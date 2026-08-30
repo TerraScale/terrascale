@@ -19,8 +19,8 @@ use terrabase::replication::LeaderlessLevel;
 use terrabase::types::DocumentValue;
 use terrabase_cluster::{ClusterHost, ClusterMode, ClusterWriteRefusal, ComposedWrite};
 
-use crate::codec::TbepValue;
-use crate::generated::{
+use crate::value::TbepValue;
+use crate::registry::{
     ChannelBindRequest, ChannelBindResponse, CommitReceipt, DocumentBody, DocumentPut,
     DocumentReadRequest, DocumentReadResponse, DocumentWriteRequest, DocumentWriteResponse,
     WriteOutcome,
@@ -175,7 +175,7 @@ impl TbepHost for ClusterTbepHost {
         // The backup_ack level is ordered: the regional quorum commits
         // first, then the 2-of-3 backup durability names FULL or
         // PARTIAL on the receipt — the active write never rolls back.
-        if matches!(request.ack, Some(crate::generated::Acknowledgement::BackupAck)) {
+        if matches!(request.ack, Some(crate::registry::Acknowledgement::BackupAck)) {
             let (receipt, backup) = cluster
                 .client_write_backup(&self.serving_member, &write)
                 .map_err(cluster_write_refusal)?;
@@ -185,20 +185,20 @@ impl TbepHost for ClusterTbepHost {
                     sequence: local.sequence().get(),
                     version: local.sequence().get(),
                     operation_id: receipt.operation().to_owned(),
-                    acknowledgement: Some(crate::generated::Acknowledgement::BackupAck),
+                    acknowledgement: Some(crate::registry::Acknowledgement::BackupAck),
                     backup: Some(match backup {
                         terrabase_cluster::BackupOutcome::Full { .. } => {
-                            crate::generated::BackupOutcome::Full
+                            crate::registry::BackupOutcome::Full
                         }
                         terrabase_cluster::BackupOutcome::Partial { .. } => {
-                            crate::generated::BackupOutcome::Partial
+                            crate::registry::BackupOutcome::Partial
                         }
                     }),
                 }),
             });
         }
         let level = match request.ack {
-            Some(crate::generated::Acknowledgement::GlobalQuorum) => LeaderlessLevel::GlobalQuorum,
+            Some(crate::registry::Acknowledgement::GlobalQuorum) => LeaderlessLevel::GlobalQuorum,
             _ => LeaderlessLevel::RegionalQuorum,
         };
         let receipt = cluster
@@ -212,10 +212,10 @@ impl TbepHost for ClusterTbepHost {
                 operation_id: receipt.operation().to_owned(),
                 acknowledgement: Some(match receipt.achieved() {
                     LeaderlessLevel::RegionalQuorum => {
-                        crate::generated::Acknowledgement::RegionalQuorum
+                        crate::registry::Acknowledgement::RegionalQuorum
                     }
                     LeaderlessLevel::GlobalQuorum => {
-                        crate::generated::Acknowledgement::GlobalQuorum
+                        crate::registry::Acknowledgement::GlobalQuorum
                     }
                 }),
                 backup: None,
@@ -226,9 +226,9 @@ impl TbepHost for ClusterTbepHost {
     fn document_delete(
         &self,
         tenant: &str,
-        request: &crate::generated::DocumentDeleteRequest,
+        request: &crate::registry::DocumentDeleteRequest,
         idempotency_key: &str,
-    ) -> Result<crate::generated::DocumentDeleteResponse, HostingError> {
+    ) -> Result<crate::registry::DocumentDeleteResponse, HostingError> {
         let mut cluster = self.lock()?;
         if tenant != cluster.tenant() {
             return Err(HostingError::Refused("the cluster serves its own tenant only".into()));
@@ -248,62 +248,62 @@ impl TbepHost for ClusterTbepHost {
         let backup = cluster.fan_to_backup(&write, terrabase_cluster::BackupPolicy::default()).map(
             |outcome| match outcome {
                 terrabase_cluster::BackupOutcome::Full { .. } => {
-                    crate::generated::BackupOutcome::Full
+                    crate::registry::BackupOutcome::Full
                 }
                 terrabase_cluster::BackupOutcome::Partial { .. } => {
-                    crate::generated::BackupOutcome::Partial
+                    crate::registry::BackupOutcome::Partial
                 }
             },
         );
         let local = receipt.local();
-        Ok(crate::generated::DocumentDeleteResponse {
+        Ok(crate::registry::DocumentDeleteResponse {
             outcome: WriteOutcome::Committed(CommitReceipt {
                 sequence: local.sequence().get(),
                 version: local.sequence().get(),
                 operation_id: receipt.operation().to_owned(),
-                acknowledgement: Some(crate::generated::Acknowledgement::RegionalQuorum),
+                acknowledgement: Some(crate::registry::Acknowledgement::RegionalQuorum),
                 backup,
             }),
         })
     }
 
     refused_plane! {
-        query_execute(_tenant: &str, _request: &crate::generated::QueryExecuteRequest) -> Result<crate::generated::QueryExecuteResponse, HostingError>, "query.execute";
-        query_cancel(_tenant: &str, _request: &crate::generated::QueryCancelRequest) -> Result<crate::generated::QueryCancelResponse, HostingError>, "query.cancel";
-        family_read(_tenant: &str, _request: &crate::generated::FamilyReadRequest) -> Result<crate::generated::FamilyReadResponse, HostingError>, "family.read";
-        family_write(_tenant: &str, _request: &crate::generated::FamilyWriteRequest, _key: &str) -> Result<crate::generated::FamilyWriteResponse, HostingError>, "family.write";
-        backbone_subscribe(_tenant: &str, _request: &crate::generated::BackboneSubscribeRequest) -> Result<(crate::generated::BackboneSubscribeResponse, std::sync::mpsc::Receiver<crate::host::TbepNotification>), HostingError>, "backbone.subscribe";
-        backbone_acknowledge(_tenant: &str, _request: &crate::generated::BackboneAcknowledgeRequest) -> Result<crate::generated::BackboneAcknowledgeResponse, HostingError>, "backbone.acknowledge";
-        backbone_unsubscribe(_tenant: &str, _request: &crate::generated::BackboneUnsubscribeRequest) -> Result<crate::generated::BackboneUnsubscribeResponse, HostingError>, "backbone.unsubscribe";
-        sync_session_setup(_tenant: &str, _request: &crate::generated::SyncSessionSetupRequest) -> Result<crate::generated::SyncSessionSetupResponse, HostingError>, "sync.session_setup";
-        sync_delta_pull(_tenant: &str, _request: &crate::generated::SyncDeltaPullRequest) -> Result<crate::generated::SyncDeltaPullResponse, HostingError>, "sync.delta_pull";
-        sync_snapshot_pull(_tenant: &str, _request: &crate::generated::SyncSnapshotPullRequest) -> Result<crate::generated::SyncSnapshotPullResponse, HostingError>, "sync.snapshot_pull";
-        sync_checkpoint_ack(_tenant: &str, _request: &crate::generated::SyncCheckpointAckRequest) -> Result<crate::generated::SyncCheckpointAckResponse, HostingError>, "sync.checkpoint_ack";
-        sync_mutation_submit(_tenant: &str, _request: &crate::generated::SyncMutationSubmitRequest, _key: &str) -> Result<crate::generated::SyncMutationSubmitResponse, HostingError>, "sync.mutation_submit";
-        sync_session_close(_tenant: &str, _request: &crate::generated::SyncSessionCloseRequest) -> Result<crate::generated::SyncSessionCloseResponse, HostingError>, "sync.session_close";
-        schema_declare(_tenant: &str, _request: &crate::generated::SchemaDeclareRequest, _key: &str) -> Result<crate::generated::SchemaDeclareResponse, HostingError>, "schema.declare";
-        schema_status(_tenant: &str, _request: &crate::generated::SchemaStatusRequest) -> Result<crate::generated::SchemaStatusResponse, HostingError>, "schema.status";
-        schema_validate(_tenant: &str, _request: &crate::generated::SchemaValidateRequest) -> Result<crate::generated::SchemaValidateResponse, HostingError>, "schema.validate";
-        tier_configure(_tenant: &str, _request: &crate::generated::TierConfigureRequest, _key: &str) -> Result<crate::generated::TierConfigureResponse, HostingError>, "tier.configure";
-        tier_inspect(_tenant: &str) -> Result<crate::generated::TierInspectResponse, HostingError>, "tier.inspect";
-        tier_explain(_tenant: &str) -> Result<crate::generated::TierExplainResponse, HostingError>, "tier.explain";
-        tier_dry_run(_tenant: &str) -> Result<crate::generated::TierDryRunResponse, HostingError>, "tier.dry_run";
-        tier_run(_tenant: &str, _key: &str) -> Result<crate::generated::TierRunResponse, HostingError>, "tier.run";
-        tier_pause(_tenant: &str, _key: &str) -> Result<crate::generated::TierPauseResponse, HostingError>, "tier.pause";
-        tier_resume(_tenant: &str, _key: &str) -> Result<crate::generated::TierResumeResponse, HostingError>, "tier.resume";
-        document_batch(_tenant: &str, _request: &crate::generated::DocumentBatchRequest, _key: &str) -> Result<crate::generated::DocumentBatchResponse, HostingError>, "document.batch";
-        migration_status(_tenant: &str, _request: &crate::generated::MigrationStatusRequest) -> Result<crate::generated::MigrationStatusResponse, HostingError>, "migration.status";
-        migration_dry_run(_tenant: &str, _request: &crate::generated::MigrationDryRunRequest) -> Result<crate::generated::MigrationDryRunResponse, HostingError>, "migration.dry_run";
-        migration_apply(_tenant: &str, _request: &crate::generated::MigrationApplyRequest, _key: &str) -> Result<crate::generated::MigrationApplyResponse, HostingError>, "migration.apply";
+        query_execute(_tenant: &str, _request: &crate::registry::QueryExecuteRequest) -> Result<crate::registry::QueryExecuteResponse, HostingError>, "query.execute";
+        query_cancel(_tenant: &str, _request: &crate::registry::QueryCancelRequest) -> Result<crate::registry::QueryCancelResponse, HostingError>, "query.cancel";
+        family_read(_tenant: &str, _request: &crate::registry::FamilyReadRequest) -> Result<crate::registry::FamilyReadResponse, HostingError>, "family.read";
+        family_write(_tenant: &str, _request: &crate::registry::FamilyWriteRequest, _key: &str) -> Result<crate::registry::FamilyWriteResponse, HostingError>, "family.write";
+        backbone_subscribe(_tenant: &str, _request: &crate::registry::BackboneSubscribeRequest) -> Result<(crate::registry::BackboneSubscribeResponse, std::sync::mpsc::Receiver<crate::host::TbepNotification>), HostingError>, "backbone.subscribe";
+        backbone_acknowledge(_tenant: &str, _request: &crate::registry::BackboneAcknowledgeRequest) -> Result<crate::registry::BackboneAcknowledgeResponse, HostingError>, "backbone.acknowledge";
+        backbone_unsubscribe(_tenant: &str, _request: &crate::registry::BackboneUnsubscribeRequest) -> Result<crate::registry::BackboneUnsubscribeResponse, HostingError>, "backbone.unsubscribe";
+        sync_session_setup(_tenant: &str, _request: &crate::registry::SyncSessionSetupRequest) -> Result<crate::registry::SyncSessionSetupResponse, HostingError>, "sync.session_setup";
+        sync_delta_pull(_tenant: &str, _request: &crate::registry::SyncDeltaPullRequest) -> Result<crate::registry::SyncDeltaPullResponse, HostingError>, "sync.delta_pull";
+        sync_snapshot_pull(_tenant: &str, _request: &crate::registry::SyncSnapshotPullRequest) -> Result<crate::registry::SyncSnapshotPullResponse, HostingError>, "sync.snapshot_pull";
+        sync_checkpoint_ack(_tenant: &str, _request: &crate::registry::SyncCheckpointAckRequest) -> Result<crate::registry::SyncCheckpointAckResponse, HostingError>, "sync.checkpoint_ack";
+        sync_mutation_submit(_tenant: &str, _request: &crate::registry::SyncMutationSubmitRequest, _key: &str) -> Result<crate::registry::SyncMutationSubmitResponse, HostingError>, "sync.mutation_submit";
+        sync_session_close(_tenant: &str, _request: &crate::registry::SyncSessionCloseRequest) -> Result<crate::registry::SyncSessionCloseResponse, HostingError>, "sync.session_close";
+        schema_declare(_tenant: &str, _request: &crate::registry::SchemaDeclareRequest, _key: &str) -> Result<crate::registry::SchemaDeclareResponse, HostingError>, "schema.declare";
+        schema_status(_tenant: &str, _request: &crate::registry::SchemaStatusRequest) -> Result<crate::registry::SchemaStatusResponse, HostingError>, "schema.status";
+        schema_validate(_tenant: &str, _request: &crate::registry::SchemaValidateRequest) -> Result<crate::registry::SchemaValidateResponse, HostingError>, "schema.validate";
+        tier_configure(_tenant: &str, _request: &crate::registry::TierConfigureRequest, _key: &str) -> Result<crate::registry::TierConfigureResponse, HostingError>, "tier.configure";
+        tier_inspect(_tenant: &str) -> Result<crate::registry::TierInspectResponse, HostingError>, "tier.inspect";
+        tier_explain(_tenant: &str) -> Result<crate::registry::TierExplainResponse, HostingError>, "tier.explain";
+        tier_dry_run(_tenant: &str) -> Result<crate::registry::TierDryRunResponse, HostingError>, "tier.dry_run";
+        tier_run(_tenant: &str, _key: &str) -> Result<crate::registry::TierRunResponse, HostingError>, "tier.run";
+        tier_pause(_tenant: &str, _key: &str) -> Result<crate::registry::TierPauseResponse, HostingError>, "tier.pause";
+        tier_resume(_tenant: &str, _key: &str) -> Result<crate::registry::TierResumeResponse, HostingError>, "tier.resume";
+        document_batch(_tenant: &str, _request: &crate::registry::DocumentBatchRequest, _key: &str) -> Result<crate::registry::DocumentBatchResponse, HostingError>, "document.batch";
+        migration_status(_tenant: &str, _request: &crate::registry::MigrationStatusRequest) -> Result<crate::registry::MigrationStatusResponse, HostingError>, "migration.status";
+        migration_dry_run(_tenant: &str, _request: &crate::registry::MigrationDryRunRequest) -> Result<crate::registry::MigrationDryRunResponse, HostingError>, "migration.dry_run";
+        migration_apply(_tenant: &str, _request: &crate::registry::MigrationApplyRequest, _key: &str) -> Result<crate::registry::MigrationApplyResponse, HostingError>, "migration.apply";
     }
 
     fn topology_read(
         &self,
         _tenant: &str,
-    ) -> Result<crate::generated::TopologyReadResponse, HostingError> {
+    ) -> Result<crate::registry::TopologyReadResponse, HostingError> {
         let cluster = self.lock()?;
-        Ok(crate::generated::TopologyReadResponse {
-            binding: crate::generated::BindingKind::LocalUds,
+        Ok(crate::registry::TopologyReadResponse {
+            binding: crate::registry::BindingKind::LocalUds,
             subsystems: vec![
                 "documents".into(),
                 "cluster".into(),
@@ -312,15 +312,15 @@ impl TbepHost for ClusterTbepHost {
             ],
             engine_topology_available: true,
             cluster_mode: Some(match cluster.mode() {
-                ClusterMode::Active => crate::generated::ClusterMode::Active,
-                ClusterMode::Backup => crate::generated::ClusterMode::Backup,
+                ClusterMode::Active => crate::registry::ClusterMode::Active,
+                ClusterMode::Backup => crate::registry::ClusterMode::Backup,
             }),
         })
     }
 
-    fn admin_status(&self) -> Result<crate::generated::AdminStatusResponse, HostingError> {
-        Ok(crate::generated::AdminStatusResponse {
-            registry_version: crate::generated::REGISTRY_VERSION.into(),
+    fn admin_status(&self) -> Result<crate::registry::AdminStatusResponse, HostingError> {
+        Ok(crate::registry::AdminStatusResponse {
+            registry_version: crate::registry::REGISTRY_VERSION.into(),
             frames_served: 0,
             sessions: 0,
             subscriptions: 0,
@@ -328,9 +328,9 @@ impl TbepHost for ClusterTbepHost {
         })
     }
 
-    fn health(&self) -> Result<crate::generated::SupervisionHealthResponse, HostingError> {
-        Ok(crate::generated::SupervisionHealthResponse {
-            state: crate::generated::HealthState::Serving,
+    fn health(&self) -> Result<crate::registry::SupervisionHealthResponse, HostingError> {
+        Ok(crate::registry::SupervisionHealthResponse {
+            state: crate::registry::HealthState::Serving,
             sessions: 0,
             subscriptions: 0,
             frames_served: 0,
@@ -339,10 +339,10 @@ impl TbepHost for ClusterTbepHost {
 
     fn begin_shutdown(
         &self,
-        _request: &crate::generated::SupervisionShutdownRequest,
-    ) -> Result<crate::generated::SupervisionShutdownResponse, HostingError> {
-        Ok(crate::generated::SupervisionShutdownResponse {
-            state: crate::generated::HealthState::Draining,
+        _request: &crate::registry::SupervisionShutdownRequest,
+    ) -> Result<crate::registry::SupervisionShutdownResponse, HostingError> {
+        Ok(crate::registry::SupervisionShutdownResponse {
+            state: crate::registry::HealthState::Draining,
             in_flight: 0,
         })
     }

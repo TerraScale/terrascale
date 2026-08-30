@@ -50,69 +50,69 @@ use terrabase_sync_core::SyncScope;
 use terrabase_sync_core::SyncValue;
 use terrabase_sync_core::protocol::PayloadCodec;
 
-use crate::codec::TbepValue;
-use crate::generated::AdminStatusResponse;
-use crate::generated::BackboneAcknowledgeRequest;
-use crate::generated::BackboneAcknowledgeResponse;
-use crate::generated::BackboneSubscribeRequest;
-use crate::generated::BackboneSubscribeResponse;
-use crate::generated::BackboneUnsubscribeRequest;
-use crate::generated::BackboneUnsubscribeResponse;
-use crate::generated::ChangeKind;
-use crate::generated::ChannelBindRequest;
-use crate::generated::ChannelBindResponse;
-use crate::generated::CommitReceipt;
-use crate::generated::DocumentDeleteRequest;
-use crate::generated::DocumentDeleteResponse;
-use crate::generated::DocumentReadRequest;
-use crate::generated::DocumentReadResponse;
-use crate::generated::DocumentWriteRequest;
-use crate::generated::DocumentWriteResponse;
-use crate::generated::ErrorCode;
-use crate::generated::FamilyReadRequest;
-use crate::generated::FamilyReadResponse;
-use crate::generated::FamilyWriteRequest;
-use crate::generated::FamilyWriteResponse;
-use crate::generated::HealthState;
-use crate::generated::MigrationApplyRequest;
-use crate::generated::MigrationApplyResponse;
-use crate::generated::MigrationDryRunRequest;
-use crate::generated::MigrationDryRunResponse;
-use crate::generated::MigrationStatusRequest;
-use crate::generated::MigrationStatusResponse;
-use crate::generated::MutationOutcome;
-use crate::generated::MutationReason;
-use crate::generated::QueryCancelRequest;
-use crate::generated::QueryCancelResponse;
-use crate::generated::QueryExecuteRequest;
-use crate::generated::QueryExecuteResponse;
-use crate::generated::REGISTRY_VERSION;
-use crate::generated::SchemaDeclareRequest;
-use crate::generated::SchemaDeclareResponse;
-use crate::generated::SchemaStatusRequest;
-use crate::generated::SchemaStatusResponse;
-use crate::generated::SchemaValidateRequest;
-use crate::generated::SchemaValidateResponse;
-use crate::generated::SubscriptionBatch;
-use crate::generated::SubscriptionCloseReason;
-use crate::generated::SubscriptionClosed;
-use crate::generated::SubscriptionStart;
-use crate::generated::SupervisionHealthResponse;
-use crate::generated::SupervisionShutdownRequest;
-use crate::generated::SupervisionShutdownResponse;
-use crate::generated::SyncCheckpointAckRequest;
-use crate::generated::SyncCheckpointAckResponse;
-use crate::generated::SyncDeltaPullRequest;
-use crate::generated::SyncDeltaPullResponse;
-use crate::generated::SyncMutationSubmitRequest;
-use crate::generated::SyncMutationSubmitResponse;
-use crate::generated::SyncSessionCloseRequest;
-use crate::generated::SyncSessionCloseResponse;
-use crate::generated::SyncSessionSetupRequest;
-use crate::generated::SyncSessionSetupResponse;
-use crate::generated::SyncSnapshotPullRequest;
-use crate::generated::SyncSnapshotPullResponse;
-use crate::generated::TopologyReadResponse;
+use crate::value::TbepValue;
+use crate::registry::AdminStatusResponse;
+use crate::registry::BackboneAcknowledgeRequest;
+use crate::registry::BackboneAcknowledgeResponse;
+use crate::registry::BackboneSubscribeRequest;
+use crate::registry::BackboneSubscribeResponse;
+use crate::registry::BackboneUnsubscribeRequest;
+use crate::registry::BackboneUnsubscribeResponse;
+use crate::registry::ChangeKind;
+use crate::registry::ChannelBindRequest;
+use crate::registry::ChannelBindResponse;
+use crate::registry::CommitReceipt;
+use crate::registry::DocumentDeleteRequest;
+use crate::registry::DocumentDeleteResponse;
+use crate::registry::DocumentReadRequest;
+use crate::registry::DocumentReadResponse;
+use crate::registry::DocumentWriteRequest;
+use crate::registry::DocumentWriteResponse;
+use crate::registry::ErrorCode;
+use crate::registry::FamilyReadRequest;
+use crate::registry::FamilyReadResponse;
+use crate::registry::FamilyWriteRequest;
+use crate::registry::FamilyWriteResponse;
+use crate::registry::HealthState;
+use crate::registry::MigrationApplyRequest;
+use crate::registry::MigrationApplyResponse;
+use crate::registry::MigrationDryRunRequest;
+use crate::registry::MigrationDryRunResponse;
+use crate::registry::MigrationStatusRequest;
+use crate::registry::MigrationStatusResponse;
+use crate::registry::MutationOutcome;
+use crate::registry::MutationReason;
+use crate::registry::QueryCancelRequest;
+use crate::registry::QueryCancelResponse;
+use crate::registry::QueryExecuteRequest;
+use crate::registry::QueryExecuteResponse;
+use crate::registry::REGISTRY_VERSION;
+use crate::registry::SchemaDeclareRequest;
+use crate::registry::SchemaDeclareResponse;
+use crate::registry::SchemaStatusRequest;
+use crate::registry::SchemaStatusResponse;
+use crate::registry::SchemaValidateRequest;
+use crate::registry::SchemaValidateResponse;
+use crate::registry::SubscriptionBatch;
+use crate::registry::SubscriptionCloseReason;
+use crate::registry::SubscriptionClosed;
+use crate::registry::SubscriptionStart;
+use crate::registry::SupervisionHealthResponse;
+use crate::registry::SupervisionShutdownRequest;
+use crate::registry::SupervisionShutdownResponse;
+use crate::registry::SyncCheckpointAckRequest;
+use crate::registry::SyncCheckpointAckResponse;
+use crate::registry::SyncDeltaPullRequest;
+use crate::registry::SyncDeltaPullResponse;
+use crate::registry::SyncMutationSubmitRequest;
+use crate::registry::SyncMutationSubmitResponse;
+use crate::registry::SyncSessionCloseRequest;
+use crate::registry::SyncSessionCloseResponse;
+use crate::registry::SyncSessionSetupRequest;
+use crate::registry::SyncSessionSetupResponse;
+use crate::registry::SyncSnapshotPullRequest;
+use crate::registry::SyncSnapshotPullResponse;
+use crate::registry::TopologyReadResponse;
 
 /// The batch byte budget the serving core configures (the SE-04 corpus
 /// default); a single oversize commit rides alone, flagged.
@@ -207,7 +207,7 @@ pub enum TbepNotification {
     /// An ordered, bounded batch of change events.
     Batch(SubscriptionBatch),
     /// The content-free trigger notification (PD-2026-08-26-13 D3).
-    Trigger(crate::generated::TriggerNotification),
+    Trigger(crate::registry::TriggerNotification),
     /// The subscription closed.
     Closed(SubscriptionClosed),
 }
@@ -320,9 +320,9 @@ pub trait TbepHost: Send + Sync {
     fn document_batch(
         &self,
         tenant: &str,
-        request: &crate::generated::DocumentBatchRequest,
+        request: &crate::registry::DocumentBatchRequest,
         idempotency_key: &str,
-    ) -> Result<crate::generated::DocumentBatchResponse, HostingError> {
+    ) -> Result<crate::registry::DocumentBatchResponse, HostingError> {
         let _ = (tenant, request, idempotency_key);
         Err(HostingError::Refused(
             "document.batch is served by the engine-backed host's transaction path".into(),
@@ -534,9 +534,9 @@ pub trait TbepHost: Send + Sync {
     fn tier_configure(
         &self,
         tenant: &str,
-        request: &crate::generated::TierConfigureRequest,
+        request: &crate::registry::TierConfigureRequest,
         idempotency_key: &str,
-    ) -> Result<crate::generated::TierConfigureResponse, HostingError> {
+    ) -> Result<crate::registry::TierConfigureResponse, HostingError> {
         let _ = (tenant, request, idempotency_key);
         Err(HostingError::Refused(
             "tier.configure is served by the engine-backed host's tier administration".into(),
@@ -551,7 +551,7 @@ pub trait TbepHost: Send + Sync {
     fn tier_inspect(
         &self,
         tenant: &str,
-    ) -> Result<crate::generated::TierInspectResponse, HostingError> {
+    ) -> Result<crate::registry::TierInspectResponse, HostingError> {
         let _ = tenant;
         Err(HostingError::Refused(
             "tier.inspect is served by the engine-backed host's tier administration".into(),
@@ -566,7 +566,7 @@ pub trait TbepHost: Send + Sync {
     fn tier_explain(
         &self,
         tenant: &str,
-    ) -> Result<crate::generated::TierExplainResponse, HostingError> {
+    ) -> Result<crate::registry::TierExplainResponse, HostingError> {
         let _ = tenant;
         Err(HostingError::Refused(
             "tier.explain is served by the engine-backed host's tier administration".into(),
@@ -581,7 +581,7 @@ pub trait TbepHost: Send + Sync {
     fn tier_dry_run(
         &self,
         tenant: &str,
-    ) -> Result<crate::generated::TierDryRunResponse, HostingError> {
+    ) -> Result<crate::registry::TierDryRunResponse, HostingError> {
         let _ = tenant;
         Err(HostingError::Refused(
             "tier.dry_run is served by the engine-backed host's tier administration".into(),
@@ -597,7 +597,7 @@ pub trait TbepHost: Send + Sync {
         &self,
         tenant: &str,
         idempotency_key: &str,
-    ) -> Result<crate::generated::TierRunResponse, HostingError> {
+    ) -> Result<crate::registry::TierRunResponse, HostingError> {
         let _ = (tenant, idempotency_key);
         Err(HostingError::Refused(
             "tier.run is served by the engine-backed host's tier administration".into(),
@@ -613,7 +613,7 @@ pub trait TbepHost: Send + Sync {
         &self,
         tenant: &str,
         idempotency_key: &str,
-    ) -> Result<crate::generated::TierPauseResponse, HostingError> {
+    ) -> Result<crate::registry::TierPauseResponse, HostingError> {
         let _ = (tenant, idempotency_key);
         Err(HostingError::Refused(
             "tier.pause is served by the engine-backed host's tier administration".into(),
@@ -629,7 +629,7 @@ pub trait TbepHost: Send + Sync {
         &self,
         tenant: &str,
         idempotency_key: &str,
-    ) -> Result<crate::generated::TierResumeResponse, HostingError> {
+    ) -> Result<crate::registry::TierResumeResponse, HostingError> {
         let _ = (tenant, idempotency_key);
         Err(HostingError::Refused(
             "tier.resume is served by the engine-backed host's tier administration".into(),
@@ -712,12 +712,12 @@ impl ScopeState {
 
     /// Serves up to `limit` events at or after `from`; the events must
     /// exist in the retained window.
-    fn events_from(&self, from: u64, limit: usize) -> Vec<crate::generated::ChangeEvent> {
+    fn events_from(&self, from: u64, limit: usize) -> Vec<crate::registry::ChangeEvent> {
         self.journal
             .iter()
             .filter(|record| record.sequence >= from)
             .take(limit)
-            .map(|record| crate::generated::ChangeEvent {
+            .map(|record| crate::registry::ChangeEvent {
                 sequence: record.sequence,
                 operation_id: record.operation_id.clone(),
                 kind: record.kind,
@@ -990,7 +990,7 @@ impl TbepHost for SyncDeliveryHost {
         };
         // Replay the retained windows of every matching scope of this
         // tenant, in sequence order, up to the list bound.
-        let mut events: Vec<crate::generated::ChangeEvent> = Vec::new();
+        let mut events: Vec<crate::registry::ChangeEvent> = Vec::new();
         for ((scope_tenant, scope_collection), scope) in &state.scopes {
             if scope_tenant != tenant {
                 continue;
@@ -1000,10 +1000,10 @@ impl TbepHost for SyncDeliveryHost {
             {
                 continue;
             }
-            events.extend(scope.events_from(from, crate::generated::MAX_LIST_ITEMS));
+            events.extend(scope.events_from(from, crate::registry::MAX_LIST_ITEMS));
         }
         events.sort_by_key(|event| event.sequence);
-        events.truncate(crate::generated::MAX_LIST_ITEMS);
+        events.truncate(crate::registry::MAX_LIST_ITEMS);
         let next_sequence = events.last().map_or(from, |event| event.sequence + 1);
         if !events.is_empty() {
             let _ = sender.send(TbepNotification::Batch(SubscriptionBatch {
@@ -1292,7 +1292,7 @@ impl TbepHost for SyncDeliveryHost {
             return Ok(mutation_applied(request.session_id, receipt));
         }
         let change = match &request.change {
-            crate::generated::SyncChange::Put(fields) => {
+            crate::registry::SyncChange::Put(fields) => {
                 let mut body: BTreeMap<String, SyncValue> = BTreeMap::new();
                 for field in fields {
                     // The serving core's value domain is scalar
@@ -1320,7 +1320,7 @@ impl TbepHost for SyncDeliveryHost {
                 }
                 JournalChange::Put { body }
             }
-            crate::generated::SyncChange::Delete => JournalChange::Delete,
+            crate::registry::SyncChange::Delete => JournalChange::Delete,
         };
         let sequence = scope.next_sequence;
         let commit = JournalCommit {
@@ -1338,7 +1338,7 @@ impl TbepHost for SyncDeliveryHost {
             version: sequence,
             operation_id: idempotency_key.to_string(),
             // The journal's single-member commit is its regional quorum.
-            acknowledgement: Some(crate::generated::Acknowledgement::RegionalQuorum),
+            acknowledgement: Some(crate::registry::Acknowledgement::RegionalQuorum),
             backup: None,
         };
         scope.record_applied(idempotency_key.to_string(), receipt.clone());
@@ -1346,13 +1346,13 @@ impl TbepHost for SyncDeliveryHost {
             sequence,
             operation_id: idempotency_key.to_string(),
             kind: match &request.change {
-                crate::generated::SyncChange::Put(_) => ChangeKind::Put,
-                crate::generated::SyncChange::Delete => ChangeKind::Delete,
+                crate::registry::SyncChange::Put(_) => ChangeKind::Put,
+                crate::registry::SyncChange::Delete => ChangeKind::Delete,
             },
             collection: collection.clone(),
             document: request.document.clone(),
         };
-        let trigger = crate::generated::TriggerNotification {
+        let trigger = crate::registry::TriggerNotification {
             subscription_id: 0, // filled per subscription below
             collection: record.collection.clone(),
             sequence: record.sequence,
@@ -1372,7 +1372,7 @@ impl TbepHost for SyncDeliveryHost {
                 continue;
             }
             let from = subscription.next_sequence;
-            let events = scope.events_from(from, crate::generated::MAX_LIST_ITEMS);
+            let events = scope.events_from(from, crate::registry::MAX_LIST_ITEMS);
             if let Some(last) = events.last() {
                 subscription.next_sequence = last.sequence + 1;
                 let _ = subscription.feed.send(TbepNotification::Batch(SubscriptionBatch {
@@ -1383,7 +1383,7 @@ impl TbepHost for SyncDeliveryHost {
                 }));
             }
             let _ = subscription.feed.send(TbepNotification::Trigger(
-                crate::generated::TriggerNotification { subscription_id: id, ..trigger.clone() },
+                crate::registry::TriggerNotification { subscription_id: id, ..trigger.clone() },
             ));
         }
         Ok(mutation_applied(request.session_id, receipt))
@@ -1407,10 +1407,10 @@ impl TbepHost for SyncDeliveryHost {
 
     fn topology_read(&self, _tenant: &str) -> Result<TopologyReadResponse, HostingError> {
         Ok(TopologyReadResponse {
-            binding: crate::generated::BindingKind::LocalUds,
+            binding: crate::registry::BindingKind::LocalUds,
             subsystems: vec!["sync-delivery".into(), "backbone".into(), "supervision".into()],
             engine_topology_available: false,
-            cluster_mode: Some(crate::generated::ClusterMode::Standalone),
+            cluster_mode: Some(crate::registry::ClusterMode::Standalone),
         })
     }
 
@@ -1720,7 +1720,7 @@ impl TbepHost for ScriptedHost {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generated::SyncChange;
+    use crate::registry::SyncChange;
 
     fn submit(host: &SyncDeliveryHost, session: u64, document: &str, key: &str) -> CommitReceipt {
         let response = host
@@ -1729,7 +1729,7 @@ mod tests {
                 &SyncMutationSubmitRequest {
                     session_id: session,
                     document: document.into(),
-                    change: SyncChange::Put(vec![crate::generated::SyncField {
+                    change: SyncChange::Put(vec![crate::registry::SyncField {
                         name: "f".into(),
                         value: TbepValue::Integer(1),
                     }]),
@@ -1864,7 +1864,7 @@ mod tests {
         assert_eq!(health.state, HealthState::Serving);
         let shutdown = host
             .begin_shutdown(&SupervisionShutdownRequest {
-                reason: crate::generated::ShutdownReason::Operator,
+                reason: crate::registry::ShutdownReason::Operator,
             })
             .expect("shutdown");
         assert_eq!(shutdown.state, HealthState::Draining);
@@ -1875,7 +1875,7 @@ mod tests {
         host: &SyncDeliveryHost,
         session: u64,
         key: &str,
-        fields: Vec<crate::generated::SyncField>,
+        fields: Vec<crate::registry::SyncField>,
     ) -> MutationOutcome {
         host.sync_mutation_submit(
             "tenant-a",
@@ -1909,7 +1909,7 @@ mod tests {
             &host,
             session,
             "op-array",
-            vec![crate::generated::SyncField {
+            vec![crate::registry::SyncField {
                 name: "tags".into(),
                 value: TbepValue::Array(vec![TbepValue::String("x".into())]),
             }],
@@ -1920,7 +1920,7 @@ mod tests {
             &host,
             session,
             "op-object",
-            vec![crate::generated::SyncField {
+            vec![crate::registry::SyncField {
                 name: "nested".into(),
                 value: TbepValue::Object(vec![("a".into(), TbepValue::Integer(1))]),
             }],
@@ -1933,7 +1933,7 @@ mod tests {
             &host,
             session,
             "op-array",
-            vec![crate::generated::SyncField {
+            vec![crate::registry::SyncField {
                 name: "tags".into(),
                 value: TbepValue::String("x".into()),
             }],
@@ -1964,7 +1964,7 @@ mod tests {
             &host,
             session,
             "op-00",
-            vec![crate::generated::SyncField { name: "f".into(), value: TbepValue::Integer(0) }],
+            vec![crate::registry::SyncField { name: "f".into(), value: TbepValue::Integer(0) }],
         ) {
             MutationOutcome::Applied(receipt) => receipt,
             MutationOutcome::Rejected(reason) => panic!("applies: {reason:?}"),
@@ -1974,7 +1974,7 @@ mod tests {
                 &host,
                 session,
                 &format!("op-{index:02}"),
-                vec![crate::generated::SyncField {
+                vec![crate::registry::SyncField {
                     name: "f".into(),
                     value: TbepValue::Integer(i64::try_from(index).expect("fits")),
                 }],
@@ -1991,7 +1991,7 @@ mod tests {
             &host,
             session,
             &newest,
-            vec![crate::generated::SyncField { name: "f".into(), value: TbepValue::Integer(1) }],
+            vec![crate::registry::SyncField { name: "f".into(), value: TbepValue::Integer(1) }],
         ) {
             MutationOutcome::Applied(receipt) => assert_eq!(receipt.operation_id, newest),
             MutationOutcome::Rejected(reason) => {
@@ -2006,7 +2006,7 @@ mod tests {
             &host,
             session,
             "op-evict",
-            vec![crate::generated::SyncField { name: "f".into(), value: TbepValue::Integer(1) }],
+            vec![crate::registry::SyncField { name: "f".into(), value: TbepValue::Integer(1) }],
         ) {
             MutationOutcome::Applied(_) => {}
             MutationOutcome::Rejected(reason) => panic!("applies: {reason:?}"),
@@ -2015,7 +2015,7 @@ mod tests {
             &host,
             session,
             "op-00",
-            vec![crate::generated::SyncField { name: "f".into(), value: TbepValue::Integer(0) }],
+            vec![crate::registry::SyncField { name: "f".into(), value: TbepValue::Integer(0) }],
         ) {
             MutationOutcome::Applied(receipt) => assert!(
                 receipt.sequence > first.sequence,

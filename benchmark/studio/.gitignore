@@ -1,7 +1,0 @@
-node_modules/
-dist/
-.next/
-.vinext/
-playwright-report/
-test-results/
-.e2e-runtime.json

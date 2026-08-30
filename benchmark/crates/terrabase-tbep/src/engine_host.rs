@@ -25,8 +25,8 @@ use terrabase::types::{
     LocalDurability, OperationId, TenantId,
 };
 
-use crate::codec::TbepValue;
-use crate::generated::{
+use crate::value::TbepValue;
+use crate::registry::{
     AdminStatusResponse, ChannelBindRequest, ChannelBindResponse, CommitReceipt, DocumentBody,
     DocumentDeleteRequest, DocumentDeleteResponse, DocumentPut, DocumentReadRequest,
     DocumentReadResponse, DocumentWriteRequest, DocumentWriteResponse, ExpectedVersion,
@@ -113,21 +113,21 @@ fn tier_error(error: terrabase::tiers::TierAdminError) -> HostingError {
 /// Maps one engine tier receipt onto the wire's.
 fn wire_receipt(
     receipt: &terrabase::tiers::TierMoveRunReceipt,
-) -> crate::generated::TierMoveReceipt {
-    crate::generated::TierMoveReceipt {
+) -> crate::registry::TierMoveReceipt {
+    crate::registry::TierMoveReceipt {
         policy_id: receipt.policy_id().to_owned(),
         policy_version: receipt.policy_version(),
         decision: match receipt.decision() {
-            terrabase::tiers::TierDecision::Promote => crate::generated::TierDecision::Promote,
-            terrabase::tiers::TierDecision::Demote => crate::generated::TierDecision::Demote,
-            terrabase::tiers::TierDecision::Split => crate::generated::TierDecision::Split,
-            terrabase::tiers::TierDecision::None => crate::generated::TierDecision::None,
-            terrabase::tiers::TierDecision::Refused => crate::generated::TierDecision::Refused,
+            terrabase::tiers::TierDecision::Promote => crate::registry::TierDecision::Promote,
+            terrabase::tiers::TierDecision::Demote => crate::registry::TierDecision::Demote,
+            terrabase::tiers::TierDecision::Split => crate::registry::TierDecision::Split,
+            terrabase::tiers::TierDecision::None => crate::registry::TierDecision::None,
+            terrabase::tiers::TierDecision::Refused => crate::registry::TierDecision::Refused,
         },
         reasons: receipt
             .reasons()
             .iter()
-            .map(|reason| crate::generated::TierMoveReason {
+            .map(|reason| crate::registry::TierMoveReason {
                 fact: reason.fact().to_owned(),
                 observed: reason.observed().to_owned(),
             })
@@ -303,7 +303,7 @@ impl EngineHost {
         tenant: &TenantId,
         operation: &str,
         stage: impl FnOnce(&mut terrabase::engine::Transaction<'_>) -> Result<(), HostingError>,
-        ack: crate::generated::Acknowledgement,
+        ack: crate::registry::Acknowledgement,
         idempotency_key: &str,
     ) -> Result<WriteOutcome, HostingError> {
         // The envelope's idempotency key is the operation identity:
@@ -404,7 +404,7 @@ impl TbepHost for EngineHost {
                     )
                     .map_err(|_| HostingError::Refused("the document was not admissible".into()))
             },
-            request.ack.unwrap_or(crate::generated::Acknowledgement::RegionalQuorum),
+            request.ack.unwrap_or(crate::registry::Acknowledgement::RegionalQuorum),
             idempotency_key,
         )?;
         // The wire's receipt carries the document's published version —
@@ -453,7 +453,7 @@ impl TbepHost for EngineHost {
                     .delete(document.clone(), expected)
                     .map_err(|_| HostingError::Refused("the document was not admissible".into()))
             },
-            request.ack.unwrap_or(crate::generated::Acknowledgement::RegionalQuorum),
+            request.ack.unwrap_or(crate::registry::Acknowledgement::RegionalQuorum),
             idempotency_key,
         )?;
         // Same rule as the write path: the wire's receipt carries the
@@ -474,15 +474,15 @@ impl TbepHost for EngineHost {
     fn document_batch(
         &self,
         tenant: &str,
-        request: &crate::generated::DocumentBatchRequest,
+        request: &crate::registry::DocumentBatchRequest,
         idempotency_key: &str,
-    ) -> Result<crate::generated::DocumentBatchResponse, HostingError> {
+    ) -> Result<crate::registry::DocumentBatchResponse, HostingError> {
         self.count_frame();
         let tenant = Self::tenant_of(tenant)?;
         if request.items.is_empty() {
             return Err(HostingError::Invalid("the batch carries no items".into()));
         }
-        if request.items.len() > crate::generated::MAX_LIST_ITEMS {
+        if request.items.len() > crate::registry::MAX_LIST_ITEMS {
             return Err(HostingError::Invalid("the batch exceeds the list bound".into()));
         }
         // One batch, one engine transaction: every item stages before the
@@ -512,17 +512,17 @@ impl TbepHost for EngineHost {
                 }
                 Ok(())
             },
-            request.ack.unwrap_or(crate::generated::Acknowledgement::RegionalQuorum),
+            request.ack.unwrap_or(crate::registry::Acknowledgement::RegionalQuorum),
             idempotency_key,
         )?;
-        Ok(crate::generated::DocumentBatchResponse { outcome })
+        Ok(crate::registry::DocumentBatchResponse { outcome })
     }
 
     fn query_execute(
         &self,
         tenant: &str,
-        request: &crate::generated::QueryExecuteRequest,
-    ) -> Result<crate::generated::QueryExecuteResponse, HostingError> {
+        request: &crate::registry::QueryExecuteRequest,
+    ) -> Result<crate::registry::QueryExecuteResponse, HostingError> {
         self.count_frame();
         let tenant = Self::tenant_of(tenant)?;
         // The wire's text is bounded TQL input, capped at
@@ -584,11 +584,11 @@ impl TbepHost for EngineHost {
             })
             .collect();
         let terminal = if limit < rows.len() {
-            crate::generated::QueryTerminal::Truncated
+            crate::registry::QueryTerminal::Truncated
         } else {
-            crate::generated::QueryTerminal::Complete
+            crate::registry::QueryTerminal::Complete
         };
-        Ok(crate::generated::QueryExecuteResponse {
+        Ok(crate::registry::QueryExecuteResponse {
             count: u32::try_from(result.matched()).unwrap_or(u32::MAX),
             documents,
             terminal,
@@ -601,50 +601,50 @@ impl TbepHost for EngineHost {
     fn query_cancel(
         &self,
         _tenant: &str,
-        request: &crate::generated::QueryCancelRequest,
-    ) -> Result<crate::generated::QueryCancelResponse, HostingError> {
+        request: &crate::registry::QueryCancelRequest,
+    ) -> Result<crate::registry::QueryCancelResponse, HostingError> {
         self.count_frame();
         // A live query cancels at its next bounded checkpoint; a
         // finished one reports completion; anything else is unknown.
         let mut live = self.live_queries.lock().expect("the live set is not poisoned");
         if let Some(cancellation) = live.remove(&request.query_id) {
             cancellation.cancel();
-            return Ok(crate::generated::QueryCancelResponse {
-                outcome: crate::generated::CancelOutcome::Cancelled,
+            return Ok(crate::registry::QueryCancelResponse {
+                outcome: crate::registry::CancelOutcome::Cancelled,
             });
         }
         let outcome = if self.query_completed(request.query_id) {
-            crate::generated::CancelOutcome::AlreadyComplete
+            crate::registry::CancelOutcome::AlreadyComplete
         } else {
-            crate::generated::CancelOutcome::UnknownQuery
+            crate::registry::CancelOutcome::UnknownQuery
         };
-        Ok(crate::generated::QueryCancelResponse { outcome })
+        Ok(crate::registry::QueryCancelResponse { outcome })
     }
 
     fn family_read(
         &self,
         _tenant: &str,
-        _request: &crate::generated::FamilyReadRequest,
-    ) -> Result<crate::generated::FamilyReadResponse, HostingError> {
+        _request: &crate::registry::FamilyReadRequest,
+    ) -> Result<crate::registry::FamilyReadResponse, HostingError> {
         Err(HostingError::Refused("family_read is served by the family-plane landing".into()))
     }
 
     fn family_write(
         &self,
         _tenant: &str,
-        _request: &crate::generated::FamilyWriteRequest,
+        _request: &crate::registry::FamilyWriteRequest,
         _idempotency_key: &str,
-    ) -> Result<crate::generated::FamilyWriteResponse, HostingError> {
+    ) -> Result<crate::registry::FamilyWriteResponse, HostingError> {
         Err(HostingError::Refused("family_write is served by the family-plane landing".into()))
     }
 
     fn backbone_subscribe(
         &self,
         _tenant: &str,
-        _request: &crate::generated::BackboneSubscribeRequest,
+        _request: &crate::registry::BackboneSubscribeRequest,
     ) -> Result<
         (
-            crate::generated::BackboneSubscribeResponse,
+            crate::registry::BackboneSubscribeResponse,
             std::sync::mpsc::Receiver<crate::host::TbepNotification>,
         ),
         HostingError,
@@ -657,8 +657,8 @@ impl TbepHost for EngineHost {
     fn backbone_acknowledge(
         &self,
         _tenant: &str,
-        _request: &crate::generated::BackboneAcknowledgeRequest,
-    ) -> Result<crate::generated::BackboneAcknowledgeResponse, HostingError> {
+        _request: &crate::registry::BackboneAcknowledgeRequest,
+    ) -> Result<crate::registry::BackboneAcknowledgeResponse, HostingError> {
         Err(HostingError::Refused(
             "backbone delivery is served by the sync-delivery host beside this one".into(),
         ))
@@ -667,8 +667,8 @@ impl TbepHost for EngineHost {
     fn backbone_unsubscribe(
         &self,
         _tenant: &str,
-        _request: &crate::generated::BackboneUnsubscribeRequest,
-    ) -> Result<crate::generated::BackboneUnsubscribeResponse, HostingError> {
+        _request: &crate::registry::BackboneUnsubscribeRequest,
+    ) -> Result<crate::registry::BackboneUnsubscribeResponse, HostingError> {
         Err(HostingError::Refused(
             "backbone delivery is served by the sync-delivery host beside this one".into(),
         ))
@@ -677,8 +677,8 @@ impl TbepHost for EngineHost {
     fn sync_session_setup(
         &self,
         _tenant: &str,
-        _request: &crate::generated::SyncSessionSetupRequest,
-    ) -> Result<crate::generated::SyncSessionSetupResponse, HostingError> {
+        _request: &crate::registry::SyncSessionSetupRequest,
+    ) -> Result<crate::registry::SyncSessionSetupResponse, HostingError> {
         Err(HostingError::Refused(
             "sync sessions are served by the sync-delivery host beside this one".into(),
         ))
@@ -687,8 +687,8 @@ impl TbepHost for EngineHost {
     fn sync_delta_pull(
         &self,
         _tenant: &str,
-        _request: &crate::generated::SyncDeltaPullRequest,
-    ) -> Result<crate::generated::SyncDeltaPullResponse, HostingError> {
+        _request: &crate::registry::SyncDeltaPullRequest,
+    ) -> Result<crate::registry::SyncDeltaPullResponse, HostingError> {
         Err(HostingError::Refused(
             "sync sessions are served by the sync-delivery host beside this one".into(),
         ))
@@ -697,8 +697,8 @@ impl TbepHost for EngineHost {
     fn sync_snapshot_pull(
         &self,
         _tenant: &str,
-        _request: &crate::generated::SyncSnapshotPullRequest,
-    ) -> Result<crate::generated::SyncSnapshotPullResponse, HostingError> {
+        _request: &crate::registry::SyncSnapshotPullRequest,
+    ) -> Result<crate::registry::SyncSnapshotPullResponse, HostingError> {
         Err(HostingError::Refused(
             "sync sessions are served by the sync-delivery host beside this one".into(),
         ))
@@ -707,8 +707,8 @@ impl TbepHost for EngineHost {
     fn sync_checkpoint_ack(
         &self,
         _tenant: &str,
-        _request: &crate::generated::SyncCheckpointAckRequest,
-    ) -> Result<crate::generated::SyncCheckpointAckResponse, HostingError> {
+        _request: &crate::registry::SyncCheckpointAckRequest,
+    ) -> Result<crate::registry::SyncCheckpointAckResponse, HostingError> {
         Err(HostingError::Refused(
             "sync sessions are served by the sync-delivery host beside this one".into(),
         ))
@@ -717,9 +717,9 @@ impl TbepHost for EngineHost {
     fn sync_mutation_submit(
         &self,
         _tenant: &str,
-        _request: &crate::generated::SyncMutationSubmitRequest,
+        _request: &crate::registry::SyncMutationSubmitRequest,
         _idempotency_key: &str,
-    ) -> Result<crate::generated::SyncMutationSubmitResponse, HostingError> {
+    ) -> Result<crate::registry::SyncMutationSubmitResponse, HostingError> {
         Err(HostingError::Refused(
             "sync sessions are served by the sync-delivery host beside this one".into(),
         ))
@@ -728,8 +728,8 @@ impl TbepHost for EngineHost {
     fn sync_session_close(
         &self,
         _tenant: &str,
-        _request: &crate::generated::SyncSessionCloseRequest,
-    ) -> Result<crate::generated::SyncSessionCloseResponse, HostingError> {
+        _request: &crate::registry::SyncSessionCloseRequest,
+    ) -> Result<crate::registry::SyncSessionCloseResponse, HostingError> {
         Err(HostingError::Refused(
             "sync sessions are served by the sync-delivery host beside this one".into(),
         ))
@@ -738,9 +738,9 @@ impl TbepHost for EngineHost {
     fn tier_configure(
         &self,
         _tenant: &str,
-        request: &crate::generated::TierConfigureRequest,
+        request: &crate::registry::TierConfigureRequest,
         _idempotency_key: &str,
-    ) -> Result<crate::generated::TierConfigureResponse, HostingError> {
+    ) -> Result<crate::registry::TierConfigureResponse, HostingError> {
         self.count_frame();
         let policy = terrabase::tiers::TierPolicy::try_new(
             &request.policy_id,
@@ -755,7 +755,7 @@ impl TbepHost for EngineHost {
         let policy = tiers
             .configure(policy)
             .map_err(|_| HostingError::Invalid("the tier policy was refused".into()))?;
-        Ok(crate::generated::TierConfigureResponse {
+        Ok(crate::registry::TierConfigureResponse {
             policy_id: policy.policy_id().to_owned(),
             version: policy.version(),
             // configure is fresh control: never paused afterwards.
@@ -766,10 +766,10 @@ impl TbepHost for EngineHost {
     fn tier_inspect(
         &self,
         _tenant: &str,
-    ) -> Result<crate::generated::TierInspectResponse, HostingError> {
+    ) -> Result<crate::registry::TierInspectResponse, HostingError> {
         self.count_frame();
         let view = self.engine.tiers().inspect();
-        Ok(crate::generated::TierInspectResponse {
+        Ok(crate::registry::TierInspectResponse {
             configured: view.configured(),
             paused: view.paused(),
             manifest_epoch: view.manifest_epoch(),
@@ -781,59 +781,59 @@ impl TbepHost for EngineHost {
     fn tier_explain(
         &self,
         _tenant: &str,
-    ) -> Result<crate::generated::TierExplainResponse, HostingError> {
+    ) -> Result<crate::registry::TierExplainResponse, HostingError> {
         self.count_frame();
         let receipt = self.engine.tiers().dry_run().map_err(tier_error)?;
-        Ok(crate::generated::TierExplainResponse { receipt: wire_receipt(&receipt) })
+        Ok(crate::registry::TierExplainResponse { receipt: wire_receipt(&receipt) })
     }
 
     fn tier_dry_run(
         &self,
         _tenant: &str,
-    ) -> Result<crate::generated::TierDryRunResponse, HostingError> {
+    ) -> Result<crate::registry::TierDryRunResponse, HostingError> {
         self.count_frame();
         let receipt = self.engine.tiers().dry_run().map_err(tier_error)?;
-        Ok(crate::generated::TierDryRunResponse { receipt: wire_receipt(&receipt) })
+        Ok(crate::registry::TierDryRunResponse { receipt: wire_receipt(&receipt) })
     }
 
     fn tier_run(
         &self,
         _tenant: &str,
         _idempotency_key: &str,
-    ) -> Result<crate::generated::TierRunResponse, HostingError> {
+    ) -> Result<crate::registry::TierRunResponse, HostingError> {
         self.count_frame();
         let receipt = self.engine.tiers().run().map_err(tier_error)?;
-        Ok(crate::generated::TierRunResponse { receipt: wire_receipt(&receipt) })
+        Ok(crate::registry::TierRunResponse { receipt: wire_receipt(&receipt) })
     }
 
     fn tier_pause(
         &self,
         _tenant: &str,
         _idempotency_key: &str,
-    ) -> Result<crate::generated::TierPauseResponse, HostingError> {
+    ) -> Result<crate::registry::TierPauseResponse, HostingError> {
         self.count_frame();
-        Ok(crate::generated::TierPauseResponse { paused: self.engine.tiers().pause() })
+        Ok(crate::registry::TierPauseResponse { paused: self.engine.tiers().pause() })
     }
 
     fn tier_resume(
         &self,
         _tenant: &str,
         _idempotency_key: &str,
-    ) -> Result<crate::generated::TierResumeResponse, HostingError> {
+    ) -> Result<crate::registry::TierResumeResponse, HostingError> {
         self.count_frame();
-        Ok(crate::generated::TierResumeResponse { paused: self.engine.tiers().resume() })
+        Ok(crate::registry::TierResumeResponse { paused: self.engine.tiers().resume() })
     }
 
     fn topology_read(
         &self,
         _tenant: &str,
-    ) -> Result<crate::generated::TopologyReadResponse, HostingError> {
+    ) -> Result<crate::registry::TopologyReadResponse, HostingError> {
         self.count_frame();
         // Honest standalone answer: this member serves every subsystem
         // it hosts over one local binding; no cluster topology exists
         // until the cluster-mode landing admits peers.
-        Ok(crate::generated::TopologyReadResponse {
-            binding: crate::generated::BindingKind::LocalUds,
+        Ok(crate::registry::TopologyReadResponse {
+            binding: crate::registry::BindingKind::LocalUds,
             subsystems: vec![
                 "documents".into(),
                 "query".into(),
@@ -842,16 +842,16 @@ impl TbepHost for EngineHost {
                 "topology".into(),
             ],
             engine_topology_available: false,
-            cluster_mode: Some(crate::generated::ClusterMode::Standalone),
+            cluster_mode: Some(crate::registry::ClusterMode::Standalone),
         })
     }
 
     fn schema_declare(
         &self,
         tenant: &str,
-        request: &crate::generated::SchemaDeclareRequest,
+        request: &crate::registry::SchemaDeclareRequest,
         idempotency_key: &str,
-    ) -> Result<crate::generated::SchemaDeclareResponse, HostingError> {
+    ) -> Result<crate::registry::SchemaDeclareResponse, HostingError> {
         self.count_frame();
         let tenant = Self::tenant_of(tenant)?;
         let collection = CollectionName::try_new(request.collection.as_str())
@@ -927,7 +927,7 @@ impl TbepHost for EngineHost {
             }
         }
         let policy = self.validation_policy(&tenant, &collection)?;
-        Ok(crate::generated::SchemaDeclareResponse {
+        Ok(crate::registry::SchemaDeclareResponse {
             enforced_version: policy.as_ref().map(|policy| policy.version().get()),
             // The rule set is bounded well below the wire's u32; the
             // saturating conversion can never lose a rule.
@@ -940,8 +940,8 @@ impl TbepHost for EngineHost {
     fn schema_validate(
         &self,
         tenant: &str,
-        request: &crate::generated::SchemaValidateRequest,
-    ) -> Result<crate::generated::SchemaValidateResponse, HostingError> {
+        request: &crate::registry::SchemaValidateRequest,
+    ) -> Result<crate::registry::SchemaValidateResponse, HostingError> {
         self.count_frame();
         let tenant = Self::tenant_of(tenant)?;
         let collection = CollectionName::try_new(request.collection.as_str())
@@ -949,7 +949,7 @@ impl TbepHost for EngineHost {
         let Some(policy) = self.validation_policy(&tenant, &collection)? else {
             // Schema-free collections carry no rule set: any body is
             // valid, and the empty version says why.
-            return Ok(crate::generated::SchemaValidateResponse {
+            return Ok(crate::registry::SchemaValidateResponse {
                 enforced_version: None,
                 valid: true,
                 violations: Vec::new(),
@@ -958,46 +958,46 @@ impl TbepHost for EngineHost {
         let body = to_engine_value(&request.document);
         let violations = terrabase::families::violations(&policy, &body)
             .into_iter()
-            .map(|violation| crate::generated::SchemaViolation {
+            .map(|violation| crate::registry::SchemaViolation {
                 field: violation.field().to_owned(),
                 kind: match violation.kind() {
                     terrabase::families::ViolationKind::DocumentNotObject => {
-                        crate::generated::ViolationKind::DocumentNotObject
+                        crate::registry::ViolationKind::DocumentNotObject
                     }
                     terrabase::families::ViolationKind::MissingRequiredField => {
-                        crate::generated::ViolationKind::MissingRequiredField
+                        crate::registry::ViolationKind::MissingRequiredField
                     }
                     terrabase::families::ViolationKind::TypeMismatch => {
-                        crate::generated::ViolationKind::TypeMismatch
+                        crate::registry::ViolationKind::TypeMismatch
                     }
                     terrabase::families::ViolationKind::ValueNotAllowed => {
-                        crate::generated::ViolationKind::ValueNotAllowed
+                        crate::registry::ViolationKind::ValueNotAllowed
                     }
                     terrabase::families::ViolationKind::NumberOutOfRange => {
-                        crate::generated::ViolationKind::NumberOutOfRange
+                        crate::registry::ViolationKind::NumberOutOfRange
                     }
                     terrabase::families::ViolationKind::LengthOutOfRange => {
-                        crate::generated::ViolationKind::LengthOutOfRange
+                        crate::registry::ViolationKind::LengthOutOfRange
                     }
                 },
             })
             .collect::<Vec<_>>();
         let enforced_version = Some(policy.version().get());
         let valid = violations.is_empty();
-        Ok(crate::generated::SchemaValidateResponse { enforced_version, valid, violations })
+        Ok(crate::registry::SchemaValidateResponse { enforced_version, valid, violations })
     }
 
     fn schema_status(
         &self,
         tenant: &str,
-        request: &crate::generated::SchemaStatusRequest,
-    ) -> Result<crate::generated::SchemaStatusResponse, HostingError> {
+        request: &crate::registry::SchemaStatusRequest,
+    ) -> Result<crate::registry::SchemaStatusResponse, HostingError> {
         self.count_frame();
         let tenant = Self::tenant_of(tenant)?;
         let collection = CollectionName::try_new(request.collection.as_str())
             .map_err(|_| HostingError::Invalid("the collection identifier is not valid".into()))?;
         let policy = self.validation_policy(&tenant, &collection)?;
-        Ok(crate::generated::SchemaStatusResponse {
+        Ok(crate::registry::SchemaStatusResponse {
             enforced_version: policy.as_ref().map(|policy| policy.version().get()),
             // The rule set is bounded well below the wire's u32; the
             // saturating conversion can never lose a rule.
