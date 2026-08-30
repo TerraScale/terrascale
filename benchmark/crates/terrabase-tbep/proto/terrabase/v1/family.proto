@@ -1,0 +1,179 @@
+syntax = "proto3";
+
+package terrabase.v1;
+
+option go_package = "terrascale.tech/terrabase-go/terrabase/v1;v1";
+
+// Versioned payload carried inside EngineServiceFamily{Read,Write}.  The
+// outer operation remains opaque for N/N-1 compatibility; this message is
+// the canonical v1 payload and is deliberately a closed oneof.
+message FamilyRequestPayload {
+  oneof operation {
+    FamilyAttachmentRead attachment_read = 1;
+    FamilyCounterRead counter_read = 2;
+    FamilyTimeSeriesRead time_series_read = 3;
+    FamilyRevisionRead revision_read = 4;
+    FamilyCompareExchangeRead compare_exchange_read = 5;
+    FamilyIdentityRead identity_read = 6;
+    FamilyLifecycleRead lifecycle_read = 7;
+    FamilyArchivalRead archival_read = 8;
+    FamilyAttachmentWrite attachment_write = 9;
+    FamilyCounterWrite counter_write = 10;
+    FamilyTimeSeriesWrite time_series_write = 11;
+    FamilyRevisionWrite revision_write = 12;
+    FamilyCompareExchangeWrite compare_exchange_write = 13;
+    FamilyIdentityWrite identity_write = 14;
+    FamilyLifecycleWrite lifecycle_write = 15;
+    FamilyArchivalWrite archival_write = 16;
+  }
+}
+
+message FamilyAttachmentRead { string document = 1; }
+message FamilyCounterRead {
+  string document = 1;
+  repeated string names = 2;
+}
+message FamilyTimeSeriesRead {
+  string document = 1;
+  string name = 2;
+  optional int64 range_start = 3;
+  optional int64 range_end = 4;
+  optional string rollup = 5;
+  optional int64 after = 6;
+  optional uint32 limit = 7;
+}
+message FamilyRevisionRead {
+  string document = 1;
+  uint64 offset = 2;
+  uint32 limit = 3;
+}
+message FamilyCompareExchangeRead { string key = 1; }
+message FamilyIdentityRead { repeated string names = 1; }
+message FamilyLifecycleRead { string document = 1; }
+message FamilyArchivalRead { string document = 1; }
+
+message FamilyAttachmentWrite {
+  string document = 1;
+  oneof mutation {
+    FamilyAttachmentStore store = 2;
+    FamilyAttachmentDelete delete = 3;
+    FamilyAttachmentRename rename = 4;
+    FamilyAttachmentCopy copy = 5;
+    FamilyAttachmentMove move = 6;
+  }
+  ExpectedVersion expected = 7;
+}
+message FamilyAttachmentStore {
+  string name = 1; string content_type = 2; uint64 size = 3; string hash = 4; bool replace = 5;
+}
+message FamilyAttachmentDelete { string name = 1; }
+message FamilyAttachmentRename { string from = 1; string to = 2; }
+message FamilyAttachmentCopy { string name = 1; string to_document = 2; string to_name = 3; }
+message FamilyAttachmentMove { string name = 1; string to_document = 2; string to_name = 3; }
+
+message FamilyCounterWrite {
+  string document = 1;
+  repeated FamilyCounterOperation operations = 2;
+  ExpectedVersion expected = 3;
+}
+message FamilyCounterOperation {
+  oneof operation {
+    FamilyCounterIncrement increment = 1;
+    FamilyCounterDelete delete = 2;
+  }
+}
+message FamilyCounterIncrement { string name = 1; sint64 delta = 2; }
+message FamilyCounterDelete { string name = 1; }
+
+message FamilyTimeSeriesWrite {
+  string document = 1; string name = 2;
+  repeated FamilyTimeSeriesAppend appends = 3;
+  repeated FamilyTimeSeriesDelete deletes = 4;
+  FamilyTimeSeriesPolicy policy = 5;
+  ExpectedVersion expected = 6;
+}
+message FamilyTimeSeriesAppend {
+  int64 timestamp = 1; repeated double values = 2; optional string tag = 3;
+}
+message FamilyTimeSeriesDelete {
+  oneof deletion { int64 timestamp = 1; FamilyTimeSeriesRange range = 2; }
+}
+message FamilyTimeSeriesRange { int64 start = 1; int64 end = 2; }
+message FamilyTimeSeriesPolicy {
+  optional int64 retention_ms = 1; repeated FamilyRollupPolicy rollups = 2;
+}
+message FamilyRollupPolicy { string name = 1; uint32 aggregation = 2; int64 window_ms = 3; }
+
+message FamilyRevisionWrite {
+  string document = 1;
+  oneof command {
+    FamilyRevisionForceCreate force_create = 2;
+    FamilyRevisionRevert revert = 3;
+    FamilyRevisionConfigure configure = 4;
+  }
+}
+message FamilyRevisionForceCreate { ExpectedVersion expected = 1; }
+message FamilyRevisionRevert { uint64 to_revision = 1; }
+message FamilyRevisionConfigure { uint32 minimum_revisions = 1; optional uint32 maximum_revisions = 2; }
+
+message FamilyCompareExchangeWrite {
+  string key = 1;
+  oneof condition {
+    FamilyCompareExchangePutIfIndex put_if_index = 2;
+    FamilyCompareExchangePutIfMissing put_if_missing = 3;
+    FamilyCompareExchangeDeleteIfIndex delete_if_index = 4;
+  }
+}
+message FamilyCompareExchangePutIfIndex { uint64 index = 1; Value value = 2; optional int64 expires_at = 3; }
+message FamilyCompareExchangePutIfMissing { Value value = 1; optional int64 expires_at = 2; }
+message FamilyCompareExchangeDeleteIfIndex { uint64 index = 1; }
+
+message FamilyIdentityWrite {
+  oneof command { FamilyIdentityAllocate allocate = 1; FamilyIdentitySeed seed = 2; }
+}
+message FamilyIdentityAllocate { string name = 1; uint64 count = 2; }
+message FamilyIdentitySeed { string name = 1; uint64 value = 2; bool force = 3; }
+
+message FamilyLifecycleWrite {
+  string document = 1;
+  oneof command { FamilyLifecycleRefresh refresh = 2; FamilyLifecycleDelete delete = 3; }
+}
+message FamilyLifecycleRefresh { int64 expires_at = 1; }
+message FamilyLifecycleDelete {}
+message FamilyArchivalWrite {
+  string document = 1;
+  oneof command { FamilyArchivalSet set = 2; FamilyArchivalDelete delete = 3; }
+}
+message FamilyArchivalSet { bool archived = 1; }
+message FamilyArchivalDelete {}
+
+// Results are transport DTOs. They intentionally do not pretend to be root
+// engine result constructors; the host maps engine getters into these forms.
+message FamilyResponsePayload {
+  oneof result {
+    FamilyAttachmentResponse attachment = 1;
+    FamilyCounterResponse counter = 2;
+    FamilyTimeSeriesResponse time_series = 3;
+    FamilyRevisionResponse revisions = 4;
+    FamilyCompareExchangeResponse compare_exchange = 5;
+    FamilyIdentityResponse identities = 6;
+    FamilyLifecycleResponse expiration_refresh = 7;
+    FamilyArchivalResponse archival = 8;
+    FamilyWriteReceiptResponse write = 9;
+  }
+}
+message FamilyAttachmentResponse { repeated FamilyAttachmentEntry entries = 1; }
+message FamilyAttachmentEntry { string name = 1; string content_type = 2; uint64 size = 3; string hash = 4; string document = 5; }
+message FamilyCounterResponse { repeated FamilyCounterEntry entries = 1; }
+message FamilyCounterEntry { string name = 1; optional sint64 value = 2; }
+message FamilyTimeSeriesResponse { repeated FamilyTimeSeriesEntry entries = 1; optional uint64 total = 2; optional int64 next = 3; }
+message FamilyTimeSeriesEntry { int64 timestamp = 1; repeated double values = 2; optional string tag = 3; }
+message FamilyRevisionResponse { repeated FamilyRevisionEntry entries = 1; uint64 total = 2; optional uint64 next = 3; }
+message FamilyRevisionEntry { uint64 revision = 1; uint64 version = 2; Value value = 3; }
+message FamilyCompareExchangeResponse { string key = 1; optional FamilyCompareExchangeEntry entry = 2; }
+message FamilyCompareExchangeEntry { Value value = 1; uint64 index = 2; optional int64 expires_at = 3; }
+message FamilyIdentityResponse { repeated FamilyIdentityEntry entries = 1; }
+message FamilyIdentityEntry { string name = 1; uint64 next = 2; }
+message FamilyLifecycleResponse { bool present = 1; optional int64 expires_at = 2; }
+message FamilyArchivalResponse { bool present = 1; bool archived = 2; }
+message FamilyWriteReceiptResponse { uint64 sequence = 1; string operation_id = 2; }

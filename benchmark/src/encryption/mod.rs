@@ -18,8 +18,6 @@ use std::time::Instant;
 use aws_lc_rs::{aead, digest, hkdf, rand};
 use zeroize::Zeroize;
 
-use crate::identity::ProjectUlid;
-
 mod local_file;
 mod oci_vault;
 mod provider;

@@ -788,7 +788,10 @@ fn concurrent_cold_start_queries_all_answer_correctly() {
     let registered = definitions(&engine, "tenant-a");
     assert_eq!(registered.len(), 1, "one cold shape registers one index");
     assert_eq!(registered[0].name(), "Auto/users/ByAge");
-    assert_eq!(registered[0].published().map(ObservedGeneration::generation), Some(1));
+    assert_eq!(
+        registered[0].published().map(crate::query::ObservedGeneration::generation),
+        Some(1)
+    );
     execute_dynamic(
         &engine,
         dynamic_spec("tenant-a", predicate(vec![equals("age", 5)]), Vec::new()),

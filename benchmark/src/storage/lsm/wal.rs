@@ -34,6 +34,7 @@ const FRAME_MAGIC: u32 = 0x544C_534D;
 const ENCRYPTED_MAGIC: &[u8; 4] = b"TBE1";
 const ORDINAL_MAGIC: &[u8; 8] = b"TBWALOR1";
 const ORDINAL_BYTES: usize = 8 + 16 + 32;
+static ORDINAL_TEMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The result of scanning a WAL file: the verified entries, the byte
 /// length of the verified prefix, and whether damage sits mid-file.
@@ -146,7 +147,7 @@ fn decode_frame(payload: &[u8]) -> Option<Vec<Entry>> {
 pub(super) struct WalLog {
     file: File,
     path_len: u64,
-    encrypted: bool,
+    pub(super) encrypted: bool,
     cipher: Option<WalCipher>,
 }
 
@@ -192,7 +193,6 @@ impl WalLog {
         let path_len = file.metadata()?.len();
         let mut prefix = [0_u8; 4];
         let mut probe = file.try_clone()?;
-        use std::io::Read as _;
         let prefix_len = probe.read(&mut prefix)?;
         let legacy = path_len != 0 && prefix_len >= 4 && prefix == FRAME_MAGIC.to_le_bytes();
         if legacy {
@@ -320,6 +320,12 @@ impl WalLog {
     /// The current WAL byte length.
     pub(super) fn len(&self) -> u64 {
         self.path_len
+    }
+
+    /// Reports whether this handle is serving the authenticated envelope
+    /// format rather than the legacy plaintext frame format.
+    pub(super) const fn is_encrypted(&self) -> bool {
+        self.encrypted
     }
 }
 
@@ -454,24 +460,18 @@ fn scan_encrypted_file(file: &File, wal_cipher: &WalCipher) -> io::Result<WalSca
             mid_file_damage = true;
             break;
         }
-        let envelope_len = match envelope_length_prefix(remaining) {
-            Ok(length) => length,
-            Err(_) => {
-                mid_file_damage = true;
-                break;
-            }
+        let Ok(envelope_len) = envelope_length_prefix(remaining) else {
+            mid_file_damage = true;
+            break;
         };
         let Some(envelope) = remaining.get(..envelope_len) else {
             // The append was interrupted after writing a strict envelope
             // prefix; the authenticated unit is a torn trailing frame.
             break;
         };
-        let plaintext = match wal_cipher.cipher.open(envelope) {
-            Ok(plaintext) => plaintext,
-            Err(_) => {
-                mid_file_damage = true;
-                break;
-            }
+        let Ok(plaintext) = wal_cipher.cipher.open(envelope) else {
+            mid_file_damage = true;
+            break;
         };
         if plaintext.len() < 16
             || u32::from_le_bytes(plaintext[..4].try_into().expect("frame magic")) != FRAME_MAGIC
@@ -612,12 +612,11 @@ fn persist_ordinal(path: &Path, ordinal: u128) -> io::Result<()> {
     {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "unsafe WAL ordinal symlink"));
     }
-    static TEMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let temp = path.with_file_name(format!(
         "{}.tmp-{}-{}",
         path.file_name().and_then(|n| n.to_str()).unwrap_or("wal.ordinal"),
         std::process::id(),
-        TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ORDINAL_TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     let mut options = OpenOptions::new();
     options.create_new(true).write(true);
@@ -626,10 +625,7 @@ fn persist_ordinal(path: &Path, ordinal: u128) -> io::Result<()> {
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600);
     }
-    let mut file = match options.open(&temp) {
-        Ok(file) => file,
-        Err(error) => return Err(error),
-    };
+    let mut file = options.open(&temp)?;
     if let Err(error) = file.write_all(&body).and_then(|()| file.sync_all()) {
         return cleanup_temp(&temp, error);
     }
@@ -638,10 +634,7 @@ fn persist_ordinal(path: &Path, ordinal: u128) -> io::Result<()> {
         return cleanup_temp(&temp, error);
     }
     if let Some(parent) = path.parent() {
-        if let Err(error) = std::fs::File::open(parent).and_then(|directory| directory.sync_data())
-        {
-            return Err(error);
-        }
+        std::fs::File::open(parent).and_then(|directory| directory.sync_data())?;
     }
     Ok(())
 }

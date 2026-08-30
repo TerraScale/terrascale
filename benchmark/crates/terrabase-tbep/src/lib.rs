@@ -41,6 +41,7 @@
 
 pub mod cluster_host;
 pub mod engine_host;
+pub mod family_codec;
 pub mod grpc;
 pub mod host;
 pub mod registry;

@@ -438,6 +438,48 @@ fn incremental_chain_restore_replays_updates_and_deletes_in_publication_order() 
 }
 
 #[test]
+fn a_no_change_incremental_restores_with_its_zero_count_tenant_scope() {
+    let (_source, engine) = open_engine("no-change-link");
+    let destination = location("no-change-link-dest");
+    let target = location("no-change-link-target");
+
+    committed(put(
+        &engine,
+        "alpha",
+        "op-1",
+        "doc-1",
+        "users",
+        text("one"),
+        LocalDurability::Synced,
+    ));
+    let full = run_backup(&engine, BackupPlan::full(), &destination).expect("base full");
+    let incremental = run_backup(
+        &engine,
+        BackupPlan::incremental_since(full.manifest().boundary_sequence()),
+        &destination,
+    )
+    .expect("empty link");
+
+    assert_eq!(incremental.manifest().documents(), 0);
+    assert_eq!(incremental.manifest().family_records(), 0);
+    assert_eq!(incremental.manifest().deletes(), 0);
+    assert_eq!(incremental.manifest().tenants().len(), 1);
+    assert_eq!(incremental.manifest().tenants()[0].tenant().as_str(), "alpha");
+    assert_eq!(incremental.manifest().tenants()[0].documents(), 0);
+    assert_eq!(incremental.manifest().tenants()[0].family_records(), 0);
+
+    let receipt = RestorePlan::restore_latest(&destination, &target)
+        .expect("a zero-count tenant scope restores");
+    assert_eq!(receipt.chain_depth(), 2);
+    assert_eq!(receipt.selected_identity(), incremental.manifest().identity());
+    assert_eq!(receipt.restored_documents(), 1);
+    assert_eq!(
+        sorted(read_back(&target, "alpha")),
+        sorted(vec![("users".to_owned(), "doc-1".to_owned(), text("one"))])
+    );
+}
+
+#[test]
 fn a_later_chain_delete_of_the_sample_document_still_verifies_green() {
     let (_source, engine) = open_engine("dead-sample");
     let destination = location("dead-sample-dest");

@@ -34,6 +34,7 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -118,6 +119,8 @@ pub const MAX_INFLIGHT_OPERATIONS: usize = 128;
 /// The depth of one subscription's outbound queue: a bounded backlog
 /// that keeps a slow stream consumer from pinning engine memory.
 pub const OUTBOUND_DEPTH: usize = 64;
+
+const DEFAULT_QUERY_MAX_ITEMS: u32 = registry::MAX_LIST_ITEMS as u32;
 
 const MAX_SYNC_TOKEN_BYTES: usize = 1057;
 const MAX_PEER_CERT_BYTES: usize = 1 << 20;
@@ -420,6 +423,7 @@ pub struct TbepGrpcServer {
     frames_served: AtomicU64,
     inflight: Arc<AtomicUsize>,
     draining: Arc<std::sync::atomic::AtomicBool>,
+    active_queries: Arc<Mutex<BTreeSet<(String, u64)>>>,
 }
 
 impl TbepGrpcServer {
@@ -462,6 +466,7 @@ impl TbepGrpcServer {
             frames_served: AtomicU64::new(0),
             inflight: Arc::new(AtomicUsize::new(0)),
             draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            active_queries: Arc::new(Mutex::new(BTreeSet::new())),
         }
     }
 
@@ -480,6 +485,25 @@ impl TbepGrpcServer {
 
     fn counted(&self) {
         self.frames_served.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn register_query(
+        &self,
+        scope: &registry::BoundScope,
+        query_id: u64,
+    ) -> Result<Arc<QueryLifecycle>, Status> {
+        let key = (scope.tenant.clone(), query_id);
+        let mut active = self.active_queries.lock().expect("the active query lock is not poisoned");
+        if !active.insert(key.clone()) {
+            return Err(conversion_error("the query id is already active for this tenant"));
+        }
+        Ok(Arc::new(QueryLifecycle {
+            state: Mutex::new(QueryLifecycleState::default()),
+            active: Arc::clone(&self.active_queries),
+            key,
+            host: Arc::clone(&self.host),
+            scope: scope.clone(),
+        }))
     }
 
     /// Stops new host work from being admitted while existing work drains.
@@ -979,6 +1003,125 @@ impl Drop for Permit {
     }
 }
 
+#[derive(Default)]
+struct QueryLifecycleState {
+    started: bool,
+    finished: bool,
+    cancel_requested: bool,
+    cancel_finished: bool,
+}
+
+/// Tracks one query across the asynchronous RPC and synchronous host task.
+///
+/// A query ID remains reserved until both the host execution and a requested
+/// cancellation have settled. This closes the race where a cancellation
+/// from a dropped RPC could arrive after the host retired an old query and
+/// accidentally target a new query reusing the same ID.
+struct QueryLifecycle {
+    state: Mutex<QueryLifecycleState>,
+    active: Arc<Mutex<BTreeSet<(String, u64)>>>,
+    key: (String, u64),
+    host: Arc<dyn TbepHost>,
+    scope: registry::BoundScope,
+}
+
+impl QueryLifecycle {
+    fn started(&self) -> bool {
+        let mut state = self.state.lock().expect("the query lifecycle lock is not poisoned");
+        if state.cancel_requested {
+            return false;
+        }
+        state.started = true;
+        true
+    }
+
+    fn finished(&self) {
+        let remove = {
+            let mut state = self.state.lock().expect("the query lifecycle lock is not poisoned");
+            state.finished = true;
+            !state.cancel_requested || state.cancel_finished
+        };
+        if remove {
+            self.remove_active();
+        }
+    }
+
+    fn abandon(&self) {
+        {
+            let mut state = self.state.lock().expect("the query lifecycle lock is not poisoned");
+            state.finished = true;
+            state.cancel_finished = true;
+        }
+        self.remove_active();
+    }
+
+    fn request_cancel(self: &Arc<Self>) {
+        let spawn = {
+            let mut state = self.state.lock().expect("the query lifecycle lock is not poisoned");
+            if state.finished || state.cancel_requested {
+                false
+            } else {
+                state.cancel_requested = true;
+                if state.started {
+                    true
+                } else {
+                    // The execution task has not entered the host yet. Its
+                    // started check will return a cancellation error, so no
+                    // host cancellation call is safe or necessary.
+                    state.cancel_finished = true;
+                    false
+                }
+            }
+        };
+        if !spawn {
+            return;
+        }
+
+        let lifecycle = Arc::clone(self);
+        let _ = std::thread::Builder::new()
+            .name("tbep-query-cancel".into())
+            .spawn(move || {
+                let request = registry::QueryCancelRequest { query_id: lifecycle.key.1 };
+                let _ = lifecycle.host.query_cancel(&lifecycle.scope, &request);
+                lifecycle.cancel_finished();
+            });
+    }
+
+    fn cancel_finished(&self) {
+        let remove = {
+            let mut state = self.state.lock().expect("the query lifecycle lock is not poisoned");
+            state.cancel_finished = true;
+            state.finished
+        };
+        if remove {
+            self.remove_active();
+        }
+    }
+
+    fn remove_active(&self) {
+        self.active.lock().expect("the active query lock is not poisoned").remove(&self.key);
+    }
+}
+
+/// Requests cancellation when a unary query future is dropped by tonic after
+/// a client disconnect or cancellation.
+struct QueryCancellationGuard(Arc<QueryLifecycle>);
+
+impl Drop for QueryCancellationGuard {
+    fn drop(&mut self) {
+        self.0.request_cancel();
+    }
+}
+
+/// Marks a blocking query task complete even if the host panics.
+struct QueryExecutionGuard(Arc<QueryLifecycle>);
+
+impl Drop for QueryExecutionGuard {
+    fn drop(&mut self) {
+        self.0.finished();
+    }
+}
+
 /// The application identity one RPC carries.
 struct Identity {
     principal: String,
@@ -1228,6 +1371,119 @@ where
             self_ref.metrics.record_request(
                 self_ref.region,
                 operation,
+                MetricOutcome::Error,
+                started.elapsed(),
+            );
+            Err(tbep_status(
+                Code::Internal,
+                pb::ErrorCode::EngineFailure,
+                "the serving task panicked",
+            ))
+        }
+    }
+}
+
+/// Runs a query behind the overload gate and keeps its host cancellation
+/// lifecycle alive when the RPC future is cancelled or times out.
+async fn run_query_host<F>(
+    self_ref: &TbepGrpcServer,
+    lifecycle: Arc<QueryLifecycle>,
+    work: F,
+) -> Result<registry::QueryExecuteResponse, Status>
+where
+    F: FnOnce() -> Result<registry::QueryExecuteResponse, HostingError> + Send + 'static,
+{
+    let started = Instant::now();
+    if self_ref.draining.load(Ordering::Acquire) {
+        lifecycle.abandon();
+        self_ref.metrics.record_request(
+            self_ref.region,
+            MetricOperation::Query,
+            MetricOutcome::Rejected,
+            started.elapsed(),
+        );
+        return Err(tbep_status(
+            Code::FailedPrecondition,
+            pb::ErrorCode::ShuttingDown,
+            "the engine is draining and is not admitting new work",
+        ));
+    }
+    if self_ref.inflight.fetch_add(1, Ordering::AcqRel) >= self_ref.config.max_inflight() {
+        self_ref.inflight.fetch_sub(1, Ordering::AcqRel);
+        lifecycle.abandon();
+        self_ref.metrics.record_request(
+            self_ref.region,
+            MetricOperation::Query,
+            MetricOutcome::Rejected,
+            started.elapsed(),
+        );
+        return Err(tbep_status(
+            Code::ResourceExhausted,
+            pb::ErrorCode::Overloaded,
+            "the engine is serving its in-flight bound; retry",
+        ));
+    }
+    let permit = Permit(Arc::clone(&self_ref.inflight));
+    let task = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let _execution = QueryExecutionGuard(Arc::clone(&lifecycle));
+        if !lifecycle.started() {
+            return Err(HostingError::Refused("the query was cancelled".into()));
+        }
+        work()
+    });
+    match tokio::time::timeout(self_ref.config.request_timeout(), task).await {
+        Err(_) => {
+            // The execution task owns the permit and continues until the
+            // host reaches its cancellation checkpoint. The cancellation
+            // guard also covers a client disconnect that drops this future.
+            lifecycle.request_cancel();
+            self_ref.metrics.record_request(
+                self_ref.region,
+                MetricOperation::Query,
+                MetricOutcome::Error,
+                started.elapsed(),
+            );
+            Err(tbep_status(
+                Code::DeadlineExceeded,
+                pb::ErrorCode::EngineFailure,
+                "the engine request exceeded its configured deadline",
+            ))
+        }
+        Ok(Ok(Ok(value))) => {
+            self_ref.metrics.record_request(
+                self_ref.region,
+                MetricOperation::Query,
+                MetricOutcome::Success,
+                started.elapsed(),
+            );
+            Ok(value)
+        }
+        Ok(Ok(Err(error))) => {
+            let outcome = match &error {
+                HostingError::EngineFailure(_) => MetricOutcome::Error,
+                HostingError::UsageCorrupt(_) => MetricOutcome::Error,
+                HostingError::Invalid(_)
+                | HostingError::Refused(_)
+                | HostingError::SessionRefused(_)
+                | HostingError::SubscriptionRefused(_)
+                | HostingError::CheckpointRefused(_)
+                | HostingError::ClusterReadOnly(_)
+                | HostingError::ClusterImmutable(_)
+                | HostingError::UsageUnavailable(_) => MetricOutcome::Rejected,
+            };
+            self_ref.metrics.record_request(
+                self_ref.region,
+                MetricOperation::Query,
+                outcome,
+                started.elapsed(),
+            );
+            Err(host_error(error))
+        }
+        Ok(Err(_)) => {
+            self_ref.metrics.record_request(
+                self_ref.region,
+                MetricOperation::Query,
                 MetricOutcome::Error,
                 started.elapsed(),
             );

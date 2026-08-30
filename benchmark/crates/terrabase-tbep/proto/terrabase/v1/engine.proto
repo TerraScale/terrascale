@@ -31,6 +31,8 @@ syntax = "proto3";
 
 package terrabase.v1;
 
+import "terrabase/v1/family.proto";
+
 option go_package = "terrascale.tech/terrabase-go/terrabase/v1;v1";
 
 // ---------------------------------------------------------------------------

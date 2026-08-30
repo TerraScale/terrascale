@@ -119,19 +119,34 @@ pub fn run(arguments: impl Iterator<Item = String>) -> Result<PathBuf, String> {
         }
     }
 
+    let complete_counts: std::collections::BTreeMap<_, _> = WORKLOADS
+        .into_iter()
+        .map(|workload| {
+            let count = loaded
+                .iter()
+                .filter(|(candidate_workload, _, document)| {
+                    *candidate_workload == workload && matches!(document, Loaded::Complete(_))
+                })
+                .count();
+            (workload, count)
+        })
+        .collect();
     let mut rows = Vec::new();
     let mut identities = std::collections::BTreeMap::new();
     let mut admission = Vec::new();
     for (workload, target, document) in loaded {
         match document {
-            Loaded::Missing => rows.push(format!(
-                "| {workload} | {target} | missing | — | — | — | — | — |"
-            )),
+            Loaded::Missing => {
+                rows.push(format!("| {workload} | {target} | missing | — | — | — | — | — |"))
+            }
             Loaded::Failed(failure) => {
                 rows.push(format!("| {workload} | {target} | failed | — | — | — | — | — |"));
-                if let Some(error) = failure.error {
-                    admission.push(format!("- {target}/{workload}: failed/raw — {error}"));
-                }
+                let error = failure.error.unwrap_or_else(|| "error not recorded".to_owned());
+                admission.push(format!(
+                    "- {target}/{workload}: failed/raw — `{}` — {}",
+                    failure.path,
+                    markdown_inline(&error)
+                ));
             }
             Loaded::Invalid(error) => {
                 rows.push(format!("| {workload} | {target} | invalid | — | — | — | — | — |"));
@@ -139,28 +154,34 @@ pub fn run(arguments: impl Iterator<Item = String>) -> Result<PathBuf, String> {
                 admission.push(format!("- {target}/{workload}: invalid — {error}"));
             }
             Loaded::Complete(document) => {
+                identities.entry(target).or_insert(document.identity.clone());
                 if let Some(error) = group_errors.get(workload) {
                     rows.push(format!("| {workload} | {target} | invalid | — | — | — | — | — |"));
                     eprintln!("invalid {target}/{workload} result: {error}");
                     admission.push(format!("- {target}/{workload}: invalid — {error}"));
                 } else {
-                    identities.entry(target).or_insert(document.identity);
                     rows.push(render_row(workload, target, &document.samples));
                 }
             }
         }
     }
     for workload in WORKLOADS {
-        let status = group_errors
-            .get(workload)
-            .map_or("admitted facts (no verdict)", |_| "not comparable");
+        let complete_count = complete_counts[workload];
+        let status = if complete_count == 0 {
+            "no complete comparison group"
+        } else if group_errors.contains_key(workload) {
+            "not comparable"
+        } else {
+            "admitted facts (no verdict)"
+        };
         admission.push(format!("- {workload}: {status}"));
     }
 
     let mut output = String::new();
     output.push_str("# Benchmark history\n\n");
     output.push_str("Every row is derived from a lane results document under `bench/results/`\n");
-    output.push_str("by `terrabase-bench-lane --render-history` — never hand-edited. Verdicts and\n");
+    output
+        .push_str("by `terrabase-bench-lane --render-history` — never hand-edited. Verdicts and\n");
     output.push_str("receipts are produced only by the engine-side adapter\n");
     output.push_str("(`src/benchmarks/`); this table tabulates facts. A wall-clock number here\n");
     output.push_str("is a fact about the host and moment that produced it, per the limits each\n");
@@ -176,6 +197,14 @@ pub fn run(arguments: impl Iterator<Item = String>) -> Result<PathBuf, String> {
     for line in admission {
         output.push_str(&line);
         output.push('\n');
+    }
+    let retained_failures = retained_failures(&results);
+    if !retained_failures.is_empty() {
+        output.push_str("\n## Retained failed/raw attempts\n\n");
+        output.push_str("These attempts are retained for audit and are never used as complete measurements.\n\n");
+        for (path, error) in retained_failures {
+            output.push_str(&format!("- `{}` — {}\n", path, markdown_inline(&error)));
+        }
     }
     output.push_str("\n## Results (median across samples)\n\n");
     output.push_str("| workload | side | status | ops/s | p50 µs (median–max) | p95 µs | p99 µs | sample wall ms |\n");
@@ -286,8 +315,8 @@ fn validate_complete(document: &Value, target: &str, workload: &str) -> Result<C
     if warmup < 0.0 || warmup.fract() != 0.0 || !(0.0..=100.0).contains(&noise) {
         return Err("invalid lane configuration".to_owned());
     }
-    if !operations.is_multiple_of(concurrency) || !(warmup as u64).is_multiple_of(concurrency) {
-        return Err("config operation counts are not divisible by concurrency".to_owned());
+    if !operations.is_multiple_of(concurrency) {
+        return Err("config operation count is not divisible by concurrency".to_owned());
     }
     let environment = fields
         .get("environment")
@@ -313,12 +342,8 @@ fn validate_complete(document: &Value, target: &str, workload: &str) -> Result<C
     if unix <= 0.0 || unix.fract() != 0.0 || cpus <= 0.0 || cpus.fract() != 0.0 {
         return Err("invalid environment counters".to_owned());
     }
-    let comparability = validate_comparability(
-        fields.get("comparability"),
-        config,
-        environment,
-        target,
-    )?;
+    let comparability =
+        validate_comparability(fields.get("comparability"), config, environment, target)?;
     let values =
         fields.get("samples").and_then(Value::as_array).ok_or("samples is not an array")?;
     if values.len() != samples_count {
@@ -362,9 +387,7 @@ fn validate_comparability(
     environment: &serde_json::Map<String, Value>,
     target: &str,
 ) -> Result<Comparability, String> {
-    let fields = value
-        .and_then(Value::as_object)
-        .ok_or("comparability is not an object")?;
+    let fields = value.and_then(Value::as_object).ok_or("comparability is not an object")?;
     let string = |name: &str| -> Result<String, String> {
         fields
             .get(name)
@@ -403,10 +426,8 @@ fn validate_comparability(
     };
     let concurrency = positive_u64("concurrency")?;
     let samples = positive_u64("samples")?;
-    let warmup_operations = number(
-        fields.get("warmup_operations"),
-        "comparability.warmup_operations",
-    )?;
+    let warmup_operations =
+        number(fields.get("warmup_operations"), "comparability.warmup_operations")?;
     if warmup_operations < 0.0 || warmup_operations.fract() != 0.0 {
         return Err("comparability.warmup_operations is invalid".to_owned());
     }
@@ -429,13 +450,14 @@ fn validate_comparability(
     if config_digest != config_digest_for(config)? {
         return Err("comparability.config_digest does not match config".to_owned());
     }
-    let observed_host = environment
+    // The controlled identity may be an operator-assigned host UUID rather
+    // than a kernel string.  Environment still validates the observed kernel
+    // separately; equality of this explicit token is what joins a group.
+    environment
         .get("kernel")
         .and_then(Value::as_str)
-        .ok_or("environment.kernel is not a string")?;
-    if !controlled_host_identity.contains(observed_host) {
-        return Err("comparability host identity does not identify environment.kernel".to_owned());
-    }
+        .filter(|kernel| !kernel.is_empty())
+        .ok_or("environment.kernel is not a non-empty string")?;
     if target == "terrabase" && boundary_class == "unknown" {
         return Err("TerraBase boundary class is unknown".to_owned());
     }
@@ -477,7 +499,9 @@ fn config_digest_for(config: &serde_json::Map<String, Value>) -> Result<String, 
         concurrency: positive_config(config, "concurrency")? as usize,
         warmup_operations: {
             let value = number(config.get("warmup_operations"), "config.warmup_operations")?;
-            if value < 0.0 || value.fract() != 0.0 { return Err("invalid warmup".to_owned()); }
+            if value < 0.0 || value.fract() != 0.0 {
+                return Err("invalid warmup".to_owned());
+            }
             value as usize
         },
         noise_percent: number(config.get("noise_percent"), "config.noise_percent")?,
@@ -547,6 +571,34 @@ fn render_row(workload: &str, target: &str, samples: &[Sample]) -> String {
     )
 }
 
+fn markdown_inline(value: &str) -> String {
+    value.replace('|', "\\|").replace('\n', " ").replace('\r', " ")
+}
+
+fn retained_failures(results: &Path) -> Vec<(String, String)> {
+    let mut failures = Vec::new();
+    let Ok(entries) = fs::read_dir(results) else { return failures };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(&path) else { continue };
+        let Ok(document) = serde_json::from_str::<Value>(&text) else { continue };
+        if document.get("status").and_then(Value::as_str) != Some("failed") {
+            continue;
+        }
+        let error = document
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("error not recorded")
+            .to_owned();
+        failures.push((path.display().to_string(), error));
+    }
+    failures.sort();
+    failures
+}
+
 fn write_retained(directory: &Path, contents: &str) -> Result<PathBuf, String> {
     fs::create_dir_all(directory).map_err(|error| format!("create history directory: {error}"))?;
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?;
@@ -585,10 +637,28 @@ mod tests {
     }
 
     fn valid() -> Value {
+        let config = LaneConfig {
+            seed_documents: 1,
+            operations: 2,
+            samples: 1,
+            concurrency: 1,
+            warmup_operations: 0,
+            noise_percent: 5.0,
+        };
         serde_json::json!({
             "status":"complete", "target":"postgresql", "workload":"read",
             "config":{"seed_documents":1,"operations":2,"samples":1,"concurrency":1,"warmup_operations":0,"noise_percent":5.0},
             "environment":{"observed_identity":"PostgreSQL test","endpoint":"tcp","client_transport":"TCP","unix_seconds":1,"kernel":"Linux test","logical_cpus":1},
+            "comparability":{
+                "run_group":"test-run", "config_digest":metrics::config_digest(&config),
+                "controlled_host_identity":"Linux test;logical-cpus=1", "time_window":"test-window",
+                "window_start_unix_seconds":1, "window_end_unix_seconds":1,
+                "workload_version":"test-workload-v1", "boundary_class":"network-reference",
+                "concurrency":1, "samples":1, "warmup_operations":0, "noise_percent":5.0,
+                "seed_policy":"seed", "document_policy":"documents", "operation_policy":"operations",
+                "write_id_policy":"write ids", "durability_semantics":"durability",
+                "server_configuration_provenance":"server config"
+            },
             "samples":[{"operations":2,"wall_seconds":1.0,"throughput_ops_per_s":2.0,"p50_us":1.0,"p95_us":2.0,"p99_us":3.0}],
         })
     }
@@ -610,9 +680,28 @@ mod tests {
         let mut boundary = valid();
         boundary["environment"]["client_transport"] = serde_json::json!("in-process");
         cases.insert("boundary", boundary);
+        let mut missing_admission = valid();
+        missing_admission.as_object_mut().expect("object").remove("comparability");
+        cases.insert("missing comparability", missing_admission);
         for (name, value) in cases {
             assert!(validate_complete(&value, "postgresql", "read").is_err(), "{name}");
         }
+    }
+
+    #[test]
+    fn mismatched_admission_facts_cannot_form_a_group() {
+        let left = match validate_complete(&valid(), "postgresql", "read") {
+            Ok(complete) => complete,
+            Err(error) => panic!("valid fixture rejected: {error}"),
+        };
+        let mut right_value = valid();
+        right_value["comparability"]["boundary_class"] = serde_json::json!("other-boundary");
+        let right = validate_complete(&right_value, "postgresql", "read")
+            .expect("field mutation remains individually valid");
+        assert_eq!(
+            differing_field(&left.comparability, &right.comparability),
+            Some("boundary_class")
+        );
     }
 
     #[test]
@@ -625,7 +714,7 @@ mod tests {
         .expect("old result");
         fs::write(directory.join("postgresql-read-200-1-0.json"), r#"{"status":"failed"}"#)
             .expect("failed result");
-        assert!(matches!(load(&directory, "postgresql", "read"), Loaded::Failed));
+        assert!(matches!(load(&directory, "postgresql", "read"), Loaded::Failed(_)));
         fs::remove_dir_all(directory).expect("remove temporary results");
     }
 

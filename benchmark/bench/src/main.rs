@@ -152,6 +152,11 @@ fn main() {
             Ok(()) => println!("served TerraBase runner completed"),
             Err(error) => {
                 eprintln!("the served TerraBase run failed: {error}");
+                let environment = metrics::host_environment(
+                    "not captured: served run failed before identity observation".to_owned(),
+                    endpoint_for(target),
+                    transport_for(target),
+                );
                 let failure = metrics::FailureResults {
                     status: "failed",
                     target: target.as_str(),
@@ -161,18 +166,10 @@ fn main() {
                     comparability: metrics::comparability(
                         &lane_config,
                         target.as_str(),
-                        &metrics::host_environment(
-                            "not captured: served run failed before identity observation".to_owned(),
-                            endpoint_for(target),
-                            transport_for(target),
-                        ),
+                        &environment,
                         Some(&boundary),
                     ),
-                    environment: metrics::host_environment(
-                        "not captured: served run failed before identity observation".to_owned(),
-                        endpoint_for(target),
-                        transport_for(target),
-                    ),
+                    environment,
                     samples: Vec::new(),
                     limits: vec![
                         "failed or invalid attempts are retained for audit and cannot be compared"
@@ -205,6 +202,11 @@ fn main() {
         }
         Err(error) => {
             eprintln!("the reference run failed: {error}");
+            let environment = metrics::host_environment(
+                "not captured: run failed before identity observation".to_owned(),
+                endpoint_for(target),
+                transport_for(target),
+            );
             let failure = metrics::FailureResults {
                 status: "failed",
                 target: target.as_str(),
@@ -214,18 +216,10 @@ fn main() {
                 comparability: metrics::comparability(
                     &lane_config,
                     target.as_str(),
-                    &metrics::host_environment(
-                        "not captured: run failed before identity observation".to_owned(),
-                        endpoint_for(target),
-                        transport_for(target),
-                    ),
+                    &environment,
                     None,
                 ),
-                environment: metrics::host_environment(
-                    "not captured: run failed before identity observation".to_owned(),
-                    endpoint_for(target),
-                    transport_for(target),
-                ),
+                environment,
                 samples: Vec::new(),
                 limits: vec![
                     "failed or invalid attempts are retained for audit and cannot be compared"

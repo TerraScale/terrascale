@@ -110,10 +110,8 @@ pub struct Comparability {
 
 const WORKLOAD_VERSION: &str = "terrabase-se15-workload-v1";
 const SEED_POLICY: &str = "seed-{index}, tenant benchmark-tenant, index modulo seed count";
-const DOCUMENT_POLICY: &str =
-    "seed documents have id seed-{index}, name user-{index}, group index modulo 100, 256-byte payload";
-const OPERATION_POLICY: &str =
-    "mixed uses index modulo 10: 0..4 read, 5..7 write, 8..9 query; read/query address index modulo seed count";
+const DOCUMENT_POLICY: &str = "seed documents have id seed-{index}, name user-{index}, group index modulo 100, 256-byte payload";
+const OPERATION_POLICY: &str = "mixed uses index modulo 10: 0..4 read, 5..7 write, 8..9 query; read/query address index modulo seed count";
 const WRITE_ID_POLICY: &str = "measured writes use measured-{global operation index}";
 
 /// Computes the canonical configuration digest shared by all lane drivers.
@@ -147,8 +145,8 @@ pub fn comparability(
     });
     let time_window = std::env::var("TERRABASE_BENCH_TIME_WINDOW")
         .unwrap_or_else(|_| (environment.unix_seconds / 3_600).to_string());
-    let run_group = std::env::var("TERRABASE_BENCH_RUN_GROUP")
-        .unwrap_or_else(|_| "unassigned".to_owned());
+    let run_group =
+        std::env::var("TERRABASE_BENCH_RUN_GROUP").unwrap_or_else(|_| "unassigned".to_owned());
     let (boundary_class, durability, server_configuration) = match target {
         "terrabase" => (
             boundary.unwrap_or("unknown").to_owned(),

@@ -10,8 +10,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
+use std::time::{Duration, Instant};
 
 use terrabase::identity::{DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid};
 use terrabase::member::{
@@ -28,6 +28,8 @@ use terrabase_replication_core::{DurableMember, DurableMemberError, DurableMembe
 
 /// The maximum selected Regions in the initial production topology.
 pub const INITIAL_PRODUCTION_REGION_COUNT: usize = 3;
+
+const DEFAULT_OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A fully bound database routing scope.
 ///
@@ -479,19 +481,38 @@ impl DurableProductionDataPlane {
         document: &str,
         body: &BTreeMap<String, terrabase::types::DocumentValue>,
     ) -> Result<terrabase::CommitReceipt, ProductionDataPlaneOperationError> {
-        let mut state = lock_unpoisoned(&self.state);
+        self.put_with_timeout(scope, operation, document, body, DEFAULT_OPERATION_TIMEOUT)
+    }
+
+    /// Routes a put with a deadline covering state-lock acquisition and the
+    /// durable operation.
+    pub fn put_with_timeout(
+        &self,
+        scope: &DatabaseRouteScope,
+        operation: &str,
+        document: &str,
+        body: &BTreeMap<String, terrabase::types::DocumentValue>,
+        timeout: Duration,
+    ) -> Result<terrabase::CommitReceipt, ProductionDataPlaneOperationError> {
+        let deadline = deadline_after(timeout);
+        let mut state = try_lock_until(&self.state, deadline)?;
+        ensure_before_deadline(deadline)?;
         if !state.accepting {
             return Err(ProductionDataPlaneOperationError::Draining);
         }
         if !state.rf2_reconciled.contains(scope) {
             return Err(ProductionDataPlaneOperationError::LocalRf2NotReconciled);
         }
-        state
+        let result = state
             .databases
             .get_mut(scope)
             .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?
             .put(operation, document, body)
-            .map_err(|_| ProductionDataPlaneOperationError::DurableMember)
+            .map_err(|_| ProductionDataPlaneOperationError::DurableMember);
+        result.and_then(|receipt| {
+            ensure_before_deadline(deadline)?;
+            Ok(receipt)
+        })
     }
 
     /// Routes a delete to the exact database lease selected by `scope`.
@@ -501,19 +522,37 @@ impl DurableProductionDataPlane {
         operation: &str,
         document: &str,
     ) -> Result<terrabase::CommitReceipt, ProductionDataPlaneOperationError> {
-        let mut state = lock_unpoisoned(&self.state);
+        self.delete_with_timeout(scope, operation, document, DEFAULT_OPERATION_TIMEOUT)
+    }
+
+    /// Routes a delete with a deadline covering state-lock acquisition and
+    /// the durable operation.
+    pub fn delete_with_timeout(
+        &self,
+        scope: &DatabaseRouteScope,
+        operation: &str,
+        document: &str,
+        timeout: Duration,
+    ) -> Result<terrabase::CommitReceipt, ProductionDataPlaneOperationError> {
+        let deadline = deadline_after(timeout);
+        let mut state = try_lock_until(&self.state, deadline)?;
+        ensure_before_deadline(deadline)?;
         if !state.accepting {
             return Err(ProductionDataPlaneOperationError::Draining);
         }
         if !state.rf2_reconciled.contains(scope) {
             return Err(ProductionDataPlaneOperationError::LocalRf2NotReconciled);
         }
-        state
+        let result = state
             .databases
             .get_mut(scope)
             .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?
             .delete(operation, document)
-            .map_err(|_| ProductionDataPlaneOperationError::DurableMember)
+            .map_err(|_| ProductionDataPlaneOperationError::DurableMember);
+        result.and_then(|receipt| {
+            ensure_before_deadline(deadline)?;
+            Ok(receipt)
+        })
     }
 
     /// Reads through the same isolated lease used for replication.
@@ -525,19 +564,39 @@ impl DurableProductionDataPlane {
         Option<BTreeMap<String, terrabase::types::DocumentValue>>,
         ProductionDataPlaneOperationError,
     > {
-        let mut state = lock_unpoisoned(&self.state);
+        self.read_with_timeout(scope, document, DEFAULT_OPERATION_TIMEOUT)
+    }
+
+    /// Reads with a deadline covering state-lock acquisition and the durable
+    /// engine read.
+    pub fn read_with_timeout(
+        &self,
+        scope: &DatabaseRouteScope,
+        document: &str,
+        timeout: Duration,
+    ) -> Result<
+        Option<BTreeMap<String, terrabase::types::DocumentValue>>,
+        ProductionDataPlaneOperationError,
+    > {
+        let deadline = deadline_after(timeout);
+        let mut state = try_lock_until(&self.state, deadline)?;
+        ensure_before_deadline(deadline)?;
         if !state.accepting {
             return Err(ProductionDataPlaneOperationError::Draining);
         }
         if !state.rf2_reconciled.contains(scope) {
             return Err(ProductionDataPlaneOperationError::LocalRf2NotReconciled);
         }
-        state
+        let result = state
             .databases
             .get_mut(scope)
             .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?
             .read(document)
-            .map_err(|_| ProductionDataPlaneOperationError::DurableMember)
+            .map_err(|_| ProductionDataPlaneOperationError::DurableMember);
+        result.and_then(|value| {
+            ensure_before_deadline(deadline)?;
+            Ok(value)
+        })
     }
 
     /// Exchanges one canonical database with a peer and marks RF=2 and repair
@@ -560,15 +619,20 @@ impl DurableProductionDataPlane {
         if std::ptr::eq(self, peer) {
             return Err(ProductionDataPlaneOperationError::DurableMember);
         }
+        let deadline = deadline_after(timeout);
+        if timeout.is_zero() {
+            return Err(ProductionDataPlaneOperationError::Deadline);
+        }
         // Always acquire both state locks by object address. Two peer
         // sessions may reconcile concurrently in opposite directions; a
         // fixed order prevents those sessions from deadlocking.
         let self_first = (self as *const Self) < (peer as *const Self);
         let (mut left, mut right, local_is_left) = if self_first {
-            (lock_unpoisoned(&self.state), lock_unpoisoned(&peer.state), true)
+            (try_lock_until(&self.state, deadline)?, try_lock_until(&peer.state, deadline)?, true)
         } else {
-            (lock_unpoisoned(&peer.state), lock_unpoisoned(&self.state), false)
+            (try_lock_until(&peer.state, deadline)?, try_lock_until(&self.state, deadline)?, false)
         };
+        ensure_before_deadline(deadline)?;
         if !left.accepting || !right.accepting {
             return Err(ProductionDataPlaneOperationError::Draining);
         }
@@ -593,10 +657,15 @@ impl DurableProductionDataPlane {
                     .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?,
             )
         };
-        local.reconcile_with_timeout(remote, timeout).map_err(|error| match error {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(ProductionDataPlaneOperationError::Deadline);
+        }
+        local.reconcile_with_timeout(remote, remaining).map_err(|error| match error {
             DurableMemberError::Timeout => ProductionDataPlaneOperationError::Deadline,
             _ => ProductionDataPlaneOperationError::DurableMember,
         })?;
+        ensure_before_deadline(deadline)?;
         left.rf2_reconciled.insert(*scope);
         right.rf2_reconciled.insert(*scope);
         left.repaired.insert(*scope);
@@ -606,13 +675,25 @@ impl DurableProductionDataPlane {
 
     /// Returns durable progress for one database.
     pub fn progress(&self, scope: &DatabaseRouteScope) -> Option<DurableMemberProgress> {
-        lock_unpoisoned(&self.state).databases.get(scope).map(DurableMember::progress)
+        match self.state.try_lock() {
+            Ok(state) => state.databases.get(scope).map(DurableMember::progress),
+            Err(TryLockError::Poisoned(poisoned)) => {
+                poisoned.into_inner().databases.get(scope).map(DurableMember::progress)
+            }
+            Err(TryLockError::WouldBlock) => None,
+        }
     }
 }
 
 impl ProductionDataPlane for DurableProductionDataPlane {
     fn facts(&self) -> ProductionDataPlaneFacts {
-        let state = lock_unpoisoned(&self.state);
+        let state = match self.state.try_lock() {
+            Ok(state) => state,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            // Facts have no error channel. A contended state must fail closed
+            // instead of blocking a readiness probe indefinitely.
+            Err(TryLockError::WouldBlock) => return ProductionDataPlaneFacts::default(),
+        };
         let complete = !state.databases.is_empty();
         let reconciled = complete && state.rf2_reconciled.len() == state.databases.len();
         let repaired = complete && state.repaired.len() == state.databases.len();
@@ -639,20 +720,31 @@ impl ProductionDataPlane for DurableProductionDataPlane {
     }
 
     fn begin_drain(&self) {
-        lock_unpoisoned(&self.state).accepting = false;
+        match self.state.try_lock() {
+            Ok(mut state) => state.accepting = false,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner().accepting = false,
+            // The trait has no result and must not block forever. `drain`
+            // retries this transition under its caller-provided deadline.
+            Err(TryLockError::WouldBlock) => {}
+        }
     }
 
     fn drain(&self, timeout: Duration) -> Result<(), ProductionDataPlaneError> {
         if timeout.is_zero() {
             return Err(ProductionDataPlaneError::Timeout);
         }
-        let started = std::time::Instant::now();
-        let mut state = lock_unpoisoned(&self.state);
+        let deadline = deadline_after(timeout);
+        let mut state =
+            try_lock_until(&self.state, deadline).map_err(|_| ProductionDataPlaneError::Timeout)?;
+        state.accepting = false;
         for member in state.databases.values_mut() {
-            if started.elapsed() >= timeout {
+            if Instant::now() >= deadline {
                 return Err(ProductionDataPlaneError::Timeout);
             }
             member.drain().map_err(|_| ProductionDataPlaneError::Persistence)?;
+        }
+        if Instant::now() >= deadline {
+            return Err(ProductionDataPlaneError::Timeout);
         }
         Ok(())
     }
@@ -1027,14 +1119,56 @@ fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     }
 }
 
+fn deadline_after(timeout: Duration) -> Instant {
+    let started = Instant::now();
+    // Treat an overflowing duration as a practically unbounded deadline
+    // rather than allowing `Instant` arithmetic to panic or wrap.
+    started.checked_add(timeout).unwrap_or_else(|| {
+        started.checked_add(Duration::from_secs(100 * 365 * 24 * 60 * 60)).unwrap_or(started)
+    })
+}
+
+fn try_lock_until<T>(
+    mutex: &Mutex<T>,
+    deadline: Instant,
+) -> Result<MutexGuard<'_, T>, ProductionDataPlaneOperationError> {
+    loop {
+        match mutex.try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(TryLockError::Poisoned(poisoned)) => return Ok(poisoned.into_inner()),
+            Err(TryLockError::WouldBlock) => {
+                if Instant::now() >= deadline {
+                    return Err(ProductionDataPlaneOperationError::Deadline);
+                }
+                std::thread::yield_now();
+            }
+        }
+    }
+}
+
+fn ensure_before_deadline(deadline: Instant) -> Result<(), ProductionDataPlaneOperationError> {
+    if Instant::now() >= deadline {
+        Err(ProductionDataPlaneOperationError::Deadline)
+    } else {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
     use terrabase::identity::{DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid, Ulid};
+    use terrabase::member::{AdmissionLimits, DatabaseSpec, Member};
     use terrabase::RegionCode;
 
     use super::{
-        DatabaseRouteScope, DatabaseRoutingCatalog, ProductionMemberError, ProductionPlacement,
-        ProductionRegionSeats,
+        DatabaseRouteScope, DatabaseRoutingCatalog, DurableProductionDataPlane,
+        ProductionDataPlane, ProductionDataPlaneError, ProductionDataPlaneOperationError,
+        ProductionMemberError, ProductionPlacement, ProductionRegionSeats,
     };
 
     fn value(number: u128) -> Ulid {
@@ -1051,6 +1185,55 @@ mod tests {
             ProjectUlid::from_value(value(200)),
             DatabaseUlid::from_value(value(number)),
         )
+    }
+
+    fn test_root(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "terrabase-production-plane-{tag}-{}-{}",
+            std::process::id(),
+            super::now_millis()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("test root");
+        root
+    }
+
+    fn open_plane(
+        root: &Path,
+        identity: MemberUlid,
+        peer: MemberUlid,
+        database: DatabaseRouteScope,
+    ) -> (Member, DurableProductionDataPlane) {
+        let database_name = database.database().to_text();
+        let member = Member::open(
+            root,
+            [DatabaseSpec::new(&database_name, &database_name)],
+            AdmissionLimits::default(),
+        )
+        .expect("member");
+        let routes = DatabaseRoutingCatalog::try_new([database]).expect("routes");
+        let placement = ProductionPlacement::try_new(
+            identity,
+            1,
+            1,
+            [ProductionRegionSeats::try_new(RegionCode::GRU, [identity, peer]).expect("seats")],
+        )
+        .expect("placement");
+        let plane =
+            DurableProductionDataPlane::open(&placement, &routes, &member).expect("durable plane");
+        (member, plane)
+    }
+
+    fn cleanup(root: PathBuf, member: Member) {
+        member.close(Duration::from_secs(2)).expect("member close");
+        std::fs::remove_dir_all(root).expect("remove test root");
+    }
+
+    fn body(value: &str) -> std::collections::BTreeMap<String, terrabase::types::DocumentValue> {
+        std::collections::BTreeMap::from([(
+            "value".to_owned(),
+            terrabase::types::DocumentValue::String(value.to_owned()),
+        )])
     }
 
     #[test]
@@ -1104,5 +1287,128 @@ mod tests {
             DatabaseRoutingCatalog::try_new([first, first]).err(),
             Some(ProductionMemberError::InvalidRoutingCatalog)
         );
+    }
+
+    #[test]
+    fn operation_deadline_includes_contended_state_lock() {
+        let first_root = test_root("operation-lock");
+        let database = scope(301);
+        let (first_member, first) = open_plane(&first_root, member(1), member(2), database);
+        let first = Arc::new(first);
+        {
+            let mut state = first.state.lock().expect("state");
+            state.rf2_reconciled.insert(database);
+        }
+        let held = Arc::clone(&first);
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let holder = thread::spawn(move || {
+            let guard = held.state.lock().expect("state");
+            ready_tx.send(()).expect("ready");
+            thread::sleep(Duration::from_millis(100));
+            drop(guard);
+        });
+        ready_rx.recv().expect("holder ready");
+        let started = Instant::now();
+        let result = first.put_with_timeout(
+            &database,
+            "operation-lock",
+            "document-a",
+            &body("value"),
+            Duration::from_millis(10),
+        );
+        assert_eq!(result, Err(ProductionDataPlaneOperationError::Deadline));
+        assert!(started.elapsed() < Duration::from_millis(80));
+        holder.join().expect("holder");
+        first.drain(Duration::from_secs(2)).expect("plane drain");
+        drop(first);
+        cleanup(first_root, first_member);
+    }
+
+    #[test]
+    fn reconciliation_deadline_includes_both_state_locks() {
+        let first_root = test_root("reconcile-lock-first");
+        let second_root = test_root("reconcile-lock-second");
+        let database = scope(302);
+        let (first_member, first) = open_plane(&first_root, member(3), member(4), database);
+        let (second_member, second) = open_plane(&second_root, member(4), member(3), database);
+        let first = Arc::new(first);
+        let second = Arc::new(second);
+        let held = Arc::clone(&second);
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let holder = thread::spawn(move || {
+            let guard = held.state.lock().expect("state");
+            ready_tx.send(()).expect("ready");
+            thread::sleep(Duration::from_millis(100));
+            drop(guard);
+        });
+        ready_rx.recv().expect("holder ready");
+        let started = Instant::now();
+        let result = first.reconcile_with_timeout(&second, &database, Duration::from_millis(10));
+        assert_eq!(result, Err(ProductionDataPlaneOperationError::Deadline));
+        assert!(started.elapsed() < Duration::from_millis(80));
+        holder.join().expect("holder");
+        first.drain(Duration::from_secs(2)).expect("first drain");
+        second.drain(Duration::from_secs(2)).expect("second drain");
+        drop(first);
+        drop(second);
+        cleanup(first_root, first_member);
+        cleanup(second_root, second_member);
+    }
+
+    #[test]
+    fn poisoned_state_is_recovered_without_panicking() {
+        let root = test_root("poison");
+        let database = scope(303);
+        let (member, plane) = open_plane(&root, member(5), member(6), database);
+        let plane = Arc::new(plane);
+        let poisoned = Arc::clone(&plane);
+        let panic = thread::spawn(move || {
+            let mut state = poisoned.state.lock().expect("state");
+            state.rf2_reconciled.insert(database);
+            panic!("poison test");
+        })
+        .join();
+        assert!(panic.is_err());
+        assert!(plane.facts().databases_admitted);
+        assert_eq!(plane.progress(&database).map(|progress| progress.applied()), Some(0));
+        plane.begin_drain();
+        assert_eq!(
+            plane.put_with_timeout(
+                &database,
+                "operation-after-poison",
+                "document-a",
+                &body("value"),
+                Duration::from_millis(10),
+            ),
+            Err(ProductionDataPlaneOperationError::Draining)
+        );
+        plane.drain(Duration::from_secs(2)).expect("plane drain");
+        drop(plane);
+        cleanup(root, member);
+    }
+
+    #[test]
+    fn drain_deadline_includes_contended_state_lock_and_zero_timeout() {
+        let root = test_root("drain-lock");
+        let database = scope(304);
+        let (member, plane) = open_plane(&root, member(7), member(8), database);
+        let plane = Arc::new(plane);
+        assert_eq!(plane.drain(Duration::ZERO), Err(ProductionDataPlaneError::Timeout));
+        let held = Arc::clone(&plane);
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let holder = thread::spawn(move || {
+            let guard = held.state.lock().expect("state");
+            ready_tx.send(()).expect("ready");
+            thread::sleep(Duration::from_millis(100));
+            drop(guard);
+        });
+        ready_rx.recv().expect("holder ready");
+        let started = Instant::now();
+        assert_eq!(plane.drain(Duration::from_millis(10)), Err(ProductionDataPlaneError::Timeout));
+        assert!(started.elapsed() < Duration::from_millis(80));
+        holder.join().expect("holder");
+        plane.drain(Duration::from_secs(2)).expect("plane drain");
+        drop(plane);
+        cleanup(root, member);
     }
 }

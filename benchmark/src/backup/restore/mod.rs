@@ -954,7 +954,22 @@ impl Replay {
         chain: &[BackupManifest],
     ) -> Result<(), BackupError> {
         for link in chain {
-            let mut counts = LinkCounts::default();
+            let expected_tenants: BTreeMap<_, _> = link
+                .tenants()
+                .iter()
+                .map(|tenant| {
+                    (tenant.tenant().clone(), (tenant.documents(), tenant.family_records()))
+                })
+                .collect();
+            // A manifest binds the complete selected tenant scope, including
+            // tenants that contribute no document or family frame to this
+            // link. Seed those keys at zero so an empty incremental verifies;
+            // the membership check below still rejects every archive record
+            // from a tenant the manifest did not declare.
+            let mut counts = LinkCounts {
+                tenants: expected_tenants.keys().cloned().map(|tenant| (tenant, (0, 0))).collect(),
+                ..LinkCounts::default()
+            };
             for member in link.members() {
                 // Manifest validation admits only canonical member names,
                 // so the joined path stays inside the point's directory.
@@ -990,13 +1005,6 @@ impl Replay {
             {
                 return Err(BackupError::ChecksumMismatch);
             }
-            let expected_tenants: BTreeMap<_, _> = link
-                .tenants()
-                .iter()
-                .map(|tenant| {
-                    (tenant.tenant().clone(), (tenant.documents(), tenant.family_records()))
-                })
-                .collect();
             if counts.tenants != expected_tenants {
                 return Err(BackupError::ChecksumMismatch);
             }

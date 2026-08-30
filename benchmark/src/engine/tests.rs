@@ -222,12 +222,12 @@ fn synced_commit_reopens_with_the_published_document() {
     assert_eq!(receipt.durability(), LocalDurability::Synced);
     engine.shutdown().expect("shuts down");
 
-    let reopened = reopen_engine(dir);
+    let reopened = reopen_engine(&dir);
     let found = read_document(&reopened, "tenant-a", "doc-1").expect("survives the reopen");
     assert_eq!(found.value(), &DocumentValue::String("ada".to_owned()));
     assert_eq!(found.metadata().version(), 1);
     reopened.shutdown().expect("shuts down");
-    std::fs::remove_dir_all(dir).ok();
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -2293,7 +2293,7 @@ fn assert_snapshot_records_from_pages(dir: &PathBuf, engine: Engine) {
         .expect("old boundary remains readable");
     assert!(first.iter().all(|record| record.document().id().as_str() != "later"));
     drop(engine);
-    let reopened = reopen_engine(&dir);
+    let reopened = reopen_engine(dir);
     assert_eq!(
         reopened
             .snapshot_records_from(tenant("tenant-a"), boundary, None, MAX_SNAPSHOT_RECORD_PAGE)
@@ -2302,7 +2302,7 @@ fn assert_snapshot_records_from_pages(dir: &PathBuf, engine: Engine) {
         2
     );
     drop(reopened);
-    std::fs::remove_dir_all(&dir).ok();
+    std::fs::remove_dir_all(dir).ok();
 }
 
 /// Seeds the compaction workload through the public transaction seam: two

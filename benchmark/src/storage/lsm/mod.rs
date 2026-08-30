@@ -179,6 +179,10 @@ impl Default for LsmTuning {
 }
 
 /// The LSM storage engine state behind the [`StoragePort`] seam.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "the flags record independent recovery, usage, and write-admission states"
+)]
 pub(crate) struct LsmStorage {
     dir: PathBuf,
     metrics: Arc<MetricsRegistry>,
@@ -395,6 +399,14 @@ impl LsmStorage {
             }
         })?;
         if writes_unavailable && (!manifest.segments.is_empty() || wal.len() != 0) {
+            return Err(LsmOpenError::FormatMismatch);
+        }
+        if wal.is_encrypted() && !manifest.segments.is_empty() {
+            // The current encrypted vertical slice covers WAL only. Never
+            // reopen an encrypted WAL alongside plaintext immutable segments:
+            // that would permit a downgrade or mixed-format read. A future
+            // segment cipher must make this gate conditional on its own
+            // authenticated segment marker.
             return Err(LsmOpenError::FormatMismatch);
         }
         let wal_scan = wal.scan().map_err(|_| LsmOpenError::Unavailable)?;
