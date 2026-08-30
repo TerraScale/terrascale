@@ -14,8 +14,17 @@ npm run build
 npm run test:unit
 npm run test:integration
 npm run test:browser
-npm pack --pack-destination artifacts/candidate
+npm run qualify:artifact -- --node /path/to/node22 --node /path/to/node24
 ```
+
+`qualify:artifact` packs once, installs that exact tarball into a clean consumer,
+checks the public export graph and Node-only boundaries, scans the archive for
+credential material, and writes a digest-, source-tree-, dependency-, license-,
+audit-, and runtime-bound receipt under `artifacts/npm-qualification`. Both
+supported Node majors must be supplied for release evidence. A one-runtime
+receipt is diagnostic and records the missing runtime as a limitation. The
+command refuses a dirty worktree unless `--allow-dirty` is explicitly supplied;
+dirty receipts are diagnostic and bind the uncommitted path list only by digest.
 
 The generated public MessagePack binding is qualified by additional commands
 because the current npm `test` script does not discover `test/*.mjs`:
