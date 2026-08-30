@@ -436,10 +436,19 @@ impl TbepHost for EngineHost {
         CollectionName::try_new(request.collection.as_str())
             .map_err(|_| HostingError::Invalid("the collection identifier is not valid".into()))?;
         let expected = to_engine_expected(&request.expected);
+        // The version a delete receipt names is the version the document
+        // had when it was removed. It is read inside the very transaction
+        // that stages the delete, so a concurrent writer cannot move it
+        // between the read and the tombstone.
+        let mut deleted_version = 0_u64;
         let outcome = self.commit(
             &tenant,
             &request.operation_id,
             |transaction| {
+                let found = transaction
+                    .read(&document)
+                    .map_err(|_| HostingError::EngineFailure("the read failed".into()))?;
+                deleted_version = found.as_ref().map_or(1, |found| found.metadata().version());
                 transaction
                     .delete(document.clone(), expected)
                     .map_err(|_| HostingError::Refused("the document was not admissible".into()))
@@ -447,6 +456,18 @@ impl TbepHost for EngineHost {
             request.ack.unwrap_or(crate::generated::Acknowledgement::RegionalQuorum),
             idempotency_key,
         )?;
+        // Same rule as the write path: the wire's receipt carries the
+        // document's version, the engine's own receipt carries the
+        // storage sequence. A replayed delete whose document is already
+        // gone reuses the write path's fallback (version 1); the storage
+        // sequence and operation identity stay exact either way.
+        let outcome = match outcome {
+            WriteOutcome::Committed(mut receipt) => {
+                receipt.version = deleted_version;
+                WriteOutcome::Committed(receipt)
+            }
+            other => other,
+        };
         Ok(DocumentDeleteResponse { outcome })
     }
 

@@ -79,7 +79,18 @@ const ALLOWED_EDGES: &[(&str, &str)] = &[
 /// runtimes and networking are confined to the transport and TBEP boundary
 /// (`crates/terrabase-tbep/Cargo.toml` cites PD-2026-08-26-05 D1). A new
 /// external dependency of the engine core requires a review note here.
-const ENGINE_CORE_EXTERNAL_DEPS: &[&str] = &["blake3"];
+///
+/// Review note (2026-08-30): `ulid` joined the engine core as the second
+/// external dependency. The accepting record is ADR 0027 'ULID object
+/// identities', whose 'Libraries and evidence' section mandates the `ulid`
+/// crate behind a TerraScale-owned wrapper (`src/identity/`). The dependency
+/// is built with `default-features = false` and no features at all, because
+/// every 1.x manifest of the crate declares `std = ["rand"]`: the engine
+/// takes the value/codec surface only, pulls no `rand` and no `serde`, and
+/// keeps cryptographically secure monotonic generation TerraScale-owned in
+/// `src/identity/generate.rs` (BLAKE3 keyed counter mode) rather than
+/// importing the crate's `rand`-backed generator.
+const ENGINE_CORE_EXTERNAL_DEPS: &[&str] = &["blake3", "ulid"];
 
 /// The workspace graph as read from the manifests.
 struct WorkspaceGraph {

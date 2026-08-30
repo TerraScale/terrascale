@@ -38,6 +38,7 @@ pub mod tbep_generated;
 pub mod hand_encoding;
 pub mod operation_map;
 pub mod production;
+pub mod schema_identity;
 
 pub use operation_map::body_kind_for;
 pub use tbep_generated::terrabase::tbep::{TbepEnvelope, TbepFrame, TbepOperation};

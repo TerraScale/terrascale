@@ -1,6 +1,5 @@
 # path<TAB>expected-match-count<TAB>match-fingerprint-sha256<TAB>reason
 Cargo.toml	2	f351fd0da6c0997f4f8cc3ca8ce520dbb769e8383fff2442472b4a1b4f1da6af	Reviewed N-1 source alias and its architecture assertion.
-GOAL.md	8	440a6bca356ed31c47e85fb6f17e7317c9c07c96ded91a83d394bdac201e82da	Stable repository planning identifiers retained as exact evidence IDs.
 README.md	1	6a428cdb459aafc0011053faa3030e96638acc1c2826787cbe6de2500e1262d5	Reviewed N-1 source alias and its architecture assertion.
 crates/terrabase-causal/src/lib.rs	2	f791dccea5a088f2396d3e383c5923a87685ae4a13a2778b9247e187db9e85ae	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 crates/terrabase-member-transport/src/journal.rs	1	d7cb457fdbdb44f26aacab932cc6c33d00521f27dfdcb3f3abf5334ccd5e95b2	Persisted-format identity or its exact reader, writer, vector, or hostile test.

@@ -40,6 +40,12 @@ unsafe_code = "allow"
 # The pinned FlatBuffers Rust runtime, matching the pinned `flatc`
 # 25.12.19 exactly (`nixpkgs#flatbuffers`).
 flatbuffers = "=25.12.19"
+# The canonical revision digest that names the pinned schema + registry
+# inputs (the same primitive and version the engine root already uses, so
+# the dependency closure gains no new supplier). `schema_identity.rs`
+# pins the generation inputs by digest so the drift gate holds with
+# neither `flatc` nor the network.
+blake3 = "1.8.2"
 # Test-only live interop peer dependencies. This peer is qualification
 # evidence for the generated bindings and framing only; it is not a TBEP
 # production server and is never linked by `terrabase-tbep`.

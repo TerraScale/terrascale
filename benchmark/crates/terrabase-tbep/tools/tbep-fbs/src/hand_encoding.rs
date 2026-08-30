@@ -148,8 +148,12 @@ impl HandEnvelope {
 /// first member, `ErrorFrame` (tags are assigned in declaration order).
 pub const ERROR_FRAME_TAG: u8 = 1;
 
+/// The union tag of the `DocumentWriteRequest` member of `TbepFrame`
+/// (eighth declared member).
+pub const DOCUMENT_WRITE_REQUEST_TAG: u8 = 8;
+
 /// The union tag of the `DocumentWriteResponse` member of `TbepFrame`
-/// (fifth declared member).
+/// (ninth declared member).
 pub const DOCUMENT_WRITE_RESPONSE_TAG: u8 = 9;
 
 /// Encode a minimal well-formed `ErrorFrame` body table: error code plus

@@ -29,6 +29,14 @@ path = "src/lib.rs"
 
 [dependencies]
 blake3 = "1.8.2"
+# ADR 0027 'Libraries and evidence': Rust uses the `ulid` crate behind a
+# TerraScale-owned wrapper (src/identity/). Every 1.x manifest of this crate
+# declares `std = ["rand"]`, so the engine-core build takes NO features at
+# all: the value/codec surface only, with no `rand`, no `serde`, and no
+# generator of its own. Generation stays TerraScale-owned in
+# src/identity/generate.rs (BLAKE3 keyed counter mode, per ADR 0027 and the
+# engine-core dependency budget this manifest records).
+ulid = { version = "1", default-features = false }
 
 [profile.release]
 codegen-units = 1

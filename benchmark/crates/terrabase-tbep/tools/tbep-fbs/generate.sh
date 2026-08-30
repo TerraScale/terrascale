@@ -1,4 +1,17 @@
 #!/usr/bin/env bash
+# Regenerates the committed TBEP FlatBuffers Rust binding from the
+# authoritative root schema with the pinned `flatc` (ADR 0025).
+#
+#   generate.sh --check              fail if the committed binding drifted
+#   generate.sh --write              rewrite the committed binding
+#   generate.sh --schema F --out-dir D --write
+#                                    regenerate from an arbitrary schema
+#                                    copy into an arbitrary directory,
+#                                    leaving every committed file alone
+#
+# The last form is the rollback drill's engine: it makes "generation is a
+# pure function of the pinned inputs" checkable without mutating the
+# working tree (tests/fbs_drift.rs).
 set -euo pipefail
 
 flatc_version="25.12.19"
@@ -6,17 +19,40 @@ linux_archive_sha256="9f87066dc5dfa7fe02090b55bab5f3e55df03e32c9b0cdf229004ade7d
 linux_archive_url="https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g%2B%2B-13.zip"
 
 tool_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-schema_path="$tool_dir/../../schema/tbep.fbs"
-committed_path="$tool_dir/../../src/generated/fbs/tbep_generated.rs"
-mode="${1:---write}"
+crate_root="$tool_dir/../.."
+schema_path="$crate_root/schema/tbep.fbs"
+committed_path="$crate_root/src/generated/fbs/tbep_generated.rs"
+output_dir=""
+mode="--write"
 
-case "$mode" in
-    --check | --write) ;;
-    *)
-        echo "usage: $0 [--check|--write]" >&2
-        exit 2
-        ;;
-esac
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --check | --write)
+            mode="$1"
+            shift
+            ;;
+        --schema)
+            [[ $# -ge 2 ]] || {
+                echo "--schema requires a path" >&2
+                exit 2
+            }
+            schema_path="$2"
+            shift 2
+            ;;
+        --out-dir)
+            [[ $# -ge 2 ]] || {
+                echo "--out-dir requires a path" >&2
+                exit 2
+            }
+            output_dir="$2"
+            shift 2
+            ;;
+        *)
+            echo "usage: $0 [--check|--write] [--schema PATH] [--out-dir DIR]" >&2
+            exit 2
+            ;;
+    esac
+done
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/tbep-fbs.XXXXXXXX")"
 cleanup() {
@@ -80,6 +116,18 @@ generated_dir="$work_dir/generated"
 mkdir -p "$generated_dir"
 "$flatc_bin" --rust -o "$generated_dir" "$schema_path"
 generated_path="$generated_dir/tbep_generated.rs"
+if [[ ! -f "$generated_path" ]]; then
+    echo "flatc produced no tbep_generated.rs for $schema_path" >&2
+    exit 1
+fi
+
+if [[ -n "$output_dir" ]]; then
+    mkdir -p "$output_dir"
+    cp "$generated_path" "$output_dir/tbep_generated.rs"
+    printf 'wrote %s/tbep_generated.rs with flatc %s from %s\n' \
+        "$output_dir" "$flatc_version" "$schema_path"
+    exit 0
+fi
 
 if [[ "$mode" == "--check" ]]; then
     if ! cmp -s "$committed_path" "$generated_path"; then

@@ -572,6 +572,7 @@ dependencies = [
 name = "tbep-fbs"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "flatbuffers",
  "quinn",
  "rustls",
@@ -584,6 +585,7 @@ name = "terrabase"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "ulid",
 ]
 
 [[package]]
@@ -763,6 +765,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
+]
+
+[[package]]
+name = "ulid"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "470dbf6591da1b39d43c14523b2b469c86879a53e8b758c8e090a470fe7b1fbe"
+dependencies = [
+ "web-time",
 ]
 
 [[package]]

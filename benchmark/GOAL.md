@@ -1,242 +1,151 @@
 # TerraBase production goal
 
-Status: pre-production plan. Last documentation audit: 2026-08-29, using the
-`develop` audit baseline at `4075908`. Later branch tips require a new audit.
+Status: goal defined; implementation and qualification are incomplete.
 
-This file is the repository execution plan. The workspace-level TerraScale
-charter remains the product and architecture authority; repository ADRs record
-decisions that need durable local context. No statement in this file is a
-production qualification, benchmark result, or release authorization.
+Last audited: 2026-08-29. Repository deletions recorded 2026-08-30. This file
+was consolidated from the workspace-level TerraScale program goal on 2026-08-30
+and covers TerraBase only; the replaced repository `GOAL.md` remains in git
+history.
 
-## Goal and scope
+This file does not claim that a Region, artifact, benchmark, security control,
+or recovery procedure is production-ready. Repository `AGENTS.md` remains a
+hard rule, and repository ADRs record decisions that need durable local
+context.
 
-Deliver a release candidate of the native TerraBase engine that can be
-qualified for the TerraScale production gateway, with reproducible artifacts,
-typed failure behavior, durable recovery, secure protocol boundaries, and
-evidence for every supported deployment shape.
+## Goal
 
-In scope:
+TerraBase is the private native multi-Region database engine of the TerraScale
+product. It owns storage, WAL, compaction, indexing, query execution,
+causality, CRDT merge, replication, repair, membership acceptance, backup,
+restore, deletion, reactive view semantics, and authoritative usage facts.
+Promote only immutable artifacts whose contract, security, durability,
+recovery, performance, and rollback evidence belongs to the exact candidate.
 
-- the root `terrabase` engine library and its eight Cargo workspace crates;
-- durable storage, WAL/LSM, indexes, queries, families, sessions, streaming,
-  replication, sharding, backup/restore, deletion, usage, and authorization;
-- private TBEP and its generated bindings, transport, vectors, and hostile
-  decode behavior;
-- repository-local host, CLI, and Studio migration/conformance lanes; and
-- the receipts and release documentation needed to hand work to the owning
-  gateway, control-plane, SDK, benchmark, and operations repositories.
+Production begins with GRU, SFO, and FRA. TerraBase uses two active Members
+per selected Region and Partition. A database may select one through twenty
+admitted Regions. A `GlobalDurable` write is refused when fewer than two
+active Regions are selected.
 
-Out of scope for this repository's implementation:
+## Accepted decisions
 
-- customer authentication or billing authority;
-- OCI provider credentials, provider-specific placement configuration, or
-  public API ownership;
-- claiming that a local deterministic lane is a WAN, hardware, timing, or
-  production result; and
-- treating the repository-local trusted-header host or direct TBEP mode as a
-  public customer surface.
+These decisions come from repository rules, accepted ADRs, current source, or
+the workspace owner's 2026-08-29 direction. They are not open design questions.
 
-## Evidence-backed current state
-
-| Area | Current fact | Evidence and limit |
-| --- | --- | --- |
-| Engine boundary | `src/lib.rs` exports the native engine modules; `Engine::open` with a durable location is the documented production path. | `src/lib.rs`, `src/engine/mod.rs`; implementation status is still active development. |
-| Local durability | `LocalDurability` distinguishes `Buffered`, `Written`, and `Synced`. | `src/types.rs`, engine tests; these are local storage points, not replication or backup guarantees. |
-| Storage/recovery | WAL/LSM, compaction, snapshots, backup/restore, recovery, tiers, and deletion-domain code have focused tests and receipts. | `docs/evidence/recovery/`, `docs/evidence/p7-*`, `docs/evidence/tier-combination-matrix.md`, `docs/evidence/deletion-workflow-lane.md`; execution wiring and production infrastructure remain open where receipts say so. |
-| Replication/cluster | Native replication, member transport, cluster durability, membership, and bounded model-checking lanes exist. | `src/replication/`, `crates/terrabase-cluster/`, `docs/evidence/replication/`, `docs/evidence/model-checking-lane.md`; lanes are in-process or loopback and do not qualify WAN or OCI behavior. |
-| Regions | The engine has strict `RegionCode` parsing/catalog behavior for `GRU`, `SFO`, and `FRA`, plus a 20-Region ceiling. | `src/regions.rs`, `docs/evidence/region-catalog-receipt.md`; external admission, placement, routing, and capacity qualification remain open. |
-| Protocol | TBEP registry, server/client paths, vectors, negotiation, transport, and hostile-input tests exist; the private schema work is present at the audit baseline. | `crates/terrabase-tbep/`, ADR 0025, qualification rows 26–28; generated-code drift, full cross-language vectors, and all required hostile classes still need release evidence. |
-| Product host | `host/` is documented as a migration-source/conformance lane. It uses a trusted local context gate and truthfully refuses engine-backed operations that are not wired. | `host/README.md`, `docs/design/host-retirement-decision.md`; the independently deployable Database service in `TerraScale.Internals` is the intended product gateway, but its migration is cross-repository work. The standalone `TerraScale.Database` repository is transitional and cannot remain source-authoritative. |
-| CLI/Studio | The CLI and Studio have typed contracts, fixture lanes, and tests, but their documented host/direct modes are not a public production boundary. | `cli/README.md`, `studio/README.md`; runtime gateway authority is accepted in ADR 0034, while migration/retirement evidence remains open. |
-| Qualification | At the 2026-08-29 audit baseline, the 40-row matrix records 2 lane-covered, 26 partial, 8 missing, and 4 blocked-external rows. | `docs/evidence/qualification-gap-sweep.md`; counts are baseline lane status, not GA status. |
-
-The current state is therefore **not production-ready**. The largest gaps are
-cross-repository gateway completion, production identity and authorization,
-protocol generation/conformance, architecture and WAN qualification, and
-durable operation wiring. Existing focused green tests are preserved as
-evidence with their stated limits; they must not be promoted to broader claims.
-
-## Target and non-goals
-
-The target follows ADR 0033: a General Availability release qualified on
-64-bit Linux x86_64 and ARM64, the admitted three-Region shape (`GRU`, `SFO`,
-`FRA`), the declared durability levels, the public Database API, production
-security controls, backup/restore, operations, and a continuous thirty-day
-soak. ADR 0025 governs the private FlatBuffers/public MessagePack split and
-ADR 0031 governs N/N-1 rolling upgrades and activation boundaries.
-
-ADR 0035 selects the fail-closed one-Region contract: `GlobalDurable` must be
-refused before acknowledgement when fewer than two active Regions are
-selected. The current cluster implementation's degenerate one-Region receipt
-is an implementation gap, not a target product behavior.
-
-The target does not include a public beta as a substitute for qualification,
-an unbounded compatibility reader, public FlatBuffers, direct Member access,
-silent weakening of durability, invented topology facts, or unmeasured
-performance claims. Any future reduction of scope requires an accepted ADR and
-an explicit service/product decision.
-
-## Prioritized gap register
-
-The IDs below are repository planning IDs. The qualification row references
-are the source of truth for detailed scenario status.
-
-| ID | Priority | Gap and required outcome | Depends on |
-| --- | --- | --- | --- |
-| TBV2-P0-01 | P0 | Product gateway cutover: move supported typed operations, authorization, channel behavior, and conformance from the migration host into the independently deployable `TerraScale.Internals`-owned Database service; keep trusted headers and direct TBEP out of production. Rows 26, 30–32. | Accepted ADR 0034 boundary; protocol contract; gateway/control-plane owners. |
-| TBV2-P0-02 | P0 | Protocol release: finish pinned schema generation, Rust/C# and public-client binding drift checks, complete valid/error vectors, and hostile decode gates before field access. Rows 27–28. | ADR 0025 implementation and generator ownership. |
-| TBV2-P0-03 | P0 | Identity and durable operations: land ADR 0027 identities where required, wire ADR 0028 operation resources, enforce ADR 0035's one-Region durability refusal, and connect backup, restore, deletion, migration, tier, movement, and repair work to resumable durable state. Rows 8, 14, 28, 38, 40. | Storage/operation owners; protocol and gateway contracts. |
-| TBV2-P0-04 | P0 | Production authorization and encryption: integrate signed grants, policy generations, regional key lifecycle, and fail-closed behavior at the product boundary; prove no secrets or private topology escape. Rows 19, 23–25, 30, 33. | Gateway, Dashboard, Orchestrator, and key-management owners. |
-| TBV2-P0-05 | P0 | Deployment qualification: native x86_64/ARM64 artifacts, mixed-architecture interchange, three admitted Regions, Tier-2-only baseline, capacity, fault-domain placement, and production SLO/soak evidence. Rows 1–3, 6–7, 29, 35. | OCI/benchmark/operations infrastructure and signed placement policy. |
-| TBV2-P1-01 | P1 | Distributed correctness completion: finish coordinator/member/Region loss at production seams, live NATS/control-plane outage, retained-floor resume, authorization reconnect, slow-consumer terminal closure, and cross-language restart/loss matrices. Rows 9–17, 19–21, 26, 39. | P0 protocol and gateway paths; live test infrastructure. |
-| TBV2-P1-02 | P1 | Data lifecycle completion: wire deletion copy execution and authorization holds, Merkle/cluster restore verification, optional-tier production behavior, and sharding hot-range split/movement. Rows 4–5, 22, 37–40. | P0 durable operations and storage/cluster owners. |
-| TBV2-P1-03 | P1 | Evidence governance: every release receipt records source commit, command, environment, exact result, and limits; refresh the matrix after each lane and reject stale or deleted receipt references. | All workstreams; release owner. |
-
-No gap is closed by a plan or an accepted ADR alone. A gap closes only when
-the owning implementation and its acceptance evidence exist and the matrix is
-updated with the honest scope.
-
-## Parallel workstreams and dependencies
-
-The following work can start in parallel. A workstream may publish a receipt
-without waiting for unrelated work, but downstream release gates consume only
-the exact evidence named by that receipt.
-
-| Workstream | Role | Parallel deliverable | Dependency / hand-off |
-| --- | --- | --- | --- |
-| A — protocol | TerraBase | Schema generator, binding drift gate, vector corpus, hostile decode, negotiation, and cross-language conformance. | Start from ADR 0025; hand protocol version and limits to B and D. |
-| B — engine | TerraBase | `TbepHost` operation coverage, ULID identity adoption, durable operation journal, deletion execution, restore verification, and tier/sharding integration. | Can start with current native APIs; consumes A's stable protocol and hands receipts to C/D. |
-| C — distributed engine | TerraBase + Orchestrator | Production-shaped membership, replication, loss/recovery, NATS/control-plane seams, authorization reconnect, and retained-history lanes. | Start with existing in-process lanes; consumes A/B contracts before public-surface tests. |
-| D — gateway and clients | TerraScale.Internals Database service + SDK owners | TerraScale.Database gateway migration into the independently deployable `TerraScale.Internals` service, grant/auth integration, SDK/Studio contract alignment, and host retirement preconditions. | Consumes A's contract and B/C operation/failure evidence; the accepted runtime boundary is ADR 0034. |
-| E — deployment and operations | Orchestrator + TerraBase.Benchmark | OCI placement/admission, native architecture matrix, measured SLO receipts, backup/restore drills, incident runbooks, key lifecycle, and thirty-day soak. | Requires stable B/C/D artifacts and external infrastructure; no local substitute qualifies it. |
-| F — release evidence | Workspace owner | Matrix refresh, receipt index, artifact manifest, compatibility/rollback record, compliance package, and final gate review. | Runs continuously; final sign-off waits for A–E and workspace-owner acceptance. |
-
-Critical path: A → B/D → C/E → F. Workstreams B and C may develop native
-correctness in parallel with A, and E may provision infrastructure in parallel,
-but no release claim may skip the dependency hand-off or the established
-repository-role evidence.
-
-## Ownership and resolved decisions
-
-The runtime boundary is already authoritative across the workspace: [ADR
-0034](docs/adr/0034-sole-production-gateway-and-host-retirement.md) records
-the independently deployable Database service owned by `TerraScale.Internals`
-as the sole production gateway, with `host/` retained only for migration and
-conformance until its deletion preconditions pass. The standalone
-`TerraScale.Database` repository is a transitional source and deployment lane.
-It may be retired only after provenance, parity, and production cutover gates
-are evidenced and accepted.
-
-[ADR 0035](docs/adr/0035-one-region-global-durable-semantics.md) resolves the
-one-Region durability meaning: `GlobalDurable` is refused before
-acknowledgement when fewer than two active Regions are selected. Implementing
-that refusal and updating its protocol/conformance evidence is a tracked gap,
-not an unresolved product question.
-
-External evidence follows the established repository boundaries:
-
-- TerraBase owns native engine, TBEP, and focused correctness evidence and
-  keeps this qualification matrix current.
-- TerraScale.Internals owns the permanent Database service source. The
-  independently deployable service remains the production gateway authority,
-  including gateway authentication and authorization integration and
-  public-boundary evidence.
-- The standalone TerraScale.Database repository is transitional. Retire it only
-  after an owner-approved receipt proves source provenance and generated-code
-  parity, all supported operations and security behavior have cut over to the
-  Internals-owned service, its release artifacts and rollback path are
-  qualified, and the repository's CI, clients, and documentation no longer
-  depend on it as an authority.
-- TerraScale.Dashboard owns identity/Better Auth behavior and its evidence.
-- TerraScale.Orchestrator owns OCI placement/admission, NATS/control-plane,
-  key-management adapters, and deployment evidence.
-- TerraBase.Benchmark owns measured performance and interference receipts.
-- The workspace owner accepts the final release and compliance evidence.
-
-Open items below are implementation, integration, or qualification gaps under
-those roles; this plan does not invent personal assignees or duplicate their
-authority.
-
-## Acceptance and evidence contract
-
-Every implementation slice must have focused tests and a receipt when it
-changes a release invariant. Receipts state their source commit, exact
-commands, environment, pass/fail result, and honest limits. A receipt that
-contains timing, throughput, WAN, hardware, compliance, or production claims
-must also identify the qualified topology and measurement method from ADR 0026;
-deterministic counters are not performance evidence.
-
-Minimum repository gates:
-
-```text
-cargo fmt --all -- --check
-cargo check --workspace --locked
-cargo test --workspace --locked
-cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo doc --workspace --no-deps --locked
-python3 scripts/check_license.py
-./scripts/check_secrets.sh
-```
-
-The final candidate gate also runs
-`python3 scripts/check_license.py --release`. The development form may record
-pending distribution terms, but it cannot qualify a release. Release mode
-inventories every first-party Cargo package independently of `cargo-deny`'s
-private-package setting and binds the owner-approved terms, package list, legal
-entity, identifier, version, and approval evidence by SHA-256.
-
-CI additionally runs `scripts/check.sh`. Recovery, replication, compaction,
-backup, protocol, and benchmark work runs its exclusive lane where required by
-the relevant ADR. Generated code is regenerated from its schema owner and
-must produce no unexplained diff.
-
-Acceptance evidence for the production goal must demonstrate:
-
-- all supported operations through the intended gateway with typed errors,
-  authorization, idempotency, cancellation, and tenant isolation;
-- native x86_64 and ARM64 artifacts, mixed-architecture interchange, complete
-  protocol vectors, hostile input rejection, and N/N-1 rollback boundaries;
-- local, regional, global, and backup durability with crash/restart, member and
-  Region loss, repair, restore, deletion, and durable progress evidence;
-- bounded queues, resource/noisy-tenant isolation, authorization changes, and
-  retained-history behavior at the public serving surface;
-- encryption/key lifecycle, secret scans, public-ingress denial, audit
-  redaction, and incident/restore runbooks; and
-- ADR 0033 SLO receipts, capacity/placement evidence, real Region pairs, and
-  the uninterrupted thirty-day soak.
-
-## Risks and mitigations
-
-| Risk | Mitigation |
+| Area | Accepted direction |
 | --- | --- |
-| Stale docs or receipts overstate current behavior. | Refresh the matrix at every landing; link exact paths and commits; preserve explicit limits. |
-| Generated schema/binding drift creates incompatible clients. | One schema owner, pinned generator, regeneration diff gate, shared vectors, and versioned activation. |
-| Trusted local headers leak into the product boundary. | Keep host migration-only; integrate product authentication and grants before cutover; enforce boundary tests. |
-| Local lanes are mistaken for production qualification. | Label all deterministic/loopback receipts; require external architecture, WAN, SLO, soak, and compliance evidence. |
-| A partial durable operation repeats or loses work after process loss. | ADR 0028 operation identity, atomic checkpoints, fencing, replay tests, and explicit terminal failures. |
-| Cross-repository sequencing stalls release. | Use the workstream dependency table and assign owners before dispatch; do not duplicate authority in this repo. |
+| Implementation language | This repository uses Rust only. `AGENTS.md` is a hard rule. |
+| Engine | TerraBase owns storage, WAL, compaction, indexing, query execution, causality, CRDT merge, replication, repair, membership acceptance, backup, restore, deletion, reactive view semantics, and authoritative usage facts. |
+| Private protocol | Private TBEP uses generated FlatBuffers over authenticated QUIC. MessagePack-based private adapters are migration input and block production until replaced. |
+| Public reactive protocol | TerraBase supplies the reference semantics and corpus for the bounded public reactive result-view contract. |
+| Durability | `GlobalDurable` fails closed for fewer than two active Regions. No local or single-Region acknowledgement may be presented as Region-loss RPO 0. |
+| Performance evidence | The `TerraBase.Benchmark` repository was deleted 2026-08-30 by owner decision; its full history is archived at `~/Projects/TerraScale-archive/TerraBase.Benchmark-2026-08-30.bundle`. No decision-grade performance baseline exists, and benchmark capability must be re-owned before PRG-P1-05 can close. Performance evidence never authorizes deployment and cannot turn an invalid, failed, safe, or synthetic run into a performance claim. |
 
-## Exit gates
+## Evidence rules
 
-TerraBase exits this plan only when all of the following are true:
+Use these status words consistently:
 
-1. ADR 0034 and ADR 0035 remain accepted, every supported product boundary has
-   one named authority, and each role has supplied the evidence assigned in
-   this plan.
-2. The qualification matrix has no `missing` or `partial` row inside the
-   declared GA scope; every blocked-external row has its required external
-   receipt, or an accepted product decision explicitly removes that scope.
-3. The complete repository and cross-repository gates are green from pinned
-   release artifacts, including generated-code drift, security, license,
-   protocol, recovery, and rollback checks.
-4. Production authentication, encryption, tenant isolation, observability,
-   deletion/retention, backup/restore, and durable operation progress are
-   exercised at the intended public boundary.
-5. ADR 0033's architecture, SLO, capacity, incident, compliance, and
-   uninterrupted thirty-day soak evidence is reviewed and accepted.
-6. The release manifest names the source commit, binaries, schemas, generated
-   bindings, configuration, compatibility window, rollback boundary, and all
-   receipt identities; the final verdict is reproducible by another operator.
+- `implemented`: source and focused tests exist;
+- `lane-covered`: a named test or receipt passed in its stated environment;
+- `qualified`: the exact production candidate passed the required real
+  boundary;
+- `blocked`: a required contract, implementation, environment, decision, or
+  receipt is missing; and
+- `production-ready`: every exit gate in this file has current,
+  candidate-bound evidence.
 
-Until these gates pass, the correct status is pre-production and the repository
-must not be described as GA-ready.
+An ADR records a decision. It does not prove implementation. A local fixture,
+RF=1 lab, loopback protocol test, skipped live test, synthetic receipt, or
+configuration declaration cannot satisfy a production gate.
+
+Every retained receipt must name the source revision, artifact and
+configuration identity, exact command or action, environment and topology,
+result, evidence tier, known limits, and redaction status. Unknown facts stay
+unknown. Failed and invalid results remain visible and cannot be reclassified
+as passes.
+
+## Current status
+
+Pre-production. The 40-row qualification sweep records 2 lane-covered, 26
+partial, 8 missing, and 4 blocked-external scenarios at the 2026-08-29 audit
+baseline (`docs/evidence/qualification-gap-sweep.md`). Finish private protocol
+generation, durable-operation wiring, distributed failure behavior,
+architecture qualification, and production receipts.
+
+## Gap register
+
+| ID | Priority | Gap | Completion evidence |
+| --- | --- | --- | --- |
+| PRG-P0-03 | P0 | Finish private FlatBuffers generation for TBEP. | Pinned generator, Rust/C# bindings, schema digest, valid/error/hostile vectors, live QUIC interchange, and rollback evidence. |
+| PRG-P0-07 | P0 | Complete TerraBase durable operations and release invariants. | ULID operation identities, resumable journals, storage/recovery, deletion, backup/restore, membership, replication, repair, and model-check receipts. |
+| PRG-P1-03 | P1 | Qualify the GRU, SFO, and FRA engine topology. | RF=2 TerraBase placement, independent failure domains, Member and Region loss, and recovery receipts. |
+| PRG-P1-05 | P1 | Establish decision-grade performance and isolation evidence. | Approved benchmark policy and baseline, noisy-tenant budgets, workload-family coverage, architecture results, capacity, cost, and regression reports. |
+
+## Parallel workstreams
+
+Streams may start in parallel when their input contract is available. No
+stream edits another stream's receipts or changes a dependency to make its own
+status appear green.
+
+| Stream | Work that can proceed in parallel | Required handoff |
+| --- | --- | --- |
+| A. Contracts and generation | Private TBEP FlatBuffers schemas, generation, errors, limits, compatibility, and drift tooling | Versioned schemas, digests, vectors, and activation rules |
+| B. Engine correctness | Storage, durable operations, replication, membership, repair, deletion, backup/restore, sharding, and model checks | Typed operation and failure receipts to consuming services |
+
+## Dependency waves
+
+### Wave 0: contract baseline
+
+1. Accept one current ADR index and this `GOAL.md`.
+2. Freeze the private TBEP, error, limit, and compatibility manifests.
+3. Keep all unconfigured production dependencies fail-closed.
+
+### Wave 1: independent P0 implementation
+
+Run protocol generation, engine correctness, and durable-operation work in
+parallel against the Wave 0 contract revision, publishing focused evidence
+without claiming cross-system qualification.
+
+### Wave 2: integration
+
+1. Run generated FlatBuffers over real authenticated QUIC at the TerraBase
+   boundary.
+2. Run the public reactive reference semantics and corpus through the Rust
+   reference implementation.
+
+### Wave 3: production-shaped qualification
+
+Qualify GRU, SFO, and FRA with native ARM64 and x86_64 artifacts, RF=2
+TerraBase placement, independent failure domains, Member and Region loss,
+backup/restore, noisy-tenant protection, and rollback. Environment-gated skips
+remain blockers.
+
+### Wave 4: performance and soak
+
+Re-own or restore the decision-grade benchmark tooling, then run the approved
+performance lanes. Complete the uninterrupted thirty-day candidate soak. A
+rebuild or configuration change restarts candidate qualification.
+
+### Wave 5: promotion
+
+Promote the exact qualified candidate and observe the accepted release window.
+Promotion does not rebuild the candidate.
+
+## Acceptance gates
+
+1. **Ownership.** One current authority owns each engine source, runtime
+   contract, artifact, and evidence record.
+2. **Contracts.** TBEP, errors, limits, generated manifests, and compatibility
+   rules agree and pass drift checks.
+3. **Security.** Encryption and key lifecycle, tenant isolation, replay,
+   hostile-input rejection, audit redaction, and secret-scan evidence passes
+   at live boundaries.
+4. **Durability.** Local, regional, global, backup, restore, deletion,
+   membership, repair, and recovery semantics pass their failure matrices.
+5. **Runtime protection.** Bounded queues, cancellation, slow-client,
+   noisy-tenant, and graceful shutdown behavior passes.
+6. **Topology.** GRU, SFO, and FRA satisfy RF=2 placement, independent failure
+   domains, and Member and Region-loss recovery.
+7. **Performance.** Decision-grade workload, latency, throughput, isolation,
+   capacity, cost, and regression evidence meets the accepted SLOs.
+8. **Soak and release.** The exact GA candidate completes the required
+   thirty-day soak and the final owner review.

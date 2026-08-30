@@ -7,7 +7,9 @@ use std::sync::Arc;
 use flatbuffers::{FlatBufferBuilder, UnionWIPOffset, WIPOffset};
 use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rcgen::{BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, KeyPair};
+use serde_json::Value;
 use tbep_fbs::decode_envelope;
+use tbep_fbs::schema_identity::{PINNED_SCHEMA_DIGEST, PinnedInputs};
 use tbep_fbs::tbep_generated::terrabase::tbep as fbs;
 use terrabase_tbep::engine_host::EngineHost;
 use terrabase_tbep::quic::{QuicBindError, TbepQuicServer};
@@ -438,4 +440,236 @@ fn the_quic_listener_refuses_to_start_without_a_client_trust_anchor() {
             panic!("an empty client trust store must fail closed");
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// The FlatBuffers golden-vector interchange lane (gap-sweep row 27):
+// every committed valid vector exchanges over the real authenticated QUIC
+// binding and every answer round-trip decodes.
+// ---------------------------------------------------------------------------
+
+fn corpus_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vectors/tbep/fbs")
+}
+
+fn load_corpus(name: &str) -> Value {
+    let text = std::fs::read_to_string(corpus_dir().join(name))
+        .unwrap_or_else(|error| panic!("the corpus file {name} reads: {error}"));
+    serde_json::from_str(&text)
+        .unwrap_or_else(|error| panic!("the corpus file {name} is JSON: {error}"))
+}
+
+fn from_hex(text: &str) -> Vec<u8> {
+    assert!(text.len().is_multiple_of(2), "hex strings carry whole bytes: {text}");
+    (0..text.len())
+        .step_by(2)
+        .map(|index| {
+            u8::from_str_radix(&text[index..index + 2], 16)
+                .unwrap_or_else(|error| panic!("bad hex {text}: {error}"))
+        })
+        .collect()
+}
+
+/// The response operation one corpus row names, as a wire discriminant.
+fn response_operation(name: &str) -> fbs::TbepOperation {
+    match name {
+        "negotiation.response" => fbs::TbepOperation::NEGOTIATION_RESPONSE,
+        "channel.bind.response" => fbs::TbepOperation::CHANNEL_BIND_RESPONSE,
+        "document.read.response" => fbs::TbepOperation::DOCUMENT_READ_RESPONSE,
+        "document.write.response" => fbs::TbepOperation::DOCUMENT_WRITE_RESPONSE,
+        "document.delete.response" => fbs::TbepOperation::DOCUMENT_DELETE_RESPONSE,
+        other => panic!("the corpus names an unsupported response operation {other}"),
+    }
+}
+
+/// A fresh engine directory per lane, so the golden vectors see the same
+/// storage state on every run.
+fn fresh_dir(label: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "tbep-fbs-quic-{label}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos())
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn every_golden_valid_vector_exchanges_over_the_authenticated_quic_binding() {
+    let document = load_corpus("valid.json");
+    let recorded = document["schema_digest"].as_str().unwrap_or_default();
+    let live = PinnedInputs::load(&std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        .expect("the pinned schema inputs read")
+        .digest();
+    assert_eq!(
+        recorded, PINNED_SCHEMA_DIGEST,
+        "the corpus was recorded against schema revision {recorded}; this tree pins {live}"
+    );
+
+    let dir = fresh_dir("valid");
+    let identity = identity();
+    let host = Arc::new(EngineHost::open(&dir, 1).expect("the engine host opens"));
+    let mut server = TbepQuicServer::bind(
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        vec![identity.server_certificate.clone()],
+        identity.server_key.clone_key(),
+        std::slice::from_ref(&identity.root),
+        host,
+    )
+    .expect("the QUIC listener binds");
+    let address = server.local_addr().expect("the listener names its address");
+
+    let mut exchanged = 0_usize;
+    for channel in document["channels"].as_array().expect("channels") {
+        // One golden channel is one authenticated connection: mutual TLS
+        // with a client workload identity, exactly as the production
+        // binding serves it.
+        let client = QuicClient::connect(
+            address,
+            identity.root.clone(),
+            Some((identity.client_certificate.clone(), identity.client_key.clone_key())),
+        )
+        .expect("the authenticated client connects");
+        let mut lane = client.channel();
+
+        for (index, frame) in channel["frames"].as_array().expect("frames").iter().enumerate() {
+            let bytes = from_hex(frame["wire"].as_str().expect("wire"));
+            let expected_request = frame["expect_request"].as_str().expect("expect_request");
+            let expected_operation = frame["expect_operation"].as_str().expect("expect_operation");
+            // The correlation the answer must name comes from the golden
+            // bytes themselves, never from a second recorded copy.
+            let request_correlation = decode_envelope(&bytes)
+                .expect("the golden request verifies")
+                .envelope
+                .correlation()
+                .expect("the golden request carries a correlation")
+                .0;
+            assert_ne!(request_correlation, [0; 16], "frame {index} has a real correlation");
+
+            let answer = lane.call(|_| bytes.clone());
+            let decoded = decode_envelope(&answer)
+                .unwrap_or_else(|error| panic!("frame {index} answer round-trip decodes: {error}"));
+            let envelope = decoded.envelope;
+            assert_eq!(
+                envelope.causation().expect("answer causation").0,
+                request_correlation,
+                "frame {index} ({expected_request}) must answer its own correlation"
+            );
+            let response_correlation = envelope.correlation().expect("answer correlation").0;
+            assert_ne!(response_correlation, [0; 16]);
+            assert_ne!(
+                response_correlation, request_correlation,
+                "a response correlation is never the request's"
+            );
+            assert_eq!(
+                envelope.operation(),
+                response_operation(expected_operation),
+                "frame {index} ({expected_request}) must be answered by {expected_operation}"
+            );
+            // No answer ever requires a feature this client did not offer.
+            assert!(envelope.required_features().is_empty());
+            exchanged += 1;
+        }
+        client.runtime.shutdown_timeout(std::time::Duration::from_secs(1));
+    }
+    assert_eq!(exchanged, 9, "every golden valid vector exchanged over QUIC TLS");
+
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_quic_listener_survives_a_flood_of_hostile_flatbuffers_frames() {
+    let document = load_corpus("hostile.json");
+    let assert_pinned = document["schema_digest"].as_str() == Some(PINNED_SCHEMA_DIGEST);
+    assert!(assert_pinned, "the hostile corpus names the pinned schema revision");
+
+    let dir = fresh_dir("flood");
+    let identity = identity();
+    let host = Arc::new(EngineHost::open(&dir, 1).expect("the engine host opens"));
+    let mut server = TbepQuicServer::bind(
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        vec![identity.server_certificate.clone()],
+        identity.server_key.clone_key(),
+        std::slice::from_ref(&identity.root),
+        host,
+    )
+    .expect("the QUIC listener binds");
+    let address = server.local_addr().expect("the listener names its address");
+
+    // Every hostile class is fired at a real authenticated channel, in
+    // volume: some are answered with a typed error frame, some close the
+    // channel. Neither may take the listener down.
+    let rows = document["rows"].as_array().expect("rows");
+    let mut fired = 0_usize;
+    for repetition in 0..10 {
+        for row in rows {
+            let bytes = match row["wire"].as_str() {
+                Some(wire) => from_hex(wire),
+                // The two construction rows (oversized, unbounded
+                // nesting) are covered by the in-process matrix; firing a
+                // 16 MiB frame at the socket ten times adds no fact.
+                None => continue,
+            };
+            let client = QuicClient::connect(
+                address,
+                identity.root.clone(),
+                Some((identity.client_certificate.clone(), identity.client_key.clone_key())),
+            )
+            .expect("the authenticated client connects");
+            let handle = client.runtime.handle().clone();
+            let (mut send, mut recv) = handle
+                .block_on(async { client.connection.open_bi().await })
+                .expect("the channel opens");
+            let _ = repetition;
+            if handle.block_on(async {
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(2),
+                    async {
+                        send.write_all(&bytes).await.ok()?;
+                        let mut prefix = [0_u8; 4];
+                        recv.read_exact(&mut prefix).await.ok()?;
+                        let length = u32::from_le_bytes(prefix) as usize;
+                        let mut body = vec![0_u8; length];
+                        recv.read_exact(&mut body).await.ok()?;
+                        Some(())
+                    },
+                )
+                .await
+                .ok()
+                .flatten()
+                .is_some()
+            }) {
+                fired += 1;
+            }
+            client.runtime.shutdown_timeout(std::time::Duration::from_millis(200));
+        }
+    }
+    // A flood that produced no traffic at all would prove nothing, and a
+    // flood that closed every channel is also fine — what matters is the
+    // listener below.
+    assert!(fired > 0, "the flood carried frames the listener answered");
+
+    // The listener still serves a fresh authenticated channel afterwards.
+    let survivor = QuicClient::connect(
+        address,
+        identity.root,
+        Some((identity.client_certificate, identity.client_key)),
+    )
+    .expect("the listener still admits an authenticated client after the flood");
+    let mut channel = survivor.channel();
+    let answer = channel.call(negotiation_request);
+    let envelope = decode_envelope(&answer).expect("the post-flood answer verifies").envelope;
+    assert_eq!(envelope.operation(), fbs::TbepOperation::NEGOTIATION_RESPONSE);
+    let negotiation = envelope
+        .body_as_negotiation_response_frame()
+        .expect("the post-flood negotiation body");
+    assert_eq!(negotiation.selected_version(), 1);
+    survivor.runtime.shutdown_timeout(std::time::Duration::from_secs(1));
+
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
 }
