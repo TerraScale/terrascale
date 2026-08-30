@@ -250,12 +250,12 @@ impl LsmStorage {
         for meta in &manifest.segments {
             let mut reader = SegmentReader::open(&segment_path(dir, meta.id), meta.id, meta.level)
                 .map_err(|_| LsmOpenError::FormatMismatch)?;
-            let verified = if reader.meta() != meta {
-                Err(io::Error::new(io::ErrorKind::InvalidData, "segment metadata mismatch"))
+            let verified_entries = if reader.meta() != meta {
+                None
             } else {
-                reader.read_all()
+                reader.read_all().ok()
             };
-            let entries = verified.map_err(|_| LsmOpenError::FormatMismatch)?;
+            let entries = verified_entries.ok_or(LsmOpenError::FormatMismatch)?;
             segment_documents.extend(
                 entries
                     .into_iter()
@@ -653,7 +653,12 @@ impl LsmStorage {
             .identifier_index
             .get(&(tenant.as_str().to_owned(), id.as_str().to_owned()))?;
         for collection in collections {
-            let key = internal::InternalKey::document(tenant, &CollectionName::try_new(collection).ok()?, id);
+            let Some(collection) = CollectionName::try_new(collection).ok() else {
+                continue;
+            };
+            // The lookup key's own sequence is irrelevant to the range the
+            // point read computes; zero is a valid stand-in.
+            let key = internal::InternalKey::document(tenant, &collection, id, 0);
             let Some((deletion, value)) = self.newest_document_entry(&key, sequence) else {
                 continue;
             };
