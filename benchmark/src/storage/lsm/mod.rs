@@ -777,16 +777,18 @@ impl LsmStorage {
             }
             return results.into_iter().map(Option::unwrap).collect();
         }
-        if any_synced
-            && (self.faults.fire(FaultPoint::PointerSync).is_err()
-                || self.faults.fire(FaultPoint::DirectorySync).is_err())
-        {
+        let pointer_fault =
+            any_synced && self.faults.fire(FaultPoint::PointerSync).is_err();
+        let directory_fault =
+            any_synced && !pointer_fault && self.faults.fire(FaultPoint::DirectorySync).is_err();
+        if pointer_fault || directory_fault {
+            let cause = if pointer_fault {
+                Some(UnknownCause::PostPublicationPointerSync)
+            } else {
+                Some(UnknownCause::PostPublicationDirectorySync)
+            };
             for item in &prepared {
-                let cause = if item.synced {
-                    Some(UnknownCause::PostPublicationPointerSync)
-                } else {
-                    None
-                };
+                let cause = if item.synced { cause } else { None };
                 results[item.index] = Some(self.finish_publication(
                     &item.entries,
                     &item.ledger_entry,

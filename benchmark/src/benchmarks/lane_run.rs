@@ -974,6 +974,33 @@ mod tests {
         }
     }
 
+    /// Concurrent synced-write probe: the group-commit shape the lane
+    /// drives (16 slots × barrier windows), reduced to its essentials.
+    #[test]
+    fn probe_concurrent_synced_writes() {
+        use std::time::Instant;
+        let lane = TerraBaseLane::open("concurrent-writes");
+        lane.seed(1_000);
+        let per_thread = 100_u64;
+        let started = Instant::now();
+        std::thread::scope(|scope| {
+            for worker in 0..16_u64 {
+                scope.spawn(move || {
+                    for index in 0..per_thread {
+                        lane.commit_put_measured(worker * per_thread + index, crate::types::LocalDurability::Synced);
+                    }
+                });
+            }
+        });
+        let elapsed = started.elapsed().as_secs_f64();
+        println!(
+            "probe 16-thread synced writes: {:.0} ops/s ({:.1} us/op amortized)",
+            (16 * per_thread) as f64 / elapsed,
+            elapsed * 1e6 / (16 * per_thread) as f64
+        );
+        lane.remove();
+    }
+
     fn config_as_tuple(config: LaneConfig) -> String {
         format!(
             "seed {} / ops {} / samples {} / concurrency {} / warmup {}",
