@@ -214,6 +214,17 @@ fn scope_audience_action_expiry_and_generation_are_all_fail_closed() {
 }
 
 #[test]
+fn duplicate_claim_names_are_rejected_instead_of_overwritten() {
+    assert_eq!(
+        PrincipalClaims::try_new([
+            ("role", AttributeValue::String("reader".to_owned())),
+            ("role", AttributeValue::String("admin".to_owned())),
+        ]),
+        Err(AuthorizationError::DuplicateClaim)
+    );
+}
+
+#[test]
 fn signed_context_is_canonical_authenticated_and_bound() {
     let signer = test_signer("local-k1");
     let payload = signed_payload();
@@ -297,7 +308,7 @@ fn signed_context_rejects_wrong_binding_time_key_and_replay() {
         verifier
             .verify_with_replay(
                 &recovered,
-            1_299,
+                1_299,
                 PrincipalSessionUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FBA").unwrap(),
                 &mut guard,
             )

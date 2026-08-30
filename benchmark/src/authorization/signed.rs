@@ -586,7 +586,7 @@ impl std::fmt::Debug for PrincipalContextEnvelope {
     }
 }
 
-/// Bounded replay state for one channel-binding owner boundary.
+/// Bounded replay state for one logical-client owner boundary.
 #[derive(Debug, Default)]
 pub struct PrincipalContextReplayGuard {
     seen: BTreeMap<PrincipalGrantUlid, u64>,
@@ -599,13 +599,13 @@ impl PrincipalContextReplayGuard {
         Self::default()
     }
 
-    /// Returns the number of accepted grant/channel pairs.
+    /// Returns the number of accepted grants.
     #[must_use]
     pub fn len(&self) -> usize {
         self.seen.len()
     }
 
-    /// Returns whether the guard has no accepted grant/channel pairs.
+    /// Returns whether the guard has no accepted grants.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.seen.is_empty()
@@ -730,8 +730,8 @@ impl PrincipalContextVerifier {
         })
     }
 
-    /// Verifies a context and rejects a repeated grant on the same channel
-    /// binding.
+    /// Verifies a context and rejects a repeated grant, binding acceptance to
+    /// the session identity carried by the signed payload.
     ///
     /// # Errors
     ///

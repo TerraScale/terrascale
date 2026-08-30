@@ -547,6 +547,7 @@ fn member_rejoin_checks_identity_and_catches_up_without_duplicates() {
     let cursor_now = follower.cursor().expect("cursor derives from the journal");
     follower.close();
     std::fs::remove_dir_all(&follower_dir).ok();
+    std::fs::create_dir_all(&follower_dir).expect("recreates the regressed empty location");
     let rejected = follower.rejoin(&cursor_now);
     assert!(
         matches!(rejected, Err(MemberError::RejoinRejected(_))),

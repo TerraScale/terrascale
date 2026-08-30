@@ -59,6 +59,8 @@ pub enum AuthorizationError {
     UnboundedRelationship,
     /// A policy contained two identical canonical grants.
     DuplicateRule,
+    /// A principal claim name appeared more than once.
+    DuplicateClaim,
     /// The signed context envelope is malformed or exceeds a bound.
     MalformedContextEnvelope,
     /// The signed context payload is not canonical or contains an invalid value.
@@ -101,6 +103,9 @@ impl fmt::Display for AuthorizationError {
             }
             Self::DuplicateRule => {
                 formatter.write_str("authorization policy contains a duplicate rule")
+            }
+            Self::DuplicateClaim => {
+                formatter.write_str("principal claims contain a duplicate name")
             }
             Self::MalformedContextEnvelope => {
                 formatter.write_str("malformed principal context envelope")
@@ -236,8 +241,12 @@ impl PrincipalClaims {
         I: IntoIterator<Item = (K, AttributeValue)>,
         K: Into<String>,
     {
-        let map: BTreeMap<String, AttributeValue> =
-            claims.into_iter().map(|(key, value)| (key.into(), value)).collect();
+        let mut map = BTreeMap::new();
+        for (key, value) in claims {
+            if map.insert(key.into(), value).is_some() {
+                return Err(AuthorizationError::DuplicateClaim);
+            }
+        }
         if map.len() > MAX_PRINCIPAL_CLAIMS {
             return Err(AuthorizationError::ExceedsBound("principal claims"));
         }

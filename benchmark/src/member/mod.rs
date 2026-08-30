@@ -855,10 +855,8 @@ mod tests {
     use super::*;
 
     fn root(label: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "terrabase-member-owner-{label}-{}",
-            std::process::id()
-        ));
+        let path = std::env::temp_dir()
+            .join(format!("terrabase-member-owner-{label}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("root");
         path
@@ -883,8 +881,8 @@ mod tests {
         assert_eq!(lease.database_owner().database(), scope.database());
         drop(lease);
         member.close(Duration::from_secs(1)).expect("close");
-        let reopened = Member::open_production(&root, [spec], AdmissionLimits::new(2, 1))
-            .expect("restart");
+        let reopened =
+            Member::open_production(&root, [spec], AdmissionLimits::new(2, 1)).expect("restart");
         let lease = reopened.acquire(&id).expect("lease");
         assert_eq!(lease.database_owner(), scope.owner());
         drop(lease);

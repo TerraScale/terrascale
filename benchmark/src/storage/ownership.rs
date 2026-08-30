@@ -25,6 +25,7 @@ const VERSION: u8 = 1;
 const MODE_LOCAL: u8 = 0;
 const MODE_PRODUCTION: u8 = 1;
 const MAX_RECORD_BYTES: usize = 512;
+const MAX_RECORD_BYTES_U64: u64 = 512;
 const MAX_ENVIRONMENT_BYTES: usize = 96;
 const FILE_NAME: &str = "owner.tbv1";
 
@@ -240,7 +241,7 @@ fn validate_location(location: &Path) -> Result<(), OwnershipError> {
     // A non-empty directory without a recognized TerraBase marker is never
     // silently adopted as a database location. The owner file itself is the
     // only permitted exception while a first open is being completed.
-    let mut entries = fs::read_dir(location).map_err(|_| OwnershipError::Unavailable)?;
+    let entries = fs::read_dir(location).map_err(|_| OwnershipError::Unavailable)?;
     let mut has_format = false;
     let mut has_other = false;
     for entry in entries {
@@ -312,8 +313,8 @@ fn encode_record(owner: &DatabaseOwner, mode: OwnershipMode) -> Vec<u8> {
 }
 
 fn checksum(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
-        hash.wrapping_mul(0x100000001b3).wrapping_add(u64::from(*byte))
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        hash.wrapping_mul(0x0100_0000_01b3).wrapping_add(u64::from(*byte))
     })
 }
 
@@ -326,7 +327,7 @@ fn read_record(path: &Path) -> Result<(DatabaseOwner, OwnershipMode), OwnershipE
     let metadata = fs::symlink_metadata(path).map_err(|_| OwnershipError::Unavailable)?;
     if metadata.file_type().is_symlink()
         || !metadata.is_file()
-        || usize::try_from(metadata.len()).map_or(true, |length| length > MAX_RECORD_BYTES)
+        || metadata.len() > MAX_RECORD_BYTES_U64
     {
         return Err(OwnershipError::Corrupt);
     }

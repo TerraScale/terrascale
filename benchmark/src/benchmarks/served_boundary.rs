@@ -88,7 +88,6 @@ impl ServedBoundaryConfig {
             }
             BoundaryAdmission::DiagnosticQualification => {}
         }
-        self.runner.validate()?;
         self.validate_diagnostic_policy()
     }
 
@@ -122,6 +121,15 @@ impl ServedBoundaryConfig {
                 "principal must be a SPIFFE URI matching the qualification client certificate"
                     .to_owned(),
             );
+        }
+        for (name, value) in [
+            ("tenant", self.runner.tenant.as_str()),
+            ("project", self.runner.project.as_str()),
+            ("database", self.runner.database.as_str()),
+        ] {
+            if value.is_empty() || value != value.trim() || value.chars().any(char::is_control) {
+                return Err(format!("{name} must be a non-empty canonical scope identifier"));
+            }
         }
         if self.runner.principal.len() > MAX_PRINCIPAL_BYTES
             || self.runner.tenant.len() > MAX_TENANT_BYTES

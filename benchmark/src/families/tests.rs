@@ -4297,7 +4297,10 @@ fn schema_free_collections_are_byte_for_byte_unaffected() {
             .into_iter()
             .filter(|(path, _)| {
                 path.file_name().is_some_and(|name| {
-                    name != "format" && name != "wal.frontier" && name != "retained.frontier"
+                    name != "format"
+                        && name != "owner.tbv1"
+                        && name != "wal.frontier"
+                        && name != "retained.frontier"
                 })
             })
             .collect();

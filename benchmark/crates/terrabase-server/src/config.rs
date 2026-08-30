@@ -12,6 +12,7 @@ use serde::Deserialize;
 use terrabase::observability::Region;
 
 const MAX_CONFIG_BYTES: u64 = 64 * 1024;
+const MAX_CONFIG_BYTES_USIZE: usize = 64 * 1024;
 const MAX_GATEWAY_PRINCIPALS: usize = 32;
 
 /// Fully validated production server configuration.
@@ -120,6 +121,11 @@ impl ServerConfig {
     /// Resolves the configuration file from `--config PATH` or
     /// `TERRABASE_CONFIG_FILE`. No other command-line value is accepted, so
     /// certificate or key material cannot accidentally enter process argv.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the command line and environment do not select
+    /// exactly one configuration path.
     pub fn path_from_process() -> Result<PathBuf, ConfigError> {
         let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
         let environment = std::env::var_os("TERRABASE_CONFIG_FILE");
@@ -129,6 +135,11 @@ impl ServerConfig {
     /// Resolves a configuration path from explicit argument and environment
     /// values. This pure form keeps parsing testable without mutating process
     /// environment.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the arguments are not exactly `--config PATH`, or
+    /// when both arguments and environment select a path.
     pub fn path_from(
         arguments: &[OsString],
         environment: Option<OsString>,
@@ -148,12 +159,22 @@ impl ServerConfig {
     /// Reads and validates one configuration file from one inspected handle.
     /// Symlinks, oversized files, unknown keys, relative production paths, zero
     /// bounds, and plaintext TCP configurations fail closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file is unsafe, changes while being read, is
+    /// not UTF-8, or contains invalid configuration.
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         let text = read_configuration(path)?;
         Self::parse(&text)
     }
 
     /// Parses and validates TOML configuration text.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the TOML or any production serving bound is
+    /// invalid.
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
         let file: FileConfig = toml::from_str(text).map_err(ConfigError::ParseConfiguration)?;
         let tbep_listen = socket(&file.tbep.listen, "tbep.listen")?;
@@ -267,7 +288,7 @@ fn open_readonly(path: &Path) -> Result<File, ConfigError> {
     {
         use std::os::unix::fs::OpenOptionsExt as _;
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        options.custom_flags(0o400000); // O_NOFOLLOW
+        options.custom_flags(0o400_000); // O_NOFOLLOW
         #[cfg(any(
             target_os = "dragonfly",
             target_os = "freebsd",
@@ -315,7 +336,7 @@ fn read_configuration(path: &Path) -> Result<String, ConfigError> {
         .read_to_end(&mut bytes)
         .map_err(ConfigError::ReadConfiguration)?;
     let after = file.metadata().map_err(ConfigError::ReadConfiguration)?;
-    if bytes.len() > MAX_CONFIG_BYTES as usize {
+    if bytes.len() > MAX_CONFIG_BYTES_USIZE {
         return Err(ConfigError::ConfigurationTooLarge);
     }
     if bytes.len() != expected_len || after.len() != metadata.len() {
@@ -569,7 +590,7 @@ allow_wildcard = false
         std::fs::remove_file(&empty_path).expect("temporary configuration removes");
 
         let oversized_path =
-            write_temporary("config-oversized", &vec![b'x'; MAX_CONFIG_BYTES as usize + 1]);
+            write_temporary("config-oversized", &vec![b'x'; MAX_CONFIG_BYTES_USIZE + 1]);
         assert!(matches!(
             ServerConfig::load(&oversized_path),
             Err(ConfigError::ConfigurationTooLarge)

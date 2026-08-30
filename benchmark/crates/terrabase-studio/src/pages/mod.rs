@@ -120,6 +120,8 @@ mod tests {
         assert!(page.contains("AcknowledgementReport"), "the omitted types are named");
         assert!(page.contains("No replication members are running"));
         assert!(page.contains("gru"), "the seeded topology renders");
+        assert!(page.contains("submit durability"));
+        assert!(page.contains("toggle inactive voter"));
     }
 
     #[test]
@@ -142,6 +144,7 @@ mod tests {
         assert!(page.contains("id=\"usage-ledger\""));
         assert!(page.contains("Authoritative durable facts"));
         assert!(page.contains("The engine is authoritative"));
+        assert!(page.contains("record usage fact"));
         assert!(!page.contains("studio-local and in-memory"));
     }
 
@@ -193,6 +196,7 @@ mod tests {
         assert!(page.contains("id=\"backup-chain\""));
         assert!(page.contains("id=\"deletion-state\""));
         assert!(page.contains("@post('/deletion/request'"));
+        assert!(page.contains("verify backup chain"));
         assert!(page.contains("Requested"), "the workflow states are explained");
         assert!(page.contains("Scheduler lifetime"), "the honest limit is stated");
     }

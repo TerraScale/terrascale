@@ -22,9 +22,15 @@ use tokio::sync::oneshot;
 use crate::config::ServerConfig;
 
 const MAX_PEM_BYTES: u64 = 1024 * 1024;
+const MAX_PEM_BYTES_USIZE: usize = 1024 * 1024;
 
 /// Opens the configured engine and runs every production listener until a
 /// termination signal begins bounded graceful drain.
+///
+/// # Errors
+///
+/// Returns an error when TLS material, the engine, a listener, shutdown, or
+/// graceful draining fails.
 pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
     let grpc_config = TbepGrpcConfig::try_new(
         config.max_message_bytes,
@@ -117,7 +123,7 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
             .map_err(|error| -> Box<dyn Error + Send + Sync> { Box::new(error) })?;
         match http_task.await {
             Ok(result) => {
-                result.map_err(|error| -> Box<dyn Error + Send + Sync> { Box::new(error) })?
+                result.map_err(|error| -> Box<dyn Error + Send + Sync> { Box::new(error) })?;
             }
             Err(error) => return Err(Box::new(error) as Box<dyn Error + Send + Sync>),
         }
@@ -168,7 +174,7 @@ fn read_pem(path: &Path, private: bool) -> Result<String, DaemonError> {
         .read_to_end(&mut bytes)
         .map_err(|_| DaemonError::SecretFile)?;
     let after = file.metadata().map_err(|_| DaemonError::SecretFile)?;
-    if bytes.len() > MAX_PEM_BYTES as usize
+    if bytes.len() > MAX_PEM_BYTES_USIZE
         || bytes.len() != expected_len
         || after.len() != metadata.len()
     {
@@ -188,7 +194,7 @@ fn open_readonly(path: &Path) -> Result<File, DaemonError> {
     {
         use std::os::unix::fs::OpenOptionsExt as _;
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        options.custom_flags(0o400000); // O_NOFOLLOW
+        options.custom_flags(0o400_000); // O_NOFOLLOW
         #[cfg(any(
             target_os = "dragonfly",
             target_os = "freebsd",
@@ -226,7 +232,7 @@ fn valid_pem(text: &str, private: bool) -> bool {
         }
         let mut encoded = String::new();
         let mut ended = false;
-        while let Some(raw_body) = lines.next() {
+        for raw_body in lines.by_ref() {
             let body = raw_body.strip_suffix('\r').unwrap_or(raw_body);
             if let Some(end_label) =
                 body.strip_prefix("-----END ").and_then(|value| value.strip_suffix("-----"))
@@ -269,10 +275,8 @@ fn decode_base64(value: &str) -> Option<Vec<u8>> {
                 return None;
             }
             2
-        } else if chunk[3] == b'=' {
-            1
         } else {
-            0
+            u8::from(chunk[3] == b'=')
         };
         if padding != 0 && index + 1 != chunk_count {
             return None;
@@ -437,7 +441,7 @@ mod tests {
 
     #[test]
     fn pem_read_rejects_growth_and_oversize_without_path_redaction() {
-        let oversized = write_temporary("pem-oversized", &vec![b'x'; MAX_PEM_BYTES as usize + 1]);
+        let oversized = write_temporary("pem-oversized", &vec![b'x'; MAX_PEM_BYTES_USIZE + 1]);
         let error = read_pem(&oversized, false).expect_err("oversized PEM refuses");
         assert!(matches!(error, DaemonError::SecretFile));
         assert!(!error.to_string().contains(oversized.to_string_lossy().as_ref()));

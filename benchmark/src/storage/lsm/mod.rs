@@ -884,7 +884,7 @@ impl LsmStorage {
             return self.publish_appended_batch_without_sync(
                 &prepared,
                 results,
-                append,
+                &append,
                 any_synced,
                 trace,
                 trace_started,
@@ -1020,7 +1020,7 @@ impl LsmStorage {
         &mut self,
         prepared: &[PreparedCommit],
         mut results: Vec<Option<CommitResult>>,
-        append: wal::WalAppend,
+        append: &wal::WalAppend,
         any_synced: bool,
         trace: bool,
         trace_started: std::time::Instant,
@@ -1040,10 +1040,7 @@ impl LsmStorage {
         }
         // The disposable shadow advances in memory only; the flush point
         // persists it in one slot write (the lazy-advance contract).
-        if self
-            .wal_frontier
-            .as_mut()
-            .is_some_and(|frontier| frontier.advance_lazy(&append).is_err())
+        if self.wal_frontier.as_mut().is_some_and(|frontier| frontier.advance_lazy(append).is_err())
         {
             self.frontier_poisoned = true;
         }
@@ -1378,13 +1375,11 @@ impl LsmStorage {
         specific_fault: FaultPoint,
     ) -> Result<(), ()> {
         let active = self.activation.is_some();
-        if active || legacy_sync_required {
-            if self.sync_wal_observed().is_err() {
-                if active {
-                    self.frontier_poisoned = true;
-                }
-                return Err(());
+        if (active || legacy_sync_required) && self.sync_wal_observed().is_err() {
+            if active {
+                self.frontier_poisoned = true;
             }
+            return Err(());
         }
         if active {
             if self.faults.fire(FaultPoint::StorageFrontierSync).is_err()

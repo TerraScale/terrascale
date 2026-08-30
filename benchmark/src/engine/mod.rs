@@ -1396,7 +1396,10 @@ impl Engine {
     ///
     /// Returns [`UsageCommandError::ScopeMismatch`] for a scope from another
     /// Engine, the typed storage availability and integrity errors otherwise.
-    #[allow(clippy::needless_pass_by_value, reason = "public command API preserves owned request semantics")]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "public command API preserves owned request semantics"
+    )]
     pub fn record_usage(
         &self,
         scope: &TenantScope,
@@ -1431,13 +1434,16 @@ impl Engine {
     /// Returns [`UsageCommandError::InvalidRequest`] for a damaged,
     /// cross-tenant, or filter-mismatched continuation and typed storage
     /// availability or integrity failures otherwise.
-    #[allow(clippy::needless_pass_by_value, reason = "public command API preserves owned request semantics")]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "public command API preserves owned request semantics"
+    )]
     pub fn usage_page(
         &self,
         scope: &TenantScope,
         request: UsagePageRequest,
     ) -> Result<UsagePage, UsageCommandError> {
-        let result = self.usage_page_unobserved(scope, request);
+        let result = self.usage_page_unobserved(scope, &request);
         match &result {
             Ok(page) => {
                 let _ = self.metrics.advance_usage_export_frontier(page.snapshot_sequence().get());
@@ -1450,7 +1456,7 @@ impl Engine {
     fn usage_page_unobserved(
         &self,
         scope: &TenantScope,
-        request: UsagePageRequest,
+        request: &UsagePageRequest,
     ) -> Result<UsagePage, UsageCommandError> {
         self.validate_scope(scope).map_err(|_| UsageCommandError::ScopeMismatch)?;
         let decoded = request.continuation().map(decode_usage_continuation).transpose()?;
@@ -1483,7 +1489,7 @@ impl Engine {
             Some(encode_usage_continuation(
                 scope.tenant(),
                 snapshot,
-                &request,
+                request,
                 &UsageFactPosition::of(last),
             ))
         } else {

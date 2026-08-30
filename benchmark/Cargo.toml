@@ -27,6 +27,11 @@ members = [
 name = "terrabase"
 path = "src/lib.rs"
 
+[[bin]]
+name = "terrabase-bench-served"
+path = "src/bin/terrabase-bench-served.rs"
+required-features = ["bench-tools"]
+
 [features]
 default = ["local-crypto"]
 local-crypto = ["aws-lc-rs/non-fips"]

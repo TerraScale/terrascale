@@ -890,13 +890,16 @@ fn tls_server_config(
     )
     .build()
     .map_err(std::io::Error::other)?;
-    rustls::ServerConfig::builder_with_provider(provider)
+    let mut config = rustls::ServerConfig::builder_with_provider(provider)
         .with_protocol_versions(&[&rustls::version::TLS13])
         .map_err(std::io::Error::other)?
         .with_client_cert_verifier(verifier)
         .with_single_cert(certificates, PrivateKeyDer::from(key))
-        .map(Arc::new)
-        .map_err(std::io::Error::other)
+        .map_err(std::io::Error::other)?;
+    // tonic speaks HTTP/2 only; advertise the protocol during the TLS
+    // handshake so grpc-go's ALPN enforcement can authenticate the peer.
+    config.alpn_protocols = vec![b"h2".to_vec()];
+    Ok(Arc::new(config))
 }
 
 fn serve_routes(

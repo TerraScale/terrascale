@@ -97,6 +97,7 @@ jobs:
       # the same format, build, test, Clippy, and documentation gates.
       - name: Standalone Studio
         run: |
+          scripts/validate-studio-assets.sh
           cargo fmt --manifest-path crates/terrabase-studio/Cargo.toml -- --check
           cargo check --manifest-path crates/terrabase-studio/Cargo.toml --locked
           cargo build --manifest-path crates/terrabase-studio/Cargo.toml --locked --release
@@ -106,11 +107,9 @@ jobs:
       - name: Release packaging definitions
         run: |
           jq --exit-status . .terrascale/deploy.json >/dev/null
-          bash -n deploy/release/candidate.sh deploy/release/package.sh deploy/release/reproduce.sh deploy/release/require-fips-toolchain.sh deploy/release/require-production-capability.sh deploy/release/sign.sh deploy/release/test-boundary.sh deploy/release/verify-source-binding.sh deploy/release/verify.sh scripts/validate-release-contracts.sh
+          bash -n deploy/release/candidate.sh deploy/release/package.sh deploy/release/reproduce.sh deploy/release/require-fips-toolchain.sh deploy/release/require-production-capability.sh deploy/release/sign.sh deploy/release/test-boundary.sh deploy/release/test-oci.sh deploy/release/test-workflow-runs.sh deploy/release/verify-oci.sh deploy/release/verify-source-binding.sh deploy/release/verify-workflow-runs.sh deploy/release/verify.sh scripts/validate-release-contracts.sh scripts/validate-studio-assets.sh
           scripts/validate-release-contracts.sh
           deploy/release/test-boundary.sh
-          python3 -m py_compile deploy/release/generate_sbom.py
-          python3 deploy/release/generate_sbom.py --help >/dev/null
           grep -q '@sha256:' deploy/release/Containerfile.server
           grep -q '@sha256:' deploy/release/Containerfile.studio
           ! grep -q 'target-cpu=native' .terrascale/deploy.json deploy/release/Containerfile.*
@@ -158,7 +157,7 @@ jobs:
           mkdir -p "$GOBIN"
           go install github.com/bufbuild/buf/cmd/buf@v1.50.0
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
-          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
           protoc_version=34.1
           protoc_archive="$(mktemp --suffix=.zip)"
           protoc_sha256=af27ea66cd26938fe48587804ca7d4817457a08350021a1c6e23a27ccc8c6904
@@ -205,6 +204,10 @@ jobs:
             crates/terrabase-tbep/proto/terrabase/v1/engine.proto
           diff -u "$active_dir/terrabase/v1/engine.pb.go" terrabase-go/terrabase/v1/engine.pb.go
           diff -u "$active_dir/terrabase/v1/engine_grpc.pb.go" terrabase-go/terrabase/v1/engine_grpc.pb.go
+          # Exercise the checked-in buf generation contract as well as the
+          # isolated protoc comparison above. Any generated-byte drift fails.
+          buf generate --template buf.gen.yaml
+          git diff --exit-code -- terrabase-go/terrabase/v1/engine.pb.go terrabase-go/terrabase/v1/engine_grpc.pb.go
 
       # The checked-in Go client must interoperate with the real Rust server,
       # not only with fake gRPC peers. The test owns its loopback PKI and
@@ -238,6 +241,7 @@ jobs:
       - name: Build, vet, and test
         run: |
           go list -mod=readonly ./...
+          test -z "$(gofmt -d -e $(git ls-files 'terrabase-go/*.go' 'terrabase-go/**/*.go'))"
           go vet -mod=readonly ./...
           go test -mod=readonly ./...
           go test -mod=readonly -race ./...

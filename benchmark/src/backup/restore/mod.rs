@@ -181,8 +181,7 @@ fn resolve_chain(
             if head.identity() != identity {
                 return Err(BackupError::ManifestInvalid);
             }
-            let chain = chain_of_head(destination, &head)?;
-            chain
+            chain_of_head(destination, &head)?
         }
     };
     if chain.is_empty() {

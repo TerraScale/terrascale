@@ -81,7 +81,7 @@ pub fn run(arguments: impl Iterator<Item = String>) -> Result<PathBuf, String> {
     let mut output = String::new();
     output.push_str("# Benchmark history\n\n");
     output.push_str("Every row is derived from a lane results document under `bench/results/`\n");
-    output.push_str("by `bench/scripts/render-history.py` — never hand-edited. Verdicts and\n");
+    output.push_str("by `terrabase-bench-lane --render-history` — never hand-edited. Verdicts and\n");
     output.push_str("receipts are produced only by the engine-side adapter\n");
     output.push_str("(`src/benchmarks/`); this table tabulates facts. A wall-clock number here\n");
     output.push_str("is a fact about the host and moment that produced it, per the limits each\n");

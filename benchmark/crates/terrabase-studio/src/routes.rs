@@ -2417,6 +2417,7 @@ mod tests {
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "{path} accepted a form without typed confirmation",
             );
+            assert_security_headers(&response);
         }
     }
 

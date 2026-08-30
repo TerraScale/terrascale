@@ -88,14 +88,15 @@ pub(crate) fn decode_member(
 ) -> Result<(), BackupError> {
     let digest_reader = DigestReader { file, hasher: Sha256::new(), remaining: expected_len };
     let mut reader = BufReader::with_capacity(READ_CHUNK_BYTES, digest_reader);
-    let mut cursor = FrameCursor { reader: &mut reader, remaining: expected_len };
-    while cursor.remaining > 0 {
-        let before = cursor.remaining;
-        let record = cursor.decode_record()?;
-        let frame_bytes = before - cursor.remaining;
-        on_record(&record, frame_bytes)?;
+    {
+        let mut cursor = FrameCursor { reader: &mut reader, remaining: expected_len };
+        while cursor.remaining > 0 {
+            let before = cursor.remaining;
+            let record = cursor.decode_record()?;
+            let frame_bytes = before - cursor.remaining;
+            on_record(&record, frame_bytes)?;
+        }
     }
-    drop(cursor);
     let digest = reader.into_inner().finish();
     if digest != expected_digest {
         return Err(BackupError::ChecksumMismatch);
