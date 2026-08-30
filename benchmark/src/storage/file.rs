@@ -1245,7 +1245,8 @@ impl super::StoragePort for FileStorage {
     }
 
     fn snapshot_boundary_available(&self, sequence: StorageSequence) -> bool {
-        self.published.sequence == sequence.get() || self.history.contains_key(&sequence.get())
+        self.published.sequence == sequence.get()
+            || self.history.range(..=sequence.get()).next_back().is_some()
     }
 
     fn winning_durabilities_at(

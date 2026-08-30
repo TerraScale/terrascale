@@ -1772,10 +1772,7 @@ impl Engine {
         Ok(documents
             .into_iter()
             .zip(winners)
-            .map(|(document, durability)| SnapshotRecord {
-                document,
-                durability,
-            })
+            .map(|(document, durability)| SnapshotRecord { document, durability })
             .collect())
     }
 

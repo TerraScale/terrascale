@@ -218,7 +218,10 @@ impl TbepHost for FixedHost {
         Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
     }
 
-    fn topology_read(&self, _scope: &registry::BoundScope) -> Result<registry::TopologyReadResponse, HostingError> {
+    fn topology_read(
+        &self,
+        _scope: &registry::BoundScope,
+    ) -> Result<registry::TopologyReadResponse, HostingError> {
         Ok(registry::TopologyReadResponse {
             binding: registry::BindingKind::LocalUds,
             subsystems: vec!["engine".into()],
@@ -425,7 +428,10 @@ async fn bind_write_read_and_delete_round_trip() {
     match written.into_inner().outcome.expect("the outcome rides").outcome {
         Some(pb::write_outcome::Outcome::Committed(receipt)) => {
             assert_eq!(receipt.sequence, 4);
-            assert_eq!(receipt.acknowledgement, pb::Acknowledgement::AcknowledgementRegionalQuorum as i32);
+            assert_eq!(
+                receipt.acknowledgement,
+                pb::Acknowledgement::AcknowledgementRegionalQuorum as i32
+            );
             assert_eq!(receipt.backup, pb::BackupOutcome::BackupOutcomeFull as i32);
         }
         other => panic!("unexpected write outcome {other:?}"),
@@ -536,7 +542,9 @@ async fn hostile_values_fail_closed_before_the_host_runs() {
     let mut engine = EngineClient::new(channel);
     let mut list = Vec::with_capacity(4097);
     for _ in 0..=4096 {
-        list.push(pb::Value { kind: Some(pb::value::Kind::Null(pb::NullValue::NullValueNull as i32)) });
+        list.push(pb::Value {
+            kind: Some(pb::value::Kind::Null(pb::NullValue::NullValueNull as i32)),
+        });
     }
     let status = engine
         .document_write(mutation(pb::EngineServiceDocumentWriteRequest {

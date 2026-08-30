@@ -391,12 +391,9 @@ pub enum OrderDirection {
 /// The explicit placement of the missing-and-null group under one ordering
 /// key.
 ///
-/// V1's `NullsOrdering` places nulls first or last regardless of the sort
-/// direction, and only its Corax engine honors the spelling
-/// (`src/TerraBase.Client/Documents/Session/Ordering.cs`; the Corax mapping
-/// in `CoraxQueryBuilder.cs`). `Implicit` keeps the seam's own total
-/// document order, which sorts the group first and reverses wholesale under
-/// a descending direction.
+/// Explicit placement puts nulls first or last regardless of sort direction.
+/// `Implicit` keeps the engine's total document order, which sorts the group
+/// first and reverses wholesale under a descending direction.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum NullsPlacement {
     /// No explicit placement: the seam's total document order decides.

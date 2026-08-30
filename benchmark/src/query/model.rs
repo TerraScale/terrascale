@@ -558,11 +558,8 @@ fn compare_objects(
 /// A seeded random ordering compares the per-document hash of the seed and
 /// the document identity, which is one fixed permutation per seed. A field
 /// key with an explicit nulls placement moves the missing-and-null group as
-/// one block to the block's side in either direction — V1's
-/// direction-independent `nulls first`/`nulls last` (the Corax mapping in
-/// `CoraxQueryBuilder.cs`: First is `NullsSmallest` ascending and
-/// `NullsLargest` descending, Last the mirror) — while the implicit
-/// placement keeps the seam's total document order unchanged.
+/// one block to the block's side in either direction. The implicit placement
+/// keeps the engine's total document order unchanged.
 pub(crate) fn compare_documents(
     ordering: &QueryOrdering,
     left: &Document,

@@ -54,19 +54,19 @@ const (
 type NullValue int32
 
 const (
-	NullValue_NULL_UNSPECIFIED NullValue = 0
-	NullValue_NULL             NullValue = 1
+	NullValue_NULL_VALUE_UNSPECIFIED NullValue = 0
+	NullValue_NULL_VALUE_NULL        NullValue = 1
 )
 
 // Enum value maps for NullValue.
 var (
 	NullValue_name = map[int32]string{
-		0: "NULL_UNSPECIFIED",
-		1: "NULL",
+		0: "NULL_VALUE_UNSPECIFIED",
+		1: "NULL_VALUE_NULL",
 	}
 	NullValue_value = map[string]int32{
-		"NULL_UNSPECIFIED": 0,
-		"NULL":             1,
+		"NULL_VALUE_UNSPECIFIED": 0,
+		"NULL_VALUE_NULL":        1,
 	}
 )
 
@@ -101,25 +101,25 @@ func (NullValue) EnumDescriptor() ([]byte, []int) {
 type Acknowledgement int32
 
 const (
-	Acknowledgement_ACK_UNSPECIFIED     Acknowledgement = 0
-	Acknowledgement_ACK_REGIONAL_QUORUM Acknowledgement = 1
-	Acknowledgement_ACK_GLOBAL_QUORUM   Acknowledgement = 2
-	Acknowledgement_ACK_BACKUP          Acknowledgement = 3
+	Acknowledgement_ACKNOWLEDGEMENT_UNSPECIFIED     Acknowledgement = 0
+	Acknowledgement_ACKNOWLEDGEMENT_REGIONAL_QUORUM Acknowledgement = 1
+	Acknowledgement_ACKNOWLEDGEMENT_GLOBAL_QUORUM   Acknowledgement = 2
+	Acknowledgement_ACKNOWLEDGEMENT_BACKUP          Acknowledgement = 3
 )
 
 // Enum value maps for Acknowledgement.
 var (
 	Acknowledgement_name = map[int32]string{
-		0: "ACK_UNSPECIFIED",
-		1: "ACK_REGIONAL_QUORUM",
-		2: "ACK_GLOBAL_QUORUM",
-		3: "ACK_BACKUP",
+		0: "ACKNOWLEDGEMENT_UNSPECIFIED",
+		1: "ACKNOWLEDGEMENT_REGIONAL_QUORUM",
+		2: "ACKNOWLEDGEMENT_GLOBAL_QUORUM",
+		3: "ACKNOWLEDGEMENT_BACKUP",
 	}
 	Acknowledgement_value = map[string]int32{
-		"ACK_UNSPECIFIED":     0,
-		"ACK_REGIONAL_QUORUM": 1,
-		"ACK_GLOBAL_QUORUM":   2,
-		"ACK_BACKUP":          3,
+		"ACKNOWLEDGEMENT_UNSPECIFIED":     0,
+		"ACKNOWLEDGEMENT_REGIONAL_QUORUM": 1,
+		"ACKNOWLEDGEMENT_GLOBAL_QUORUM":   2,
+		"ACKNOWLEDGEMENT_BACKUP":          3,
 	}
 )
 
@@ -154,25 +154,25 @@ func (Acknowledgement) EnumDescriptor() ([]byte, []int) {
 type BackupOutcome int32
 
 const (
-	BackupOutcome_BACKUP_UNSPECIFIED BackupOutcome = 0
-	BackupOutcome_BACKUP_NONE        BackupOutcome = 1
-	BackupOutcome_BACKUP_FULL        BackupOutcome = 2
-	BackupOutcome_BACKUP_PARTIAL     BackupOutcome = 3
+	BackupOutcome_BACKUP_OUTCOME_UNSPECIFIED BackupOutcome = 0
+	BackupOutcome_BACKUP_OUTCOME_NONE        BackupOutcome = 1
+	BackupOutcome_BACKUP_OUTCOME_FULL        BackupOutcome = 2
+	BackupOutcome_BACKUP_OUTCOME_PARTIAL     BackupOutcome = 3
 )
 
 // Enum value maps for BackupOutcome.
 var (
 	BackupOutcome_name = map[int32]string{
-		0: "BACKUP_UNSPECIFIED",
-		1: "BACKUP_NONE",
-		2: "BACKUP_FULL",
-		3: "BACKUP_PARTIAL",
+		0: "BACKUP_OUTCOME_UNSPECIFIED",
+		1: "BACKUP_OUTCOME_NONE",
+		2: "BACKUP_OUTCOME_FULL",
+		3: "BACKUP_OUTCOME_PARTIAL",
 	}
 	BackupOutcome_value = map[string]int32{
-		"BACKUP_UNSPECIFIED": 0,
-		"BACKUP_NONE":        1,
-		"BACKUP_FULL":        2,
-		"BACKUP_PARTIAL":     3,
+		"BACKUP_OUTCOME_UNSPECIFIED": 0,
+		"BACKUP_OUTCOME_NONE":        1,
+		"BACKUP_OUTCOME_FULL":        2,
+		"BACKUP_OUTCOME_PARTIAL":     3,
 	}
 )
 
@@ -1963,7 +1963,7 @@ func (x *Value) GetNull() NullValue {
 			return x.Null
 		}
 	}
-	return NullValue_NULL_UNSPECIFIED
+	return NullValue_NULL_VALUE_UNSPECIFIED
 }
 
 func (x *Value) GetBoolean() bool {
@@ -2348,14 +2348,14 @@ func (x *CommitReceipt) GetAcknowledgement() Acknowledgement {
 	if x != nil {
 		return x.Acknowledgement
 	}
-	return Acknowledgement_ACK_UNSPECIFIED
+	return Acknowledgement_ACKNOWLEDGEMENT_UNSPECIFIED
 }
 
 func (x *CommitReceipt) GetBackup() BackupOutcome {
 	if x != nil {
 		return x.Backup
 	}
-	return BackupOutcome_BACKUP_UNSPECIFIED
+	return BackupOutcome_BACKUP_OUTCOME_UNSPECIFIED
 }
 
 // The expected-version discipline of a mutation.
@@ -3446,7 +3446,7 @@ func (x *BatchWrite) GetOperationId() string {
 	return ""
 }
 
-type DocumentReadRequest struct {
+type EngineServiceDocumentReadRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Collection    string                 `protobuf:"bytes,1,opt,name=collection,proto3" json:"collection,omitempty"` // <= 64 bytes.
 	Document      string                 `protobuf:"bytes,2,opt,name=document,proto3" json:"document,omitempty"`     // <= 64 bytes.
@@ -3455,20 +3455,20 @@ type DocumentReadRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *DocumentReadRequest) Reset() {
-	*x = DocumentReadRequest{}
+func (x *EngineServiceDocumentReadRequest) Reset() {
+	*x = EngineServiceDocumentReadRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *DocumentReadRequest) String() string {
+func (x *EngineServiceDocumentReadRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*DocumentReadRequest) ProtoMessage() {}
+func (*EngineServiceDocumentReadRequest) ProtoMessage() {}
 
-func (x *DocumentReadRequest) ProtoReflect() protoreflect.Message {
+func (x *EngineServiceDocumentReadRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3480,33 +3480,33 @@ func (x *DocumentReadRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use DocumentReadRequest.ProtoReflect.Descriptor instead.
-func (*DocumentReadRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use EngineServiceDocumentReadRequest.ProtoReflect.Descriptor instead.
+func (*EngineServiceDocumentReadRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{25}
 }
 
-func (x *DocumentReadRequest) GetCollection() string {
+func (x *EngineServiceDocumentReadRequest) GetCollection() string {
 	if x != nil {
 		return x.Collection
 	}
 	return ""
 }
 
-func (x *DocumentReadRequest) GetDocument() string {
+func (x *EngineServiceDocumentReadRequest) GetDocument() string {
 	if x != nil {
 		return x.Document
 	}
 	return ""
 }
 
-func (x *DocumentReadRequest) GetLevel() ReadLevel {
+func (x *EngineServiceDocumentReadRequest) GetLevel() ReadLevel {
 	if x != nil {
 		return x.Level
 	}
 	return ReadLevel_READ_LEVEL_UNSPECIFIED
 }
 
-type DocumentReadResponse struct {
+type EngineServiceDocumentReadResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Found         bool                   `protobuf:"varint,1,opt,name=found,proto3" json:"found,omitempty"`
 	Document      *DocumentBody          `protobuf:"bytes,2,opt,name=document,proto3" json:"document,omitempty"`
@@ -3515,20 +3515,20 @@ type DocumentReadResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *DocumentReadResponse) Reset() {
-	*x = DocumentReadResponse{}
+func (x *EngineServiceDocumentReadResponse) Reset() {
+	*x = EngineServiceDocumentReadResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *DocumentReadResponse) String() string {
+func (x *EngineServiceDocumentReadResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*DocumentReadResponse) ProtoMessage() {}
+func (*EngineServiceDocumentReadResponse) ProtoMessage() {}
 
-func (x *DocumentReadResponse) ProtoReflect() protoreflect.Message {
+func (x *EngineServiceDocumentReadResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3540,33 +3540,33 @@ func (x *DocumentReadResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use DocumentReadResponse.ProtoReflect.Descriptor instead.
-func (*DocumentReadResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use EngineServiceDocumentReadResponse.ProtoReflect.Descriptor instead.
+func (*EngineServiceDocumentReadResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{26}
 }
 
-func (x *DocumentReadResponse) GetFound() bool {
+func (x *EngineServiceDocumentReadResponse) GetFound() bool {
 	if x != nil {
 		return x.Found
 	}
 	return false
 }
 
-func (x *DocumentReadResponse) GetDocument() *DocumentBody {
+func (x *EngineServiceDocumentReadResponse) GetDocument() *DocumentBody {
 	if x != nil {
 		return x.Document
 	}
 	return nil
 }
 
-func (x *DocumentReadResponse) GetPosition() uint64 {
+func (x *EngineServiceDocumentReadResponse) GetPosition() uint64 {
 	if x != nil {
 		return x.Position
 	}
 	return 0
 }
 
-type DocumentWriteRequest struct {
+type EngineServiceDocumentWriteRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Document      *DocumentPut           `protobuf:"bytes,1,opt,name=document,proto3" json:"document,omitempty"`
 	Expected      *ExpectedVersion       `protobuf:"bytes,2,opt,name=expected,proto3" json:"expected,omitempty"`
@@ -3577,20 +3577,20 @@ type DocumentWriteRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *DocumentWriteRequest) Reset() {
-	*x = DocumentWriteRequest{}
+func (x *EngineServiceDocumentWriteRequest) Reset() {
+	*x = EngineServiceDocumentWriteRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *DocumentWriteRequest) String() string {
+func (x *EngineServiceDocumentWriteRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*DocumentWriteRequest) ProtoMessage() {}
+func (*EngineServiceDocumentWriteRequest) ProtoMessage() {}
 
-func (x *DocumentWriteRequest) ProtoReflect() protoreflect.Message {
+func (x *EngineServiceDocumentWriteRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3602,67 +3602,67 @@ func (x *DocumentWriteRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use DocumentWriteRequest.ProtoReflect.Descriptor instead.
-func (*DocumentWriteRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use EngineServiceDocumentWriteRequest.ProtoReflect.Descriptor instead.
+func (*EngineServiceDocumentWriteRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{27}
 }
 
-func (x *DocumentWriteRequest) GetDocument() *DocumentPut {
+func (x *EngineServiceDocumentWriteRequest) GetDocument() *DocumentPut {
 	if x != nil {
 		return x.Document
 	}
 	return nil
 }
 
-func (x *DocumentWriteRequest) GetExpected() *ExpectedVersion {
+func (x *EngineServiceDocumentWriteRequest) GetExpected() *ExpectedVersion {
 	if x != nil {
 		return x.Expected
 	}
 	return nil
 }
 
-func (x *DocumentWriteRequest) GetOperationId() string {
+func (x *EngineServiceDocumentWriteRequest) GetOperationId() string {
 	if x != nil {
 		return x.OperationId
 	}
 	return ""
 }
 
-func (x *DocumentWriteRequest) GetAck() Acknowledgement {
+func (x *EngineServiceDocumentWriteRequest) GetAck() Acknowledgement {
 	if x != nil {
 		return x.Ack
 	}
-	return Acknowledgement_ACK_UNSPECIFIED
+	return Acknowledgement_ACKNOWLEDGEMENT_UNSPECIFIED
 }
 
-func (x *DocumentWriteRequest) GetUsage() *UsageAdmissionContext {
+func (x *EngineServiceDocumentWriteRequest) GetUsage() *UsageAdmissionContext {
 	if x != nil {
 		return x.Usage
 	}
 	return nil
 }
 
-type DocumentWriteResponse struct {
+type EngineServiceDocumentWriteResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Outcome       *WriteOutcome          `protobuf:"bytes,1,opt,name=outcome,proto3" json:"outcome,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *DocumentWriteResponse) Reset() {
-	*x = DocumentWriteResponse{}
+func (x *EngineServiceDocumentWriteResponse) Reset() {
+	*x = EngineServiceDocumentWriteResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *DocumentWriteResponse) String() string {
+func (x *EngineServiceDocumentWriteResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*DocumentWriteResponse) ProtoMessage() {}
+func (*EngineServiceDocumentWriteResponse) ProtoMessage() {}
 
-func (x *DocumentWriteResponse) ProtoReflect() protoreflect.Message {
+func (x *EngineServiceDocumentWriteResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3674,19 +3674,19 @@ func (x *DocumentWriteResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use DocumentWriteResponse.ProtoReflect.Descriptor instead.
-func (*DocumentWriteResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use EngineServiceDocumentWriteResponse.ProtoReflect.Descriptor instead.
+func (*EngineServiceDocumentWriteResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{28}
 }
 
-func (x *DocumentWriteResponse) GetOutcome() *WriteOutcome {
+func (x *EngineServiceDocumentWriteResponse) GetOutcome() *WriteOutcome {
 	if x != nil {
 		return x.Outcome
 	}
 	return nil
 }
 
-type DocumentDeleteRequest struct {
+type EngineServiceDocumentDeleteRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Collection    string                 `protobuf:"bytes,1,opt,name=collection,proto3" json:"collection,omitempty"` // <= 64 bytes.
 	Document      string                 `protobuf:"bytes,2,opt,name=document,proto3" json:"document,omitempty"`     // <= 64 bytes.
@@ -3698,20 +3698,20 @@ type DocumentDeleteRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *DocumentDeleteRequest) Reset() {
-	*x = DocumentDeleteRequest{}
+func (x *EngineServiceDocumentDeleteRequest) Reset() {
+	*x = EngineServiceDocumentDeleteRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *DocumentDeleteRequest) String() string {
+func (x *EngineServiceDocumentDeleteRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*DocumentDeleteRequest) ProtoMessage() {}
+func (*EngineServiceDocumentDeleteRequest) ProtoMessage() {}
 
-func (x *DocumentDeleteRequest) ProtoReflect() protoreflect.Message {
+func (x *EngineServiceDocumentDeleteRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3723,74 +3723,74 @@ func (x *DocumentDeleteRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use DocumentDeleteRequest.ProtoReflect.Descriptor instead.
-func (*DocumentDeleteRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use EngineServiceDocumentDeleteRequest.ProtoReflect.Descriptor instead.
+func (*EngineServiceDocumentDeleteRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{29}
 }
 
-func (x *DocumentDeleteRequest) GetCollection() string {
+func (x *EngineServiceDocumentDeleteRequest) GetCollection() string {
 	if x != nil {
 		return x.Collection
 	}
 	return ""
 }
 
-func (x *DocumentDeleteRequest) GetDocument() string {
+func (x *EngineServiceDocumentDeleteRequest) GetDocument() string {
 	if x != nil {
 		return x.Document
 	}
 	return ""
 }
 
-func (x *DocumentDeleteRequest) GetExpected() *ExpectedVersion {
+func (x *EngineServiceDocumentDeleteRequest) GetExpected() *ExpectedVersion {
 	if x != nil {
 		return x.Expected
 	}
 	return nil
 }
 
-func (x *DocumentDeleteRequest) GetOperationId() string {
+func (x *EngineServiceDocumentDeleteRequest) GetOperationId() string {
 	if x != nil {
 		return x.OperationId
 	}
 	return ""
 }
 
-func (x *DocumentDeleteRequest) GetAck() Acknowledgement {
+func (x *EngineServiceDocumentDeleteRequest) GetAck() Acknowledgement {
 	if x != nil {
 		return x.Ack
 	}
-	return Acknowledgement_ACK_UNSPECIFIED
+	return Acknowledgement_ACKNOWLEDGEMENT_UNSPECIFIED
 }
 
-func (x *DocumentDeleteRequest) GetUsage() *UsageAdmissionContext {
+func (x *EngineServiceDocumentDeleteRequest) GetUsage() *UsageAdmissionContext {
 	if x != nil {
 		return x.Usage
 	}
 	return nil
 }
 
-type DocumentDeleteResponse struct {
+type EngineServiceDocumentDeleteResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Outcome       *WriteOutcome          `protobuf:"bytes,1,opt,name=outcome,proto3" json:"outcome,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *DocumentDeleteResponse) Reset() {
-	*x = DocumentDeleteResponse{}
+func (x *EngineServiceDocumentDeleteResponse) Reset() {
+	*x = EngineServiceDocumentDeleteResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *DocumentDeleteResponse) String() string {
+func (x *EngineServiceDocumentDeleteResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*DocumentDeleteResponse) ProtoMessage() {}
+func (*EngineServiceDocumentDeleteResponse) ProtoMessage() {}
 
-func (x *DocumentDeleteResponse) ProtoReflect() protoreflect.Message {
+func (x *EngineServiceDocumentDeleteResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3802,19 +3802,19 @@ func (x *DocumentDeleteResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use DocumentDeleteResponse.ProtoReflect.Descriptor instead.
-func (*DocumentDeleteResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use EngineServiceDocumentDeleteResponse.ProtoReflect.Descriptor instead.
+func (*EngineServiceDocumentDeleteResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{30}
 }
 
-func (x *DocumentDeleteResponse) GetOutcome() *WriteOutcome {
+func (x *EngineServiceDocumentDeleteResponse) GetOutcome() *WriteOutcome {
 	if x != nil {
 		return x.Outcome
 	}
 	return nil
 }
 
-type DocumentBatchRequest struct {
+type EngineServiceDocumentBatchRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Items         []*BatchWrite          `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"` // 1..=256 items.
 	Ack           Acknowledgement        `protobuf:"varint,2,opt,name=ack,proto3,enum=terrabase.v1.Acknowledgement" json:"ack,omitempty"`
@@ -3823,20 +3823,20 @@ type DocumentBatchRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *DocumentBatchRequest) Reset() {
-	*x = DocumentBatchRequest{}
+func (x *EngineServiceDocumentBatchRequest) Reset() {
+	*x = EngineServiceDocumentBatchRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *DocumentBatchRequest) String() string {
+func (x *EngineServiceDocumentBatchRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*DocumentBatchRequest) ProtoMessage() {}
+func (*EngineServiceDocumentBatchRequest) ProtoMessage() {}
 
-func (x *DocumentBatchRequest) ProtoReflect() protoreflect.Message {
+func (x *EngineServiceDocumentBatchRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3848,53 +3848,53 @@ func (x *DocumentBatchRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use DocumentBatchRequest.ProtoReflect.Descriptor instead.
-func (*DocumentBatchRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use EngineServiceDocumentBatchRequest.ProtoReflect.Descriptor instead.
+func (*EngineServiceDocumentBatchRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{31}
 }
 
-func (x *DocumentBatchRequest) GetItems() []*BatchWrite {
+func (x *EngineServiceDocumentBatchRequest) GetItems() []*BatchWrite {
 	if x != nil {
 		return x.Items
 	}
 	return nil
 }
 
-func (x *DocumentBatchRequest) GetAck() Acknowledgement {
+func (x *EngineServiceDocumentBatchRequest) GetAck() Acknowledgement {
 	if x != nil {
 		return x.Ack
 	}
-	return Acknowledgement_ACK_UNSPECIFIED
+	return Acknowledgement_ACKNOWLEDGEMENT_UNSPECIFIED
 }
 
-func (x *DocumentBatchRequest) GetUsage() *UsageAdmissionContext {
+func (x *EngineServiceDocumentBatchRequest) GetUsage() *UsageAdmissionContext {
 	if x != nil {
 		return x.Usage
 	}
 	return nil
 }
 
-type DocumentBatchResponse struct {
+type EngineServiceDocumentBatchResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Outcome       *WriteOutcome          `protobuf:"bytes,1,opt,name=outcome,proto3" json:"outcome,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *DocumentBatchResponse) Reset() {
-	*x = DocumentBatchResponse{}
+func (x *EngineServiceDocumentBatchResponse) Reset() {
+	*x = EngineServiceDocumentBatchResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *DocumentBatchResponse) String() string {
+func (x *EngineServiceDocumentBatchResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*DocumentBatchResponse) ProtoMessage() {}
+func (*EngineServiceDocumentBatchResponse) ProtoMessage() {}
 
-func (x *DocumentBatchResponse) ProtoReflect() protoreflect.Message {
+func (x *EngineServiceDocumentBatchResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3906,19 +3906,19 @@ func (x *DocumentBatchResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use DocumentBatchResponse.ProtoReflect.Descriptor instead.
-func (*DocumentBatchResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use EngineServiceDocumentBatchResponse.ProtoReflect.Descriptor instead.
+func (*EngineServiceDocumentBatchResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{32}
 }
 
-func (x *DocumentBatchResponse) GetOutcome() *WriteOutcome {
+func (x *EngineServiceDocumentBatchResponse) GetOutcome() *WriteOutcome {
 	if x != nil {
 		return x.Outcome
 	}
 	return nil
 }
 
-type QueryExecuteRequest struct {
+type EngineServiceQueryExecuteRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	QueryId       uint64                 `protobuf:"varint,1,opt,name=query_id,json=queryId,proto3" json:"query_id,omitempty"`
 	Text          string                 `protobuf:"bytes,2,opt,name=text,proto3" json:"text,omitempty"` // 1..=4096 bytes.
@@ -3928,20 +3928,20 @@ type QueryExecuteRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *QueryExecuteRequest) Reset() {
-	*x = QueryExecuteRequest{}
+func (x *EngineServiceQueryExecuteRequest) Reset() {
+	*x = EngineServiceQueryExecuteRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *QueryExecuteRequest) String() string {
+func (x *EngineServiceQueryExecuteRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*QueryExecuteRequest) ProtoMessage() {}
+func (*EngineServiceQueryExecuteRequest) ProtoMessage() {}
 
-func (x *QueryExecuteRequest) ProtoReflect() protoreflect.Message {
+func (x *EngineServiceQueryExecuteRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3953,40 +3953,40 @@ func (x *QueryExecuteRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use QueryExecuteRequest.ProtoReflect.Descriptor instead.
-func (*QueryExecuteRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use EngineServiceQueryExecuteRequest.ProtoReflect.Descriptor instead.
+func (*EngineServiceQueryExecuteRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{33}
 }
 
-func (x *QueryExecuteRequest) GetQueryId() uint64 {
+func (x *EngineServiceQueryExecuteRequest) GetQueryId() uint64 {
 	if x != nil {
 		return x.QueryId
 	}
 	return 0
 }
 
-func (x *QueryExecuteRequest) GetText() string {
+func (x *EngineServiceQueryExecuteRequest) GetText() string {
 	if x != nil {
 		return x.Text
 	}
 	return ""
 }
 
-func (x *QueryExecuteRequest) GetMaxItems() uint32 {
+func (x *EngineServiceQueryExecuteRequest) GetMaxItems() uint32 {
 	if x != nil {
 		return x.MaxItems
 	}
 	return 0
 }
 
-func (x *QueryExecuteRequest) GetLevel() ReadLevel {
+func (x *EngineServiceQueryExecuteRequest) GetLevel() ReadLevel {
 	if x != nil {
 		return x.Level
 	}
 	return ReadLevel_READ_LEVEL_UNSPECIFIED
 }
 
-type QueryExecuteResponse struct {
+type EngineServiceQueryExecuteResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Documents     []*DocumentBody        `protobuf:"bytes,1,rep,name=documents,proto3" json:"documents,omitempty"` // <= max_items.
 	Count         uint32                 `protobuf:"varint,2,opt,name=count,proto3" json:"count,omitempty"`
@@ -3996,20 +3996,20 @@ type QueryExecuteResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *QueryExecuteResponse) Reset() {
-	*x = QueryExecuteResponse{}
+func (x *EngineServiceQueryExecuteResponse) Reset() {
+	*x = EngineServiceQueryExecuteResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *QueryExecuteResponse) String() string {
+func (x *EngineServiceQueryExecuteResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*QueryExecuteResponse) ProtoMessage() {}
+func (*EngineServiceQueryExecuteResponse) ProtoMessage() {}
 
-func (x *QueryExecuteResponse) ProtoReflect() protoreflect.Message {
+func (x *EngineServiceQueryExecuteResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4021,60 +4021,60 @@ func (x *QueryExecuteResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use QueryExecuteResponse.ProtoReflect.Descriptor instead.
-func (*QueryExecuteResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use EngineServiceQueryExecuteResponse.ProtoReflect.Descriptor instead.
+func (*EngineServiceQueryExecuteResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{34}
 }
 
-func (x *QueryExecuteResponse) GetDocuments() []*DocumentBody {
+func (x *EngineServiceQueryExecuteResponse) GetDocuments() []*DocumentBody {
 	if x != nil {
 		return x.Documents
 	}
 	return nil
 }
 
-func (x *QueryExecuteResponse) GetCount() uint32 {
+func (x *EngineServiceQueryExecuteResponse) GetCount() uint32 {
 	if x != nil {
 		return x.Count
 	}
 	return 0
 }
 
-func (x *QueryExecuteResponse) GetTerminal() QueryTerminal {
+func (x *EngineServiceQueryExecuteResponse) GetTerminal() QueryTerminal {
 	if x != nil {
 		return x.Terminal
 	}
 	return QueryTerminal_QUERY_TERMINAL_UNSPECIFIED
 }
 
-func (x *QueryExecuteResponse) GetPosition() uint64 {
+func (x *EngineServiceQueryExecuteResponse) GetPosition() uint64 {
 	if x != nil {
 		return x.Position
 	}
 	return 0
 }
 
-type QueryCancelRequest struct {
+type EngineServiceQueryCancelRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	QueryId       uint64                 `protobuf:"varint,1,opt,name=query_id,json=queryId,proto3" json:"query_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *QueryCancelRequest) Reset() {
-	*x = QueryCancelRequest{}
+func (x *EngineServiceQueryCancelRequest) Reset() {
+	*x = EngineServiceQueryCancelRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *QueryCancelRequest) String() string {
+func (x *EngineServiceQueryCancelRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*QueryCancelRequest) ProtoMessage() {}
+func (*EngineServiceQueryCancelRequest) ProtoMessage() {}
 
-func (x *QueryCancelRequest) ProtoReflect() protoreflect.Message {
+func (x *EngineServiceQueryCancelRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4086,39 +4086,39 @@ func (x *QueryCancelRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use QueryCancelRequest.ProtoReflect.Descriptor instead.
-func (*QueryCancelRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use EngineServiceQueryCancelRequest.ProtoReflect.Descriptor instead.
+func (*EngineServiceQueryCancelRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{35}
 }
 
-func (x *QueryCancelRequest) GetQueryId() uint64 {
+func (x *EngineServiceQueryCancelRequest) GetQueryId() uint64 {
 	if x != nil {
 		return x.QueryId
 	}
 	return 0
 }
 
-type QueryCancelResponse struct {
+type EngineServiceQueryCancelResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Outcome       CancelOutcome          `protobuf:"varint,1,opt,name=outcome,proto3,enum=terrabase.v1.CancelOutcome" json:"outcome,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *QueryCancelResponse) Reset() {
-	*x = QueryCancelResponse{}
+func (x *EngineServiceQueryCancelResponse) Reset() {
+	*x = EngineServiceQueryCancelResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *QueryCancelResponse) String() string {
+func (x *EngineServiceQueryCancelResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*QueryCancelResponse) ProtoMessage() {}
+func (*EngineServiceQueryCancelResponse) ProtoMessage() {}
 
-func (x *QueryCancelResponse) ProtoReflect() protoreflect.Message {
+func (x *EngineServiceQueryCancelResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4130,19 +4130,19 @@ func (x *QueryCancelResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use QueryCancelResponse.ProtoReflect.Descriptor instead.
-func (*QueryCancelResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use EngineServiceQueryCancelResponse.ProtoReflect.Descriptor instead.
+func (*EngineServiceQueryCancelResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{36}
 }
 
-func (x *QueryCancelResponse) GetOutcome() CancelOutcome {
+func (x *EngineServiceQueryCancelResponse) GetOutcome() CancelOutcome {
 	if x != nil {
 		return x.Outcome
 	}
 	return CancelOutcome_CANCEL_OUTCOME_UNSPECIFIED
 }
 
-type FamilyReadRequest struct {
+type EngineServiceFamilyReadRequest struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	Family string                 `protobuf:"bytes,1,opt,name=family,proto3" json:"family,omitempty"` // closed vocabulary: attachment, counter,
 	// time_series, revisions, compare_exchange,
@@ -4154,20 +4154,20 @@ type FamilyReadRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *FamilyReadRequest) Reset() {
-	*x = FamilyReadRequest{}
+func (x *EngineServiceFamilyReadRequest) Reset() {
+	*x = EngineServiceFamilyReadRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *FamilyReadRequest) String() string {
+func (x *EngineServiceFamilyReadRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*FamilyReadRequest) ProtoMessage() {}
+func (*EngineServiceFamilyReadRequest) ProtoMessage() {}
 
-func (x *FamilyReadRequest) ProtoReflect() protoreflect.Message {
+func (x *EngineServiceFamilyReadRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4179,40 +4179,40 @@ func (x *FamilyReadRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use FamilyReadRequest.ProtoReflect.Descriptor instead.
-func (*FamilyReadRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use EngineServiceFamilyReadRequest.ProtoReflect.Descriptor instead.
+func (*EngineServiceFamilyReadRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{37}
 }
 
-func (x *FamilyReadRequest) GetFamily() string {
+func (x *EngineServiceFamilyReadRequest) GetFamily() string {
 	if x != nil {
 		return x.Family
 	}
 	return ""
 }
 
-func (x *FamilyReadRequest) GetName() string {
+func (x *EngineServiceFamilyReadRequest) GetName() string {
 	if x != nil {
 		return x.Name
 	}
 	return ""
 }
 
-func (x *FamilyReadRequest) GetRequestCodec() string {
+func (x *EngineServiceFamilyReadRequest) GetRequestCodec() string {
 	if x != nil {
 		return x.RequestCodec
 	}
 	return ""
 }
 
-func (x *FamilyReadRequest) GetRequest() []byte {
+func (x *EngineServiceFamilyReadRequest) GetRequest() []byte {
 	if x != nil {
 		return x.Request
 	}
 	return nil
 }
 
-type FamilyReadResponse struct {
+type EngineServiceFamilyReadResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ResponseCodec string                 `protobuf:"bytes,1,opt,name=response_codec,json=responseCodec,proto3" json:"response_codec,omitempty"`
 	Response      []byte                 `protobuf:"bytes,2,opt,name=response,proto3" json:"response,omitempty"` // <= 16 MiB.
@@ -4220,20 +4220,20 @@ type FamilyReadResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *FamilyReadResponse) Reset() {
-	*x = FamilyReadResponse{}
+func (x *EngineServiceFamilyReadResponse) Reset() {
+	*x = EngineServiceFamilyReadResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *FamilyReadResponse) String() string {
+func (x *EngineServiceFamilyReadResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*FamilyReadResponse) ProtoMessage() {}
+func (*EngineServiceFamilyReadResponse) ProtoMessage() {}
 
-func (x *FamilyReadResponse) ProtoReflect() protoreflect.Message {
+func (x *EngineServiceFamilyReadResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4245,26 +4245,26 @@ func (x *FamilyReadResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use FamilyReadResponse.ProtoReflect.Descriptor instead.
-func (*FamilyReadResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use EngineServiceFamilyReadResponse.ProtoReflect.Descriptor instead.
+func (*EngineServiceFamilyReadResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{38}
 }
 
-func (x *FamilyReadResponse) GetResponseCodec() string {
+func (x *EngineServiceFamilyReadResponse) GetResponseCodec() string {
 	if x != nil {
 		return x.ResponseCodec
 	}
 	return ""
 }
 
-func (x *FamilyReadResponse) GetResponse() []byte {
+func (x *EngineServiceFamilyReadResponse) GetResponse() []byte {
 	if x != nil {
 		return x.Response
 	}
 	return nil
 }
 
-type FamilyWriteRequest struct {
+type EngineServiceFamilyWriteRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Family        string                 `protobuf:"bytes,1,opt,name=family,proto3" json:"family,omitempty"`
 	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
@@ -4276,20 +4276,20 @@ type FamilyWriteRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *FamilyWriteRequest) Reset() {
-	*x = FamilyWriteRequest{}
+func (x *EngineServiceFamilyWriteRequest) Reset() {
+	*x = EngineServiceFamilyWriteRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *FamilyWriteRequest) String() string {
+func (x *EngineServiceFamilyWriteRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*FamilyWriteRequest) ProtoMessage() {}
+func (*EngineServiceFamilyWriteRequest) ProtoMessage() {}
 
-func (x *FamilyWriteRequest) ProtoReflect() protoreflect.Message {
+func (x *EngineServiceFamilyWriteRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4301,54 +4301,54 @@ func (x *FamilyWriteRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use FamilyWriteRequest.ProtoReflect.Descriptor instead.
-func (*FamilyWriteRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use EngineServiceFamilyWriteRequest.ProtoReflect.Descriptor instead.
+func (*EngineServiceFamilyWriteRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{39}
 }
 
-func (x *FamilyWriteRequest) GetFamily() string {
+func (x *EngineServiceFamilyWriteRequest) GetFamily() string {
 	if x != nil {
 		return x.Family
 	}
 	return ""
 }
 
-func (x *FamilyWriteRequest) GetName() string {
+func (x *EngineServiceFamilyWriteRequest) GetName() string {
 	if x != nil {
 		return x.Name
 	}
 	return ""
 }
 
-func (x *FamilyWriteRequest) GetRequestCodec() string {
+func (x *EngineServiceFamilyWriteRequest) GetRequestCodec() string {
 	if x != nil {
 		return x.RequestCodec
 	}
 	return ""
 }
 
-func (x *FamilyWriteRequest) GetRequest() []byte {
+func (x *EngineServiceFamilyWriteRequest) GetRequest() []byte {
 	if x != nil {
 		return x.Request
 	}
 	return nil
 }
 
-func (x *FamilyWriteRequest) GetOperationId() string {
+func (x *EngineServiceFamilyWriteRequest) GetOperationId() string {
 	if x != nil {
 		return x.OperationId
 	}
 	return ""
 }
 
-func (x *FamilyWriteRequest) GetUsage() *UsageAdmissionContext {
+func (x *EngineServiceFamilyWriteRequest) GetUsage() *UsageAdmissionContext {
 	if x != nil {
 		return x.Usage
 	}
 	return nil
 }
 
-type FamilyWriteResponse struct {
+type EngineServiceFamilyWriteResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ResponseCodec string                 `protobuf:"bytes,1,opt,name=response_codec,json=responseCodec,proto3" json:"response_codec,omitempty"`
 	Response      []byte                 `protobuf:"bytes,2,opt,name=response,proto3" json:"response,omitempty"`
@@ -4356,20 +4356,20 @@ type FamilyWriteResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *FamilyWriteResponse) Reset() {
-	*x = FamilyWriteResponse{}
+func (x *EngineServiceFamilyWriteResponse) Reset() {
+	*x = EngineServiceFamilyWriteResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *FamilyWriteResponse) String() string {
+func (x *EngineServiceFamilyWriteResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*FamilyWriteResponse) ProtoMessage() {}
+func (*EngineServiceFamilyWriteResponse) ProtoMessage() {}
 
-func (x *FamilyWriteResponse) ProtoReflect() protoreflect.Message {
+func (x *EngineServiceFamilyWriteResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4381,26 +4381,26 @@ func (x *FamilyWriteResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use FamilyWriteResponse.ProtoReflect.Descriptor instead.
-func (*FamilyWriteResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use EngineServiceFamilyWriteResponse.ProtoReflect.Descriptor instead.
+func (*EngineServiceFamilyWriteResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{40}
 }
 
-func (x *FamilyWriteResponse) GetResponseCodec() string {
+func (x *EngineServiceFamilyWriteResponse) GetResponseCodec() string {
 	if x != nil {
 		return x.ResponseCodec
 	}
 	return ""
 }
 
-func (x *FamilyWriteResponse) GetResponse() []byte {
+func (x *EngineServiceFamilyWriteResponse) GetResponse() []byte {
 	if x != nil {
 		return x.Response
 	}
 	return nil
 }
 
-type BackboneSubscribeRequest struct {
+type BackboneServiceSubscribeRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	SubscriptionId uint64                 `protobuf:"varint,1,opt,name=subscription_id,json=subscriptionId,proto3" json:"subscription_id,omitempty"`
 	Collections    []string               `protobuf:"bytes,2,rep,name=collections,proto3" json:"collections,omitempty"` // <= 64 items, each <= 64 bytes.
@@ -4409,20 +4409,20 @@ type BackboneSubscribeRequest struct {
 	sizeCache      protoimpl.SizeCache
 }
 
-func (x *BackboneSubscribeRequest) Reset() {
-	*x = BackboneSubscribeRequest{}
+func (x *BackboneServiceSubscribeRequest) Reset() {
+	*x = BackboneServiceSubscribeRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *BackboneSubscribeRequest) String() string {
+func (x *BackboneServiceSubscribeRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*BackboneSubscribeRequest) ProtoMessage() {}
+func (*BackboneServiceSubscribeRequest) ProtoMessage() {}
 
-func (x *BackboneSubscribeRequest) ProtoReflect() protoreflect.Message {
+func (x *BackboneServiceSubscribeRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4434,33 +4434,33 @@ func (x *BackboneSubscribeRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use BackboneSubscribeRequest.ProtoReflect.Descriptor instead.
-func (*BackboneSubscribeRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use BackboneServiceSubscribeRequest.ProtoReflect.Descriptor instead.
+func (*BackboneServiceSubscribeRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{41}
 }
 
-func (x *BackboneSubscribeRequest) GetSubscriptionId() uint64 {
+func (x *BackboneServiceSubscribeRequest) GetSubscriptionId() uint64 {
 	if x != nil {
 		return x.SubscriptionId
 	}
 	return 0
 }
 
-func (x *BackboneSubscribeRequest) GetCollections() []string {
+func (x *BackboneServiceSubscribeRequest) GetCollections() []string {
 	if x != nil {
 		return x.Collections
 	}
 	return nil
 }
 
-func (x *BackboneSubscribeRequest) GetFrom() *SubscriptionStart {
+func (x *BackboneServiceSubscribeRequest) GetFrom() *SubscriptionStart {
 	if x != nil {
 		return x.From
 	}
 	return nil
 }
 
-type BackboneSubscribeResponse struct {
+type BackboneServiceSubscribeResponse struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	SubscriptionId uint64                 `protobuf:"varint,1,opt,name=subscription_id,json=subscriptionId,proto3" json:"subscription_id,omitempty"`
 	StartSequence  uint64                 `protobuf:"varint,2,opt,name=start_sequence,json=startSequence,proto3" json:"start_sequence,omitempty"`
@@ -4468,20 +4468,20 @@ type BackboneSubscribeResponse struct {
 	sizeCache      protoimpl.SizeCache
 }
 
-func (x *BackboneSubscribeResponse) Reset() {
-	*x = BackboneSubscribeResponse{}
+func (x *BackboneServiceSubscribeResponse) Reset() {
+	*x = BackboneServiceSubscribeResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *BackboneSubscribeResponse) String() string {
+func (x *BackboneServiceSubscribeResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*BackboneSubscribeResponse) ProtoMessage() {}
+func (*BackboneServiceSubscribeResponse) ProtoMessage() {}
 
-func (x *BackboneSubscribeResponse) ProtoReflect() protoreflect.Message {
+func (x *BackboneServiceSubscribeResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4493,26 +4493,26 @@ func (x *BackboneSubscribeResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use BackboneSubscribeResponse.ProtoReflect.Descriptor instead.
-func (*BackboneSubscribeResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use BackboneServiceSubscribeResponse.ProtoReflect.Descriptor instead.
+func (*BackboneServiceSubscribeResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{42}
 }
 
-func (x *BackboneSubscribeResponse) GetSubscriptionId() uint64 {
+func (x *BackboneServiceSubscribeResponse) GetSubscriptionId() uint64 {
 	if x != nil {
 		return x.SubscriptionId
 	}
 	return 0
 }
 
-func (x *BackboneSubscribeResponse) GetStartSequence() uint64 {
+func (x *BackboneServiceSubscribeResponse) GetStartSequence() uint64 {
 	if x != nil {
 		return x.StartSequence
 	}
 	return 0
 }
 
-type BackboneAcknowledgeRequest struct {
+type BackboneServiceAcknowledgeRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	SubscriptionId  uint64                 `protobuf:"varint,1,opt,name=subscription_id,json=subscriptionId,proto3" json:"subscription_id,omitempty"`
 	ThroughSequence uint64                 `protobuf:"varint,2,opt,name=through_sequence,json=throughSequence,proto3" json:"through_sequence,omitempty"`
@@ -4520,20 +4520,20 @@ type BackboneAcknowledgeRequest struct {
 	sizeCache       protoimpl.SizeCache
 }
 
-func (x *BackboneAcknowledgeRequest) Reset() {
-	*x = BackboneAcknowledgeRequest{}
+func (x *BackboneServiceAcknowledgeRequest) Reset() {
+	*x = BackboneServiceAcknowledgeRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *BackboneAcknowledgeRequest) String() string {
+func (x *BackboneServiceAcknowledgeRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*BackboneAcknowledgeRequest) ProtoMessage() {}
+func (*BackboneServiceAcknowledgeRequest) ProtoMessage() {}
 
-func (x *BackboneAcknowledgeRequest) ProtoReflect() protoreflect.Message {
+func (x *BackboneServiceAcknowledgeRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4545,26 +4545,26 @@ func (x *BackboneAcknowledgeRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use BackboneAcknowledgeRequest.ProtoReflect.Descriptor instead.
-func (*BackboneAcknowledgeRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use BackboneServiceAcknowledgeRequest.ProtoReflect.Descriptor instead.
+func (*BackboneServiceAcknowledgeRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{43}
 }
 
-func (x *BackboneAcknowledgeRequest) GetSubscriptionId() uint64 {
+func (x *BackboneServiceAcknowledgeRequest) GetSubscriptionId() uint64 {
 	if x != nil {
 		return x.SubscriptionId
 	}
 	return 0
 }
 
-func (x *BackboneAcknowledgeRequest) GetThroughSequence() uint64 {
+func (x *BackboneServiceAcknowledgeRequest) GetThroughSequence() uint64 {
 	if x != nil {
 		return x.ThroughSequence
 	}
 	return 0
 }
 
-type BackboneAcknowledgeResponse struct {
+type BackboneServiceAcknowledgeResponse struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	SubscriptionId      uint64                 `protobuf:"varint,1,opt,name=subscription_id,json=subscriptionId,proto3" json:"subscription_id,omitempty"`
 	AcknowledgedThrough uint64                 `protobuf:"varint,2,opt,name=acknowledged_through,json=acknowledgedThrough,proto3" json:"acknowledged_through,omitempty"`
@@ -4572,20 +4572,20 @@ type BackboneAcknowledgeResponse struct {
 	sizeCache           protoimpl.SizeCache
 }
 
-func (x *BackboneAcknowledgeResponse) Reset() {
-	*x = BackboneAcknowledgeResponse{}
+func (x *BackboneServiceAcknowledgeResponse) Reset() {
+	*x = BackboneServiceAcknowledgeResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *BackboneAcknowledgeResponse) String() string {
+func (x *BackboneServiceAcknowledgeResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*BackboneAcknowledgeResponse) ProtoMessage() {}
+func (*BackboneServiceAcknowledgeResponse) ProtoMessage() {}
 
-func (x *BackboneAcknowledgeResponse) ProtoReflect() protoreflect.Message {
+func (x *BackboneServiceAcknowledgeResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4597,46 +4597,46 @@ func (x *BackboneAcknowledgeResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use BackboneAcknowledgeResponse.ProtoReflect.Descriptor instead.
-func (*BackboneAcknowledgeResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use BackboneServiceAcknowledgeResponse.ProtoReflect.Descriptor instead.
+func (*BackboneServiceAcknowledgeResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{44}
 }
 
-func (x *BackboneAcknowledgeResponse) GetSubscriptionId() uint64 {
+func (x *BackboneServiceAcknowledgeResponse) GetSubscriptionId() uint64 {
 	if x != nil {
 		return x.SubscriptionId
 	}
 	return 0
 }
 
-func (x *BackboneAcknowledgeResponse) GetAcknowledgedThrough() uint64 {
+func (x *BackboneServiceAcknowledgeResponse) GetAcknowledgedThrough() uint64 {
 	if x != nil {
 		return x.AcknowledgedThrough
 	}
 	return 0
 }
 
-type BackboneUnsubscribeRequest struct {
+type BackboneServiceUnsubscribeRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	SubscriptionId uint64                 `protobuf:"varint,1,opt,name=subscription_id,json=subscriptionId,proto3" json:"subscription_id,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
-func (x *BackboneUnsubscribeRequest) Reset() {
-	*x = BackboneUnsubscribeRequest{}
+func (x *BackboneServiceUnsubscribeRequest) Reset() {
+	*x = BackboneServiceUnsubscribeRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *BackboneUnsubscribeRequest) String() string {
+func (x *BackboneServiceUnsubscribeRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*BackboneUnsubscribeRequest) ProtoMessage() {}
+func (*BackboneServiceUnsubscribeRequest) ProtoMessage() {}
 
-func (x *BackboneUnsubscribeRequest) ProtoReflect() protoreflect.Message {
+func (x *BackboneServiceUnsubscribeRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4648,39 +4648,39 @@ func (x *BackboneUnsubscribeRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use BackboneUnsubscribeRequest.ProtoReflect.Descriptor instead.
-func (*BackboneUnsubscribeRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use BackboneServiceUnsubscribeRequest.ProtoReflect.Descriptor instead.
+func (*BackboneServiceUnsubscribeRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{45}
 }
 
-func (x *BackboneUnsubscribeRequest) GetSubscriptionId() uint64 {
+func (x *BackboneServiceUnsubscribeRequest) GetSubscriptionId() uint64 {
 	if x != nil {
 		return x.SubscriptionId
 	}
 	return 0
 }
 
-type BackboneUnsubscribeResponse struct {
+type BackboneServiceUnsubscribeResponse struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	SubscriptionId uint64                 `protobuf:"varint,1,opt,name=subscription_id,json=subscriptionId,proto3" json:"subscription_id,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
-func (x *BackboneUnsubscribeResponse) Reset() {
-	*x = BackboneUnsubscribeResponse{}
+func (x *BackboneServiceUnsubscribeResponse) Reset() {
+	*x = BackboneServiceUnsubscribeResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *BackboneUnsubscribeResponse) String() string {
+func (x *BackboneServiceUnsubscribeResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*BackboneUnsubscribeResponse) ProtoMessage() {}
+func (*BackboneServiceUnsubscribeResponse) ProtoMessage() {}
 
-func (x *BackboneUnsubscribeResponse) ProtoReflect() protoreflect.Message {
+func (x *BackboneServiceUnsubscribeResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4692,12 +4692,12 @@ func (x *BackboneUnsubscribeResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use BackboneUnsubscribeResponse.ProtoReflect.Descriptor instead.
-func (*BackboneUnsubscribeResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use BackboneServiceUnsubscribeResponse.ProtoReflect.Descriptor instead.
+func (*BackboneServiceUnsubscribeResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{46}
 }
 
-func (x *BackboneUnsubscribeResponse) GetSubscriptionId() uint64 {
+func (x *BackboneServiceUnsubscribeResponse) GetSubscriptionId() uint64 {
 	if x != nil {
 		return x.SubscriptionId
 	}
@@ -4897,33 +4897,33 @@ func (x *SubscriptionClosed) GetReason() SubscriptionCloseReason {
 
 // The server-stream event of one backbone subscription: the initial
 // confirmation, then ordered batches, triggers, and the close frame.
-type BackboneStreamEvent struct {
+type SubscribeResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Event:
 	//
-	//	*BackboneStreamEvent_Subscribed
-	//	*BackboneStreamEvent_Batch
-	//	*BackboneStreamEvent_Trigger
-	//	*BackboneStreamEvent_Closed
-	Event         isBackboneStreamEvent_Event `protobuf_oneof:"event"`
+	//	*SubscribeResponse_Subscribed
+	//	*SubscribeResponse_Batch
+	//	*SubscribeResponse_Trigger
+	//	*SubscribeResponse_Closed
+	Event         isSubscribeResponse_Event `protobuf_oneof:"event"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *BackboneStreamEvent) Reset() {
-	*x = BackboneStreamEvent{}
+func (x *SubscribeResponse) Reset() {
+	*x = SubscribeResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *BackboneStreamEvent) String() string {
+func (x *SubscribeResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*BackboneStreamEvent) ProtoMessage() {}
+func (*SubscribeResponse) ProtoMessage() {}
 
-func (x *BackboneStreamEvent) ProtoReflect() protoreflect.Message {
+func (x *SubscribeResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4935,83 +4935,83 @@ func (x *BackboneStreamEvent) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use BackboneStreamEvent.ProtoReflect.Descriptor instead.
-func (*BackboneStreamEvent) Descriptor() ([]byte, []int) {
+// Deprecated: Use SubscribeResponse.ProtoReflect.Descriptor instead.
+func (*SubscribeResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{50}
 }
 
-func (x *BackboneStreamEvent) GetEvent() isBackboneStreamEvent_Event {
+func (x *SubscribeResponse) GetEvent() isSubscribeResponse_Event {
 	if x != nil {
 		return x.Event
 	}
 	return nil
 }
 
-func (x *BackboneStreamEvent) GetSubscribed() *BackboneSubscribeResponse {
+func (x *SubscribeResponse) GetSubscribed() *BackboneServiceSubscribeResponse {
 	if x != nil {
-		if x, ok := x.Event.(*BackboneStreamEvent_Subscribed); ok {
+		if x, ok := x.Event.(*SubscribeResponse_Subscribed); ok {
 			return x.Subscribed
 		}
 	}
 	return nil
 }
 
-func (x *BackboneStreamEvent) GetBatch() *SubscriptionBatch {
+func (x *SubscribeResponse) GetBatch() *SubscriptionBatch {
 	if x != nil {
-		if x, ok := x.Event.(*BackboneStreamEvent_Batch); ok {
+		if x, ok := x.Event.(*SubscribeResponse_Batch); ok {
 			return x.Batch
 		}
 	}
 	return nil
 }
 
-func (x *BackboneStreamEvent) GetTrigger() *TriggerNotification {
+func (x *SubscribeResponse) GetTrigger() *TriggerNotification {
 	if x != nil {
-		if x, ok := x.Event.(*BackboneStreamEvent_Trigger); ok {
+		if x, ok := x.Event.(*SubscribeResponse_Trigger); ok {
 			return x.Trigger
 		}
 	}
 	return nil
 }
 
-func (x *BackboneStreamEvent) GetClosed() *SubscriptionClosed {
+func (x *SubscribeResponse) GetClosed() *SubscriptionClosed {
 	if x != nil {
-		if x, ok := x.Event.(*BackboneStreamEvent_Closed); ok {
+		if x, ok := x.Event.(*SubscribeResponse_Closed); ok {
 			return x.Closed
 		}
 	}
 	return nil
 }
 
-type isBackboneStreamEvent_Event interface {
-	isBackboneStreamEvent_Event()
+type isSubscribeResponse_Event interface {
+	isSubscribeResponse_Event()
 }
 
-type BackboneStreamEvent_Subscribed struct {
-	Subscribed *BackboneSubscribeResponse `protobuf:"bytes,1,opt,name=subscribed,proto3,oneof"`
+type SubscribeResponse_Subscribed struct {
+	Subscribed *BackboneServiceSubscribeResponse `protobuf:"bytes,1,opt,name=subscribed,proto3,oneof"`
 }
 
-type BackboneStreamEvent_Batch struct {
+type SubscribeResponse_Batch struct {
 	Batch *SubscriptionBatch `protobuf:"bytes,2,opt,name=batch,proto3,oneof"`
 }
 
-type BackboneStreamEvent_Trigger struct {
+type SubscribeResponse_Trigger struct {
 	Trigger *TriggerNotification `protobuf:"bytes,3,opt,name=trigger,proto3,oneof"`
 }
 
-type BackboneStreamEvent_Closed struct {
+type SubscribeResponse_Closed struct {
 	Closed *SubscriptionClosed `protobuf:"bytes,4,opt,name=closed,proto3,oneof"`
 }
 
-func (*BackboneStreamEvent_Subscribed) isBackboneStreamEvent_Event() {}
+func (*SubscribeResponse_Subscribed) isSubscribeResponse_Event() {}
 
-func (*BackboneStreamEvent_Batch) isBackboneStreamEvent_Event() {}
+func (*SubscribeResponse_Batch) isSubscribeResponse_Event() {}
 
-func (*BackboneStreamEvent_Trigger) isBackboneStreamEvent_Event() {}
+func (*SubscribeResponse_Trigger) isSubscribeResponse_Event() {}
 
-func (*BackboneStreamEvent_Closed) isBackboneStreamEvent_Event() {}
+func (*SubscribeResponse_Closed) isSubscribeResponse_Event() {}
 
-type SyncSessionSetupRequest struct {
+type SyncServiceSessionSetupRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Collection    string                 `protobuf:"bytes,1,opt,name=collection,proto3" json:"collection,omitempty"` // <= 64 bytes.
 	Resume        []byte                 `protobuf:"bytes,2,opt,name=resume,proto3" json:"resume,omitempty"`         // <= 1057 bytes; empty starts fresh.
@@ -5019,20 +5019,20 @@ type SyncSessionSetupRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SyncSessionSetupRequest) Reset() {
-	*x = SyncSessionSetupRequest{}
+func (x *SyncServiceSessionSetupRequest) Reset() {
+	*x = SyncServiceSessionSetupRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SyncSessionSetupRequest) String() string {
+func (x *SyncServiceSessionSetupRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SyncSessionSetupRequest) ProtoMessage() {}
+func (*SyncServiceSessionSetupRequest) ProtoMessage() {}
 
-func (x *SyncSessionSetupRequest) ProtoReflect() protoreflect.Message {
+func (x *SyncServiceSessionSetupRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -5044,26 +5044,26 @@ func (x *SyncSessionSetupRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SyncSessionSetupRequest.ProtoReflect.Descriptor instead.
-func (*SyncSessionSetupRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use SyncServiceSessionSetupRequest.ProtoReflect.Descriptor instead.
+func (*SyncServiceSessionSetupRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{51}
 }
 
-func (x *SyncSessionSetupRequest) GetCollection() string {
+func (x *SyncServiceSessionSetupRequest) GetCollection() string {
 	if x != nil {
 		return x.Collection
 	}
 	return ""
 }
 
-func (x *SyncSessionSetupRequest) GetResume() []byte {
+func (x *SyncServiceSessionSetupRequest) GetResume() []byte {
 	if x != nil {
 		return x.Resume
 	}
 	return nil
 }
 
-type SyncSessionSetupResponse struct {
+type SyncServiceSessionSetupResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     uint64                 `protobuf:"varint,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	Checkpoint    []byte                 `protobuf:"bytes,2,opt,name=checkpoint,proto3" json:"checkpoint,omitempty"`                            // <= 1057 bytes.
@@ -5072,20 +5072,20 @@ type SyncSessionSetupResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SyncSessionSetupResponse) Reset() {
-	*x = SyncSessionSetupResponse{}
+func (x *SyncServiceSessionSetupResponse) Reset() {
+	*x = SyncServiceSessionSetupResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SyncSessionSetupResponse) String() string {
+func (x *SyncServiceSessionSetupResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SyncSessionSetupResponse) ProtoMessage() {}
+func (*SyncServiceSessionSetupResponse) ProtoMessage() {}
 
-func (x *SyncSessionSetupResponse) ProtoReflect() protoreflect.Message {
+func (x *SyncServiceSessionSetupResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -5097,33 +5097,33 @@ func (x *SyncSessionSetupResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SyncSessionSetupResponse.ProtoReflect.Descriptor instead.
-func (*SyncSessionSetupResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use SyncServiceSessionSetupResponse.ProtoReflect.Descriptor instead.
+func (*SyncServiceSessionSetupResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{52}
 }
 
-func (x *SyncSessionSetupResponse) GetSessionId() uint64 {
+func (x *SyncServiceSessionSetupResponse) GetSessionId() uint64 {
 	if x != nil {
 		return x.SessionId
 	}
 	return 0
 }
 
-func (x *SyncSessionSetupResponse) GetCheckpoint() []byte {
+func (x *SyncServiceSessionSetupResponse) GetCheckpoint() []byte {
 	if x != nil {
 		return x.Checkpoint
 	}
 	return nil
 }
 
-func (x *SyncSessionSetupResponse) GetRetainedFloor() []byte {
+func (x *SyncServiceSessionSetupResponse) GetRetainedFloor() []byte {
 	if x != nil {
 		return x.RetainedFloor
 	}
 	return nil
 }
 
-type SyncDeltaPullRequest struct {
+type SyncServiceDeltaPullRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     uint64                 `protobuf:"varint,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	From          []byte                 `protobuf:"bytes,2,opt,name=from,proto3" json:"from,omitempty"` // <= 1057 bytes.
@@ -5131,20 +5131,20 @@ type SyncDeltaPullRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SyncDeltaPullRequest) Reset() {
-	*x = SyncDeltaPullRequest{}
+func (x *SyncServiceDeltaPullRequest) Reset() {
+	*x = SyncServiceDeltaPullRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SyncDeltaPullRequest) String() string {
+func (x *SyncServiceDeltaPullRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SyncDeltaPullRequest) ProtoMessage() {}
+func (*SyncServiceDeltaPullRequest) ProtoMessage() {}
 
-func (x *SyncDeltaPullRequest) ProtoReflect() protoreflect.Message {
+func (x *SyncServiceDeltaPullRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -5156,26 +5156,26 @@ func (x *SyncDeltaPullRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SyncDeltaPullRequest.ProtoReflect.Descriptor instead.
-func (*SyncDeltaPullRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use SyncServiceDeltaPullRequest.ProtoReflect.Descriptor instead.
+func (*SyncServiceDeltaPullRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{53}
 }
 
-func (x *SyncDeltaPullRequest) GetSessionId() uint64 {
+func (x *SyncServiceDeltaPullRequest) GetSessionId() uint64 {
 	if x != nil {
 		return x.SessionId
 	}
 	return 0
 }
 
-func (x *SyncDeltaPullRequest) GetFrom() []byte {
+func (x *SyncServiceDeltaPullRequest) GetFrom() []byte {
 	if x != nil {
 		return x.From
 	}
 	return nil
 }
 
-type SyncDeltaPullResponse struct {
+type SyncServiceDeltaPullResponse struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	SessionId            uint64                 `protobuf:"varint,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	PayloadCodec         string                 `protobuf:"bytes,2,opt,name=payload_codec,json=payloadCodec,proto3" json:"payload_codec,omitempty"`
@@ -5187,20 +5187,20 @@ type SyncDeltaPullResponse struct {
 	sizeCache            protoimpl.SizeCache
 }
 
-func (x *SyncDeltaPullResponse) Reset() {
-	*x = SyncDeltaPullResponse{}
+func (x *SyncServiceDeltaPullResponse) Reset() {
+	*x = SyncServiceDeltaPullResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SyncDeltaPullResponse) String() string {
+func (x *SyncServiceDeltaPullResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SyncDeltaPullResponse) ProtoMessage() {}
+func (*SyncServiceDeltaPullResponse) ProtoMessage() {}
 
-func (x *SyncDeltaPullResponse) ProtoReflect() protoreflect.Message {
+func (x *SyncServiceDeltaPullResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -5212,74 +5212,74 @@ func (x *SyncDeltaPullResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SyncDeltaPullResponse.ProtoReflect.Descriptor instead.
-func (*SyncDeltaPullResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use SyncServiceDeltaPullResponse.ProtoReflect.Descriptor instead.
+func (*SyncServiceDeltaPullResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{54}
 }
 
-func (x *SyncDeltaPullResponse) GetSessionId() uint64 {
+func (x *SyncServiceDeltaPullResponse) GetSessionId() uint64 {
 	if x != nil {
 		return x.SessionId
 	}
 	return 0
 }
 
-func (x *SyncDeltaPullResponse) GetPayloadCodec() string {
+func (x *SyncServiceDeltaPullResponse) GetPayloadCodec() string {
 	if x != nil {
 		return x.PayloadCodec
 	}
 	return ""
 }
 
-func (x *SyncDeltaPullResponse) GetPayload() []byte {
+func (x *SyncServiceDeltaPullResponse) GetPayload() []byte {
 	if x != nil {
 		return x.Payload
 	}
 	return nil
 }
 
-func (x *SyncDeltaPullResponse) GetNext() []byte {
+func (x *SyncServiceDeltaPullResponse) GetNext() []byte {
 	if x != nil {
 		return x.Next
 	}
 	return nil
 }
 
-func (x *SyncDeltaPullResponse) GetCommits() uint32 {
+func (x *SyncServiceDeltaPullResponse) GetCommits() uint32 {
 	if x != nil {
 		return x.Commits
 	}
 	return 0
 }
 
-func (x *SyncDeltaPullResponse) GetSingleCommitOversize() bool {
+func (x *SyncServiceDeltaPullResponse) GetSingleCommitOversize() bool {
 	if x != nil {
 		return x.SingleCommitOversize
 	}
 	return false
 }
 
-type SyncSnapshotPullRequest struct {
+type SyncServiceSnapshotPullRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     uint64                 `protobuf:"varint,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SyncSnapshotPullRequest) Reset() {
-	*x = SyncSnapshotPullRequest{}
+func (x *SyncServiceSnapshotPullRequest) Reset() {
+	*x = SyncServiceSnapshotPullRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SyncSnapshotPullRequest) String() string {
+func (x *SyncServiceSnapshotPullRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SyncSnapshotPullRequest) ProtoMessage() {}
+func (*SyncServiceSnapshotPullRequest) ProtoMessage() {}
 
-func (x *SyncSnapshotPullRequest) ProtoReflect() protoreflect.Message {
+func (x *SyncServiceSnapshotPullRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -5291,19 +5291,19 @@ func (x *SyncSnapshotPullRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SyncSnapshotPullRequest.ProtoReflect.Descriptor instead.
-func (*SyncSnapshotPullRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use SyncServiceSnapshotPullRequest.ProtoReflect.Descriptor instead.
+func (*SyncServiceSnapshotPullRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{55}
 }
 
-func (x *SyncSnapshotPullRequest) GetSessionId() uint64 {
+func (x *SyncServiceSnapshotPullRequest) GetSessionId() uint64 {
 	if x != nil {
 		return x.SessionId
 	}
 	return 0
 }
 
-type SyncSnapshotPullResponse struct {
+type SyncServiceSnapshotPullResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     uint64                 `protobuf:"varint,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	PayloadCodec  string                 `protobuf:"bytes,2,opt,name=payload_codec,json=payloadCodec,proto3" json:"payload_codec,omitempty"`
@@ -5313,20 +5313,20 @@ type SyncSnapshotPullResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SyncSnapshotPullResponse) Reset() {
-	*x = SyncSnapshotPullResponse{}
+func (x *SyncServiceSnapshotPullResponse) Reset() {
+	*x = SyncServiceSnapshotPullResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SyncSnapshotPullResponse) String() string {
+func (x *SyncServiceSnapshotPullResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SyncSnapshotPullResponse) ProtoMessage() {}
+func (*SyncServiceSnapshotPullResponse) ProtoMessage() {}
 
-func (x *SyncSnapshotPullResponse) ProtoReflect() protoreflect.Message {
+func (x *SyncServiceSnapshotPullResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -5338,40 +5338,40 @@ func (x *SyncSnapshotPullResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SyncSnapshotPullResponse.ProtoReflect.Descriptor instead.
-func (*SyncSnapshotPullResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use SyncServiceSnapshotPullResponse.ProtoReflect.Descriptor instead.
+func (*SyncServiceSnapshotPullResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{56}
 }
 
-func (x *SyncSnapshotPullResponse) GetSessionId() uint64 {
+func (x *SyncServiceSnapshotPullResponse) GetSessionId() uint64 {
 	if x != nil {
 		return x.SessionId
 	}
 	return 0
 }
 
-func (x *SyncSnapshotPullResponse) GetPayloadCodec() string {
+func (x *SyncServiceSnapshotPullResponse) GetPayloadCodec() string {
 	if x != nil {
 		return x.PayloadCodec
 	}
 	return ""
 }
 
-func (x *SyncSnapshotPullResponse) GetPayload() []byte {
+func (x *SyncServiceSnapshotPullResponse) GetPayload() []byte {
 	if x != nil {
 		return x.Payload
 	}
 	return nil
 }
 
-func (x *SyncSnapshotPullResponse) GetCheckpoint() []byte {
+func (x *SyncServiceSnapshotPullResponse) GetCheckpoint() []byte {
 	if x != nil {
 		return x.Checkpoint
 	}
 	return nil
 }
 
-type SyncCheckpointAckRequest struct {
+type SyncServiceCheckpointAckRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     uint64                 `protobuf:"varint,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	Checkpoint    []byte                 `protobuf:"bytes,2,opt,name=checkpoint,proto3" json:"checkpoint,omitempty"` // <= 1057 bytes.
@@ -5379,20 +5379,20 @@ type SyncCheckpointAckRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SyncCheckpointAckRequest) Reset() {
-	*x = SyncCheckpointAckRequest{}
+func (x *SyncServiceCheckpointAckRequest) Reset() {
+	*x = SyncServiceCheckpointAckRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SyncCheckpointAckRequest) String() string {
+func (x *SyncServiceCheckpointAckRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SyncCheckpointAckRequest) ProtoMessage() {}
+func (*SyncServiceCheckpointAckRequest) ProtoMessage() {}
 
-func (x *SyncCheckpointAckRequest) ProtoReflect() protoreflect.Message {
+func (x *SyncServiceCheckpointAckRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -5404,46 +5404,46 @@ func (x *SyncCheckpointAckRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SyncCheckpointAckRequest.ProtoReflect.Descriptor instead.
-func (*SyncCheckpointAckRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use SyncServiceCheckpointAckRequest.ProtoReflect.Descriptor instead.
+func (*SyncServiceCheckpointAckRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{57}
 }
 
-func (x *SyncCheckpointAckRequest) GetSessionId() uint64 {
+func (x *SyncServiceCheckpointAckRequest) GetSessionId() uint64 {
 	if x != nil {
 		return x.SessionId
 	}
 	return 0
 }
 
-func (x *SyncCheckpointAckRequest) GetCheckpoint() []byte {
+func (x *SyncServiceCheckpointAckRequest) GetCheckpoint() []byte {
 	if x != nil {
 		return x.Checkpoint
 	}
 	return nil
 }
 
-type SyncCheckpointAckResponse struct {
+type SyncServiceCheckpointAckResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     uint64                 `protobuf:"varint,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SyncCheckpointAckResponse) Reset() {
-	*x = SyncCheckpointAckResponse{}
+func (x *SyncServiceCheckpointAckResponse) Reset() {
+	*x = SyncServiceCheckpointAckResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SyncCheckpointAckResponse) String() string {
+func (x *SyncServiceCheckpointAckResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SyncCheckpointAckResponse) ProtoMessage() {}
+func (*SyncServiceCheckpointAckResponse) ProtoMessage() {}
 
-func (x *SyncCheckpointAckResponse) ProtoReflect() protoreflect.Message {
+func (x *SyncServiceCheckpointAckResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -5455,19 +5455,19 @@ func (x *SyncCheckpointAckResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SyncCheckpointAckResponse.ProtoReflect.Descriptor instead.
-func (*SyncCheckpointAckResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use SyncServiceCheckpointAckResponse.ProtoReflect.Descriptor instead.
+func (*SyncServiceCheckpointAckResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{58}
 }
 
-func (x *SyncCheckpointAckResponse) GetSessionId() uint64 {
+func (x *SyncServiceCheckpointAckResponse) GetSessionId() uint64 {
 	if x != nil {
 		return x.SessionId
 	}
 	return 0
 }
 
-type SyncMutationSubmitRequest struct {
+type SyncServiceMutationSubmitRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     uint64                 `protobuf:"varint,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	Document      string                 `protobuf:"bytes,2,opt,name=document,proto3" json:"document,omitempty"` // <= 64 bytes.
@@ -5477,20 +5477,20 @@ type SyncMutationSubmitRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SyncMutationSubmitRequest) Reset() {
-	*x = SyncMutationSubmitRequest{}
+func (x *SyncServiceMutationSubmitRequest) Reset() {
+	*x = SyncServiceMutationSubmitRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SyncMutationSubmitRequest) String() string {
+func (x *SyncServiceMutationSubmitRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SyncMutationSubmitRequest) ProtoMessage() {}
+func (*SyncServiceMutationSubmitRequest) ProtoMessage() {}
 
-func (x *SyncMutationSubmitRequest) ProtoReflect() protoreflect.Message {
+func (x *SyncServiceMutationSubmitRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -5502,40 +5502,40 @@ func (x *SyncMutationSubmitRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SyncMutationSubmitRequest.ProtoReflect.Descriptor instead.
-func (*SyncMutationSubmitRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use SyncServiceMutationSubmitRequest.ProtoReflect.Descriptor instead.
+func (*SyncServiceMutationSubmitRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{59}
 }
 
-func (x *SyncMutationSubmitRequest) GetSessionId() uint64 {
+func (x *SyncServiceMutationSubmitRequest) GetSessionId() uint64 {
 	if x != nil {
 		return x.SessionId
 	}
 	return 0
 }
 
-func (x *SyncMutationSubmitRequest) GetDocument() string {
+func (x *SyncServiceMutationSubmitRequest) GetDocument() string {
 	if x != nil {
 		return x.Document
 	}
 	return ""
 }
 
-func (x *SyncMutationSubmitRequest) GetChange() *SyncChange {
+func (x *SyncServiceMutationSubmitRequest) GetChange() *SyncChange {
 	if x != nil {
 		return x.Change
 	}
 	return nil
 }
 
-func (x *SyncMutationSubmitRequest) GetUsage() *UsageAdmissionContext {
+func (x *SyncServiceMutationSubmitRequest) GetUsage() *UsageAdmissionContext {
 	if x != nil {
 		return x.Usage
 	}
 	return nil
 }
 
-type SyncMutationSubmitResponse struct {
+type SyncServiceMutationSubmitResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     uint64                 `protobuf:"varint,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	Outcome       *MutationOutcome       `protobuf:"bytes,2,opt,name=outcome,proto3" json:"outcome,omitempty"`
@@ -5543,20 +5543,20 @@ type SyncMutationSubmitResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SyncMutationSubmitResponse) Reset() {
-	*x = SyncMutationSubmitResponse{}
+func (x *SyncServiceMutationSubmitResponse) Reset() {
+	*x = SyncServiceMutationSubmitResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SyncMutationSubmitResponse) String() string {
+func (x *SyncServiceMutationSubmitResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SyncMutationSubmitResponse) ProtoMessage() {}
+func (*SyncServiceMutationSubmitResponse) ProtoMessage() {}
 
-func (x *SyncMutationSubmitResponse) ProtoReflect() protoreflect.Message {
+func (x *SyncServiceMutationSubmitResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -5568,46 +5568,46 @@ func (x *SyncMutationSubmitResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SyncMutationSubmitResponse.ProtoReflect.Descriptor instead.
-func (*SyncMutationSubmitResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use SyncServiceMutationSubmitResponse.ProtoReflect.Descriptor instead.
+func (*SyncServiceMutationSubmitResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{60}
 }
 
-func (x *SyncMutationSubmitResponse) GetSessionId() uint64 {
+func (x *SyncServiceMutationSubmitResponse) GetSessionId() uint64 {
 	if x != nil {
 		return x.SessionId
 	}
 	return 0
 }
 
-func (x *SyncMutationSubmitResponse) GetOutcome() *MutationOutcome {
+func (x *SyncServiceMutationSubmitResponse) GetOutcome() *MutationOutcome {
 	if x != nil {
 		return x.Outcome
 	}
 	return nil
 }
 
-type SyncSessionCloseRequest struct {
+type SyncServiceSessionCloseRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     uint64                 `protobuf:"varint,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SyncSessionCloseRequest) Reset() {
-	*x = SyncSessionCloseRequest{}
+func (x *SyncServiceSessionCloseRequest) Reset() {
+	*x = SyncServiceSessionCloseRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SyncSessionCloseRequest) String() string {
+func (x *SyncServiceSessionCloseRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SyncSessionCloseRequest) ProtoMessage() {}
+func (*SyncServiceSessionCloseRequest) ProtoMessage() {}
 
-func (x *SyncSessionCloseRequest) ProtoReflect() protoreflect.Message {
+func (x *SyncServiceSessionCloseRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -5619,39 +5619,39 @@ func (x *SyncSessionCloseRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SyncSessionCloseRequest.ProtoReflect.Descriptor instead.
-func (*SyncSessionCloseRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use SyncServiceSessionCloseRequest.ProtoReflect.Descriptor instead.
+func (*SyncServiceSessionCloseRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{61}
 }
 
-func (x *SyncSessionCloseRequest) GetSessionId() uint64 {
+func (x *SyncServiceSessionCloseRequest) GetSessionId() uint64 {
 	if x != nil {
 		return x.SessionId
 	}
 	return 0
 }
 
-type SyncSessionCloseResponse struct {
+type SyncServiceSessionCloseResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     uint64                 `protobuf:"varint,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SyncSessionCloseResponse) Reset() {
-	*x = SyncSessionCloseResponse{}
+func (x *SyncServiceSessionCloseResponse) Reset() {
+	*x = SyncServiceSessionCloseResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SyncSessionCloseResponse) String() string {
+func (x *SyncServiceSessionCloseResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SyncSessionCloseResponse) ProtoMessage() {}
+func (*SyncServiceSessionCloseResponse) ProtoMessage() {}
 
-func (x *SyncSessionCloseResponse) ProtoReflect() protoreflect.Message {
+func (x *SyncServiceSessionCloseResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -5663,12 +5663,12 @@ func (x *SyncSessionCloseResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SyncSessionCloseResponse.ProtoReflect.Descriptor instead.
-func (*SyncSessionCloseResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use SyncServiceSessionCloseResponse.ProtoReflect.Descriptor instead.
+func (*SyncServiceSessionCloseResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{62}
 }
 
-func (x *SyncSessionCloseResponse) GetSessionId() uint64 {
+func (x *SyncServiceSessionCloseResponse) GetSessionId() uint64 {
 	if x != nil {
 		return x.SessionId
 	}
@@ -6486,7 +6486,7 @@ func (x *MigrationReceipt) GetAlreadyApplied() bool {
 	return false
 }
 
-type SchemaDeclareRequest struct {
+type SchemaServiceDeclareRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Collection    string                 `protobuf:"bytes,1,opt,name=collection,proto3" json:"collection,omitempty"` // <= 64 bytes.
 	Schema        *Value                 `protobuf:"bytes,2,opt,name=schema,proto3" json:"schema,omitempty"`
@@ -6495,20 +6495,20 @@ type SchemaDeclareRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SchemaDeclareRequest) Reset() {
-	*x = SchemaDeclareRequest{}
+func (x *SchemaServiceDeclareRequest) Reset() {
+	*x = SchemaServiceDeclareRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SchemaDeclareRequest) String() string {
+func (x *SchemaServiceDeclareRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SchemaDeclareRequest) ProtoMessage() {}
+func (*SchemaServiceDeclareRequest) ProtoMessage() {}
 
-func (x *SchemaDeclareRequest) ProtoReflect() protoreflect.Message {
+func (x *SchemaServiceDeclareRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -6520,33 +6520,33 @@ func (x *SchemaDeclareRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SchemaDeclareRequest.ProtoReflect.Descriptor instead.
-func (*SchemaDeclareRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use SchemaServiceDeclareRequest.ProtoReflect.Descriptor instead.
+func (*SchemaServiceDeclareRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{72}
 }
 
-func (x *SchemaDeclareRequest) GetCollection() string {
+func (x *SchemaServiceDeclareRequest) GetCollection() string {
 	if x != nil {
 		return x.Collection
 	}
 	return ""
 }
 
-func (x *SchemaDeclareRequest) GetSchema() *Value {
+func (x *SchemaServiceDeclareRequest) GetSchema() *Value {
 	if x != nil {
 		return x.Schema
 	}
 	return nil
 }
 
-func (x *SchemaDeclareRequest) GetOperationId() string {
+func (x *SchemaServiceDeclareRequest) GetOperationId() string {
 	if x != nil {
 		return x.OperationId
 	}
 	return ""
 }
 
-type SchemaDeclareResponse struct {
+type SchemaServiceDeclareResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	EnforcedVersion uint64                 `protobuf:"varint,1,opt,name=enforced_version,json=enforcedVersion,proto3" json:"enforced_version,omitempty"`
 	RuleCount       uint32                 `protobuf:"varint,2,opt,name=rule_count,json=ruleCount,proto3" json:"rule_count,omitempty"`
@@ -6554,20 +6554,20 @@ type SchemaDeclareResponse struct {
 	sizeCache       protoimpl.SizeCache
 }
 
-func (x *SchemaDeclareResponse) Reset() {
-	*x = SchemaDeclareResponse{}
+func (x *SchemaServiceDeclareResponse) Reset() {
+	*x = SchemaServiceDeclareResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SchemaDeclareResponse) String() string {
+func (x *SchemaServiceDeclareResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SchemaDeclareResponse) ProtoMessage() {}
+func (*SchemaServiceDeclareResponse) ProtoMessage() {}
 
-func (x *SchemaDeclareResponse) ProtoReflect() protoreflect.Message {
+func (x *SchemaServiceDeclareResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -6579,46 +6579,46 @@ func (x *SchemaDeclareResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SchemaDeclareResponse.ProtoReflect.Descriptor instead.
-func (*SchemaDeclareResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use SchemaServiceDeclareResponse.ProtoReflect.Descriptor instead.
+func (*SchemaServiceDeclareResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{73}
 }
 
-func (x *SchemaDeclareResponse) GetEnforcedVersion() uint64 {
+func (x *SchemaServiceDeclareResponse) GetEnforcedVersion() uint64 {
 	if x != nil {
 		return x.EnforcedVersion
 	}
 	return 0
 }
 
-func (x *SchemaDeclareResponse) GetRuleCount() uint32 {
+func (x *SchemaServiceDeclareResponse) GetRuleCount() uint32 {
 	if x != nil {
 		return x.RuleCount
 	}
 	return 0
 }
 
-type SchemaStatusRequest struct {
+type SchemaServiceStatusRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Collection    string                 `protobuf:"bytes,1,opt,name=collection,proto3" json:"collection,omitempty"` // <= 64 bytes.
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SchemaStatusRequest) Reset() {
-	*x = SchemaStatusRequest{}
+func (x *SchemaServiceStatusRequest) Reset() {
+	*x = SchemaServiceStatusRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SchemaStatusRequest) String() string {
+func (x *SchemaServiceStatusRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SchemaStatusRequest) ProtoMessage() {}
+func (*SchemaServiceStatusRequest) ProtoMessage() {}
 
-func (x *SchemaStatusRequest) ProtoReflect() protoreflect.Message {
+func (x *SchemaServiceStatusRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -6630,19 +6630,19 @@ func (x *SchemaStatusRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SchemaStatusRequest.ProtoReflect.Descriptor instead.
-func (*SchemaStatusRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use SchemaServiceStatusRequest.ProtoReflect.Descriptor instead.
+func (*SchemaServiceStatusRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{74}
 }
 
-func (x *SchemaStatusRequest) GetCollection() string {
+func (x *SchemaServiceStatusRequest) GetCollection() string {
 	if x != nil {
 		return x.Collection
 	}
 	return ""
 }
 
-type SchemaStatusResponse struct {
+type SchemaServiceStatusResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	EnforcedVersion uint64                 `protobuf:"varint,1,opt,name=enforced_version,json=enforcedVersion,proto3" json:"enforced_version,omitempty"`
 	RuleCount       uint32                 `protobuf:"varint,2,opt,name=rule_count,json=ruleCount,proto3" json:"rule_count,omitempty"`
@@ -6650,20 +6650,20 @@ type SchemaStatusResponse struct {
 	sizeCache       protoimpl.SizeCache
 }
 
-func (x *SchemaStatusResponse) Reset() {
-	*x = SchemaStatusResponse{}
+func (x *SchemaServiceStatusResponse) Reset() {
+	*x = SchemaServiceStatusResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SchemaStatusResponse) String() string {
+func (x *SchemaServiceStatusResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SchemaStatusResponse) ProtoMessage() {}
+func (*SchemaServiceStatusResponse) ProtoMessage() {}
 
-func (x *SchemaStatusResponse) ProtoReflect() protoreflect.Message {
+func (x *SchemaServiceStatusResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -6675,26 +6675,26 @@ func (x *SchemaStatusResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SchemaStatusResponse.ProtoReflect.Descriptor instead.
-func (*SchemaStatusResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use SchemaServiceStatusResponse.ProtoReflect.Descriptor instead.
+func (*SchemaServiceStatusResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{75}
 }
 
-func (x *SchemaStatusResponse) GetEnforcedVersion() uint64 {
+func (x *SchemaServiceStatusResponse) GetEnforcedVersion() uint64 {
 	if x != nil {
 		return x.EnforcedVersion
 	}
 	return 0
 }
 
-func (x *SchemaStatusResponse) GetRuleCount() uint32 {
+func (x *SchemaServiceStatusResponse) GetRuleCount() uint32 {
 	if x != nil {
 		return x.RuleCount
 	}
 	return 0
 }
 
-type SchemaValidateRequest struct {
+type SchemaServiceValidateRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Collection    string                 `protobuf:"bytes,1,opt,name=collection,proto3" json:"collection,omitempty"` // <= 64 bytes.
 	Document      *Value                 `protobuf:"bytes,2,opt,name=document,proto3" json:"document,omitempty"`
@@ -6702,20 +6702,20 @@ type SchemaValidateRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SchemaValidateRequest) Reset() {
-	*x = SchemaValidateRequest{}
+func (x *SchemaServiceValidateRequest) Reset() {
+	*x = SchemaServiceValidateRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SchemaValidateRequest) String() string {
+func (x *SchemaServiceValidateRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SchemaValidateRequest) ProtoMessage() {}
+func (*SchemaServiceValidateRequest) ProtoMessage() {}
 
-func (x *SchemaValidateRequest) ProtoReflect() protoreflect.Message {
+func (x *SchemaServiceValidateRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -6727,26 +6727,26 @@ func (x *SchemaValidateRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SchemaValidateRequest.ProtoReflect.Descriptor instead.
-func (*SchemaValidateRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use SchemaServiceValidateRequest.ProtoReflect.Descriptor instead.
+func (*SchemaServiceValidateRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{76}
 }
 
-func (x *SchemaValidateRequest) GetCollection() string {
+func (x *SchemaServiceValidateRequest) GetCollection() string {
 	if x != nil {
 		return x.Collection
 	}
 	return ""
 }
 
-func (x *SchemaValidateRequest) GetDocument() *Value {
+func (x *SchemaServiceValidateRequest) GetDocument() *Value {
 	if x != nil {
 		return x.Document
 	}
 	return nil
 }
 
-type SchemaValidateResponse struct {
+type SchemaServiceValidateResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	EnforcedVersion uint64                 `protobuf:"varint,1,opt,name=enforced_version,json=enforcedVersion,proto3" json:"enforced_version,omitempty"`
 	Valid           bool                   `protobuf:"varint,2,opt,name=valid,proto3" json:"valid,omitempty"`
@@ -6755,20 +6755,20 @@ type SchemaValidateResponse struct {
 	sizeCache       protoimpl.SizeCache
 }
 
-func (x *SchemaValidateResponse) Reset() {
-	*x = SchemaValidateResponse{}
+func (x *SchemaServiceValidateResponse) Reset() {
+	*x = SchemaServiceValidateResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SchemaValidateResponse) String() string {
+func (x *SchemaServiceValidateResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SchemaValidateResponse) ProtoMessage() {}
+func (*SchemaServiceValidateResponse) ProtoMessage() {}
 
-func (x *SchemaValidateResponse) ProtoReflect() protoreflect.Message {
+func (x *SchemaServiceValidateResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -6780,26 +6780,26 @@ func (x *SchemaValidateResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SchemaValidateResponse.ProtoReflect.Descriptor instead.
-func (*SchemaValidateResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use SchemaServiceValidateResponse.ProtoReflect.Descriptor instead.
+func (*SchemaServiceValidateResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{77}
 }
 
-func (x *SchemaValidateResponse) GetEnforcedVersion() uint64 {
+func (x *SchemaServiceValidateResponse) GetEnforcedVersion() uint64 {
 	if x != nil {
 		return x.EnforcedVersion
 	}
 	return 0
 }
 
-func (x *SchemaValidateResponse) GetValid() bool {
+func (x *SchemaServiceValidateResponse) GetValid() bool {
 	if x != nil {
 		return x.Valid
 	}
 	return false
 }
 
-func (x *SchemaValidateResponse) GetViolations() []*SchemaViolation {
+func (x *SchemaServiceValidateResponse) GetViolations() []*SchemaViolation {
 	if x != nil {
 		return x.Violations
 	}
@@ -7086,26 +7086,26 @@ func (x *MigrationApplyResponse) GetReceipt() *MigrationReceipt {
 	return nil
 }
 
-type ReplicationConflictsRequest struct {
+type ReplicationServiceConflictsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ReplicationConflictsRequest) Reset() {
-	*x = ReplicationConflictsRequest{}
+func (x *ReplicationServiceConflictsRequest) Reset() {
+	*x = ReplicationServiceConflictsRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ReplicationConflictsRequest) String() string {
+func (x *ReplicationServiceConflictsRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ReplicationConflictsRequest) ProtoMessage() {}
+func (*ReplicationServiceConflictsRequest) ProtoMessage() {}
 
-func (x *ReplicationConflictsRequest) ProtoReflect() protoreflect.Message {
+func (x *ReplicationServiceConflictsRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -7117,8 +7117,8 @@ func (x *ReplicationConflictsRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ReplicationConflictsRequest.ProtoReflect.Descriptor instead.
-func (*ReplicationConflictsRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use ReplicationServiceConflictsRequest.ProtoReflect.Descriptor instead.
+func (*ReplicationServiceConflictsRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{84}
 }
 
@@ -7305,7 +7305,7 @@ func (x *ConflictRecord) GetOutcome() *ConflictOutcome {
 	return nil
 }
 
-type ReplicationConflictsResponse struct {
+type ReplicationServiceConflictsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Member        string                 `protobuf:"bytes,1,opt,name=member,proto3" json:"member,omitempty"`
 	Records       []*ConflictRecord      `protobuf:"bytes,2,rep,name=records,proto3" json:"records,omitempty"` // <= 256 items.
@@ -7313,20 +7313,20 @@ type ReplicationConflictsResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ReplicationConflictsResponse) Reset() {
-	*x = ReplicationConflictsResponse{}
+func (x *ReplicationServiceConflictsResponse) Reset() {
+	*x = ReplicationServiceConflictsResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[88]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ReplicationConflictsResponse) String() string {
+func (x *ReplicationServiceConflictsResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ReplicationConflictsResponse) ProtoMessage() {}
+func (*ReplicationServiceConflictsResponse) ProtoMessage() {}
 
-func (x *ReplicationConflictsResponse) ProtoReflect() protoreflect.Message {
+func (x *ReplicationServiceConflictsResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[88]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -7338,45 +7338,45 @@ func (x *ReplicationConflictsResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ReplicationConflictsResponse.ProtoReflect.Descriptor instead.
-func (*ReplicationConflictsResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use ReplicationServiceConflictsResponse.ProtoReflect.Descriptor instead.
+func (*ReplicationServiceConflictsResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{88}
 }
 
-func (x *ReplicationConflictsResponse) GetMember() string {
+func (x *ReplicationServiceConflictsResponse) GetMember() string {
 	if x != nil {
 		return x.Member
 	}
 	return ""
 }
 
-func (x *ReplicationConflictsResponse) GetRecords() []*ConflictRecord {
+func (x *ReplicationServiceConflictsResponse) GetRecords() []*ConflictRecord {
 	if x != nil {
 		return x.Records
 	}
 	return nil
 }
 
-type ReplicationFencedRequest struct {
+type ReplicationServiceFencedRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ReplicationFencedRequest) Reset() {
-	*x = ReplicationFencedRequest{}
+func (x *ReplicationServiceFencedRequest) Reset() {
+	*x = ReplicationServiceFencedRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[89]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ReplicationFencedRequest) String() string {
+func (x *ReplicationServiceFencedRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ReplicationFencedRequest) ProtoMessage() {}
+func (*ReplicationServiceFencedRequest) ProtoMessage() {}
 
-func (x *ReplicationFencedRequest) ProtoReflect() protoreflect.Message {
+func (x *ReplicationServiceFencedRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[89]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -7388,8 +7388,8 @@ func (x *ReplicationFencedRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ReplicationFencedRequest.ProtoReflect.Descriptor instead.
-func (*ReplicationFencedRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use ReplicationServiceFencedRequest.ProtoReflect.Descriptor instead.
+func (*ReplicationServiceFencedRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{89}
 }
 
@@ -7462,7 +7462,7 @@ func (x *FencedRecord) GetSource() string {
 	return ""
 }
 
-type ReplicationFencedResponse struct {
+type ReplicationServiceFencedResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Member        string                 `protobuf:"bytes,1,opt,name=member,proto3" json:"member,omitempty"`
 	Records       []*FencedRecord        `protobuf:"bytes,2,rep,name=records,proto3" json:"records,omitempty"` // <= 256 items.
@@ -7470,20 +7470,20 @@ type ReplicationFencedResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ReplicationFencedResponse) Reset() {
-	*x = ReplicationFencedResponse{}
+func (x *ReplicationServiceFencedResponse) Reset() {
+	*x = ReplicationServiceFencedResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[91]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ReplicationFencedResponse) String() string {
+func (x *ReplicationServiceFencedResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ReplicationFencedResponse) ProtoMessage() {}
+func (*ReplicationServiceFencedResponse) ProtoMessage() {}
 
-func (x *ReplicationFencedResponse) ProtoReflect() protoreflect.Message {
+func (x *ReplicationServiceFencedResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[91]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -7495,45 +7495,45 @@ func (x *ReplicationFencedResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ReplicationFencedResponse.ProtoReflect.Descriptor instead.
-func (*ReplicationFencedResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use ReplicationServiceFencedResponse.ProtoReflect.Descriptor instead.
+func (*ReplicationServiceFencedResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{91}
 }
 
-func (x *ReplicationFencedResponse) GetMember() string {
+func (x *ReplicationServiceFencedResponse) GetMember() string {
 	if x != nil {
 		return x.Member
 	}
 	return ""
 }
 
-func (x *ReplicationFencedResponse) GetRecords() []*FencedRecord {
+func (x *ReplicationServiceFencedResponse) GetRecords() []*FencedRecord {
 	if x != nil {
 		return x.Records
 	}
 	return nil
 }
 
-type ReplicationDepositionsRequest struct {
+type ReplicationServiceDepositionsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ReplicationDepositionsRequest) Reset() {
-	*x = ReplicationDepositionsRequest{}
+func (x *ReplicationServiceDepositionsRequest) Reset() {
+	*x = ReplicationServiceDepositionsRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[92]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ReplicationDepositionsRequest) String() string {
+func (x *ReplicationServiceDepositionsRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ReplicationDepositionsRequest) ProtoMessage() {}
+func (*ReplicationServiceDepositionsRequest) ProtoMessage() {}
 
-func (x *ReplicationDepositionsRequest) ProtoReflect() protoreflect.Message {
+func (x *ReplicationServiceDepositionsRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[92]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -7545,8 +7545,8 @@ func (x *ReplicationDepositionsRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ReplicationDepositionsRequest.ProtoReflect.Descriptor instead.
-func (*ReplicationDepositionsRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use ReplicationServiceDepositionsRequest.ProtoReflect.Descriptor instead.
+func (*ReplicationServiceDepositionsRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{92}
 }
 
@@ -7619,7 +7619,7 @@ func (x *DepositionRecord) GetNewOwner() string {
 	return ""
 }
 
-type ReplicationDepositionsResponse struct {
+type ReplicationServiceDepositionsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Member        string                 `protobuf:"bytes,1,opt,name=member,proto3" json:"member,omitempty"`
 	Records       []*DepositionRecord    `protobuf:"bytes,2,rep,name=records,proto3" json:"records,omitempty"` // <= 256 items.
@@ -7627,20 +7627,20 @@ type ReplicationDepositionsResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ReplicationDepositionsResponse) Reset() {
-	*x = ReplicationDepositionsResponse{}
+func (x *ReplicationServiceDepositionsResponse) Reset() {
+	*x = ReplicationServiceDepositionsResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[94]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ReplicationDepositionsResponse) String() string {
+func (x *ReplicationServiceDepositionsResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ReplicationDepositionsResponse) ProtoMessage() {}
+func (*ReplicationServiceDepositionsResponse) ProtoMessage() {}
 
-func (x *ReplicationDepositionsResponse) ProtoReflect() protoreflect.Message {
+func (x *ReplicationServiceDepositionsResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[94]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -7652,45 +7652,45 @@ func (x *ReplicationDepositionsResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ReplicationDepositionsResponse.ProtoReflect.Descriptor instead.
-func (*ReplicationDepositionsResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use ReplicationServiceDepositionsResponse.ProtoReflect.Descriptor instead.
+func (*ReplicationServiceDepositionsResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{94}
 }
 
-func (x *ReplicationDepositionsResponse) GetMember() string {
+func (x *ReplicationServiceDepositionsResponse) GetMember() string {
 	if x != nil {
 		return x.Member
 	}
 	return ""
 }
 
-func (x *ReplicationDepositionsResponse) GetRecords() []*DepositionRecord {
+func (x *ReplicationServiceDepositionsResponse) GetRecords() []*DepositionRecord {
 	if x != nil {
 		return x.Records
 	}
 	return nil
 }
 
-type ReplicationCursorRequest struct {
+type ReplicationServiceCursorRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ReplicationCursorRequest) Reset() {
-	*x = ReplicationCursorRequest{}
+func (x *ReplicationServiceCursorRequest) Reset() {
+	*x = ReplicationServiceCursorRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[95]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ReplicationCursorRequest) String() string {
+func (x *ReplicationServiceCursorRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ReplicationCursorRequest) ProtoMessage() {}
+func (*ReplicationServiceCursorRequest) ProtoMessage() {}
 
-func (x *ReplicationCursorRequest) ProtoReflect() protoreflect.Message {
+func (x *ReplicationServiceCursorRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[95]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -7702,12 +7702,12 @@ func (x *ReplicationCursorRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ReplicationCursorRequest.ProtoReflect.Descriptor instead.
-func (*ReplicationCursorRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use ReplicationServiceCursorRequest.ProtoReflect.Descriptor instead.
+func (*ReplicationServiceCursorRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{95}
 }
 
-type ReplicationCursorResponse struct {
+type ReplicationServiceCursorResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Member        string                 `protobuf:"bytes,1,opt,name=member,proto3" json:"member,omitempty"`
 	Position      uint64                 `protobuf:"varint,2,opt,name=position,proto3" json:"position,omitempty"`
@@ -7715,20 +7715,20 @@ type ReplicationCursorResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ReplicationCursorResponse) Reset() {
-	*x = ReplicationCursorResponse{}
+func (x *ReplicationServiceCursorResponse) Reset() {
+	*x = ReplicationServiceCursorResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[96]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ReplicationCursorResponse) String() string {
+func (x *ReplicationServiceCursorResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ReplicationCursorResponse) ProtoMessage() {}
+func (*ReplicationServiceCursorResponse) ProtoMessage() {}
 
-func (x *ReplicationCursorResponse) ProtoReflect() protoreflect.Message {
+func (x *ReplicationServiceCursorResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[96]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -7740,45 +7740,45 @@ func (x *ReplicationCursorResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ReplicationCursorResponse.ProtoReflect.Descriptor instead.
-func (*ReplicationCursorResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use ReplicationServiceCursorResponse.ProtoReflect.Descriptor instead.
+func (*ReplicationServiceCursorResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{96}
 }
 
-func (x *ReplicationCursorResponse) GetMember() string {
+func (x *ReplicationServiceCursorResponse) GetMember() string {
 	if x != nil {
 		return x.Member
 	}
 	return ""
 }
 
-func (x *ReplicationCursorResponse) GetPosition() uint64 {
+func (x *ReplicationServiceCursorResponse) GetPosition() uint64 {
 	if x != nil {
 		return x.Position
 	}
 	return 0
 }
 
-type ReplicationHealthRequest struct {
+type ReplicationServiceHealthRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ReplicationHealthRequest) Reset() {
-	*x = ReplicationHealthRequest{}
+func (x *ReplicationServiceHealthRequest) Reset() {
+	*x = ReplicationServiceHealthRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[97]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ReplicationHealthRequest) String() string {
+func (x *ReplicationServiceHealthRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ReplicationHealthRequest) ProtoMessage() {}
+func (*ReplicationServiceHealthRequest) ProtoMessage() {}
 
-func (x *ReplicationHealthRequest) ProtoReflect() protoreflect.Message {
+func (x *ReplicationServiceHealthRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[97]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -7790,12 +7790,12 @@ func (x *ReplicationHealthRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ReplicationHealthRequest.ProtoReflect.Descriptor instead.
-func (*ReplicationHealthRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use ReplicationServiceHealthRequest.ProtoReflect.Descriptor instead.
+func (*ReplicationServiceHealthRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{97}
 }
 
-type ReplicationHealthResponse struct {
+type ReplicationServiceHealthResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Member        string                 `protobuf:"bytes,1,opt,name=member,proto3" json:"member,omitempty"`
 	Status        ReplicationStatus      `protobuf:"varint,2,opt,name=status,proto3,enum=terrabase.v1.ReplicationStatus" json:"status,omitempty"`
@@ -7803,20 +7803,20 @@ type ReplicationHealthResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ReplicationHealthResponse) Reset() {
-	*x = ReplicationHealthResponse{}
+func (x *ReplicationServiceHealthResponse) Reset() {
+	*x = ReplicationServiceHealthResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[98]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ReplicationHealthResponse) String() string {
+func (x *ReplicationServiceHealthResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ReplicationHealthResponse) ProtoMessage() {}
+func (*ReplicationServiceHealthResponse) ProtoMessage() {}
 
-func (x *ReplicationHealthResponse) ProtoReflect() protoreflect.Message {
+func (x *ReplicationServiceHealthResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[98]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -7828,45 +7828,45 @@ func (x *ReplicationHealthResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ReplicationHealthResponse.ProtoReflect.Descriptor instead.
-func (*ReplicationHealthResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use ReplicationServiceHealthResponse.ProtoReflect.Descriptor instead.
+func (*ReplicationServiceHealthResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{98}
 }
 
-func (x *ReplicationHealthResponse) GetMember() string {
+func (x *ReplicationServiceHealthResponse) GetMember() string {
 	if x != nil {
 		return x.Member
 	}
 	return ""
 }
 
-func (x *ReplicationHealthResponse) GetStatus() ReplicationStatus {
+func (x *ReplicationServiceHealthResponse) GetStatus() ReplicationStatus {
 	if x != nil {
 		return x.Status
 	}
 	return ReplicationStatus_REPLICATION_STATUS_UNSPECIFIED
 }
 
-type ReplicationDenialsRequest struct {
+type ReplicationServiceDenialsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ReplicationDenialsRequest) Reset() {
-	*x = ReplicationDenialsRequest{}
+func (x *ReplicationServiceDenialsRequest) Reset() {
+	*x = ReplicationServiceDenialsRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[99]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ReplicationDenialsRequest) String() string {
+func (x *ReplicationServiceDenialsRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ReplicationDenialsRequest) ProtoMessage() {}
+func (*ReplicationServiceDenialsRequest) ProtoMessage() {}
 
-func (x *ReplicationDenialsRequest) ProtoReflect() protoreflect.Message {
+func (x *ReplicationServiceDenialsRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[99]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -7878,8 +7878,8 @@ func (x *ReplicationDenialsRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ReplicationDenialsRequest.ProtoReflect.Descriptor instead.
-func (*ReplicationDenialsRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use ReplicationServiceDenialsRequest.ProtoReflect.Descriptor instead.
+func (*ReplicationServiceDenialsRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{99}
 }
 
@@ -7952,7 +7952,7 @@ func (x *DenialRecord) GetCounterparty() string {
 	return ""
 }
 
-type ReplicationDenialsResponse struct {
+type ReplicationServiceDenialsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Member        string                 `protobuf:"bytes,1,opt,name=member,proto3" json:"member,omitempty"`
 	Records       []*DenialRecord        `protobuf:"bytes,2,rep,name=records,proto3" json:"records,omitempty"` // <= 256 items.
@@ -7960,20 +7960,20 @@ type ReplicationDenialsResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ReplicationDenialsResponse) Reset() {
-	*x = ReplicationDenialsResponse{}
+func (x *ReplicationServiceDenialsResponse) Reset() {
+	*x = ReplicationServiceDenialsResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[101]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ReplicationDenialsResponse) String() string {
+func (x *ReplicationServiceDenialsResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ReplicationDenialsResponse) ProtoMessage() {}
+func (*ReplicationServiceDenialsResponse) ProtoMessage() {}
 
-func (x *ReplicationDenialsResponse) ProtoReflect() protoreflect.Message {
+func (x *ReplicationServiceDenialsResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[101]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -7985,26 +7985,26 @@ func (x *ReplicationDenialsResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ReplicationDenialsResponse.ProtoReflect.Descriptor instead.
-func (*ReplicationDenialsResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use ReplicationServiceDenialsResponse.ProtoReflect.Descriptor instead.
+func (*ReplicationServiceDenialsResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{101}
 }
 
-func (x *ReplicationDenialsResponse) GetMember() string {
+func (x *ReplicationServiceDenialsResponse) GetMember() string {
 	if x != nil {
 		return x.Member
 	}
 	return ""
 }
 
-func (x *ReplicationDenialsResponse) GetRecords() []*DenialRecord {
+func (x *ReplicationServiceDenialsResponse) GetRecords() []*DenialRecord {
 	if x != nil {
 		return x.Records
 	}
 	return nil
 }
 
-type ChannelBindRequest struct {
+type ChannelServiceBindRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Principal     string                 `protobuf:"bytes,1,opt,name=principal,proto3" json:"principal,omitempty"` // 1..=128 bytes.
 	Tenant        string                 `protobuf:"bytes,2,opt,name=tenant,proto3" json:"tenant,omitempty"`       // 1..=64 bytes.
@@ -8014,20 +8014,20 @@ type ChannelBindRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ChannelBindRequest) Reset() {
-	*x = ChannelBindRequest{}
+func (x *ChannelServiceBindRequest) Reset() {
+	*x = ChannelServiceBindRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[102]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ChannelBindRequest) String() string {
+func (x *ChannelServiceBindRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ChannelBindRequest) ProtoMessage() {}
+func (*ChannelServiceBindRequest) ProtoMessage() {}
 
-func (x *ChannelBindRequest) ProtoReflect() protoreflect.Message {
+func (x *ChannelServiceBindRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[102]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -8039,40 +8039,40 @@ func (x *ChannelBindRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ChannelBindRequest.ProtoReflect.Descriptor instead.
-func (*ChannelBindRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use ChannelServiceBindRequest.ProtoReflect.Descriptor instead.
+func (*ChannelServiceBindRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{102}
 }
 
-func (x *ChannelBindRequest) GetPrincipal() string {
+func (x *ChannelServiceBindRequest) GetPrincipal() string {
 	if x != nil {
 		return x.Principal
 	}
 	return ""
 }
 
-func (x *ChannelBindRequest) GetTenant() string {
+func (x *ChannelServiceBindRequest) GetTenant() string {
 	if x != nil {
 		return x.Tenant
 	}
 	return ""
 }
 
-func (x *ChannelBindRequest) GetProject() string {
+func (x *ChannelServiceBindRequest) GetProject() string {
 	if x != nil {
 		return x.Project
 	}
 	return ""
 }
 
-func (x *ChannelBindRequest) GetDatabase() string {
+func (x *ChannelServiceBindRequest) GetDatabase() string {
 	if x != nil {
 		return x.Database
 	}
 	return ""
 }
 
-type ChannelBindResponse struct {
+type ChannelServiceBindResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Principal       string                 `protobuf:"bytes,1,opt,name=principal,proto3" json:"principal,omitempty"`
 	Tenant          string                 `protobuf:"bytes,2,opt,name=tenant,proto3" json:"tenant,omitempty"`
@@ -8083,20 +8083,20 @@ type ChannelBindResponse struct {
 	sizeCache       protoimpl.SizeCache
 }
 
-func (x *ChannelBindResponse) Reset() {
-	*x = ChannelBindResponse{}
+func (x *ChannelServiceBindResponse) Reset() {
+	*x = ChannelServiceBindResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[103]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ChannelBindResponse) String() string {
+func (x *ChannelServiceBindResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ChannelBindResponse) ProtoMessage() {}
+func (*ChannelServiceBindResponse) ProtoMessage() {}
 
-func (x *ChannelBindResponse) ProtoReflect() protoreflect.Message {
+func (x *ChannelServiceBindResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[103]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -8108,66 +8108,66 @@ func (x *ChannelBindResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ChannelBindResponse.ProtoReflect.Descriptor instead.
-func (*ChannelBindResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use ChannelServiceBindResponse.ProtoReflect.Descriptor instead.
+func (*ChannelServiceBindResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{103}
 }
 
-func (x *ChannelBindResponse) GetPrincipal() string {
+func (x *ChannelServiceBindResponse) GetPrincipal() string {
 	if x != nil {
 		return x.Principal
 	}
 	return ""
 }
 
-func (x *ChannelBindResponse) GetTenant() string {
+func (x *ChannelServiceBindResponse) GetTenant() string {
 	if x != nil {
 		return x.Tenant
 	}
 	return ""
 }
 
-func (x *ChannelBindResponse) GetServingInstance() uint64 {
+func (x *ChannelServiceBindResponse) GetServingInstance() uint64 {
 	if x != nil {
 		return x.ServingInstance
 	}
 	return 0
 }
 
-func (x *ChannelBindResponse) GetProject() string {
+func (x *ChannelServiceBindResponse) GetProject() string {
 	if x != nil {
 		return x.Project
 	}
 	return ""
 }
 
-func (x *ChannelBindResponse) GetDatabase() string {
+func (x *ChannelServiceBindResponse) GetDatabase() string {
 	if x != nil {
 		return x.Database
 	}
 	return ""
 }
 
-type TopologyReadRequest struct {
+type MaintenanceServiceTopologyReadRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TopologyReadRequest) Reset() {
-	*x = TopologyReadRequest{}
+func (x *MaintenanceServiceTopologyReadRequest) Reset() {
+	*x = MaintenanceServiceTopologyReadRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[104]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TopologyReadRequest) String() string {
+func (x *MaintenanceServiceTopologyReadRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TopologyReadRequest) ProtoMessage() {}
+func (*MaintenanceServiceTopologyReadRequest) ProtoMessage() {}
 
-func (x *TopologyReadRequest) ProtoReflect() protoreflect.Message {
+func (x *MaintenanceServiceTopologyReadRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[104]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -8179,12 +8179,12 @@ func (x *TopologyReadRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TopologyReadRequest.ProtoReflect.Descriptor instead.
-func (*TopologyReadRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use MaintenanceServiceTopologyReadRequest.ProtoReflect.Descriptor instead.
+func (*MaintenanceServiceTopologyReadRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{104}
 }
 
-type TopologyReadResponse struct {
+type MaintenanceServiceTopologyReadResponse struct {
 	state                   protoimpl.MessageState `protogen:"open.v1"`
 	Binding                 BindingKind            `protobuf:"varint,1,opt,name=binding,proto3,enum=terrabase.v1.BindingKind" json:"binding,omitempty"`
 	Subsystems              []string               `protobuf:"bytes,2,rep,name=subsystems,proto3" json:"subsystems,omitempty"` // <= 16 items.
@@ -8194,20 +8194,20 @@ type TopologyReadResponse struct {
 	sizeCache               protoimpl.SizeCache
 }
 
-func (x *TopologyReadResponse) Reset() {
-	*x = TopologyReadResponse{}
+func (x *MaintenanceServiceTopologyReadResponse) Reset() {
+	*x = MaintenanceServiceTopologyReadResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[105]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TopologyReadResponse) String() string {
+func (x *MaintenanceServiceTopologyReadResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TopologyReadResponse) ProtoMessage() {}
+func (*MaintenanceServiceTopologyReadResponse) ProtoMessage() {}
 
-func (x *TopologyReadResponse) ProtoReflect() protoreflect.Message {
+func (x *MaintenanceServiceTopologyReadResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[105]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -8219,59 +8219,59 @@ func (x *TopologyReadResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TopologyReadResponse.ProtoReflect.Descriptor instead.
-func (*TopologyReadResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use MaintenanceServiceTopologyReadResponse.ProtoReflect.Descriptor instead.
+func (*MaintenanceServiceTopologyReadResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{105}
 }
 
-func (x *TopologyReadResponse) GetBinding() BindingKind {
+func (x *MaintenanceServiceTopologyReadResponse) GetBinding() BindingKind {
 	if x != nil {
 		return x.Binding
 	}
 	return BindingKind_BINDING_KIND_UNSPECIFIED
 }
 
-func (x *TopologyReadResponse) GetSubsystems() []string {
+func (x *MaintenanceServiceTopologyReadResponse) GetSubsystems() []string {
 	if x != nil {
 		return x.Subsystems
 	}
 	return nil
 }
 
-func (x *TopologyReadResponse) GetEngineTopologyAvailable() bool {
+func (x *MaintenanceServiceTopologyReadResponse) GetEngineTopologyAvailable() bool {
 	if x != nil {
 		return x.EngineTopologyAvailable
 	}
 	return false
 }
 
-func (x *TopologyReadResponse) GetClusterMode() ClusterMode {
+func (x *MaintenanceServiceTopologyReadResponse) GetClusterMode() ClusterMode {
 	if x != nil {
 		return x.ClusterMode
 	}
 	return ClusterMode_CLUSTER_MODE_UNSPECIFIED
 }
 
-type AdminStatusRequest struct {
+type MaintenanceServiceAdminStatusRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *AdminStatusRequest) Reset() {
-	*x = AdminStatusRequest{}
+func (x *MaintenanceServiceAdminStatusRequest) Reset() {
+	*x = MaintenanceServiceAdminStatusRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[106]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *AdminStatusRequest) String() string {
+func (x *MaintenanceServiceAdminStatusRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*AdminStatusRequest) ProtoMessage() {}
+func (*MaintenanceServiceAdminStatusRequest) ProtoMessage() {}
 
-func (x *AdminStatusRequest) ProtoReflect() protoreflect.Message {
+func (x *MaintenanceServiceAdminStatusRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[106]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -8283,12 +8283,12 @@ func (x *AdminStatusRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use AdminStatusRequest.ProtoReflect.Descriptor instead.
-func (*AdminStatusRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use MaintenanceServiceAdminStatusRequest.ProtoReflect.Descriptor instead.
+func (*MaintenanceServiceAdminStatusRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{106}
 }
 
-type AdminStatusResponse struct {
+type MaintenanceServiceAdminStatusResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	RegistryVersion string                 `protobuf:"bytes,1,opt,name=registry_version,json=registryVersion,proto3" json:"registry_version,omitempty"`
 	FramesServed    uint64                 `protobuf:"varint,2,opt,name=frames_served,json=framesServed,proto3" json:"frames_served,omitempty"`
@@ -8299,20 +8299,20 @@ type AdminStatusResponse struct {
 	sizeCache       protoimpl.SizeCache
 }
 
-func (x *AdminStatusResponse) Reset() {
-	*x = AdminStatusResponse{}
+func (x *MaintenanceServiceAdminStatusResponse) Reset() {
+	*x = MaintenanceServiceAdminStatusResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[107]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *AdminStatusResponse) String() string {
+func (x *MaintenanceServiceAdminStatusResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*AdminStatusResponse) ProtoMessage() {}
+func (*MaintenanceServiceAdminStatusResponse) ProtoMessage() {}
 
-func (x *AdminStatusResponse) ProtoReflect() protoreflect.Message {
+func (x *MaintenanceServiceAdminStatusResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[107]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -8324,66 +8324,66 @@ func (x *AdminStatusResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use AdminStatusResponse.ProtoReflect.Descriptor instead.
-func (*AdminStatusResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use MaintenanceServiceAdminStatusResponse.ProtoReflect.Descriptor instead.
+func (*MaintenanceServiceAdminStatusResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{107}
 }
 
-func (x *AdminStatusResponse) GetRegistryVersion() string {
+func (x *MaintenanceServiceAdminStatusResponse) GetRegistryVersion() string {
 	if x != nil {
 		return x.RegistryVersion
 	}
 	return ""
 }
 
-func (x *AdminStatusResponse) GetFramesServed() uint64 {
+func (x *MaintenanceServiceAdminStatusResponse) GetFramesServed() uint64 {
 	if x != nil {
 		return x.FramesServed
 	}
 	return 0
 }
 
-func (x *AdminStatusResponse) GetSessions() uint32 {
+func (x *MaintenanceServiceAdminStatusResponse) GetSessions() uint32 {
 	if x != nil {
 		return x.Sessions
 	}
 	return 0
 }
 
-func (x *AdminStatusResponse) GetSubscriptions() uint32 {
+func (x *MaintenanceServiceAdminStatusResponse) GetSubscriptions() uint32 {
 	if x != nil {
 		return x.Subscriptions
 	}
 	return 0
 }
 
-func (x *AdminStatusResponse) GetScopes() uint32 {
+func (x *MaintenanceServiceAdminStatusResponse) GetScopes() uint32 {
 	if x != nil {
 		return x.Scopes
 	}
 	return 0
 }
 
-type SupervisionHealthRequest struct {
+type MaintenanceServiceSupervisionHealthRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SupervisionHealthRequest) Reset() {
-	*x = SupervisionHealthRequest{}
+func (x *MaintenanceServiceSupervisionHealthRequest) Reset() {
+	*x = MaintenanceServiceSupervisionHealthRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[108]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SupervisionHealthRequest) String() string {
+func (x *MaintenanceServiceSupervisionHealthRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SupervisionHealthRequest) ProtoMessage() {}
+func (*MaintenanceServiceSupervisionHealthRequest) ProtoMessage() {}
 
-func (x *SupervisionHealthRequest) ProtoReflect() protoreflect.Message {
+func (x *MaintenanceServiceSupervisionHealthRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[108]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -8395,12 +8395,12 @@ func (x *SupervisionHealthRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SupervisionHealthRequest.ProtoReflect.Descriptor instead.
-func (*SupervisionHealthRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use MaintenanceServiceSupervisionHealthRequest.ProtoReflect.Descriptor instead.
+func (*MaintenanceServiceSupervisionHealthRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{108}
 }
 
-type SupervisionHealthResponse struct {
+type MaintenanceServiceSupervisionHealthResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	State         HealthState            `protobuf:"varint,1,opt,name=state,proto3,enum=terrabase.v1.HealthState" json:"state,omitempty"`
 	Sessions      uint32                 `protobuf:"varint,2,opt,name=sessions,proto3" json:"sessions,omitempty"`
@@ -8410,20 +8410,20 @@ type SupervisionHealthResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SupervisionHealthResponse) Reset() {
-	*x = SupervisionHealthResponse{}
+func (x *MaintenanceServiceSupervisionHealthResponse) Reset() {
+	*x = MaintenanceServiceSupervisionHealthResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[109]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SupervisionHealthResponse) String() string {
+func (x *MaintenanceServiceSupervisionHealthResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SupervisionHealthResponse) ProtoMessage() {}
+func (*MaintenanceServiceSupervisionHealthResponse) ProtoMessage() {}
 
-func (x *SupervisionHealthResponse) ProtoReflect() protoreflect.Message {
+func (x *MaintenanceServiceSupervisionHealthResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[109]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -8435,60 +8435,60 @@ func (x *SupervisionHealthResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SupervisionHealthResponse.ProtoReflect.Descriptor instead.
-func (*SupervisionHealthResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use MaintenanceServiceSupervisionHealthResponse.ProtoReflect.Descriptor instead.
+func (*MaintenanceServiceSupervisionHealthResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{109}
 }
 
-func (x *SupervisionHealthResponse) GetState() HealthState {
+func (x *MaintenanceServiceSupervisionHealthResponse) GetState() HealthState {
 	if x != nil {
 		return x.State
 	}
 	return HealthState_HEALTH_STATE_UNSPECIFIED
 }
 
-func (x *SupervisionHealthResponse) GetSessions() uint32 {
+func (x *MaintenanceServiceSupervisionHealthResponse) GetSessions() uint32 {
 	if x != nil {
 		return x.Sessions
 	}
 	return 0
 }
 
-func (x *SupervisionHealthResponse) GetSubscriptions() uint32 {
+func (x *MaintenanceServiceSupervisionHealthResponse) GetSubscriptions() uint32 {
 	if x != nil {
 		return x.Subscriptions
 	}
 	return 0
 }
 
-func (x *SupervisionHealthResponse) GetFramesServed() uint64 {
+func (x *MaintenanceServiceSupervisionHealthResponse) GetFramesServed() uint64 {
 	if x != nil {
 		return x.FramesServed
 	}
 	return 0
 }
 
-type SupervisionShutdownRequest struct {
+type MaintenanceServiceSupervisionShutdownRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Reason        ShutdownReason         `protobuf:"varint,1,opt,name=reason,proto3,enum=terrabase.v1.ShutdownReason" json:"reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SupervisionShutdownRequest) Reset() {
-	*x = SupervisionShutdownRequest{}
+func (x *MaintenanceServiceSupervisionShutdownRequest) Reset() {
+	*x = MaintenanceServiceSupervisionShutdownRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[110]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SupervisionShutdownRequest) String() string {
+func (x *MaintenanceServiceSupervisionShutdownRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SupervisionShutdownRequest) ProtoMessage() {}
+func (*MaintenanceServiceSupervisionShutdownRequest) ProtoMessage() {}
 
-func (x *SupervisionShutdownRequest) ProtoReflect() protoreflect.Message {
+func (x *MaintenanceServiceSupervisionShutdownRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[110]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -8500,19 +8500,19 @@ func (x *SupervisionShutdownRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SupervisionShutdownRequest.ProtoReflect.Descriptor instead.
-func (*SupervisionShutdownRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use MaintenanceServiceSupervisionShutdownRequest.ProtoReflect.Descriptor instead.
+func (*MaintenanceServiceSupervisionShutdownRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{110}
 }
 
-func (x *SupervisionShutdownRequest) GetReason() ShutdownReason {
+func (x *MaintenanceServiceSupervisionShutdownRequest) GetReason() ShutdownReason {
 	if x != nil {
 		return x.Reason
 	}
 	return ShutdownReason_SHUTDOWN_REASON_UNSPECIFIED
 }
 
-type SupervisionShutdownResponse struct {
+type MaintenanceServiceSupervisionShutdownResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	State         HealthState            `protobuf:"varint,1,opt,name=state,proto3,enum=terrabase.v1.HealthState" json:"state,omitempty"`
 	InFlight      uint32                 `protobuf:"varint,2,opt,name=in_flight,json=inFlight,proto3" json:"in_flight,omitempty"`
@@ -8520,20 +8520,20 @@ type SupervisionShutdownResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SupervisionShutdownResponse) Reset() {
-	*x = SupervisionShutdownResponse{}
+func (x *MaintenanceServiceSupervisionShutdownResponse) Reset() {
+	*x = MaintenanceServiceSupervisionShutdownResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[111]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SupervisionShutdownResponse) String() string {
+func (x *MaintenanceServiceSupervisionShutdownResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SupervisionShutdownResponse) ProtoMessage() {}
+func (*MaintenanceServiceSupervisionShutdownResponse) ProtoMessage() {}
 
-func (x *SupervisionShutdownResponse) ProtoReflect() protoreflect.Message {
+func (x *MaintenanceServiceSupervisionShutdownResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[111]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -8545,19 +8545,19 @@ func (x *SupervisionShutdownResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SupervisionShutdownResponse.ProtoReflect.Descriptor instead.
-func (*SupervisionShutdownResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use MaintenanceServiceSupervisionShutdownResponse.ProtoReflect.Descriptor instead.
+func (*MaintenanceServiceSupervisionShutdownResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{111}
 }
 
-func (x *SupervisionShutdownResponse) GetState() HealthState {
+func (x *MaintenanceServiceSupervisionShutdownResponse) GetState() HealthState {
 	if x != nil {
 		return x.State
 	}
 	return HealthState_HEALTH_STATE_UNSPECIFIED
 }
 
-func (x *SupervisionShutdownResponse) GetInFlight() uint32 {
+func (x *MaintenanceServiceSupervisionShutdownResponse) GetInFlight() uint32 {
 	if x != nil {
 		return x.InFlight
 	}
@@ -8668,7 +8668,7 @@ func (x *UsageAdmissionContext) GetIntegerUnits() string {
 	return ""
 }
 
-type UsageRecordRequest struct {
+type UsageServiceRecordRequest struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Meter            UsageRecordMeter       `protobuf:"varint,1,opt,name=meter,proto3,enum=terrabase.v1.UsageRecordMeter" json:"meter,omitempty"`
 	Project          string                 `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`     // 1..=255 bytes.
@@ -8685,20 +8685,20 @@ type UsageRecordRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *UsageRecordRequest) Reset() {
-	*x = UsageRecordRequest{}
+func (x *UsageServiceRecordRequest) Reset() {
+	*x = UsageServiceRecordRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[113]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *UsageRecordRequest) String() string {
+func (x *UsageServiceRecordRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*UsageRecordRequest) ProtoMessage() {}
+func (*UsageServiceRecordRequest) ProtoMessage() {}
 
-func (x *UsageRecordRequest) ProtoReflect() protoreflect.Message {
+func (x *UsageServiceRecordRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[113]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -8710,75 +8710,75 @@ func (x *UsageRecordRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use UsageRecordRequest.ProtoReflect.Descriptor instead.
-func (*UsageRecordRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use UsageServiceRecordRequest.ProtoReflect.Descriptor instead.
+func (*UsageServiceRecordRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{113}
 }
 
-func (x *UsageRecordRequest) GetMeter() UsageRecordMeter {
+func (x *UsageServiceRecordRequest) GetMeter() UsageRecordMeter {
 	if x != nil {
 		return x.Meter
 	}
 	return UsageRecordMeter_USAGE_RECORD_METER_UNSPECIFIED
 }
 
-func (x *UsageRecordRequest) GetProject() string {
+func (x *UsageServiceRecordRequest) GetProject() string {
 	if x != nil {
 		return x.Project
 	}
 	return ""
 }
 
-func (x *UsageRecordRequest) GetDatabase() string {
+func (x *UsageServiceRecordRequest) GetDatabase() string {
 	if x != nil {
 		return x.Database
 	}
 	return ""
 }
 
-func (x *UsageRecordRequest) GetPartition() string {
+func (x *UsageServiceRecordRequest) GetPartition() string {
 	if x != nil {
 		return x.Partition
 	}
 	return ""
 }
 
-func (x *UsageRecordRequest) GetOriginRegion() UsageRegion {
+func (x *UsageServiceRecordRequest) GetOriginRegion() UsageRegion {
 	if x != nil {
 		return x.OriginRegion
 	}
 	return UsageRegion_USAGE_REGION_UNSPECIFIED
 }
 
-func (x *UsageRecordRequest) GetFactId() string {
+func (x *UsageServiceRecordRequest) GetFactId() string {
 	if x != nil {
 		return x.FactId
 	}
 	return ""
 }
 
-func (x *UsageRecordRequest) GetRecordedAtMillis() uint64 {
+func (x *UsageServiceRecordRequest) GetRecordedAtMillis() uint64 {
 	if x != nil {
 		return x.RecordedAtMillis
 	}
 	return 0
 }
 
-func (x *UsageRecordRequest) GetMeterVersion() uint32 {
+func (x *UsageServiceRecordRequest) GetMeterVersion() uint32 {
 	if x != nil {
 		return x.MeterVersion
 	}
 	return 0
 }
 
-func (x *UsageRecordRequest) GetIntegerUnits() string {
+func (x *UsageServiceRecordRequest) GetIntegerUnits() string {
 	if x != nil {
 		return x.IntegerUnits
 	}
 	return ""
 }
 
-type UsageRecordResponse struct {
+type UsageServiceRecordResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Sequence        uint64                 `protobuf:"varint,1,opt,name=sequence,proto3" json:"sequence,omitempty"`
 	ReplicaEpoch    uint64                 `protobuf:"varint,2,opt,name=replica_epoch,json=replicaEpoch,proto3" json:"replica_epoch,omitempty"`
@@ -8787,20 +8787,20 @@ type UsageRecordResponse struct {
 	sizeCache       protoimpl.SizeCache
 }
 
-func (x *UsageRecordResponse) Reset() {
-	*x = UsageRecordResponse{}
+func (x *UsageServiceRecordResponse) Reset() {
+	*x = UsageServiceRecordResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[114]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *UsageRecordResponse) String() string {
+func (x *UsageServiceRecordResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*UsageRecordResponse) ProtoMessage() {}
+func (*UsageServiceRecordResponse) ProtoMessage() {}
 
-func (x *UsageRecordResponse) ProtoReflect() protoreflect.Message {
+func (x *UsageServiceRecordResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[114]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -8812,26 +8812,26 @@ func (x *UsageRecordResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use UsageRecordResponse.ProtoReflect.Descriptor instead.
-func (*UsageRecordResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use UsageServiceRecordResponse.ProtoReflect.Descriptor instead.
+func (*UsageServiceRecordResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{114}
 }
 
-func (x *UsageRecordResponse) GetSequence() uint64 {
+func (x *UsageServiceRecordResponse) GetSequence() uint64 {
 	if x != nil {
 		return x.Sequence
 	}
 	return 0
 }
 
-func (x *UsageRecordResponse) GetReplicaEpoch() uint64 {
+func (x *UsageServiceRecordResponse) GetReplicaEpoch() uint64 {
 	if x != nil {
 		return x.ReplicaEpoch
 	}
 	return 0
 }
 
-func (x *UsageRecordResponse) GetAlreadyRecorded() bool {
+func (x *UsageServiceRecordResponse) GetAlreadyRecorded() bool {
 	if x != nil {
 		return x.AlreadyRecorded
 	}
@@ -9033,7 +9033,7 @@ func (x *UsageFact) GetChecksum() []byte {
 // Reads one stable, tenant-bound snapshot. Window bounds are an all-or-none
 // half-open pair. The continuation is opaque and bound to the tenant, exact
 // filters, and snapshot sequence selected by the first page.
-type UsageExportRequest struct {
+type UsageServiceExportRequest struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	WindowStartMillis *uint64                `protobuf:"varint,1,opt,name=window_start_millis,json=windowStartMillis,proto3,oneof" json:"window_start_millis,omitempty"`
 	WindowEndMillis   *uint64                `protobuf:"varint,2,opt,name=window_end_millis,json=windowEndMillis,proto3,oneof" json:"window_end_millis,omitempty"`
@@ -9043,20 +9043,20 @@ type UsageExportRequest struct {
 	sizeCache         protoimpl.SizeCache
 }
 
-func (x *UsageExportRequest) Reset() {
-	*x = UsageExportRequest{}
+func (x *UsageServiceExportRequest) Reset() {
+	*x = UsageServiceExportRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[116]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *UsageExportRequest) String() string {
+func (x *UsageServiceExportRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*UsageExportRequest) ProtoMessage() {}
+func (*UsageServiceExportRequest) ProtoMessage() {}
 
-func (x *UsageExportRequest) ProtoReflect() protoreflect.Message {
+func (x *UsageServiceExportRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[116]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -9068,33 +9068,33 @@ func (x *UsageExportRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use UsageExportRequest.ProtoReflect.Descriptor instead.
-func (*UsageExportRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use UsageServiceExportRequest.ProtoReflect.Descriptor instead.
+func (*UsageServiceExportRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{116}
 }
 
-func (x *UsageExportRequest) GetWindowStartMillis() uint64 {
+func (x *UsageServiceExportRequest) GetWindowStartMillis() uint64 {
 	if x != nil && x.WindowStartMillis != nil {
 		return *x.WindowStartMillis
 	}
 	return 0
 }
 
-func (x *UsageExportRequest) GetWindowEndMillis() uint64 {
+func (x *UsageServiceExportRequest) GetWindowEndMillis() uint64 {
 	if x != nil && x.WindowEndMillis != nil {
 		return *x.WindowEndMillis
 	}
 	return 0
 }
 
-func (x *UsageExportRequest) GetPageSize() uint32 {
+func (x *UsageServiceExportRequest) GetPageSize() uint32 {
 	if x != nil {
 		return x.PageSize
 	}
 	return 0
 }
 
-func (x *UsageExportRequest) GetContinuation() []byte {
+func (x *UsageServiceExportRequest) GetContinuation() []byte {
 	if x != nil {
 		return x.Continuation
 	}
@@ -9104,7 +9104,7 @@ func (x *UsageExportRequest) GetContinuation() []byte {
 // Facts are ordered by (sequence, minting_rule, fact_id). An empty
 // continuation completes the snapshot. Facts committed after
 // snapshot_sequence are excluded from every page in this response chain.
-type UsageExportResponse struct {
+type UsageServiceExportResponse struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Facts            []*UsageFact           `protobuf:"bytes,1,rep,name=facts,proto3" json:"facts,omitempty"`               // <= 256 facts.
 	Continuation     []byte                 `protobuf:"bytes,2,opt,name=continuation,proto3" json:"continuation,omitempty"` // <= 1024 bytes.
@@ -9113,20 +9113,20 @@ type UsageExportResponse struct {
 	sizeCache        protoimpl.SizeCache
 }
 
-func (x *UsageExportResponse) Reset() {
-	*x = UsageExportResponse{}
+func (x *UsageServiceExportResponse) Reset() {
+	*x = UsageServiceExportResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[117]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *UsageExportResponse) String() string {
+func (x *UsageServiceExportResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*UsageExportResponse) ProtoMessage() {}
+func (*UsageServiceExportResponse) ProtoMessage() {}
 
-func (x *UsageExportResponse) ProtoReflect() protoreflect.Message {
+func (x *UsageServiceExportResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[117]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -9138,33 +9138,33 @@ func (x *UsageExportResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use UsageExportResponse.ProtoReflect.Descriptor instead.
-func (*UsageExportResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use UsageServiceExportResponse.ProtoReflect.Descriptor instead.
+func (*UsageServiceExportResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{117}
 }
 
-func (x *UsageExportResponse) GetFacts() []*UsageFact {
+func (x *UsageServiceExportResponse) GetFacts() []*UsageFact {
 	if x != nil {
 		return x.Facts
 	}
 	return nil
 }
 
-func (x *UsageExportResponse) GetContinuation() []byte {
+func (x *UsageServiceExportResponse) GetContinuation() []byte {
 	if x != nil {
 		return x.Continuation
 	}
 	return nil
 }
 
-func (x *UsageExportResponse) GetSnapshotSequence() uint64 {
+func (x *UsageServiceExportResponse) GetSnapshotSequence() uint64 {
 	if x != nil {
 		return x.SnapshotSequence
 	}
 	return 0
 }
 
-type TierConfigureRequest struct {
+type TierServiceConfigureRequest struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	PolicyId           string                 `protobuf:"bytes,1,opt,name=policy_id,json=policyId,proto3" json:"policy_id,omitempty"` // <= 128 bytes.
 	Version            uint32                 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
@@ -9176,20 +9176,20 @@ type TierConfigureRequest struct {
 	sizeCache          protoimpl.SizeCache
 }
 
-func (x *TierConfigureRequest) Reset() {
-	*x = TierConfigureRequest{}
+func (x *TierServiceConfigureRequest) Reset() {
+	*x = TierServiceConfigureRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[118]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TierConfigureRequest) String() string {
+func (x *TierServiceConfigureRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TierConfigureRequest) ProtoMessage() {}
+func (*TierServiceConfigureRequest) ProtoMessage() {}
 
-func (x *TierConfigureRequest) ProtoReflect() protoreflect.Message {
+func (x *TierServiceConfigureRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[118]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -9201,54 +9201,54 @@ func (x *TierConfigureRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TierConfigureRequest.ProtoReflect.Descriptor instead.
-func (*TierConfigureRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use TierServiceConfigureRequest.ProtoReflect.Descriptor instead.
+func (*TierServiceConfigureRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{118}
 }
 
-func (x *TierConfigureRequest) GetPolicyId() string {
+func (x *TierServiceConfigureRequest) GetPolicyId() string {
 	if x != nil {
 		return x.PolicyId
 	}
 	return ""
 }
 
-func (x *TierConfigureRequest) GetVersion() uint32 {
+func (x *TierServiceConfigureRequest) GetVersion() uint32 {
 	if x != nil {
 		return x.Version
 	}
 	return 0
 }
 
-func (x *TierConfigureRequest) GetNvmeBudgetBytes() uint64 {
+func (x *TierServiceConfigureRequest) GetNvmeBudgetBytes() uint64 {
 	if x != nil {
 		return x.NvmeBudgetBytes
 	}
 	return 0
 }
 
-func (x *TierConfigureRequest) GetMinResidenceMoves() uint32 {
+func (x *TierServiceConfigureRequest) GetMinResidenceMoves() uint32 {
 	if x != nil {
 		return x.MinResidenceMoves
 	}
 	return 0
 }
 
-func (x *TierConfigureRequest) GetPromotionThreshold() uint32 {
+func (x *TierServiceConfigureRequest) GetPromotionThreshold() uint32 {
 	if x != nil {
 		return x.PromotionThreshold
 	}
 	return 0
 }
 
-func (x *TierConfigureRequest) GetPinnedSegmentIds() []uint64 {
+func (x *TierServiceConfigureRequest) GetPinnedSegmentIds() []uint64 {
 	if x != nil {
 		return x.PinnedSegmentIds
 	}
 	return nil
 }
 
-type TierConfigureResponse struct {
+type TierServiceConfigureResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PolicyId      string                 `protobuf:"bytes,1,opt,name=policy_id,json=policyId,proto3" json:"policy_id,omitempty"`
 	Version       uint32                 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
@@ -9257,20 +9257,20 @@ type TierConfigureResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TierConfigureResponse) Reset() {
-	*x = TierConfigureResponse{}
+func (x *TierServiceConfigureResponse) Reset() {
+	*x = TierServiceConfigureResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[119]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TierConfigureResponse) String() string {
+func (x *TierServiceConfigureResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TierConfigureResponse) ProtoMessage() {}
+func (*TierServiceConfigureResponse) ProtoMessage() {}
 
-func (x *TierConfigureResponse) ProtoReflect() protoreflect.Message {
+func (x *TierServiceConfigureResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[119]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -9282,52 +9282,52 @@ func (x *TierConfigureResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TierConfigureResponse.ProtoReflect.Descriptor instead.
-func (*TierConfigureResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use TierServiceConfigureResponse.ProtoReflect.Descriptor instead.
+func (*TierServiceConfigureResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{119}
 }
 
-func (x *TierConfigureResponse) GetPolicyId() string {
+func (x *TierServiceConfigureResponse) GetPolicyId() string {
 	if x != nil {
 		return x.PolicyId
 	}
 	return ""
 }
 
-func (x *TierConfigureResponse) GetVersion() uint32 {
+func (x *TierServiceConfigureResponse) GetVersion() uint32 {
 	if x != nil {
 		return x.Version
 	}
 	return 0
 }
 
-func (x *TierConfigureResponse) GetPaused() bool {
+func (x *TierServiceConfigureResponse) GetPaused() bool {
 	if x != nil {
 		return x.Paused
 	}
 	return false
 }
 
-type TierInspectRequest struct {
+type TierServiceInspectRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TierInspectRequest) Reset() {
-	*x = TierInspectRequest{}
+func (x *TierServiceInspectRequest) Reset() {
+	*x = TierServiceInspectRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[120]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TierInspectRequest) String() string {
+func (x *TierServiceInspectRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TierInspectRequest) ProtoMessage() {}
+func (*TierServiceInspectRequest) ProtoMessage() {}
 
-func (x *TierInspectRequest) ProtoReflect() protoreflect.Message {
+func (x *TierServiceInspectRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[120]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -9339,12 +9339,12 @@ func (x *TierInspectRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TierInspectRequest.ProtoReflect.Descriptor instead.
-func (*TierInspectRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use TierServiceInspectRequest.ProtoReflect.Descriptor instead.
+func (*TierServiceInspectRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{120}
 }
 
-type TierInspectResponse struct {
+type TierServiceInspectResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Configured    bool                   `protobuf:"varint,1,opt,name=configured,proto3" json:"configured,omitempty"`
 	Paused        bool                   `protobuf:"varint,2,opt,name=paused,proto3" json:"paused,omitempty"`
@@ -9355,20 +9355,20 @@ type TierInspectResponse struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TierInspectResponse) Reset() {
-	*x = TierInspectResponse{}
+func (x *TierServiceInspectResponse) Reset() {
+	*x = TierServiceInspectResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[121]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TierInspectResponse) String() string {
+func (x *TierServiceInspectResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TierInspectResponse) ProtoMessage() {}
+func (*TierServiceInspectResponse) ProtoMessage() {}
 
-func (x *TierInspectResponse) ProtoReflect() protoreflect.Message {
+func (x *TierServiceInspectResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[121]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -9380,66 +9380,66 @@ func (x *TierInspectResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TierInspectResponse.ProtoReflect.Descriptor instead.
-func (*TierInspectResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use TierServiceInspectResponse.ProtoReflect.Descriptor instead.
+func (*TierServiceInspectResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{121}
 }
 
-func (x *TierInspectResponse) GetConfigured() bool {
+func (x *TierServiceInspectResponse) GetConfigured() bool {
 	if x != nil {
 		return x.Configured
 	}
 	return false
 }
 
-func (x *TierInspectResponse) GetPaused() bool {
+func (x *TierServiceInspectResponse) GetPaused() bool {
 	if x != nil {
 		return x.Paused
 	}
 	return false
 }
 
-func (x *TierInspectResponse) GetManifestEpoch() uint64 {
+func (x *TierServiceInspectResponse) GetManifestEpoch() uint64 {
 	if x != nil {
 		return x.ManifestEpoch
 	}
 	return 0
 }
 
-func (x *TierInspectResponse) GetObjectCount() uint32 {
+func (x *TierServiceInspectResponse) GetObjectCount() uint32 {
 	if x != nil {
 		return x.ObjectCount
 	}
 	return 0
 }
 
-func (x *TierInspectResponse) GetNvmeBytes() uint64 {
+func (x *TierServiceInspectResponse) GetNvmeBytes() uint64 {
 	if x != nil {
 		return x.NvmeBytes
 	}
 	return 0
 }
 
-type TierDryRunRequest struct {
+type TierServiceDryRunRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TierDryRunRequest) Reset() {
-	*x = TierDryRunRequest{}
+func (x *TierServiceDryRunRequest) Reset() {
+	*x = TierServiceDryRunRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[122]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TierDryRunRequest) String() string {
+func (x *TierServiceDryRunRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TierDryRunRequest) ProtoMessage() {}
+func (*TierServiceDryRunRequest) ProtoMessage() {}
 
-func (x *TierDryRunRequest) ProtoReflect() protoreflect.Message {
+func (x *TierServiceDryRunRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[122]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -9451,32 +9451,32 @@ func (x *TierDryRunRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TierDryRunRequest.ProtoReflect.Descriptor instead.
-func (*TierDryRunRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use TierServiceDryRunRequest.ProtoReflect.Descriptor instead.
+func (*TierServiceDryRunRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{122}
 }
 
-type TierDryRunResponse struct {
+type TierServiceDryRunResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Receipt       *TierMoveReceipt       `protobuf:"bytes,1,opt,name=receipt,proto3" json:"receipt,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TierDryRunResponse) Reset() {
-	*x = TierDryRunResponse{}
+func (x *TierServiceDryRunResponse) Reset() {
+	*x = TierServiceDryRunResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[123]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TierDryRunResponse) String() string {
+func (x *TierServiceDryRunResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TierDryRunResponse) ProtoMessage() {}
+func (*TierServiceDryRunResponse) ProtoMessage() {}
 
-func (x *TierDryRunResponse) ProtoReflect() protoreflect.Message {
+func (x *TierServiceDryRunResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[123]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -9488,38 +9488,38 @@ func (x *TierDryRunResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TierDryRunResponse.ProtoReflect.Descriptor instead.
-func (*TierDryRunResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use TierServiceDryRunResponse.ProtoReflect.Descriptor instead.
+func (*TierServiceDryRunResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{123}
 }
 
-func (x *TierDryRunResponse) GetReceipt() *TierMoveReceipt {
+func (x *TierServiceDryRunResponse) GetReceipt() *TierMoveReceipt {
 	if x != nil {
 		return x.Receipt
 	}
 	return nil
 }
 
-type TierExplainRequest struct {
+type TierServiceExplainRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TierExplainRequest) Reset() {
-	*x = TierExplainRequest{}
+func (x *TierServiceExplainRequest) Reset() {
+	*x = TierServiceExplainRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[124]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TierExplainRequest) String() string {
+func (x *TierServiceExplainRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TierExplainRequest) ProtoMessage() {}
+func (*TierServiceExplainRequest) ProtoMessage() {}
 
-func (x *TierExplainRequest) ProtoReflect() protoreflect.Message {
+func (x *TierServiceExplainRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[124]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -9531,32 +9531,32 @@ func (x *TierExplainRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TierExplainRequest.ProtoReflect.Descriptor instead.
-func (*TierExplainRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use TierServiceExplainRequest.ProtoReflect.Descriptor instead.
+func (*TierServiceExplainRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{124}
 }
 
-type TierExplainResponse struct {
+type TierServiceExplainResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Receipt       *TierMoveReceipt       `protobuf:"bytes,1,opt,name=receipt,proto3" json:"receipt,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TierExplainResponse) Reset() {
-	*x = TierExplainResponse{}
+func (x *TierServiceExplainResponse) Reset() {
+	*x = TierServiceExplainResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[125]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TierExplainResponse) String() string {
+func (x *TierServiceExplainResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TierExplainResponse) ProtoMessage() {}
+func (*TierServiceExplainResponse) ProtoMessage() {}
 
-func (x *TierExplainResponse) ProtoReflect() protoreflect.Message {
+func (x *TierServiceExplainResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[125]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -9568,38 +9568,38 @@ func (x *TierExplainResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TierExplainResponse.ProtoReflect.Descriptor instead.
-func (*TierExplainResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use TierServiceExplainResponse.ProtoReflect.Descriptor instead.
+func (*TierServiceExplainResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{125}
 }
 
-func (x *TierExplainResponse) GetReceipt() *TierMoveReceipt {
+func (x *TierServiceExplainResponse) GetReceipt() *TierMoveReceipt {
 	if x != nil {
 		return x.Receipt
 	}
 	return nil
 }
 
-type TierRunRequest struct {
+type TierServiceRunRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TierRunRequest) Reset() {
-	*x = TierRunRequest{}
+func (x *TierServiceRunRequest) Reset() {
+	*x = TierServiceRunRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[126]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TierRunRequest) String() string {
+func (x *TierServiceRunRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TierRunRequest) ProtoMessage() {}
+func (*TierServiceRunRequest) ProtoMessage() {}
 
-func (x *TierRunRequest) ProtoReflect() protoreflect.Message {
+func (x *TierServiceRunRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[126]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -9611,32 +9611,32 @@ func (x *TierRunRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TierRunRequest.ProtoReflect.Descriptor instead.
-func (*TierRunRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use TierServiceRunRequest.ProtoReflect.Descriptor instead.
+func (*TierServiceRunRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{126}
 }
 
-type TierRunResponse struct {
+type TierServiceRunResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Receipt       *TierMoveReceipt       `protobuf:"bytes,1,opt,name=receipt,proto3" json:"receipt,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TierRunResponse) Reset() {
-	*x = TierRunResponse{}
+func (x *TierServiceRunResponse) Reset() {
+	*x = TierServiceRunResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[127]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TierRunResponse) String() string {
+func (x *TierServiceRunResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TierRunResponse) ProtoMessage() {}
+func (*TierServiceRunResponse) ProtoMessage() {}
 
-func (x *TierRunResponse) ProtoReflect() protoreflect.Message {
+func (x *TierServiceRunResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[127]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -9648,38 +9648,38 @@ func (x *TierRunResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TierRunResponse.ProtoReflect.Descriptor instead.
-func (*TierRunResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use TierServiceRunResponse.ProtoReflect.Descriptor instead.
+func (*TierServiceRunResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{127}
 }
 
-func (x *TierRunResponse) GetReceipt() *TierMoveReceipt {
+func (x *TierServiceRunResponse) GetReceipt() *TierMoveReceipt {
 	if x != nil {
 		return x.Receipt
 	}
 	return nil
 }
 
-type TierPauseRequest struct {
+type TierServicePauseRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TierPauseRequest) Reset() {
-	*x = TierPauseRequest{}
+func (x *TierServicePauseRequest) Reset() {
+	*x = TierServicePauseRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[128]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TierPauseRequest) String() string {
+func (x *TierServicePauseRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TierPauseRequest) ProtoMessage() {}
+func (*TierServicePauseRequest) ProtoMessage() {}
 
-func (x *TierPauseRequest) ProtoReflect() protoreflect.Message {
+func (x *TierServicePauseRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[128]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -9691,32 +9691,32 @@ func (x *TierPauseRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TierPauseRequest.ProtoReflect.Descriptor instead.
-func (*TierPauseRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use TierServicePauseRequest.ProtoReflect.Descriptor instead.
+func (*TierServicePauseRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{128}
 }
 
-type TierPauseResponse struct {
+type TierServicePauseResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Paused        bool                   `protobuf:"varint,1,opt,name=paused,proto3" json:"paused,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TierPauseResponse) Reset() {
-	*x = TierPauseResponse{}
+func (x *TierServicePauseResponse) Reset() {
+	*x = TierServicePauseResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[129]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TierPauseResponse) String() string {
+func (x *TierServicePauseResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TierPauseResponse) ProtoMessage() {}
+func (*TierServicePauseResponse) ProtoMessage() {}
 
-func (x *TierPauseResponse) ProtoReflect() protoreflect.Message {
+func (x *TierServicePauseResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[129]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -9728,38 +9728,38 @@ func (x *TierPauseResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TierPauseResponse.ProtoReflect.Descriptor instead.
-func (*TierPauseResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use TierServicePauseResponse.ProtoReflect.Descriptor instead.
+func (*TierServicePauseResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{129}
 }
 
-func (x *TierPauseResponse) GetPaused() bool {
+func (x *TierServicePauseResponse) GetPaused() bool {
 	if x != nil {
 		return x.Paused
 	}
 	return false
 }
 
-type TierResumeRequest struct {
+type TierServiceResumeRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TierResumeRequest) Reset() {
-	*x = TierResumeRequest{}
+func (x *TierServiceResumeRequest) Reset() {
+	*x = TierServiceResumeRequest{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[130]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TierResumeRequest) String() string {
+func (x *TierServiceResumeRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TierResumeRequest) ProtoMessage() {}
+func (*TierServiceResumeRequest) ProtoMessage() {}
 
-func (x *TierResumeRequest) ProtoReflect() protoreflect.Message {
+func (x *TierServiceResumeRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[130]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -9771,32 +9771,32 @@ func (x *TierResumeRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TierResumeRequest.ProtoReflect.Descriptor instead.
-func (*TierResumeRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use TierServiceResumeRequest.ProtoReflect.Descriptor instead.
+func (*TierServiceResumeRequest) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{130}
 }
 
-type TierResumeResponse struct {
+type TierServiceResumeResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Paused        bool                   `protobuf:"varint,1,opt,name=paused,proto3" json:"paused,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TierResumeResponse) Reset() {
-	*x = TierResumeResponse{}
+func (x *TierServiceResumeResponse) Reset() {
+	*x = TierServiceResumeResponse{}
 	mi := &file_terrabase_v1_engine_proto_msgTypes[131]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TierResumeResponse) String() string {
+func (x *TierServiceResumeResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TierResumeResponse) ProtoMessage() {}
+func (*TierServiceResumeResponse) ProtoMessage() {}
 
-func (x *TierResumeResponse) ProtoReflect() protoreflect.Message {
+func (x *TierServiceResumeResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_terrabase_v1_engine_proto_msgTypes[131]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -9808,12 +9808,12 @@ func (x *TierResumeResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TierResumeResponse.ProtoReflect.Descriptor instead.
-func (*TierResumeResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use TierServiceResumeResponse.ProtoReflect.Descriptor instead.
+func (*TierServiceResumeResponse) Descriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{131}
 }
 
-func (x *TierResumeResponse) GetPaused() bool {
+func (x *TierServiceResumeResponse) GetPaused() bool {
 	if x != nil {
 		return x.Paused
 	}
@@ -10097,26 +10097,26 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"BatchWrite\x125\n" +
 	"\bdocument\x18\x01 \x01(\v2\x19.terrabase.v1.DocumentPutR\bdocument\x129\n" +
 	"\bexpected\x18\x02 \x01(\v2\x1d.terrabase.v1.ExpectedVersionR\bexpected\x12!\n" +
-	"\foperation_id\x18\x03 \x01(\tR\voperationId\"\x80\x01\n" +
-	"\x13DocumentReadRequest\x12\x1e\n" +
+	"\foperation_id\x18\x03 \x01(\tR\voperationId\"\x8d\x01\n" +
+	" EngineServiceDocumentReadRequest\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x01 \x01(\tR\n" +
 	"collection\x12\x1a\n" +
 	"\bdocument\x18\x02 \x01(\tR\bdocument\x12-\n" +
-	"\x05level\x18\x03 \x01(\x0e2\x17.terrabase.v1.ReadLevelR\x05level\"\x80\x01\n" +
-	"\x14DocumentReadResponse\x12\x14\n" +
+	"\x05level\x18\x03 \x01(\x0e2\x17.terrabase.v1.ReadLevelR\x05level\"\x8d\x01\n" +
+	"!EngineServiceDocumentReadResponse\x12\x14\n" +
 	"\x05found\x18\x01 \x01(\bR\x05found\x126\n" +
 	"\bdocument\x18\x02 \x01(\v2\x1a.terrabase.v1.DocumentBodyR\bdocument\x12\x1a\n" +
-	"\bposition\x18\x03 \x01(\x04R\bposition\"\x97\x02\n" +
-	"\x14DocumentWriteRequest\x125\n" +
+	"\bposition\x18\x03 \x01(\x04R\bposition\"\xa4\x02\n" +
+	"!EngineServiceDocumentWriteRequest\x125\n" +
 	"\bdocument\x18\x01 \x01(\v2\x19.terrabase.v1.DocumentPutR\bdocument\x129\n" +
 	"\bexpected\x18\x02 \x01(\v2\x1d.terrabase.v1.ExpectedVersionR\bexpected\x12!\n" +
 	"\foperation_id\x18\x03 \x01(\tR\voperationId\x12/\n" +
 	"\x03ack\x18\x04 \x01(\x0e2\x1d.terrabase.v1.AcknowledgementR\x03ack\x129\n" +
-	"\x05usage\x18\x05 \x01(\v2#.terrabase.v1.UsageAdmissionContextR\x05usage\"M\n" +
-	"\x15DocumentWriteResponse\x124\n" +
-	"\aoutcome\x18\x01 \x01(\v2\x1a.terrabase.v1.WriteOutcomeR\aoutcome\"\x9d\x02\n" +
-	"\x15DocumentDeleteRequest\x12\x1e\n" +
+	"\x05usage\x18\x05 \x01(\v2#.terrabase.v1.UsageAdmissionContextR\x05usage\"Z\n" +
+	"\"EngineServiceDocumentWriteResponse\x124\n" +
+	"\aoutcome\x18\x01 \x01(\v2\x1a.terrabase.v1.WriteOutcomeR\aoutcome\"\xaa\x02\n" +
+	"\"EngineServiceDocumentDeleteRequest\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x01 \x01(\tR\n" +
 	"collection\x12\x1a\n" +
@@ -10124,63 +10124,63 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"\bexpected\x18\x03 \x01(\v2\x1d.terrabase.v1.ExpectedVersionR\bexpected\x12!\n" +
 	"\foperation_id\x18\x04 \x01(\tR\voperationId\x12/\n" +
 	"\x03ack\x18\x05 \x01(\x0e2\x1d.terrabase.v1.AcknowledgementR\x03ack\x129\n" +
-	"\x05usage\x18\x06 \x01(\v2#.terrabase.v1.UsageAdmissionContextR\x05usage\"N\n" +
-	"\x16DocumentDeleteResponse\x124\n" +
-	"\aoutcome\x18\x01 \x01(\v2\x1a.terrabase.v1.WriteOutcomeR\aoutcome\"\xb2\x01\n" +
-	"\x14DocumentBatchRequest\x12.\n" +
+	"\x05usage\x18\x06 \x01(\v2#.terrabase.v1.UsageAdmissionContextR\x05usage\"[\n" +
+	"#EngineServiceDocumentDeleteResponse\x124\n" +
+	"\aoutcome\x18\x01 \x01(\v2\x1a.terrabase.v1.WriteOutcomeR\aoutcome\"\xbf\x01\n" +
+	"!EngineServiceDocumentBatchRequest\x12.\n" +
 	"\x05items\x18\x01 \x03(\v2\x18.terrabase.v1.BatchWriteR\x05items\x12/\n" +
 	"\x03ack\x18\x02 \x01(\x0e2\x1d.terrabase.v1.AcknowledgementR\x03ack\x129\n" +
-	"\x05usage\x18\x03 \x01(\v2#.terrabase.v1.UsageAdmissionContextR\x05usage\"M\n" +
-	"\x15DocumentBatchResponse\x124\n" +
-	"\aoutcome\x18\x01 \x01(\v2\x1a.terrabase.v1.WriteOutcomeR\aoutcome\"\x90\x01\n" +
-	"\x13QueryExecuteRequest\x12\x19\n" +
+	"\x05usage\x18\x03 \x01(\v2#.terrabase.v1.UsageAdmissionContextR\x05usage\"Z\n" +
+	"\"EngineServiceDocumentBatchResponse\x124\n" +
+	"\aoutcome\x18\x01 \x01(\v2\x1a.terrabase.v1.WriteOutcomeR\aoutcome\"\x9d\x01\n" +
+	" EngineServiceQueryExecuteRequest\x12\x19\n" +
 	"\bquery_id\x18\x01 \x01(\x04R\aqueryId\x12\x12\n" +
 	"\x04text\x18\x02 \x01(\tR\x04text\x12\x1b\n" +
 	"\tmax_items\x18\x03 \x01(\rR\bmaxItems\x12-\n" +
-	"\x05level\x18\x04 \x01(\x0e2\x17.terrabase.v1.ReadLevelR\x05level\"\xbb\x01\n" +
-	"\x14QueryExecuteResponse\x128\n" +
+	"\x05level\x18\x04 \x01(\x0e2\x17.terrabase.v1.ReadLevelR\x05level\"\xc8\x01\n" +
+	"!EngineServiceQueryExecuteResponse\x128\n" +
 	"\tdocuments\x18\x01 \x03(\v2\x1a.terrabase.v1.DocumentBodyR\tdocuments\x12\x14\n" +
 	"\x05count\x18\x02 \x01(\rR\x05count\x127\n" +
 	"\bterminal\x18\x03 \x01(\x0e2\x1b.terrabase.v1.QueryTerminalR\bterminal\x12\x1a\n" +
-	"\bposition\x18\x04 \x01(\x04R\bposition\"/\n" +
-	"\x12QueryCancelRequest\x12\x19\n" +
-	"\bquery_id\x18\x01 \x01(\x04R\aqueryId\"L\n" +
-	"\x13QueryCancelResponse\x125\n" +
-	"\aoutcome\x18\x01 \x01(\x0e2\x1b.terrabase.v1.CancelOutcomeR\aoutcome\"~\n" +
-	"\x11FamilyReadRequest\x12\x16\n" +
+	"\bposition\x18\x04 \x01(\x04R\bposition\"<\n" +
+	"\x1fEngineServiceQueryCancelRequest\x12\x19\n" +
+	"\bquery_id\x18\x01 \x01(\x04R\aqueryId\"Y\n" +
+	" EngineServiceQueryCancelResponse\x125\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1b.terrabase.v1.CancelOutcomeR\aoutcome\"\x8b\x01\n" +
+	"\x1eEngineServiceFamilyReadRequest\x12\x16\n" +
 	"\x06family\x18\x01 \x01(\tR\x06family\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12#\n" +
 	"\rrequest_codec\x18\x03 \x01(\tR\frequestCodec\x12\x18\n" +
-	"\arequest\x18\x04 \x01(\fR\arequest\"W\n" +
-	"\x12FamilyReadResponse\x12%\n" +
+	"\arequest\x18\x04 \x01(\fR\arequest\"d\n" +
+	"\x1fEngineServiceFamilyReadResponse\x12%\n" +
 	"\x0eresponse_codec\x18\x01 \x01(\tR\rresponseCodec\x12\x1a\n" +
-	"\bresponse\x18\x02 \x01(\fR\bresponse\"\xdd\x01\n" +
-	"\x12FamilyWriteRequest\x12\x16\n" +
+	"\bresponse\x18\x02 \x01(\fR\bresponse\"\xea\x01\n" +
+	"\x1fEngineServiceFamilyWriteRequest\x12\x16\n" +
 	"\x06family\x18\x01 \x01(\tR\x06family\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12#\n" +
 	"\rrequest_codec\x18\x03 \x01(\tR\frequestCodec\x12\x18\n" +
 	"\arequest\x18\x04 \x01(\fR\arequest\x12!\n" +
 	"\foperation_id\x18\x05 \x01(\tR\voperationId\x129\n" +
-	"\x05usage\x18\x06 \x01(\v2#.terrabase.v1.UsageAdmissionContextR\x05usage\"X\n" +
-	"\x13FamilyWriteResponse\x12%\n" +
+	"\x05usage\x18\x06 \x01(\v2#.terrabase.v1.UsageAdmissionContextR\x05usage\"e\n" +
+	" EngineServiceFamilyWriteResponse\x12%\n" +
 	"\x0eresponse_codec\x18\x01 \x01(\tR\rresponseCodec\x12\x1a\n" +
-	"\bresponse\x18\x02 \x01(\fR\bresponse\"\x9a\x01\n" +
-	"\x18BackboneSubscribeRequest\x12'\n" +
+	"\bresponse\x18\x02 \x01(\fR\bresponse\"\xa1\x01\n" +
+	"\x1fBackboneServiceSubscribeRequest\x12'\n" +
 	"\x0fsubscription_id\x18\x01 \x01(\x04R\x0esubscriptionId\x12 \n" +
 	"\vcollections\x18\x02 \x03(\tR\vcollections\x123\n" +
-	"\x04from\x18\x03 \x01(\v2\x1f.terrabase.v1.SubscriptionStartR\x04from\"k\n" +
-	"\x19BackboneSubscribeResponse\x12'\n" +
+	"\x04from\x18\x03 \x01(\v2\x1f.terrabase.v1.SubscriptionStartR\x04from\"r\n" +
+	" BackboneServiceSubscribeResponse\x12'\n" +
 	"\x0fsubscription_id\x18\x01 \x01(\x04R\x0esubscriptionId\x12%\n" +
-	"\x0estart_sequence\x18\x02 \x01(\x04R\rstartSequence\"p\n" +
-	"\x1aBackboneAcknowledgeRequest\x12'\n" +
+	"\x0estart_sequence\x18\x02 \x01(\x04R\rstartSequence\"w\n" +
+	"!BackboneServiceAcknowledgeRequest\x12'\n" +
 	"\x0fsubscription_id\x18\x01 \x01(\x04R\x0esubscriptionId\x12)\n" +
-	"\x10through_sequence\x18\x02 \x01(\x04R\x0fthroughSequence\"y\n" +
-	"\x1bBackboneAcknowledgeResponse\x12'\n" +
+	"\x10through_sequence\x18\x02 \x01(\x04R\x0fthroughSequence\"\x80\x01\n" +
+	"\"BackboneServiceAcknowledgeResponse\x12'\n" +
 	"\x0fsubscription_id\x18\x01 \x01(\x04R\x0esubscriptionId\x121\n" +
-	"\x14acknowledged_through\x18\x02 \x01(\x04R\x13acknowledgedThrough\"E\n" +
-	"\x1aBackboneUnsubscribeRequest\x12'\n" +
-	"\x0fsubscription_id\x18\x01 \x01(\x04R\x0esubscriptionId\"F\n" +
-	"\x1bBackboneUnsubscribeResponse\x12'\n" +
+	"\x14acknowledged_through\x18\x02 \x01(\x04R\x13acknowledgedThrough\"L\n" +
+	"!BackboneServiceUnsubscribeRequest\x12'\n" +
+	"\x0fsubscription_id\x18\x01 \x01(\x04R\x0esubscriptionId\"M\n" +
+	"\"BackboneServiceUnsubscribeResponse\x12'\n" +
 	"\x0fsubscription_id\x18\x01 \x01(\x04R\x0esubscriptionId\"\xb9\x01\n" +
 	"\x11SubscriptionBatch\x12'\n" +
 	"\x0fsubscription_id\x18\x01 \x01(\x04R\x0esubscriptionId\x12#\n" +
@@ -10196,73 +10196,73 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"\foperation_id\x18\x04 \x01(\tR\voperationId\"|\n" +
 	"\x12SubscriptionClosed\x12'\n" +
 	"\x0fsubscription_id\x18\x01 \x01(\x04R\x0esubscriptionId\x12=\n" +
-	"\x06reason\x18\x02 \x01(\x0e2%.terrabase.v1.SubscriptionCloseReasonR\x06reason\"\x9d\x02\n" +
-	"\x13BackboneStreamEvent\x12I\n" +
+	"\x06reason\x18\x02 \x01(\x0e2%.terrabase.v1.SubscriptionCloseReasonR\x06reason\"\xa2\x02\n" +
+	"\x11SubscribeResponse\x12P\n" +
 	"\n" +
-	"subscribed\x18\x01 \x01(\v2'.terrabase.v1.BackboneSubscribeResponseH\x00R\n" +
+	"subscribed\x18\x01 \x01(\v2..terrabase.v1.BackboneServiceSubscribeResponseH\x00R\n" +
 	"subscribed\x127\n" +
 	"\x05batch\x18\x02 \x01(\v2\x1f.terrabase.v1.SubscriptionBatchH\x00R\x05batch\x12=\n" +
 	"\atrigger\x18\x03 \x01(\v2!.terrabase.v1.TriggerNotificationH\x00R\atrigger\x12:\n" +
 	"\x06closed\x18\x04 \x01(\v2 .terrabase.v1.SubscriptionClosedH\x00R\x06closedB\a\n" +
-	"\x05event\"Q\n" +
-	"\x17SyncSessionSetupRequest\x12\x1e\n" +
+	"\x05event\"X\n" +
+	"\x1eSyncServiceSessionSetupRequest\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x01 \x01(\tR\n" +
 	"collection\x12\x16\n" +
-	"\x06resume\x18\x02 \x01(\fR\x06resume\"\x80\x01\n" +
-	"\x18SyncSessionSetupResponse\x12\x1d\n" +
+	"\x06resume\x18\x02 \x01(\fR\x06resume\"\x87\x01\n" +
+	"\x1fSyncServiceSessionSetupResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\x04R\tsessionId\x12\x1e\n" +
 	"\n" +
 	"checkpoint\x18\x02 \x01(\fR\n" +
 	"checkpoint\x12%\n" +
-	"\x0eretained_floor\x18\x03 \x01(\fR\rretainedFloor\"I\n" +
-	"\x14SyncDeltaPullRequest\x12\x1d\n" +
+	"\x0eretained_floor\x18\x03 \x01(\fR\rretainedFloor\"P\n" +
+	"\x1bSyncServiceDeltaPullRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\x04R\tsessionId\x12\x12\n" +
-	"\x04from\x18\x02 \x01(\fR\x04from\"\xd9\x01\n" +
-	"\x15SyncDeltaPullResponse\x12\x1d\n" +
+	"\x04from\x18\x02 \x01(\fR\x04from\"\xe0\x01\n" +
+	"\x1cSyncServiceDeltaPullResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\x04R\tsessionId\x12#\n" +
 	"\rpayload_codec\x18\x02 \x01(\tR\fpayloadCodec\x12\x18\n" +
 	"\apayload\x18\x03 \x01(\fR\apayload\x12\x12\n" +
 	"\x04next\x18\x04 \x01(\fR\x04next\x12\x18\n" +
 	"\acommits\x18\x05 \x01(\rR\acommits\x124\n" +
-	"\x16single_commit_oversize\x18\x06 \x01(\bR\x14singleCommitOversize\"8\n" +
-	"\x17SyncSnapshotPullRequest\x12\x1d\n" +
+	"\x16single_commit_oversize\x18\x06 \x01(\bR\x14singleCommitOversize\"?\n" +
+	"\x1eSyncServiceSnapshotPullRequest\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\x04R\tsessionId\"\x98\x01\n" +
-	"\x18SyncSnapshotPullResponse\x12\x1d\n" +
+	"session_id\x18\x01 \x01(\x04R\tsessionId\"\x9f\x01\n" +
+	"\x1fSyncServiceSnapshotPullResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\x04R\tsessionId\x12#\n" +
 	"\rpayload_codec\x18\x02 \x01(\tR\fpayloadCodec\x12\x18\n" +
 	"\apayload\x18\x03 \x01(\fR\apayload\x12\x1e\n" +
 	"\n" +
 	"checkpoint\x18\x04 \x01(\fR\n" +
-	"checkpoint\"Y\n" +
-	"\x18SyncCheckpointAckRequest\x12\x1d\n" +
+	"checkpoint\"`\n" +
+	"\x1fSyncServiceCheckpointAckRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\x04R\tsessionId\x12\x1e\n" +
 	"\n" +
 	"checkpoint\x18\x02 \x01(\fR\n" +
-	"checkpoint\":\n" +
-	"\x19SyncCheckpointAckResponse\x12\x1d\n" +
+	"checkpoint\"A\n" +
+	" SyncServiceCheckpointAckResponse\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\x04R\tsessionId\"\xc3\x01\n" +
-	"\x19SyncMutationSubmitRequest\x12\x1d\n" +
+	"session_id\x18\x01 \x01(\x04R\tsessionId\"\xca\x01\n" +
+	" SyncServiceMutationSubmitRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\x04R\tsessionId\x12\x1a\n" +
 	"\bdocument\x18\x02 \x01(\tR\bdocument\x120\n" +
 	"\x06change\x18\x03 \x01(\v2\x18.terrabase.v1.SyncChangeR\x06change\x129\n" +
-	"\x05usage\x18\x04 \x01(\v2#.terrabase.v1.UsageAdmissionContextR\x05usage\"t\n" +
-	"\x1aSyncMutationSubmitResponse\x12\x1d\n" +
+	"\x05usage\x18\x04 \x01(\v2#.terrabase.v1.UsageAdmissionContextR\x05usage\"{\n" +
+	"!SyncServiceMutationSubmitResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\x04R\tsessionId\x127\n" +
-	"\aoutcome\x18\x02 \x01(\v2\x1d.terrabase.v1.MutationOutcomeR\aoutcome\"8\n" +
-	"\x17SyncSessionCloseRequest\x12\x1d\n" +
+	"\aoutcome\x18\x02 \x01(\v2\x1d.terrabase.v1.MutationOutcomeR\aoutcome\"?\n" +
+	"\x1eSyncServiceSessionCloseRequest\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\x04R\tsessionId\"9\n" +
-	"\x18SyncSessionCloseResponse\x12\x1d\n" +
+	"session_id\x18\x01 \x01(\x04R\tsessionId\"@\n" +
+	"\x1fSyncServiceSessionCloseResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\x04R\tsessionId\"X\n" +
 	"\x0fSchemaViolation\x12\x14\n" +
@@ -10345,31 +10345,31 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	" \x01(\x04R\x05pages\x12F\n" +
 	"\x0erollback_limit\x18\v \x01(\x0e2\x1f.terrabase.v1.RollbackLimitKindR\rrollbackLimit\x12B\n" +
 	"\x1dacknowledged_not_rollbackable\x18\f \x01(\bR\x1backnowledgedNotRollbackable\x12'\n" +
-	"\x0falready_applied\x18\r \x01(\bR\x0ealreadyApplied\"\x86\x01\n" +
-	"\x14SchemaDeclareRequest\x12\x1e\n" +
+	"\x0falready_applied\x18\r \x01(\bR\x0ealreadyApplied\"\x8d\x01\n" +
+	"\x1bSchemaServiceDeclareRequest\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x01 \x01(\tR\n" +
 	"collection\x12+\n" +
 	"\x06schema\x18\x02 \x01(\v2\x13.terrabase.v1.ValueR\x06schema\x12!\n" +
-	"\foperation_id\x18\x03 \x01(\tR\voperationId\"a\n" +
-	"\x15SchemaDeclareResponse\x12)\n" +
+	"\foperation_id\x18\x03 \x01(\tR\voperationId\"h\n" +
+	"\x1cSchemaServiceDeclareResponse\x12)\n" +
 	"\x10enforced_version\x18\x01 \x01(\x04R\x0fenforcedVersion\x12\x1d\n" +
 	"\n" +
-	"rule_count\x18\x02 \x01(\rR\truleCount\"5\n" +
-	"\x13SchemaStatusRequest\x12\x1e\n" +
+	"rule_count\x18\x02 \x01(\rR\truleCount\"<\n" +
+	"\x1aSchemaServiceStatusRequest\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x01 \x01(\tR\n" +
-	"collection\"`\n" +
-	"\x14SchemaStatusResponse\x12)\n" +
+	"collection\"g\n" +
+	"\x1bSchemaServiceStatusResponse\x12)\n" +
 	"\x10enforced_version\x18\x01 \x01(\x04R\x0fenforcedVersion\x12\x1d\n" +
 	"\n" +
-	"rule_count\x18\x02 \x01(\rR\truleCount\"h\n" +
-	"\x15SchemaValidateRequest\x12\x1e\n" +
+	"rule_count\x18\x02 \x01(\rR\truleCount\"o\n" +
+	"\x1cSchemaServiceValidateRequest\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x01 \x01(\tR\n" +
 	"collection\x12/\n" +
-	"\bdocument\x18\x02 \x01(\v2\x13.terrabase.v1.ValueR\bdocument\"\x98\x01\n" +
-	"\x16SchemaValidateResponse\x12)\n" +
+	"\bdocument\x18\x02 \x01(\v2\x13.terrabase.v1.ValueR\bdocument\"\x9f\x01\n" +
+	"\x1dSchemaServiceValidateResponse\x12)\n" +
 	"\x10enforced_version\x18\x01 \x01(\x04R\x0fenforcedVersion\x12\x14\n" +
 	"\x05valid\x18\x02 \x01(\bR\x05valid\x12=\n" +
 	"\n" +
@@ -10390,8 +10390,8 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"\x1cacknowledge_not_rollbackable\x18\x02 \x01(\bR\x1aacknowledgeNotRollbackable\x12!\n" +
 	"\foperation_id\x18\x03 \x01(\tR\voperationId\"R\n" +
 	"\x16MigrationApplyResponse\x128\n" +
-	"\areceipt\x18\x01 \x01(\v2\x1e.terrabase.v1.MigrationReceiptR\areceipt\"\x1d\n" +
-	"\x1bReplicationConflictsRequest\"<\n" +
+	"\areceipt\x18\x01 \x01(\v2\x1e.terrabase.v1.MigrationReceiptR\areceipt\"$\n" +
+	"\"ReplicationServiceConflictsRequest\"<\n" +
 	"\n" +
 	"ClockStamp\x12\x14\n" +
 	"\x05ticks\x18\x01 \x01(\x04R\x05ticks\x12\x18\n" +
@@ -10406,83 +10406,83 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"operations\x12\x18\n" +
 	"\amembers\x18\x03 \x03(\tR\amembers\x120\n" +
 	"\x06clocks\x18\x04 \x03(\v2\x18.terrabase.v1.ClockStampR\x06clocks\x127\n" +
-	"\aoutcome\x18\x05 \x01(\v2\x1d.terrabase.v1.ConflictOutcomeR\aoutcome\"n\n" +
-	"\x1cReplicationConflictsResponse\x12\x16\n" +
+	"\aoutcome\x18\x05 \x01(\v2\x1d.terrabase.v1.ConflictOutcomeR\aoutcome\"u\n" +
+	"#ReplicationServiceConflictsResponse\x12\x16\n" +
 	"\x06member\x18\x01 \x01(\tR\x06member\x126\n" +
-	"\arecords\x18\x02 \x03(\v2\x1c.terrabase.v1.ConflictRecordR\arecords\"\x1a\n" +
-	"\x18ReplicationFencedRequest\"\x82\x01\n" +
+	"\arecords\x18\x02 \x03(\v2\x1c.terrabase.v1.ConflictRecordR\arecords\"!\n" +
+	"\x1fReplicationServiceFencedRequest\"\x82\x01\n" +
 	"\fFencedRecord\x12\x14\n" +
 	"\x05range\x18\x01 \x01(\tR\x05range\x12\x1f\n" +
 	"\vbatch_epoch\x18\x02 \x01(\x04R\n" +
 	"batchEpoch\x12#\n" +
 	"\rhighest_epoch\x18\x03 \x01(\x04R\fhighestEpoch\x12\x16\n" +
-	"\x06source\x18\x04 \x01(\tR\x06source\"i\n" +
-	"\x19ReplicationFencedResponse\x12\x16\n" +
+	"\x06source\x18\x04 \x01(\tR\x06source\"p\n" +
+	" ReplicationServiceFencedResponse\x12\x16\n" +
 	"\x06member\x18\x01 \x01(\tR\x06member\x124\n" +
-	"\arecords\x18\x02 \x03(\v2\x1a.terrabase.v1.FencedRecordR\arecords\"\x1f\n" +
-	"\x1dReplicationDepositionsRequest\"\x85\x01\n" +
+	"\arecords\x18\x02 \x03(\v2\x1a.terrabase.v1.FencedRecordR\arecords\"&\n" +
+	"$ReplicationServiceDepositionsRequest\"\x85\x01\n" +
 	"\x10DepositionRecord\x12\x14\n" +
 	"\x05range\x18\x01 \x01(\tR\x05range\x12\x1d\n" +
 	"\n" +
 	"held_epoch\x18\x02 \x01(\x04R\theldEpoch\x12\x1f\n" +
 	"\vowner_epoch\x18\x03 \x01(\x04R\n" +
 	"ownerEpoch\x12\x1b\n" +
-	"\tnew_owner\x18\x04 \x01(\tR\bnewOwner\"r\n" +
-	"\x1eReplicationDepositionsResponse\x12\x16\n" +
+	"\tnew_owner\x18\x04 \x01(\tR\bnewOwner\"y\n" +
+	"%ReplicationServiceDepositionsResponse\x12\x16\n" +
 	"\x06member\x18\x01 \x01(\tR\x06member\x128\n" +
-	"\arecords\x18\x02 \x03(\v2\x1e.terrabase.v1.DepositionRecordR\arecords\"\x1a\n" +
-	"\x18ReplicationCursorRequest\"O\n" +
-	"\x19ReplicationCursorResponse\x12\x16\n" +
+	"\arecords\x18\x02 \x03(\v2\x1e.terrabase.v1.DepositionRecordR\arecords\"!\n" +
+	"\x1fReplicationServiceCursorRequest\"V\n" +
+	" ReplicationServiceCursorResponse\x12\x16\n" +
 	"\x06member\x18\x01 \x01(\tR\x06member\x12\x1a\n" +
-	"\bposition\x18\x02 \x01(\x04R\bposition\"\x1a\n" +
-	"\x18ReplicationHealthRequest\"l\n" +
-	"\x19ReplicationHealthResponse\x12\x16\n" +
+	"\bposition\x18\x02 \x01(\x04R\bposition\"!\n" +
+	"\x1fReplicationServiceHealthRequest\"s\n" +
+	" ReplicationServiceHealthResponse\x12\x16\n" +
 	"\x06member\x18\x01 \x01(\tR\x06member\x127\n" +
-	"\x06status\x18\x02 \x01(\x0e2\x1f.terrabase.v1.ReplicationStatusR\x06status\"\x1b\n" +
-	"\x19ReplicationDenialsRequest\"\xae\x01\n" +
+	"\x06status\x18\x02 \x01(\x0e2\x1f.terrabase.v1.ReplicationStatusR\x06status\"\"\n" +
+	" ReplicationServiceDenialsRequest\"\xae\x01\n" +
 	"\fDenialRecord\x12,\n" +
 	"\x04seam\x18\x01 \x01(\x0e2\x18.terrabase.v1.DenialSeamR\x04seam\x12!\n" +
 	"\fscope_tenant\x18\x02 \x01(\tR\vscopeTenant\x12)\n" +
 	"\x10attempted_tenant\x18\x03 \x01(\tR\x0fattemptedTenant\x12\"\n" +
-	"\fcounterparty\x18\x04 \x01(\tR\fcounterparty\"j\n" +
-	"\x1aReplicationDenialsResponse\x12\x16\n" +
+	"\fcounterparty\x18\x04 \x01(\tR\fcounterparty\"q\n" +
+	"!ReplicationServiceDenialsResponse\x12\x16\n" +
 	"\x06member\x18\x01 \x01(\tR\x06member\x124\n" +
-	"\arecords\x18\x02 \x03(\v2\x1a.terrabase.v1.DenialRecordR\arecords\"\x80\x01\n" +
-	"\x12ChannelBindRequest\x12\x1c\n" +
+	"\arecords\x18\x02 \x03(\v2\x1a.terrabase.v1.DenialRecordR\arecords\"\x87\x01\n" +
+	"\x19ChannelServiceBindRequest\x12\x1c\n" +
 	"\tprincipal\x18\x01 \x01(\tR\tprincipal\x12\x16\n" +
 	"\x06tenant\x18\x02 \x01(\tR\x06tenant\x12\x18\n" +
 	"\aproject\x18\x03 \x01(\tR\aproject\x12\x1a\n" +
-	"\bdatabase\x18\x04 \x01(\tR\bdatabase\"\xac\x01\n" +
-	"\x13ChannelBindResponse\x12\x1c\n" +
+	"\bdatabase\x18\x04 \x01(\tR\bdatabase\"\xb3\x01\n" +
+	"\x1aChannelServiceBindResponse\x12\x1c\n" +
 	"\tprincipal\x18\x01 \x01(\tR\tprincipal\x12\x16\n" +
 	"\x06tenant\x18\x02 \x01(\tR\x06tenant\x12)\n" +
 	"\x10serving_instance\x18\x03 \x01(\x04R\x0fservingInstance\x12\x18\n" +
 	"\aproject\x18\x04 \x01(\tR\aproject\x12\x1a\n" +
-	"\bdatabase\x18\x05 \x01(\tR\bdatabase\"\x15\n" +
-	"\x13TopologyReadRequest\"\xe5\x01\n" +
-	"\x14TopologyReadResponse\x123\n" +
+	"\bdatabase\x18\x05 \x01(\tR\bdatabase\"'\n" +
+	"%MaintenanceServiceTopologyReadRequest\"\xf7\x01\n" +
+	"&MaintenanceServiceTopologyReadResponse\x123\n" +
 	"\abinding\x18\x01 \x01(\x0e2\x19.terrabase.v1.BindingKindR\abinding\x12\x1e\n" +
 	"\n" +
 	"subsystems\x18\x02 \x03(\tR\n" +
 	"subsystems\x12:\n" +
 	"\x19engine_topology_available\x18\x03 \x01(\bR\x17engineTopologyAvailable\x12<\n" +
-	"\fcluster_mode\x18\x04 \x01(\x0e2\x19.terrabase.v1.ClusterModeR\vclusterMode\"\x14\n" +
-	"\x12AdminStatusRequest\"\xbf\x01\n" +
-	"\x13AdminStatusResponse\x12)\n" +
+	"\fcluster_mode\x18\x04 \x01(\x0e2\x19.terrabase.v1.ClusterModeR\vclusterMode\"&\n" +
+	"$MaintenanceServiceAdminStatusRequest\"\xd1\x01\n" +
+	"%MaintenanceServiceAdminStatusResponse\x12)\n" +
 	"\x10registry_version\x18\x01 \x01(\tR\x0fregistryVersion\x12#\n" +
 	"\rframes_served\x18\x02 \x01(\x04R\fframesServed\x12\x1a\n" +
 	"\bsessions\x18\x03 \x01(\rR\bsessions\x12$\n" +
 	"\rsubscriptions\x18\x04 \x01(\rR\rsubscriptions\x12\x16\n" +
-	"\x06scopes\x18\x05 \x01(\rR\x06scopes\"\x1a\n" +
-	"\x18SupervisionHealthRequest\"\xb3\x01\n" +
-	"\x19SupervisionHealthResponse\x12/\n" +
+	"\x06scopes\x18\x05 \x01(\rR\x06scopes\",\n" +
+	"*MaintenanceServiceSupervisionHealthRequest\"\xc5\x01\n" +
+	"+MaintenanceServiceSupervisionHealthResponse\x12/\n" +
 	"\x05state\x18\x01 \x01(\x0e2\x19.terrabase.v1.HealthStateR\x05state\x12\x1a\n" +
 	"\bsessions\x18\x02 \x01(\rR\bsessions\x12$\n" +
 	"\rsubscriptions\x18\x03 \x01(\rR\rsubscriptions\x12#\n" +
-	"\rframes_served\x18\x04 \x01(\x04R\fframesServed\"R\n" +
-	"\x1aSupervisionShutdownRequest\x124\n" +
-	"\x06reason\x18\x01 \x01(\x0e2\x1c.terrabase.v1.ShutdownReasonR\x06reason\"k\n" +
-	"\x1bSupervisionShutdownResponse\x12/\n" +
+	"\rframes_served\x18\x04 \x01(\x04R\fframesServed\"d\n" +
+	",MaintenanceServiceSupervisionShutdownRequest\x124\n" +
+	"\x06reason\x18\x01 \x01(\x0e2\x1c.terrabase.v1.ShutdownReasonR\x06reason\"}\n" +
+	"-MaintenanceServiceSupervisionShutdownResponse\x12/\n" +
 	"\x05state\x18\x01 \x01(\x0e2\x19.terrabase.v1.HealthStateR\x05state\x12\x1b\n" +
 	"\tin_flight\x18\x02 \x01(\rR\binFlight\"\xc2\x02\n" +
 	"\x15UsageAdmissionContext\x12\x18\n" +
@@ -10494,8 +10494,8 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"request_id\x18\x05 \x01(\tR\trequestId\x12,\n" +
 	"\x12accepted_at_millis\x18\x06 \x01(\x04R\x10acceptedAtMillis\x12#\n" +
 	"\rmeter_version\x18\a \x01(\rR\fmeterVersion\x12#\n" +
-	"\rinteger_units\x18\b \x01(\tR\fintegerUnits\"\xef\x02\n" +
-	"\x12UsageRecordRequest\x124\n" +
+	"\rinteger_units\x18\b \x01(\tR\fintegerUnits\"\xf6\x02\n" +
+	"\x19UsageServiceRecordRequest\x124\n" +
 	"\x05meter\x18\x01 \x01(\x0e2\x1e.terrabase.v1.UsageRecordMeterR\x05meter\x12\x18\n" +
 	"\aproject\x18\x02 \x01(\tR\aproject\x12\x1a\n" +
 	"\bdatabase\x18\x03 \x01(\tR\bdatabase\x12\x1c\n" +
@@ -10504,8 +10504,8 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"\afact_id\x18\x06 \x01(\tR\x06factId\x12,\n" +
 	"\x12recorded_at_millis\x18\a \x01(\x04R\x10recordedAtMillis\x12#\n" +
 	"\rmeter_version\x18\b \x01(\rR\fmeterVersion\x12#\n" +
-	"\rinteger_units\x18\t \x01(\tR\fintegerUnits\"\x81\x01\n" +
-	"\x13UsageRecordResponse\x12\x1a\n" +
+	"\rinteger_units\x18\t \x01(\tR\fintegerUnits\"\x88\x01\n" +
+	"\x1aUsageServiceRecordResponse\x12\x1a\n" +
 	"\bsequence\x18\x01 \x01(\x04R\bsequence\x12#\n" +
 	"\rreplica_epoch\x18\x02 \x01(\x04R\freplicaEpoch\x12)\n" +
 	"\x10already_recorded\x18\x03 \x01(\bR\x0falreadyRecorded\"\x82\x06\n" +
@@ -10529,31 +10529,31 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"\rreplica_epoch\x18\x10 \x01(\x04R\freplicaEpoch\x12%\n" +
 	"\x0eformat_version\x18\x11 \x01(\rR\rformatVersion\x12\x1c\n" +
 	"\tcanonical\x18\x12 \x01(\fR\tcanonical\x12\x1a\n" +
-	"\bchecksum\x18\x13 \x01(\fR\bchecksum\"\xe9\x01\n" +
-	"\x12UsageExportRequest\x123\n" +
+	"\bchecksum\x18\x13 \x01(\fR\bchecksum\"\xf0\x01\n" +
+	"\x19UsageServiceExportRequest\x123\n" +
 	"\x13window_start_millis\x18\x01 \x01(\x04H\x00R\x11windowStartMillis\x88\x01\x01\x12/\n" +
 	"\x11window_end_millis\x18\x02 \x01(\x04H\x01R\x0fwindowEndMillis\x88\x01\x01\x12\x1b\n" +
 	"\tpage_size\x18\x03 \x01(\rR\bpageSize\x12\"\n" +
 	"\fcontinuation\x18\x04 \x01(\fR\fcontinuationB\x16\n" +
 	"\x14_window_start_millisB\x14\n" +
-	"\x12_window_end_millis\"\x95\x01\n" +
-	"\x13UsageExportResponse\x12-\n" +
+	"\x12_window_end_millis\"\x9c\x01\n" +
+	"\x1aUsageServiceExportResponse\x12-\n" +
 	"\x05facts\x18\x01 \x03(\v2\x17.terrabase.v1.UsageFactR\x05facts\x12\"\n" +
 	"\fcontinuation\x18\x02 \x01(\fR\fcontinuation\x12+\n" +
-	"\x11snapshot_sequence\x18\x03 \x01(\x04R\x10snapshotSequence\"\x88\x02\n" +
-	"\x14TierConfigureRequest\x12\x1b\n" +
+	"\x11snapshot_sequence\x18\x03 \x01(\x04R\x10snapshotSequence\"\x8f\x02\n" +
+	"\x1bTierServiceConfigureRequest\x12\x1b\n" +
 	"\tpolicy_id\x18\x01 \x01(\tR\bpolicyId\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\rR\aversion\x12*\n" +
 	"\x11nvme_budget_bytes\x18\x03 \x01(\x04R\x0fnvmeBudgetBytes\x12.\n" +
 	"\x13min_residence_moves\x18\x04 \x01(\rR\x11minResidenceMoves\x12/\n" +
 	"\x13promotion_threshold\x18\x05 \x01(\rR\x12promotionThreshold\x12,\n" +
-	"\x12pinned_segment_ids\x18\x06 \x03(\x04R\x10pinnedSegmentIds\"f\n" +
-	"\x15TierConfigureResponse\x12\x1b\n" +
+	"\x12pinned_segment_ids\x18\x06 \x03(\x04R\x10pinnedSegmentIds\"m\n" +
+	"\x1cTierServiceConfigureResponse\x12\x1b\n" +
 	"\tpolicy_id\x18\x01 \x01(\tR\bpolicyId\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\rR\aversion\x12\x16\n" +
-	"\x06paused\x18\x03 \x01(\bR\x06paused\"\x14\n" +
-	"\x12TierInspectRequest\"\xb6\x01\n" +
-	"\x13TierInspectResponse\x12\x1e\n" +
+	"\x06paused\x18\x03 \x01(\bR\x06paused\"\x1b\n" +
+	"\x19TierServiceInspectRequest\"\xbd\x01\n" +
+	"\x1aTierServiceInspectResponse\x12\x1e\n" +
 	"\n" +
 	"configured\x18\x01 \x01(\bR\n" +
 	"configured\x12\x16\n" +
@@ -10561,21 +10561,21 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"\x0emanifest_epoch\x18\x03 \x01(\x04R\rmanifestEpoch\x12!\n" +
 	"\fobject_count\x18\x04 \x01(\rR\vobjectCount\x12\x1d\n" +
 	"\n" +
-	"nvme_bytes\x18\x05 \x01(\x04R\tnvmeBytes\"\x13\n" +
-	"\x11TierDryRunRequest\"M\n" +
-	"\x12TierDryRunResponse\x127\n" +
-	"\areceipt\x18\x01 \x01(\v2\x1d.terrabase.v1.TierMoveReceiptR\areceipt\"\x14\n" +
-	"\x12TierExplainRequest\"N\n" +
-	"\x13TierExplainResponse\x127\n" +
-	"\areceipt\x18\x01 \x01(\v2\x1d.terrabase.v1.TierMoveReceiptR\areceipt\"\x10\n" +
-	"\x0eTierRunRequest\"J\n" +
-	"\x0fTierRunResponse\x127\n" +
-	"\areceipt\x18\x01 \x01(\v2\x1d.terrabase.v1.TierMoveReceiptR\areceipt\"\x12\n" +
-	"\x10TierPauseRequest\"+\n" +
-	"\x11TierPauseResponse\x12\x16\n" +
-	"\x06paused\x18\x01 \x01(\bR\x06paused\"\x13\n" +
-	"\x11TierResumeRequest\",\n" +
-	"\x12TierResumeResponse\x12\x16\n" +
+	"nvme_bytes\x18\x05 \x01(\x04R\tnvmeBytes\"\x1a\n" +
+	"\x18TierServiceDryRunRequest\"T\n" +
+	"\x19TierServiceDryRunResponse\x127\n" +
+	"\areceipt\x18\x01 \x01(\v2\x1d.terrabase.v1.TierMoveReceiptR\areceipt\"\x1b\n" +
+	"\x19TierServiceExplainRequest\"U\n" +
+	"\x1aTierServiceExplainResponse\x127\n" +
+	"\areceipt\x18\x01 \x01(\v2\x1d.terrabase.v1.TierMoveReceiptR\areceipt\"\x17\n" +
+	"\x15TierServiceRunRequest\"Q\n" +
+	"\x16TierServiceRunResponse\x127\n" +
+	"\areceipt\x18\x01 \x01(\v2\x1d.terrabase.v1.TierMoveReceiptR\areceipt\"\x19\n" +
+	"\x17TierServicePauseRequest\"2\n" +
+	"\x18TierServicePauseResponse\x12\x16\n" +
+	"\x06paused\x18\x01 \x01(\bR\x06paused\"\x1a\n" +
+	"\x18TierServiceResumeRequest\"3\n" +
+	"\x19TierServiceResumeResponse\x12\x16\n" +
 	"\x06paused\x18\x01 \x01(\bR\x06paused\"P\n" +
 	"\tTbepError\x12+\n" +
 	"\x04code\x18\x01 \x01(\x0e2\x17.terrabase.v1.ErrorCodeR\x04code\x12\x16\n" +
@@ -10586,21 +10586,20 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"\tRpcStatus\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12+\n" +
-	"\adetails\x18\x03 \x03(\v2\x11.terrabase.v1.AnyR\adetails*+\n" +
-	"\tNullValue\x12\x14\n" +
-	"\x10NULL_UNSPECIFIED\x10\x00\x12\b\n" +
-	"\x04NULL\x10\x01*f\n" +
-	"\x0fAcknowledgement\x12\x13\n" +
-	"\x0fACK_UNSPECIFIED\x10\x00\x12\x17\n" +
-	"\x13ACK_REGIONAL_QUORUM\x10\x01\x12\x15\n" +
-	"\x11ACK_GLOBAL_QUORUM\x10\x02\x12\x0e\n" +
-	"\n" +
-	"ACK_BACKUP\x10\x03*]\n" +
-	"\rBackupOutcome\x12\x16\n" +
-	"\x12BACKUP_UNSPECIFIED\x10\x00\x12\x0f\n" +
-	"\vBACKUP_NONE\x10\x01\x12\x0f\n" +
-	"\vBACKUP_FULL\x10\x02\x12\x12\n" +
-	"\x0eBACKUP_PARTIAL\x10\x03*{\n" +
+	"\adetails\x18\x03 \x03(\v2\x11.terrabase.v1.AnyR\adetails*<\n" +
+	"\tNullValue\x12\x1a\n" +
+	"\x16NULL_VALUE_UNSPECIFIED\x10\x00\x12\x13\n" +
+	"\x0fNULL_VALUE_NULL\x10\x01*\x96\x01\n" +
+	"\x0fAcknowledgement\x12\x1f\n" +
+	"\x1bACKNOWLEDGEMENT_UNSPECIFIED\x10\x00\x12#\n" +
+	"\x1fACKNOWLEDGEMENT_REGIONAL_QUORUM\x10\x01\x12!\n" +
+	"\x1dACKNOWLEDGEMENT_GLOBAL_QUORUM\x10\x02\x12\x1a\n" +
+	"\x16ACKNOWLEDGEMENT_BACKUP\x10\x03*}\n" +
+	"\rBackupOutcome\x12\x1e\n" +
+	"\x1aBACKUP_OUTCOME_UNSPECIFIED\x10\x00\x12\x17\n" +
+	"\x13BACKUP_OUTCOME_NONE\x10\x01\x12\x17\n" +
+	"\x13BACKUP_OUTCOME_FULL\x10\x02\x12\x1a\n" +
+	"\x16BACKUP_OUTCOME_PARTIAL\x10\x03*{\n" +
 	"\tReadLevel\x12\x1a\n" +
 	"\x16READ_LEVEL_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10READ_LEVEL_LOCAL\x10\x01\x12\x1e\n" +
@@ -10768,60 +10767,60 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	" ERROR_CODE_COLD_TIER_UNAVAILABLE\x10\x14\x12#\n" +
 	"\x1fERROR_CODE_FRONTIER_UNREACHABLE\x10\x15\x12 \n" +
 	"\x1cERROR_CODE_USAGE_UNAVAILABLE\x10\x16\x12\x1c\n" +
-	"\x18ERROR_CODE_USAGE_CORRUPT\x10\x172V\n" +
-	"\aChannel\x12K\n" +
-	"\x04Bind\x12 .terrabase.v1.ChannelBindRequest\x1a!.terrabase.v1.ChannelBindResponse2\xc0\x05\n" +
-	"\x06Engine\x12U\n" +
-	"\fDocumentRead\x12!.terrabase.v1.DocumentReadRequest\x1a\".terrabase.v1.DocumentReadResponse\x12X\n" +
-	"\rDocumentWrite\x12\".terrabase.v1.DocumentWriteRequest\x1a#.terrabase.v1.DocumentWriteResponse\x12[\n" +
-	"\x0eDocumentDelete\x12#.terrabase.v1.DocumentDeleteRequest\x1a$.terrabase.v1.DocumentDeleteResponse\x12X\n" +
-	"\rDocumentBatch\x12\".terrabase.v1.DocumentBatchRequest\x1a#.terrabase.v1.DocumentBatchResponse\x12U\n" +
-	"\fQueryExecute\x12!.terrabase.v1.QueryExecuteRequest\x1a\".terrabase.v1.QueryExecuteResponse\x12R\n" +
-	"\vQueryCancel\x12 .terrabase.v1.QueryCancelRequest\x1a!.terrabase.v1.QueryCancelResponse\x12O\n" +
+	"\x18ERROR_CODE_USAGE_CORRUPT\x10\x172k\n" +
+	"\x0eChannelService\x12Y\n" +
+	"\x04Bind\x12'.terrabase.v1.ChannelServiceBindRequest\x1a(.terrabase.v1.ChannelServiceBindResponse2\x97\a\n" +
+	"\rEngineService\x12o\n" +
+	"\fDocumentRead\x12..terrabase.v1.EngineServiceDocumentReadRequest\x1a/.terrabase.v1.EngineServiceDocumentReadResponse\x12r\n" +
+	"\rDocumentWrite\x12/.terrabase.v1.EngineServiceDocumentWriteRequest\x1a0.terrabase.v1.EngineServiceDocumentWriteResponse\x12u\n" +
+	"\x0eDocumentDelete\x120.terrabase.v1.EngineServiceDocumentDeleteRequest\x1a1.terrabase.v1.EngineServiceDocumentDeleteResponse\x12r\n" +
+	"\rDocumentBatch\x12/.terrabase.v1.EngineServiceDocumentBatchRequest\x1a0.terrabase.v1.EngineServiceDocumentBatchResponse\x12o\n" +
+	"\fQueryExecute\x12..terrabase.v1.EngineServiceQueryExecuteRequest\x1a/.terrabase.v1.EngineServiceQueryExecuteResponse\x12l\n" +
+	"\vQueryCancel\x12-.terrabase.v1.EngineServiceQueryCancelRequest\x1a..terrabase.v1.EngineServiceQueryCancelResponse\x12i\n" +
 	"\n" +
-	"FamilyRead\x12\x1f.terrabase.v1.FamilyReadRequest\x1a .terrabase.v1.FamilyReadResponse\x12R\n" +
-	"\vFamilyWrite\x12 .terrabase.v1.FamilyWriteRequest\x1a!.terrabase.v1.FamilyWriteResponse2\xac\x02\n" +
-	"\bBackbone\x12X\n" +
-	"\tSubscribe\x12&.terrabase.v1.BackboneSubscribeRequest\x1a!.terrabase.v1.BackboneStreamEvent0\x01\x12b\n" +
-	"\vAcknowledge\x12(.terrabase.v1.BackboneAcknowledgeRequest\x1a).terrabase.v1.BackboneAcknowledgeResponse\x12b\n" +
-	"\vUnsubscribe\x12(.terrabase.v1.BackboneUnsubscribeRequest\x1a).terrabase.v1.BackboneUnsubscribeResponse2\xc0\x04\n" +
-	"\x04Sync\x12]\n" +
-	"\fSessionSetup\x12%.terrabase.v1.SyncSessionSetupRequest\x1a&.terrabase.v1.SyncSessionSetupResponse\x12T\n" +
-	"\tDeltaPull\x12\".terrabase.v1.SyncDeltaPullRequest\x1a#.terrabase.v1.SyncDeltaPullResponse\x12]\n" +
-	"\fSnapshotPull\x12%.terrabase.v1.SyncSnapshotPullRequest\x1a&.terrabase.v1.SyncSnapshotPullResponse\x12`\n" +
-	"\rCheckpointAck\x12&.terrabase.v1.SyncCheckpointAckRequest\x1a'.terrabase.v1.SyncCheckpointAckResponse\x12c\n" +
-	"\x0eMutationSubmit\x12'.terrabase.v1.SyncMutationSubmitRequest\x1a(.terrabase.v1.SyncMutationSubmitResponse\x12]\n" +
-	"\fSessionClose\x12%.terrabase.v1.SyncSessionCloseRequest\x1a&.terrabase.v1.SyncSessionCloseResponse2\xa1\x04\n" +
-	"\x06Schema\x12R\n" +
-	"\aDeclare\x12\".terrabase.v1.SchemaDeclareRequest\x1a#.terrabase.v1.SchemaDeclareResponse\x12O\n" +
-	"\x06Status\x12!.terrabase.v1.SchemaStatusRequest\x1a\".terrabase.v1.SchemaStatusResponse\x12U\n" +
-	"\bValidate\x12#.terrabase.v1.SchemaValidateRequest\x1a$.terrabase.v1.SchemaValidateResponse\x12^\n" +
+	"FamilyRead\x12,.terrabase.v1.EngineServiceFamilyReadRequest\x1a-.terrabase.v1.EngineServiceFamilyReadResponse\x12l\n" +
+	"\vFamilyWrite\x12-.terrabase.v1.EngineServiceFamilyWriteRequest\x1a..terrabase.v1.EngineServiceFamilyWriteResponse2\xd4\x02\n" +
+	"\x0fBackboneService\x12]\n" +
+	"\tSubscribe\x12-.terrabase.v1.BackboneServiceSubscribeRequest\x1a\x1f.terrabase.v1.SubscribeResponse0\x01\x12p\n" +
+	"\vAcknowledge\x12/.terrabase.v1.BackboneServiceAcknowledgeRequest\x1a0.terrabase.v1.BackboneServiceAcknowledgeResponse\x12p\n" +
+	"\vUnsubscribe\x12/.terrabase.v1.BackboneServiceUnsubscribeRequest\x1a0.terrabase.v1.BackboneServiceUnsubscribeResponse2\x9b\x05\n" +
+	"\vSyncService\x12k\n" +
+	"\fSessionSetup\x12,.terrabase.v1.SyncServiceSessionSetupRequest\x1a-.terrabase.v1.SyncServiceSessionSetupResponse\x12b\n" +
+	"\tDeltaPull\x12).terrabase.v1.SyncServiceDeltaPullRequest\x1a*.terrabase.v1.SyncServiceDeltaPullResponse\x12k\n" +
+	"\fSnapshotPull\x12,.terrabase.v1.SyncServiceSnapshotPullRequest\x1a-.terrabase.v1.SyncServiceSnapshotPullResponse\x12n\n" +
+	"\rCheckpointAck\x12-.terrabase.v1.SyncServiceCheckpointAckRequest\x1a..terrabase.v1.SyncServiceCheckpointAckResponse\x12q\n" +
+	"\x0eMutationSubmit\x12..terrabase.v1.SyncServiceMutationSubmitRequest\x1a/.terrabase.v1.SyncServiceMutationSubmitResponse\x12k\n" +
+	"\fSessionClose\x12,.terrabase.v1.SyncServiceSessionCloseRequest\x1a-.terrabase.v1.SyncServiceSessionCloseResponse2\xd2\x04\n" +
+	"\rSchemaService\x12`\n" +
+	"\aDeclare\x12).terrabase.v1.SchemaServiceDeclareRequest\x1a*.terrabase.v1.SchemaServiceDeclareResponse\x12]\n" +
+	"\x06Status\x12(.terrabase.v1.SchemaServiceStatusRequest\x1a).terrabase.v1.SchemaServiceStatusResponse\x12c\n" +
+	"\bValidate\x12*.terrabase.v1.SchemaServiceValidateRequest\x1a+.terrabase.v1.SchemaServiceValidateResponse\x12^\n" +
 	"\x0fMigrationStatus\x12$.terrabase.v1.MigrationStatusRequest\x1a%.terrabase.v1.MigrationStatusResponse\x12^\n" +
 	"\x0fMigrationDryRun\x12$.terrabase.v1.MigrationDryRunRequest\x1a%.terrabase.v1.MigrationDryRunResponse\x12[\n" +
-	"\x0eMigrationApply\x12#.terrabase.v1.MigrationApplyRequest\x1a$.terrabase.v1.MigrationApplyResponse2\xca\x04\n" +
-	"\vReplication\x12b\n" +
-	"\tConflicts\x12).terrabase.v1.ReplicationConflictsRequest\x1a*.terrabase.v1.ReplicationConflictsResponse\x12Y\n" +
-	"\x06Fenced\x12&.terrabase.v1.ReplicationFencedRequest\x1a'.terrabase.v1.ReplicationFencedResponse\x12h\n" +
-	"\vDepositions\x12+.terrabase.v1.ReplicationDepositionsRequest\x1a,.terrabase.v1.ReplicationDepositionsResponse\x12Y\n" +
-	"\x06Cursor\x12&.terrabase.v1.ReplicationCursorRequest\x1a'.terrabase.v1.ReplicationCursorResponse\x12Y\n" +
-	"\x06Health\x12&.terrabase.v1.ReplicationHealthRequest\x1a'.terrabase.v1.ReplicationHealthResponse\x12\\\n" +
-	"\aDenials\x12'.terrabase.v1.ReplicationDenialsRequest\x1a(.terrabase.v1.ReplicationDenialsResponse2\x8a\x03\n" +
-	"\vMaintenance\x12U\n" +
-	"\fTopologyRead\x12!.terrabase.v1.TopologyReadRequest\x1a\".terrabase.v1.TopologyReadResponse\x12R\n" +
-	"\vAdminStatus\x12 .terrabase.v1.AdminStatusRequest\x1a!.terrabase.v1.AdminStatusResponse\x12d\n" +
-	"\x11SupervisionHealth\x12&.terrabase.v1.SupervisionHealthRequest\x1a'.terrabase.v1.SupervisionHealthResponse\x12j\n" +
-	"\x13SupervisionShutdown\x12(.terrabase.v1.SupervisionShutdownRequest\x1a).terrabase.v1.SupervisionShutdownResponse2\xa5\x01\n" +
-	"\x05Usage\x12M\n" +
-	"\x06Record\x12 .terrabase.v1.UsageRecordRequest\x1a!.terrabase.v1.UsageRecordResponse\x12M\n" +
-	"\x06Export\x12 .terrabase.v1.UsageExportRequest\x1a!.terrabase.v1.UsageExportResponse2\xa4\x04\n" +
-	"\x04Tier\x12T\n" +
-	"\tConfigure\x12\".terrabase.v1.TierConfigureRequest\x1a#.terrabase.v1.TierConfigureResponse\x12N\n" +
-	"\aInspect\x12 .terrabase.v1.TierInspectRequest\x1a!.terrabase.v1.TierInspectResponse\x12K\n" +
-	"\x06DryRun\x12\x1f.terrabase.v1.TierDryRunRequest\x1a .terrabase.v1.TierDryRunResponse\x12N\n" +
-	"\aExplain\x12 .terrabase.v1.TierExplainRequest\x1a!.terrabase.v1.TierExplainResponse\x12B\n" +
-	"\x03Run\x12\x1c.terrabase.v1.TierRunRequest\x1a\x1d.terrabase.v1.TierRunResponse\x12H\n" +
-	"\x05Pause\x12\x1e.terrabase.v1.TierPauseRequest\x1a\x1f.terrabase.v1.TierPauseResponse\x12K\n" +
-	"\x06Resume\x12\x1f.terrabase.v1.TierResumeRequest\x1a .terrabase.v1.TierResumeResponseB.Z,terrascale.tech/terrabase-go/terrabase/v1;v1b\x06proto3"
+	"\x0eMigrationApply\x12#.terrabase.v1.MigrationApplyRequest\x1a$.terrabase.v1.MigrationApplyResponse2\xa5\x05\n" +
+	"\x12ReplicationService\x12p\n" +
+	"\tConflicts\x120.terrabase.v1.ReplicationServiceConflictsRequest\x1a1.terrabase.v1.ReplicationServiceConflictsResponse\x12g\n" +
+	"\x06Fenced\x12-.terrabase.v1.ReplicationServiceFencedRequest\x1a..terrabase.v1.ReplicationServiceFencedResponse\x12v\n" +
+	"\vDepositions\x122.terrabase.v1.ReplicationServiceDepositionsRequest\x1a3.terrabase.v1.ReplicationServiceDepositionsResponse\x12g\n" +
+	"\x06Cursor\x12-.terrabase.v1.ReplicationServiceCursorRequest\x1a..terrabase.v1.ReplicationServiceCursorResponse\x12g\n" +
+	"\x06Health\x12-.terrabase.v1.ReplicationServiceHealthRequest\x1a..terrabase.v1.ReplicationServiceHealthResponse\x12j\n" +
+	"\aDenials\x12..terrabase.v1.ReplicationServiceDenialsRequest\x1a/.terrabase.v1.ReplicationServiceDenialsResponse2\xa3\x04\n" +
+	"\x12MaintenanceService\x12y\n" +
+	"\fTopologyRead\x123.terrabase.v1.MaintenanceServiceTopologyReadRequest\x1a4.terrabase.v1.MaintenanceServiceTopologyReadResponse\x12v\n" +
+	"\vAdminStatus\x122.terrabase.v1.MaintenanceServiceAdminStatusRequest\x1a3.terrabase.v1.MaintenanceServiceAdminStatusResponse\x12\x88\x01\n" +
+	"\x11SupervisionHealth\x128.terrabase.v1.MaintenanceServiceSupervisionHealthRequest\x1a9.terrabase.v1.MaintenanceServiceSupervisionHealthResponse\x12\x8e\x01\n" +
+	"\x13SupervisionShutdown\x12:.terrabase.v1.MaintenanceServiceSupervisionShutdownRequest\x1a;.terrabase.v1.MaintenanceServiceSupervisionShutdownResponse2\xc8\x01\n" +
+	"\fUsageService\x12[\n" +
+	"\x06Record\x12'.terrabase.v1.UsageServiceRecordRequest\x1a(.terrabase.v1.UsageServiceRecordResponse\x12[\n" +
+	"\x06Export\x12'.terrabase.v1.UsageServiceExportRequest\x1a(.terrabase.v1.UsageServiceExportResponse2\x8d\x05\n" +
+	"\vTierService\x12b\n" +
+	"\tConfigure\x12).terrabase.v1.TierServiceConfigureRequest\x1a*.terrabase.v1.TierServiceConfigureResponse\x12\\\n" +
+	"\aInspect\x12'.terrabase.v1.TierServiceInspectRequest\x1a(.terrabase.v1.TierServiceInspectResponse\x12Y\n" +
+	"\x06DryRun\x12&.terrabase.v1.TierServiceDryRunRequest\x1a'.terrabase.v1.TierServiceDryRunResponse\x12\\\n" +
+	"\aExplain\x12'.terrabase.v1.TierServiceExplainRequest\x1a(.terrabase.v1.TierServiceExplainResponse\x12P\n" +
+	"\x03Run\x12#.terrabase.v1.TierServiceRunRequest\x1a$.terrabase.v1.TierServiceRunResponse\x12V\n" +
+	"\x05Pause\x12%.terrabase.v1.TierServicePauseRequest\x1a&.terrabase.v1.TierServicePauseResponse\x12Y\n" +
+	"\x06Resume\x12&.terrabase.v1.TierServiceResumeRequest\x1a'.terrabase.v1.TierServiceResumeResponseB.Z,terrascale.tech/terrabase-go/terrabase/v1;v1b\x06proto3"
 
 var (
 	file_terrabase_v1_engine_proto_rawDescOnce sync.Once
@@ -10838,173 +10837,173 @@ func file_terrabase_v1_engine_proto_rawDescGZIP() []byte {
 var file_terrabase_v1_engine_proto_enumTypes = make([]protoimpl.EnumInfo, 32)
 var file_terrabase_v1_engine_proto_msgTypes = make([]protoimpl.MessageInfo, 135)
 var file_terrabase_v1_engine_proto_goTypes = []any{
-	(NullValue)(0),                         // 0: terrabase.v1.NullValue
-	(Acknowledgement)(0),                   // 1: terrabase.v1.Acknowledgement
-	(BackupOutcome)(0),                     // 2: terrabase.v1.BackupOutcome
-	(ReadLevel)(0),                         // 3: terrabase.v1.ReadLevel
-	(ClusterMode)(0),                       // 4: terrabase.v1.ClusterMode
-	(TierDecision)(0),                      // 5: terrabase.v1.TierDecision
-	(WriteReason)(0),                       // 6: terrabase.v1.WriteReason
-	(QueryTerminal)(0),                     // 7: terrabase.v1.QueryTerminal
-	(CancelOutcome)(0),                     // 8: terrabase.v1.CancelOutcome
-	(ChangeKind)(0),                        // 9: terrabase.v1.ChangeKind
-	(MutationReason)(0),                    // 10: terrabase.v1.MutationReason
-	(HealthState)(0),                       // 11: terrabase.v1.HealthState
-	(ShutdownReason)(0),                    // 12: terrabase.v1.ShutdownReason
-	(SubscriptionCloseReason)(0),           // 13: terrabase.v1.SubscriptionCloseReason
-	(BindingKind)(0),                       // 14: terrabase.v1.BindingKind
-	(ViolationKind)(0),                     // 15: terrabase.v1.ViolationKind
-	(Coercion)(0),                          // 16: terrabase.v1.Coercion
-	(TransformRejection)(0),                // 17: terrabase.v1.TransformRejection
-	(FieldTransform)(0),                    // 18: terrabase.v1.FieldTransform
-	(PlanProblemKind)(0),                   // 19: terrabase.v1.PlanProblemKind
-	(MigrationStateKind)(0),                // 20: terrabase.v1.MigrationStateKind
-	(RollbackLimitKind)(0),                 // 21: terrabase.v1.RollbackLimitKind
-	(ConflictOutcomeKind)(0),               // 22: terrabase.v1.ConflictOutcomeKind
-	(ReplicationStatus)(0),                 // 23: terrabase.v1.ReplicationStatus
-	(DenialSeam)(0),                        // 24: terrabase.v1.DenialSeam
-	(UsageMeter)(0),                        // 25: terrabase.v1.UsageMeter
-	(UsageUnit)(0),                         // 26: terrabase.v1.UsageUnit
-	(UsageChargeScope)(0),                  // 27: terrabase.v1.UsageChargeScope
-	(UsageMintingRule)(0),                  // 28: terrabase.v1.UsageMintingRule
-	(UsageRegion)(0),                       // 29: terrabase.v1.UsageRegion
-	(UsageRecordMeter)(0),                  // 30: terrabase.v1.UsageRecordMeter
-	(ErrorCode)(0),                         // 31: terrabase.v1.ErrorCode
-	(*ValueEntry)(nil),                     // 32: terrabase.v1.ValueEntry
-	(*ValueList)(nil),                      // 33: terrabase.v1.ValueList
-	(*Value)(nil),                          // 34: terrabase.v1.Value
-	(*ValueMap)(nil),                       // 35: terrabase.v1.ValueMap
-	(*TierMoveReason)(nil),                 // 36: terrabase.v1.TierMoveReason
-	(*TierMoveReceipt)(nil),                // 37: terrabase.v1.TierMoveReceipt
-	(*CommitReceipt)(nil),                  // 38: terrabase.v1.CommitReceipt
-	(*ExpectedVersion)(nil),                // 39: terrabase.v1.ExpectedVersion
-	(*ExpectedAbsent)(nil),                 // 40: terrabase.v1.ExpectedAbsent
-	(*ExpectedAny)(nil),                    // 41: terrabase.v1.ExpectedAny
-	(*WriteOutcome)(nil),                   // 42: terrabase.v1.WriteOutcome
-	(*WriteConflict)(nil),                  // 43: terrabase.v1.WriteConflict
-	(*WriteRejected)(nil),                  // 44: terrabase.v1.WriteRejected
-	(*ChangeEvent)(nil),                    // 45: terrabase.v1.ChangeEvent
-	(*SubscriptionStart)(nil),              // 46: terrabase.v1.SubscriptionStart
-	(*SubscriptionLive)(nil),               // 47: terrabase.v1.SubscriptionLive
-	(*MutationOutcome)(nil),                // 48: terrabase.v1.MutationOutcome
-	(*MutationRejected)(nil),               // 49: terrabase.v1.MutationRejected
-	(*SyncField)(nil),                      // 50: terrabase.v1.SyncField
-	(*SyncChange)(nil),                     // 51: terrabase.v1.SyncChange
-	(*SyncPut)(nil),                        // 52: terrabase.v1.SyncPut
-	(*SyncDelete)(nil),                     // 53: terrabase.v1.SyncDelete
-	(*DocumentBody)(nil),                   // 54: terrabase.v1.DocumentBody
-	(*DocumentPut)(nil),                    // 55: terrabase.v1.DocumentPut
-	(*BatchWrite)(nil),                     // 56: terrabase.v1.BatchWrite
-	(*DocumentReadRequest)(nil),            // 57: terrabase.v1.DocumentReadRequest
-	(*DocumentReadResponse)(nil),           // 58: terrabase.v1.DocumentReadResponse
-	(*DocumentWriteRequest)(nil),           // 59: terrabase.v1.DocumentWriteRequest
-	(*DocumentWriteResponse)(nil),          // 60: terrabase.v1.DocumentWriteResponse
-	(*DocumentDeleteRequest)(nil),          // 61: terrabase.v1.DocumentDeleteRequest
-	(*DocumentDeleteResponse)(nil),         // 62: terrabase.v1.DocumentDeleteResponse
-	(*DocumentBatchRequest)(nil),           // 63: terrabase.v1.DocumentBatchRequest
-	(*DocumentBatchResponse)(nil),          // 64: terrabase.v1.DocumentBatchResponse
-	(*QueryExecuteRequest)(nil),            // 65: terrabase.v1.QueryExecuteRequest
-	(*QueryExecuteResponse)(nil),           // 66: terrabase.v1.QueryExecuteResponse
-	(*QueryCancelRequest)(nil),             // 67: terrabase.v1.QueryCancelRequest
-	(*QueryCancelResponse)(nil),            // 68: terrabase.v1.QueryCancelResponse
-	(*FamilyReadRequest)(nil),              // 69: terrabase.v1.FamilyReadRequest
-	(*FamilyReadResponse)(nil),             // 70: terrabase.v1.FamilyReadResponse
-	(*FamilyWriteRequest)(nil),             // 71: terrabase.v1.FamilyWriteRequest
-	(*FamilyWriteResponse)(nil),            // 72: terrabase.v1.FamilyWriteResponse
-	(*BackboneSubscribeRequest)(nil),       // 73: terrabase.v1.BackboneSubscribeRequest
-	(*BackboneSubscribeResponse)(nil),      // 74: terrabase.v1.BackboneSubscribeResponse
-	(*BackboneAcknowledgeRequest)(nil),     // 75: terrabase.v1.BackboneAcknowledgeRequest
-	(*BackboneAcknowledgeResponse)(nil),    // 76: terrabase.v1.BackboneAcknowledgeResponse
-	(*BackboneUnsubscribeRequest)(nil),     // 77: terrabase.v1.BackboneUnsubscribeRequest
-	(*BackboneUnsubscribeResponse)(nil),    // 78: terrabase.v1.BackboneUnsubscribeResponse
-	(*SubscriptionBatch)(nil),              // 79: terrabase.v1.SubscriptionBatch
-	(*TriggerNotification)(nil),            // 80: terrabase.v1.TriggerNotification
-	(*SubscriptionClosed)(nil),             // 81: terrabase.v1.SubscriptionClosed
-	(*BackboneStreamEvent)(nil),            // 82: terrabase.v1.BackboneStreamEvent
-	(*SyncSessionSetupRequest)(nil),        // 83: terrabase.v1.SyncSessionSetupRequest
-	(*SyncSessionSetupResponse)(nil),       // 84: terrabase.v1.SyncSessionSetupResponse
-	(*SyncDeltaPullRequest)(nil),           // 85: terrabase.v1.SyncDeltaPullRequest
-	(*SyncDeltaPullResponse)(nil),          // 86: terrabase.v1.SyncDeltaPullResponse
-	(*SyncSnapshotPullRequest)(nil),        // 87: terrabase.v1.SyncSnapshotPullRequest
-	(*SyncSnapshotPullResponse)(nil),       // 88: terrabase.v1.SyncSnapshotPullResponse
-	(*SyncCheckpointAckRequest)(nil),       // 89: terrabase.v1.SyncCheckpointAckRequest
-	(*SyncCheckpointAckResponse)(nil),      // 90: terrabase.v1.SyncCheckpointAckResponse
-	(*SyncMutationSubmitRequest)(nil),      // 91: terrabase.v1.SyncMutationSubmitRequest
-	(*SyncMutationSubmitResponse)(nil),     // 92: terrabase.v1.SyncMutationSubmitResponse
-	(*SyncSessionCloseRequest)(nil),        // 93: terrabase.v1.SyncSessionCloseRequest
-	(*SyncSessionCloseResponse)(nil),       // 94: terrabase.v1.SyncSessionCloseResponse
-	(*SchemaViolation)(nil),                // 95: terrabase.v1.SchemaViolation
-	(*TransformLiteral)(nil),               // 96: terrabase.v1.TransformLiteral
-	(*FieldTransformStep)(nil),             // 97: terrabase.v1.FieldTransformStep
-	(*SchemaMigrationContract)(nil),        // 98: terrabase.v1.SchemaMigrationContract
-	(*PlanProblem)(nil),                    // 99: terrabase.v1.PlanProblem
-	(*TransformCounts)(nil),                // 100: terrabase.v1.TransformCounts
-	(*MigrationState)(nil),                 // 101: terrabase.v1.MigrationState
-	(*MigrationPlan)(nil),                  // 102: terrabase.v1.MigrationPlan
-	(*MigrationReceipt)(nil),               // 103: terrabase.v1.MigrationReceipt
-	(*SchemaDeclareRequest)(nil),           // 104: terrabase.v1.SchemaDeclareRequest
-	(*SchemaDeclareResponse)(nil),          // 105: terrabase.v1.SchemaDeclareResponse
-	(*SchemaStatusRequest)(nil),            // 106: terrabase.v1.SchemaStatusRequest
-	(*SchemaStatusResponse)(nil),           // 107: terrabase.v1.SchemaStatusResponse
-	(*SchemaValidateRequest)(nil),          // 108: terrabase.v1.SchemaValidateRequest
-	(*SchemaValidateResponse)(nil),         // 109: terrabase.v1.SchemaValidateResponse
-	(*MigrationStatusRequest)(nil),         // 110: terrabase.v1.MigrationStatusRequest
-	(*MigrationStatusResponse)(nil),        // 111: terrabase.v1.MigrationStatusResponse
-	(*MigrationDryRunRequest)(nil),         // 112: terrabase.v1.MigrationDryRunRequest
-	(*MigrationDryRunResponse)(nil),        // 113: terrabase.v1.MigrationDryRunResponse
-	(*MigrationApplyRequest)(nil),          // 114: terrabase.v1.MigrationApplyRequest
-	(*MigrationApplyResponse)(nil),         // 115: terrabase.v1.MigrationApplyResponse
-	(*ReplicationConflictsRequest)(nil),    // 116: terrabase.v1.ReplicationConflictsRequest
-	(*ClockStamp)(nil),                     // 117: terrabase.v1.ClockStamp
-	(*ConflictOutcome)(nil),                // 118: terrabase.v1.ConflictOutcome
-	(*ConflictRecord)(nil),                 // 119: terrabase.v1.ConflictRecord
-	(*ReplicationConflictsResponse)(nil),   // 120: terrabase.v1.ReplicationConflictsResponse
-	(*ReplicationFencedRequest)(nil),       // 121: terrabase.v1.ReplicationFencedRequest
-	(*FencedRecord)(nil),                   // 122: terrabase.v1.FencedRecord
-	(*ReplicationFencedResponse)(nil),      // 123: terrabase.v1.ReplicationFencedResponse
-	(*ReplicationDepositionsRequest)(nil),  // 124: terrabase.v1.ReplicationDepositionsRequest
-	(*DepositionRecord)(nil),               // 125: terrabase.v1.DepositionRecord
-	(*ReplicationDepositionsResponse)(nil), // 126: terrabase.v1.ReplicationDepositionsResponse
-	(*ReplicationCursorRequest)(nil),       // 127: terrabase.v1.ReplicationCursorRequest
-	(*ReplicationCursorResponse)(nil),      // 128: terrabase.v1.ReplicationCursorResponse
-	(*ReplicationHealthRequest)(nil),       // 129: terrabase.v1.ReplicationHealthRequest
-	(*ReplicationHealthResponse)(nil),      // 130: terrabase.v1.ReplicationHealthResponse
-	(*ReplicationDenialsRequest)(nil),      // 131: terrabase.v1.ReplicationDenialsRequest
-	(*DenialRecord)(nil),                   // 132: terrabase.v1.DenialRecord
-	(*ReplicationDenialsResponse)(nil),     // 133: terrabase.v1.ReplicationDenialsResponse
-	(*ChannelBindRequest)(nil),             // 134: terrabase.v1.ChannelBindRequest
-	(*ChannelBindResponse)(nil),            // 135: terrabase.v1.ChannelBindResponse
-	(*TopologyReadRequest)(nil),            // 136: terrabase.v1.TopologyReadRequest
-	(*TopologyReadResponse)(nil),           // 137: terrabase.v1.TopologyReadResponse
-	(*AdminStatusRequest)(nil),             // 138: terrabase.v1.AdminStatusRequest
-	(*AdminStatusResponse)(nil),            // 139: terrabase.v1.AdminStatusResponse
-	(*SupervisionHealthRequest)(nil),       // 140: terrabase.v1.SupervisionHealthRequest
-	(*SupervisionHealthResponse)(nil),      // 141: terrabase.v1.SupervisionHealthResponse
-	(*SupervisionShutdownRequest)(nil),     // 142: terrabase.v1.SupervisionShutdownRequest
-	(*SupervisionShutdownResponse)(nil),    // 143: terrabase.v1.SupervisionShutdownResponse
-	(*UsageAdmissionContext)(nil),          // 144: terrabase.v1.UsageAdmissionContext
-	(*UsageRecordRequest)(nil),             // 145: terrabase.v1.UsageRecordRequest
-	(*UsageRecordResponse)(nil),            // 146: terrabase.v1.UsageRecordResponse
-	(*UsageFact)(nil),                      // 147: terrabase.v1.UsageFact
-	(*UsageExportRequest)(nil),             // 148: terrabase.v1.UsageExportRequest
-	(*UsageExportResponse)(nil),            // 149: terrabase.v1.UsageExportResponse
-	(*TierConfigureRequest)(nil),           // 150: terrabase.v1.TierConfigureRequest
-	(*TierConfigureResponse)(nil),          // 151: terrabase.v1.TierConfigureResponse
-	(*TierInspectRequest)(nil),             // 152: terrabase.v1.TierInspectRequest
-	(*TierInspectResponse)(nil),            // 153: terrabase.v1.TierInspectResponse
-	(*TierDryRunRequest)(nil),              // 154: terrabase.v1.TierDryRunRequest
-	(*TierDryRunResponse)(nil),             // 155: terrabase.v1.TierDryRunResponse
-	(*TierExplainRequest)(nil),             // 156: terrabase.v1.TierExplainRequest
-	(*TierExplainResponse)(nil),            // 157: terrabase.v1.TierExplainResponse
-	(*TierRunRequest)(nil),                 // 158: terrabase.v1.TierRunRequest
-	(*TierRunResponse)(nil),                // 159: terrabase.v1.TierRunResponse
-	(*TierPauseRequest)(nil),               // 160: terrabase.v1.TierPauseRequest
-	(*TierPauseResponse)(nil),              // 161: terrabase.v1.TierPauseResponse
-	(*TierResumeRequest)(nil),              // 162: terrabase.v1.TierResumeRequest
-	(*TierResumeResponse)(nil),             // 163: terrabase.v1.TierResumeResponse
-	(*TbepError)(nil),                      // 164: terrabase.v1.TbepError
-	(*Any)(nil),                            // 165: terrabase.v1.Any
-	(*RpcStatus)(nil),                      // 166: terrabase.v1.RpcStatus
+	(NullValue)(0),                                        // 0: terrabase.v1.NullValue
+	(Acknowledgement)(0),                                  // 1: terrabase.v1.Acknowledgement
+	(BackupOutcome)(0),                                    // 2: terrabase.v1.BackupOutcome
+	(ReadLevel)(0),                                        // 3: terrabase.v1.ReadLevel
+	(ClusterMode)(0),                                      // 4: terrabase.v1.ClusterMode
+	(TierDecision)(0),                                     // 5: terrabase.v1.TierDecision
+	(WriteReason)(0),                                      // 6: terrabase.v1.WriteReason
+	(QueryTerminal)(0),                                    // 7: terrabase.v1.QueryTerminal
+	(CancelOutcome)(0),                                    // 8: terrabase.v1.CancelOutcome
+	(ChangeKind)(0),                                       // 9: terrabase.v1.ChangeKind
+	(MutationReason)(0),                                   // 10: terrabase.v1.MutationReason
+	(HealthState)(0),                                      // 11: terrabase.v1.HealthState
+	(ShutdownReason)(0),                                   // 12: terrabase.v1.ShutdownReason
+	(SubscriptionCloseReason)(0),                          // 13: terrabase.v1.SubscriptionCloseReason
+	(BindingKind)(0),                                      // 14: terrabase.v1.BindingKind
+	(ViolationKind)(0),                                    // 15: terrabase.v1.ViolationKind
+	(Coercion)(0),                                         // 16: terrabase.v1.Coercion
+	(TransformRejection)(0),                               // 17: terrabase.v1.TransformRejection
+	(FieldTransform)(0),                                   // 18: terrabase.v1.FieldTransform
+	(PlanProblemKind)(0),                                  // 19: terrabase.v1.PlanProblemKind
+	(MigrationStateKind)(0),                               // 20: terrabase.v1.MigrationStateKind
+	(RollbackLimitKind)(0),                                // 21: terrabase.v1.RollbackLimitKind
+	(ConflictOutcomeKind)(0),                              // 22: terrabase.v1.ConflictOutcomeKind
+	(ReplicationStatus)(0),                                // 23: terrabase.v1.ReplicationStatus
+	(DenialSeam)(0),                                       // 24: terrabase.v1.DenialSeam
+	(UsageMeter)(0),                                       // 25: terrabase.v1.UsageMeter
+	(UsageUnit)(0),                                        // 26: terrabase.v1.UsageUnit
+	(UsageChargeScope)(0),                                 // 27: terrabase.v1.UsageChargeScope
+	(UsageMintingRule)(0),                                 // 28: terrabase.v1.UsageMintingRule
+	(UsageRegion)(0),                                      // 29: terrabase.v1.UsageRegion
+	(UsageRecordMeter)(0),                                 // 30: terrabase.v1.UsageRecordMeter
+	(ErrorCode)(0),                                        // 31: terrabase.v1.ErrorCode
+	(*ValueEntry)(nil),                                    // 32: terrabase.v1.ValueEntry
+	(*ValueList)(nil),                                     // 33: terrabase.v1.ValueList
+	(*Value)(nil),                                         // 34: terrabase.v1.Value
+	(*ValueMap)(nil),                                      // 35: terrabase.v1.ValueMap
+	(*TierMoveReason)(nil),                                // 36: terrabase.v1.TierMoveReason
+	(*TierMoveReceipt)(nil),                               // 37: terrabase.v1.TierMoveReceipt
+	(*CommitReceipt)(nil),                                 // 38: terrabase.v1.CommitReceipt
+	(*ExpectedVersion)(nil),                               // 39: terrabase.v1.ExpectedVersion
+	(*ExpectedAbsent)(nil),                                // 40: terrabase.v1.ExpectedAbsent
+	(*ExpectedAny)(nil),                                   // 41: terrabase.v1.ExpectedAny
+	(*WriteOutcome)(nil),                                  // 42: terrabase.v1.WriteOutcome
+	(*WriteConflict)(nil),                                 // 43: terrabase.v1.WriteConflict
+	(*WriteRejected)(nil),                                 // 44: terrabase.v1.WriteRejected
+	(*ChangeEvent)(nil),                                   // 45: terrabase.v1.ChangeEvent
+	(*SubscriptionStart)(nil),                             // 46: terrabase.v1.SubscriptionStart
+	(*SubscriptionLive)(nil),                              // 47: terrabase.v1.SubscriptionLive
+	(*MutationOutcome)(nil),                               // 48: terrabase.v1.MutationOutcome
+	(*MutationRejected)(nil),                              // 49: terrabase.v1.MutationRejected
+	(*SyncField)(nil),                                     // 50: terrabase.v1.SyncField
+	(*SyncChange)(nil),                                    // 51: terrabase.v1.SyncChange
+	(*SyncPut)(nil),                                       // 52: terrabase.v1.SyncPut
+	(*SyncDelete)(nil),                                    // 53: terrabase.v1.SyncDelete
+	(*DocumentBody)(nil),                                  // 54: terrabase.v1.DocumentBody
+	(*DocumentPut)(nil),                                   // 55: terrabase.v1.DocumentPut
+	(*BatchWrite)(nil),                                    // 56: terrabase.v1.BatchWrite
+	(*EngineServiceDocumentReadRequest)(nil),              // 57: terrabase.v1.EngineServiceDocumentReadRequest
+	(*EngineServiceDocumentReadResponse)(nil),             // 58: terrabase.v1.EngineServiceDocumentReadResponse
+	(*EngineServiceDocumentWriteRequest)(nil),             // 59: terrabase.v1.EngineServiceDocumentWriteRequest
+	(*EngineServiceDocumentWriteResponse)(nil),            // 60: terrabase.v1.EngineServiceDocumentWriteResponse
+	(*EngineServiceDocumentDeleteRequest)(nil),            // 61: terrabase.v1.EngineServiceDocumentDeleteRequest
+	(*EngineServiceDocumentDeleteResponse)(nil),           // 62: terrabase.v1.EngineServiceDocumentDeleteResponse
+	(*EngineServiceDocumentBatchRequest)(nil),             // 63: terrabase.v1.EngineServiceDocumentBatchRequest
+	(*EngineServiceDocumentBatchResponse)(nil),            // 64: terrabase.v1.EngineServiceDocumentBatchResponse
+	(*EngineServiceQueryExecuteRequest)(nil),              // 65: terrabase.v1.EngineServiceQueryExecuteRequest
+	(*EngineServiceQueryExecuteResponse)(nil),             // 66: terrabase.v1.EngineServiceQueryExecuteResponse
+	(*EngineServiceQueryCancelRequest)(nil),               // 67: terrabase.v1.EngineServiceQueryCancelRequest
+	(*EngineServiceQueryCancelResponse)(nil),              // 68: terrabase.v1.EngineServiceQueryCancelResponse
+	(*EngineServiceFamilyReadRequest)(nil),                // 69: terrabase.v1.EngineServiceFamilyReadRequest
+	(*EngineServiceFamilyReadResponse)(nil),               // 70: terrabase.v1.EngineServiceFamilyReadResponse
+	(*EngineServiceFamilyWriteRequest)(nil),               // 71: terrabase.v1.EngineServiceFamilyWriteRequest
+	(*EngineServiceFamilyWriteResponse)(nil),              // 72: terrabase.v1.EngineServiceFamilyWriteResponse
+	(*BackboneServiceSubscribeRequest)(nil),               // 73: terrabase.v1.BackboneServiceSubscribeRequest
+	(*BackboneServiceSubscribeResponse)(nil),              // 74: terrabase.v1.BackboneServiceSubscribeResponse
+	(*BackboneServiceAcknowledgeRequest)(nil),             // 75: terrabase.v1.BackboneServiceAcknowledgeRequest
+	(*BackboneServiceAcknowledgeResponse)(nil),            // 76: terrabase.v1.BackboneServiceAcknowledgeResponse
+	(*BackboneServiceUnsubscribeRequest)(nil),             // 77: terrabase.v1.BackboneServiceUnsubscribeRequest
+	(*BackboneServiceUnsubscribeResponse)(nil),            // 78: terrabase.v1.BackboneServiceUnsubscribeResponse
+	(*SubscriptionBatch)(nil),                             // 79: terrabase.v1.SubscriptionBatch
+	(*TriggerNotification)(nil),                           // 80: terrabase.v1.TriggerNotification
+	(*SubscriptionClosed)(nil),                            // 81: terrabase.v1.SubscriptionClosed
+	(*SubscribeResponse)(nil),                             // 82: terrabase.v1.SubscribeResponse
+	(*SyncServiceSessionSetupRequest)(nil),                // 83: terrabase.v1.SyncServiceSessionSetupRequest
+	(*SyncServiceSessionSetupResponse)(nil),               // 84: terrabase.v1.SyncServiceSessionSetupResponse
+	(*SyncServiceDeltaPullRequest)(nil),                   // 85: terrabase.v1.SyncServiceDeltaPullRequest
+	(*SyncServiceDeltaPullResponse)(nil),                  // 86: terrabase.v1.SyncServiceDeltaPullResponse
+	(*SyncServiceSnapshotPullRequest)(nil),                // 87: terrabase.v1.SyncServiceSnapshotPullRequest
+	(*SyncServiceSnapshotPullResponse)(nil),               // 88: terrabase.v1.SyncServiceSnapshotPullResponse
+	(*SyncServiceCheckpointAckRequest)(nil),               // 89: terrabase.v1.SyncServiceCheckpointAckRequest
+	(*SyncServiceCheckpointAckResponse)(nil),              // 90: terrabase.v1.SyncServiceCheckpointAckResponse
+	(*SyncServiceMutationSubmitRequest)(nil),              // 91: terrabase.v1.SyncServiceMutationSubmitRequest
+	(*SyncServiceMutationSubmitResponse)(nil),             // 92: terrabase.v1.SyncServiceMutationSubmitResponse
+	(*SyncServiceSessionCloseRequest)(nil),                // 93: terrabase.v1.SyncServiceSessionCloseRequest
+	(*SyncServiceSessionCloseResponse)(nil),               // 94: terrabase.v1.SyncServiceSessionCloseResponse
+	(*SchemaViolation)(nil),                               // 95: terrabase.v1.SchemaViolation
+	(*TransformLiteral)(nil),                              // 96: terrabase.v1.TransformLiteral
+	(*FieldTransformStep)(nil),                            // 97: terrabase.v1.FieldTransformStep
+	(*SchemaMigrationContract)(nil),                       // 98: terrabase.v1.SchemaMigrationContract
+	(*PlanProblem)(nil),                                   // 99: terrabase.v1.PlanProblem
+	(*TransformCounts)(nil),                               // 100: terrabase.v1.TransformCounts
+	(*MigrationState)(nil),                                // 101: terrabase.v1.MigrationState
+	(*MigrationPlan)(nil),                                 // 102: terrabase.v1.MigrationPlan
+	(*MigrationReceipt)(nil),                              // 103: terrabase.v1.MigrationReceipt
+	(*SchemaServiceDeclareRequest)(nil),                   // 104: terrabase.v1.SchemaServiceDeclareRequest
+	(*SchemaServiceDeclareResponse)(nil),                  // 105: terrabase.v1.SchemaServiceDeclareResponse
+	(*SchemaServiceStatusRequest)(nil),                    // 106: terrabase.v1.SchemaServiceStatusRequest
+	(*SchemaServiceStatusResponse)(nil),                   // 107: terrabase.v1.SchemaServiceStatusResponse
+	(*SchemaServiceValidateRequest)(nil),                  // 108: terrabase.v1.SchemaServiceValidateRequest
+	(*SchemaServiceValidateResponse)(nil),                 // 109: terrabase.v1.SchemaServiceValidateResponse
+	(*MigrationStatusRequest)(nil),                        // 110: terrabase.v1.MigrationStatusRequest
+	(*MigrationStatusResponse)(nil),                       // 111: terrabase.v1.MigrationStatusResponse
+	(*MigrationDryRunRequest)(nil),                        // 112: terrabase.v1.MigrationDryRunRequest
+	(*MigrationDryRunResponse)(nil),                       // 113: terrabase.v1.MigrationDryRunResponse
+	(*MigrationApplyRequest)(nil),                         // 114: terrabase.v1.MigrationApplyRequest
+	(*MigrationApplyResponse)(nil),                        // 115: terrabase.v1.MigrationApplyResponse
+	(*ReplicationServiceConflictsRequest)(nil),            // 116: terrabase.v1.ReplicationServiceConflictsRequest
+	(*ClockStamp)(nil),                                    // 117: terrabase.v1.ClockStamp
+	(*ConflictOutcome)(nil),                               // 118: terrabase.v1.ConflictOutcome
+	(*ConflictRecord)(nil),                                // 119: terrabase.v1.ConflictRecord
+	(*ReplicationServiceConflictsResponse)(nil),           // 120: terrabase.v1.ReplicationServiceConflictsResponse
+	(*ReplicationServiceFencedRequest)(nil),               // 121: terrabase.v1.ReplicationServiceFencedRequest
+	(*FencedRecord)(nil),                                  // 122: terrabase.v1.FencedRecord
+	(*ReplicationServiceFencedResponse)(nil),              // 123: terrabase.v1.ReplicationServiceFencedResponse
+	(*ReplicationServiceDepositionsRequest)(nil),          // 124: terrabase.v1.ReplicationServiceDepositionsRequest
+	(*DepositionRecord)(nil),                              // 125: terrabase.v1.DepositionRecord
+	(*ReplicationServiceDepositionsResponse)(nil),         // 126: terrabase.v1.ReplicationServiceDepositionsResponse
+	(*ReplicationServiceCursorRequest)(nil),               // 127: terrabase.v1.ReplicationServiceCursorRequest
+	(*ReplicationServiceCursorResponse)(nil),              // 128: terrabase.v1.ReplicationServiceCursorResponse
+	(*ReplicationServiceHealthRequest)(nil),               // 129: terrabase.v1.ReplicationServiceHealthRequest
+	(*ReplicationServiceHealthResponse)(nil),              // 130: terrabase.v1.ReplicationServiceHealthResponse
+	(*ReplicationServiceDenialsRequest)(nil),              // 131: terrabase.v1.ReplicationServiceDenialsRequest
+	(*DenialRecord)(nil),                                  // 132: terrabase.v1.DenialRecord
+	(*ReplicationServiceDenialsResponse)(nil),             // 133: terrabase.v1.ReplicationServiceDenialsResponse
+	(*ChannelServiceBindRequest)(nil),                     // 134: terrabase.v1.ChannelServiceBindRequest
+	(*ChannelServiceBindResponse)(nil),                    // 135: terrabase.v1.ChannelServiceBindResponse
+	(*MaintenanceServiceTopologyReadRequest)(nil),         // 136: terrabase.v1.MaintenanceServiceTopologyReadRequest
+	(*MaintenanceServiceTopologyReadResponse)(nil),        // 137: terrabase.v1.MaintenanceServiceTopologyReadResponse
+	(*MaintenanceServiceAdminStatusRequest)(nil),          // 138: terrabase.v1.MaintenanceServiceAdminStatusRequest
+	(*MaintenanceServiceAdminStatusResponse)(nil),         // 139: terrabase.v1.MaintenanceServiceAdminStatusResponse
+	(*MaintenanceServiceSupervisionHealthRequest)(nil),    // 140: terrabase.v1.MaintenanceServiceSupervisionHealthRequest
+	(*MaintenanceServiceSupervisionHealthResponse)(nil),   // 141: terrabase.v1.MaintenanceServiceSupervisionHealthResponse
+	(*MaintenanceServiceSupervisionShutdownRequest)(nil),  // 142: terrabase.v1.MaintenanceServiceSupervisionShutdownRequest
+	(*MaintenanceServiceSupervisionShutdownResponse)(nil), // 143: terrabase.v1.MaintenanceServiceSupervisionShutdownResponse
+	(*UsageAdmissionContext)(nil),                         // 144: terrabase.v1.UsageAdmissionContext
+	(*UsageServiceRecordRequest)(nil),                     // 145: terrabase.v1.UsageServiceRecordRequest
+	(*UsageServiceRecordResponse)(nil),                    // 146: terrabase.v1.UsageServiceRecordResponse
+	(*UsageFact)(nil),                                     // 147: terrabase.v1.UsageFact
+	(*UsageServiceExportRequest)(nil),                     // 148: terrabase.v1.UsageServiceExportRequest
+	(*UsageServiceExportResponse)(nil),                    // 149: terrabase.v1.UsageServiceExportResponse
+	(*TierServiceConfigureRequest)(nil),                   // 150: terrabase.v1.TierServiceConfigureRequest
+	(*TierServiceConfigureResponse)(nil),                  // 151: terrabase.v1.TierServiceConfigureResponse
+	(*TierServiceInspectRequest)(nil),                     // 152: terrabase.v1.TierServiceInspectRequest
+	(*TierServiceInspectResponse)(nil),                    // 153: terrabase.v1.TierServiceInspectResponse
+	(*TierServiceDryRunRequest)(nil),                      // 154: terrabase.v1.TierServiceDryRunRequest
+	(*TierServiceDryRunResponse)(nil),                     // 155: terrabase.v1.TierServiceDryRunResponse
+	(*TierServiceExplainRequest)(nil),                     // 156: terrabase.v1.TierServiceExplainRequest
+	(*TierServiceExplainResponse)(nil),                    // 157: terrabase.v1.TierServiceExplainResponse
+	(*TierServiceRunRequest)(nil),                         // 158: terrabase.v1.TierServiceRunRequest
+	(*TierServiceRunResponse)(nil),                        // 159: terrabase.v1.TierServiceRunResponse
+	(*TierServicePauseRequest)(nil),                       // 160: terrabase.v1.TierServicePauseRequest
+	(*TierServicePauseResponse)(nil),                      // 161: terrabase.v1.TierServicePauseResponse
+	(*TierServiceResumeRequest)(nil),                      // 162: terrabase.v1.TierServiceResumeRequest
+	(*TierServiceResumeResponse)(nil),                     // 163: terrabase.v1.TierServiceResumeResponse
+	(*TbepError)(nil),                                     // 164: terrabase.v1.TbepError
+	(*Any)(nil),                                           // 165: terrabase.v1.Any
+	(*RpcStatus)(nil),                                     // 166: terrabase.v1.RpcStatus
 }
 var file_terrabase_v1_engine_proto_depIdxs = []int32{
 	34,  // 0: terrabase.v1.ValueEntry.value:type_name -> terrabase.v1.Value
@@ -11036,36 +11035,36 @@ var file_terrabase_v1_engine_proto_depIdxs = []int32{
 	34,  // 26: terrabase.v1.DocumentPut.body:type_name -> terrabase.v1.Value
 	55,  // 27: terrabase.v1.BatchWrite.document:type_name -> terrabase.v1.DocumentPut
 	39,  // 28: terrabase.v1.BatchWrite.expected:type_name -> terrabase.v1.ExpectedVersion
-	3,   // 29: terrabase.v1.DocumentReadRequest.level:type_name -> terrabase.v1.ReadLevel
-	54,  // 30: terrabase.v1.DocumentReadResponse.document:type_name -> terrabase.v1.DocumentBody
-	55,  // 31: terrabase.v1.DocumentWriteRequest.document:type_name -> terrabase.v1.DocumentPut
-	39,  // 32: terrabase.v1.DocumentWriteRequest.expected:type_name -> terrabase.v1.ExpectedVersion
-	1,   // 33: terrabase.v1.DocumentWriteRequest.ack:type_name -> terrabase.v1.Acknowledgement
-	144, // 34: terrabase.v1.DocumentWriteRequest.usage:type_name -> terrabase.v1.UsageAdmissionContext
-	42,  // 35: terrabase.v1.DocumentWriteResponse.outcome:type_name -> terrabase.v1.WriteOutcome
-	39,  // 36: terrabase.v1.DocumentDeleteRequest.expected:type_name -> terrabase.v1.ExpectedVersion
-	1,   // 37: terrabase.v1.DocumentDeleteRequest.ack:type_name -> terrabase.v1.Acknowledgement
-	144, // 38: terrabase.v1.DocumentDeleteRequest.usage:type_name -> terrabase.v1.UsageAdmissionContext
-	42,  // 39: terrabase.v1.DocumentDeleteResponse.outcome:type_name -> terrabase.v1.WriteOutcome
-	56,  // 40: terrabase.v1.DocumentBatchRequest.items:type_name -> terrabase.v1.BatchWrite
-	1,   // 41: terrabase.v1.DocumentBatchRequest.ack:type_name -> terrabase.v1.Acknowledgement
-	144, // 42: terrabase.v1.DocumentBatchRequest.usage:type_name -> terrabase.v1.UsageAdmissionContext
-	42,  // 43: terrabase.v1.DocumentBatchResponse.outcome:type_name -> terrabase.v1.WriteOutcome
-	3,   // 44: terrabase.v1.QueryExecuteRequest.level:type_name -> terrabase.v1.ReadLevel
-	54,  // 45: terrabase.v1.QueryExecuteResponse.documents:type_name -> terrabase.v1.DocumentBody
-	7,   // 46: terrabase.v1.QueryExecuteResponse.terminal:type_name -> terrabase.v1.QueryTerminal
-	8,   // 47: terrabase.v1.QueryCancelResponse.outcome:type_name -> terrabase.v1.CancelOutcome
-	144, // 48: terrabase.v1.FamilyWriteRequest.usage:type_name -> terrabase.v1.UsageAdmissionContext
-	46,  // 49: terrabase.v1.BackboneSubscribeRequest.from:type_name -> terrabase.v1.SubscriptionStart
+	3,   // 29: terrabase.v1.EngineServiceDocumentReadRequest.level:type_name -> terrabase.v1.ReadLevel
+	54,  // 30: terrabase.v1.EngineServiceDocumentReadResponse.document:type_name -> terrabase.v1.DocumentBody
+	55,  // 31: terrabase.v1.EngineServiceDocumentWriteRequest.document:type_name -> terrabase.v1.DocumentPut
+	39,  // 32: terrabase.v1.EngineServiceDocumentWriteRequest.expected:type_name -> terrabase.v1.ExpectedVersion
+	1,   // 33: terrabase.v1.EngineServiceDocumentWriteRequest.ack:type_name -> terrabase.v1.Acknowledgement
+	144, // 34: terrabase.v1.EngineServiceDocumentWriteRequest.usage:type_name -> terrabase.v1.UsageAdmissionContext
+	42,  // 35: terrabase.v1.EngineServiceDocumentWriteResponse.outcome:type_name -> terrabase.v1.WriteOutcome
+	39,  // 36: terrabase.v1.EngineServiceDocumentDeleteRequest.expected:type_name -> terrabase.v1.ExpectedVersion
+	1,   // 37: terrabase.v1.EngineServiceDocumentDeleteRequest.ack:type_name -> terrabase.v1.Acknowledgement
+	144, // 38: terrabase.v1.EngineServiceDocumentDeleteRequest.usage:type_name -> terrabase.v1.UsageAdmissionContext
+	42,  // 39: terrabase.v1.EngineServiceDocumentDeleteResponse.outcome:type_name -> terrabase.v1.WriteOutcome
+	56,  // 40: terrabase.v1.EngineServiceDocumentBatchRequest.items:type_name -> terrabase.v1.BatchWrite
+	1,   // 41: terrabase.v1.EngineServiceDocumentBatchRequest.ack:type_name -> terrabase.v1.Acknowledgement
+	144, // 42: terrabase.v1.EngineServiceDocumentBatchRequest.usage:type_name -> terrabase.v1.UsageAdmissionContext
+	42,  // 43: terrabase.v1.EngineServiceDocumentBatchResponse.outcome:type_name -> terrabase.v1.WriteOutcome
+	3,   // 44: terrabase.v1.EngineServiceQueryExecuteRequest.level:type_name -> terrabase.v1.ReadLevel
+	54,  // 45: terrabase.v1.EngineServiceQueryExecuteResponse.documents:type_name -> terrabase.v1.DocumentBody
+	7,   // 46: terrabase.v1.EngineServiceQueryExecuteResponse.terminal:type_name -> terrabase.v1.QueryTerminal
+	8,   // 47: terrabase.v1.EngineServiceQueryCancelResponse.outcome:type_name -> terrabase.v1.CancelOutcome
+	144, // 48: terrabase.v1.EngineServiceFamilyWriteRequest.usage:type_name -> terrabase.v1.UsageAdmissionContext
+	46,  // 49: terrabase.v1.BackboneServiceSubscribeRequest.from:type_name -> terrabase.v1.SubscriptionStart
 	45,  // 50: terrabase.v1.SubscriptionBatch.events:type_name -> terrabase.v1.ChangeEvent
 	13,  // 51: terrabase.v1.SubscriptionClosed.reason:type_name -> terrabase.v1.SubscriptionCloseReason
-	74,  // 52: terrabase.v1.BackboneStreamEvent.subscribed:type_name -> terrabase.v1.BackboneSubscribeResponse
-	79,  // 53: terrabase.v1.BackboneStreamEvent.batch:type_name -> terrabase.v1.SubscriptionBatch
-	80,  // 54: terrabase.v1.BackboneStreamEvent.trigger:type_name -> terrabase.v1.TriggerNotification
-	81,  // 55: terrabase.v1.BackboneStreamEvent.closed:type_name -> terrabase.v1.SubscriptionClosed
-	51,  // 56: terrabase.v1.SyncMutationSubmitRequest.change:type_name -> terrabase.v1.SyncChange
-	144, // 57: terrabase.v1.SyncMutationSubmitRequest.usage:type_name -> terrabase.v1.UsageAdmissionContext
-	48,  // 58: terrabase.v1.SyncMutationSubmitResponse.outcome:type_name -> terrabase.v1.MutationOutcome
+	74,  // 52: terrabase.v1.SubscribeResponse.subscribed:type_name -> terrabase.v1.BackboneServiceSubscribeResponse
+	79,  // 53: terrabase.v1.SubscribeResponse.batch:type_name -> terrabase.v1.SubscriptionBatch
+	80,  // 54: terrabase.v1.SubscribeResponse.trigger:type_name -> terrabase.v1.TriggerNotification
+	81,  // 55: terrabase.v1.SubscribeResponse.closed:type_name -> terrabase.v1.SubscriptionClosed
+	51,  // 56: terrabase.v1.SyncServiceMutationSubmitRequest.change:type_name -> terrabase.v1.SyncChange
+	144, // 57: terrabase.v1.SyncServiceMutationSubmitRequest.usage:type_name -> terrabase.v1.UsageAdmissionContext
+	48,  // 58: terrabase.v1.SyncServiceMutationSubmitResponse.outcome:type_name -> terrabase.v1.MutationOutcome
 	15,  // 59: terrabase.v1.SchemaViolation.kind:type_name -> terrabase.v1.ViolationKind
 	18,  // 60: terrabase.v1.FieldTransformStep.kind:type_name -> terrabase.v1.FieldTransform
 	96,  // 61: terrabase.v1.FieldTransformStep.default:type_name -> terrabase.v1.TransformLiteral
@@ -11080,9 +11079,9 @@ var file_terrabase_v1_engine_proto_depIdxs = []int32{
 	99,  // 70: terrabase.v1.MigrationPlan.problems:type_name -> terrabase.v1.PlanProblem
 	100, // 71: terrabase.v1.MigrationReceipt.transform_counts:type_name -> terrabase.v1.TransformCounts
 	21,  // 72: terrabase.v1.MigrationReceipt.rollback_limit:type_name -> terrabase.v1.RollbackLimitKind
-	34,  // 73: terrabase.v1.SchemaDeclareRequest.schema:type_name -> terrabase.v1.Value
-	34,  // 74: terrabase.v1.SchemaValidateRequest.document:type_name -> terrabase.v1.Value
-	95,  // 75: terrabase.v1.SchemaValidateResponse.violations:type_name -> terrabase.v1.SchemaViolation
+	34,  // 73: terrabase.v1.SchemaServiceDeclareRequest.schema:type_name -> terrabase.v1.Value
+	34,  // 74: terrabase.v1.SchemaServiceValidateRequest.document:type_name -> terrabase.v1.Value
+	95,  // 75: terrabase.v1.SchemaServiceValidateResponse.violations:type_name -> terrabase.v1.SchemaViolation
 	101, // 76: terrabase.v1.MigrationStatusResponse.state:type_name -> terrabase.v1.MigrationState
 	98,  // 77: terrabase.v1.MigrationDryRunRequest.contract:type_name -> terrabase.v1.SchemaMigrationContract
 	102, // 78: terrabase.v1.MigrationDryRunResponse.plan:type_name -> terrabase.v1.MigrationPlan
@@ -11091,117 +11090,117 @@ var file_terrabase_v1_engine_proto_depIdxs = []int32{
 	22,  // 81: terrabase.v1.ConflictOutcome.kind:type_name -> terrabase.v1.ConflictOutcomeKind
 	117, // 82: terrabase.v1.ConflictRecord.clocks:type_name -> terrabase.v1.ClockStamp
 	118, // 83: terrabase.v1.ConflictRecord.outcome:type_name -> terrabase.v1.ConflictOutcome
-	119, // 84: terrabase.v1.ReplicationConflictsResponse.records:type_name -> terrabase.v1.ConflictRecord
-	122, // 85: terrabase.v1.ReplicationFencedResponse.records:type_name -> terrabase.v1.FencedRecord
-	125, // 86: terrabase.v1.ReplicationDepositionsResponse.records:type_name -> terrabase.v1.DepositionRecord
-	23,  // 87: terrabase.v1.ReplicationHealthResponse.status:type_name -> terrabase.v1.ReplicationStatus
+	119, // 84: terrabase.v1.ReplicationServiceConflictsResponse.records:type_name -> terrabase.v1.ConflictRecord
+	122, // 85: terrabase.v1.ReplicationServiceFencedResponse.records:type_name -> terrabase.v1.FencedRecord
+	125, // 86: terrabase.v1.ReplicationServiceDepositionsResponse.records:type_name -> terrabase.v1.DepositionRecord
+	23,  // 87: terrabase.v1.ReplicationServiceHealthResponse.status:type_name -> terrabase.v1.ReplicationStatus
 	24,  // 88: terrabase.v1.DenialRecord.seam:type_name -> terrabase.v1.DenialSeam
-	132, // 89: terrabase.v1.ReplicationDenialsResponse.records:type_name -> terrabase.v1.DenialRecord
-	14,  // 90: terrabase.v1.TopologyReadResponse.binding:type_name -> terrabase.v1.BindingKind
-	4,   // 91: terrabase.v1.TopologyReadResponse.cluster_mode:type_name -> terrabase.v1.ClusterMode
-	11,  // 92: terrabase.v1.SupervisionHealthResponse.state:type_name -> terrabase.v1.HealthState
-	12,  // 93: terrabase.v1.SupervisionShutdownRequest.reason:type_name -> terrabase.v1.ShutdownReason
-	11,  // 94: terrabase.v1.SupervisionShutdownResponse.state:type_name -> terrabase.v1.HealthState
+	132, // 89: terrabase.v1.ReplicationServiceDenialsResponse.records:type_name -> terrabase.v1.DenialRecord
+	14,  // 90: terrabase.v1.MaintenanceServiceTopologyReadResponse.binding:type_name -> terrabase.v1.BindingKind
+	4,   // 91: terrabase.v1.MaintenanceServiceTopologyReadResponse.cluster_mode:type_name -> terrabase.v1.ClusterMode
+	11,  // 92: terrabase.v1.MaintenanceServiceSupervisionHealthResponse.state:type_name -> terrabase.v1.HealthState
+	12,  // 93: terrabase.v1.MaintenanceServiceSupervisionShutdownRequest.reason:type_name -> terrabase.v1.ShutdownReason
+	11,  // 94: terrabase.v1.MaintenanceServiceSupervisionShutdownResponse.state:type_name -> terrabase.v1.HealthState
 	29,  // 95: terrabase.v1.UsageAdmissionContext.origin_region:type_name -> terrabase.v1.UsageRegion
-	30,  // 96: terrabase.v1.UsageRecordRequest.meter:type_name -> terrabase.v1.UsageRecordMeter
-	29,  // 97: terrabase.v1.UsageRecordRequest.origin_region:type_name -> terrabase.v1.UsageRegion
+	30,  // 96: terrabase.v1.UsageServiceRecordRequest.meter:type_name -> terrabase.v1.UsageRecordMeter
+	29,  // 97: terrabase.v1.UsageServiceRecordRequest.origin_region:type_name -> terrabase.v1.UsageRegion
 	25,  // 98: terrabase.v1.UsageFact.meter:type_name -> terrabase.v1.UsageMeter
 	26,  // 99: terrabase.v1.UsageFact.unit:type_name -> terrabase.v1.UsageUnit
 	27,  // 100: terrabase.v1.UsageFact.charge_scope:type_name -> terrabase.v1.UsageChargeScope
 	28,  // 101: terrabase.v1.UsageFact.minting_rule:type_name -> terrabase.v1.UsageMintingRule
 	29,  // 102: terrabase.v1.UsageFact.region:type_name -> terrabase.v1.UsageRegion
-	147, // 103: terrabase.v1.UsageExportResponse.facts:type_name -> terrabase.v1.UsageFact
-	37,  // 104: terrabase.v1.TierDryRunResponse.receipt:type_name -> terrabase.v1.TierMoveReceipt
-	37,  // 105: terrabase.v1.TierExplainResponse.receipt:type_name -> terrabase.v1.TierMoveReceipt
-	37,  // 106: terrabase.v1.TierRunResponse.receipt:type_name -> terrabase.v1.TierMoveReceipt
+	147, // 103: terrabase.v1.UsageServiceExportResponse.facts:type_name -> terrabase.v1.UsageFact
+	37,  // 104: terrabase.v1.TierServiceDryRunResponse.receipt:type_name -> terrabase.v1.TierMoveReceipt
+	37,  // 105: terrabase.v1.TierServiceExplainResponse.receipt:type_name -> terrabase.v1.TierMoveReceipt
+	37,  // 106: terrabase.v1.TierServiceRunResponse.receipt:type_name -> terrabase.v1.TierMoveReceipt
 	31,  // 107: terrabase.v1.TbepError.code:type_name -> terrabase.v1.ErrorCode
 	165, // 108: terrabase.v1.RpcStatus.details:type_name -> terrabase.v1.Any
-	134, // 109: terrabase.v1.Channel.Bind:input_type -> terrabase.v1.ChannelBindRequest
-	57,  // 110: terrabase.v1.Engine.DocumentRead:input_type -> terrabase.v1.DocumentReadRequest
-	59,  // 111: terrabase.v1.Engine.DocumentWrite:input_type -> terrabase.v1.DocumentWriteRequest
-	61,  // 112: terrabase.v1.Engine.DocumentDelete:input_type -> terrabase.v1.DocumentDeleteRequest
-	63,  // 113: terrabase.v1.Engine.DocumentBatch:input_type -> terrabase.v1.DocumentBatchRequest
-	65,  // 114: terrabase.v1.Engine.QueryExecute:input_type -> terrabase.v1.QueryExecuteRequest
-	67,  // 115: terrabase.v1.Engine.QueryCancel:input_type -> terrabase.v1.QueryCancelRequest
-	69,  // 116: terrabase.v1.Engine.FamilyRead:input_type -> terrabase.v1.FamilyReadRequest
-	71,  // 117: terrabase.v1.Engine.FamilyWrite:input_type -> terrabase.v1.FamilyWriteRequest
-	73,  // 118: terrabase.v1.Backbone.Subscribe:input_type -> terrabase.v1.BackboneSubscribeRequest
-	75,  // 119: terrabase.v1.Backbone.Acknowledge:input_type -> terrabase.v1.BackboneAcknowledgeRequest
-	77,  // 120: terrabase.v1.Backbone.Unsubscribe:input_type -> terrabase.v1.BackboneUnsubscribeRequest
-	83,  // 121: terrabase.v1.Sync.SessionSetup:input_type -> terrabase.v1.SyncSessionSetupRequest
-	85,  // 122: terrabase.v1.Sync.DeltaPull:input_type -> terrabase.v1.SyncDeltaPullRequest
-	87,  // 123: terrabase.v1.Sync.SnapshotPull:input_type -> terrabase.v1.SyncSnapshotPullRequest
-	89,  // 124: terrabase.v1.Sync.CheckpointAck:input_type -> terrabase.v1.SyncCheckpointAckRequest
-	91,  // 125: terrabase.v1.Sync.MutationSubmit:input_type -> terrabase.v1.SyncMutationSubmitRequest
-	93,  // 126: terrabase.v1.Sync.SessionClose:input_type -> terrabase.v1.SyncSessionCloseRequest
-	104, // 127: terrabase.v1.Schema.Declare:input_type -> terrabase.v1.SchemaDeclareRequest
-	106, // 128: terrabase.v1.Schema.Status:input_type -> terrabase.v1.SchemaStatusRequest
-	108, // 129: terrabase.v1.Schema.Validate:input_type -> terrabase.v1.SchemaValidateRequest
-	110, // 130: terrabase.v1.Schema.MigrationStatus:input_type -> terrabase.v1.MigrationStatusRequest
-	112, // 131: terrabase.v1.Schema.MigrationDryRun:input_type -> terrabase.v1.MigrationDryRunRequest
-	114, // 132: terrabase.v1.Schema.MigrationApply:input_type -> terrabase.v1.MigrationApplyRequest
-	116, // 133: terrabase.v1.Replication.Conflicts:input_type -> terrabase.v1.ReplicationConflictsRequest
-	121, // 134: terrabase.v1.Replication.Fenced:input_type -> terrabase.v1.ReplicationFencedRequest
-	124, // 135: terrabase.v1.Replication.Depositions:input_type -> terrabase.v1.ReplicationDepositionsRequest
-	127, // 136: terrabase.v1.Replication.Cursor:input_type -> terrabase.v1.ReplicationCursorRequest
-	129, // 137: terrabase.v1.Replication.Health:input_type -> terrabase.v1.ReplicationHealthRequest
-	131, // 138: terrabase.v1.Replication.Denials:input_type -> terrabase.v1.ReplicationDenialsRequest
-	136, // 139: terrabase.v1.Maintenance.TopologyRead:input_type -> terrabase.v1.TopologyReadRequest
-	138, // 140: terrabase.v1.Maintenance.AdminStatus:input_type -> terrabase.v1.AdminStatusRequest
-	140, // 141: terrabase.v1.Maintenance.SupervisionHealth:input_type -> terrabase.v1.SupervisionHealthRequest
-	142, // 142: terrabase.v1.Maintenance.SupervisionShutdown:input_type -> terrabase.v1.SupervisionShutdownRequest
-	145, // 143: terrabase.v1.Usage.Record:input_type -> terrabase.v1.UsageRecordRequest
-	148, // 144: terrabase.v1.Usage.Export:input_type -> terrabase.v1.UsageExportRequest
-	150, // 145: terrabase.v1.Tier.Configure:input_type -> terrabase.v1.TierConfigureRequest
-	152, // 146: terrabase.v1.Tier.Inspect:input_type -> terrabase.v1.TierInspectRequest
-	154, // 147: terrabase.v1.Tier.DryRun:input_type -> terrabase.v1.TierDryRunRequest
-	156, // 148: terrabase.v1.Tier.Explain:input_type -> terrabase.v1.TierExplainRequest
-	158, // 149: terrabase.v1.Tier.Run:input_type -> terrabase.v1.TierRunRequest
-	160, // 150: terrabase.v1.Tier.Pause:input_type -> terrabase.v1.TierPauseRequest
-	162, // 151: terrabase.v1.Tier.Resume:input_type -> terrabase.v1.TierResumeRequest
-	135, // 152: terrabase.v1.Channel.Bind:output_type -> terrabase.v1.ChannelBindResponse
-	58,  // 153: terrabase.v1.Engine.DocumentRead:output_type -> terrabase.v1.DocumentReadResponse
-	60,  // 154: terrabase.v1.Engine.DocumentWrite:output_type -> terrabase.v1.DocumentWriteResponse
-	62,  // 155: terrabase.v1.Engine.DocumentDelete:output_type -> terrabase.v1.DocumentDeleteResponse
-	64,  // 156: terrabase.v1.Engine.DocumentBatch:output_type -> terrabase.v1.DocumentBatchResponse
-	66,  // 157: terrabase.v1.Engine.QueryExecute:output_type -> terrabase.v1.QueryExecuteResponse
-	68,  // 158: terrabase.v1.Engine.QueryCancel:output_type -> terrabase.v1.QueryCancelResponse
-	70,  // 159: terrabase.v1.Engine.FamilyRead:output_type -> terrabase.v1.FamilyReadResponse
-	72,  // 160: terrabase.v1.Engine.FamilyWrite:output_type -> terrabase.v1.FamilyWriteResponse
-	82,  // 161: terrabase.v1.Backbone.Subscribe:output_type -> terrabase.v1.BackboneStreamEvent
-	76,  // 162: terrabase.v1.Backbone.Acknowledge:output_type -> terrabase.v1.BackboneAcknowledgeResponse
-	78,  // 163: terrabase.v1.Backbone.Unsubscribe:output_type -> terrabase.v1.BackboneUnsubscribeResponse
-	84,  // 164: terrabase.v1.Sync.SessionSetup:output_type -> terrabase.v1.SyncSessionSetupResponse
-	86,  // 165: terrabase.v1.Sync.DeltaPull:output_type -> terrabase.v1.SyncDeltaPullResponse
-	88,  // 166: terrabase.v1.Sync.SnapshotPull:output_type -> terrabase.v1.SyncSnapshotPullResponse
-	90,  // 167: terrabase.v1.Sync.CheckpointAck:output_type -> terrabase.v1.SyncCheckpointAckResponse
-	92,  // 168: terrabase.v1.Sync.MutationSubmit:output_type -> terrabase.v1.SyncMutationSubmitResponse
-	94,  // 169: terrabase.v1.Sync.SessionClose:output_type -> terrabase.v1.SyncSessionCloseResponse
-	105, // 170: terrabase.v1.Schema.Declare:output_type -> terrabase.v1.SchemaDeclareResponse
-	107, // 171: terrabase.v1.Schema.Status:output_type -> terrabase.v1.SchemaStatusResponse
-	109, // 172: terrabase.v1.Schema.Validate:output_type -> terrabase.v1.SchemaValidateResponse
-	111, // 173: terrabase.v1.Schema.MigrationStatus:output_type -> terrabase.v1.MigrationStatusResponse
-	113, // 174: terrabase.v1.Schema.MigrationDryRun:output_type -> terrabase.v1.MigrationDryRunResponse
-	115, // 175: terrabase.v1.Schema.MigrationApply:output_type -> terrabase.v1.MigrationApplyResponse
-	120, // 176: terrabase.v1.Replication.Conflicts:output_type -> terrabase.v1.ReplicationConflictsResponse
-	123, // 177: terrabase.v1.Replication.Fenced:output_type -> terrabase.v1.ReplicationFencedResponse
-	126, // 178: terrabase.v1.Replication.Depositions:output_type -> terrabase.v1.ReplicationDepositionsResponse
-	128, // 179: terrabase.v1.Replication.Cursor:output_type -> terrabase.v1.ReplicationCursorResponse
-	130, // 180: terrabase.v1.Replication.Health:output_type -> terrabase.v1.ReplicationHealthResponse
-	133, // 181: terrabase.v1.Replication.Denials:output_type -> terrabase.v1.ReplicationDenialsResponse
-	137, // 182: terrabase.v1.Maintenance.TopologyRead:output_type -> terrabase.v1.TopologyReadResponse
-	139, // 183: terrabase.v1.Maintenance.AdminStatus:output_type -> terrabase.v1.AdminStatusResponse
-	141, // 184: terrabase.v1.Maintenance.SupervisionHealth:output_type -> terrabase.v1.SupervisionHealthResponse
-	143, // 185: terrabase.v1.Maintenance.SupervisionShutdown:output_type -> terrabase.v1.SupervisionShutdownResponse
-	146, // 186: terrabase.v1.Usage.Record:output_type -> terrabase.v1.UsageRecordResponse
-	149, // 187: terrabase.v1.Usage.Export:output_type -> terrabase.v1.UsageExportResponse
-	151, // 188: terrabase.v1.Tier.Configure:output_type -> terrabase.v1.TierConfigureResponse
-	153, // 189: terrabase.v1.Tier.Inspect:output_type -> terrabase.v1.TierInspectResponse
-	155, // 190: terrabase.v1.Tier.DryRun:output_type -> terrabase.v1.TierDryRunResponse
-	157, // 191: terrabase.v1.Tier.Explain:output_type -> terrabase.v1.TierExplainResponse
-	159, // 192: terrabase.v1.Tier.Run:output_type -> terrabase.v1.TierRunResponse
-	161, // 193: terrabase.v1.Tier.Pause:output_type -> terrabase.v1.TierPauseResponse
-	163, // 194: terrabase.v1.Tier.Resume:output_type -> terrabase.v1.TierResumeResponse
+	134, // 109: terrabase.v1.ChannelService.Bind:input_type -> terrabase.v1.ChannelServiceBindRequest
+	57,  // 110: terrabase.v1.EngineService.DocumentRead:input_type -> terrabase.v1.EngineServiceDocumentReadRequest
+	59,  // 111: terrabase.v1.EngineService.DocumentWrite:input_type -> terrabase.v1.EngineServiceDocumentWriteRequest
+	61,  // 112: terrabase.v1.EngineService.DocumentDelete:input_type -> terrabase.v1.EngineServiceDocumentDeleteRequest
+	63,  // 113: terrabase.v1.EngineService.DocumentBatch:input_type -> terrabase.v1.EngineServiceDocumentBatchRequest
+	65,  // 114: terrabase.v1.EngineService.QueryExecute:input_type -> terrabase.v1.EngineServiceQueryExecuteRequest
+	67,  // 115: terrabase.v1.EngineService.QueryCancel:input_type -> terrabase.v1.EngineServiceQueryCancelRequest
+	69,  // 116: terrabase.v1.EngineService.FamilyRead:input_type -> terrabase.v1.EngineServiceFamilyReadRequest
+	71,  // 117: terrabase.v1.EngineService.FamilyWrite:input_type -> terrabase.v1.EngineServiceFamilyWriteRequest
+	73,  // 118: terrabase.v1.BackboneService.Subscribe:input_type -> terrabase.v1.BackboneServiceSubscribeRequest
+	75,  // 119: terrabase.v1.BackboneService.Acknowledge:input_type -> terrabase.v1.BackboneServiceAcknowledgeRequest
+	77,  // 120: terrabase.v1.BackboneService.Unsubscribe:input_type -> terrabase.v1.BackboneServiceUnsubscribeRequest
+	83,  // 121: terrabase.v1.SyncService.SessionSetup:input_type -> terrabase.v1.SyncServiceSessionSetupRequest
+	85,  // 122: terrabase.v1.SyncService.DeltaPull:input_type -> terrabase.v1.SyncServiceDeltaPullRequest
+	87,  // 123: terrabase.v1.SyncService.SnapshotPull:input_type -> terrabase.v1.SyncServiceSnapshotPullRequest
+	89,  // 124: terrabase.v1.SyncService.CheckpointAck:input_type -> terrabase.v1.SyncServiceCheckpointAckRequest
+	91,  // 125: terrabase.v1.SyncService.MutationSubmit:input_type -> terrabase.v1.SyncServiceMutationSubmitRequest
+	93,  // 126: terrabase.v1.SyncService.SessionClose:input_type -> terrabase.v1.SyncServiceSessionCloseRequest
+	104, // 127: terrabase.v1.SchemaService.Declare:input_type -> terrabase.v1.SchemaServiceDeclareRequest
+	106, // 128: terrabase.v1.SchemaService.Status:input_type -> terrabase.v1.SchemaServiceStatusRequest
+	108, // 129: terrabase.v1.SchemaService.Validate:input_type -> terrabase.v1.SchemaServiceValidateRequest
+	110, // 130: terrabase.v1.SchemaService.MigrationStatus:input_type -> terrabase.v1.MigrationStatusRequest
+	112, // 131: terrabase.v1.SchemaService.MigrationDryRun:input_type -> terrabase.v1.MigrationDryRunRequest
+	114, // 132: terrabase.v1.SchemaService.MigrationApply:input_type -> terrabase.v1.MigrationApplyRequest
+	116, // 133: terrabase.v1.ReplicationService.Conflicts:input_type -> terrabase.v1.ReplicationServiceConflictsRequest
+	121, // 134: terrabase.v1.ReplicationService.Fenced:input_type -> terrabase.v1.ReplicationServiceFencedRequest
+	124, // 135: terrabase.v1.ReplicationService.Depositions:input_type -> terrabase.v1.ReplicationServiceDepositionsRequest
+	127, // 136: terrabase.v1.ReplicationService.Cursor:input_type -> terrabase.v1.ReplicationServiceCursorRequest
+	129, // 137: terrabase.v1.ReplicationService.Health:input_type -> terrabase.v1.ReplicationServiceHealthRequest
+	131, // 138: terrabase.v1.ReplicationService.Denials:input_type -> terrabase.v1.ReplicationServiceDenialsRequest
+	136, // 139: terrabase.v1.MaintenanceService.TopologyRead:input_type -> terrabase.v1.MaintenanceServiceTopologyReadRequest
+	138, // 140: terrabase.v1.MaintenanceService.AdminStatus:input_type -> terrabase.v1.MaintenanceServiceAdminStatusRequest
+	140, // 141: terrabase.v1.MaintenanceService.SupervisionHealth:input_type -> terrabase.v1.MaintenanceServiceSupervisionHealthRequest
+	142, // 142: terrabase.v1.MaintenanceService.SupervisionShutdown:input_type -> terrabase.v1.MaintenanceServiceSupervisionShutdownRequest
+	145, // 143: terrabase.v1.UsageService.Record:input_type -> terrabase.v1.UsageServiceRecordRequest
+	148, // 144: terrabase.v1.UsageService.Export:input_type -> terrabase.v1.UsageServiceExportRequest
+	150, // 145: terrabase.v1.TierService.Configure:input_type -> terrabase.v1.TierServiceConfigureRequest
+	152, // 146: terrabase.v1.TierService.Inspect:input_type -> terrabase.v1.TierServiceInspectRequest
+	154, // 147: terrabase.v1.TierService.DryRun:input_type -> terrabase.v1.TierServiceDryRunRequest
+	156, // 148: terrabase.v1.TierService.Explain:input_type -> terrabase.v1.TierServiceExplainRequest
+	158, // 149: terrabase.v1.TierService.Run:input_type -> terrabase.v1.TierServiceRunRequest
+	160, // 150: terrabase.v1.TierService.Pause:input_type -> terrabase.v1.TierServicePauseRequest
+	162, // 151: terrabase.v1.TierService.Resume:input_type -> terrabase.v1.TierServiceResumeRequest
+	135, // 152: terrabase.v1.ChannelService.Bind:output_type -> terrabase.v1.ChannelServiceBindResponse
+	58,  // 153: terrabase.v1.EngineService.DocumentRead:output_type -> terrabase.v1.EngineServiceDocumentReadResponse
+	60,  // 154: terrabase.v1.EngineService.DocumentWrite:output_type -> terrabase.v1.EngineServiceDocumentWriteResponse
+	62,  // 155: terrabase.v1.EngineService.DocumentDelete:output_type -> terrabase.v1.EngineServiceDocumentDeleteResponse
+	64,  // 156: terrabase.v1.EngineService.DocumentBatch:output_type -> terrabase.v1.EngineServiceDocumentBatchResponse
+	66,  // 157: terrabase.v1.EngineService.QueryExecute:output_type -> terrabase.v1.EngineServiceQueryExecuteResponse
+	68,  // 158: terrabase.v1.EngineService.QueryCancel:output_type -> terrabase.v1.EngineServiceQueryCancelResponse
+	70,  // 159: terrabase.v1.EngineService.FamilyRead:output_type -> terrabase.v1.EngineServiceFamilyReadResponse
+	72,  // 160: terrabase.v1.EngineService.FamilyWrite:output_type -> terrabase.v1.EngineServiceFamilyWriteResponse
+	82,  // 161: terrabase.v1.BackboneService.Subscribe:output_type -> terrabase.v1.SubscribeResponse
+	76,  // 162: terrabase.v1.BackboneService.Acknowledge:output_type -> terrabase.v1.BackboneServiceAcknowledgeResponse
+	78,  // 163: terrabase.v1.BackboneService.Unsubscribe:output_type -> terrabase.v1.BackboneServiceUnsubscribeResponse
+	84,  // 164: terrabase.v1.SyncService.SessionSetup:output_type -> terrabase.v1.SyncServiceSessionSetupResponse
+	86,  // 165: terrabase.v1.SyncService.DeltaPull:output_type -> terrabase.v1.SyncServiceDeltaPullResponse
+	88,  // 166: terrabase.v1.SyncService.SnapshotPull:output_type -> terrabase.v1.SyncServiceSnapshotPullResponse
+	90,  // 167: terrabase.v1.SyncService.CheckpointAck:output_type -> terrabase.v1.SyncServiceCheckpointAckResponse
+	92,  // 168: terrabase.v1.SyncService.MutationSubmit:output_type -> terrabase.v1.SyncServiceMutationSubmitResponse
+	94,  // 169: terrabase.v1.SyncService.SessionClose:output_type -> terrabase.v1.SyncServiceSessionCloseResponse
+	105, // 170: terrabase.v1.SchemaService.Declare:output_type -> terrabase.v1.SchemaServiceDeclareResponse
+	107, // 171: terrabase.v1.SchemaService.Status:output_type -> terrabase.v1.SchemaServiceStatusResponse
+	109, // 172: terrabase.v1.SchemaService.Validate:output_type -> terrabase.v1.SchemaServiceValidateResponse
+	111, // 173: terrabase.v1.SchemaService.MigrationStatus:output_type -> terrabase.v1.MigrationStatusResponse
+	113, // 174: terrabase.v1.SchemaService.MigrationDryRun:output_type -> terrabase.v1.MigrationDryRunResponse
+	115, // 175: terrabase.v1.SchemaService.MigrationApply:output_type -> terrabase.v1.MigrationApplyResponse
+	120, // 176: terrabase.v1.ReplicationService.Conflicts:output_type -> terrabase.v1.ReplicationServiceConflictsResponse
+	123, // 177: terrabase.v1.ReplicationService.Fenced:output_type -> terrabase.v1.ReplicationServiceFencedResponse
+	126, // 178: terrabase.v1.ReplicationService.Depositions:output_type -> terrabase.v1.ReplicationServiceDepositionsResponse
+	128, // 179: terrabase.v1.ReplicationService.Cursor:output_type -> terrabase.v1.ReplicationServiceCursorResponse
+	130, // 180: terrabase.v1.ReplicationService.Health:output_type -> terrabase.v1.ReplicationServiceHealthResponse
+	133, // 181: terrabase.v1.ReplicationService.Denials:output_type -> terrabase.v1.ReplicationServiceDenialsResponse
+	137, // 182: terrabase.v1.MaintenanceService.TopologyRead:output_type -> terrabase.v1.MaintenanceServiceTopologyReadResponse
+	139, // 183: terrabase.v1.MaintenanceService.AdminStatus:output_type -> terrabase.v1.MaintenanceServiceAdminStatusResponse
+	141, // 184: terrabase.v1.MaintenanceService.SupervisionHealth:output_type -> terrabase.v1.MaintenanceServiceSupervisionHealthResponse
+	143, // 185: terrabase.v1.MaintenanceService.SupervisionShutdown:output_type -> terrabase.v1.MaintenanceServiceSupervisionShutdownResponse
+	146, // 186: terrabase.v1.UsageService.Record:output_type -> terrabase.v1.UsageServiceRecordResponse
+	149, // 187: terrabase.v1.UsageService.Export:output_type -> terrabase.v1.UsageServiceExportResponse
+	151, // 188: terrabase.v1.TierService.Configure:output_type -> terrabase.v1.TierServiceConfigureResponse
+	153, // 189: terrabase.v1.TierService.Inspect:output_type -> terrabase.v1.TierServiceInspectResponse
+	155, // 190: terrabase.v1.TierService.DryRun:output_type -> terrabase.v1.TierServiceDryRunResponse
+	157, // 191: terrabase.v1.TierService.Explain:output_type -> terrabase.v1.TierServiceExplainResponse
+	159, // 192: terrabase.v1.TierService.Run:output_type -> terrabase.v1.TierServiceRunResponse
+	161, // 193: terrabase.v1.TierService.Pause:output_type -> terrabase.v1.TierServicePauseResponse
+	163, // 194: terrabase.v1.TierService.Resume:output_type -> terrabase.v1.TierServiceResumeResponse
 	152, // [152:195] is the sub-list for method output_type
 	109, // [109:152] is the sub-list for method input_type
 	109, // [109:109] is the sub-list for extension type_name
@@ -11246,10 +11245,10 @@ func file_terrabase_v1_engine_proto_init() {
 		(*SyncChange_Delete)(nil),
 	}
 	file_terrabase_v1_engine_proto_msgTypes[50].OneofWrappers = []any{
-		(*BackboneStreamEvent_Subscribed)(nil),
-		(*BackboneStreamEvent_Batch)(nil),
-		(*BackboneStreamEvent_Trigger)(nil),
-		(*BackboneStreamEvent_Closed)(nil),
+		(*SubscribeResponse_Subscribed)(nil),
+		(*SubscribeResponse_Batch)(nil),
+		(*SubscribeResponse_Trigger)(nil),
+		(*SubscribeResponse_Closed)(nil),
 	}
 	file_terrabase_v1_engine_proto_msgTypes[64].OneofWrappers = []any{
 		(*TransformLiteral_Boolean)(nil),

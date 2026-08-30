@@ -5,9 +5,7 @@
 //! **selection**, resolves the matched document identities against one
 //! immutable snapshot in bounded pages, and publishes the writes as **one
 //! engine transaction per bounded page** — one derived [`OperationId`], one
-//! atomic commit, all or nothing — V1's per-batch transaction shape
-//! (`AbstractDatabaseQueryRunner.cs:184-196`, batches of 4096 at `:153`,
-//! pinned V1 tree). The patch half's per-document body is exactly the
+//! atomic commit, all or nothing. The patch half's per-document body is exactly the
 //! GAP-D07 typed [`DocumentPatch`] applied through
 //! [`apply_document_patch`]; there is
 //! no second patch language and no script body (charter
@@ -45,9 +43,8 @@ use crate::types::{
 
 /// The maximum number of documents one write page holds.
 ///
-/// The bound mirrors V1's server-side bulk-operation batch size
-/// (`AbstractDatabaseQueryRunner.cs:153`, pinned V1 tree). The engine's
-/// per-document limits already bound bytes, so no second byte bound exists.
+/// The engine's per-document limits already bound bytes, so no second byte
+/// bound exists.
 pub const MAX_BULK_PAGE_DOCUMENTS: usize = 4096;
 
 /// The maximum number of per-document detail records one receipt retains.
@@ -74,8 +71,7 @@ pub struct BulkByQueryOptions {
 
 impl BulkByQueryOptions {
     /// Creates the default options: the maximum write-page bound and no
-    /// per-document detail window (V1's `RetrieveDetails` defaults to
-    /// false, `QueryOperationOptions.cs:49`, pinned V1 tree).
+    /// per-document detail window.
     #[must_use]
     pub const fn new() -> Self {
         Self { page_documents: MAX_BULK_PAGE_DOCUMENTS, details: false }
@@ -99,7 +95,7 @@ impl BulkByQueryOptions {
         Ok(self)
     }
 
-    /// Selects per-document detail disclosure (V1's `RetrieveDetails`).
+    /// Selects per-document detail disclosure.
     #[must_use]
     pub const fn with_details(mut self, details: bool) -> Self {
         self.details = details;
@@ -241,9 +237,7 @@ impl DeleteByQueryRequest {
 /// The patch is data, not a program: it is the same
 /// [`DocumentPatch`] vocabulary GAP-D07
 /// defined, applied per matched document under
-/// [`ExpectedVersion::Any`] — V1's patch-by-query runs its command with a
-/// null change vector (`AbstractDatabaseQueryRunner.cs:120`, pinned V1
-/// tree).
+/// [`ExpectedVersion::Any`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct PatchByQueryRequest {
     query: QuerySpec,
@@ -390,8 +384,7 @@ pub enum BulkDetailOutcome {
     Missing,
 }
 
-/// One bounded per-document detail record (V1's `DeleteDetails` /
-/// `PatchDetails`, `BulkOperationResult.cs:86-101`, pinned V1 tree).
+/// One bounded per-document detail record.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BulkDetail {
     collection: CollectionName,
@@ -450,8 +443,7 @@ pub enum BulkTermination {
     /// The run refused before any data access.
     Refused(BulkRefusal),
     /// The selection query refused — including the strict-stale
-    /// `IndexNotReady` refusal, the typed form of V1's stale-index throw
-    /// (`AbstractDatabaseQueryRunner.cs:167-168`, pinned V1 tree).
+    /// `IndexNotReady` refusal.
     Selection(QueryError),
     /// The caller's cancellation was observed: published pages stay
     /// committed and the untouched identities are accounted unattempted.
@@ -609,9 +601,7 @@ impl BulkByQueryReceipt {
 /// The lifecycle stage of one audited bulk-by-query run.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BulkAuditStage {
-    /// The run passed its gates and began its selection — V1's scheduling
-    /// position (`AbstractDatabaseOperationQueriesHandlerProcessor.cs:55-66`,
-    /// pinned V1 tree).
+    /// The run passed its gates and began its selection.
     Dispatched,
     /// A dispatched run finished its terminal accounting, successfully or
     /// not.
@@ -653,10 +643,8 @@ impl BulkAuditStage {
 ///
 /// The event names only structural identity and counts: kind, tenant, run
 /// identity, stage, selected, processed. It structurally cannot carry a
-/// query text, document body, or field — V1's audit line carries the query
-/// (`AbstractDatabaseOperationQueriesHandlerProcessor.cs:65`, pinned V1
-/// tree); the engine journal is content-free by the seam's audit
-/// discipline, recorded as an accepted difference in the decision record.
+/// query text, document body, or field. The engine journal is content-free by
+/// the seam's audit discipline.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BulkAuditEntry {
     sequence: u64,
@@ -982,8 +970,7 @@ impl QueryStore<'_> {
     ///
     /// The snapshot cannot shift under the selection, so advancing the page
     /// offset over the same snapshot is sound. The identities are the only
-    /// thing the selection materializes — V1's id-only operation projection
-    /// (`AbstractDatabaseQueryRunner.cs:225`, pinned V1 tree).
+    /// thing the selection materializes.
     fn select_identities(
         &self,
         run: &BulkRun,

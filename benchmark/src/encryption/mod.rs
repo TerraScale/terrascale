@@ -488,7 +488,9 @@ impl ArtifactCipher {
         {
             return Err(EncryptionError::ProductionProviderUnavailable);
         }
-        if next_ordinal > MAX_ORDINAL {
+        // `MAX_ORDINAL + 1` is the durable read-only recovery sentinel after
+        // the final 96-bit ordinal has been sealed. It must not be allocatable.
+        if next_ordinal > MAX_ORDINAL + 1 {
             return Err(EncryptionError::OrdinalExhausted);
         }
 

@@ -24,6 +24,11 @@ pub struct LocalFileKeyProvider {
 
 impl LocalFileKeyProvider {
     /// Resolves the fixed key path below one engine location.
+    ///
+    /// The engine location and every existing ancestor must be a trusted,
+    /// owner-controlled path. The provider checks the final `keys` directory
+    /// and key file, but directory creation cannot safely distinguish an
+    /// attacker-controlled symlink in an ancestor from an ordinary path.
     #[must_use]
     pub fn at_engine_location(engine_location: &Path) -> Self {
         Self { path: engine_location.join(KEY_DIRECTORY).join(KEY_FILE) }

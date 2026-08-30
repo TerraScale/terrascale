@@ -1,11 +1,14 @@
 //! The HTTP surface: one router, server-rendered pages, and Datastar actions.
 
+use std::fmt::Write as _;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{DefaultBodyLimit, Form, Query, State};
-use axum::http::{HeaderValue, Request, StatusCode, header};
+use axum::extract::{DefaultBodyLimit, Extension, Form, Query, State};
+use axum::http::uri::Authority;
+use axum::http::{HeaderValue, Request, StatusCode, Uri, header};
 use axum::middleware::{self, Next};
 use axum::response::{Html, Response};
 use axum::routing::{get, post};
@@ -24,10 +27,10 @@ use crate::s3_backup::{
 };
 use crate::state::StudioState;
 
-/// Maximum encoded form body accepted by any action. This bounds JSON editor
-/// input and prevents a browser action from consuming unbounded memory while
-/// Axum deserializes it.
-const MAX_ACTION_BODY_BYTES: usize = 256 * 1024;
+/// Maximum encoded form body accepted by any action. The engine accepts a
+/// 1 MiB document; allowing roughly 8x for JSON and form escaping plus form
+/// fields keeps that document usable without admitting an unbounded body.
+const MAX_ACTION_BODY_BYTES: usize = 9 * 1024 * 1024;
 const MAX_CONFIRMATION_TARGET_BYTES: usize = 1_024;
 const MAX_CONFIRMATION_PHRASE_BYTES: usize = 128;
 const CONFIRM_TARGET_FIELD: &str = "confirm_target";
@@ -39,8 +42,6 @@ const BASECOAT_CSS: &str = include_str!("../static/basecoat.css");
 const DATASTAR_JS: &[u8] = include_bytes!("../static/datastar-1.0.3.js");
 /// The small Studio-owned Monaco loader and form bridge.
 const STUDIO_MONACO_JS: &[u8] = include_bytes!("../static/studio-monaco.js");
-/// CSP sources required by the hand-written runtime and pinned Monaco asset.
-const CONTENT_SECURITY_POLICY_VALUE: &str = "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self'; worker-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 /// Monaco 0.52.2 assets are vendored so the private Studio makes no CDN calls.
 const MONACO_LOADER: &[u8] = include_bytes!("../static/monaco/vs/loader.js");
 const MONACO_EDITOR_JS: &[u8] = include_bytes!("../static/monaco/vs/editor/editor.main.js");
@@ -53,6 +54,8 @@ const MONACO_CODICON_FONT: &[u8] =
 
 /// Builds the studio's router.
 pub fn router(state: Arc<StudioState>) -> Router {
+    let security = SecurityState::try_new(&state.config.addr)
+        .expect("StudioState must carry the validated numeric loopback listener");
     Router::new()
         .route("/static/basecoat.css", get(stylesheet))
         .route("/static/datastar-1.0.3.js", get(datastar_runtime))
@@ -117,32 +120,103 @@ pub fn router(state: Arc<StudioState>) -> Router {
         .route("/metrics/prometheus", get(prometheus_metrics))
         .route("/events/metrics", get(metrics_stream))
         .layer(DefaultBodyLimit::max(MAX_ACTION_BODY_BYTES))
-        .layer(middleware::from_fn(security_headers))
+        .layer(middleware::from_fn_with_state(security, security_headers))
         .with_state(state)
+}
+
+#[derive(Clone, Debug)]
+struct SecurityState {
+    listener: SocketAddr,
+}
+
+impl SecurityState {
+    fn try_new(address: &str) -> Result<Self, String> {
+        let listener = address
+            .parse::<SocketAddr>()
+            .map_err(|_| "the Studio listener is not a numeric socket address".to_owned())?;
+        if !listener.ip().is_loopback() {
+            return Err("the Studio listener is not loopback".to_owned());
+        }
+        Ok(Self { listener })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CspNonce(String);
+
+impl CspNonce {
+    fn generate() -> Result<Self, getrandom::Error> {
+        let mut bytes = [0_u8; 16];
+        getrandom::fill(&mut bytes)?;
+        let mut encoded = String::with_capacity(bytes.len() * 2);
+        for byte in bytes {
+            write!(&mut encoded, "{byte:02x}").expect("writing hexadecimal into a String");
+        }
+        Ok(Self(encoded))
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Adds browser hardening headers to every Studio response. The Studio is a
 /// loopback-only owner tool with no authentication, so the listener refuses
 /// non-loopback binds and this middleware rejects cross-origin writes.
-async fn security_headers(request: Request<Body>, next: Next) -> Response {
-    if request.method() == axum::http::Method::POST && !same_origin(&request) {
-        return hardened(status_text(StatusCode::FORBIDDEN, "cross-origin action refused\n"));
+async fn security_headers(
+    State(security): State<SecurityState>,
+    mut request: Request<Body>,
+    next: Next,
+) -> Response {
+    let nonce = match CspNonce::generate() {
+        Ok(nonce) => nonce,
+        Err(_) => {
+            return hardened_without_scripts(status_text(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "secure response nonce generation failed\n",
+            ));
+        }
+    };
+    if request.method() == axum::http::Method::POST && !same_origin(&request, &security) {
+        return hardened(
+            status_text(StatusCode::FORBIDDEN, "cross-origin action refused\n"),
+            &nonce,
+        );
     }
+    request.extensions_mut().insert(nonce.clone());
     let request = match reject_duplicate_confirmations(request).await {
         Ok(request) => request,
-        Err(response) => return hardened(response),
+        Err(response) => return hardened(response, &nonce),
     };
-    hardened(next.run(request).await)
+    hardened(next.run(request).await, &nonce)
 }
 
-fn hardened(mut response: Response) -> Response {
+fn hardened(mut response: Response, nonce: &CspNonce) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    headers.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    let policy = format!(
+        "default-src 'self'; script-src 'self' 'nonce-{}'; style-src 'self'; font-src 'self' data:; img-src 'self' data:; connect-src 'self'; worker-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+        nonce.as_str(),
+    );
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_str(&policy).expect("a hexadecimal nonce makes a valid CSP header"),
+    );
+    response
+}
+
+fn hardened_without_scripts(mut response: Response) -> Response {
     let headers = response.headers_mut();
     headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     headers.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
     headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
     headers.insert(
         header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(CONTENT_SECURITY_POLICY_VALUE),
+        HeaderValue::from_static(
+            "default-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+        ),
     );
     response
 }
@@ -264,7 +338,7 @@ fn status_text(status: StatusCode, body: &'static str) -> Response {
 /// that is the explicit compatibility policy for curl/CLI clients. A
 /// `Sec-Fetch-Site` value without an `Origin` is browser metadata but not proof
 /// of this listener's origin, so it is rejected (including `same-site`).
-fn same_origin(request: &Request<Body>) -> bool {
+fn same_origin(request: &Request<Body>, security: &SecurityState) -> bool {
     let fetch_header = request.headers().get("sec-fetch-site");
     let fetch_site = fetch_header.and_then(|value| value.to_str().ok());
     let origin_header = request.headers().get(header::ORIGIN);
@@ -292,8 +366,46 @@ fn same_origin(request: &Request<Body>) -> bool {
     let Some(host) = host else {
         return false;
     };
-    origin.eq_ignore_ascii_case(&format!("http://{host}"))
-        || origin.eq_ignore_ascii_case(&format!("https://{host}"))
+    let Ok(origin) = origin.parse::<Uri>() else {
+        return false;
+    };
+    if !origin.scheme_str().is_some_and(|scheme| scheme.eq_ignore_ascii_case("http"))
+        || origin.query().is_some()
+        || origin.path() != "/"
+    {
+        return false;
+    }
+    let Some(origin_authority) = origin.authority() else {
+        return false;
+    };
+    let Ok(host_authority) = host.parse::<Authority>() else {
+        return false;
+    };
+    trusted_authority(origin_authority, security.listener)
+        .zip(trusted_authority(&host_authority, security.listener))
+        .is_some_and(|(origin_host, request_host)| origin_host == request_host)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TrustedHost {
+    ConfiguredLoopback,
+    Localhost,
+}
+
+fn trusted_authority(authority: &Authority, listener: SocketAddr) -> Option<TrustedHost> {
+    if authority.as_str().contains('@') {
+        return None;
+    }
+    let port = authority.port_u16().or_else(|| (listener.port() == 80).then_some(80))?;
+    if port != listener.port() {
+        return None;
+    }
+    let host = authority.host().trim_matches(['[', ']']);
+    if host.eq_ignore_ascii_case("localhost") {
+        return Some(TrustedHost::Localhost);
+    }
+    let address = host.parse::<IpAddr>().ok()?;
+    (address == listener.ip()).then_some(TrustedHost::ConfiguredLoopback)
 }
 
 /* ------------------------------------------------------------------ static */
@@ -305,16 +417,15 @@ fn text(body: &'static str, kind: &'static str) -> Response {
 }
 
 async fn stylesheet() -> Response {
-    text(BASECOAT_CSS, "text/css; charset=utf-8")
+    let mut response = text(BASECOAT_CSS, "text/css; charset=utf-8");
+    response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    response
 }
 
 fn asset(body: &'static [u8], kind: &'static str) -> Response {
     let mut response = Response::new(axum::body::Body::from(body));
     response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static(kind));
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=31536000, immutable"),
-    );
+    response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     response
 }
 
@@ -376,28 +487,44 @@ async fn prometheus_metrics(State(state): State<Arc<StudioState>>) -> Response {
 
 /* -------------------------------------------------------------- html pages */
 
-async fn overview_page(State(state): State<Arc<StudioState>>) -> Html<String> {
-    Html(on_blocking(state, |state| Ok(overview::render(state))).await.unwrap_or_else(page_failure))
-}
-
-async fn metrics_page_handler(State(state): State<Arc<StudioState>>) -> Html<String> {
+async fn full_page<F>(state: Arc<StudioState>, nonce: CspNonce, render: F) -> Html<String>
+where
+    F: FnOnce(&StudioState, &str) -> String + Send + 'static,
+{
+    let failure_nonce = nonce.clone();
     Html(
-        on_blocking(state, |state| Ok(metrics_page::render(state)))
+        on_blocking(state, move |state| Ok(render(state, nonce.as_str())))
             .await
-            .unwrap_or_else(page_failure),
+            .unwrap_or_else(|message| page_failure(failure_nonce.as_str(), message)),
     )
 }
 
-async fn cluster_page(State(state): State<Arc<StudioState>>) -> Html<String> {
-    Html(
-        on_blocking(state, |state| Ok(replication::render(state)))
-            .await
-            .unwrap_or_else(page_failure),
-    )
+async fn overview_page(
+    State(state): State<Arc<StudioState>>,
+    Extension(nonce): Extension<CspNonce>,
+) -> Html<String> {
+    full_page(state, nonce, overview::render).await
 }
 
-async fn indexes_page(State(state): State<Arc<StudioState>>) -> Html<String> {
-    Html(on_blocking(state, |state| Ok(indexes::render(state))).await.unwrap_or_else(page_failure))
+async fn metrics_page_handler(
+    State(state): State<Arc<StudioState>>,
+    Extension(nonce): Extension<CspNonce>,
+) -> Html<String> {
+    full_page(state, nonce, metrics_page::render).await
+}
+
+async fn cluster_page(
+    State(state): State<Arc<StudioState>>,
+    Extension(nonce): Extension<CspNonce>,
+) -> Html<String> {
+    full_page(state, nonce, replication::render).await
+}
+
+async fn indexes_page(
+    State(state): State<Arc<StudioState>>,
+    Extension(nonce): Extension<CspNonce>,
+) -> Html<String> {
+    full_page(state, nonce, indexes::render).await
 }
 
 async fn healthz() -> Response {
@@ -433,6 +560,7 @@ struct DocumentsQuery {
 
 async fn documents_page(
     State(state): State<Arc<StudioState>>,
+    Extension(nonce): Extension<CspNonce>,
     parameters: Query<DocumentsQuery>,
 ) -> Html<String> {
     let requested = parameters.0;
@@ -442,48 +570,61 @@ async fn documents_page(
         collection: requested.collection.unwrap_or(fallback.collection),
         page: requested.page.unwrap_or(0),
     };
-    Html(
-        on_blocking(state, move |state| Ok(documents::render(state, &selection)))
-            .await
-            .unwrap_or_else(page_failure),
-    )
+    full_page(state, nonce, move |state, nonce| documents::render(state, &selection, nonce)).await
 }
 
 async fn query_page(
     State(state): State<Arc<StudioState>>,
+    Extension(nonce): Extension<CspNonce>,
     parameters: Query<DocumentsQuery>,
 ) -> Html<String> {
     let pair = parameters.0.tenant.zip(parameters.0.collection);
-    Html(
-        on_blocking(state, move |state| Ok(query::render(state, &pair)))
-            .await
-            .unwrap_or_else(page_failure),
-    )
+    full_page(state, nonce, move |state, nonce| query::render(state, &pair, nonce)).await
 }
 
-async fn replication_page(State(state): State<Arc<StudioState>>) -> Html<String> {
-    Html(
-        on_blocking(state, |state| Ok(replication::render(state)))
-            .await
-            .unwrap_or_else(page_failure),
-    )
+async fn replication_page(
+    State(state): State<Arc<StudioState>>,
+    Extension(nonce): Extension<CspNonce>,
+) -> Html<String> {
+    full_page(state, nonce, replication::render).await
 }
 
-async fn tiers_page(State(state): State<Arc<StudioState>>) -> Html<String> {
-    Html(on_blocking(state, |state| Ok(tiers::render(state))).await.unwrap_or_else(page_failure))
+async fn tiers_page(
+    State(state): State<Arc<StudioState>>,
+    Extension(nonce): Extension<CspNonce>,
+) -> Html<String> {
+    full_page(state, nonce, tiers::render).await
 }
 
-async fn usage_page(State(state): State<Arc<StudioState>>) -> Html<String> {
-    Html(on_blocking(state, |state| Ok(usage::render(state))).await.unwrap_or_else(page_failure))
+#[derive(Deserialize)]
+struct UsageQuery {
+    tenant: Option<String>,
 }
 
-async fn backups_page(State(state): State<Arc<StudioState>>) -> Html<String> {
+async fn usage_page(
+    State(state): State<Arc<StudioState>>,
+    Extension(nonce): Extension<CspNonce>,
+    Query(parameters): Query<UsageQuery>,
+) -> Html<String> {
+    let tenant = parameters
+        .tenant
+        .filter(|tenant| !tenant.trim().is_empty())
+        .or_else(|| state.tenants().into_iter().next())
+        .unwrap_or_else(|| "demo".to_owned());
+    full_page(state, nonce, move |state, nonce| usage::render(state, &tenant, nonce)).await
+}
+
+async fn backups_page(
+    State(state): State<Arc<StudioState>>,
+    Extension(nonce): Extension<CspNonce>,
+) -> Html<String> {
     let points = load_remote_recovery_points(state.as_ref()).await;
-    Html(backups::render(state.as_ref(), points.as_deref().map_err(String::as_str)))
+    Html(backups::render(state.as_ref(), points.as_deref().map_err(String::as_str), nonce.as_str()))
 }
 
-fn page_failure(message: String) -> String {
+fn page_failure(nonce: &str, message: String) -> String {
     html::page(
+        nonce,
         "Unavailable",
         "/",
         "",
@@ -574,6 +715,8 @@ struct PutForm {
     json: String,
     expected: Option<String>,
     version: Option<String>,
+    confirm_target: String,
+    confirm_phrase: String,
 }
 
 async fn documents_put(
@@ -581,6 +724,12 @@ async fn documents_put(
     Form(form): Form<PutForm>,
 ) -> Response {
     let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            &format!("{}/{}/{}", form.tenant, form.collection, form.id),
+            "replace document",
+        )?;
         state.observe(&form.tenant, Some(&form.collection));
         let tenant = engine_ops::tenant(&form.tenant)?;
         let collection = engine_ops::collection(&form.collection)?;
@@ -1297,8 +1446,13 @@ async fn tiers_run(
 #[derive(Deserialize)]
 struct UsageRecordForm {
     tenant: String,
+    meter: String,
     project: String,
+    database: String,
     partition: String,
+    region: String,
+    fact_id: String,
+    integer_units: String,
 }
 
 async fn usage_record(
@@ -1306,12 +1460,18 @@ async fn usage_record(
     Form(form): Form<UsageRecordForm>,
 ) -> Response {
     let refresh_state = Arc::clone(&state);
+    let refresh_tenant = form.tenant.clone();
     let outcome = on_blocking(state, move |state| {
-        let result = usage::record_segment(
+        let result = usage::record_fact(
             state,
             &form.tenant,
+            &form.meter,
             &form.project,
+            &form.database,
             &form.partition,
+            &form.region,
+            &form.fact_id,
+            &form.integer_units,
             now_millis(),
         );
         state.record(
@@ -1322,8 +1482,8 @@ async fn usage_record(
         result
     })
     .await;
-    let refresh = on_blocking(refresh_state, |state| {
-        Ok(format!("<div id=\"{}\">{}</div>", usage::LEDGER_ID, html::esc(&ledger_summary(state))))
+    let refresh = on_blocking(refresh_state, move |state| {
+        Ok(usage::authoritative_fragment(state, &refresh_tenant))
     })
     .await;
     let refresh = refresh
@@ -1331,24 +1491,11 @@ async fn usage_record(
             vec![datastar::merge_fragments(
                 &markup,
                 Some(&format!("#{}", usage::LEDGER_ID)),
-                MergeMode::Inner,
+                MergeMode::Outer,
             )]
         })
         .unwrap_or_default();
     response_with_refresh("usage-receipt", outcome, refresh)
-}
-
-fn ledger_summary(state: &StudioState) -> String {
-    let ledger = state.usage.lock().unwrap_or_else(|poison| poison.into_inner());
-    let totals = usage::fold(&ledger);
-    if totals.is_empty() {
-        return "No segment recorded yet.".to_owned();
-    }
-    totals
-        .iter()
-        .map(|total| format!("{:?}: {}", total.kind, total.total))
-        .collect::<Vec<_>>()
-        .join("; ")
 }
 
 /* ----------------------------------------------------------------- backups */
@@ -1373,12 +1520,22 @@ struct BackupConfigureForm {
     enabled: Option<String>,
     virtual_hosted_style: Option<String>,
     allow_http: Option<String>,
+    confirm_target: String,
+    confirm_phrase: String,
 }
 
 async fn backup_configure(
     State(state): State<Arc<StudioState>>,
     Form(form): Form<BackupConfigureForm>,
 ) -> Response {
+    if let Err(failure) = require_confirmation(
+        &form.confirm_target,
+        &form.confirm_phrase,
+        "backup settings",
+        "configure backup",
+    ) {
+        return receipt("backup-configuration-receipt", Err(failure));
+    }
     let outcome: Result<String, String> = async {
         let mut settings = S3BackupSettings {
             enabled: form.enabled.is_some(),
@@ -1936,43 +2093,56 @@ mod tests {
         builder.body(Body::empty()).expect("test request")
     }
 
+    fn security() -> SecurityState {
+        SecurityState::try_new(crate::state::DEFAULT_ADDR).expect("default listener")
+    }
+
     #[test]
     fn headerless_requests_are_allowed_for_non_browser_operators() {
-        assert!(same_origin(&post(&[])));
+        assert!(same_origin(&post(&[]), &security()));
     }
 
     #[test]
     fn same_site_without_origin_is_not_same_origin_proof() {
-        assert!(!same_origin(&post(&[
-            ("host", "127.0.0.1:8090"),
-            ("sec-fetch-site", "same-site"),
-        ])));
+        assert!(!same_origin(
+            &post(&[("host", "127.0.0.1:8090"), ("sec-fetch-site", "same-site"),]),
+            &security(),
+        ));
     }
 
     #[test]
     fn matching_origin_and_host_are_allowed() {
-        assert!(same_origin(&post(&[
-            ("host", "127.0.0.1:8090"),
-            ("origin", "http://127.0.0.1:8090"),
-            ("sec-fetch-site", "same-origin"),
-        ])));
+        assert!(same_origin(
+            &post(&[
+                ("host", "127.0.0.1:8090"),
+                ("origin", "http://127.0.0.1:8090"),
+                ("sec-fetch-site", "same-origin"),
+            ]),
+            &security(),
+        ));
+        assert!(same_origin(
+            &post(&[("host", "localhost:8090"), ("origin", "http://localhost:8090")]),
+            &security(),
+        ));
     }
 
     #[test]
     fn cross_port_and_cross_origin_requests_are_rejected() {
-        assert!(!same_origin(&post(&[
-            ("host", "127.0.0.1:8090"),
-            ("origin", "http://127.0.0.1:8091"),
-        ])));
-        assert!(!same_origin(&post(&[
-            ("host", "127.0.0.1:8090"),
-            ("origin", "http://evil.example"),
-        ])));
+        for (host, origin) in [
+            ("127.0.0.1:8090", "http://127.0.0.1:8091"),
+            ("127.0.0.1:8090", "http://evil.example:8090"),
+            ("evil.example:8090", "http://evil.example:8090"),
+            ("127.0.0.2:8090", "http://127.0.0.2:8090"),
+            ("localhost:8090", "http://127.0.0.1:8090"),
+            ("127.0.0.1:8090", "https://127.0.0.1:8090"),
+        ] {
+            assert!(!same_origin(&post(&[("host", host), ("origin", origin)]), &security(),));
+        }
     }
 
     #[test]
     fn origin_without_host_is_rejected() {
-        assert!(!same_origin(&post(&[("origin", "http://127.0.0.1:8090")])));
+        assert!(!same_origin(&post(&[("origin", "http://127.0.0.1:8090")]), &security(),));
     }
 
     #[test]
@@ -1984,7 +2154,7 @@ mod tests {
             .header(header::ORIGIN, HeaderValue::from_bytes(&[0xff]).expect("header bytes"))
             .body(Body::empty())
             .expect("test request");
-        assert!(!same_origin(&request));
+        assert!(!same_origin(&request, &security()));
     }
 
     #[test]
@@ -2060,14 +2230,26 @@ mod tests {
         assert!(state.journal().iter().all(|entry| entry.action != "tiers/pause"));
     }
 
-    #[test]
-    fn csp_allows_pinned_monaco_without_inline_script_execution() {
-        assert!(CONTENT_SECURITY_POLICY_VALUE.contains("script-src 'self' 'unsafe-eval'"));
-        assert!(!CONTENT_SECURITY_POLICY_VALUE.contains("https:"));
-        assert!(CONTENT_SECURITY_POLICY_VALUE.contains("worker-src 'self' data: blob:"));
-        assert!(!CONTENT_SECURITY_POLICY_VALUE.contains("script-src 'self' 'unsafe-inline'"));
-        assert!(CONTENT_SECURITY_POLICY_VALUE.contains("object-src 'none'"));
-        assert!(CONTENT_SECURITY_POLICY_VALUE.contains("frame-ancestors 'none'"));
+    #[tokio::test]
+    async fn a_wrong_document_replacement_confirmation_cannot_observe_or_write() {
+        let state = studio("replacement-confirmation");
+        let tenants_before = state.tenants();
+        let response = router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/documents/put")
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "tenant=unseen&collection=users&id=42&json=%7B%7D&expected=any&version=1&confirm_target=wrong&confirm_phrase=replace%20document",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(state.tenants(), tenants_before);
+        assert!(state.journal().iter().all(|entry| entry.action != "documents/put"));
     }
 
     #[tokio::test]
@@ -2087,24 +2269,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn browser_policy_allows_the_runtime_and_pinned_monaco_only() {
-        let response = router(studio("csp"))
-            .oneshot(Request::builder().uri("/documents").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        let policy =
-            response.headers().get(header::CONTENT_SECURITY_POLICY).unwrap().to_str().unwrap();
-        assert!(policy.contains("script-src 'self' 'unsafe-eval'"));
-        assert!(!policy.contains("https:"));
-        assert!(policy.contains("worker-src 'self' data: blob:"));
-        assert!(policy.contains("object-src 'none'"));
+    async fn each_page_nonce_is_fresh_and_matches_its_strict_csp() {
+        let app = router(studio("csp"));
+        let mut observed = Vec::new();
+        for _ in 0..2 {
+            let response = app
+                .clone()
+                .oneshot(Request::builder().uri("/documents").body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let policy = response
+                .headers()
+                .get(header::CONTENT_SECURITY_POLICY)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_owned();
+            let body = axum::body::to_bytes(response.into_body(), 2 << 20).await.unwrap();
+            let body = String::from_utf8(body.to_vec()).unwrap();
+            let marker = "data-nonce=\"";
+            let start = body.find(marker).expect("page nonce") + marker.len();
+            let end = start + body[start..].find('"').expect("nonce terminator");
+            let nonce = body[start..end].to_owned();
+            assert_eq!(nonce.len(), 32);
+            assert!(nonce.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            assert!(policy.contains(&format!("script-src 'self' 'nonce-{nonce}'")));
+            assert!(policy.contains("worker-src 'self' data: blob:"));
+            assert!(policy.contains("object-src 'none'"));
+            assert!(!policy.contains("cdn.jsdelivr"));
+            assert!(!policy.contains("'unsafe-inline'"));
+            assert!(!policy.contains("'unsafe-eval'"));
+            observed.push(nonce);
+        }
+        assert_ne!(observed[0], observed[1]);
     }
 
     #[tokio::test]
     async fn referenced_browser_runtimes_are_embedded_and_served() {
         let app = router(studio("browser-assets"));
-        for path in ["/static/datastar-1.0.3.js", "/static/studio-monaco.js"] {
+        for path in
+            ["/static/datastar-1.0.3.js", "/static/studio-monaco.js", "/static/monaco/vs/loader.js"]
+        {
             let response = app
                 .clone()
                 .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
@@ -2116,6 +2322,7 @@ mod tests {
                 "text/javascript; charset=utf-8",
                 "{path}",
             );
+            assert_eq!(response.headers().get(header::CACHE_CONTROL).unwrap(), "no-cache");
         }
     }
 

@@ -65,28 +65,14 @@
 //!
 //! # Memory bound of a state archive
 //!
-//! A full or snapshot run reconstructs each tenant's live state by replaying
-//! its publication history, and that replay materializes one tenant's
-//! complete live document set in memory before the first record of the
-//! tenant is written: the per-tenant map is `(collection, document id) ->
-//! (document, durability)`. The run's peak memory is therefore the largest
-//! selected tenant's live byte weight, and no bound in this module caps it.
-//! Incremental runs never materialize state — they page the journal and
-//! write each record as it is classified. A streaming or spilling state
-//! archive is a recorded open limit, not an implemented one. The available
-//! history seam is paged, but last-write wins still requires retaining every
-//! live key (and its document) before the canonical final state can be
-//! emitted. The existing snapshot-page seam is not a drop-in replacement: it
-//! cannot pin an arbitrary `StorageSequence`, returns no durability fact for
-//! the final write, and its identifier cursor is ambiguous when one
-//! identifier is reused across collections. The exact bounded seam required
-//! here is a durable `snapshot_records_from(tenant, boundary,
-//! after: Option<(collection, identifier)>, limit)` read that returns
-//! final-state documents together with the durability of their winning
-//! writes, in a stable full-key order. With that seam, backup can page
-//! directly into the staged member writer; without it, a spill/sort format or
-//! an incompatible loss of those facts is required. The recovery lane
-//! (BK-02) must size and disclose this bound rather than inherit it silently.
+//! A full or snapshot run pages final-state records at the requested boundary
+//! through the Engine's `snapshot_records_from` seam. Each page carries the
+//! document and the durability of its winning write in stable full-key order,
+//! so backup writes directly into the staged member writer without retaining
+//! a tenant's complete live state or a second archive bundle. Incremental
+//! runs likewise page the journal and write each record as it is classified.
+//! The page bound is the Engine seam's hard maximum; the storage indexes and
+//! one page of decoded records are the remaining working set.
 //!
 //! # Limits (focused tests only)
 //!

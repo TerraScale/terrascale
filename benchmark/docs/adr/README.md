@@ -32,6 +32,7 @@ material choice and must not be treated as release authorization.
 - [0036 — Private Prometheus and Grafana observability](0036-private-prometheus-and-grafana-observability.md)
 - [0037 — S3 recovery-point repository](0037-s3-recovery-point-repository.md)
 - [0038 — Unified multi-database Member process](0038-unified-multi-database-member-process.md)
+- [0039 — Multi-tenant authorization and isolation](0039-multi-tenant-authorization-and-isolation.md)
 
 ## Authoring and release rules
 

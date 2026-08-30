@@ -48,107 +48,107 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Channel_Bind_FullMethodName = "/terrabase.v1.Channel/Bind"
+	ChannelService_Bind_FullMethodName = "/terrabase.v1.ChannelService/Bind"
 )
 
-// ChannelClient is the client API for Channel service.
+// ChannelServiceClient is the client API for ChannelService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // Channel identity: validates the application identity the metadata
 // carries and answers the serving instance.
-type ChannelClient interface {
-	Bind(ctx context.Context, in *ChannelBindRequest, opts ...grpc.CallOption) (*ChannelBindResponse, error)
+type ChannelServiceClient interface {
+	Bind(ctx context.Context, in *ChannelServiceBindRequest, opts ...grpc.CallOption) (*ChannelServiceBindResponse, error)
 }
 
-type channelClient struct {
+type channelServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewChannelClient(cc grpc.ClientConnInterface) ChannelClient {
-	return &channelClient{cc}
+func NewChannelServiceClient(cc grpc.ClientConnInterface) ChannelServiceClient {
+	return &channelServiceClient{cc}
 }
 
-func (c *channelClient) Bind(ctx context.Context, in *ChannelBindRequest, opts ...grpc.CallOption) (*ChannelBindResponse, error) {
+func (c *channelServiceClient) Bind(ctx context.Context, in *ChannelServiceBindRequest, opts ...grpc.CallOption) (*ChannelServiceBindResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ChannelBindResponse)
-	err := c.cc.Invoke(ctx, Channel_Bind_FullMethodName, in, out, cOpts...)
+	out := new(ChannelServiceBindResponse)
+	err := c.cc.Invoke(ctx, ChannelService_Bind_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// ChannelServer is the server API for Channel service.
-// All implementations must embed UnimplementedChannelServer
+// ChannelServiceServer is the server API for ChannelService service.
+// All implementations must embed UnimplementedChannelServiceServer
 // for forward compatibility.
 //
 // Channel identity: validates the application identity the metadata
 // carries and answers the serving instance.
-type ChannelServer interface {
-	Bind(context.Context, *ChannelBindRequest) (*ChannelBindResponse, error)
-	mustEmbedUnimplementedChannelServer()
+type ChannelServiceServer interface {
+	Bind(context.Context, *ChannelServiceBindRequest) (*ChannelServiceBindResponse, error)
+	mustEmbedUnimplementedChannelServiceServer()
 }
 
-// UnimplementedChannelServer must be embedded to have
+// UnimplementedChannelServiceServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedChannelServer struct{}
+type UnimplementedChannelServiceServer struct{}
 
-func (UnimplementedChannelServer) Bind(context.Context, *ChannelBindRequest) (*ChannelBindResponse, error) {
+func (UnimplementedChannelServiceServer) Bind(context.Context, *ChannelServiceBindRequest) (*ChannelServiceBindResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Bind not implemented")
 }
-func (UnimplementedChannelServer) mustEmbedUnimplementedChannelServer() {}
-func (UnimplementedChannelServer) testEmbeddedByValue()                 {}
+func (UnimplementedChannelServiceServer) mustEmbedUnimplementedChannelServiceServer() {}
+func (UnimplementedChannelServiceServer) testEmbeddedByValue()                        {}
 
-// UnsafeChannelServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to ChannelServer will
+// UnsafeChannelServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to ChannelServiceServer will
 // result in compilation errors.
-type UnsafeChannelServer interface {
-	mustEmbedUnimplementedChannelServer()
+type UnsafeChannelServiceServer interface {
+	mustEmbedUnimplementedChannelServiceServer()
 }
 
-func RegisterChannelServer(s grpc.ServiceRegistrar, srv ChannelServer) {
-	// If the following call panics, it indicates UnimplementedChannelServer was
+func RegisterChannelServiceServer(s grpc.ServiceRegistrar, srv ChannelServiceServer) {
+	// If the following call panics, it indicates UnimplementedChannelServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&Channel_ServiceDesc, srv)
+	s.RegisterService(&ChannelService_ServiceDesc, srv)
 }
 
-func _Channel_Bind_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ChannelBindRequest)
+func _ChannelService_Bind_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ChannelServiceBindRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(ChannelServer).Bind(ctx, in)
+		return srv.(ChannelServiceServer).Bind(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Channel_Bind_FullMethodName,
+		FullMethod: ChannelService_Bind_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ChannelServer).Bind(ctx, req.(*ChannelBindRequest))
+		return srv.(ChannelServiceServer).Bind(ctx, req.(*ChannelServiceBindRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// Channel_ServiceDesc is the grpc.ServiceDesc for Channel service.
+// ChannelService_ServiceDesc is the grpc.ServiceDesc for ChannelService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var Channel_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "terrabase.v1.Channel",
-	HandlerType: (*ChannelServer)(nil),
+var ChannelService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "terrabase.v1.ChannelService",
+	HandlerType: (*ChannelServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Bind",
-			Handler:    _Channel_Bind_Handler,
+			Handler:    _ChannelService_Bind_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -156,371 +156,371 @@ var Channel_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	Engine_DocumentRead_FullMethodName   = "/terrabase.v1.Engine/DocumentRead"
-	Engine_DocumentWrite_FullMethodName  = "/terrabase.v1.Engine/DocumentWrite"
-	Engine_DocumentDelete_FullMethodName = "/terrabase.v1.Engine/DocumentDelete"
-	Engine_DocumentBatch_FullMethodName  = "/terrabase.v1.Engine/DocumentBatch"
-	Engine_QueryExecute_FullMethodName   = "/terrabase.v1.Engine/QueryExecute"
-	Engine_QueryCancel_FullMethodName    = "/terrabase.v1.Engine/QueryCancel"
-	Engine_FamilyRead_FullMethodName     = "/terrabase.v1.Engine/FamilyRead"
-	Engine_FamilyWrite_FullMethodName    = "/terrabase.v1.Engine/FamilyWrite"
+	EngineService_DocumentRead_FullMethodName   = "/terrabase.v1.EngineService/DocumentRead"
+	EngineService_DocumentWrite_FullMethodName  = "/terrabase.v1.EngineService/DocumentWrite"
+	EngineService_DocumentDelete_FullMethodName = "/terrabase.v1.EngineService/DocumentDelete"
+	EngineService_DocumentBatch_FullMethodName  = "/terrabase.v1.EngineService/DocumentBatch"
+	EngineService_QueryExecute_FullMethodName   = "/terrabase.v1.EngineService/QueryExecute"
+	EngineService_QueryCancel_FullMethodName    = "/terrabase.v1.EngineService/QueryCancel"
+	EngineService_FamilyRead_FullMethodName     = "/terrabase.v1.EngineService/FamilyRead"
+	EngineService_FamilyWrite_FullMethodName    = "/terrabase.v1.EngineService/FamilyWrite"
 )
 
-// EngineClient is the client API for Engine service.
+// EngineServiceClient is the client API for EngineService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // Documents, queries, and families.
-type EngineClient interface {
-	DocumentRead(ctx context.Context, in *DocumentReadRequest, opts ...grpc.CallOption) (*DocumentReadResponse, error)
-	DocumentWrite(ctx context.Context, in *DocumentWriteRequest, opts ...grpc.CallOption) (*DocumentWriteResponse, error)
-	DocumentDelete(ctx context.Context, in *DocumentDeleteRequest, opts ...grpc.CallOption) (*DocumentDeleteResponse, error)
-	DocumentBatch(ctx context.Context, in *DocumentBatchRequest, opts ...grpc.CallOption) (*DocumentBatchResponse, error)
-	QueryExecute(ctx context.Context, in *QueryExecuteRequest, opts ...grpc.CallOption) (*QueryExecuteResponse, error)
-	QueryCancel(ctx context.Context, in *QueryCancelRequest, opts ...grpc.CallOption) (*QueryCancelResponse, error)
-	FamilyRead(ctx context.Context, in *FamilyReadRequest, opts ...grpc.CallOption) (*FamilyReadResponse, error)
-	FamilyWrite(ctx context.Context, in *FamilyWriteRequest, opts ...grpc.CallOption) (*FamilyWriteResponse, error)
+type EngineServiceClient interface {
+	DocumentRead(ctx context.Context, in *EngineServiceDocumentReadRequest, opts ...grpc.CallOption) (*EngineServiceDocumentReadResponse, error)
+	DocumentWrite(ctx context.Context, in *EngineServiceDocumentWriteRequest, opts ...grpc.CallOption) (*EngineServiceDocumentWriteResponse, error)
+	DocumentDelete(ctx context.Context, in *EngineServiceDocumentDeleteRequest, opts ...grpc.CallOption) (*EngineServiceDocumentDeleteResponse, error)
+	DocumentBatch(ctx context.Context, in *EngineServiceDocumentBatchRequest, opts ...grpc.CallOption) (*EngineServiceDocumentBatchResponse, error)
+	QueryExecute(ctx context.Context, in *EngineServiceQueryExecuteRequest, opts ...grpc.CallOption) (*EngineServiceQueryExecuteResponse, error)
+	QueryCancel(ctx context.Context, in *EngineServiceQueryCancelRequest, opts ...grpc.CallOption) (*EngineServiceQueryCancelResponse, error)
+	FamilyRead(ctx context.Context, in *EngineServiceFamilyReadRequest, opts ...grpc.CallOption) (*EngineServiceFamilyReadResponse, error)
+	FamilyWrite(ctx context.Context, in *EngineServiceFamilyWriteRequest, opts ...grpc.CallOption) (*EngineServiceFamilyWriteResponse, error)
 }
 
-type engineClient struct {
+type engineServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewEngineClient(cc grpc.ClientConnInterface) EngineClient {
-	return &engineClient{cc}
+func NewEngineServiceClient(cc grpc.ClientConnInterface) EngineServiceClient {
+	return &engineServiceClient{cc}
 }
 
-func (c *engineClient) DocumentRead(ctx context.Context, in *DocumentReadRequest, opts ...grpc.CallOption) (*DocumentReadResponse, error) {
+func (c *engineServiceClient) DocumentRead(ctx context.Context, in *EngineServiceDocumentReadRequest, opts ...grpc.CallOption) (*EngineServiceDocumentReadResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DocumentReadResponse)
-	err := c.cc.Invoke(ctx, Engine_DocumentRead_FullMethodName, in, out, cOpts...)
+	out := new(EngineServiceDocumentReadResponse)
+	err := c.cc.Invoke(ctx, EngineService_DocumentRead_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *engineClient) DocumentWrite(ctx context.Context, in *DocumentWriteRequest, opts ...grpc.CallOption) (*DocumentWriteResponse, error) {
+func (c *engineServiceClient) DocumentWrite(ctx context.Context, in *EngineServiceDocumentWriteRequest, opts ...grpc.CallOption) (*EngineServiceDocumentWriteResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DocumentWriteResponse)
-	err := c.cc.Invoke(ctx, Engine_DocumentWrite_FullMethodName, in, out, cOpts...)
+	out := new(EngineServiceDocumentWriteResponse)
+	err := c.cc.Invoke(ctx, EngineService_DocumentWrite_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *engineClient) DocumentDelete(ctx context.Context, in *DocumentDeleteRequest, opts ...grpc.CallOption) (*DocumentDeleteResponse, error) {
+func (c *engineServiceClient) DocumentDelete(ctx context.Context, in *EngineServiceDocumentDeleteRequest, opts ...grpc.CallOption) (*EngineServiceDocumentDeleteResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DocumentDeleteResponse)
-	err := c.cc.Invoke(ctx, Engine_DocumentDelete_FullMethodName, in, out, cOpts...)
+	out := new(EngineServiceDocumentDeleteResponse)
+	err := c.cc.Invoke(ctx, EngineService_DocumentDelete_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *engineClient) DocumentBatch(ctx context.Context, in *DocumentBatchRequest, opts ...grpc.CallOption) (*DocumentBatchResponse, error) {
+func (c *engineServiceClient) DocumentBatch(ctx context.Context, in *EngineServiceDocumentBatchRequest, opts ...grpc.CallOption) (*EngineServiceDocumentBatchResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DocumentBatchResponse)
-	err := c.cc.Invoke(ctx, Engine_DocumentBatch_FullMethodName, in, out, cOpts...)
+	out := new(EngineServiceDocumentBatchResponse)
+	err := c.cc.Invoke(ctx, EngineService_DocumentBatch_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *engineClient) QueryExecute(ctx context.Context, in *QueryExecuteRequest, opts ...grpc.CallOption) (*QueryExecuteResponse, error) {
+func (c *engineServiceClient) QueryExecute(ctx context.Context, in *EngineServiceQueryExecuteRequest, opts ...grpc.CallOption) (*EngineServiceQueryExecuteResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(QueryExecuteResponse)
-	err := c.cc.Invoke(ctx, Engine_QueryExecute_FullMethodName, in, out, cOpts...)
+	out := new(EngineServiceQueryExecuteResponse)
+	err := c.cc.Invoke(ctx, EngineService_QueryExecute_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *engineClient) QueryCancel(ctx context.Context, in *QueryCancelRequest, opts ...grpc.CallOption) (*QueryCancelResponse, error) {
+func (c *engineServiceClient) QueryCancel(ctx context.Context, in *EngineServiceQueryCancelRequest, opts ...grpc.CallOption) (*EngineServiceQueryCancelResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(QueryCancelResponse)
-	err := c.cc.Invoke(ctx, Engine_QueryCancel_FullMethodName, in, out, cOpts...)
+	out := new(EngineServiceQueryCancelResponse)
+	err := c.cc.Invoke(ctx, EngineService_QueryCancel_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *engineClient) FamilyRead(ctx context.Context, in *FamilyReadRequest, opts ...grpc.CallOption) (*FamilyReadResponse, error) {
+func (c *engineServiceClient) FamilyRead(ctx context.Context, in *EngineServiceFamilyReadRequest, opts ...grpc.CallOption) (*EngineServiceFamilyReadResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FamilyReadResponse)
-	err := c.cc.Invoke(ctx, Engine_FamilyRead_FullMethodName, in, out, cOpts...)
+	out := new(EngineServiceFamilyReadResponse)
+	err := c.cc.Invoke(ctx, EngineService_FamilyRead_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *engineClient) FamilyWrite(ctx context.Context, in *FamilyWriteRequest, opts ...grpc.CallOption) (*FamilyWriteResponse, error) {
+func (c *engineServiceClient) FamilyWrite(ctx context.Context, in *EngineServiceFamilyWriteRequest, opts ...grpc.CallOption) (*EngineServiceFamilyWriteResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FamilyWriteResponse)
-	err := c.cc.Invoke(ctx, Engine_FamilyWrite_FullMethodName, in, out, cOpts...)
+	out := new(EngineServiceFamilyWriteResponse)
+	err := c.cc.Invoke(ctx, EngineService_FamilyWrite_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// EngineServer is the server API for Engine service.
-// All implementations must embed UnimplementedEngineServer
+// EngineServiceServer is the server API for EngineService service.
+// All implementations must embed UnimplementedEngineServiceServer
 // for forward compatibility.
 //
 // Documents, queries, and families.
-type EngineServer interface {
-	DocumentRead(context.Context, *DocumentReadRequest) (*DocumentReadResponse, error)
-	DocumentWrite(context.Context, *DocumentWriteRequest) (*DocumentWriteResponse, error)
-	DocumentDelete(context.Context, *DocumentDeleteRequest) (*DocumentDeleteResponse, error)
-	DocumentBatch(context.Context, *DocumentBatchRequest) (*DocumentBatchResponse, error)
-	QueryExecute(context.Context, *QueryExecuteRequest) (*QueryExecuteResponse, error)
-	QueryCancel(context.Context, *QueryCancelRequest) (*QueryCancelResponse, error)
-	FamilyRead(context.Context, *FamilyReadRequest) (*FamilyReadResponse, error)
-	FamilyWrite(context.Context, *FamilyWriteRequest) (*FamilyWriteResponse, error)
-	mustEmbedUnimplementedEngineServer()
+type EngineServiceServer interface {
+	DocumentRead(context.Context, *EngineServiceDocumentReadRequest) (*EngineServiceDocumentReadResponse, error)
+	DocumentWrite(context.Context, *EngineServiceDocumentWriteRequest) (*EngineServiceDocumentWriteResponse, error)
+	DocumentDelete(context.Context, *EngineServiceDocumentDeleteRequest) (*EngineServiceDocumentDeleteResponse, error)
+	DocumentBatch(context.Context, *EngineServiceDocumentBatchRequest) (*EngineServiceDocumentBatchResponse, error)
+	QueryExecute(context.Context, *EngineServiceQueryExecuteRequest) (*EngineServiceQueryExecuteResponse, error)
+	QueryCancel(context.Context, *EngineServiceQueryCancelRequest) (*EngineServiceQueryCancelResponse, error)
+	FamilyRead(context.Context, *EngineServiceFamilyReadRequest) (*EngineServiceFamilyReadResponse, error)
+	FamilyWrite(context.Context, *EngineServiceFamilyWriteRequest) (*EngineServiceFamilyWriteResponse, error)
+	mustEmbedUnimplementedEngineServiceServer()
 }
 
-// UnimplementedEngineServer must be embedded to have
+// UnimplementedEngineServiceServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedEngineServer struct{}
+type UnimplementedEngineServiceServer struct{}
 
-func (UnimplementedEngineServer) DocumentRead(context.Context, *DocumentReadRequest) (*DocumentReadResponse, error) {
+func (UnimplementedEngineServiceServer) DocumentRead(context.Context, *EngineServiceDocumentReadRequest) (*EngineServiceDocumentReadResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DocumentRead not implemented")
 }
-func (UnimplementedEngineServer) DocumentWrite(context.Context, *DocumentWriteRequest) (*DocumentWriteResponse, error) {
+func (UnimplementedEngineServiceServer) DocumentWrite(context.Context, *EngineServiceDocumentWriteRequest) (*EngineServiceDocumentWriteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DocumentWrite not implemented")
 }
-func (UnimplementedEngineServer) DocumentDelete(context.Context, *DocumentDeleteRequest) (*DocumentDeleteResponse, error) {
+func (UnimplementedEngineServiceServer) DocumentDelete(context.Context, *EngineServiceDocumentDeleteRequest) (*EngineServiceDocumentDeleteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DocumentDelete not implemented")
 }
-func (UnimplementedEngineServer) DocumentBatch(context.Context, *DocumentBatchRequest) (*DocumentBatchResponse, error) {
+func (UnimplementedEngineServiceServer) DocumentBatch(context.Context, *EngineServiceDocumentBatchRequest) (*EngineServiceDocumentBatchResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DocumentBatch not implemented")
 }
-func (UnimplementedEngineServer) QueryExecute(context.Context, *QueryExecuteRequest) (*QueryExecuteResponse, error) {
+func (UnimplementedEngineServiceServer) QueryExecute(context.Context, *EngineServiceQueryExecuteRequest) (*EngineServiceQueryExecuteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method QueryExecute not implemented")
 }
-func (UnimplementedEngineServer) QueryCancel(context.Context, *QueryCancelRequest) (*QueryCancelResponse, error) {
+func (UnimplementedEngineServiceServer) QueryCancel(context.Context, *EngineServiceQueryCancelRequest) (*EngineServiceQueryCancelResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method QueryCancel not implemented")
 }
-func (UnimplementedEngineServer) FamilyRead(context.Context, *FamilyReadRequest) (*FamilyReadResponse, error) {
+func (UnimplementedEngineServiceServer) FamilyRead(context.Context, *EngineServiceFamilyReadRequest) (*EngineServiceFamilyReadResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FamilyRead not implemented")
 }
-func (UnimplementedEngineServer) FamilyWrite(context.Context, *FamilyWriteRequest) (*FamilyWriteResponse, error) {
+func (UnimplementedEngineServiceServer) FamilyWrite(context.Context, *EngineServiceFamilyWriteRequest) (*EngineServiceFamilyWriteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FamilyWrite not implemented")
 }
-func (UnimplementedEngineServer) mustEmbedUnimplementedEngineServer() {}
-func (UnimplementedEngineServer) testEmbeddedByValue()                {}
+func (UnimplementedEngineServiceServer) mustEmbedUnimplementedEngineServiceServer() {}
+func (UnimplementedEngineServiceServer) testEmbeddedByValue()                       {}
 
-// UnsafeEngineServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to EngineServer will
+// UnsafeEngineServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to EngineServiceServer will
 // result in compilation errors.
-type UnsafeEngineServer interface {
-	mustEmbedUnimplementedEngineServer()
+type UnsafeEngineServiceServer interface {
+	mustEmbedUnimplementedEngineServiceServer()
 }
 
-func RegisterEngineServer(s grpc.ServiceRegistrar, srv EngineServer) {
-	// If the following call panics, it indicates UnimplementedEngineServer was
+func RegisterEngineServiceServer(s grpc.ServiceRegistrar, srv EngineServiceServer) {
+	// If the following call panics, it indicates UnimplementedEngineServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&Engine_ServiceDesc, srv)
+	s.RegisterService(&EngineService_ServiceDesc, srv)
 }
 
-func _Engine_DocumentRead_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DocumentReadRequest)
+func _EngineService_DocumentRead_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EngineServiceDocumentReadRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(EngineServer).DocumentRead(ctx, in)
+		return srv.(EngineServiceServer).DocumentRead(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Engine_DocumentRead_FullMethodName,
+		FullMethod: EngineService_DocumentRead_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EngineServer).DocumentRead(ctx, req.(*DocumentReadRequest))
+		return srv.(EngineServiceServer).DocumentRead(ctx, req.(*EngineServiceDocumentReadRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Engine_DocumentWrite_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DocumentWriteRequest)
+func _EngineService_DocumentWrite_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EngineServiceDocumentWriteRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(EngineServer).DocumentWrite(ctx, in)
+		return srv.(EngineServiceServer).DocumentWrite(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Engine_DocumentWrite_FullMethodName,
+		FullMethod: EngineService_DocumentWrite_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EngineServer).DocumentWrite(ctx, req.(*DocumentWriteRequest))
+		return srv.(EngineServiceServer).DocumentWrite(ctx, req.(*EngineServiceDocumentWriteRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Engine_DocumentDelete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DocumentDeleteRequest)
+func _EngineService_DocumentDelete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EngineServiceDocumentDeleteRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(EngineServer).DocumentDelete(ctx, in)
+		return srv.(EngineServiceServer).DocumentDelete(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Engine_DocumentDelete_FullMethodName,
+		FullMethod: EngineService_DocumentDelete_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EngineServer).DocumentDelete(ctx, req.(*DocumentDeleteRequest))
+		return srv.(EngineServiceServer).DocumentDelete(ctx, req.(*EngineServiceDocumentDeleteRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Engine_DocumentBatch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DocumentBatchRequest)
+func _EngineService_DocumentBatch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EngineServiceDocumentBatchRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(EngineServer).DocumentBatch(ctx, in)
+		return srv.(EngineServiceServer).DocumentBatch(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Engine_DocumentBatch_FullMethodName,
+		FullMethod: EngineService_DocumentBatch_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EngineServer).DocumentBatch(ctx, req.(*DocumentBatchRequest))
+		return srv.(EngineServiceServer).DocumentBatch(ctx, req.(*EngineServiceDocumentBatchRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Engine_QueryExecute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryExecuteRequest)
+func _EngineService_QueryExecute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EngineServiceQueryExecuteRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(EngineServer).QueryExecute(ctx, in)
+		return srv.(EngineServiceServer).QueryExecute(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Engine_QueryExecute_FullMethodName,
+		FullMethod: EngineService_QueryExecute_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EngineServer).QueryExecute(ctx, req.(*QueryExecuteRequest))
+		return srv.(EngineServiceServer).QueryExecute(ctx, req.(*EngineServiceQueryExecuteRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Engine_QueryCancel_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryCancelRequest)
+func _EngineService_QueryCancel_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EngineServiceQueryCancelRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(EngineServer).QueryCancel(ctx, in)
+		return srv.(EngineServiceServer).QueryCancel(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Engine_QueryCancel_FullMethodName,
+		FullMethod: EngineService_QueryCancel_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EngineServer).QueryCancel(ctx, req.(*QueryCancelRequest))
+		return srv.(EngineServiceServer).QueryCancel(ctx, req.(*EngineServiceQueryCancelRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Engine_FamilyRead_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(FamilyReadRequest)
+func _EngineService_FamilyRead_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EngineServiceFamilyReadRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(EngineServer).FamilyRead(ctx, in)
+		return srv.(EngineServiceServer).FamilyRead(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Engine_FamilyRead_FullMethodName,
+		FullMethod: EngineService_FamilyRead_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EngineServer).FamilyRead(ctx, req.(*FamilyReadRequest))
+		return srv.(EngineServiceServer).FamilyRead(ctx, req.(*EngineServiceFamilyReadRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Engine_FamilyWrite_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(FamilyWriteRequest)
+func _EngineService_FamilyWrite_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EngineServiceFamilyWriteRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(EngineServer).FamilyWrite(ctx, in)
+		return srv.(EngineServiceServer).FamilyWrite(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Engine_FamilyWrite_FullMethodName,
+		FullMethod: EngineService_FamilyWrite_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EngineServer).FamilyWrite(ctx, req.(*FamilyWriteRequest))
+		return srv.(EngineServiceServer).FamilyWrite(ctx, req.(*EngineServiceFamilyWriteRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// Engine_ServiceDesc is the grpc.ServiceDesc for Engine service.
+// EngineService_ServiceDesc is the grpc.ServiceDesc for EngineService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var Engine_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "terrabase.v1.Engine",
-	HandlerType: (*EngineServer)(nil),
+var EngineService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "terrabase.v1.EngineService",
+	HandlerType: (*EngineServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "DocumentRead",
-			Handler:    _Engine_DocumentRead_Handler,
+			Handler:    _EngineService_DocumentRead_Handler,
 		},
 		{
 			MethodName: "DocumentWrite",
-			Handler:    _Engine_DocumentWrite_Handler,
+			Handler:    _EngineService_DocumentWrite_Handler,
 		},
 		{
 			MethodName: "DocumentDelete",
-			Handler:    _Engine_DocumentDelete_Handler,
+			Handler:    _EngineService_DocumentDelete_Handler,
 		},
 		{
 			MethodName: "DocumentBatch",
-			Handler:    _Engine_DocumentBatch_Handler,
+			Handler:    _EngineService_DocumentBatch_Handler,
 		},
 		{
 			MethodName: "QueryExecute",
-			Handler:    _Engine_QueryExecute_Handler,
+			Handler:    _EngineService_QueryExecute_Handler,
 		},
 		{
 			MethodName: "QueryCancel",
-			Handler:    _Engine_QueryCancel_Handler,
+			Handler:    _EngineService_QueryCancel_Handler,
 		},
 		{
 			MethodName: "FamilyRead",
-			Handler:    _Engine_FamilyRead_Handler,
+			Handler:    _EngineService_FamilyRead_Handler,
 		},
 		{
 			MethodName: "FamilyWrite",
-			Handler:    _Engine_FamilyWrite_Handler,
+			Handler:    _EngineService_FamilyWrite_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -528,40 +528,40 @@ var Engine_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	Backbone_Subscribe_FullMethodName   = "/terrabase.v1.Backbone/Subscribe"
-	Backbone_Acknowledge_FullMethodName = "/terrabase.v1.Backbone/Acknowledge"
-	Backbone_Unsubscribe_FullMethodName = "/terrabase.v1.Backbone/Unsubscribe"
+	BackboneService_Subscribe_FullMethodName   = "/terrabase.v1.BackboneService/Subscribe"
+	BackboneService_Acknowledge_FullMethodName = "/terrabase.v1.BackboneService/Acknowledge"
+	BackboneService_Unsubscribe_FullMethodName = "/terrabase.v1.BackboneService/Unsubscribe"
 )
 
-// BackboneClient is the client API for Backbone service.
+// BackboneServiceClient is the client API for BackboneService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // The backbone change stream.
-type BackboneClient interface {
+type BackboneServiceClient interface {
 	// Opens one subscription; the stream delivers the confirmation, then
 	// ordered batches, triggers, and the close frame. Acknowledgements and
 	// teardown ride the sibling unary RPCs on the same channel.
-	Subscribe(ctx context.Context, in *BackboneSubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[BackboneStreamEvent], error)
-	Acknowledge(ctx context.Context, in *BackboneAcknowledgeRequest, opts ...grpc.CallOption) (*BackboneAcknowledgeResponse, error)
-	Unsubscribe(ctx context.Context, in *BackboneUnsubscribeRequest, opts ...grpc.CallOption) (*BackboneUnsubscribeResponse, error)
+	Subscribe(ctx context.Context, in *BackboneServiceSubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SubscribeResponse], error)
+	Acknowledge(ctx context.Context, in *BackboneServiceAcknowledgeRequest, opts ...grpc.CallOption) (*BackboneServiceAcknowledgeResponse, error)
+	Unsubscribe(ctx context.Context, in *BackboneServiceUnsubscribeRequest, opts ...grpc.CallOption) (*BackboneServiceUnsubscribeResponse, error)
 }
 
-type backboneClient struct {
+type backboneServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewBackboneClient(cc grpc.ClientConnInterface) BackboneClient {
-	return &backboneClient{cc}
+func NewBackboneServiceClient(cc grpc.ClientConnInterface) BackboneServiceClient {
+	return &backboneServiceClient{cc}
 }
 
-func (c *backboneClient) Subscribe(ctx context.Context, in *BackboneSubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[BackboneStreamEvent], error) {
+func (c *backboneServiceClient) Subscribe(ctx context.Context, in *BackboneServiceSubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SubscribeResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Backbone_ServiceDesc.Streams[0], Backbone_Subscribe_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &BackboneService_ServiceDesc.Streams[0], BackboneService_Subscribe_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[BackboneSubscribeRequest, BackboneStreamEvent]{ClientStream: stream}
+	x := &grpc.GenericClientStream[BackboneServiceSubscribeRequest, SubscribeResponse]{ClientStream: stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -572,147 +572,147 @@ func (c *backboneClient) Subscribe(ctx context.Context, in *BackboneSubscribeReq
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Backbone_SubscribeClient = grpc.ServerStreamingClient[BackboneStreamEvent]
+type BackboneService_SubscribeClient = grpc.ServerStreamingClient[SubscribeResponse]
 
-func (c *backboneClient) Acknowledge(ctx context.Context, in *BackboneAcknowledgeRequest, opts ...grpc.CallOption) (*BackboneAcknowledgeResponse, error) {
+func (c *backboneServiceClient) Acknowledge(ctx context.Context, in *BackboneServiceAcknowledgeRequest, opts ...grpc.CallOption) (*BackboneServiceAcknowledgeResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(BackboneAcknowledgeResponse)
-	err := c.cc.Invoke(ctx, Backbone_Acknowledge_FullMethodName, in, out, cOpts...)
+	out := new(BackboneServiceAcknowledgeResponse)
+	err := c.cc.Invoke(ctx, BackboneService_Acknowledge_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *backboneClient) Unsubscribe(ctx context.Context, in *BackboneUnsubscribeRequest, opts ...grpc.CallOption) (*BackboneUnsubscribeResponse, error) {
+func (c *backboneServiceClient) Unsubscribe(ctx context.Context, in *BackboneServiceUnsubscribeRequest, opts ...grpc.CallOption) (*BackboneServiceUnsubscribeResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(BackboneUnsubscribeResponse)
-	err := c.cc.Invoke(ctx, Backbone_Unsubscribe_FullMethodName, in, out, cOpts...)
+	out := new(BackboneServiceUnsubscribeResponse)
+	err := c.cc.Invoke(ctx, BackboneService_Unsubscribe_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// BackboneServer is the server API for Backbone service.
-// All implementations must embed UnimplementedBackboneServer
+// BackboneServiceServer is the server API for BackboneService service.
+// All implementations must embed UnimplementedBackboneServiceServer
 // for forward compatibility.
 //
 // The backbone change stream.
-type BackboneServer interface {
+type BackboneServiceServer interface {
 	// Opens one subscription; the stream delivers the confirmation, then
 	// ordered batches, triggers, and the close frame. Acknowledgements and
 	// teardown ride the sibling unary RPCs on the same channel.
-	Subscribe(*BackboneSubscribeRequest, grpc.ServerStreamingServer[BackboneStreamEvent]) error
-	Acknowledge(context.Context, *BackboneAcknowledgeRequest) (*BackboneAcknowledgeResponse, error)
-	Unsubscribe(context.Context, *BackboneUnsubscribeRequest) (*BackboneUnsubscribeResponse, error)
-	mustEmbedUnimplementedBackboneServer()
+	Subscribe(*BackboneServiceSubscribeRequest, grpc.ServerStreamingServer[SubscribeResponse]) error
+	Acknowledge(context.Context, *BackboneServiceAcknowledgeRequest) (*BackboneServiceAcknowledgeResponse, error)
+	Unsubscribe(context.Context, *BackboneServiceUnsubscribeRequest) (*BackboneServiceUnsubscribeResponse, error)
+	mustEmbedUnimplementedBackboneServiceServer()
 }
 
-// UnimplementedBackboneServer must be embedded to have
+// UnimplementedBackboneServiceServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedBackboneServer struct{}
+type UnimplementedBackboneServiceServer struct{}
 
-func (UnimplementedBackboneServer) Subscribe(*BackboneSubscribeRequest, grpc.ServerStreamingServer[BackboneStreamEvent]) error {
+func (UnimplementedBackboneServiceServer) Subscribe(*BackboneServiceSubscribeRequest, grpc.ServerStreamingServer[SubscribeResponse]) error {
 	return status.Error(codes.Unimplemented, "method Subscribe not implemented")
 }
-func (UnimplementedBackboneServer) Acknowledge(context.Context, *BackboneAcknowledgeRequest) (*BackboneAcknowledgeResponse, error) {
+func (UnimplementedBackboneServiceServer) Acknowledge(context.Context, *BackboneServiceAcknowledgeRequest) (*BackboneServiceAcknowledgeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Acknowledge not implemented")
 }
-func (UnimplementedBackboneServer) Unsubscribe(context.Context, *BackboneUnsubscribeRequest) (*BackboneUnsubscribeResponse, error) {
+func (UnimplementedBackboneServiceServer) Unsubscribe(context.Context, *BackboneServiceUnsubscribeRequest) (*BackboneServiceUnsubscribeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Unsubscribe not implemented")
 }
-func (UnimplementedBackboneServer) mustEmbedUnimplementedBackboneServer() {}
-func (UnimplementedBackboneServer) testEmbeddedByValue()                  {}
+func (UnimplementedBackboneServiceServer) mustEmbedUnimplementedBackboneServiceServer() {}
+func (UnimplementedBackboneServiceServer) testEmbeddedByValue()                         {}
 
-// UnsafeBackboneServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to BackboneServer will
+// UnsafeBackboneServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to BackboneServiceServer will
 // result in compilation errors.
-type UnsafeBackboneServer interface {
-	mustEmbedUnimplementedBackboneServer()
+type UnsafeBackboneServiceServer interface {
+	mustEmbedUnimplementedBackboneServiceServer()
 }
 
-func RegisterBackboneServer(s grpc.ServiceRegistrar, srv BackboneServer) {
-	// If the following call panics, it indicates UnimplementedBackboneServer was
+func RegisterBackboneServiceServer(s grpc.ServiceRegistrar, srv BackboneServiceServer) {
+	// If the following call panics, it indicates UnimplementedBackboneServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&Backbone_ServiceDesc, srv)
+	s.RegisterService(&BackboneService_ServiceDesc, srv)
 }
 
-func _Backbone_Subscribe_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(BackboneSubscribeRequest)
+func _BackboneService_Subscribe_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(BackboneServiceSubscribeRequest)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(BackboneServer).Subscribe(m, &grpc.GenericServerStream[BackboneSubscribeRequest, BackboneStreamEvent]{ServerStream: stream})
+	return srv.(BackboneServiceServer).Subscribe(m, &grpc.GenericServerStream[BackboneServiceSubscribeRequest, SubscribeResponse]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Backbone_SubscribeServer = grpc.ServerStreamingServer[BackboneStreamEvent]
+type BackboneService_SubscribeServer = grpc.ServerStreamingServer[SubscribeResponse]
 
-func _Backbone_Acknowledge_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BackboneAcknowledgeRequest)
+func _BackboneService_Acknowledge_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BackboneServiceAcknowledgeRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(BackboneServer).Acknowledge(ctx, in)
+		return srv.(BackboneServiceServer).Acknowledge(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Backbone_Acknowledge_FullMethodName,
+		FullMethod: BackboneService_Acknowledge_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(BackboneServer).Acknowledge(ctx, req.(*BackboneAcknowledgeRequest))
+		return srv.(BackboneServiceServer).Acknowledge(ctx, req.(*BackboneServiceAcknowledgeRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Backbone_Unsubscribe_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BackboneUnsubscribeRequest)
+func _BackboneService_Unsubscribe_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BackboneServiceUnsubscribeRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(BackboneServer).Unsubscribe(ctx, in)
+		return srv.(BackboneServiceServer).Unsubscribe(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Backbone_Unsubscribe_FullMethodName,
+		FullMethod: BackboneService_Unsubscribe_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(BackboneServer).Unsubscribe(ctx, req.(*BackboneUnsubscribeRequest))
+		return srv.(BackboneServiceServer).Unsubscribe(ctx, req.(*BackboneServiceUnsubscribeRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// Backbone_ServiceDesc is the grpc.ServiceDesc for Backbone service.
+// BackboneService_ServiceDesc is the grpc.ServiceDesc for BackboneService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var Backbone_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "terrabase.v1.Backbone",
-	HandlerType: (*BackboneServer)(nil),
+var BackboneService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "terrabase.v1.BackboneService",
+	HandlerType: (*BackboneServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Acknowledge",
-			Handler:    _Backbone_Acknowledge_Handler,
+			Handler:    _BackboneService_Acknowledge_Handler,
 		},
 		{
 			MethodName: "Unsubscribe",
-			Handler:    _Backbone_Unsubscribe_Handler,
+			Handler:    _BackboneService_Unsubscribe_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "Subscribe",
-			Handler:       _Backbone_Subscribe_Handler,
+			Handler:       _BackboneService_Subscribe_Handler,
 			ServerStreams: true,
 		},
 	},
@@ -720,295 +720,295 @@ var Backbone_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	Sync_SessionSetup_FullMethodName   = "/terrabase.v1.Sync/SessionSetup"
-	Sync_DeltaPull_FullMethodName      = "/terrabase.v1.Sync/DeltaPull"
-	Sync_SnapshotPull_FullMethodName   = "/terrabase.v1.Sync/SnapshotPull"
-	Sync_CheckpointAck_FullMethodName  = "/terrabase.v1.Sync/CheckpointAck"
-	Sync_MutationSubmit_FullMethodName = "/terrabase.v1.Sync/MutationSubmit"
-	Sync_SessionClose_FullMethodName   = "/terrabase.v1.Sync/SessionClose"
+	SyncService_SessionSetup_FullMethodName   = "/terrabase.v1.SyncService/SessionSetup"
+	SyncService_DeltaPull_FullMethodName      = "/terrabase.v1.SyncService/DeltaPull"
+	SyncService_SnapshotPull_FullMethodName   = "/terrabase.v1.SyncService/SnapshotPull"
+	SyncService_CheckpointAck_FullMethodName  = "/terrabase.v1.SyncService/CheckpointAck"
+	SyncService_MutationSubmit_FullMethodName = "/terrabase.v1.SyncService/MutationSubmit"
+	SyncService_SessionClose_FullMethodName   = "/terrabase.v1.SyncService/SessionClose"
 )
 
-// SyncClient is the client API for Sync service.
+// SyncServiceClient is the client API for SyncService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // Sync delivery sessions.
-type SyncClient interface {
-	SessionSetup(ctx context.Context, in *SyncSessionSetupRequest, opts ...grpc.CallOption) (*SyncSessionSetupResponse, error)
-	DeltaPull(ctx context.Context, in *SyncDeltaPullRequest, opts ...grpc.CallOption) (*SyncDeltaPullResponse, error)
-	SnapshotPull(ctx context.Context, in *SyncSnapshotPullRequest, opts ...grpc.CallOption) (*SyncSnapshotPullResponse, error)
-	CheckpointAck(ctx context.Context, in *SyncCheckpointAckRequest, opts ...grpc.CallOption) (*SyncCheckpointAckResponse, error)
-	MutationSubmit(ctx context.Context, in *SyncMutationSubmitRequest, opts ...grpc.CallOption) (*SyncMutationSubmitResponse, error)
-	SessionClose(ctx context.Context, in *SyncSessionCloseRequest, opts ...grpc.CallOption) (*SyncSessionCloseResponse, error)
+type SyncServiceClient interface {
+	SessionSetup(ctx context.Context, in *SyncServiceSessionSetupRequest, opts ...grpc.CallOption) (*SyncServiceSessionSetupResponse, error)
+	DeltaPull(ctx context.Context, in *SyncServiceDeltaPullRequest, opts ...grpc.CallOption) (*SyncServiceDeltaPullResponse, error)
+	SnapshotPull(ctx context.Context, in *SyncServiceSnapshotPullRequest, opts ...grpc.CallOption) (*SyncServiceSnapshotPullResponse, error)
+	CheckpointAck(ctx context.Context, in *SyncServiceCheckpointAckRequest, opts ...grpc.CallOption) (*SyncServiceCheckpointAckResponse, error)
+	MutationSubmit(ctx context.Context, in *SyncServiceMutationSubmitRequest, opts ...grpc.CallOption) (*SyncServiceMutationSubmitResponse, error)
+	SessionClose(ctx context.Context, in *SyncServiceSessionCloseRequest, opts ...grpc.CallOption) (*SyncServiceSessionCloseResponse, error)
 }
 
-type syncClient struct {
+type syncServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewSyncClient(cc grpc.ClientConnInterface) SyncClient {
-	return &syncClient{cc}
+func NewSyncServiceClient(cc grpc.ClientConnInterface) SyncServiceClient {
+	return &syncServiceClient{cc}
 }
 
-func (c *syncClient) SessionSetup(ctx context.Context, in *SyncSessionSetupRequest, opts ...grpc.CallOption) (*SyncSessionSetupResponse, error) {
+func (c *syncServiceClient) SessionSetup(ctx context.Context, in *SyncServiceSessionSetupRequest, opts ...grpc.CallOption) (*SyncServiceSessionSetupResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SyncSessionSetupResponse)
-	err := c.cc.Invoke(ctx, Sync_SessionSetup_FullMethodName, in, out, cOpts...)
+	out := new(SyncServiceSessionSetupResponse)
+	err := c.cc.Invoke(ctx, SyncService_SessionSetup_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *syncClient) DeltaPull(ctx context.Context, in *SyncDeltaPullRequest, opts ...grpc.CallOption) (*SyncDeltaPullResponse, error) {
+func (c *syncServiceClient) DeltaPull(ctx context.Context, in *SyncServiceDeltaPullRequest, opts ...grpc.CallOption) (*SyncServiceDeltaPullResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SyncDeltaPullResponse)
-	err := c.cc.Invoke(ctx, Sync_DeltaPull_FullMethodName, in, out, cOpts...)
+	out := new(SyncServiceDeltaPullResponse)
+	err := c.cc.Invoke(ctx, SyncService_DeltaPull_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *syncClient) SnapshotPull(ctx context.Context, in *SyncSnapshotPullRequest, opts ...grpc.CallOption) (*SyncSnapshotPullResponse, error) {
+func (c *syncServiceClient) SnapshotPull(ctx context.Context, in *SyncServiceSnapshotPullRequest, opts ...grpc.CallOption) (*SyncServiceSnapshotPullResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SyncSnapshotPullResponse)
-	err := c.cc.Invoke(ctx, Sync_SnapshotPull_FullMethodName, in, out, cOpts...)
+	out := new(SyncServiceSnapshotPullResponse)
+	err := c.cc.Invoke(ctx, SyncService_SnapshotPull_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *syncClient) CheckpointAck(ctx context.Context, in *SyncCheckpointAckRequest, opts ...grpc.CallOption) (*SyncCheckpointAckResponse, error) {
+func (c *syncServiceClient) CheckpointAck(ctx context.Context, in *SyncServiceCheckpointAckRequest, opts ...grpc.CallOption) (*SyncServiceCheckpointAckResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SyncCheckpointAckResponse)
-	err := c.cc.Invoke(ctx, Sync_CheckpointAck_FullMethodName, in, out, cOpts...)
+	out := new(SyncServiceCheckpointAckResponse)
+	err := c.cc.Invoke(ctx, SyncService_CheckpointAck_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *syncClient) MutationSubmit(ctx context.Context, in *SyncMutationSubmitRequest, opts ...grpc.CallOption) (*SyncMutationSubmitResponse, error) {
+func (c *syncServiceClient) MutationSubmit(ctx context.Context, in *SyncServiceMutationSubmitRequest, opts ...grpc.CallOption) (*SyncServiceMutationSubmitResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SyncMutationSubmitResponse)
-	err := c.cc.Invoke(ctx, Sync_MutationSubmit_FullMethodName, in, out, cOpts...)
+	out := new(SyncServiceMutationSubmitResponse)
+	err := c.cc.Invoke(ctx, SyncService_MutationSubmit_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *syncClient) SessionClose(ctx context.Context, in *SyncSessionCloseRequest, opts ...grpc.CallOption) (*SyncSessionCloseResponse, error) {
+func (c *syncServiceClient) SessionClose(ctx context.Context, in *SyncServiceSessionCloseRequest, opts ...grpc.CallOption) (*SyncServiceSessionCloseResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SyncSessionCloseResponse)
-	err := c.cc.Invoke(ctx, Sync_SessionClose_FullMethodName, in, out, cOpts...)
+	out := new(SyncServiceSessionCloseResponse)
+	err := c.cc.Invoke(ctx, SyncService_SessionClose_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// SyncServer is the server API for Sync service.
-// All implementations must embed UnimplementedSyncServer
+// SyncServiceServer is the server API for SyncService service.
+// All implementations must embed UnimplementedSyncServiceServer
 // for forward compatibility.
 //
 // Sync delivery sessions.
-type SyncServer interface {
-	SessionSetup(context.Context, *SyncSessionSetupRequest) (*SyncSessionSetupResponse, error)
-	DeltaPull(context.Context, *SyncDeltaPullRequest) (*SyncDeltaPullResponse, error)
-	SnapshotPull(context.Context, *SyncSnapshotPullRequest) (*SyncSnapshotPullResponse, error)
-	CheckpointAck(context.Context, *SyncCheckpointAckRequest) (*SyncCheckpointAckResponse, error)
-	MutationSubmit(context.Context, *SyncMutationSubmitRequest) (*SyncMutationSubmitResponse, error)
-	SessionClose(context.Context, *SyncSessionCloseRequest) (*SyncSessionCloseResponse, error)
-	mustEmbedUnimplementedSyncServer()
+type SyncServiceServer interface {
+	SessionSetup(context.Context, *SyncServiceSessionSetupRequest) (*SyncServiceSessionSetupResponse, error)
+	DeltaPull(context.Context, *SyncServiceDeltaPullRequest) (*SyncServiceDeltaPullResponse, error)
+	SnapshotPull(context.Context, *SyncServiceSnapshotPullRequest) (*SyncServiceSnapshotPullResponse, error)
+	CheckpointAck(context.Context, *SyncServiceCheckpointAckRequest) (*SyncServiceCheckpointAckResponse, error)
+	MutationSubmit(context.Context, *SyncServiceMutationSubmitRequest) (*SyncServiceMutationSubmitResponse, error)
+	SessionClose(context.Context, *SyncServiceSessionCloseRequest) (*SyncServiceSessionCloseResponse, error)
+	mustEmbedUnimplementedSyncServiceServer()
 }
 
-// UnimplementedSyncServer must be embedded to have
+// UnimplementedSyncServiceServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedSyncServer struct{}
+type UnimplementedSyncServiceServer struct{}
 
-func (UnimplementedSyncServer) SessionSetup(context.Context, *SyncSessionSetupRequest) (*SyncSessionSetupResponse, error) {
+func (UnimplementedSyncServiceServer) SessionSetup(context.Context, *SyncServiceSessionSetupRequest) (*SyncServiceSessionSetupResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SessionSetup not implemented")
 }
-func (UnimplementedSyncServer) DeltaPull(context.Context, *SyncDeltaPullRequest) (*SyncDeltaPullResponse, error) {
+func (UnimplementedSyncServiceServer) DeltaPull(context.Context, *SyncServiceDeltaPullRequest) (*SyncServiceDeltaPullResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeltaPull not implemented")
 }
-func (UnimplementedSyncServer) SnapshotPull(context.Context, *SyncSnapshotPullRequest) (*SyncSnapshotPullResponse, error) {
+func (UnimplementedSyncServiceServer) SnapshotPull(context.Context, *SyncServiceSnapshotPullRequest) (*SyncServiceSnapshotPullResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SnapshotPull not implemented")
 }
-func (UnimplementedSyncServer) CheckpointAck(context.Context, *SyncCheckpointAckRequest) (*SyncCheckpointAckResponse, error) {
+func (UnimplementedSyncServiceServer) CheckpointAck(context.Context, *SyncServiceCheckpointAckRequest) (*SyncServiceCheckpointAckResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CheckpointAck not implemented")
 }
-func (UnimplementedSyncServer) MutationSubmit(context.Context, *SyncMutationSubmitRequest) (*SyncMutationSubmitResponse, error) {
+func (UnimplementedSyncServiceServer) MutationSubmit(context.Context, *SyncServiceMutationSubmitRequest) (*SyncServiceMutationSubmitResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MutationSubmit not implemented")
 }
-func (UnimplementedSyncServer) SessionClose(context.Context, *SyncSessionCloseRequest) (*SyncSessionCloseResponse, error) {
+func (UnimplementedSyncServiceServer) SessionClose(context.Context, *SyncServiceSessionCloseRequest) (*SyncServiceSessionCloseResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SessionClose not implemented")
 }
-func (UnimplementedSyncServer) mustEmbedUnimplementedSyncServer() {}
-func (UnimplementedSyncServer) testEmbeddedByValue()              {}
+func (UnimplementedSyncServiceServer) mustEmbedUnimplementedSyncServiceServer() {}
+func (UnimplementedSyncServiceServer) testEmbeddedByValue()                     {}
 
-// UnsafeSyncServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to SyncServer will
+// UnsafeSyncServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to SyncServiceServer will
 // result in compilation errors.
-type UnsafeSyncServer interface {
-	mustEmbedUnimplementedSyncServer()
+type UnsafeSyncServiceServer interface {
+	mustEmbedUnimplementedSyncServiceServer()
 }
 
-func RegisterSyncServer(s grpc.ServiceRegistrar, srv SyncServer) {
-	// If the following call panics, it indicates UnimplementedSyncServer was
+func RegisterSyncServiceServer(s grpc.ServiceRegistrar, srv SyncServiceServer) {
+	// If the following call panics, it indicates UnimplementedSyncServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&Sync_ServiceDesc, srv)
+	s.RegisterService(&SyncService_ServiceDesc, srv)
 }
 
-func _Sync_SessionSetup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SyncSessionSetupRequest)
+func _SyncService_SessionSetup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SyncServiceSessionSetupRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SyncServer).SessionSetup(ctx, in)
+		return srv.(SyncServiceServer).SessionSetup(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Sync_SessionSetup_FullMethodName,
+		FullMethod: SyncService_SessionSetup_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SyncServer).SessionSetup(ctx, req.(*SyncSessionSetupRequest))
+		return srv.(SyncServiceServer).SessionSetup(ctx, req.(*SyncServiceSessionSetupRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Sync_DeltaPull_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SyncDeltaPullRequest)
+func _SyncService_DeltaPull_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SyncServiceDeltaPullRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SyncServer).DeltaPull(ctx, in)
+		return srv.(SyncServiceServer).DeltaPull(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Sync_DeltaPull_FullMethodName,
+		FullMethod: SyncService_DeltaPull_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SyncServer).DeltaPull(ctx, req.(*SyncDeltaPullRequest))
+		return srv.(SyncServiceServer).DeltaPull(ctx, req.(*SyncServiceDeltaPullRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Sync_SnapshotPull_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SyncSnapshotPullRequest)
+func _SyncService_SnapshotPull_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SyncServiceSnapshotPullRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SyncServer).SnapshotPull(ctx, in)
+		return srv.(SyncServiceServer).SnapshotPull(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Sync_SnapshotPull_FullMethodName,
+		FullMethod: SyncService_SnapshotPull_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SyncServer).SnapshotPull(ctx, req.(*SyncSnapshotPullRequest))
+		return srv.(SyncServiceServer).SnapshotPull(ctx, req.(*SyncServiceSnapshotPullRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Sync_CheckpointAck_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SyncCheckpointAckRequest)
+func _SyncService_CheckpointAck_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SyncServiceCheckpointAckRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SyncServer).CheckpointAck(ctx, in)
+		return srv.(SyncServiceServer).CheckpointAck(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Sync_CheckpointAck_FullMethodName,
+		FullMethod: SyncService_CheckpointAck_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SyncServer).CheckpointAck(ctx, req.(*SyncCheckpointAckRequest))
+		return srv.(SyncServiceServer).CheckpointAck(ctx, req.(*SyncServiceCheckpointAckRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Sync_MutationSubmit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SyncMutationSubmitRequest)
+func _SyncService_MutationSubmit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SyncServiceMutationSubmitRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SyncServer).MutationSubmit(ctx, in)
+		return srv.(SyncServiceServer).MutationSubmit(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Sync_MutationSubmit_FullMethodName,
+		FullMethod: SyncService_MutationSubmit_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SyncServer).MutationSubmit(ctx, req.(*SyncMutationSubmitRequest))
+		return srv.(SyncServiceServer).MutationSubmit(ctx, req.(*SyncServiceMutationSubmitRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Sync_SessionClose_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SyncSessionCloseRequest)
+func _SyncService_SessionClose_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SyncServiceSessionCloseRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SyncServer).SessionClose(ctx, in)
+		return srv.(SyncServiceServer).SessionClose(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Sync_SessionClose_FullMethodName,
+		FullMethod: SyncService_SessionClose_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SyncServer).SessionClose(ctx, req.(*SyncSessionCloseRequest))
+		return srv.(SyncServiceServer).SessionClose(ctx, req.(*SyncServiceSessionCloseRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// Sync_ServiceDesc is the grpc.ServiceDesc for Sync service.
+// SyncService_ServiceDesc is the grpc.ServiceDesc for SyncService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var Sync_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "terrabase.v1.Sync",
-	HandlerType: (*SyncServer)(nil),
+var SyncService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "terrabase.v1.SyncService",
+	HandlerType: (*SyncServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "SessionSetup",
-			Handler:    _Sync_SessionSetup_Handler,
+			Handler:    _SyncService_SessionSetup_Handler,
 		},
 		{
 			MethodName: "DeltaPull",
-			Handler:    _Sync_DeltaPull_Handler,
+			Handler:    _SyncService_DeltaPull_Handler,
 		},
 		{
 			MethodName: "SnapshotPull",
-			Handler:    _Sync_SnapshotPull_Handler,
+			Handler:    _SyncService_SnapshotPull_Handler,
 		},
 		{
 			MethodName: "CheckpointAck",
-			Handler:    _Sync_CheckpointAck_Handler,
+			Handler:    _SyncService_CheckpointAck_Handler,
 		},
 		{
 			MethodName: "MutationSubmit",
-			Handler:    _Sync_MutationSubmit_Handler,
+			Handler:    _SyncService_MutationSubmit_Handler,
 		},
 		{
 			MethodName: "SessionClose",
-			Handler:    _Sync_SessionClose_Handler,
+			Handler:    _SyncService_SessionClose_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -1016,295 +1016,295 @@ var Sync_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	Schema_Declare_FullMethodName         = "/terrabase.v1.Schema/Declare"
-	Schema_Status_FullMethodName          = "/terrabase.v1.Schema/Status"
-	Schema_Validate_FullMethodName        = "/terrabase.v1.Schema/Validate"
-	Schema_MigrationStatus_FullMethodName = "/terrabase.v1.Schema/MigrationStatus"
-	Schema_MigrationDryRun_FullMethodName = "/terrabase.v1.Schema/MigrationDryRun"
-	Schema_MigrationApply_FullMethodName  = "/terrabase.v1.Schema/MigrationApply"
+	SchemaService_Declare_FullMethodName         = "/terrabase.v1.SchemaService/Declare"
+	SchemaService_Status_FullMethodName          = "/terrabase.v1.SchemaService/Status"
+	SchemaService_Validate_FullMethodName        = "/terrabase.v1.SchemaService/Validate"
+	SchemaService_MigrationStatus_FullMethodName = "/terrabase.v1.SchemaService/MigrationStatus"
+	SchemaService_MigrationDryRun_FullMethodName = "/terrabase.v1.SchemaService/MigrationDryRun"
+	SchemaService_MigrationApply_FullMethodName  = "/terrabase.v1.SchemaService/MigrationApply"
 )
 
-// SchemaClient is the client API for Schema service.
+// SchemaServiceClient is the client API for SchemaService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // Schema declaration and migrations.
-type SchemaClient interface {
-	Declare(ctx context.Context, in *SchemaDeclareRequest, opts ...grpc.CallOption) (*SchemaDeclareResponse, error)
-	Status(ctx context.Context, in *SchemaStatusRequest, opts ...grpc.CallOption) (*SchemaStatusResponse, error)
-	Validate(ctx context.Context, in *SchemaValidateRequest, opts ...grpc.CallOption) (*SchemaValidateResponse, error)
+type SchemaServiceClient interface {
+	Declare(ctx context.Context, in *SchemaServiceDeclareRequest, opts ...grpc.CallOption) (*SchemaServiceDeclareResponse, error)
+	Status(ctx context.Context, in *SchemaServiceStatusRequest, opts ...grpc.CallOption) (*SchemaServiceStatusResponse, error)
+	Validate(ctx context.Context, in *SchemaServiceValidateRequest, opts ...grpc.CallOption) (*SchemaServiceValidateResponse, error)
 	MigrationStatus(ctx context.Context, in *MigrationStatusRequest, opts ...grpc.CallOption) (*MigrationStatusResponse, error)
 	MigrationDryRun(ctx context.Context, in *MigrationDryRunRequest, opts ...grpc.CallOption) (*MigrationDryRunResponse, error)
 	MigrationApply(ctx context.Context, in *MigrationApplyRequest, opts ...grpc.CallOption) (*MigrationApplyResponse, error)
 }
 
-type schemaClient struct {
+type schemaServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewSchemaClient(cc grpc.ClientConnInterface) SchemaClient {
-	return &schemaClient{cc}
+func NewSchemaServiceClient(cc grpc.ClientConnInterface) SchemaServiceClient {
+	return &schemaServiceClient{cc}
 }
 
-func (c *schemaClient) Declare(ctx context.Context, in *SchemaDeclareRequest, opts ...grpc.CallOption) (*SchemaDeclareResponse, error) {
+func (c *schemaServiceClient) Declare(ctx context.Context, in *SchemaServiceDeclareRequest, opts ...grpc.CallOption) (*SchemaServiceDeclareResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SchemaDeclareResponse)
-	err := c.cc.Invoke(ctx, Schema_Declare_FullMethodName, in, out, cOpts...)
+	out := new(SchemaServiceDeclareResponse)
+	err := c.cc.Invoke(ctx, SchemaService_Declare_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *schemaClient) Status(ctx context.Context, in *SchemaStatusRequest, opts ...grpc.CallOption) (*SchemaStatusResponse, error) {
+func (c *schemaServiceClient) Status(ctx context.Context, in *SchemaServiceStatusRequest, opts ...grpc.CallOption) (*SchemaServiceStatusResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SchemaStatusResponse)
-	err := c.cc.Invoke(ctx, Schema_Status_FullMethodName, in, out, cOpts...)
+	out := new(SchemaServiceStatusResponse)
+	err := c.cc.Invoke(ctx, SchemaService_Status_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *schemaClient) Validate(ctx context.Context, in *SchemaValidateRequest, opts ...grpc.CallOption) (*SchemaValidateResponse, error) {
+func (c *schemaServiceClient) Validate(ctx context.Context, in *SchemaServiceValidateRequest, opts ...grpc.CallOption) (*SchemaServiceValidateResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SchemaValidateResponse)
-	err := c.cc.Invoke(ctx, Schema_Validate_FullMethodName, in, out, cOpts...)
+	out := new(SchemaServiceValidateResponse)
+	err := c.cc.Invoke(ctx, SchemaService_Validate_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *schemaClient) MigrationStatus(ctx context.Context, in *MigrationStatusRequest, opts ...grpc.CallOption) (*MigrationStatusResponse, error) {
+func (c *schemaServiceClient) MigrationStatus(ctx context.Context, in *MigrationStatusRequest, opts ...grpc.CallOption) (*MigrationStatusResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(MigrationStatusResponse)
-	err := c.cc.Invoke(ctx, Schema_MigrationStatus_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, SchemaService_MigrationStatus_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *schemaClient) MigrationDryRun(ctx context.Context, in *MigrationDryRunRequest, opts ...grpc.CallOption) (*MigrationDryRunResponse, error) {
+func (c *schemaServiceClient) MigrationDryRun(ctx context.Context, in *MigrationDryRunRequest, opts ...grpc.CallOption) (*MigrationDryRunResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(MigrationDryRunResponse)
-	err := c.cc.Invoke(ctx, Schema_MigrationDryRun_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, SchemaService_MigrationDryRun_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *schemaClient) MigrationApply(ctx context.Context, in *MigrationApplyRequest, opts ...grpc.CallOption) (*MigrationApplyResponse, error) {
+func (c *schemaServiceClient) MigrationApply(ctx context.Context, in *MigrationApplyRequest, opts ...grpc.CallOption) (*MigrationApplyResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(MigrationApplyResponse)
-	err := c.cc.Invoke(ctx, Schema_MigrationApply_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, SchemaService_MigrationApply_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// SchemaServer is the server API for Schema service.
-// All implementations must embed UnimplementedSchemaServer
+// SchemaServiceServer is the server API for SchemaService service.
+// All implementations must embed UnimplementedSchemaServiceServer
 // for forward compatibility.
 //
 // Schema declaration and migrations.
-type SchemaServer interface {
-	Declare(context.Context, *SchemaDeclareRequest) (*SchemaDeclareResponse, error)
-	Status(context.Context, *SchemaStatusRequest) (*SchemaStatusResponse, error)
-	Validate(context.Context, *SchemaValidateRequest) (*SchemaValidateResponse, error)
+type SchemaServiceServer interface {
+	Declare(context.Context, *SchemaServiceDeclareRequest) (*SchemaServiceDeclareResponse, error)
+	Status(context.Context, *SchemaServiceStatusRequest) (*SchemaServiceStatusResponse, error)
+	Validate(context.Context, *SchemaServiceValidateRequest) (*SchemaServiceValidateResponse, error)
 	MigrationStatus(context.Context, *MigrationStatusRequest) (*MigrationStatusResponse, error)
 	MigrationDryRun(context.Context, *MigrationDryRunRequest) (*MigrationDryRunResponse, error)
 	MigrationApply(context.Context, *MigrationApplyRequest) (*MigrationApplyResponse, error)
-	mustEmbedUnimplementedSchemaServer()
+	mustEmbedUnimplementedSchemaServiceServer()
 }
 
-// UnimplementedSchemaServer must be embedded to have
+// UnimplementedSchemaServiceServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedSchemaServer struct{}
+type UnimplementedSchemaServiceServer struct{}
 
-func (UnimplementedSchemaServer) Declare(context.Context, *SchemaDeclareRequest) (*SchemaDeclareResponse, error) {
+func (UnimplementedSchemaServiceServer) Declare(context.Context, *SchemaServiceDeclareRequest) (*SchemaServiceDeclareResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Declare not implemented")
 }
-func (UnimplementedSchemaServer) Status(context.Context, *SchemaStatusRequest) (*SchemaStatusResponse, error) {
+func (UnimplementedSchemaServiceServer) Status(context.Context, *SchemaServiceStatusRequest) (*SchemaServiceStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Status not implemented")
 }
-func (UnimplementedSchemaServer) Validate(context.Context, *SchemaValidateRequest) (*SchemaValidateResponse, error) {
+func (UnimplementedSchemaServiceServer) Validate(context.Context, *SchemaServiceValidateRequest) (*SchemaServiceValidateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Validate not implemented")
 }
-func (UnimplementedSchemaServer) MigrationStatus(context.Context, *MigrationStatusRequest) (*MigrationStatusResponse, error) {
+func (UnimplementedSchemaServiceServer) MigrationStatus(context.Context, *MigrationStatusRequest) (*MigrationStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MigrationStatus not implemented")
 }
-func (UnimplementedSchemaServer) MigrationDryRun(context.Context, *MigrationDryRunRequest) (*MigrationDryRunResponse, error) {
+func (UnimplementedSchemaServiceServer) MigrationDryRun(context.Context, *MigrationDryRunRequest) (*MigrationDryRunResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MigrationDryRun not implemented")
 }
-func (UnimplementedSchemaServer) MigrationApply(context.Context, *MigrationApplyRequest) (*MigrationApplyResponse, error) {
+func (UnimplementedSchemaServiceServer) MigrationApply(context.Context, *MigrationApplyRequest) (*MigrationApplyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MigrationApply not implemented")
 }
-func (UnimplementedSchemaServer) mustEmbedUnimplementedSchemaServer() {}
-func (UnimplementedSchemaServer) testEmbeddedByValue()                {}
+func (UnimplementedSchemaServiceServer) mustEmbedUnimplementedSchemaServiceServer() {}
+func (UnimplementedSchemaServiceServer) testEmbeddedByValue()                       {}
 
-// UnsafeSchemaServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to SchemaServer will
+// UnsafeSchemaServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to SchemaServiceServer will
 // result in compilation errors.
-type UnsafeSchemaServer interface {
-	mustEmbedUnimplementedSchemaServer()
+type UnsafeSchemaServiceServer interface {
+	mustEmbedUnimplementedSchemaServiceServer()
 }
 
-func RegisterSchemaServer(s grpc.ServiceRegistrar, srv SchemaServer) {
-	// If the following call panics, it indicates UnimplementedSchemaServer was
+func RegisterSchemaServiceServer(s grpc.ServiceRegistrar, srv SchemaServiceServer) {
+	// If the following call panics, it indicates UnimplementedSchemaServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&Schema_ServiceDesc, srv)
+	s.RegisterService(&SchemaService_ServiceDesc, srv)
 }
 
-func _Schema_Declare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SchemaDeclareRequest)
+func _SchemaService_Declare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SchemaServiceDeclareRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SchemaServer).Declare(ctx, in)
+		return srv.(SchemaServiceServer).Declare(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Schema_Declare_FullMethodName,
+		FullMethod: SchemaService_Declare_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SchemaServer).Declare(ctx, req.(*SchemaDeclareRequest))
+		return srv.(SchemaServiceServer).Declare(ctx, req.(*SchemaServiceDeclareRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Schema_Status_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SchemaStatusRequest)
+func _SchemaService_Status_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SchemaServiceStatusRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SchemaServer).Status(ctx, in)
+		return srv.(SchemaServiceServer).Status(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Schema_Status_FullMethodName,
+		FullMethod: SchemaService_Status_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SchemaServer).Status(ctx, req.(*SchemaStatusRequest))
+		return srv.(SchemaServiceServer).Status(ctx, req.(*SchemaServiceStatusRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Schema_Validate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SchemaValidateRequest)
+func _SchemaService_Validate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SchemaServiceValidateRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SchemaServer).Validate(ctx, in)
+		return srv.(SchemaServiceServer).Validate(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Schema_Validate_FullMethodName,
+		FullMethod: SchemaService_Validate_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SchemaServer).Validate(ctx, req.(*SchemaValidateRequest))
+		return srv.(SchemaServiceServer).Validate(ctx, req.(*SchemaServiceValidateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Schema_MigrationStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _SchemaService_MigrationStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MigrationStatusRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SchemaServer).MigrationStatus(ctx, in)
+		return srv.(SchemaServiceServer).MigrationStatus(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Schema_MigrationStatus_FullMethodName,
+		FullMethod: SchemaService_MigrationStatus_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SchemaServer).MigrationStatus(ctx, req.(*MigrationStatusRequest))
+		return srv.(SchemaServiceServer).MigrationStatus(ctx, req.(*MigrationStatusRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Schema_MigrationDryRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _SchemaService_MigrationDryRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MigrationDryRunRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SchemaServer).MigrationDryRun(ctx, in)
+		return srv.(SchemaServiceServer).MigrationDryRun(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Schema_MigrationDryRun_FullMethodName,
+		FullMethod: SchemaService_MigrationDryRun_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SchemaServer).MigrationDryRun(ctx, req.(*MigrationDryRunRequest))
+		return srv.(SchemaServiceServer).MigrationDryRun(ctx, req.(*MigrationDryRunRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Schema_MigrationApply_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _SchemaService_MigrationApply_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MigrationApplyRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SchemaServer).MigrationApply(ctx, in)
+		return srv.(SchemaServiceServer).MigrationApply(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Schema_MigrationApply_FullMethodName,
+		FullMethod: SchemaService_MigrationApply_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SchemaServer).MigrationApply(ctx, req.(*MigrationApplyRequest))
+		return srv.(SchemaServiceServer).MigrationApply(ctx, req.(*MigrationApplyRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// Schema_ServiceDesc is the grpc.ServiceDesc for Schema service.
+// SchemaService_ServiceDesc is the grpc.ServiceDesc for SchemaService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var Schema_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "terrabase.v1.Schema",
-	HandlerType: (*SchemaServer)(nil),
+var SchemaService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "terrabase.v1.SchemaService",
+	HandlerType: (*SchemaServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Declare",
-			Handler:    _Schema_Declare_Handler,
+			Handler:    _SchemaService_Declare_Handler,
 		},
 		{
 			MethodName: "Status",
-			Handler:    _Schema_Status_Handler,
+			Handler:    _SchemaService_Status_Handler,
 		},
 		{
 			MethodName: "Validate",
-			Handler:    _Schema_Validate_Handler,
+			Handler:    _SchemaService_Validate_Handler,
 		},
 		{
 			MethodName: "MigrationStatus",
-			Handler:    _Schema_MigrationStatus_Handler,
+			Handler:    _SchemaService_MigrationStatus_Handler,
 		},
 		{
 			MethodName: "MigrationDryRun",
-			Handler:    _Schema_MigrationDryRun_Handler,
+			Handler:    _SchemaService_MigrationDryRun_Handler,
 		},
 		{
 			MethodName: "MigrationApply",
-			Handler:    _Schema_MigrationApply_Handler,
+			Handler:    _SchemaService_MigrationApply_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -1312,295 +1312,295 @@ var Schema_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	Replication_Conflicts_FullMethodName   = "/terrabase.v1.Replication/Conflicts"
-	Replication_Fenced_FullMethodName      = "/terrabase.v1.Replication/Fenced"
-	Replication_Depositions_FullMethodName = "/terrabase.v1.Replication/Depositions"
-	Replication_Cursor_FullMethodName      = "/terrabase.v1.Replication/Cursor"
-	Replication_Health_FullMethodName      = "/terrabase.v1.Replication/Health"
-	Replication_Denials_FullMethodName     = "/terrabase.v1.Replication/Denials"
+	ReplicationService_Conflicts_FullMethodName   = "/terrabase.v1.ReplicationService/Conflicts"
+	ReplicationService_Fenced_FullMethodName      = "/terrabase.v1.ReplicationService/Fenced"
+	ReplicationService_Depositions_FullMethodName = "/terrabase.v1.ReplicationService/Depositions"
+	ReplicationService_Cursor_FullMethodName      = "/terrabase.v1.ReplicationService/Cursor"
+	ReplicationService_Health_FullMethodName      = "/terrabase.v1.ReplicationService/Health"
+	ReplicationService_Denials_FullMethodName     = "/terrabase.v1.ReplicationService/Denials"
 )
 
-// ReplicationClient is the client API for Replication service.
+// ReplicationServiceClient is the client API for ReplicationService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // Replication observation (read-only).
-type ReplicationClient interface {
-	Conflicts(ctx context.Context, in *ReplicationConflictsRequest, opts ...grpc.CallOption) (*ReplicationConflictsResponse, error)
-	Fenced(ctx context.Context, in *ReplicationFencedRequest, opts ...grpc.CallOption) (*ReplicationFencedResponse, error)
-	Depositions(ctx context.Context, in *ReplicationDepositionsRequest, opts ...grpc.CallOption) (*ReplicationDepositionsResponse, error)
-	Cursor(ctx context.Context, in *ReplicationCursorRequest, opts ...grpc.CallOption) (*ReplicationCursorResponse, error)
-	Health(ctx context.Context, in *ReplicationHealthRequest, opts ...grpc.CallOption) (*ReplicationHealthResponse, error)
-	Denials(ctx context.Context, in *ReplicationDenialsRequest, opts ...grpc.CallOption) (*ReplicationDenialsResponse, error)
+type ReplicationServiceClient interface {
+	Conflicts(ctx context.Context, in *ReplicationServiceConflictsRequest, opts ...grpc.CallOption) (*ReplicationServiceConflictsResponse, error)
+	Fenced(ctx context.Context, in *ReplicationServiceFencedRequest, opts ...grpc.CallOption) (*ReplicationServiceFencedResponse, error)
+	Depositions(ctx context.Context, in *ReplicationServiceDepositionsRequest, opts ...grpc.CallOption) (*ReplicationServiceDepositionsResponse, error)
+	Cursor(ctx context.Context, in *ReplicationServiceCursorRequest, opts ...grpc.CallOption) (*ReplicationServiceCursorResponse, error)
+	Health(ctx context.Context, in *ReplicationServiceHealthRequest, opts ...grpc.CallOption) (*ReplicationServiceHealthResponse, error)
+	Denials(ctx context.Context, in *ReplicationServiceDenialsRequest, opts ...grpc.CallOption) (*ReplicationServiceDenialsResponse, error)
 }
 
-type replicationClient struct {
+type replicationServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewReplicationClient(cc grpc.ClientConnInterface) ReplicationClient {
-	return &replicationClient{cc}
+func NewReplicationServiceClient(cc grpc.ClientConnInterface) ReplicationServiceClient {
+	return &replicationServiceClient{cc}
 }
 
-func (c *replicationClient) Conflicts(ctx context.Context, in *ReplicationConflictsRequest, opts ...grpc.CallOption) (*ReplicationConflictsResponse, error) {
+func (c *replicationServiceClient) Conflicts(ctx context.Context, in *ReplicationServiceConflictsRequest, opts ...grpc.CallOption) (*ReplicationServiceConflictsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ReplicationConflictsResponse)
-	err := c.cc.Invoke(ctx, Replication_Conflicts_FullMethodName, in, out, cOpts...)
+	out := new(ReplicationServiceConflictsResponse)
+	err := c.cc.Invoke(ctx, ReplicationService_Conflicts_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *replicationClient) Fenced(ctx context.Context, in *ReplicationFencedRequest, opts ...grpc.CallOption) (*ReplicationFencedResponse, error) {
+func (c *replicationServiceClient) Fenced(ctx context.Context, in *ReplicationServiceFencedRequest, opts ...grpc.CallOption) (*ReplicationServiceFencedResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ReplicationFencedResponse)
-	err := c.cc.Invoke(ctx, Replication_Fenced_FullMethodName, in, out, cOpts...)
+	out := new(ReplicationServiceFencedResponse)
+	err := c.cc.Invoke(ctx, ReplicationService_Fenced_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *replicationClient) Depositions(ctx context.Context, in *ReplicationDepositionsRequest, opts ...grpc.CallOption) (*ReplicationDepositionsResponse, error) {
+func (c *replicationServiceClient) Depositions(ctx context.Context, in *ReplicationServiceDepositionsRequest, opts ...grpc.CallOption) (*ReplicationServiceDepositionsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ReplicationDepositionsResponse)
-	err := c.cc.Invoke(ctx, Replication_Depositions_FullMethodName, in, out, cOpts...)
+	out := new(ReplicationServiceDepositionsResponse)
+	err := c.cc.Invoke(ctx, ReplicationService_Depositions_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *replicationClient) Cursor(ctx context.Context, in *ReplicationCursorRequest, opts ...grpc.CallOption) (*ReplicationCursorResponse, error) {
+func (c *replicationServiceClient) Cursor(ctx context.Context, in *ReplicationServiceCursorRequest, opts ...grpc.CallOption) (*ReplicationServiceCursorResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ReplicationCursorResponse)
-	err := c.cc.Invoke(ctx, Replication_Cursor_FullMethodName, in, out, cOpts...)
+	out := new(ReplicationServiceCursorResponse)
+	err := c.cc.Invoke(ctx, ReplicationService_Cursor_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *replicationClient) Health(ctx context.Context, in *ReplicationHealthRequest, opts ...grpc.CallOption) (*ReplicationHealthResponse, error) {
+func (c *replicationServiceClient) Health(ctx context.Context, in *ReplicationServiceHealthRequest, opts ...grpc.CallOption) (*ReplicationServiceHealthResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ReplicationHealthResponse)
-	err := c.cc.Invoke(ctx, Replication_Health_FullMethodName, in, out, cOpts...)
+	out := new(ReplicationServiceHealthResponse)
+	err := c.cc.Invoke(ctx, ReplicationService_Health_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *replicationClient) Denials(ctx context.Context, in *ReplicationDenialsRequest, opts ...grpc.CallOption) (*ReplicationDenialsResponse, error) {
+func (c *replicationServiceClient) Denials(ctx context.Context, in *ReplicationServiceDenialsRequest, opts ...grpc.CallOption) (*ReplicationServiceDenialsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ReplicationDenialsResponse)
-	err := c.cc.Invoke(ctx, Replication_Denials_FullMethodName, in, out, cOpts...)
+	out := new(ReplicationServiceDenialsResponse)
+	err := c.cc.Invoke(ctx, ReplicationService_Denials_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// ReplicationServer is the server API for Replication service.
-// All implementations must embed UnimplementedReplicationServer
+// ReplicationServiceServer is the server API for ReplicationService service.
+// All implementations must embed UnimplementedReplicationServiceServer
 // for forward compatibility.
 //
 // Replication observation (read-only).
-type ReplicationServer interface {
-	Conflicts(context.Context, *ReplicationConflictsRequest) (*ReplicationConflictsResponse, error)
-	Fenced(context.Context, *ReplicationFencedRequest) (*ReplicationFencedResponse, error)
-	Depositions(context.Context, *ReplicationDepositionsRequest) (*ReplicationDepositionsResponse, error)
-	Cursor(context.Context, *ReplicationCursorRequest) (*ReplicationCursorResponse, error)
-	Health(context.Context, *ReplicationHealthRequest) (*ReplicationHealthResponse, error)
-	Denials(context.Context, *ReplicationDenialsRequest) (*ReplicationDenialsResponse, error)
-	mustEmbedUnimplementedReplicationServer()
+type ReplicationServiceServer interface {
+	Conflicts(context.Context, *ReplicationServiceConflictsRequest) (*ReplicationServiceConflictsResponse, error)
+	Fenced(context.Context, *ReplicationServiceFencedRequest) (*ReplicationServiceFencedResponse, error)
+	Depositions(context.Context, *ReplicationServiceDepositionsRequest) (*ReplicationServiceDepositionsResponse, error)
+	Cursor(context.Context, *ReplicationServiceCursorRequest) (*ReplicationServiceCursorResponse, error)
+	Health(context.Context, *ReplicationServiceHealthRequest) (*ReplicationServiceHealthResponse, error)
+	Denials(context.Context, *ReplicationServiceDenialsRequest) (*ReplicationServiceDenialsResponse, error)
+	mustEmbedUnimplementedReplicationServiceServer()
 }
 
-// UnimplementedReplicationServer must be embedded to have
+// UnimplementedReplicationServiceServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedReplicationServer struct{}
+type UnimplementedReplicationServiceServer struct{}
 
-func (UnimplementedReplicationServer) Conflicts(context.Context, *ReplicationConflictsRequest) (*ReplicationConflictsResponse, error) {
+func (UnimplementedReplicationServiceServer) Conflicts(context.Context, *ReplicationServiceConflictsRequest) (*ReplicationServiceConflictsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Conflicts not implemented")
 }
-func (UnimplementedReplicationServer) Fenced(context.Context, *ReplicationFencedRequest) (*ReplicationFencedResponse, error) {
+func (UnimplementedReplicationServiceServer) Fenced(context.Context, *ReplicationServiceFencedRequest) (*ReplicationServiceFencedResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Fenced not implemented")
 }
-func (UnimplementedReplicationServer) Depositions(context.Context, *ReplicationDepositionsRequest) (*ReplicationDepositionsResponse, error) {
+func (UnimplementedReplicationServiceServer) Depositions(context.Context, *ReplicationServiceDepositionsRequest) (*ReplicationServiceDepositionsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Depositions not implemented")
 }
-func (UnimplementedReplicationServer) Cursor(context.Context, *ReplicationCursorRequest) (*ReplicationCursorResponse, error) {
+func (UnimplementedReplicationServiceServer) Cursor(context.Context, *ReplicationServiceCursorRequest) (*ReplicationServiceCursorResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Cursor not implemented")
 }
-func (UnimplementedReplicationServer) Health(context.Context, *ReplicationHealthRequest) (*ReplicationHealthResponse, error) {
+func (UnimplementedReplicationServiceServer) Health(context.Context, *ReplicationServiceHealthRequest) (*ReplicationServiceHealthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Health not implemented")
 }
-func (UnimplementedReplicationServer) Denials(context.Context, *ReplicationDenialsRequest) (*ReplicationDenialsResponse, error) {
+func (UnimplementedReplicationServiceServer) Denials(context.Context, *ReplicationServiceDenialsRequest) (*ReplicationServiceDenialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Denials not implemented")
 }
-func (UnimplementedReplicationServer) mustEmbedUnimplementedReplicationServer() {}
-func (UnimplementedReplicationServer) testEmbeddedByValue()                     {}
+func (UnimplementedReplicationServiceServer) mustEmbedUnimplementedReplicationServiceServer() {}
+func (UnimplementedReplicationServiceServer) testEmbeddedByValue()                            {}
 
-// UnsafeReplicationServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to ReplicationServer will
+// UnsafeReplicationServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to ReplicationServiceServer will
 // result in compilation errors.
-type UnsafeReplicationServer interface {
-	mustEmbedUnimplementedReplicationServer()
+type UnsafeReplicationServiceServer interface {
+	mustEmbedUnimplementedReplicationServiceServer()
 }
 
-func RegisterReplicationServer(s grpc.ServiceRegistrar, srv ReplicationServer) {
-	// If the following call panics, it indicates UnimplementedReplicationServer was
+func RegisterReplicationServiceServer(s grpc.ServiceRegistrar, srv ReplicationServiceServer) {
+	// If the following call panics, it indicates UnimplementedReplicationServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&Replication_ServiceDesc, srv)
+	s.RegisterService(&ReplicationService_ServiceDesc, srv)
 }
 
-func _Replication_Conflicts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ReplicationConflictsRequest)
+func _ReplicationService_Conflicts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReplicationServiceConflictsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(ReplicationServer).Conflicts(ctx, in)
+		return srv.(ReplicationServiceServer).Conflicts(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Replication_Conflicts_FullMethodName,
+		FullMethod: ReplicationService_Conflicts_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ReplicationServer).Conflicts(ctx, req.(*ReplicationConflictsRequest))
+		return srv.(ReplicationServiceServer).Conflicts(ctx, req.(*ReplicationServiceConflictsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Replication_Fenced_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ReplicationFencedRequest)
+func _ReplicationService_Fenced_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReplicationServiceFencedRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(ReplicationServer).Fenced(ctx, in)
+		return srv.(ReplicationServiceServer).Fenced(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Replication_Fenced_FullMethodName,
+		FullMethod: ReplicationService_Fenced_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ReplicationServer).Fenced(ctx, req.(*ReplicationFencedRequest))
+		return srv.(ReplicationServiceServer).Fenced(ctx, req.(*ReplicationServiceFencedRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Replication_Depositions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ReplicationDepositionsRequest)
+func _ReplicationService_Depositions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReplicationServiceDepositionsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(ReplicationServer).Depositions(ctx, in)
+		return srv.(ReplicationServiceServer).Depositions(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Replication_Depositions_FullMethodName,
+		FullMethod: ReplicationService_Depositions_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ReplicationServer).Depositions(ctx, req.(*ReplicationDepositionsRequest))
+		return srv.(ReplicationServiceServer).Depositions(ctx, req.(*ReplicationServiceDepositionsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Replication_Cursor_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ReplicationCursorRequest)
+func _ReplicationService_Cursor_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReplicationServiceCursorRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(ReplicationServer).Cursor(ctx, in)
+		return srv.(ReplicationServiceServer).Cursor(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Replication_Cursor_FullMethodName,
+		FullMethod: ReplicationService_Cursor_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ReplicationServer).Cursor(ctx, req.(*ReplicationCursorRequest))
+		return srv.(ReplicationServiceServer).Cursor(ctx, req.(*ReplicationServiceCursorRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Replication_Health_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ReplicationHealthRequest)
+func _ReplicationService_Health_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReplicationServiceHealthRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(ReplicationServer).Health(ctx, in)
+		return srv.(ReplicationServiceServer).Health(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Replication_Health_FullMethodName,
+		FullMethod: ReplicationService_Health_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ReplicationServer).Health(ctx, req.(*ReplicationHealthRequest))
+		return srv.(ReplicationServiceServer).Health(ctx, req.(*ReplicationServiceHealthRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Replication_Denials_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ReplicationDenialsRequest)
+func _ReplicationService_Denials_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReplicationServiceDenialsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(ReplicationServer).Denials(ctx, in)
+		return srv.(ReplicationServiceServer).Denials(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Replication_Denials_FullMethodName,
+		FullMethod: ReplicationService_Denials_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ReplicationServer).Denials(ctx, req.(*ReplicationDenialsRequest))
+		return srv.(ReplicationServiceServer).Denials(ctx, req.(*ReplicationServiceDenialsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// Replication_ServiceDesc is the grpc.ServiceDesc for Replication service.
+// ReplicationService_ServiceDesc is the grpc.ServiceDesc for ReplicationService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var Replication_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "terrabase.v1.Replication",
-	HandlerType: (*ReplicationServer)(nil),
+var ReplicationService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "terrabase.v1.ReplicationService",
+	HandlerType: (*ReplicationServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Conflicts",
-			Handler:    _Replication_Conflicts_Handler,
+			Handler:    _ReplicationService_Conflicts_Handler,
 		},
 		{
 			MethodName: "Fenced",
-			Handler:    _Replication_Fenced_Handler,
+			Handler:    _ReplicationService_Fenced_Handler,
 		},
 		{
 			MethodName: "Depositions",
-			Handler:    _Replication_Depositions_Handler,
+			Handler:    _ReplicationService_Depositions_Handler,
 		},
 		{
 			MethodName: "Cursor",
-			Handler:    _Replication_Cursor_Handler,
+			Handler:    _ReplicationService_Cursor_Handler,
 		},
 		{
 			MethodName: "Health",
-			Handler:    _Replication_Health_Handler,
+			Handler:    _ReplicationService_Health_Handler,
 		},
 		{
 			MethodName: "Denials",
-			Handler:    _Replication_Denials_Handler,
+			Handler:    _ReplicationService_Denials_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -1608,219 +1608,219 @@ var Replication_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	Maintenance_TopologyRead_FullMethodName        = "/terrabase.v1.Maintenance/TopologyRead"
-	Maintenance_AdminStatus_FullMethodName         = "/terrabase.v1.Maintenance/AdminStatus"
-	Maintenance_SupervisionHealth_FullMethodName   = "/terrabase.v1.Maintenance/SupervisionHealth"
-	Maintenance_SupervisionShutdown_FullMethodName = "/terrabase.v1.Maintenance/SupervisionShutdown"
+	MaintenanceService_TopologyRead_FullMethodName        = "/terrabase.v1.MaintenanceService/TopologyRead"
+	MaintenanceService_AdminStatus_FullMethodName         = "/terrabase.v1.MaintenanceService/AdminStatus"
+	MaintenanceService_SupervisionHealth_FullMethodName   = "/terrabase.v1.MaintenanceService/SupervisionHealth"
+	MaintenanceService_SupervisionShutdown_FullMethodName = "/terrabase.v1.MaintenanceService/SupervisionShutdown"
 )
 
-// MaintenanceClient is the client API for Maintenance service.
+// MaintenanceServiceClient is the client API for MaintenanceService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // Topology, administration, and supervision.
-type MaintenanceClient interface {
-	TopologyRead(ctx context.Context, in *TopologyReadRequest, opts ...grpc.CallOption) (*TopologyReadResponse, error)
-	AdminStatus(ctx context.Context, in *AdminStatusRequest, opts ...grpc.CallOption) (*AdminStatusResponse, error)
-	SupervisionHealth(ctx context.Context, in *SupervisionHealthRequest, opts ...grpc.CallOption) (*SupervisionHealthResponse, error)
-	SupervisionShutdown(ctx context.Context, in *SupervisionShutdownRequest, opts ...grpc.CallOption) (*SupervisionShutdownResponse, error)
+type MaintenanceServiceClient interface {
+	TopologyRead(ctx context.Context, in *MaintenanceServiceTopologyReadRequest, opts ...grpc.CallOption) (*MaintenanceServiceTopologyReadResponse, error)
+	AdminStatus(ctx context.Context, in *MaintenanceServiceAdminStatusRequest, opts ...grpc.CallOption) (*MaintenanceServiceAdminStatusResponse, error)
+	SupervisionHealth(ctx context.Context, in *MaintenanceServiceSupervisionHealthRequest, opts ...grpc.CallOption) (*MaintenanceServiceSupervisionHealthResponse, error)
+	SupervisionShutdown(ctx context.Context, in *MaintenanceServiceSupervisionShutdownRequest, opts ...grpc.CallOption) (*MaintenanceServiceSupervisionShutdownResponse, error)
 }
 
-type maintenanceClient struct {
+type maintenanceServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewMaintenanceClient(cc grpc.ClientConnInterface) MaintenanceClient {
-	return &maintenanceClient{cc}
+func NewMaintenanceServiceClient(cc grpc.ClientConnInterface) MaintenanceServiceClient {
+	return &maintenanceServiceClient{cc}
 }
 
-func (c *maintenanceClient) TopologyRead(ctx context.Context, in *TopologyReadRequest, opts ...grpc.CallOption) (*TopologyReadResponse, error) {
+func (c *maintenanceServiceClient) TopologyRead(ctx context.Context, in *MaintenanceServiceTopologyReadRequest, opts ...grpc.CallOption) (*MaintenanceServiceTopologyReadResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TopologyReadResponse)
-	err := c.cc.Invoke(ctx, Maintenance_TopologyRead_FullMethodName, in, out, cOpts...)
+	out := new(MaintenanceServiceTopologyReadResponse)
+	err := c.cc.Invoke(ctx, MaintenanceService_TopologyRead_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *maintenanceClient) AdminStatus(ctx context.Context, in *AdminStatusRequest, opts ...grpc.CallOption) (*AdminStatusResponse, error) {
+func (c *maintenanceServiceClient) AdminStatus(ctx context.Context, in *MaintenanceServiceAdminStatusRequest, opts ...grpc.CallOption) (*MaintenanceServiceAdminStatusResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(AdminStatusResponse)
-	err := c.cc.Invoke(ctx, Maintenance_AdminStatus_FullMethodName, in, out, cOpts...)
+	out := new(MaintenanceServiceAdminStatusResponse)
+	err := c.cc.Invoke(ctx, MaintenanceService_AdminStatus_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *maintenanceClient) SupervisionHealth(ctx context.Context, in *SupervisionHealthRequest, opts ...grpc.CallOption) (*SupervisionHealthResponse, error) {
+func (c *maintenanceServiceClient) SupervisionHealth(ctx context.Context, in *MaintenanceServiceSupervisionHealthRequest, opts ...grpc.CallOption) (*MaintenanceServiceSupervisionHealthResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SupervisionHealthResponse)
-	err := c.cc.Invoke(ctx, Maintenance_SupervisionHealth_FullMethodName, in, out, cOpts...)
+	out := new(MaintenanceServiceSupervisionHealthResponse)
+	err := c.cc.Invoke(ctx, MaintenanceService_SupervisionHealth_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *maintenanceClient) SupervisionShutdown(ctx context.Context, in *SupervisionShutdownRequest, opts ...grpc.CallOption) (*SupervisionShutdownResponse, error) {
+func (c *maintenanceServiceClient) SupervisionShutdown(ctx context.Context, in *MaintenanceServiceSupervisionShutdownRequest, opts ...grpc.CallOption) (*MaintenanceServiceSupervisionShutdownResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SupervisionShutdownResponse)
-	err := c.cc.Invoke(ctx, Maintenance_SupervisionShutdown_FullMethodName, in, out, cOpts...)
+	out := new(MaintenanceServiceSupervisionShutdownResponse)
+	err := c.cc.Invoke(ctx, MaintenanceService_SupervisionShutdown_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// MaintenanceServer is the server API for Maintenance service.
-// All implementations must embed UnimplementedMaintenanceServer
+// MaintenanceServiceServer is the server API for MaintenanceService service.
+// All implementations must embed UnimplementedMaintenanceServiceServer
 // for forward compatibility.
 //
 // Topology, administration, and supervision.
-type MaintenanceServer interface {
-	TopologyRead(context.Context, *TopologyReadRequest) (*TopologyReadResponse, error)
-	AdminStatus(context.Context, *AdminStatusRequest) (*AdminStatusResponse, error)
-	SupervisionHealth(context.Context, *SupervisionHealthRequest) (*SupervisionHealthResponse, error)
-	SupervisionShutdown(context.Context, *SupervisionShutdownRequest) (*SupervisionShutdownResponse, error)
-	mustEmbedUnimplementedMaintenanceServer()
+type MaintenanceServiceServer interface {
+	TopologyRead(context.Context, *MaintenanceServiceTopologyReadRequest) (*MaintenanceServiceTopologyReadResponse, error)
+	AdminStatus(context.Context, *MaintenanceServiceAdminStatusRequest) (*MaintenanceServiceAdminStatusResponse, error)
+	SupervisionHealth(context.Context, *MaintenanceServiceSupervisionHealthRequest) (*MaintenanceServiceSupervisionHealthResponse, error)
+	SupervisionShutdown(context.Context, *MaintenanceServiceSupervisionShutdownRequest) (*MaintenanceServiceSupervisionShutdownResponse, error)
+	mustEmbedUnimplementedMaintenanceServiceServer()
 }
 
-// UnimplementedMaintenanceServer must be embedded to have
+// UnimplementedMaintenanceServiceServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedMaintenanceServer struct{}
+type UnimplementedMaintenanceServiceServer struct{}
 
-func (UnimplementedMaintenanceServer) TopologyRead(context.Context, *TopologyReadRequest) (*TopologyReadResponse, error) {
+func (UnimplementedMaintenanceServiceServer) TopologyRead(context.Context, *MaintenanceServiceTopologyReadRequest) (*MaintenanceServiceTopologyReadResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method TopologyRead not implemented")
 }
-func (UnimplementedMaintenanceServer) AdminStatus(context.Context, *AdminStatusRequest) (*AdminStatusResponse, error) {
+func (UnimplementedMaintenanceServiceServer) AdminStatus(context.Context, *MaintenanceServiceAdminStatusRequest) (*MaintenanceServiceAdminStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AdminStatus not implemented")
 }
-func (UnimplementedMaintenanceServer) SupervisionHealth(context.Context, *SupervisionHealthRequest) (*SupervisionHealthResponse, error) {
+func (UnimplementedMaintenanceServiceServer) SupervisionHealth(context.Context, *MaintenanceServiceSupervisionHealthRequest) (*MaintenanceServiceSupervisionHealthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SupervisionHealth not implemented")
 }
-func (UnimplementedMaintenanceServer) SupervisionShutdown(context.Context, *SupervisionShutdownRequest) (*SupervisionShutdownResponse, error) {
+func (UnimplementedMaintenanceServiceServer) SupervisionShutdown(context.Context, *MaintenanceServiceSupervisionShutdownRequest) (*MaintenanceServiceSupervisionShutdownResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SupervisionShutdown not implemented")
 }
-func (UnimplementedMaintenanceServer) mustEmbedUnimplementedMaintenanceServer() {}
-func (UnimplementedMaintenanceServer) testEmbeddedByValue()                     {}
+func (UnimplementedMaintenanceServiceServer) mustEmbedUnimplementedMaintenanceServiceServer() {}
+func (UnimplementedMaintenanceServiceServer) testEmbeddedByValue()                            {}
 
-// UnsafeMaintenanceServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to MaintenanceServer will
+// UnsafeMaintenanceServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to MaintenanceServiceServer will
 // result in compilation errors.
-type UnsafeMaintenanceServer interface {
-	mustEmbedUnimplementedMaintenanceServer()
+type UnsafeMaintenanceServiceServer interface {
+	mustEmbedUnimplementedMaintenanceServiceServer()
 }
 
-func RegisterMaintenanceServer(s grpc.ServiceRegistrar, srv MaintenanceServer) {
-	// If the following call panics, it indicates UnimplementedMaintenanceServer was
+func RegisterMaintenanceServiceServer(s grpc.ServiceRegistrar, srv MaintenanceServiceServer) {
+	// If the following call panics, it indicates UnimplementedMaintenanceServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&Maintenance_ServiceDesc, srv)
+	s.RegisterService(&MaintenanceService_ServiceDesc, srv)
 }
 
-func _Maintenance_TopologyRead_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TopologyReadRequest)
+func _MaintenanceService_TopologyRead_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MaintenanceServiceTopologyReadRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MaintenanceServer).TopologyRead(ctx, in)
+		return srv.(MaintenanceServiceServer).TopologyRead(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Maintenance_TopologyRead_FullMethodName,
+		FullMethod: MaintenanceService_TopologyRead_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MaintenanceServer).TopologyRead(ctx, req.(*TopologyReadRequest))
+		return srv.(MaintenanceServiceServer).TopologyRead(ctx, req.(*MaintenanceServiceTopologyReadRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Maintenance_AdminStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(AdminStatusRequest)
+func _MaintenanceService_AdminStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MaintenanceServiceAdminStatusRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MaintenanceServer).AdminStatus(ctx, in)
+		return srv.(MaintenanceServiceServer).AdminStatus(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Maintenance_AdminStatus_FullMethodName,
+		FullMethod: MaintenanceService_AdminStatus_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MaintenanceServer).AdminStatus(ctx, req.(*AdminStatusRequest))
+		return srv.(MaintenanceServiceServer).AdminStatus(ctx, req.(*MaintenanceServiceAdminStatusRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Maintenance_SupervisionHealth_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SupervisionHealthRequest)
+func _MaintenanceService_SupervisionHealth_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MaintenanceServiceSupervisionHealthRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MaintenanceServer).SupervisionHealth(ctx, in)
+		return srv.(MaintenanceServiceServer).SupervisionHealth(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Maintenance_SupervisionHealth_FullMethodName,
+		FullMethod: MaintenanceService_SupervisionHealth_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MaintenanceServer).SupervisionHealth(ctx, req.(*SupervisionHealthRequest))
+		return srv.(MaintenanceServiceServer).SupervisionHealth(ctx, req.(*MaintenanceServiceSupervisionHealthRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Maintenance_SupervisionShutdown_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SupervisionShutdownRequest)
+func _MaintenanceService_SupervisionShutdown_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MaintenanceServiceSupervisionShutdownRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MaintenanceServer).SupervisionShutdown(ctx, in)
+		return srv.(MaintenanceServiceServer).SupervisionShutdown(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Maintenance_SupervisionShutdown_FullMethodName,
+		FullMethod: MaintenanceService_SupervisionShutdown_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MaintenanceServer).SupervisionShutdown(ctx, req.(*SupervisionShutdownRequest))
+		return srv.(MaintenanceServiceServer).SupervisionShutdown(ctx, req.(*MaintenanceServiceSupervisionShutdownRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// Maintenance_ServiceDesc is the grpc.ServiceDesc for Maintenance service.
+// MaintenanceService_ServiceDesc is the grpc.ServiceDesc for MaintenanceService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var Maintenance_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "terrabase.v1.Maintenance",
-	HandlerType: (*MaintenanceServer)(nil),
+var MaintenanceService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "terrabase.v1.MaintenanceService",
+	HandlerType: (*MaintenanceServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "TopologyRead",
-			Handler:    _Maintenance_TopologyRead_Handler,
+			Handler:    _MaintenanceService_TopologyRead_Handler,
 		},
 		{
 			MethodName: "AdminStatus",
-			Handler:    _Maintenance_AdminStatus_Handler,
+			Handler:    _MaintenanceService_AdminStatus_Handler,
 		},
 		{
 			MethodName: "SupervisionHealth",
-			Handler:    _Maintenance_SupervisionHealth_Handler,
+			Handler:    _MaintenanceService_SupervisionHealth_Handler,
 		},
 		{
 			MethodName: "SupervisionShutdown",
-			Handler:    _Maintenance_SupervisionShutdown_Handler,
+			Handler:    _MaintenanceService_SupervisionShutdown_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -1828,143 +1828,143 @@ var Maintenance_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	Usage_Record_FullMethodName = "/terrabase.v1.Usage/Record"
-	Usage_Export_FullMethodName = "/terrabase.v1.Usage/Export"
+	UsageService_Record_FullMethodName = "/terrabase.v1.UsageService/Record"
+	UsageService_Export_FullMethodName = "/terrabase.v1.UsageService/Export"
 )
 
-// UsageClient is the client API for Usage service.
+// UsageServiceClient is the client API for UsageService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // Tenant-bound export of authoritative WAL-durable usage facts.
-type UsageClient interface {
-	Record(ctx context.Context, in *UsageRecordRequest, opts ...grpc.CallOption) (*UsageRecordResponse, error)
-	Export(ctx context.Context, in *UsageExportRequest, opts ...grpc.CallOption) (*UsageExportResponse, error)
+type UsageServiceClient interface {
+	Record(ctx context.Context, in *UsageServiceRecordRequest, opts ...grpc.CallOption) (*UsageServiceRecordResponse, error)
+	Export(ctx context.Context, in *UsageServiceExportRequest, opts ...grpc.CallOption) (*UsageServiceExportResponse, error)
 }
 
-type usageClient struct {
+type usageServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewUsageClient(cc grpc.ClientConnInterface) UsageClient {
-	return &usageClient{cc}
+func NewUsageServiceClient(cc grpc.ClientConnInterface) UsageServiceClient {
+	return &usageServiceClient{cc}
 }
 
-func (c *usageClient) Record(ctx context.Context, in *UsageRecordRequest, opts ...grpc.CallOption) (*UsageRecordResponse, error) {
+func (c *usageServiceClient) Record(ctx context.Context, in *UsageServiceRecordRequest, opts ...grpc.CallOption) (*UsageServiceRecordResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(UsageRecordResponse)
-	err := c.cc.Invoke(ctx, Usage_Record_FullMethodName, in, out, cOpts...)
+	out := new(UsageServiceRecordResponse)
+	err := c.cc.Invoke(ctx, UsageService_Record_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *usageClient) Export(ctx context.Context, in *UsageExportRequest, opts ...grpc.CallOption) (*UsageExportResponse, error) {
+func (c *usageServiceClient) Export(ctx context.Context, in *UsageServiceExportRequest, opts ...grpc.CallOption) (*UsageServiceExportResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(UsageExportResponse)
-	err := c.cc.Invoke(ctx, Usage_Export_FullMethodName, in, out, cOpts...)
+	out := new(UsageServiceExportResponse)
+	err := c.cc.Invoke(ctx, UsageService_Export_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// UsageServer is the server API for Usage service.
-// All implementations must embed UnimplementedUsageServer
+// UsageServiceServer is the server API for UsageService service.
+// All implementations must embed UnimplementedUsageServiceServer
 // for forward compatibility.
 //
 // Tenant-bound export of authoritative WAL-durable usage facts.
-type UsageServer interface {
-	Record(context.Context, *UsageRecordRequest) (*UsageRecordResponse, error)
-	Export(context.Context, *UsageExportRequest) (*UsageExportResponse, error)
-	mustEmbedUnimplementedUsageServer()
+type UsageServiceServer interface {
+	Record(context.Context, *UsageServiceRecordRequest) (*UsageServiceRecordResponse, error)
+	Export(context.Context, *UsageServiceExportRequest) (*UsageServiceExportResponse, error)
+	mustEmbedUnimplementedUsageServiceServer()
 }
 
-// UnimplementedUsageServer must be embedded to have
+// UnimplementedUsageServiceServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedUsageServer struct{}
+type UnimplementedUsageServiceServer struct{}
 
-func (UnimplementedUsageServer) Record(context.Context, *UsageRecordRequest) (*UsageRecordResponse, error) {
+func (UnimplementedUsageServiceServer) Record(context.Context, *UsageServiceRecordRequest) (*UsageServiceRecordResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Record not implemented")
 }
-func (UnimplementedUsageServer) Export(context.Context, *UsageExportRequest) (*UsageExportResponse, error) {
+func (UnimplementedUsageServiceServer) Export(context.Context, *UsageServiceExportRequest) (*UsageServiceExportResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Export not implemented")
 }
-func (UnimplementedUsageServer) mustEmbedUnimplementedUsageServer() {}
-func (UnimplementedUsageServer) testEmbeddedByValue()               {}
+func (UnimplementedUsageServiceServer) mustEmbedUnimplementedUsageServiceServer() {}
+func (UnimplementedUsageServiceServer) testEmbeddedByValue()                      {}
 
-// UnsafeUsageServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to UsageServer will
+// UnsafeUsageServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to UsageServiceServer will
 // result in compilation errors.
-type UnsafeUsageServer interface {
-	mustEmbedUnimplementedUsageServer()
+type UnsafeUsageServiceServer interface {
+	mustEmbedUnimplementedUsageServiceServer()
 }
 
-func RegisterUsageServer(s grpc.ServiceRegistrar, srv UsageServer) {
-	// If the following call panics, it indicates UnimplementedUsageServer was
+func RegisterUsageServiceServer(s grpc.ServiceRegistrar, srv UsageServiceServer) {
+	// If the following call panics, it indicates UnimplementedUsageServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&Usage_ServiceDesc, srv)
+	s.RegisterService(&UsageService_ServiceDesc, srv)
 }
 
-func _Usage_Record_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(UsageRecordRequest)
+func _UsageService_Record_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UsageServiceRecordRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(UsageServer).Record(ctx, in)
+		return srv.(UsageServiceServer).Record(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Usage_Record_FullMethodName,
+		FullMethod: UsageService_Record_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(UsageServer).Record(ctx, req.(*UsageRecordRequest))
+		return srv.(UsageServiceServer).Record(ctx, req.(*UsageServiceRecordRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Usage_Export_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(UsageExportRequest)
+func _UsageService_Export_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UsageServiceExportRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(UsageServer).Export(ctx, in)
+		return srv.(UsageServiceServer).Export(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Usage_Export_FullMethodName,
+		FullMethod: UsageService_Export_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(UsageServer).Export(ctx, req.(*UsageExportRequest))
+		return srv.(UsageServiceServer).Export(ctx, req.(*UsageServiceExportRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// Usage_ServiceDesc is the grpc.ServiceDesc for Usage service.
+// UsageService_ServiceDesc is the grpc.ServiceDesc for UsageService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var Usage_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "terrabase.v1.Usage",
-	HandlerType: (*UsageServer)(nil),
+var UsageService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "terrabase.v1.UsageService",
+	HandlerType: (*UsageServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Record",
-			Handler:    _Usage_Record_Handler,
+			Handler:    _UsageService_Record_Handler,
 		},
 		{
 			MethodName: "Export",
-			Handler:    _Usage_Export_Handler,
+			Handler:    _UsageService_Export_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -1972,333 +1972,333 @@ var Usage_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	Tier_Configure_FullMethodName = "/terrabase.v1.Tier/Configure"
-	Tier_Inspect_FullMethodName   = "/terrabase.v1.Tier/Inspect"
-	Tier_DryRun_FullMethodName    = "/terrabase.v1.Tier/DryRun"
-	Tier_Explain_FullMethodName   = "/terrabase.v1.Tier/Explain"
-	Tier_Run_FullMethodName       = "/terrabase.v1.Tier/Run"
-	Tier_Pause_FullMethodName     = "/terrabase.v1.Tier/Pause"
-	Tier_Resume_FullMethodName    = "/terrabase.v1.Tier/Resume"
+	TierService_Configure_FullMethodName = "/terrabase.v1.TierService/Configure"
+	TierService_Inspect_FullMethodName   = "/terrabase.v1.TierService/Inspect"
+	TierService_DryRun_FullMethodName    = "/terrabase.v1.TierService/DryRun"
+	TierService_Explain_FullMethodName   = "/terrabase.v1.TierService/Explain"
+	TierService_Run_FullMethodName       = "/terrabase.v1.TierService/Run"
+	TierService_Pause_FullMethodName     = "/terrabase.v1.TierService/Pause"
+	TierService_Resume_FullMethodName    = "/terrabase.v1.TierService/Resume"
 )
 
-// TierClient is the client API for Tier service.
+// TierServiceClient is the client API for TierService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // Tier administration.
-type TierClient interface {
-	Configure(ctx context.Context, in *TierConfigureRequest, opts ...grpc.CallOption) (*TierConfigureResponse, error)
-	Inspect(ctx context.Context, in *TierInspectRequest, opts ...grpc.CallOption) (*TierInspectResponse, error)
-	DryRun(ctx context.Context, in *TierDryRunRequest, opts ...grpc.CallOption) (*TierDryRunResponse, error)
-	Explain(ctx context.Context, in *TierExplainRequest, opts ...grpc.CallOption) (*TierExplainResponse, error)
-	Run(ctx context.Context, in *TierRunRequest, opts ...grpc.CallOption) (*TierRunResponse, error)
-	Pause(ctx context.Context, in *TierPauseRequest, opts ...grpc.CallOption) (*TierPauseResponse, error)
-	Resume(ctx context.Context, in *TierResumeRequest, opts ...grpc.CallOption) (*TierResumeResponse, error)
+type TierServiceClient interface {
+	Configure(ctx context.Context, in *TierServiceConfigureRequest, opts ...grpc.CallOption) (*TierServiceConfigureResponse, error)
+	Inspect(ctx context.Context, in *TierServiceInspectRequest, opts ...grpc.CallOption) (*TierServiceInspectResponse, error)
+	DryRun(ctx context.Context, in *TierServiceDryRunRequest, opts ...grpc.CallOption) (*TierServiceDryRunResponse, error)
+	Explain(ctx context.Context, in *TierServiceExplainRequest, opts ...grpc.CallOption) (*TierServiceExplainResponse, error)
+	Run(ctx context.Context, in *TierServiceRunRequest, opts ...grpc.CallOption) (*TierServiceRunResponse, error)
+	Pause(ctx context.Context, in *TierServicePauseRequest, opts ...grpc.CallOption) (*TierServicePauseResponse, error)
+	Resume(ctx context.Context, in *TierServiceResumeRequest, opts ...grpc.CallOption) (*TierServiceResumeResponse, error)
 }
 
-type tierClient struct {
+type tierServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewTierClient(cc grpc.ClientConnInterface) TierClient {
-	return &tierClient{cc}
+func NewTierServiceClient(cc grpc.ClientConnInterface) TierServiceClient {
+	return &tierServiceClient{cc}
 }
 
-func (c *tierClient) Configure(ctx context.Context, in *TierConfigureRequest, opts ...grpc.CallOption) (*TierConfigureResponse, error) {
+func (c *tierServiceClient) Configure(ctx context.Context, in *TierServiceConfigureRequest, opts ...grpc.CallOption) (*TierServiceConfigureResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TierConfigureResponse)
-	err := c.cc.Invoke(ctx, Tier_Configure_FullMethodName, in, out, cOpts...)
+	out := new(TierServiceConfigureResponse)
+	err := c.cc.Invoke(ctx, TierService_Configure_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *tierClient) Inspect(ctx context.Context, in *TierInspectRequest, opts ...grpc.CallOption) (*TierInspectResponse, error) {
+func (c *tierServiceClient) Inspect(ctx context.Context, in *TierServiceInspectRequest, opts ...grpc.CallOption) (*TierServiceInspectResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TierInspectResponse)
-	err := c.cc.Invoke(ctx, Tier_Inspect_FullMethodName, in, out, cOpts...)
+	out := new(TierServiceInspectResponse)
+	err := c.cc.Invoke(ctx, TierService_Inspect_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *tierClient) DryRun(ctx context.Context, in *TierDryRunRequest, opts ...grpc.CallOption) (*TierDryRunResponse, error) {
+func (c *tierServiceClient) DryRun(ctx context.Context, in *TierServiceDryRunRequest, opts ...grpc.CallOption) (*TierServiceDryRunResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TierDryRunResponse)
-	err := c.cc.Invoke(ctx, Tier_DryRun_FullMethodName, in, out, cOpts...)
+	out := new(TierServiceDryRunResponse)
+	err := c.cc.Invoke(ctx, TierService_DryRun_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *tierClient) Explain(ctx context.Context, in *TierExplainRequest, opts ...grpc.CallOption) (*TierExplainResponse, error) {
+func (c *tierServiceClient) Explain(ctx context.Context, in *TierServiceExplainRequest, opts ...grpc.CallOption) (*TierServiceExplainResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TierExplainResponse)
-	err := c.cc.Invoke(ctx, Tier_Explain_FullMethodName, in, out, cOpts...)
+	out := new(TierServiceExplainResponse)
+	err := c.cc.Invoke(ctx, TierService_Explain_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *tierClient) Run(ctx context.Context, in *TierRunRequest, opts ...grpc.CallOption) (*TierRunResponse, error) {
+func (c *tierServiceClient) Run(ctx context.Context, in *TierServiceRunRequest, opts ...grpc.CallOption) (*TierServiceRunResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TierRunResponse)
-	err := c.cc.Invoke(ctx, Tier_Run_FullMethodName, in, out, cOpts...)
+	out := new(TierServiceRunResponse)
+	err := c.cc.Invoke(ctx, TierService_Run_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *tierClient) Pause(ctx context.Context, in *TierPauseRequest, opts ...grpc.CallOption) (*TierPauseResponse, error) {
+func (c *tierServiceClient) Pause(ctx context.Context, in *TierServicePauseRequest, opts ...grpc.CallOption) (*TierServicePauseResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TierPauseResponse)
-	err := c.cc.Invoke(ctx, Tier_Pause_FullMethodName, in, out, cOpts...)
+	out := new(TierServicePauseResponse)
+	err := c.cc.Invoke(ctx, TierService_Pause_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *tierClient) Resume(ctx context.Context, in *TierResumeRequest, opts ...grpc.CallOption) (*TierResumeResponse, error) {
+func (c *tierServiceClient) Resume(ctx context.Context, in *TierServiceResumeRequest, opts ...grpc.CallOption) (*TierServiceResumeResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TierResumeResponse)
-	err := c.cc.Invoke(ctx, Tier_Resume_FullMethodName, in, out, cOpts...)
+	out := new(TierServiceResumeResponse)
+	err := c.cc.Invoke(ctx, TierService_Resume_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// TierServer is the server API for Tier service.
-// All implementations must embed UnimplementedTierServer
+// TierServiceServer is the server API for TierService service.
+// All implementations must embed UnimplementedTierServiceServer
 // for forward compatibility.
 //
 // Tier administration.
-type TierServer interface {
-	Configure(context.Context, *TierConfigureRequest) (*TierConfigureResponse, error)
-	Inspect(context.Context, *TierInspectRequest) (*TierInspectResponse, error)
-	DryRun(context.Context, *TierDryRunRequest) (*TierDryRunResponse, error)
-	Explain(context.Context, *TierExplainRequest) (*TierExplainResponse, error)
-	Run(context.Context, *TierRunRequest) (*TierRunResponse, error)
-	Pause(context.Context, *TierPauseRequest) (*TierPauseResponse, error)
-	Resume(context.Context, *TierResumeRequest) (*TierResumeResponse, error)
-	mustEmbedUnimplementedTierServer()
+type TierServiceServer interface {
+	Configure(context.Context, *TierServiceConfigureRequest) (*TierServiceConfigureResponse, error)
+	Inspect(context.Context, *TierServiceInspectRequest) (*TierServiceInspectResponse, error)
+	DryRun(context.Context, *TierServiceDryRunRequest) (*TierServiceDryRunResponse, error)
+	Explain(context.Context, *TierServiceExplainRequest) (*TierServiceExplainResponse, error)
+	Run(context.Context, *TierServiceRunRequest) (*TierServiceRunResponse, error)
+	Pause(context.Context, *TierServicePauseRequest) (*TierServicePauseResponse, error)
+	Resume(context.Context, *TierServiceResumeRequest) (*TierServiceResumeResponse, error)
+	mustEmbedUnimplementedTierServiceServer()
 }
 
-// UnimplementedTierServer must be embedded to have
+// UnimplementedTierServiceServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedTierServer struct{}
+type UnimplementedTierServiceServer struct{}
 
-func (UnimplementedTierServer) Configure(context.Context, *TierConfigureRequest) (*TierConfigureResponse, error) {
+func (UnimplementedTierServiceServer) Configure(context.Context, *TierServiceConfigureRequest) (*TierServiceConfigureResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Configure not implemented")
 }
-func (UnimplementedTierServer) Inspect(context.Context, *TierInspectRequest) (*TierInspectResponse, error) {
+func (UnimplementedTierServiceServer) Inspect(context.Context, *TierServiceInspectRequest) (*TierServiceInspectResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Inspect not implemented")
 }
-func (UnimplementedTierServer) DryRun(context.Context, *TierDryRunRequest) (*TierDryRunResponse, error) {
+func (UnimplementedTierServiceServer) DryRun(context.Context, *TierServiceDryRunRequest) (*TierServiceDryRunResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DryRun not implemented")
 }
-func (UnimplementedTierServer) Explain(context.Context, *TierExplainRequest) (*TierExplainResponse, error) {
+func (UnimplementedTierServiceServer) Explain(context.Context, *TierServiceExplainRequest) (*TierServiceExplainResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Explain not implemented")
 }
-func (UnimplementedTierServer) Run(context.Context, *TierRunRequest) (*TierRunResponse, error) {
+func (UnimplementedTierServiceServer) Run(context.Context, *TierServiceRunRequest) (*TierServiceRunResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Run not implemented")
 }
-func (UnimplementedTierServer) Pause(context.Context, *TierPauseRequest) (*TierPauseResponse, error) {
+func (UnimplementedTierServiceServer) Pause(context.Context, *TierServicePauseRequest) (*TierServicePauseResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Pause not implemented")
 }
-func (UnimplementedTierServer) Resume(context.Context, *TierResumeRequest) (*TierResumeResponse, error) {
+func (UnimplementedTierServiceServer) Resume(context.Context, *TierServiceResumeRequest) (*TierServiceResumeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Resume not implemented")
 }
-func (UnimplementedTierServer) mustEmbedUnimplementedTierServer() {}
-func (UnimplementedTierServer) testEmbeddedByValue()              {}
+func (UnimplementedTierServiceServer) mustEmbedUnimplementedTierServiceServer() {}
+func (UnimplementedTierServiceServer) testEmbeddedByValue()                     {}
 
-// UnsafeTierServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to TierServer will
+// UnsafeTierServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to TierServiceServer will
 // result in compilation errors.
-type UnsafeTierServer interface {
-	mustEmbedUnimplementedTierServer()
+type UnsafeTierServiceServer interface {
+	mustEmbedUnimplementedTierServiceServer()
 }
 
-func RegisterTierServer(s grpc.ServiceRegistrar, srv TierServer) {
-	// If the following call panics, it indicates UnimplementedTierServer was
+func RegisterTierServiceServer(s grpc.ServiceRegistrar, srv TierServiceServer) {
+	// If the following call panics, it indicates UnimplementedTierServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&Tier_ServiceDesc, srv)
+	s.RegisterService(&TierService_ServiceDesc, srv)
 }
 
-func _Tier_Configure_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TierConfigureRequest)
+func _TierService_Configure_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TierServiceConfigureRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(TierServer).Configure(ctx, in)
+		return srv.(TierServiceServer).Configure(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Tier_Configure_FullMethodName,
+		FullMethod: TierService_Configure_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(TierServer).Configure(ctx, req.(*TierConfigureRequest))
+		return srv.(TierServiceServer).Configure(ctx, req.(*TierServiceConfigureRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Tier_Inspect_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TierInspectRequest)
+func _TierService_Inspect_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TierServiceInspectRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(TierServer).Inspect(ctx, in)
+		return srv.(TierServiceServer).Inspect(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Tier_Inspect_FullMethodName,
+		FullMethod: TierService_Inspect_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(TierServer).Inspect(ctx, req.(*TierInspectRequest))
+		return srv.(TierServiceServer).Inspect(ctx, req.(*TierServiceInspectRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Tier_DryRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TierDryRunRequest)
+func _TierService_DryRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TierServiceDryRunRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(TierServer).DryRun(ctx, in)
+		return srv.(TierServiceServer).DryRun(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Tier_DryRun_FullMethodName,
+		FullMethod: TierService_DryRun_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(TierServer).DryRun(ctx, req.(*TierDryRunRequest))
+		return srv.(TierServiceServer).DryRun(ctx, req.(*TierServiceDryRunRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Tier_Explain_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TierExplainRequest)
+func _TierService_Explain_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TierServiceExplainRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(TierServer).Explain(ctx, in)
+		return srv.(TierServiceServer).Explain(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Tier_Explain_FullMethodName,
+		FullMethod: TierService_Explain_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(TierServer).Explain(ctx, req.(*TierExplainRequest))
+		return srv.(TierServiceServer).Explain(ctx, req.(*TierServiceExplainRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Tier_Run_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TierRunRequest)
+func _TierService_Run_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TierServiceRunRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(TierServer).Run(ctx, in)
+		return srv.(TierServiceServer).Run(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Tier_Run_FullMethodName,
+		FullMethod: TierService_Run_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(TierServer).Run(ctx, req.(*TierRunRequest))
+		return srv.(TierServiceServer).Run(ctx, req.(*TierServiceRunRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Tier_Pause_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TierPauseRequest)
+func _TierService_Pause_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TierServicePauseRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(TierServer).Pause(ctx, in)
+		return srv.(TierServiceServer).Pause(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Tier_Pause_FullMethodName,
+		FullMethod: TierService_Pause_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(TierServer).Pause(ctx, req.(*TierPauseRequest))
+		return srv.(TierServiceServer).Pause(ctx, req.(*TierServicePauseRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Tier_Resume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TierResumeRequest)
+func _TierService_Resume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TierServiceResumeRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(TierServer).Resume(ctx, in)
+		return srv.(TierServiceServer).Resume(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Tier_Resume_FullMethodName,
+		FullMethod: TierService_Resume_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(TierServer).Resume(ctx, req.(*TierResumeRequest))
+		return srv.(TierServiceServer).Resume(ctx, req.(*TierServiceResumeRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// Tier_ServiceDesc is the grpc.ServiceDesc for Tier service.
+// TierService_ServiceDesc is the grpc.ServiceDesc for TierService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var Tier_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "terrabase.v1.Tier",
-	HandlerType: (*TierServer)(nil),
+var TierService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "terrabase.v1.TierService",
+	HandlerType: (*TierServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Configure",
-			Handler:    _Tier_Configure_Handler,
+			Handler:    _TierService_Configure_Handler,
 		},
 		{
 			MethodName: "Inspect",
-			Handler:    _Tier_Inspect_Handler,
+			Handler:    _TierService_Inspect_Handler,
 		},
 		{
 			MethodName: "DryRun",
-			Handler:    _Tier_DryRun_Handler,
+			Handler:    _TierService_DryRun_Handler,
 		},
 		{
 			MethodName: "Explain",
-			Handler:    _Tier_Explain_Handler,
+			Handler:    _TierService_Explain_Handler,
 		},
 		{
 			MethodName: "Run",
-			Handler:    _Tier_Run_Handler,
+			Handler:    _TierService_Run_Handler,
 		},
 		{
 			MethodName: "Pause",
-			Handler:    _Tier_Pause_Handler,
+			Handler:    _TierService_Pause_Handler,
 		},
 		{
 			MethodName: "Resume",
-			Handler:    _Tier_Resume_Handler,
+			Handler:    _TierService_Resume_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

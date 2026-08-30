@@ -380,7 +380,7 @@ impl Member {
         };
         let engine = lock_unpoisoned(&entry.engine).clone();
         match engine {
-            Some(engine) => Ok(DatabaseLease { entry, engine, global, local }),
+            Some(engine) => Ok(DatabaseLease { entry, engine, _global: global, _local: local }),
             None => {
                 drop(local);
                 drop(global);
@@ -445,8 +445,8 @@ impl Member {
 pub struct DatabaseLease {
     entry: Arc<DatabaseEntry>,
     engine: Arc<Engine>,
-    global: AdmissionPermit,
-    local: AdmissionPermit,
+    _global: AdmissionPermit,
+    _local: AdmissionPermit,
 }
 
 impl DatabaseLease {

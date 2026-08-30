@@ -35,6 +35,7 @@ the workspace owner's 2026-08-30 direction.
 | Implementation language | The engine, Studio, benchmark driver, and repository-owned runtime services use Rust. The repository-local `terrabase-go` client and its generated Go gRPC bindings are the explicit exception. The production Database gateway is implemented in Go and uses this client. |
 | Engine | TerraBase owns storage, WAL, compaction, indexing, query execution, causality, CRDT merge, replication, repair, membership acceptance, backup, restore, deletion, reactive view semantics, and authoritative usage facts. |
 | Member composition | One Rust Member process owns every engine and TBEP plane. A shared DBaaS Member multiplexes separate per-database engine locations, journals, keys, backups, quotas, and recovery state. `ts-orchestrator` may move a database to dedicated Members without changing its format or API. ADR 0038 owns the composition. |
+| Multi-tenant authorization | The Go gateway authenticates callers and checks public actions. TerraBase independently enforces immutable `PrincipalUlid`, `TenantUlid`, `ProjectUlid`, and `DatabaseUlid` scope, current durable policy, revocation generation, and resource limits from a short-lived signed principal context. ADR 0039 owns the boundary. |
 | Private protocol | Private TBEP is protobuf/gRPC over HTTP/2. Production TCP requires TLS 1.3 and mutual workload authentication. A dedicated gateway CA and exact SPIFFE URI SAN allow-list bind gateway identity. `terrabase-go` is the only network client. UDS is local-only. ADR 0025 owns the contract. |
 | Reactive semantics | TerraBase owns the transport-independent reactive result-view state machine and exposes it only to the Go gateway through private TBEP gRPC. Reactive revisions and checkpoints derive only from the durable engine publication journal. It has no public transport or codec. |
 | Durability | `GlobalDurable` fails closed for fewer than two active Regions. No local or single-Region acknowledgement may be presented as Region-loss RPO 0. |
@@ -115,6 +116,11 @@ The executable audit also found release-blocking composition gaps:
   still hosts a single standalone `EngineHost`, cannot become ready without
   the complete clustered data plane, and needs live TLS 1.3 refusal and SPIFFE
   certificate tests on the stable candidate.
+- TBEP currently binds the gateway principal and tenant, Project, and database
+  as strings repeated in RPC metadata. It does not yet carry the canonical
+  16-byte identities or signed end-user `PrincipalContext` required by ADRs
+  0027 and 0039. The string-only binding is not a production authorization
+  boundary.
 - The checkout is changing under several concurrent implementation and test
   processes. No clean full-gate result is recorded for the resulting candidate.
 
@@ -144,6 +150,7 @@ continues to change.
 | PRG-P0-08 | P0 | Make every repository-owned deliverable part of the strict release gate. | Clean formatting, warning-free Clippy, tests and docs for the root workspace, Studio, benchmark driver, and `terrabase-go`, plus schema/binding drift and dependency checks. |
 | PRG-P0-09 | P0 | Implement production observability. | Prometheus exposition contract, stable bounded labels, redaction tests, health/readiness separation, Grafana dashboard and alerts, failure tests, and an operator runbook. |
 | PRG-P0-10 | P0 | Close the private Studio release boundary. | Vendored Datastar, Basecoat, and Monaco assets resolve without network access; JSON diagnostics work; every destructive or replacement action has exactly one target and phrase confirmation enforced by the server; CSP, same-origin, body-bound, and browser tests pass. |
+| PRG-P0-11 | P0 | Implement the multi-tenant authorization boundary in ADR 0039. | Canonical binary scope identities, signed short-lived principal contexts, durable policy generations, fail-closed engine enforcement, revocation, cross-tenant denial, fair admission, redaction, and live multi-user Go-gateway evidence pass through the complete Member host. |
 | PRG-P1-03 | P1 | Qualify the GRU, SFO, and FRA engine topology. | RF=2 TerraBase placement, independent failure domains, Member and Region loss, and recovery receipts. |
 | PRG-P1-05 | P1 | Establish decision-grade performance and isolation evidence. | Approved benchmark policy and baseline, noisy-tenant budgets, workload-family coverage, architecture results, capacity, cost, and regression reports. |
 | PRG-P1-06 | P1 | Complete the external GA assurance gates. | `ts-orchestrator` supplies native x86_64 and ARM64 topology, private-network, OCI Vault, recovery, rollback, incident-drill, thirty-day soak, and promotion receipts; the scoped SOC 2 Type I report is complete and the Type II observation period is active. |
@@ -166,6 +173,7 @@ continues to change.
 | Studio JSON tooling | Monaco, its JSON worker, Datastar, and Basecoat are vendored and served from the Studio binary. Monaco uses the `terrabase-midnight` theme, JSON diagnostics, formatting, folding, and bracket guides. |
 | Studio confirmations | Delete, replacement, restore, compaction, topology, tier, index, maintenance, and deletion-completion actions require one exact target and one exact action phrase. Duplicate confirmation fields fail before form decoding. |
 | External qualification | Native architecture, OCI topology, fault-domain, private network, SOC 2, thirty-day soak, and promotion work belongs to `ts-orchestrator`; TerraBase must first hand it a stable code-complete candidate. |
+| Multi-user DBaaS security | The gateway and TerraBase both enforce their own boundary. Scope uses canonical ULIDs, logical clients bind one short-lived signed principal context, engine policy and reactive revocation fail closed, and shared Members enforce hierarchical fair limits. |
 
 The owner has already fixed the readiness boundary: this repository must hand
 `ts-orchestrator` a code-complete candidate that can accept platform users.

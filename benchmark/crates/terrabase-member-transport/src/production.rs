@@ -212,6 +212,7 @@ impl MemberWorkloadIdentity {
 fn validate_path_segment(value: &str) -> Result<(), ProductionTransportError> {
     if value.is_empty()
         || value.len() > 128
+        || matches!(value, "." | "..")
         || value
             .bytes()
             .any(|byte| !(byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_')))
@@ -248,6 +249,7 @@ impl ProductionPeerAdmission {
             || server_name.len() > 253
             || server_name != server_name.trim()
             || server_name.chars().any(char::is_control)
+            || rustls::pki_types::ServerName::try_from(server_name).is_err()
         {
             return Err(ProductionTransportError::InvalidConfiguration);
         }
@@ -756,10 +758,9 @@ impl ProductionQuicEndpoint {
         let peer_slots = config.peers.len().saturating_mul(MAX_CONNECTIONS_PER_PEER).max(1);
         let incoming_buffer_size = u64::try_from(config.limits.max_queued_bytes)
             .map_err(|_| ProductionTransportError::InvalidLimits)?;
-        let incoming_buffer_size_total = u64::try_from(
-            config.limits.max_queued_bytes.saturating_mul(peer_slots),
-        )
-        .map_err(|_| ProductionTransportError::InvalidLimits)?;
+        let incoming_buffer_size_total =
+            u64::try_from(config.limits.max_queued_bytes.saturating_mul(peer_slots))
+                .map_err(|_| ProductionTransportError::InvalidLimits)?;
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_crypto));
         server_config
             .max_incoming(peer_slots)
@@ -977,8 +978,14 @@ impl ProductionQuicEndpoint {
         self.state.draining.store(true, Ordering::Release);
         let deadline = self.config.limits.drain_timeout;
         let drained = tokio::time::timeout(deadline, async {
-            while self.state.active_operations.load(Ordering::Acquire) != 0 {
-                self.state.changed.notified().await;
+            loop {
+                let notified = self.state.changed.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if self.state.active_operations.load(Ordering::Acquire) == 0 {
+                    break;
+                }
+                notified.await;
             }
         })
         .await
@@ -1443,6 +1450,9 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::time::Duration;
 
+    use rcgen::{CertificateParams, Ia5String, KeyPair, SanType};
+    use rustls::pki_types::CertificateDer;
+
     use super::{
         ConnectionHello, MemberWorkloadIdentity, ProductionFrameQueue, ProductionPeerAdmission,
         ProductionRegion, ProductionTransportConfig, ProductionTransportError,
@@ -1487,6 +1497,16 @@ mod tests {
         .expect("config")
     }
 
+    fn certificate_with_uri_sans(uris: &[&str]) -> CertificateDer<'static> {
+        let key = KeyPair::generate().expect("test key");
+        let mut params = CertificateParams::default();
+        params.subject_alt_names = uris
+            .iter()
+            .map(|uri| SanType::URI(Ia5String::try_from(*uri).expect("test URI is valid IA5 text")))
+            .collect();
+        CertificateDer::from(params.self_signed(&key).expect("test certificate").der().to_vec())
+    }
+
     #[test]
     fn workload_identity_is_an_exact_namespace() {
         let identity = MemberWorkloadIdentity::try_new("prod", "cluster-a", "member-a")
@@ -1500,10 +1520,35 @@ mod tests {
             "spiffe://terrascale.tech/prod/database-gateway/cluster-a/member-a",
             "spiffe://terrascale.tech/prod/terrabase-member/cluster-a/member-a/extra",
             "spiffe://other.example/prod/terrabase-member/cluster-a/member-a",
+            "spiffe://terrascale.tech/../terrabase-member/cluster-a/member-a",
         ] {
             assert_eq!(
                 MemberWorkloadIdentity::parse(invalid).err(),
                 Some(ProductionTransportError::InvalidWorkloadIdentity)
+            );
+        }
+    }
+
+    #[test]
+    fn certificate_requires_exactly_one_canonical_member_uri_san() {
+        let expected = MemberWorkloadIdentity::try_new("prod", "cluster-a", "member-a")
+            .expect("canonical identity");
+        let valid = certificate_with_uri_sans(&[expected.as_str()]);
+        assert_eq!(MemberWorkloadIdentity::from_leaf_certificate(&valid), Ok(expected));
+
+        for invalid in [
+            certificate_with_uri_sans(&[]),
+            certificate_with_uri_sans(&[
+                "spiffe://terrascale.tech/prod/terrabase-member/cluster-a/member-a",
+                "spiffe://terrascale.tech/prod/terrabase-member/cluster-a/member-b",
+            ]),
+            certificate_with_uri_sans(&[
+                "spiffe://terrascale.tech/prod/database-gateway/cluster-a/member-a",
+            ]),
+        ] {
+            assert_eq!(
+                MemberWorkloadIdentity::from_leaf_certificate(&invalid),
+                Err(ProductionTransportError::InvalidPeerCertificate)
             );
         }
     }
@@ -1566,6 +1611,22 @@ mod tests {
                 )
                 .err(),
                 Some(ProductionTransportError::InvalidConfiguration)
+            );
+        }
+    }
+
+    #[test]
+    fn peer_route_requires_a_tls_server_name() {
+        let identity = MemberWorkloadIdentity::try_new("prod", "cluster-a", "member-b").unwrap();
+        for invalid in ["not a server name", "member/b", "[broken"] {
+            assert_eq!(
+                ProductionPeerAdmission::try_new(
+                    identity.clone(),
+                    ProductionRegion::Sfo,
+                    "127.0.0.1:7444".parse().unwrap(),
+                    invalid,
+                ),
+                Err(ProductionTransportError::InvalidConfiguration)
             );
         }
     }

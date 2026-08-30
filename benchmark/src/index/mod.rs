@@ -1597,9 +1597,8 @@ impl IndexCatalog {
             | (Op::Stop, State::Paused)
             | (Op::Enable, State::Normal | State::Paused)
             | (Op::Disable, State::Disabled) => None,
-            // V1's indexing thread refuses to start in Disabled and Error
-            // (Index.cs:1040-1041); nothing indexes there, so nothing can
-            // pause, disable, or be cleared.
+            // Nothing indexes in Disabled or Error, so nothing can pause,
+            // disable, or be cleared.
             _ => {
                 return Err(operations::IndexOperationError::IllegalTransition { from, operation });
             }

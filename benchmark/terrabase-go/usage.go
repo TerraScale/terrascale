@@ -131,14 +131,14 @@ const (
 	UsageRecordPublicEgressBytes
 )
 
-func (meter UsageRecordMeter) proto() (v1.UsageServiceRecordMeter, bool) {
+func (meter UsageRecordMeter) proto() (v1.UsageRecordMeter, bool) {
 	switch meter {
 	case UsageRecordAdmittedRequestUnits:
-		return v1.UsageServiceRecordMeter_USAGE_RECORD_METER_ADMITTED_REQUEST_UNITS, true
+		return v1.UsageRecordMeter_USAGE_RECORD_METER_ADMITTED_REQUEST_UNITS, true
 	case UsageRecordPublicEgressBytes:
-		return v1.UsageServiceRecordMeter_USAGE_RECORD_METER_PUBLIC_EGRESS_BYTES, true
+		return v1.UsageRecordMeter_USAGE_RECORD_METER_PUBLIC_EGRESS_BYTES, true
 	default:
-		return v1.UsageServiceRecordMeter_USAGE_RECORD_METER_UNSPECIFIED, false
+		return v1.UsageRecordMeter_USAGE_RECORD_METER_UNSPECIFIED, false
 	}
 }
 
@@ -217,7 +217,7 @@ func (c *Client) UsageRecord(ctx context.Context, input UsageRecordInput) (Usage
 	if err != nil {
 		return UsageRecordReceipt{}, err
 	}
-	response, err := c.usage.Record(ctx, &v1.UsageServiceRecordRequest{
+	response, err := c.usage.Record(ctx, &v1.UsageRecordRequest{
 		Meter:            meter,
 		Project:          input.Project,
 		Database:         input.Database,
@@ -327,7 +327,7 @@ func (c *Client) UsageExport(ctx context.Context, request UsageExportRequest) (U
 	if len(request.Continuation) > maxUsageContinuationBytes {
 		return UsagePage{}, localError("the usage continuation exceeds %d bytes", maxUsageContinuationBytes)
 	}
-	wire := &v1.UsageServiceExportRequest{
+	wire := &v1.UsageExportRequest{
 		PageSize:     request.PageSize,
 		Continuation: append([]byte(nil), request.Continuation...),
 	}
@@ -350,7 +350,7 @@ func (c *Client) UsageExport(ctx context.Context, request UsageExportRequest) (U
 	return c.usagePageFrom(response, request.PageSize)
 }
 
-func (c *Client) usagePageFrom(response *v1.UsageServiceExportResponse, pageSize uint32) (UsagePage, error) {
+func (c *Client) usagePageFrom(response *v1.UsageExportResponse, pageSize uint32) (UsagePage, error) {
 	if response == nil || len(response.GetFacts()) > maxUsageFacts || len(response.GetFacts()) > int(pageSize) {
 		return UsagePage{}, contractError("the engine returned an invalid usage page size")
 	}

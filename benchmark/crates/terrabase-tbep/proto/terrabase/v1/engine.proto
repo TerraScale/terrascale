@@ -39,8 +39,8 @@ option go_package = "terrascale.tech/terrabase-go/terrabase/v1;v1";
 
 // The closed null marker (mirrors google.protobuf.NullValue).
 enum NullValue {
-  NULL_UNSPECIFIED = 0;
-  NULL = 1;
+  NULL_VALUE_UNSPECIFIED = 0;
+  NULL_VALUE_NULL = 1;
 }
 
 // One ordered map entry of an object value. Object fields are canonically
@@ -80,18 +80,18 @@ message ValueMap {
 
 // The acknowledgement discipline of a committed mutation.
 enum Acknowledgement {
-  ACK_UNSPECIFIED = 0;
-  ACK_REGIONAL_QUORUM = 1;
-  ACK_GLOBAL_QUORUM = 2;
-  ACK_BACKUP = 3;
+  ACKNOWLEDGEMENT_UNSPECIFIED = 0;
+  ACKNOWLEDGEMENT_REGIONAL_QUORUM = 1;
+  ACKNOWLEDGEMENT_GLOBAL_QUORUM = 2;
+  ACKNOWLEDGEMENT_BACKUP = 3;
 }
 
 // Whether a commit reached a backup tier.
 enum BackupOutcome {
-  BACKUP_UNSPECIFIED = 0;
-  BACKUP_NONE = 1;
-  BACKUP_FULL = 2;
-  BACKUP_PARTIAL = 3;
+  BACKUP_OUTCOME_UNSPECIFIED = 0;
+  BACKUP_OUTCOME_NONE = 1;
+  BACKUP_OUTCOME_FULL = 2;
+  BACKUP_OUTCOME_PARTIAL = 3;
 }
 
 // The read consistency level.
@@ -331,19 +331,19 @@ message BatchWrite {
   string operation_id = 3; // <= 128 bytes.
 }
 
-message DocumentReadRequest {
+message EngineServiceDocumentReadRequest {
   string collection = 1; // <= 64 bytes.
   string document = 2;   // <= 64 bytes.
   ReadLevel level = 3;
 }
 
-message DocumentReadResponse {
+message EngineServiceDocumentReadResponse {
   bool found = 1;
   DocumentBody document = 2;
   uint64 position = 3;
 }
 
-message DocumentWriteRequest {
+message EngineServiceDocumentWriteRequest {
   DocumentPut document = 1;
   ExpectedVersion expected = 2;
   string operation_id = 3; // <= 128 bytes.
@@ -351,11 +351,11 @@ message DocumentWriteRequest {
   UsageAdmissionContext usage = 5;
 }
 
-message DocumentWriteResponse {
+message EngineServiceDocumentWriteResponse {
   WriteOutcome outcome = 1;
 }
 
-message DocumentDeleteRequest {
+message EngineServiceDocumentDeleteRequest {
   string collection = 1; // <= 64 bytes.
   string document = 2;   // <= 64 bytes.
   ExpectedVersion expected = 3;
@@ -364,43 +364,43 @@ message DocumentDeleteRequest {
   UsageAdmissionContext usage = 6;
 }
 
-message DocumentDeleteResponse {
+message EngineServiceDocumentDeleteResponse {
   WriteOutcome outcome = 1;
 }
 
-message DocumentBatchRequest {
+message EngineServiceDocumentBatchRequest {
   repeated BatchWrite items = 1; // 1..=256 items.
   Acknowledgement ack = 2;
   UsageAdmissionContext usage = 3;
 }
 
-message DocumentBatchResponse {
+message EngineServiceDocumentBatchResponse {
   WriteOutcome outcome = 1;
 }
 
-message QueryExecuteRequest {
+message EngineServiceQueryExecuteRequest {
   uint64 query_id = 1;
   string text = 2; // 1..=4096 bytes.
   uint32 max_items = 3;
   ReadLevel level = 4;
 }
 
-message QueryExecuteResponse {
+message EngineServiceQueryExecuteResponse {
   repeated DocumentBody documents = 1; // <= max_items.
   uint32 count = 2;
   QueryTerminal terminal = 3;
   uint64 position = 4;
 }
 
-message QueryCancelRequest {
+message EngineServiceQueryCancelRequest {
   uint64 query_id = 1;
 }
 
-message QueryCancelResponse {
+message EngineServiceQueryCancelResponse {
   CancelOutcome outcome = 1;
 }
 
-message FamilyReadRequest {
+message EngineServiceFamilyReadRequest {
   string family = 1;         // closed vocabulary: attachment, counter,
                              // time_series, revisions, compare_exchange,
                              // identities, expiration_refresh, archival.
@@ -409,12 +409,12 @@ message FamilyReadRequest {
   bytes request = 4;         // <= 16 MiB.
 }
 
-message FamilyReadResponse {
+message EngineServiceFamilyReadResponse {
   string response_codec = 1;
   bytes response = 2; // <= 16 MiB.
 }
 
-message FamilyWriteRequest {
+message EngineServiceFamilyWriteRequest {
   string family = 1;
   string name = 2;
   string request_codec = 3;
@@ -423,7 +423,7 @@ message FamilyWriteRequest {
   UsageAdmissionContext usage = 6;
 }
 
-message FamilyWriteResponse {
+message EngineServiceFamilyWriteResponse {
   string response_codec = 1;
   bytes response = 2;
 }
@@ -432,32 +432,32 @@ message FamilyWriteResponse {
 // Backbone subscriptions
 // ---------------------------------------------------------------------------
 
-message BackboneSubscribeRequest {
+message BackboneServiceSubscribeRequest {
   uint64 subscription_id = 1;
   repeated string collections = 2; // <= 64 items, each <= 64 bytes.
   SubscriptionStart from = 3;
 }
 
-message BackboneSubscribeResponse {
+message BackboneServiceSubscribeResponse {
   uint64 subscription_id = 1;
   uint64 start_sequence = 2;
 }
 
-message BackboneAcknowledgeRequest {
+message BackboneServiceAcknowledgeRequest {
   uint64 subscription_id = 1;
   uint64 through_sequence = 2;
 }
 
-message BackboneAcknowledgeResponse {
+message BackboneServiceAcknowledgeResponse {
   uint64 subscription_id = 1;
   uint64 acknowledged_through = 2;
 }
 
-message BackboneUnsubscribeRequest {
+message BackboneServiceUnsubscribeRequest {
   uint64 subscription_id = 1;
 }
 
-message BackboneUnsubscribeResponse {
+message BackboneServiceUnsubscribeResponse {
   uint64 subscription_id = 1;
 }
 
@@ -485,9 +485,9 @@ message SubscriptionClosed {
 
 // The server-stream event of one backbone subscription: the initial
 // confirmation, then ordered batches, triggers, and the close frame.
-message BackboneStreamEvent {
+message SubscribeResponse {
   oneof event {
-    BackboneSubscribeResponse subscribed = 1;
+    BackboneServiceSubscribeResponse subscribed = 1;
     SubscriptionBatch batch = 2;
     TriggerNotification trigger = 3;
     SubscriptionClosed closed = 4;
@@ -498,23 +498,23 @@ message BackboneStreamEvent {
 // Sync sessions
 // ---------------------------------------------------------------------------
 
-message SyncSessionSetupRequest {
+message SyncServiceSessionSetupRequest {
   string collection = 1; // <= 64 bytes.
   bytes resume = 2;       // <= 1057 bytes; empty starts fresh.
 }
 
-message SyncSessionSetupResponse {
+message SyncServiceSessionSetupResponse {
   uint64 session_id = 1;
   bytes checkpoint = 2;    // <= 1057 bytes.
   bytes retained_floor = 3; // <= 1057 bytes.
 }
 
-message SyncDeltaPullRequest {
+message SyncServiceDeltaPullRequest {
   uint64 session_id = 1;
   bytes from = 2; // <= 1057 bytes.
 }
 
-message SyncDeltaPullResponse {
+message SyncServiceDeltaPullResponse {
   uint64 session_id = 1;
   string payload_codec = 2;
   bytes payload = 3;  // <= 16 MiB.
@@ -523,43 +523,43 @@ message SyncDeltaPullResponse {
   bool single_commit_oversize = 6;
 }
 
-message SyncSnapshotPullRequest {
+message SyncServiceSnapshotPullRequest {
   uint64 session_id = 1;
 }
 
-message SyncSnapshotPullResponse {
+message SyncServiceSnapshotPullResponse {
   uint64 session_id = 1;
   string payload_codec = 2;
   bytes payload = 3;
   bytes checkpoint = 4;
 }
 
-message SyncCheckpointAckRequest {
+message SyncServiceCheckpointAckRequest {
   uint64 session_id = 1;
   bytes checkpoint = 2; // <= 1057 bytes.
 }
 
-message SyncCheckpointAckResponse {
+message SyncServiceCheckpointAckResponse {
   uint64 session_id = 1;
 }
 
-message SyncMutationSubmitRequest {
+message SyncServiceMutationSubmitRequest {
   uint64 session_id = 1;
   string document = 2; // <= 64 bytes.
   SyncChange change = 3;
   UsageAdmissionContext usage = 4;
 }
 
-message SyncMutationSubmitResponse {
+message SyncServiceMutationSubmitResponse {
   uint64 session_id = 1;
   MutationOutcome outcome = 2;
 }
 
-message SyncSessionCloseRequest {
+message SyncServiceSessionCloseRequest {
   uint64 session_id = 1;
 }
 
-message SyncSessionCloseResponse {
+message SyncServiceSessionCloseResponse {
   uint64 session_id = 1;
 }
 
@@ -719,32 +719,32 @@ message MigrationReceipt {
   bool already_applied = 13;
 }
 
-message SchemaDeclareRequest {
+message SchemaServiceDeclareRequest {
   string collection = 1; // <= 64 bytes.
   Value schema = 2;
   string operation_id = 3; // <= 128 bytes.
 }
 
-message SchemaDeclareResponse {
+message SchemaServiceDeclareResponse {
   uint64 enforced_version = 1;
   uint32 rule_count = 2;
 }
 
-message SchemaStatusRequest {
+message SchemaServiceStatusRequest {
   string collection = 1; // <= 64 bytes.
 }
 
-message SchemaStatusResponse {
+message SchemaServiceStatusResponse {
   uint64 enforced_version = 1;
   uint32 rule_count = 2;
 }
 
-message SchemaValidateRequest {
+message SchemaServiceValidateRequest {
   string collection = 1; // <= 64 bytes.
   Value document = 2;
 }
 
-message SchemaValidateResponse {
+message SchemaServiceValidateResponse {
   uint64 enforced_version = 1;
   bool valid = 2;
   repeated SchemaViolation violations = 3; // <= 256 items.
@@ -780,7 +780,7 @@ message MigrationApplyResponse {
 // Replication observation
 // ---------------------------------------------------------------------------
 
-message ReplicationConflictsRequest {}
+message ReplicationServiceConflictsRequest {}
 
 // One causal-clock stamp of a conflict participant.
 message ClockStamp {
@@ -811,12 +811,12 @@ message ConflictRecord {
   ConflictOutcome outcome = 5;
 }
 
-message ReplicationConflictsResponse {
+message ReplicationServiceConflictsResponse {
   string member = 1;
   repeated ConflictRecord records = 2; // <= 256 items.
 }
 
-message ReplicationFencedRequest {}
+message ReplicationServiceFencedRequest {}
 
 // One observed fenced range.
 message FencedRecord {
@@ -826,12 +826,12 @@ message FencedRecord {
   string source = 4;      // <= 128 bytes.
 }
 
-message ReplicationFencedResponse {
+message ReplicationServiceFencedResponse {
   string member = 1;
   repeated FencedRecord records = 2; // <= 256 items.
 }
 
-message ReplicationDepositionsRequest {}
+message ReplicationServiceDepositionsRequest {}
 
 // One observed leadership deposition.
 message DepositionRecord {
@@ -841,19 +841,19 @@ message DepositionRecord {
   string new_owner = 4;  // <= 128 bytes.
 }
 
-message ReplicationDepositionsResponse {
+message ReplicationServiceDepositionsResponse {
   string member = 1;
   repeated DepositionRecord records = 2; // <= 256 items.
 }
 
-message ReplicationCursorRequest {}
+message ReplicationServiceCursorRequest {}
 
-message ReplicationCursorResponse {
+message ReplicationServiceCursorResponse {
   string member = 1;
   uint64 position = 2;
 }
 
-message ReplicationHealthRequest {}
+message ReplicationServiceHealthRequest {}
 
 // The closed replication-status vocabulary.
 enum ReplicationStatus {
@@ -867,12 +867,12 @@ enum ReplicationStatus {
   REPLICATION_STATUS_UNKNOWN = 7;
 }
 
-message ReplicationHealthResponse {
+message ReplicationServiceHealthResponse {
   string member = 1;
   ReplicationStatus status = 2;
 }
 
-message ReplicationDenialsRequest {}
+message ReplicationServiceDenialsRequest {}
 
 // Which seam observed a cross-tenant denial.
 enum DenialSeam {
@@ -889,7 +889,7 @@ message DenialRecord {
   string counterparty = 4;     // <= 128 bytes.
 }
 
-message ReplicationDenialsResponse {
+message ReplicationServiceDenialsResponse {
   string member = 1;
   repeated DenialRecord records = 2; // <= 256 items.
 }
@@ -898,14 +898,14 @@ message ReplicationDenialsResponse {
 // Topology, administration, supervision
 // ---------------------------------------------------------------------------
 
-message ChannelBindRequest {
+message ChannelServiceBindRequest {
   string principal = 1; // 1..=128 bytes.
   string tenant = 2;    // 1..=64 bytes.
   string project = 3;   // 1..=255 bytes.
   string database = 4;  // 1..=255 bytes.
 }
 
-message ChannelBindResponse {
+message ChannelServiceBindResponse {
   string principal = 1;
   string tenant = 2;
   uint64 serving_instance = 3;
@@ -913,18 +913,18 @@ message ChannelBindResponse {
   string database = 5;
 }
 
-message TopologyReadRequest {}
+message MaintenanceServiceTopologyReadRequest {}
 
-message TopologyReadResponse {
+message MaintenanceServiceTopologyReadResponse {
   BindingKind binding = 1;
   repeated string subsystems = 2; // <= 16 items.
   bool engine_topology_available = 3;
   ClusterMode cluster_mode = 4;
 }
 
-message AdminStatusRequest {}
+message MaintenanceServiceAdminStatusRequest {}
 
-message AdminStatusResponse {
+message MaintenanceServiceAdminStatusResponse {
   string registry_version = 1;
   uint64 frames_served = 2;
   uint32 sessions = 3;
@@ -932,20 +932,20 @@ message AdminStatusResponse {
   uint32 scopes = 5;
 }
 
-message SupervisionHealthRequest {}
+message MaintenanceServiceSupervisionHealthRequest {}
 
-message SupervisionHealthResponse {
+message MaintenanceServiceSupervisionHealthResponse {
   HealthState state = 1;
   uint32 sessions = 2;
   uint32 subscriptions = 3;
   uint64 frames_served = 4;
 }
 
-message SupervisionShutdownRequest {
+message MaintenanceServiceSupervisionShutdownRequest {
   ShutdownReason reason = 1;
 }
 
-message SupervisionShutdownResponse {
+message MaintenanceServiceSupervisionShutdownResponse {
   HealthState state = 1;
   uint32 in_flight = 2;
 }
@@ -1032,7 +1032,7 @@ enum UsageRecordMeter {
   USAGE_RECORD_METER_PUBLIC_EGRESS_BYTES = 2;
 }
 
-message UsageRecordRequest {
+message UsageServiceRecordRequest {
   UsageRecordMeter meter = 1;
   string project = 2;       // 1..=255 bytes.
   string database = 3;      // 1..=255 bytes.
@@ -1046,7 +1046,7 @@ message UsageRecordRequest {
   string integer_units = 9;
 }
 
-message UsageRecordResponse {
+message UsageServiceRecordResponse {
   uint64 sequence = 1;
   uint64 replica_epoch = 2;
   bool already_recorded = 3;
@@ -1081,7 +1081,7 @@ message UsageFact {
 // Reads one stable, tenant-bound snapshot. Window bounds are an all-or-none
 // half-open pair. The continuation is opaque and bound to the tenant, exact
 // filters, and snapshot sequence selected by the first page.
-message UsageExportRequest {
+message UsageServiceExportRequest {
   optional uint64 window_start_millis = 1;
   optional uint64 window_end_millis = 2;
   uint32 page_size = 3;   // 1..=256 facts.
@@ -1091,7 +1091,7 @@ message UsageExportRequest {
 // Facts are ordered by (sequence, minting_rule, fact_id). An empty
 // continuation completes the snapshot. Facts committed after
 // snapshot_sequence are excluded from every page in this response chain.
-message UsageExportResponse {
+message UsageServiceExportResponse {
   repeated UsageFact facts = 1; // <= 256 facts.
   bytes continuation = 2;       // <= 1024 bytes.
   uint64 snapshot_sequence = 3;
@@ -1101,7 +1101,7 @@ message UsageExportResponse {
 // Tier administration
 // ---------------------------------------------------------------------------
 
-message TierConfigureRequest {
+message TierServiceConfigureRequest {
   string policy_id = 1; // <= 128 bytes.
   uint32 version = 2;
   uint64 nvme_budget_bytes = 3;
@@ -1110,15 +1110,15 @@ message TierConfigureRequest {
   repeated uint64 pinned_segment_ids = 6; // <= 4096 items.
 }
 
-message TierConfigureResponse {
+message TierServiceConfigureResponse {
   string policy_id = 1;
   uint32 version = 2;
   bool paused = 3;
 }
 
-message TierInspectRequest {}
+message TierServiceInspectRequest {}
 
-message TierInspectResponse {
+message TierServiceInspectResponse {
   bool configured = 1;
   bool paused = 2;
   uint64 manifest_epoch = 3;
@@ -1126,33 +1126,33 @@ message TierInspectResponse {
   uint64 nvme_bytes = 5;
 }
 
-message TierDryRunRequest {}
+message TierServiceDryRunRequest {}
 
-message TierDryRunResponse {
+message TierServiceDryRunResponse {
   TierMoveReceipt receipt = 1;
 }
 
-message TierExplainRequest {}
+message TierServiceExplainRequest {}
 
-message TierExplainResponse {
+message TierServiceExplainResponse {
   TierMoveReceipt receipt = 1;
 }
 
-message TierRunRequest {}
+message TierServiceRunRequest {}
 
-message TierRunResponse {
+message TierServiceRunResponse {
   TierMoveReceipt receipt = 1;
 }
 
-message TierPauseRequest {}
+message TierServicePauseRequest {}
 
-message TierPauseResponse {
+message TierServicePauseResponse {
   bool paused = 1;
 }
 
-message TierResumeRequest {}
+message TierServiceResumeRequest {}
 
-message TierResumeResponse {
+message TierServiceResumeResponse {
   bool paused = 1;
 }
 
@@ -1215,83 +1215,83 @@ message RpcStatus {
 
 // Channel identity: validates the application identity the metadata
 // carries and answers the serving instance.
-service Channel {
-  rpc Bind(ChannelBindRequest) returns (ChannelBindResponse);
+service ChannelService {
+  rpc Bind(ChannelServiceBindRequest) returns (ChannelServiceBindResponse);
 }
 
 // Documents, queries, and families.
-service Engine {
-  rpc DocumentRead(DocumentReadRequest) returns (DocumentReadResponse);
-  rpc DocumentWrite(DocumentWriteRequest) returns (DocumentWriteResponse);
-  rpc DocumentDelete(DocumentDeleteRequest) returns (DocumentDeleteResponse);
-  rpc DocumentBatch(DocumentBatchRequest) returns (DocumentBatchResponse);
-  rpc QueryExecute(QueryExecuteRequest) returns (QueryExecuteResponse);
-  rpc QueryCancel(QueryCancelRequest) returns (QueryCancelResponse);
-  rpc FamilyRead(FamilyReadRequest) returns (FamilyReadResponse);
-  rpc FamilyWrite(FamilyWriteRequest) returns (FamilyWriteResponse);
+service EngineService {
+  rpc DocumentRead(EngineServiceDocumentReadRequest) returns (EngineServiceDocumentReadResponse);
+  rpc DocumentWrite(EngineServiceDocumentWriteRequest) returns (EngineServiceDocumentWriteResponse);
+  rpc DocumentDelete(EngineServiceDocumentDeleteRequest) returns (EngineServiceDocumentDeleteResponse);
+  rpc DocumentBatch(EngineServiceDocumentBatchRequest) returns (EngineServiceDocumentBatchResponse);
+  rpc QueryExecute(EngineServiceQueryExecuteRequest) returns (EngineServiceQueryExecuteResponse);
+  rpc QueryCancel(EngineServiceQueryCancelRequest) returns (EngineServiceQueryCancelResponse);
+  rpc FamilyRead(EngineServiceFamilyReadRequest) returns (EngineServiceFamilyReadResponse);
+  rpc FamilyWrite(EngineServiceFamilyWriteRequest) returns (EngineServiceFamilyWriteResponse);
 }
 
 // The backbone change stream.
-service Backbone {
+service BackboneService {
   // Opens one subscription; the stream delivers the confirmation, then
   // ordered batches, triggers, and the close frame. Acknowledgements and
   // teardown ride the sibling unary RPCs on the same channel.
-  rpc Subscribe(BackboneSubscribeRequest) returns (stream BackboneStreamEvent);
-  rpc Acknowledge(BackboneAcknowledgeRequest) returns (BackboneAcknowledgeResponse);
-  rpc Unsubscribe(BackboneUnsubscribeRequest) returns (BackboneUnsubscribeResponse);
+  rpc Subscribe(BackboneServiceSubscribeRequest) returns (stream SubscribeResponse);
+  rpc Acknowledge(BackboneServiceAcknowledgeRequest) returns (BackboneServiceAcknowledgeResponse);
+  rpc Unsubscribe(BackboneServiceUnsubscribeRequest) returns (BackboneServiceUnsubscribeResponse);
 }
 
 // Sync delivery sessions.
-service Sync {
-  rpc SessionSetup(SyncSessionSetupRequest) returns (SyncSessionSetupResponse);
-  rpc DeltaPull(SyncDeltaPullRequest) returns (SyncDeltaPullResponse);
-  rpc SnapshotPull(SyncSnapshotPullRequest) returns (SyncSnapshotPullResponse);
-  rpc CheckpointAck(SyncCheckpointAckRequest) returns (SyncCheckpointAckResponse);
-  rpc MutationSubmit(SyncMutationSubmitRequest) returns (SyncMutationSubmitResponse);
-  rpc SessionClose(SyncSessionCloseRequest) returns (SyncSessionCloseResponse);
+service SyncService {
+  rpc SessionSetup(SyncServiceSessionSetupRequest) returns (SyncServiceSessionSetupResponse);
+  rpc DeltaPull(SyncServiceDeltaPullRequest) returns (SyncServiceDeltaPullResponse);
+  rpc SnapshotPull(SyncServiceSnapshotPullRequest) returns (SyncServiceSnapshotPullResponse);
+  rpc CheckpointAck(SyncServiceCheckpointAckRequest) returns (SyncServiceCheckpointAckResponse);
+  rpc MutationSubmit(SyncServiceMutationSubmitRequest) returns (SyncServiceMutationSubmitResponse);
+  rpc SessionClose(SyncServiceSessionCloseRequest) returns (SyncServiceSessionCloseResponse);
 }
 
 // Schema declaration and migrations.
-service Schema {
-  rpc Declare(SchemaDeclareRequest) returns (SchemaDeclareResponse);
-  rpc Status(SchemaStatusRequest) returns (SchemaStatusResponse);
-  rpc Validate(SchemaValidateRequest) returns (SchemaValidateResponse);
+service SchemaService {
+  rpc Declare(SchemaServiceDeclareRequest) returns (SchemaServiceDeclareResponse);
+  rpc Status(SchemaServiceStatusRequest) returns (SchemaServiceStatusResponse);
+  rpc Validate(SchemaServiceValidateRequest) returns (SchemaServiceValidateResponse);
   rpc MigrationStatus(MigrationStatusRequest) returns (MigrationStatusResponse);
   rpc MigrationDryRun(MigrationDryRunRequest) returns (MigrationDryRunResponse);
   rpc MigrationApply(MigrationApplyRequest) returns (MigrationApplyResponse);
 }
 
 // Replication observation (read-only).
-service Replication {
-  rpc Conflicts(ReplicationConflictsRequest) returns (ReplicationConflictsResponse);
-  rpc Fenced(ReplicationFencedRequest) returns (ReplicationFencedResponse);
-  rpc Depositions(ReplicationDepositionsRequest) returns (ReplicationDepositionsResponse);
-  rpc Cursor(ReplicationCursorRequest) returns (ReplicationCursorResponse);
-  rpc Health(ReplicationHealthRequest) returns (ReplicationHealthResponse);
-  rpc Denials(ReplicationDenialsRequest) returns (ReplicationDenialsResponse);
+service ReplicationService {
+  rpc Conflicts(ReplicationServiceConflictsRequest) returns (ReplicationServiceConflictsResponse);
+  rpc Fenced(ReplicationServiceFencedRequest) returns (ReplicationServiceFencedResponse);
+  rpc Depositions(ReplicationServiceDepositionsRequest) returns (ReplicationServiceDepositionsResponse);
+  rpc Cursor(ReplicationServiceCursorRequest) returns (ReplicationServiceCursorResponse);
+  rpc Health(ReplicationServiceHealthRequest) returns (ReplicationServiceHealthResponse);
+  rpc Denials(ReplicationServiceDenialsRequest) returns (ReplicationServiceDenialsResponse);
 }
 
 // Topology, administration, and supervision.
-service Maintenance {
-  rpc TopologyRead(TopologyReadRequest) returns (TopologyReadResponse);
-  rpc AdminStatus(AdminStatusRequest) returns (AdminStatusResponse);
-  rpc SupervisionHealth(SupervisionHealthRequest) returns (SupervisionHealthResponse);
-  rpc SupervisionShutdown(SupervisionShutdownRequest) returns (SupervisionShutdownResponse);
+service MaintenanceService {
+  rpc TopologyRead(MaintenanceServiceTopologyReadRequest) returns (MaintenanceServiceTopologyReadResponse);
+  rpc AdminStatus(MaintenanceServiceAdminStatusRequest) returns (MaintenanceServiceAdminStatusResponse);
+  rpc SupervisionHealth(MaintenanceServiceSupervisionHealthRequest) returns (MaintenanceServiceSupervisionHealthResponse);
+  rpc SupervisionShutdown(MaintenanceServiceSupervisionShutdownRequest) returns (MaintenanceServiceSupervisionShutdownResponse);
 }
 
 // Tenant-bound export of authoritative WAL-durable usage facts.
-service Usage {
-  rpc Record(UsageRecordRequest) returns (UsageRecordResponse);
-  rpc Export(UsageExportRequest) returns (UsageExportResponse);
+service UsageService {
+  rpc Record(UsageServiceRecordRequest) returns (UsageServiceRecordResponse);
+  rpc Export(UsageServiceExportRequest) returns (UsageServiceExportResponse);
 }
 
 // Tier administration.
-service Tier {
-  rpc Configure(TierConfigureRequest) returns (TierConfigureResponse);
-  rpc Inspect(TierInspectRequest) returns (TierInspectResponse);
-  rpc DryRun(TierDryRunRequest) returns (TierDryRunResponse);
-  rpc Explain(TierExplainRequest) returns (TierExplainResponse);
-  rpc Run(TierRunRequest) returns (TierRunResponse);
-  rpc Pause(TierPauseRequest) returns (TierPauseResponse);
-  rpc Resume(TierResumeRequest) returns (TierResumeResponse);
+service TierService {
+  rpc Configure(TierServiceConfigureRequest) returns (TierServiceConfigureResponse);
+  rpc Inspect(TierServiceInspectRequest) returns (TierServiceInspectResponse);
+  rpc DryRun(TierServiceDryRunRequest) returns (TierServiceDryRunResponse);
+  rpc Explain(TierServiceExplainRequest) returns (TierServiceExplainResponse);
+  rpc Run(TierServiceRunRequest) returns (TierServiceRunResponse);
+  rpc Pause(TierServicePauseRequest) returns (TierServicePauseResponse);
+  rpc Resume(TierServiceResumeRequest) returns (TierServiceResumeResponse);
 }

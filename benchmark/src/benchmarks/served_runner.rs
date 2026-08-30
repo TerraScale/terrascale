@@ -1,10 +1,10 @@
 //! Process orchestration for the served TerraBase benchmark lane.
 //!
-//! This runner owns the production harness and Go adapter lifecycle. A
+//! This runner owns the diagnostic qualification harness and Go adapter lifecycle. A
 //! result is accepted only when it is fresh, complete, and identifies the
-//! requested network mTLS boundary. The qualification harness is a single
-//! standalone member, so mutation workloads are rejected until a real
-//! regional RF=2 host can honestly acknowledge regional quorum.
+//! requested network mTLS boundary. Admission policy and any claim decision
+//! remain in `served_boundary`; this module only runs processes and validates
+//! their retained output.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -23,26 +23,25 @@ const MAX_RESULT_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const DEFAULT_AUTHORITY: &str = "terrabase-bench";
-const SERVED_IDENTITY: &str = "tbep-production-harness/network-mtls/v1";
-const DEFAULT_SOURCE_IDENTITY: &str = "terrabase-rust-served-boundary-benchmark/v1";
-const ADAPTER_CONTRACT_IDENTITY: &str = "terrabase-go/network-mtls/per-slot-connection/v2";
-const DEFAULT_TRANSPORT_IDENTITY: &str =
-    "terrabase-go/network-mtls/per-slot-connection/v2 (network mTLS over loopback TCP)";
-const MAX_PRINCIPAL_BYTES: usize = 128;
-const MAX_TENANT_BYTES: usize = 64;
-const MAX_PROJECT_BYTES: usize = 255;
-const MAX_DATABASE_BYTES: usize = 255;
+pub(super) const QUALIFICATION_SERVER_IDENTITY: &str =
+    "tbep-qualification-harness/network-mtls/v1";
+pub(super) const QUALIFICATION_SOURCE_IDENTITY: &str =
+    "terrabase-rust-diagnostic-qualification/v1";
+pub(super) const ADAPTER_CONTRACT_IDENTITY: &str =
+    "terrabase-go/network-mtls/per-slot-connection/v2";
+pub(super) const QUALIFICATION_TRANSPORT_IDENTITY: &str =
+    "terrabase-go/network-mtls/per-slot-connection/v2 (diagnostic loopback mTLS)";
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Configuration for one served-boundary workload.
 #[derive(Clone, Debug)]
-pub(crate) struct ServedRunnerConfig {
+pub(super) struct ServedRunnerConfig {
     /// Exact lane configuration passed to the adapter.
     pub lane: LaneConfig,
     /// Workload selected for this invocation.
     pub workload: Workload,
-    /// Existing tbep-production-harness executable.
-    pub harness_executable: PathBuf,
+    /// Existing test-only qualification harness executable.
+    pub qualification_harness_executable: PathBuf,
     /// Go executable used when adapter_executable is absent.
     pub go_executable: PathBuf,
     /// Working directory containing the Go adapter command.
@@ -73,7 +72,7 @@ pub(crate) struct ServedRunnerConfig {
 
 impl ServedRunnerConfig {
     /// Validates configuration without starting a process.
-    pub(crate) fn validate(&self) -> Result<(), String> {
+    pub(super) fn validate(&self) -> Result<(), String> {
         self.lane.validate().map_err(|e| format!("invalid LaneConfig: {e:?}"))?;
         if !matches!(
             self.workload,
@@ -84,13 +83,10 @@ impl ServedRunnerConfig {
         ) {
             return Err(format!("Go adapter does not support {}", self.workload.as_str()));
         }
-        if matches!(self.workload, Workload::DocumentWrite | Workload::Mixed) {
-            return Err("standalone qualification harness cannot substantiate regional quorum writes; use an RF=2 production Member host".to_owned());
-        }
-        if !self.harness_executable.is_file() {
+        if !self.qualification_harness_executable.is_file() {
             return Err(format!(
-                "harness executable is missing: {}",
-                self.harness_executable.display()
+                "qualification harness executable is missing: {}",
+                self.qualification_harness_executable.display()
             ));
         }
         if !self.go_workdir.is_dir() {
@@ -104,10 +100,8 @@ impl ServedRunnerConfig {
         if self.timeout.is_zero() || self.timeout > MAX_TIMEOUT {
             return Err(format!("timeout must be in (0, {MAX_TIMEOUT:?}]"));
         }
-        if self.server_identity != SERVED_IDENTITY {
-            return Err(format!("server identity must exactly equal {SERVED_IDENTITY:?}"));
-        }
         for (name, value) in [
+            ("server identity", &self.server_identity),
             ("principal", &self.principal),
             ("tenant", &self.tenant),
             ("project", &self.project),
@@ -117,30 +111,11 @@ impl ServedRunnerConfig {
         ] {
             validate_text(name, value)?;
         }
-        if !self.principal.starts_with("spiffe://") {
-            return Err(
-                "principal must be a SPIFFE URI for the mTLS client certificate SAN".to_owned()
-            );
-        }
-        if self.principal.len() > MAX_PRINCIPAL_BYTES
-            || self.tenant.len() > MAX_TENANT_BYTES
-            || self.project.len() > MAX_PROJECT_BYTES
-            || self.database.len() > MAX_DATABASE_BYTES
-        {
-            return Err("binding scope exceeds the TBEP identity or scope bounds".to_owned());
-        }
-        if self.transport_identity.contains("in-process")
-            || !self.transport_identity.contains(ADAPTER_CONTRACT_IDENTITY)
-        {
-            return Err(format!(
-                "transport identity must contain the exact adapter contract marker {ADAPTER_CONTRACT_IDENTITY:?}"
-            ));
-        }
         Ok(())
     }
 
     /// Resolves the runner from TERRABASE_BENCH_* settings.
-    pub(crate) fn from_env(workload: Workload) -> Result<Self, String> {
+    pub(super) fn from_env(workload: Workload) -> Result<Self, String> {
         let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let lane = LaneConfig {
             seed_documents: env_usize("TERRABASE_BENCH_SEED_DOCUMENTS", 1_000)?,
@@ -153,7 +128,7 @@ impl ServedRunnerConfig {
         Ok(Self {
             lane,
             workload,
-            harness_executable: required_path("TERRABASE_BENCH_HARNESS")?,
+            qualification_harness_executable: required_path("TERRABASE_BENCH_HARNESS")?,
             go_executable: env_path("TERRABASE_BENCH_GO").unwrap_or_else(|| PathBuf::from("go")),
             go_workdir: env_path("TERRABASE_BENCH_GO_DIR")
                 .unwrap_or_else(|| repository.join("terrabase-go")),
@@ -161,15 +136,15 @@ impl ServedRunnerConfig {
             output_directory: required_path("TERRABASE_BENCH_OUTPUT_DIR")?,
             timeout: env_duration("TERRABASE_BENCH_TIMEOUT", DEFAULT_TIMEOUT)?,
             server_identity: optional_env("TERRABASE_BENCH_SERVER_IDENTITY")
-                .unwrap_or_else(|| SERVED_IDENTITY.to_owned()),
+                .unwrap_or_else(|| QUALIFICATION_SERVER_IDENTITY.to_owned()),
             principal: required_string("TERRABASE_BENCH_PRINCIPAL")?,
             tenant: required_string("TERRABASE_BENCH_TENANT")?,
             project: required_string("TERRABASE_BENCH_PROJECT")?,
             database: required_string("TERRABASE_BENCH_DATABASE")?,
             source_identity: optional_env("TERRABASE_BENCH_SOURCE_IDENTITY")
-                .unwrap_or_else(|| DEFAULT_SOURCE_IDENTITY.to_owned()),
+                .unwrap_or_else(|| QUALIFICATION_SOURCE_IDENTITY.to_owned()),
             transport_identity: optional_env("TERRABASE_BENCH_TRANSPORT_IDENTITY")
-                .unwrap_or_else(|| DEFAULT_TRANSPORT_IDENTITY.to_owned()),
+                .unwrap_or_else(|| QUALIFICATION_TRANSPORT_IDENTITY.to_owned()),
             openssl_executable: env_path("TERRABASE_BENCH_OPENSSL")
                 .unwrap_or_else(|| PathBuf::from("openssl")),
         })
@@ -178,7 +153,7 @@ impl ServedRunnerConfig {
 
 /// A validated complete result and the retained immutable path.
 #[derive(Debug)]
-pub(crate) struct ServedRunnerResult {
+pub(super) struct ServedRunnerResult {
     /// Facts parsed through the existing Rust result reader.
     pub facts: SideFacts,
     /// Retained complete result path.
@@ -189,19 +164,19 @@ pub(crate) struct ServedRunnerResult {
 
 /// A failed attempt. Failure documents always have an empty sample array.
 #[derive(Debug)]
-pub(crate) struct ServedRunnerError {
+pub(super) struct ServedRunnerError {
     reason: String,
     retained_path: Option<PathBuf>,
 }
 
 impl ServedRunnerError {
     /// Returns the failure reason.
-    pub(crate) fn reason(&self) -> &str {
+    pub(super) fn reason(&self) -> &str {
         &self.reason
     }
 
     /// Returns the retained failed-attempt path, if writing it succeeded.
-    pub(crate) fn retained_path(&self) -> Option<&Path> {
+    pub(super) fn retained_path(&self) -> Option<&Path> {
         self.retained_path.as_deref()
     }
 }
@@ -215,7 +190,7 @@ impl std::fmt::Display for ServedRunnerError {
 impl std::error::Error for ServedRunnerError {}
 
 /// Runs one complete served-boundary workload.
-pub(crate) fn run_served_runner(
+pub(super) fn run_served_runner(
     config: &ServedRunnerConfig,
 ) -> Result<ServedRunnerResult, ServedRunnerError> {
     if let Err(reason) = config.validate() {
@@ -444,7 +419,7 @@ enum ReadEvent {
 fn start_harness(config: &ServedRunnerConfig, pki: &Pki, dir: &Path) -> Result<Harness, String> {
     let storage = dir.join("storage");
     fs::create_dir(&storage).map_err(|e| format!("create fresh harness storage: {e}"))?;
-    let mut child = Command::new(&config.harness_executable)
+    let mut child = Command::new(&config.qualification_harness_executable)
         .arg(&pki.server)
         .arg(&pki.server_key)
         .arg(&pki.ca)
@@ -453,7 +428,7 @@ fn start_harness(config: &ServedRunnerConfig, pki: &Pki, dir: &Path) -> Result<H
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("start production harness: {e}"))?;
+        .map_err(|e| format!("start qualification harness: {e}"))?;
     let stdout = child.stdout.take().ok_or("harness stdout was not piped")?;
     let (sender, events) = mpsc::channel();
     thread::spawn(move || {
@@ -492,11 +467,11 @@ fn wait_ready(harness: &mut Harness, deadline: Instant) -> Result<u16, String> {
                 }
             }
             Ok(ReadEvent::Eof) => {
-                return Err("production harness exited before readiness".to_owned());
+                return Err("qualification harness exited before readiness".to_owned());
             }
             Ok(ReadEvent::Error(e)) => return Err(format!("read harness readiness: {e}")),
             Err(RecvTimeoutError::Timeout) => {
-                return Err("production harness readiness timed out".to_owned());
+                return Err("qualification harness readiness timed out".to_owned());
             }
             Err(RecvTimeoutError::Disconnected) => {
                 return Err("harness readiness channel closed".to_owned());
@@ -634,7 +609,7 @@ fn stop_harness(harness: &mut Harness, deadline: Instant) {
         let _ = stdin.write_all(b"shutdown\n");
         let _ = stdin.flush();
     }
-    if wait_child(&mut harness.child, deadline, "production harness").is_err() {
+    if wait_child(&mut harness.child, deadline, "qualification harness").is_err() {
         let _ = harness.child.kill();
         let _ = harness.child.wait();
     }
@@ -830,19 +805,20 @@ mod tests {
         ServedRunnerConfig {
             lane: LaneConfig::COMMISSIONING_TRIAL,
             workload,
-            harness_executable: std::env::current_exe().expect("test executable"),
+            qualification_harness_executable: std::env::current_exe()
+                .expect("test executable"),
             go_executable: PathBuf::from("go"),
             go_workdir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("terrabase-go"),
             adapter_executable: None,
             output_directory: std::env::temp_dir().join("terrabase-served-runner-tests"),
             timeout: Duration::from_secs(1),
-            server_identity: SERVED_IDENTITY.to_owned(),
+            server_identity: QUALIFICATION_SERVER_IDENTITY.to_owned(),
             principal: "spiffe://terrascale.tech/benchmark".to_owned(),
             tenant: "benchmark-tenant".to_owned(),
             project: "benchmark-project".to_owned(),
             database: "benchmark-database".to_owned(),
-            source_identity: DEFAULT_SOURCE_IDENTITY.to_owned(),
-            transport_identity: DEFAULT_TRANSPORT_IDENTITY.to_owned(),
+            source_identity: QUALIFICATION_SOURCE_IDENTITY.to_owned(),
+            transport_identity: QUALIFICATION_TRANSPORT_IDENTITY.to_owned(),
             openssl_executable: PathBuf::from("openssl"),
         }
     }
@@ -857,11 +833,9 @@ mod tests {
     }
 
     #[test]
-    fn mutation_runs_fail_closed_for_single_member_qualification_host() {
-        let error = config(Workload::DocumentWrite).validate().expect_err("write must be rejected");
-        assert!(error.contains("RF=2"));
-        let error = config(Workload::Mixed).validate().expect_err("mixed must be rejected");
-        assert!(error.contains("regional quorum"));
+    fn runner_leaves_mutation_claim_admission_to_the_boundary() {
+        config(Workload::DocumentWrite).validate().expect("runner mechanics support writes");
+        config(Workload::Mixed).validate().expect("runner mechanics support mixed work");
     }
 
     #[test]

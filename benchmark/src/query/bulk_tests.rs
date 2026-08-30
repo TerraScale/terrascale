@@ -297,9 +297,8 @@ fn delete_by_query_strict_stale_refuses_before_any_write() {
         vec![document("doc-1", &[("tenant-visible", DocumentValue::Boolean(true))])],
     );
 
-    // V1: `AllowStale == false` and a stale index throw before any command
-    // runs (AbstractDatabaseQueryRunner.cs:167-168). The strict policy over
-    // a namespace the catalog cannot supply is the same refusal.
+    // Strict stale selection refuses before any command runs. A namespace the
+    // catalog cannot supply follows the same rule.
     let namespace =
         IndexNamespace::try_new(tenant("tenant-a"), "ix-orders-status").expect("valid namespace");
     let policy = StalenessPolicy::try_new(StalenessMode::Strict, vec![namespace])
@@ -688,7 +687,7 @@ fn bulk_runs_record_audit_entries_on_the_engine() {
 fn bulk_options_bounds_are_the_documented_constants() {
     assert_eq!(
         MAX_BULK_PAGE_DOCUMENTS, 4096,
-        "V1's server batch bound (AbstractDatabaseQueryRunner.cs:153)"
+        "the documented server batch bound"
     );
     let options = BulkByQueryOptions::new();
     assert_eq!(options.page_documents(), MAX_BULK_PAGE_DOCUMENTS);

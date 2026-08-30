@@ -151,6 +151,29 @@ fn reserved_ordinals_survive_restart_without_nonce_reuse() {
 }
 
 #[test]
+fn restart_at_ordinal_exhaustion_allows_reads_but_not_writes() {
+    let mut writer = ArtifactCipher::with_next_ordinal(
+        ProviderMode::LocalFile,
+        DatabaseKey::from_bytes([0x2a; 32]),
+        context("01JTENANT"),
+        (1u128 << 96) - 1,
+    )
+    .unwrap();
+    let envelope = writer.seal(b"final ordinal").unwrap();
+    assert_eq!(writer.next_ordinal(), 1u128 << 96);
+
+    let mut recovered = ArtifactCipher::with_next_ordinal(
+        ProviderMode::LocalFile,
+        DatabaseKey::from_bytes([0x2a; 32]),
+        context("01JTENANT"),
+        1u128 << 96,
+    )
+    .unwrap();
+    assert_eq!(recovered.open(&envelope).unwrap(), b"final ordinal");
+    assert_eq!(recovered.seal(b"after exhaustion"), Err(EncryptionError::OrdinalExhausted));
+}
+
+#[test]
 fn wrong_key_aad_tag_and_truncation_are_rejected() {
     let mut writer = cipher([4; 32]);
     let envelope = writer.seal(b"authenticated bytes").unwrap();
@@ -427,6 +450,24 @@ fn local_file_key_rejects_broad_permissions() {
     std::fs::set_permissions(provider.path(), std::fs::Permissions::from_mode(0o644)).unwrap();
     assert!(matches!(provider.load_or_create(), Err(EncryptionError::UnsafeLocalKeyFile)));
 
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn local_file_key_rejects_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let directory = unique_directory("symlink");
+    let provider = LocalFileKeyProvider::at_engine_location(&directory);
+    std::fs::create_dir_all(provider.path().parent().unwrap()).unwrap();
+    let target = directory.join("target.key");
+    std::fs::write(&target, [0u8; 32]).unwrap();
+    symlink(&target, provider.path()).unwrap();
+    assert!(matches!(
+        provider.load_or_create(),
+        Err(EncryptionError::UnsafeLocalKeyFile)
+    ));
     std::fs::remove_dir_all(directory).unwrap();
 }
 

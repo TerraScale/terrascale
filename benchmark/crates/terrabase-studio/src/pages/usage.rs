@@ -1,8 +1,6 @@
 //! The Usage page: the engine's meter catalog and authoritative durable facts.
 
-use terrabase::usage::{
-    UsageFactId, UsagePageRequest, UsageRecordMeter, UsageRecordRequest,
-};
+use terrabase::usage::{UsageFactId, UsagePageRequest, UsageRecordMeter, UsageRecordRequest};
 use terrabase::{MeterCatalog, MeterKind, RegionCode};
 
 use crate::html::{self, ButtonStyle, Tone};
@@ -107,11 +105,7 @@ fn authoritative_table(state: &StudioState, tenant_name: &str) -> Result<String,
             scope.region_id().as_str(),
         )));
         rows.push_str(&html::cell(&format!("{:?}:{}", identity.rule(), identity.id())));
-        rows.push_str(&html::cell(&format!(
-            "{}..{}",
-            window.start_millis(),
-            window.end_millis(),
-        )));
+        rows.push_str(&html::cell(&format!("{}..{}", window.start_millis(), window.end_millis(),)));
         rows.push_str(&html::cell(&fact.delta().to_string()));
         rows.push_str("</tr>");
     }
@@ -141,15 +135,7 @@ fn authoritative_table(state: &StudioState, tenant_name: &str) -> Result<String,
         "{selector}{table}{note}",
         selector = tenant_selector(state, tenant.as_str()),
         table = html::table(
-            &[
-                "sequence",
-                "replica epoch",
-                "meter",
-                "scope",
-                "identity",
-                "window millis",
-                "delta",
-            ],
+            &["sequence", "replica epoch", "meter", "scope", "identity", "window millis", "delta",],
             &[rows],
             "No durable usage fact has been recorded for this tenant.",
         ),
@@ -241,8 +227,8 @@ pub fn record_fact(
     };
     let region = RegionCode::from_text(region.trim().to_uppercase().as_str())
         .map_err(|error| format!("origin region: {error:?}"))?;
-    let fact_id = UsageFactId::try_new(fact_id.trim())
-        .map_err(|error| format!("fact id: {error:?}"))?;
+    let fact_id =
+        UsageFactId::try_new(fact_id.trim()).map_err(|error| format!("fact id: {error:?}"))?;
     let integer_units = integer_units
         .trim()
         .parse::<i128>()

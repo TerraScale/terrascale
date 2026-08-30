@@ -201,20 +201,16 @@ impl TokenFilterKind {
 /// One analyzer configuration: the typed, code-free unit the analysis
 /// surface is built from.
 ///
-/// Three named configurations are V1's engine defaults, carried under V1's
-/// own names so an index definition authored against V1 vocabulary resolves
-/// without translation:
+/// Three named configurations cover the engine defaults:
 ///
-/// | Variant | V1 name at the pin | V1 role |
+/// | Variant | Name | Role |
 /// | --- | --- | --- |
 /// | [`Self::Keyword`] | `KeywordAnalyzer` | the exact default |
 /// | [`Self::LowercaseKeyword`] | `LowerCaseKeywordAnalyzer` | the general default |
 /// | [`Self::Standard`] | `TerraBaseStandardAnalyzer` | the search default |
 ///
-/// V1's Corax builds the exact default as its keyword tokenizer plus the
-/// exact transformer, and the general default as the same tokenizer plus
-/// its lower-case transformer; the record carries the pinned file and line
-/// for each.
+/// The exact default uses the keyword tokenizer and exact transformer. The
+/// general default uses the same tokenizer and its lowercase transformer.
 ///
 /// [`Self::Composite`] is the declarative escape hatch for configurations
 /// the three defaults do not cover — a closed tokenizer plus an ordered,
@@ -929,7 +925,7 @@ mod tests {
     }
 
     #[test]
-    fn the_three_v1_default_names_resolve_to_their_kinds() {
+    fn the_three_default_names_resolve_to_their_kinds() {
         assert_eq!(Analyzer::resolve("KeywordAnalyzer").unwrap().kind(), &AnalyzerKind::Keyword);
         assert_eq!(
             Analyzer::resolve("LowerCaseKeywordAnalyzer").unwrap().kind(),
@@ -943,11 +939,9 @@ mod tests {
 
     #[test]
     fn an_unknown_analyzer_name_fails_closed() {
-        // V1 accepts assembly-qualified type names and compiled custom
-        // analyzer names; V2's closed set refuses them.
+        // The closed set refuses unknown and custom analyzer names.
         for name in [
             "SimpleAnalyzer",
-            "Lucene.Net.Analysis.SimpleAnalyzer",
             "StopAnalyzer",
             "NGramAnalyzer",
             "MyNamespace.MyCustomAnalyzer",

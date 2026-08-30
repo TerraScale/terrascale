@@ -26,14 +26,7 @@ docs/evidence/replication/se06-nats-usage-audit.md	2	9ea2f0298d8f3163851de0d08eb
 docs/evidence/replication/se06-quic-lane-determinism.md	1	809b41b9bcaaafbe07e0903f6a4a5db572d919f50c97c2022b77c6df1dd67163	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/evidence/replication/w4-lane-three-region-composite.md	1	9bf8fce5ff9d19a933fb3f08dbafb1877820ccb78aeb143bf7e9c877cbf4e56a	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/evidence/studio/db07-topology-demo-evidence.md	1	f08790f4096c12a3d6813102078323ed73da3750abfadcfa0ca527c0ee9eae1b	Exact historical evidence, command, checkout, candidate, or issue provenance.
-docs/evidence/sync/se11/s1-golden-path.md	2	caf5a9e33823ff94f9a0e83248a7b223c05c9ac2f2d1858f40c6dbc40e73940a	Exact historical evidence, command, checkout, candidate, or issue provenance.
-docs/evidence/sync/se11/s2-drop-resume.md	2	41984a1b9fc2e649e8dc107755cdb33614b5357dfe76e7227e855a0c8a8dc108	Exact historical evidence, command, checkout, candidate, or issue provenance.
-docs/evidence/sync/se11/s3-slow-consumer.md	2	6254a7b41c58a7dfcfbf2d691c038bdb00284fc5f157381e5c11285cb0bc8060	Exact historical evidence, command, checkout, candidate, or issue provenance.
-docs/evidence/sync/se11/s4-tbep-link-loss.md	2	c9e6531d2ee1a4f0c8ce795228945b2c78f4ce06f75aea48d9538e0c29e959cc	Exact historical evidence, command, checkout, candidate, or issue provenance.
-docs/evidence/sync/se11/s5-region-route-change.md	2	e030a747af0f3d4bb0e30ae25377db35b8eeffa675595a0aa80902a7217d412e	Exact historical evidence, command, checkout, candidate, or issue provenance.
-docs/evidence/sync/se11/s6-multi-region.md	2	53b21e5fef5d119f0cce735be255828522488a10548e6c779ec62f31699ade1b	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/evidence/tier-combination-matrix.md	4	99c952b5baf8018aece045f674ca67778aa173b16ff8a6c42b33b61db2d27e41	Exact historical evidence, command, checkout, candidate, or issue provenance.
-docs/evidence/tracer-retirement-note.md	3	f372da4ae4004108d8bd386c1fa2217250f59a988462db3893ca85e7e88ea186	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/replication/se06-member-transport-nats.md	2	d125bd5c23d36afd5a336f2d1d11329aa9512c249008f3362e5976ee25b5ca67	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/spike/se02-prototype-evidence.md	2	52bfdae866a3ed81da008c3b97a5f8ec7faffc79abe96d946d3a99d7a641eca7	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/storage/lsm-engine.md	2	9817545ad6688056779fbba65a569d5f13e9a50abad170bf56d1501c38a6671b	Format design records the persisted marker required by existing directories.

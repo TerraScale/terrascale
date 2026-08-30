@@ -1771,18 +1771,12 @@ fn nan_and_non_finite_numbers_keep_a_total_deterministic_order() {
 // live in docs/query/gap-eval-evaluator-parity.md.
 // ---------------------------------------------------------------------------
 
-/// Q1 (PB-4004): V1 `NotEquals` matches documents that do not carry the
-/// field. Both V1 engines build the same shape: Lucene is
-/// `MatchAllDocs MUST` + `Term MUST_NOT`
-/// (src/TerraBase.Server/Documents/Queries/LuceneQueryHelper.cs:43-70) and
-/// Corax is `AllEntries AndNot TermQuery`
-/// (src/TerraBase.Server/Documents/Indexes/Persistence/Corax/QueryOptimizer/
-/// CoraxBooleanItem.cs:210-222), so an absent field is never excluded. A
-/// null literal is the explicit-null entry only (`Field != null` excludes
-/// present nulls and nothing else; CoraxBooleanItem.cs:50-54), and `= null`
-/// matches the explicit null sentinel, never absence.
+/// `NotEquals` matches documents that do not carry the field. A null literal
+/// is the explicit-null entry only. `Field != null` excludes present nulls
+/// and nothing else, while `= null` matches the explicit null sentinel and
+/// never absence.
 #[test]
-fn v1_not_equals_matches_missing_and_pins_null_semantics() {
+fn not_equals_matches_missing_and_pins_null_semantics() {
     let (dir, engine) = open_engine("gap-eval-q1");
     let tenant_scope = scope(&engine, "tenant-a");
     commit_documents(
@@ -1873,8 +1867,7 @@ fn v1_not_equals_matches_missing_and_pins_null_semantics() {
 /// docs/query/w3-query-index.md:398-406). Above 2^53 the float spacing
 /// exceeds one, so a widening comparison would call `Integer(2^53 + 1)` and
 /// `Number(2^53.0)` equal; V1 indexes longs and doubles as exact distinct
-/// terms (LuceneQueryBuilder.cs:202-226 keeps Long and Double field types
-/// apart), so the exact comparison is the V1-faithful rule.
+/// terms, so the exact comparison is the native rule.
 #[test]
 #[allow(
     clippy::cast_precision_loss,
@@ -1943,11 +1936,8 @@ fn predicate_comparison_is_exact_across_integer_and_number_domains() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// Q2 (PB-4006): V1 orders date-valued fields through the exact tick domain:
-/// a date literal becomes ticks and compares as a long
-/// (LuceneQueryBuilder.cs:473-505 `TranslateDateRangeQuery` and
-/// `TryUseTime`; CoraxBooleanItem.cs:98-107 does the same conversion). V2
-/// has no date literal in the typed value domain, so the pinned mapping is:
+/// Date-valued fields use the exact tick domain. The typed value domain has
+/// no separate date literal, so the mapping is:
 /// dates as tick integers ride the exact integer order, and ISO-8601 date
 /// strings ride the lexicographic string order, which is identical for
 /// same-format timestamps. The close-out record files this as the accepted
@@ -2009,11 +1999,8 @@ fn date_valued_fields_order_exactly_in_the_integer_and_string_domains() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// Q3 (PB-4010): V1 `intersect(...)` intersects the results of its argument
-/// predicates — the arguments are visited as where clauses
-/// (src/TerraBase.Server/Documents/Queries/QueryMetadata.cs:2433-2440) and
-/// the match is the conjunction. The seam's predicate conjunction is that
-/// semantics; this pin proves a two-argument intersect is exactly the
+/// `intersect(...)` intersects the results of its argument predicates. The
+/// match is the conjunction, so a two-argument intersect is exactly the
 /// two-condition conjunction over the same documents.
 #[test]
 fn intersect_semantics_is_the_predicate_conjunction() {
@@ -2073,8 +2060,7 @@ fn intersect_semantics_is_the_predicate_conjunction() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// Q2 (PB-4006): BETWEEN pins V1's `BuildBetween` exactly
-/// (CoraxBooleanItem.cs:105-160): a null bound is unbounded; both bounds
+/// A null `BETWEEN` bound is unbounded. Both bounds
 /// unbounded matches every document that carries the field, explicit null
 /// included ("matching lucene results, nulls included"); only the upper
 /// bound unbounded also admits explicit nulls (the null term is OR-ed in);
@@ -2082,7 +2068,7 @@ fn intersect_semantics_is_the_predicate_conjunction() {
 /// are the inclusive range over orderable values, which explicit null and
 /// absence never satisfy.
 #[test]
-fn between_pins_v1_null_bound_semantics() {
+fn between_pins_null_bound_semantics() {
     let (dir, engine) = open_engine("gap-eval-q2-between");
     let tenant_scope = scope(&engine, "tenant-a");
     let between = |low: DocumentValue, high: DocumentValue| QueryCondition::Between {
@@ -2135,16 +2121,11 @@ fn between_pins_v1_null_bound_semantics() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// Q3 (PB-4005): `in` is V1's In operator and V1's index flattens array
-/// values into terms, so one operator covers scalar membership and
-/// `ContainsAny` over array fields (LuceneQueryBuilder.cs:383-400;
-/// AbstractDocumentQuery.cs:1499-1510). `all in` is `ContainsAll` — every
-/// listed value must be carried (CoraxQueryBuilder.cs:623-633), and the
-/// empty list matches everything (the client lowers an empty `ContainsAll`
-/// to `TrueToken`, AbstractDocumentQuery.cs:1516-1537). Absence matches
-/// neither.
+/// `in` covers scalar membership and any matching element of an array.
+/// `all in` requires every listed value. An empty `all in` list matches
+/// everything. Absence matches neither non-empty form.
 #[test]
-fn in_and_all_in_pin_v1_membership_and_array_semantics() {
+fn in_and_all_in_pin_membership_and_array_semantics() {
     let (dir, engine) = open_engine("gap-eval-q3-in");
     let tenant_scope = scope(&engine, "tenant-a");
     commit_documents(
@@ -2220,11 +2201,9 @@ fn in_and_all_in_pin_v1_membership_and_array_semantics() {
 
 /// Q3 (PB-4007): prefix, suffix, and substring conditions match the string
 /// domain — a string field directly, or any string element of an array
-/// field, because V1's flattened term space is per-value
-/// (LuceneQueryBuilder.cs:423-426 lowers the pattern methods). Matching is
-/// case-sensitive: the exact-mode V1 behavior; the analyzed-mode differences
-/// are gated on the analyzer foundation (GAP-Q13) and recorded in the
-/// close-out.
+/// field because the flattened term space is per-value. Exact-mode matching
+/// is case-sensitive. Analyzed-mode behavior belongs to the analyzer
+/// foundation.
 #[test]
 fn pattern_conditions_pin_prefix_suffix_and_substring_semantics() {
     let (dir, engine) = open_engine("gap-eval-q3-pattern");
@@ -2302,10 +2281,9 @@ fn pattern_conditions_pin_prefix_suffix_and_substring_semantics() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// Q4 (PB-4013): explicit nulls placement is direction-independent — V1
-/// maps First to "nulls before values" and Last to "nulls after values"
-/// under both ascending and descending sorts (Ordering.cs:15-43 and the
-/// Corax mapping CoraxQueryBuilder.cs:1334-1339). The missing-and-null
+/// Explicit null placement is direction-independent. First means "nulls
+/// before values" and Last means "nulls after values" under both ascending
+/// and descending sorts. The missing-and-null
 /// group moves as one block, because an index sort cannot distinguish an
 /// absent field from an explicit null; inside the block the seam's tracer
 /// order (missing before null) stays.
@@ -2362,11 +2340,8 @@ fn explicit_nulls_placement_is_direction_independent() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// Q4 (PB-4013): seeded random ordering is deterministic per seed. V1
-/// derives the permutation from the seed argument (CoraxQueryBuilder.cs:
-/// 1343-1347; RandomFieldComparator.cs:20-24) and V1's two engines already
-/// disagree on the sequence for one seed, so the parity contract pinned
-/// here is determinism and seed sensitivity, never one canonical sequence.
+/// Seeded random ordering is deterministic per seed. The contract pins
+/// determinism and seed sensitivity, not one canonical sequence.
 #[test]
 fn random_with_seed_orders_deterministically_per_seed() {
     let (dir, engine) = open_engine("gap-eval-q4-random");
@@ -2412,10 +2387,9 @@ fn random_with_seed_orders_deterministically_per_seed() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// Q5 (PB-4015): `load` resolves the referenced source document. V1 binds
-/// each alias to the document whose id the path reads
-/// (QueryMetadata.cs:1082-1136) and the projected value comes from that
-/// source document; serving a projection from stored index fields is the
+/// `load` resolves the referenced source document. Each alias binds to the
+/// document whose identity the path reads, and the projected value comes
+/// from that source document. Serving a projection from stored index fields is the
 /// GAP-Q6-gated half and does not exist here. A reference that resolves to
 /// no document binds null (docs/tql/spec.md Section 4.2), and an absent
 /// field of a resolved reference is omitted, staying distinct from a

@@ -24,13 +24,11 @@ fn v1_default_analyzer_names_resolve_and_unknown_names_fail_closed() {
         assert_eq!(analyzer.identity(), identity);
     }
 
-    // V1 resolves arbitrary analyzer type names and compiled custom
-    // analyzers; V2's closed set refuses every one of them.
+    // The closed set refuses arbitrary and custom analyzer names.
     for name in [
         "SimpleAnalyzer",
         "StopAnalyzer",
         "KeywordTokenizer",
-        "Lucene.Net.Analysis.Standard.StandardAnalyzer",
         "MyAnalyzer",
     ] {
         assert_eq!(

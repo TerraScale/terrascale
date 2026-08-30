@@ -432,8 +432,7 @@ fn lifecycle_transition_matrix_is_exhaustive_and_typed() {
         (Paused, Op::Disable, Expect::To(Disabled)),
         (Paused, Op::Reset, Expect::To(Normal)),
         (Paused, Op::ClearErrors, Expect::Refused),
-        // From Disabled: V1 Index.cs:1040-1041 refuses to start the
-        // indexing thread in Disabled and Error.
+        // Disabled and Error never start indexing work.
         (Disabled, Op::Start, Expect::Refused),
         (Disabled, Op::Stop, Expect::Refused),
         (Disabled, Op::Enable, Expect::To(Normal)),
@@ -658,7 +657,7 @@ fn staleness_is_coverage_based_for_normal_paused_and_disabled_states() {
         "a paused index performs no indexing"
     );
 
-    // Disabled: the same coverage rule (V1 DisableIndexOperation.cs:9-10).
+    // Disabled uses the same coverage rule.
     // Resuming from pause is `start`; `enable` addresses the disable axis.
     store.start(&ns).expect("resume lands");
     expect_published(store.rebuild(&ns).expect("one build step"));

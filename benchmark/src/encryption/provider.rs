@@ -150,6 +150,11 @@ pub struct KeyScope {
 
 impl KeyScope {
     /// Creates a validated key scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncryptionError::InvalidKeyMetadata`] for an invalid
+    /// environment identity.
     pub fn new(
         environment: impl Into<String>,
         tenant: TenantUlid,
@@ -310,6 +315,11 @@ pub struct WrappedDatabaseKey {
 
 impl WrappedDatabaseKey {
     /// Validates bounded opaque wrapper material returned by an adapter.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncryptionError::InvalidWrappedKey`] for empty or oversized
+    /// wrapper material.
     pub fn new(
         metadata: KeyVersionMetadata,
         region: RegionCode,
@@ -379,6 +389,11 @@ impl DatabaseKeyLease {
     ///
     /// Production cipher construction rejects leases created by this method;
     /// an adapter must use [`Self::from_adapter`] after external authorization.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncryptionError::InvalidKeyLease`] for an empty or oversized
+    /// lease duration.
     pub fn new(
         metadata: KeyVersionMetadata,
         key: DatabaseKey,
@@ -396,6 +411,11 @@ impl DatabaseKeyLease {
     ///
     /// The adapter is responsible for establishing authorization and regional
     /// wrapper provenance before calling this constructor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the provider is not OCI Vault or the duration is
+    /// outside the bounded lease interval.
     #[allow(
         dead_code,
         reason = "reserved for the in-crate OCI adapter; the current provider is fail-closed"
@@ -443,6 +463,10 @@ impl DatabaseKeyLease {
     ///
     /// The callback receives a borrowed key and cannot retain ownership of
     /// the key material after the call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncryptionError::KeyLeaseExpired`] after the lease expires.
     pub fn with_database_key<T>(
         &self,
         operation: impl FnOnce(&DatabaseKey) -> T,
@@ -475,6 +499,11 @@ pub struct KeyRotation {
 
 impl KeyRotation {
     /// Validates that the versions differ and their scope is unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncryptionError::InvalidKeyRotation`] when the scope changes
+    /// or the version is reused.
     pub fn new(
         current: KeyVersionMetadata,
         next: KeyVersionMetadata,
@@ -501,7 +530,7 @@ impl KeyRotation {
 /// Provider-neutral key wrapping, rotation, recovery, and destruction seam.
 ///
 /// Provider implementations must keep OCI OCIDs and credentials outside all
-/// returned TerraBase values. Operations fail closed when authorization or a
+/// returned `TerraBase` values. Operations fail closed when authorization or a
 /// regional wrapper is unavailable.
 pub trait KeyWrappingProvider: fmt::Debug + Send + Sync {
     /// Returns the stable provider identity.
@@ -511,6 +540,10 @@ pub trait KeyWrappingProvider: fmt::Debug + Send + Sync {
     fn capability(&self) -> ProviderCapability;
 
     /// Wraps one database-key version in a canonical Region.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when provider authorization or wrapping fails.
     fn wrap_database_key(
         &self,
         metadata: &KeyVersionMetadata,
@@ -519,6 +552,10 @@ pub trait KeyWrappingProvider: fmt::Debug + Send + Sync {
     ) -> Result<WrappedDatabaseKey, EncryptionError>;
 
     /// Unwraps one regional wrapper into a bounded authorization lease.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the wrapper or provider authorization is invalid.
     fn unwrap_database_key(
         &self,
         wrapper: &WrappedDatabaseKey,
@@ -527,6 +564,11 @@ pub trait KeyWrappingProvider: fmt::Debug + Send + Sync {
 
     /// Rewraps a version for key-encryption-key rotation or Region addition
     /// without changing the database-key version.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when provider authorization or the destination is
+    /// invalid.
     fn rewrap_database_key(
         &self,
         wrapper: &WrappedDatabaseKey,
@@ -534,6 +576,10 @@ pub trait KeyWrappingProvider: fmt::Debug + Send + Sync {
     ) -> Result<WrappedDatabaseKey, EncryptionError>;
 
     /// Recovers a version from bounded surviving regional wrappers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no authorized wrapper can recover the version.
     fn recover_database_key(
         &self,
         expected: &KeyVersionMetadata,
@@ -542,5 +588,9 @@ pub trait KeyWrappingProvider: fmt::Debug + Send + Sync {
     ) -> Result<DatabaseKeyLease, EncryptionError>;
 
     /// Destroys one regional wrapper as part of durable crypto-erasure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when provider authorization or destruction fails.
     fn destroy_wrapper(&self, wrapper: &WrappedDatabaseKey) -> Result<(), EncryptionError>;
 }

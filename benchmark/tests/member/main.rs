@@ -6,12 +6,13 @@ use std::{
 };
 
 use terrabase::{
-    CollectionName, Document, DocumentId, DocumentValue, Engine, ExpectedVersion, LocalDurability,
-    OperationId, TenantId,
+    Document, DocumentId, DocumentValue, Engine, ExpectedVersion, LocalDurability, OperationId,
+    TenantId,
     member::{
         AdmissionLimits, AdmissionScope, CatalogValidationError, DatabaseId, DatabaseSpec,
         LifecycleState, MAX_DATABASES, Member, MemberError, MemberOpenError,
     },
+    types::CollectionName,
 };
 
 static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);

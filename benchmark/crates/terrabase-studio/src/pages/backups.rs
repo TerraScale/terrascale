@@ -64,6 +64,7 @@ fn configuration_card(state: &StudioState) -> String {
 <label class=\"flex items-center gap-2\"><input type=\"checkbox\" name=\"virtual_hosted_style\"{virtual_hosted}> Virtual-hosted requests</label>\n\
 <label class=\"flex items-center gap-2\"><input type=\"checkbox\" name=\"allow_http\"{allow_http}> Allow HTTP for a local S3-compatible store</label>\n\
 </div>\n\
+{confirmation}\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary} w-fit\">Save and test S3</button>\n\
 </form>\n{receipt}",
         bucket = html::text_input("bucket", "Bucket", &settings.bucket, "terrabase-backups"),
@@ -99,6 +100,7 @@ fn configuration_card(state: &StudioState) -> String {
         enabled = checked(settings.enabled),
         virtual_hosted = checked(settings.virtual_hosted_style),
         allow_http = checked(settings.allow_http),
+        confirmation = html::confirmation_fields("backup settings", "configure backup"),
         primary = ButtonStyle::Primary.classes(),
         receipt = html::receipt_region_with("backup-configuration-receipt"),
     );

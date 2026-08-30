@@ -2261,7 +2261,11 @@ fn tenant_documents_from_key_at(
     let lower = after.map_or_else(
         || (tenant.as_str().to_owned(), String::new(), String::new()),
         |(collection, identifier)| {
-            (tenant.as_str().to_owned(), collection.as_str().to_owned(), identifier.as_str().to_owned())
+            (
+                tenant.as_str().to_owned(),
+                collection.as_str().to_owned(),
+                identifier.as_str().to_owned(),
+            )
         },
     );
     for (candidate_tenant, collection, identifier) in

@@ -44,19 +44,22 @@ use std::time::Instant;
 use prost::Message as _;
 use tokio::sync::mpsc;
 use tokio_stream::Stream;
+use tokio_stream::StreamExt as _;
 use tokio_stream::wrappers::ReceiverStream;
 
 use tonic::Code;
 use tonic::Request;
 use tonic::Response;
 use tonic::Status;
-use tonic::transport::Certificate as TransportCertificate;
-use tonic::transport::Identity as TransportIdentity;
 use tonic::transport::ServerTlsConfig;
 use x509_parser::extensions::GeneralName;
 use x509_parser::extensions::ParsedExtension;
 use x509_parser::prelude::FromDer;
 use x509_parser::prelude::X509Certificate;
+
+use tokio_rustls::TlsAcceptor;
+use tokio_rustls::rustls;
+use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 use terrabase::observability::{
     MetricsRegistry, Operation as MetricOperation, Outcome as MetricOutcome, Region as MetricRegion,
@@ -146,9 +149,8 @@ impl TbepGrpcConfig {
         shutdown_grace: Duration,
         gateway_principals: BTreeSet<String>,
     ) -> std::io::Result<Self> {
-        let valid_principals = gateway_principals
-            .iter()
-            .all(|principal| valid_gateway_spiffe_uri(principal));
+        let valid_principals =
+            gateway_principals.iter().all(|principal| valid_gateway_spiffe_uri(principal));
         if !(1024..=registry::MAX_FRAME_BYTES).contains(&max_message_bytes)
             || !(1..=4096).contains(&max_inflight)
             || request_timeout.is_zero()
@@ -723,10 +725,8 @@ impl TbepGrpcServer {
                 "production TLS requires a non-empty client CA bundle for mutual authentication",
             ));
         };
-        let identity = TransportIdentity::from_pem(server_pem, key_pem);
-        let mut tls =
-            ServerTlsConfig::new().identity(identity).timeout(self.config.tls_handshake_timeout());
-        tls = tls.client_ca_root(TransportCertificate::from_pem(client_ca_pem));
+        let tls_config = tls_server_config(server_pem, key_pem, client_ca_pem)?;
+        let tls_acceptor = TlsAcceptor::from(tls_config);
         let server = Arc::clone(self);
         let startup_timeout = self.config.tls_handshake_timeout();
         let (shutdown, signal) = tokio::sync::oneshot::channel::<()>();
@@ -758,7 +758,7 @@ impl TbepGrpcServer {
                             return Err(error);
                         }
                     };
-                    let routes = match serve_routes(Arc::clone(&server), Some(tls)) {
+                    let routes = match serve_routes(Arc::clone(&server), None) {
                         Ok(routes) => routes,
                         Err(error) => {
                             let error = std::io::Error::other(error);
@@ -768,13 +768,28 @@ impl TbepGrpcServer {
                         }
                     };
                     let _ = addr_tx.send(Ok(local));
+                    let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener).then(
+                        move |accepted| {
+                            let acceptor = tls_acceptor.clone();
+                            async move {
+                                let stream = accepted?;
+                                match tokio::time::timeout(startup_timeout, acceptor.accept(stream))
+                                    .await
+                                {
+                                    Ok(Ok(stream)) => Ok(stream),
+                                    Ok(Err(error)) => Err(std::io::Error::other(error)),
+                                    Err(_) => Err(std::io::Error::new(
+                                        std::io::ErrorKind::TimedOut,
+                                        "the TLS handshake exceeded its configured deadline",
+                                    )),
+                                }
+                            }
+                        },
+                    );
                     routes
-                        .serve_with_incoming_shutdown(
-                            tokio_stream::wrappers::TcpListenerStream::new(listener),
-                            async {
-                                let _ = signal.await;
-                            },
-                        )
+                        .serve_with_incoming_shutdown(incoming, async {
+                            let _ = signal.await;
+                        })
                         .await
                         .map_err(std::io::Error::other)
                 });
@@ -817,6 +832,59 @@ impl TbepGrpcServer {
             draining: Arc::clone(&self.draining),
         })
     }
+}
+
+fn tls_server_config(
+    server_pem: &str,
+    key_pem: &str,
+    client_ca_pem: &str,
+) -> std::io::Result<Arc<rustls::ServerConfig>> {
+    let mut server_reader = std::io::BufReader::new(server_pem.as_bytes());
+    let certificates = rustls_pemfile::certs(&mut server_reader)
+        .collect::<Result<Vec<CertificateDer<'static>>, _>>()
+        .map_err(std::io::Error::other)?;
+    if certificates.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "the TLS server certificate chain is empty",
+        ));
+    }
+    let mut key_reader = std::io::BufReader::new(key_pem.as_bytes());
+    let key = rustls_pemfile::private_key(&mut key_reader)
+        .map_err(std::io::Error::other)?
+        .ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "the TLS private key is empty")
+        })?;
+
+    let mut roots = rustls::RootCertStore::empty();
+    let mut ca_reader = std::io::BufReader::new(client_ca_pem.as_bytes());
+    let ca_certificates = rustls_pemfile::certs(&mut ca_reader)
+        .collect::<Result<Vec<CertificateDer<'static>>, _>>()
+        .map_err(std::io::Error::other)?;
+    if ca_certificates.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "the TLS client CA bundle is empty",
+        ));
+    }
+    for certificate in ca_certificates {
+        roots.add(certificate).map_err(std::io::Error::other)?;
+    }
+
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
+        Arc::new(roots),
+        Arc::clone(&provider),
+    )
+    .build()
+    .map_err(std::io::Error::other)?;
+    rustls::ServerConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .map_err(std::io::Error::other)?
+        .with_client_cert_verifier(verifier)
+        .with_single_cert(certificates, PrivateKeyDer::from(key))
+        .map(Arc::new)
+        .map_err(std::io::Error::other)
 }
 
 fn serve_routes(
@@ -1308,8 +1376,12 @@ fn value_to_pb(value: &TbepValue) -> pb::Value {
 fn acknowledgement(v: i32) -> Option<registry::Acknowledgement> {
     match pb::Acknowledgement::try_from(v).ok()? {
         pb::Acknowledgement::AcknowledgementUnspecified => None,
-        pb::Acknowledgement::AcknowledgementRegionalQuorum => Some(registry::Acknowledgement::RegionalQuorum),
-        pb::Acknowledgement::AcknowledgementGlobalQuorum => Some(registry::Acknowledgement::GlobalQuorum),
+        pb::Acknowledgement::AcknowledgementRegionalQuorum => {
+            Some(registry::Acknowledgement::RegionalQuorum)
+        }
+        pb::Acknowledgement::AcknowledgementGlobalQuorum => {
+            Some(registry::Acknowledgement::GlobalQuorum)
+        }
         pb::Acknowledgement::AcknowledgementBackup => Some(registry::Acknowledgement::BackupAck),
     }
 }
@@ -1322,7 +1394,9 @@ fn acknowledgement_pb(value: Option<registry::Acknowledgement>) -> i32 {
         Some(registry::Acknowledgement::GlobalQuorum) => {
             pb::Acknowledgement::AcknowledgementGlobalQuorum as i32
         }
-        Some(registry::Acknowledgement::BackupAck) => pb::Acknowledgement::AcknowledgementBackup as i32,
+        Some(registry::Acknowledgement::BackupAck) => {
+            pb::Acknowledgement::AcknowledgementBackup as i32
+        }
     }
 }
 
@@ -2899,8 +2973,7 @@ impl UsageService for Arc<TbepGrpcServer> {
             integer_units: message.integer_units,
         };
         domain.validate_for_key(&key).map_err(|error| conversion_error(&error.to_string()))?;
-        if domain.project != identity.tenant.project
-            || domain.database != identity.tenant.database
+        if domain.project != identity.tenant.project || domain.database != identity.tenant.database
         {
             return Err(conversion_error(
                 "the usage record does not match the bound Project and Database",

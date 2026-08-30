@@ -44,33 +44,27 @@ pub const MAX_INDEX_ERRORS_PER_INDEX: usize = 64;
 /// The number of consecutive failed build or publish attempts that moves
 /// an index into the [`Error`](IndexOperationalState::Error) state.
 ///
-/// The typed form of V1's error-limit rule: a failure count past the
-/// limit calls `SetState(IndexState.Error)`. It is an initial engine
-/// bound, tunable with evidence, never a performance claim.
+/// A failure count past this limit moves the index to the error state. It is
+/// an initial engine bound, tunable with evidence, never a performance claim.
 pub const INDEX_ERROR_STATE_THRESHOLD: usize = 8;
 
 /// The operational state of one explicitly created index.
 ///
-/// This is V1's `IndexState` folded to one axis (V1 carries `State` and a
-/// separate running status): `Normal` maps V1's `Normal`, `Paused` maps
-/// the node-local stop of `StopIndex`, `Disabled` maps the persistent
-/// stop of `DisableIndex`, and `Error` maps the failure-entered state.
-/// V1's `Idle` lives in the automatic lifecycle of auto indexes
-/// (`IndexLifecycleState::Idle`, IX-03) — demotion in preference, not an
-/// operational condition.
+/// `Normal` serves and indexes, `Paused` is a node-local stop, `Disabled` is
+/// a persistent stop, and `Error` records repeated failures. `Idle` belongs
+/// to the automatic index lifecycle and is not an operational condition.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IndexOperationalState {
     /// Serving and indexing normally.
     Normal,
     /// Paused: performs no indexing, still queryable; results may be
-    /// stale while coverage trails (V1 `StopIndexOperation.cs:9-13`).
+    /// stale while coverage trails.
     Paused,
     /// Disabled: the persistent form of inertness, intended to survive a
-    /// restart in V1; still queryable with the same staleness rule (V1
-    /// `DisableIndexOperation.cs:8-14`).
+    /// restart; still queryable with the same staleness rule.
     Disabled,
     /// Error: entered by repeated build or publish failures; unconditionally
-    /// stale until cleared (V1 `Index.cs:2196-2218`, `:1373`).
+    /// stale until cleared.
     Error,
 }
 
@@ -155,10 +149,9 @@ pub enum IndexOperationError {
 
 /// The deployment options an explicit index carries at creation.
 ///
-/// Priority is observable metadata (V1 `IndexPriority.cs:29-33`); the
-/// in-memory catalog has no indexing thread pool to order, so it carries
-/// no scheduling semantics here. The lock mode guards definition changes
-/// exactly as V1's does (V1 `IndexLockMode.cs:22-27`).
+/// Priority is observable metadata. The in-memory catalog has no indexing
+/// thread pool to order, so it carries no scheduling semantics here. The
+/// lock mode guards definition changes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct IndexDeployment {
     priority: IndexPriority,
@@ -191,9 +184,8 @@ impl IndexDeployment {
 
 /// The processing priority recorded on one explicit index.
 ///
-/// V1 `IndexPriority.cs:29-33`. Observable deployment metadata; the
-/// scheduling effect belongs to a future indexing scheduler owned by the
-/// IX wave.
+/// Observable deployment metadata. Scheduling belongs to the indexing
+/// scheduler rather than this catalog record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IndexPriority {
     /// Lower processing priority than normal.
@@ -206,8 +198,8 @@ pub enum IndexPriority {
 
 /// How an index's definition is guarded against changes.
 ///
-/// V1 `IndexLockMode.cs:22-27`: unlock accepts changes, locked-ignore
-/// accepts them as a recorded no-op, and locked-error refuses them.
+/// Unlock accepts changes, locked-ignore accepts them as a recorded no-op,
+/// and locked-error refuses them.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IndexLockMode {
     /// All definition changes are accepted.
@@ -222,7 +214,6 @@ pub enum IndexLockMode {
 
 /// The reset mode of [`IndexStore::reset`].
 ///
-/// V1 `ResetIndexOperation.cs:44-46`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IndexResetMode {
     /// Removes all existing indexed data and re-indexes in place: the
@@ -430,12 +421,10 @@ impl IndexErrorListing {
 
 /// One typed reason an index is stale.
 ///
-/// The typed form of V1's `stalenessReasons` list (V1
-/// `Index.cs:1362-1376`).
+/// The typed reason list returned by a staleness check.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StalenessReason {
-    /// The index is in the error state, which is unconditionally stale
-    /// (V1's faulty-index rule, `Index.cs:1373`).
+    /// The index is in the error state, which is unconditionally stale.
     ErrorState,
     /// The index's covered storage sequence trails the latest observed
     /// publication.
@@ -496,15 +485,14 @@ impl IndexStaleness {
 
 /// The bound of one wait-for-non-stale call.
 ///
-/// The default is V1's 15-second convention (V1
-/// `DocumentConventions.cs:91`, `DynamicQueryRunner.cs:191-194`). A zero
-/// bound is legal and means "evaluate once, never step". The bound is a
-/// deadline, not a sleep: see [`IndexStore::wait_for_non_stale`].
+/// The default is fifteen seconds. A zero bound is legal and means "evaluate
+/// once, never step". The bound is a deadline, not a sleep. See
+/// [`IndexStore::wait_for_non_stale`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WaitForNonStale(Duration);
 
 impl WaitForNonStale {
-    /// The default bound: fifteen seconds, V1's convention.
+    /// The default bound: fifteen seconds.
     pub const DEFAULT: Self = Self(Duration::from_secs(15));
 
     /// Creates one bounded wait.
@@ -529,9 +517,8 @@ impl Default for WaitForNonStale {
 /// The outcome of one bounded wait-for-non-stale call.
 ///
 /// The engine returns the typed outcome with the final staleness it
-/// observed; translating a timeout into a caller-facing error belongs to
-/// the caller, exactly as V1's client — not its server — throws the
-/// timeout (V1 `QueryOperation.cs:453-465`).
+/// observed. Translating a timeout into a caller-facing error belongs to the
+/// caller rather than the engine.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NonStaleWaitOutcome {
     /// The index was (or became) non-stale; the carried report is fresh.

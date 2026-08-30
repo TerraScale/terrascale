@@ -355,15 +355,15 @@ func TestCancellationAndDeadlineRemainInspectable(t *testing.T) {
 }
 
 func TestWholeMessageLimit(t *testing.T) {
-	request := &v1.EngineServiceFamilyWriteRequest{Request: make([]byte, maxFrameBytes+1)}
+	request := &v1.FamilyWriteRequest{Request: make([]byte, maxFrameBytes+1)}
 	if err := checkMessageSize("request", request); !errors.Is(err, ErrRequestTooLarge) {
 		t.Fatalf("an oversized request must answer ErrRequestTooLarge, got %v", err)
 	}
-	response := &v1.EngineServiceFamilyReadResponse{Response: make([]byte, maxFrameBytes+1)}
+	response := &v1.FamilyReadResponse{Response: make([]byte, maxFrameBytes+1)}
 	if err := checkMessageSize("response", response); !errors.Is(err, ErrEngineFailure) {
 		t.Fatalf("an oversized response must answer ErrEngineFailure, got %v", err)
 	}
-	if err := checkMessageSize("request", &v1.EngineServiceFamilyWriteRequest{Request: []byte(strings.Repeat("x", 8))}); err != nil {
+	if err := checkMessageSize("request", &v1.FamilyWriteRequest{Request: []byte(strings.Repeat("x", 8))}); err != nil {
 		t.Fatalf("a bounded request was refused: %v", err)
 	}
 }

@@ -198,10 +198,8 @@ impl IndexGenerationRef {
 
 /// One counter-source result row: one live counter entry (GAP-Q19).
 ///
-/// The field space is V1's counter map input — `(DocumentId, Name, Value)`
-/// (`CounterEntry.cs` and `DynamicCounterEntry.cs`, pinned citations in
-/// `docs/query/gapq19-family-sources.md` D2). A row exists only for a
-/// present value: a counter that does not exist or is tombstoned
+/// The field space is `(DocumentId, Name, Value)`. A row exists only for a
+/// present value. A counter that does not exist or is tombstoned
 /// contributes no row, the family read seam's own live-name rule.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CounterQueryRow {

@@ -2220,8 +2220,18 @@ fn snapshot_documents_from_serves_bounded_windows_and_validates_the_view() {
 }
 
 #[test]
-fn snapshot_records_from_pages_full_keys_and_winning_durability() {
+fn snapshot_records_from_pages_full_keys_and_winning_durability_lsm() {
     let (dir, engine) = open_engine("engine-record-pages");
+    assert_snapshot_records_from_pages(&dir, engine);
+}
+
+#[test]
+fn snapshot_records_from_pages_full_keys_and_winning_durability_root() {
+    let (dir, engine) = open_root_engine("engine-record-pages-root");
+    assert_snapshot_records_from_pages(&dir, engine);
+}
+
+fn assert_snapshot_records_from_pages(dir: &PathBuf, engine: Engine) {
     let scope = tenant_scope(&engine, "tenant-a");
     for (operation_name, id, collection, value, durability, expected) in [
         ("record-1", "same", "alpha", "a1", LocalDurability::Written, ExpectedVersion::New),
@@ -2344,6 +2354,33 @@ fn assert_compaction_workload_intact(engine: &Engine) {
     assert!(read_document(engine, "tenant-a", "doc-1").is_some(), "doc-1 survives");
     assert!(read_document(engine, "tenant-a", "doc-2").is_none(), "doc-2 stays deleted");
     assert!(read_document(engine, "tenant-a", "doc-3").is_some(), "doc-3 survives");
+}
+
+#[test]
+fn snapshot_records_fail_closed_when_a_live_winner_is_below_history_floor() {
+    let (dir, engine) = open_engine("snapshot-history-floor");
+    seed_compaction_workload(&engine);
+    let retention = SharedTombstoneRetention::new();
+    engine
+        .compact_with_retention(
+            CompactionRequest::new(CompactionPolicy::ReclaimHistory),
+            &retention,
+        )
+        .expect("history reclaim runs");
+    let boundary = StorageSequence::new(4);
+    assert_eq!(engine.servable_history_start().expect("history window"), Some(boundary));
+    assert_eq!(
+        engine.snapshot_records_from(tenant("tenant-a"), StorageSequence::new(3), None, 256),
+        Err(EngineError::SnapshotBoundaryUnavailable),
+        "a boundary below the history floor is refused before reading state"
+    );
+    assert_eq!(
+        engine.snapshot_records_from(tenant("tenant-a"), boundary, None, 256),
+        Err(EngineError::SnapshotBoundaryUnavailable),
+        "a live document whose winning put was reclaimed cannot be upgraded or omitted"
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// The production retention-driving path with data (GAP-S1 D5):

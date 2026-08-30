@@ -229,6 +229,7 @@ fn editor_card(state: &StudioState, selection: &Selection) -> String {
         "<form class=\"grid gap-4\" data-on:submit=\"@post('/documents/put', {{contentType: 'form', retry: 'never'}})\">\n{tenant}{collection}{id}\
 {json}\
 <div class=\"grid gap-4 sm:grid-cols-2\">{expected}{version}</div>\n\
+{confirmation}\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary} w-fit\">Create or replace</button>\n\
 </form>\n{receipt}",
         tenant = html::select("tenant", "Tenant", &tenant_options),
@@ -246,6 +247,10 @@ fn editor_card(state: &StudioState, selection: &Selection) -> String {
             )
         ),
         version = html::number_input("version", "Exact version", "1"),
+        confirmation = html::confirmation_fields(
+            &format!("{}/{}/<document id entered above>", selection.tenant, selection.collection),
+            "replace document",
+        ),
         primary = ButtonStyle::Primary.classes(),
         receipt = html::receipt_region_with("editor-receipt"),
     );
