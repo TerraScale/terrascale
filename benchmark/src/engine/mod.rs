@@ -721,11 +721,21 @@ impl Engine {
                         }
                     }
                 }
-                // No further batch can carry the deferred flips: make any
-                // deferred records durable, then step down atomically —
-                // the flag clear and the empty check share one lock hold,
-                // so a committer that queued while the flush ran is driven
-                // by this leader instead of waiting behind a cleared flag.
+                // Arrivals first: a wave that is already queued carries
+                // the deferred flips in its own witness, which is the
+                // entire saving, so a leader with arrivals skips the flush
+                // and keeps driving. A quiet leader flushes while it still
+                // holds leadership — arrivals during the flush join its
+                // next batch instead of racing a leaderless queue — and
+                // only then steps down atomically: the flag clear and the
+                // empty check share one lock hold, so nothing strands.
+                if self
+                    .commit_mailbox
+                    .lock()
+                    .is_ok_and(|mailbox| !mailbox.queue.is_empty())
+                {
+                    continue;
+                }
                 if let Ok(mut storage) = self.lock_storage() {
                     storage.port.flush_pending_flips();
                 }
