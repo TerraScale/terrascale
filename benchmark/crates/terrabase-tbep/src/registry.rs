@@ -1962,7 +1962,7 @@ impl FamilyReadRequest {
     pub fn validate(&self) -> Result<(), crate::value::BodyError> {
         crate::value::check_str_bound(&self.family, 64, "family")?;
         crate::value::check_one_of(&self.family, FAMILY_KINDS, "family")?;
-        crate::value::check_str_bound(&self.name, 128, "name")?;
+        crate::value::check_str_bound(&self.name, 64, "name")?;
         crate::value::check_str_bound(&self.request_codec, 64, "request_codec")?;
         Ok(())
     }
@@ -2055,7 +2055,7 @@ impl FamilyWriteRequest {
     pub fn validate(&self) -> Result<(), crate::value::BodyError> {
         crate::value::check_str_bound(&self.family, 64, "family")?;
         crate::value::check_one_of(&self.family, FAMILY_KINDS, "family")?;
-        crate::value::check_str_bound(&self.name, 128, "name")?;
+        crate::value::check_str_bound(&self.name, 64, "name")?;
         crate::value::check_str_bound(&self.request_codec, 64, "request_codec")?;
         crate::value::check_str_bound(&self.operation_id, 128, "operation_id")?;
         Ok(())

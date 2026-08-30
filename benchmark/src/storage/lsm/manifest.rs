@@ -41,6 +41,7 @@ const ACTIVE_MANIFEST_TEMP: &str = "MANIFEST.active.tmp";
 const MANIFEST_ORDINAL_MAGIC: &[u8; 8] = b"TBMFNOR1";
 const MANIFEST_ORDINAL_BYTES: usize = 8 + 16 + 32;
 const ENCRYPTED_MAGIC: &[u8; 4] = b"TBE1";
+static MANIFEST_TEMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Local artifact-key inputs retained by the LSM owner for manifest I/O.
 /// The provider reloads the key for each operation, so this configuration
@@ -448,7 +449,17 @@ impl SegmentManifest {
         let parent = path
             .parent()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "manifest has no parent"))?;
-        let (cipher, _) = encryption.cipher(parent)?;
+        let (cipher, ordinal_path) = encryption.cipher(parent)?;
+        let next = load_or_create_ordinal(&ordinal_path, true)?;
+        if bytes.len() < 17 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "manifest envelope ordinal"));
+        }
+        let mut ordinal_bytes = [0_u8; 16];
+        ordinal_bytes[4..].copy_from_slice(&bytes[5..17]);
+        let ordinal = u128::from_be_bytes(ordinal_bytes);
+        if ordinal >= next {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "manifest ordinal rollback"));
+        }
         let plaintext = cipher.open(&bytes).map_err(encryption_io)?;
         SegmentManifest::decode(&plaintext)
             .map(Some)
@@ -531,12 +542,11 @@ fn persist_ordinal(path: &Path, ordinal: u128) -> io::Result<()> {
     body.extend_from_slice(MANIFEST_ORDINAL_MAGIC);
     body.extend_from_slice(&ordinal.to_be_bytes());
     body.extend_from_slice(&ordinal_checksum(&body));
-    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let temp = path.with_file_name(format!(
         "{}.tmp-{}-{}",
         path.file_name().and_then(|name| name.to_str()).unwrap_or("manifest.ordinal"),
         std::process::id(),
-        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        MANIFEST_TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);

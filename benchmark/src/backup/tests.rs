@@ -19,11 +19,13 @@ use std::sync::mpsc;
 use std::thread;
 
 use crate::backup::{
-    BackupError, BackupKind, BackupPlan, BackupSkipReason, BackupStep, load_recovery_point,
-    run_backup, verify_latest_chain,
+    BackupError, BackupKind, BackupPlan, BackupSkipReason, BackupStep, RestorePlan,
+    load_recovery_point, run_backup, verify_latest_chain,
+};
+use crate::encryption::{
+    ArtifactCipher, Compression, DatabaseKey, EncryptionContext, ProviderMode,
 };
 use crate::engine::{CommitOutcome, Engine, EngineConfig};
-use crate::encryption::{ArtifactCipher, Compression, DatabaseKey, EncryptionContext, ProviderMode};
 use crate::types::{
     Cancellation, CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion,
     LocalDurability, OperationId, StorageSequence, TenantId, TenantScope,
@@ -165,12 +167,9 @@ fn encrypted_backup_seals_members_and_manifest_and_round_trips() {
         LocalDurability::Synced,
     ));
 
-    let result = run_backup(
-        &engine,
-        BackupPlan::full().with_encryption(test_backup_cipher()),
-        &destination,
-    )
-    .expect("encrypted backup");
+    let result =
+        run_backup(&engine, BackupPlan::full().with_encryption(test_backup_cipher()), &destination)
+            .expect("encrypted backup");
     let point = destination.join(format!("rp-{}", result.manifest().identity()));
     assert!(!point.join("manifest.tbv2m").exists());
     let encrypted_manifest = std::fs::read(point.join("manifest.tbv3e")).expect("manifest");

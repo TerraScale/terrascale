@@ -494,7 +494,7 @@ pub(crate) fn read_segment_with_sources(
     // 1. Local `NVMe`.
     if let Some(meta) = storage.segment_metas().iter().find(|meta| meta.id == segment_id)
         && let Ok(bytes) = std::fs::read(super::segment_path(storage.dir(), meta.id))
-        && decode_segment_bytes(&bytes, meta.id, meta.level).is_ok()
+        && decode_segment_bytes_for_storage(storage, &bytes, meta.id, meta.level).is_ok()
     {
         return Ok(bytes);
     }
@@ -515,7 +515,8 @@ pub(crate) fn read_segment_with_sources(
         if bytes.len() as u64 != object.byte_len {
             continue;
         }
-        if decode_segment_bytes(&bytes, object.segment_id, object.level).is_ok() {
+        if decode_segment_bytes_for_storage(storage, &bytes, object.segment_id, object.level).is_ok()
+        {
             return Ok(bytes);
         }
     }
@@ -535,7 +536,26 @@ pub(super) fn read_cold_segment_entries(
             manifest.objects.into_iter().find(|object| object.segment_id == segment_id)
         })
         .ok_or(ObjectStoreError::ColdTierUnavailable)?;
-    decode_segment_bytes(&bytes, object.segment_id, object.level)
+    decode_segment_bytes_for_storage(storage, &bytes, object.segment_id, object.level)
+}
+
+fn decode_segment_bytes_for_storage(
+    storage: &LsmStorage,
+    bytes: &[u8],
+    segment_id: u64,
+    level: u16,
+) -> Result<Vec<Entry>, ObjectStoreError> {
+    if let Some(encryption) = &storage.segment_encryption {
+        return super::segment::decode_encrypted_segment_bytes(
+            bytes,
+            &super::segment_path(storage.dir(), segment_id),
+            segment_id,
+            level,
+            encryption,
+        )
+        .map_err(|_| ObjectStoreError::ChecksumMismatch);
+    }
+    decode_segment_bytes(bytes, segment_id, level)
 }
 
 /// Decodes and verifies the immutable segment format from an object-store

@@ -531,8 +531,19 @@ mod tests {
         ))
     }
 
-    #[test]
-    fn one_bind_supports_repeated_bound_checks_without_replaying_envelope() {
+    struct Fixture {
+        gateway: AuthorizedEngine,
+        envelope: PrincipalContextEnvelope,
+        envelope_two: PrincipalContextEnvelope,
+        scope: ResourceScope,
+        grant: PrincipalGrantUlid,
+        policy_id: AuthorizationPolicyUlid,
+        session: PrincipalSessionUlid,
+        session_two: PrincipalSessionUlid,
+        engine_path: std::path::PathBuf,
+    }
+
+    fn fixture() -> Fixture {
         let engine_path = path("engine");
         let policy_path = engine_path.join("authorization.journal");
         let engine =
@@ -545,14 +556,29 @@ mod tests {
         )
         .expect("scope");
         let grant = PrincipalGrantUlid::from_wire_bytes([4; 16]);
+        let grant_two = PrincipalGrantUlid::from_wire_bytes([8; 16]);
         let policy_id = AuthorizationPolicyUlid::from_wire_bytes([5; 16]);
-        let policy = Policy::try_new_with_id(
-            policy_id,
-            1,
-            std::iter::empty::<String>(),
-            [PolicyRule::try_new_with_id(grant, Operation::Read, "documents").expect("rule")],
-        )
-        .expect("policy");
+        let rules = [
+            Operation::Read,
+            Operation::Query,
+            Operation::Mutate,
+            Operation::Subscribe,
+            Operation::Schema,
+            Operation::Admin,
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, operation)| {
+            PolicyRule::try_new_with_id(
+                if index == 0 { grant_two } else { grant },
+                operation,
+                "documents",
+            )
+            .expect("rule")
+        })
+        .collect::<Vec<_>>();
+        let policy = Policy::try_new_with_id(policy_id, 1, std::iter::empty::<String>(), rules)
+            .expect("policy");
         let mut store = AuthorizationPolicyStore::open(&policy_path, [42; 32]).expect("store");
         store.publish(scope.clone(), policy).expect("publish");
         let signer = PrincipalContextSigner::from_pkcs8(
@@ -566,25 +592,46 @@ mod tests {
             .to_vec(),
         )
         .expect("signer");
-        let payload = PrincipalContextPayload::try_new(
-            "production",
-            "spiffe://terrascale/gateway",
-            "terrascale-go",
-            "terrascale.database",
-            scope.clone(),
-            PrincipalUlid::from_wire_bytes([6; 16]),
-            PrincipalSessionUlid::from_wire_bytes([7; 16]),
-            grant,
-            policy_id,
-            BTreeSet::from([Action::Read]),
-            PrincipalClaims::default(),
-            1,
-            1,
-            100,
-        )
-        .expect("payload");
-        let envelope =
-            signer.sign(&payload, AuthorizationCryptoMode::LocalDevelopment).expect("sign");
+        let make_payload = |principal, session, grant| {
+            PrincipalContextPayload::try_new(
+                "production",
+                "spiffe://terrascale/gateway",
+                "terrascale-go",
+                "terrascale.database",
+                scope.clone(),
+                principal,
+                session,
+                grant,
+                policy_id,
+                BTreeSet::from([
+                    Action::Read,
+                    Action::Query,
+                    Action::Mutate,
+                    Action::Subscribe,
+                    Action::Schema,
+                    Action::Admin,
+                ]),
+                PrincipalClaims::default(),
+                1,
+                1,
+                100,
+            )
+            .expect("payload")
+        };
+        let session = PrincipalSessionUlid::from_wire_bytes([7; 16]);
+        let session_two = PrincipalSessionUlid::from_wire_bytes([10; 16]);
+        let envelope = signer
+            .sign(
+                &make_payload(PrincipalUlid::from_wire_bytes([6; 16]), session, grant),
+                AuthorizationCryptoMode::LocalDevelopment,
+            )
+            .expect("sign");
+        let envelope_two = signer
+            .sign(
+                &make_payload(PrincipalUlid::from_wire_bytes([9; 16]), session_two, grant_two),
+                AuthorizationCryptoMode::LocalDevelopment,
+            )
+            .expect("sign");
         let key = PrincipalContextKey::new(signer.key_id(), signer.public_key().expect("public"))
             .expect("key");
         let verifier = crate::authorization::PrincipalContextVerifier::new(
@@ -605,13 +652,28 @@ mod tests {
             store,
         )
         .expect("gateway");
+        Fixture {
+            gateway,
+            envelope,
+            envelope_two,
+            scope,
+            grant,
+            policy_id,
+            session,
+            session_two,
+            engine_path,
+        }
+    }
+
+    #[test]
+    fn one_bind_supports_repeated_bound_checks_without_replaying_envelope() {
+        let Fixture { gateway, envelope, scope, grant, policy_id, session, engine_path, .. } =
+            fixture();
         assert!(matches!(
             gateway.bind(&envelope, PrincipalSessionUlid::from_wire_bytes([8; 16]), 10),
             Err(AuthorizedEngineError::Authorization(AuthorizationError::ContextBindingMismatch))
         ));
-        let session = gateway
-            .bind(&envelope, PrincipalSessionUlid::from_wire_bytes([7; 16]), 10)
-            .expect("bind");
+        let session = gateway.bind(&envelope, session, 10).expect("bind");
         assert!(matches!(
             gateway.bind(&envelope, PrincipalSessionUlid::from_wire_bytes([7; 16]), 10),
             Err(AuthorizedEngineError::Authorization(AuthorizationError::ContextReplay))
@@ -632,6 +694,8 @@ mod tests {
             gateway.authorize_bound(&session, &request, 100),
             Err(AuthorizedEngineError::Authorization(AuthorizationError::ContextExpired))
         ));
+        let policy_id = AuthorizationPolicyUlid::from_wire_bytes([5; 16]);
+        let grant = PrincipalGrantUlid::from_wire_bytes([4; 16]);
         let replacement = Policy::try_new_with_id(
             policy_id,
             2,
@@ -644,6 +708,115 @@ mod tests {
             !gateway.authorize_bound(&session, &request, 11).expect("stale decision").is_allowed()
         );
         assert!(!format!("{gateway:?}").contains("authorized-test"));
+        drop(gateway);
+        let _ = fs::remove_dir_all(engine_path);
+    }
+
+    #[test]
+    fn category_gateways_accept_only_their_exact_action() {
+        let Fixture { gateway, envelope, scope, session, engine_path, .. } = fixture();
+        let session = gateway.bind(&envelope, session, 10).expect("bind");
+        let actions = [
+            Action::Read,
+            Action::Query,
+            Action::Mutate,
+            Action::Subscribe,
+            Action::Schema,
+            Action::Admin,
+        ];
+        let authorize = |action, request: &AuthorizationRequest| match action {
+            Action::Read => gateway.authorize_family_read(&session, request, 10),
+            Action::Query => gateway.authorize_query(&session, request, 10),
+            Action::Mutate => gateway.authorize_family_write(&session, request, 10),
+            Action::Subscribe => gateway.authorize_subscription(&session, request, 10),
+            Action::Schema => gateway.authorize_schema(&session, request, 10),
+            Action::Admin => gateway.authorize_admin(&session, request, 10),
+        };
+
+        for action in actions {
+            let request = AuthorizationRequest::try_new(
+                scope.clone(),
+                "terrascale.database",
+                action,
+                "documents",
+                BTreeMap::new(),
+                BTreeSet::new(),
+                10,
+            )
+            .expect("request");
+            assert!(authorize(action, &request).expect("exact action").is_allowed());
+
+            for other_action in actions {
+                if other_action == action {
+                    continue;
+                }
+                let request = AuthorizationRequest::try_new(
+                    scope.clone(),
+                    "terrascale.database",
+                    other_action,
+                    "documents",
+                    BTreeMap::new(),
+                    BTreeSet::new(),
+                    10,
+                )
+                .expect("request");
+                assert!(matches!(authorize(action, &request), Err(AuthorizedEngineError::Denied)));
+            }
+        }
+        drop(session);
+        let _ = fs::remove_dir_all(engine_path);
+    }
+
+    #[test]
+    fn concurrent_sessions_reuse_bound_contexts_without_cross_session_replay() {
+        let Fixture {
+            gateway,
+            envelope,
+            envelope_two,
+            scope,
+            session,
+            session_two,
+            engine_path,
+            ..
+        } = fixture();
+        let first_session = gateway.bind(&envelope, session, 10).expect("first bind");
+        let second_session = gateway.bind(&envelope_two, session_two, 10).expect("second bind");
+        let gateway = std::sync::Arc::new(gateway);
+        let request = AuthorizationRequest::try_new(
+            scope,
+            "terrascale.database",
+            Action::Query,
+            "documents",
+            BTreeMap::new(),
+            BTreeSet::new(),
+            10,
+        )
+        .expect("request");
+        let first_gateway = std::sync::Arc::clone(&gateway);
+        let second_gateway = std::sync::Arc::clone(&gateway);
+        let second_request = request.clone();
+        let first = std::thread::spawn(move || {
+            for now in 10..30 {
+                assert!(
+                    first_gateway
+                        .authorize_bound(&first_session, &request, now)
+                        .expect("first authorization")
+                        .is_allowed()
+                );
+            }
+        });
+        let second = std::thread::spawn(move || {
+            for now in 10..30 {
+                assert!(
+                    second_gateway
+                        .authorize_bound(&second_session, &second_request, now)
+                        .expect("second authorization")
+                        .is_allowed()
+                );
+            }
+        });
+        first.join().expect("first thread");
+        second.join().expect("second thread");
         drop(gateway);
         let _ = fs::remove_dir_all(engine_path);
     }

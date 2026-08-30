@@ -1143,6 +1143,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d354792e39fa5f0009e47623cf8b15b099bf9a652fa55c6f817fe28ac84fea50"
 dependencies = [
  "async-trait",
+ "aws-lc-rs",
  "base64",
  "bytes",
  "chrono",

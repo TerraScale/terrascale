@@ -182,16 +182,22 @@ impl ProductionCatalogBootstrap {
 
     /// Closes the owned catalog within the caller-provided bounded deadline.
     ///
-    /// The Member is taken before close is attempted, so the bootstrap Drop
-    /// path cannot issue a second close after this method returns. A durable
-    /// drain or engine-shutdown failure is returned unchanged.
+    /// The Member is relinquished only after close succeeds, so the bootstrap
+    /// Drop path can retry bounded cleanup after a durable failure but cannot
+    /// issue a second close after success. A durable drain or engine-shutdown
+    /// failure is returned unchanged.
     ///
     /// # Errors
     ///
     /// Returns the durable [`MemberError`] reported by the root catalog.
-    pub fn close(mut self, timeout: Duration) -> Result<(), MemberError> {
-        let member = self.member.take().ok_or(MemberError::Draining)?;
-        member.close(timeout)
+    pub fn close(&mut self, timeout: Duration) -> Result<(), MemberError> {
+        let member = self.member.as_ref().ok_or(MemberError::Draining)?;
+        member.close(timeout)?;
+        // Only relinquish ownership after a successful durable close. If the
+        // close fails, Drop retains the Member and makes one bounded cleanup
+        // attempt rather than silently abandoning it.
+        self.member = None;
+        Ok(())
     }
 
     /// Transfers every owned catalog component to the production runtime.
@@ -201,16 +207,14 @@ impl ProductionCatalogBootstrap {
     /// the Member and must eventually close it after runtime draining.
     #[must_use]
     pub fn into_parts(mut self) -> ProductionCatalogParts {
-        let member = self
-            .member
-            .take()
-            .expect("a live production bootstrap always owns its Member");
+        let member =
+            self.member.take().expect("a live production bootstrap always owns its Member");
         ProductionCatalogParts {
-            root: self.root,
+            root: std::mem::take(&mut self.root),
             member,
-            specs: self.specs,
-            routes: self.routes,
-            placement: self.placement,
+            specs: std::mem::take(&mut self.specs),
+            routes: self.routes.clone(),
+            placement: self.placement.clone(),
             limits: self.limits,
         }
     }
@@ -486,9 +490,67 @@ fn close_with<T>(
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
 
-    use super::{ProductionCatalogError, derive_root, normalize_location};
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt as _;
+
+    use terrabase::identity::{DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid};
+    use terrabase::member::{AdmissionLimits, DatabaseScope, DatabaseSpec, Member};
+    use terrabase::regions::RegionCode;
+
+    use super::{
+        DatabaseRouteScope, DatabaseRoutingCatalog, ProductionCatalogBootstrap,
+        ProductionCatalogError, ProductionPlacement, ProductionRegionSeats, close_with,
+        derive_root, normalize_location,
+    };
+
+    fn opened_bootstrap(label: &str) -> (ProductionCatalogBootstrap, PathBuf, DatabaseSpec) {
+        let root = std::env::temp_dir()
+            .join(format!("terrabase-server-production-{label}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("test root");
+        #[cfg(unix)]
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).expect("root mode");
+
+        let tenant = TenantUlid::generate();
+        let project = ProjectUlid::generate();
+        let database = DatabaseUlid::generate();
+        let scope = DatabaseScope::new("production", tenant, project, database, RegionCode::GRU)
+            .expect("scope");
+        let spec = DatabaseSpec::scoped(scope, "db");
+        let member = Member::open_production(&root, [spec.clone()], AdmissionLimits::new(2, 2))
+            .expect("member");
+        let routes =
+            DatabaseRoutingCatalog::try_new([DatabaseRouteScope::new(tenant, project, database)])
+                .expect("routes");
+        let local_member = MemberUlid::generate();
+        let peer = MemberUlid::generate();
+        let placement = ProductionPlacement::try_new(
+            local_member,
+            1,
+            1,
+            [ProductionRegionSeats::try_new(RegionCode::GRU, [local_member, peer]).expect("seats")],
+        )
+        .expect("placement");
+        let bootstrap = ProductionCatalogBootstrap {
+            root: root.clone(),
+            member: Some(member),
+            specs: vec![spec.clone()],
+            routes,
+            placement,
+            limits: AdmissionLimits::new(2, 2),
+        };
+        (bootstrap, root, spec)
+    }
+
+    fn reopen(root: &Path, spec: DatabaseSpec) {
+        let member = Member::open_production(root, [spec], AdmissionLimits::new(2, 2))
+            .expect("reopen after cleanup");
+        member.close(Duration::from_secs(1)).expect("close reopened member");
+    }
 
     #[test]
     fn derives_common_owner_root_for_siblings() {
@@ -513,5 +575,40 @@ mod tests {
             normalize_location(Path::new("/var/lib/terrabase/../db")),
             Err(ProductionCatalogError::TraversalLocation(_))
         ));
+    }
+
+    #[test]
+    fn explicit_close_returns_and_releases_the_durable_member() {
+        let (mut bootstrap, root, spec) = opened_bootstrap("explicit-close");
+        bootstrap.close(Duration::from_secs(1)).expect("explicit close");
+        assert!(bootstrap.member().is_none());
+        reopen(&root, spec);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ownership_transfer_does_not_close_before_runtime_takes_over() {
+        let (bootstrap, root, spec) = opened_bootstrap("transfer");
+        let parts = bootstrap.into_parts();
+        assert_eq!(parts.member.status().lifecycle, terrabase::member::LifecycleState::Serving);
+        parts.member.close(Duration::from_secs(1)).expect("runtime close");
+        reopen(&root, spec);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn post_open_cleanup_closes_member_and_drop_is_bounded() {
+        let (bootstrap, root, spec) = opened_bootstrap("post-open");
+        let parts = bootstrap.into_parts();
+        let result: Result<(), ProductionCatalogError> =
+            close_with(parts.member, ProductionCatalogError::CatalogMismatch);
+        assert_eq!(result, Err(ProductionCatalogError::CatalogMismatch));
+        reopen(&root, spec.clone());
+        let _ = fs::remove_dir_all(&root);
+        let (bootstrap, root, spec) = opened_bootstrap("drop");
+        assert!(bootstrap.member().is_some());
+        drop(bootstrap);
+        reopen(&root, spec);
+        let _ = fs::remove_dir_all(root);
     }
 }

@@ -7,13 +7,14 @@
 //! into disposable local scratch space.
 
 use std::collections::BTreeSet;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::{StreamExt, TryStreamExt, stream};
-use object_store::aws::AmazonS3Builder;
+use object_store::aws::{AmazonS3Builder, AmazonS3ConfigKey};
 use object_store::path::Path as ObjectPath;
 use object_store::{
     Error as ObjectStoreError, ObjectStore, ObjectStoreExt, PutMode, PutOptions, PutPayload, TagSet,
@@ -29,6 +30,11 @@ compile_error!("select one of `local-crypto` or `production-fips`");
 
 const MANIFEST_FILE: &str = "manifest.tbv2m";
 const MANIFEST_LIMIT_BYTES: u64 = 1024 * 1024;
+const MAX_BUCKET_BYTES: usize = 255;
+const MAX_REGION_BYTES: usize = 128;
+const MAX_PREFIX_BYTES: usize = 768;
+const MAX_ENDPOINT_BYTES: usize = 2_048;
+const MAX_KMS_KEY_ID_BYTES: usize = 2_048;
 /// Bounds list memory and manifest fetch work for one repository prefix.
 const MAX_RECOVERY_POINTS: usize = 100_000;
 /// Bounds decoded manifest memory independently of recovery-point cadence.
@@ -125,21 +131,37 @@ impl S3BackupSettings {
     /// Validates the non-secret settings without contacting S3.
     pub fn validate(&self) -> Result<(), String> {
         if self.bucket.is_empty()
-            || self.bucket.len() > 255
-            || self.bucket.contains('/')
-            || self.bucket.chars().any(char::is_control)
+            || self.bucket.len() > MAX_BUCKET_BYTES
+            || !self
+                .bucket
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
         {
-            return Err("the S3 bucket name is invalid".to_owned());
+            return Err(
+                "the S3 bucket name must use only letters, digits, dots, underscores, or hyphens"
+                    .to_owned(),
+            );
         }
-        if self.region.is_empty() || self.region.chars().any(char::is_whitespace) {
-            return Err("the S3 region is required and cannot contain whitespace".to_owned());
+        if self.region.is_empty()
+            || self.region.len() > MAX_REGION_BYTES
+            || !self
+                .region
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        {
+            return Err(
+                "the S3 region must use only letters, digits, dots, underscores, or hyphens"
+                    .to_owned(),
+            );
         }
         if self.prefix.is_empty()
+            || self.prefix.len() > MAX_PREFIX_BYTES
             || self.prefix.split('/').any(|part| part.is_empty() || part == "." || part == "..")
             || self.prefix.chars().any(char::is_control)
         {
             return Err(
-                "the S3 prefix must be a non-empty object path without dot segments".to_owned()
+                "the S3 prefix must be a bounded object path without empty or dot segments"
+                    .to_owned(),
             );
         }
         if self.incremental_interval_minutes == 0 {
@@ -148,7 +170,14 @@ impl S3BackupSettings {
         if self.full_interval_hours == 0 {
             return Err("the full interval must be at least one hour".to_owned());
         }
-        if !self.endpoint.is_empty() {
+        if self.endpoint.is_empty() {
+            if self.allow_http {
+                return Err("allow HTTP requires an explicit loopback S3 endpoint".to_owned());
+            }
+        } else {
+            if self.endpoint.len() > MAX_ENDPOINT_BYTES {
+                return Err("the S3 endpoint exceeds the 2048-byte limit".to_owned());
+            }
             let endpoint = self
                 .endpoint
                 .parse::<axum::http::Uri>()
@@ -159,8 +188,11 @@ impl S3BackupSettings {
             let authority = endpoint
                 .authority()
                 .ok_or_else(|| "the S3 endpoint must include an authority".to_owned())?;
-            if authority.as_str().contains('@') {
+            if authority.host().is_empty() || authority.as_str().contains('@') {
                 return Err("the S3 endpoint must not contain credentials".to_owned());
+            }
+            if endpoint.query().is_some() {
+                return Err("the S3 endpoint must not contain a query string".to_owned());
             }
             if scheme.eq_ignore_ascii_case("http") {
                 if !self.allow_http {
@@ -169,7 +201,7 @@ impl S3BackupSettings {
                             .to_owned(),
                     );
                 }
-                let host = authority.host();
+                let host = authority.host().trim_matches(['[', ']']);
                 let loopback = host.eq_ignore_ascii_case("localhost")
                     || host.parse::<std::net::IpAddr>().is_ok_and(|address| address.is_loopback());
                 if !loopback {
@@ -180,6 +212,17 @@ impl S3BackupSettings {
             } else if !scheme.eq_ignore_ascii_case("https") {
                 return Err("the S3 endpoint scheme must be HTTP or HTTPS".to_owned());
             }
+        }
+        if self.kms_key_id.len() > MAX_KMS_KEY_ID_BYTES
+            || self
+                .kms_key_id
+                .chars()
+                .any(|character| character.is_whitespace() || character.is_control())
+        {
+            return Err(
+                "the KMS key identifier cannot exceed 2048 bytes or contain whitespace or controls"
+                    .to_owned(),
+            );
         }
         Ok(())
     }
@@ -250,19 +293,8 @@ impl S3BackupRepository {
     /// Builds a repository from Studio settings and the standard AWS
     /// credential-provider environment.
     pub fn from_settings(settings: &S3BackupSettings) -> Result<Self, String> {
-        settings.validate()?;
+        let builder = configured_s3_builder(settings, std::env::vars_os())?;
         install_rustls_provider()?;
-        let mut builder = AmazonS3Builder::from_env()
-            .with_bucket_name(&settings.bucket)
-            .with_region(&settings.region)
-            .with_virtual_hosted_style_request(settings.virtual_hosted_style)
-            .with_allow_http(settings.allow_http);
-        if !settings.endpoint.is_empty() {
-            builder = builder.with_endpoint(&settings.endpoint);
-        }
-        if !settings.kms_key_id.is_empty() {
-            builder = builder.with_sse_kms_encryption(&settings.kms_key_id).with_bucket_key(true);
-        }
         let store = builder.build().map_err(|error| safe_store_error("configure S3", error))?;
         Self::new(
             Arc::new(store),
@@ -496,6 +528,141 @@ impl S3BackupRepository {
     fn object_path(&self, identity: &str, file: &str) -> ObjectPath {
         self.prefix.clone().join(format!("rp-{identity}")).join(file)
     }
+}
+
+fn configured_s3_builder(
+    settings: &S3BackupSettings,
+    environment: impl IntoIterator<Item = (OsString, OsString)>,
+) -> Result<AmazonS3Builder, String> {
+    settings.validate()?;
+    let mut builder = credential_environment_builder(environment)?
+        .with_bucket_name(&settings.bucket)
+        .with_region(&settings.region)
+        .with_virtual_hosted_style_request(settings.virtual_hosted_style)
+        .with_allow_http(settings.allow_http);
+    if !settings.endpoint.is_empty() {
+        builder = builder.with_endpoint(&settings.endpoint);
+    }
+    if !settings.kms_key_id.is_empty() {
+        builder = builder.with_sse_kms_encryption(&settings.kms_key_id).with_bucket_key(true);
+    }
+    Ok(builder)
+}
+
+/// Copies only AWS credential-provider settings into a clean S3 builder.
+///
+/// `AmazonS3Builder::from_env` also imports endpoint, HTTP, proxy, certificate,
+/// signing, and encryption switches. Those deployment-wide variables must not
+/// override settings that Studio has validated and shown to the operator.
+fn credential_environment_builder(
+    environment: impl IntoIterator<Item = (OsString, OsString)>,
+) -> Result<AmazonS3Builder, String> {
+    let mut builder = AmazonS3Builder::new();
+    for (name, value) in environment {
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let key = match name {
+            "AWS_ACCESS_KEY_ID" => AmazonS3ConfigKey::AccessKeyId,
+            "AWS_SECRET_ACCESS_KEY" => AmazonS3ConfigKey::SecretAccessKey,
+            "AWS_SESSION_TOKEN" => AmazonS3ConfigKey::Token,
+            "AWS_WEB_IDENTITY_TOKEN_FILE" => AmazonS3ConfigKey::WebIdentityTokenFile,
+            "AWS_ROLE_ARN" => AmazonS3ConfigKey::RoleArn,
+            "AWS_ROLE_SESSION_NAME" => AmazonS3ConfigKey::RoleSessionName,
+            "AWS_ENDPOINT_URL_STS" => AmazonS3ConfigKey::StsEndpoint,
+            "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI" => {
+                AmazonS3ConfigKey::ContainerCredentialsRelativeUri
+            }
+            "AWS_CONTAINER_CREDENTIALS_FULL_URI" => AmazonS3ConfigKey::ContainerCredentialsFullUri,
+            "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE" => {
+                AmazonS3ConfigKey::ContainerAuthorizationTokenFile
+            }
+            _ => continue,
+        };
+        let value =
+            value.into_string().map_err(|_| format!("{name} must contain valid Unicode"))?;
+        validate_credential_environment(name, &value)?;
+        builder = builder.with_config(key, value);
+    }
+    Ok(builder)
+}
+
+fn validate_credential_environment(name: &str, value: &str) -> Result<(), String> {
+    match name {
+        "AWS_ENDPOINT_URL_STS" => validate_credential_endpoint(value, true, name),
+        "AWS_CONTAINER_CREDENTIALS_FULL_URI" => validate_credential_endpoint(value, false, name),
+        "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI" => {
+            if value.is_empty()
+                || value.len() > MAX_ENDPOINT_BYTES
+                || !value.starts_with('/')
+                || value.starts_with("//")
+                || value.chars().any(char::is_control)
+            {
+                return Err(format!(
+                    "{name} must be a bounded absolute path on the ECS credential endpoint"
+                ));
+            }
+            Ok(())
+        }
+        "AWS_WEB_IDENTITY_TOKEN_FILE" | "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE" => {
+            if value.is_empty() || value.len() > MAX_ENDPOINT_BYTES || value.contains('\0') {
+                return Err(format!("{name} must be a bounded filesystem path"));
+            }
+            Ok(())
+        }
+        "AWS_ROLE_ARN" | "AWS_ROLE_SESSION_NAME" => {
+            if value.is_empty()
+                || value.len() > MAX_ENDPOINT_BYTES
+                || value.chars().any(char::is_control)
+            {
+                return Err(format!("{name} is empty, oversized, or contains a control character"));
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn validate_credential_endpoint(value: &str, https_only: bool, name: &str) -> Result<(), String> {
+    if value.is_empty() || value.len() > MAX_ENDPOINT_BYTES {
+        return Err(format!("{name} is empty or exceeds the 2048-byte limit"));
+    }
+    let endpoint =
+        value.parse::<axum::http::Uri>().map_err(|_| format!("{name} is not a valid HTTP URI"))?;
+    let scheme = endpoint.scheme_str().ok_or_else(|| format!("{name} must include a scheme"))?;
+    let authority =
+        endpoint.authority().ok_or_else(|| format!("{name} must include an authority"))?;
+    if authority.host().is_empty() || authority.as_str().contains('@') || endpoint.query().is_some()
+    {
+        return Err(format!("{name} must not contain credentials or a query string"));
+    }
+    if scheme.eq_ignore_ascii_case("https") {
+        return Ok(());
+    }
+    if https_only || !scheme.eq_ignore_ascii_case("http") {
+        return Err(format!("{name} must use HTTPS"));
+    }
+
+    // AWS permits cleartext container-credential requests only to loopback or
+    // its fixed task/pod identity link-local endpoints. The authorization
+    // token file must never be sent to an arbitrary HTTP host.
+    let host = authority.host().trim_matches(['[', ']']);
+    let approved = host.eq_ignore_ascii_case("localhost")
+        || host.parse::<std::net::IpAddr>().is_ok_and(|address| {
+            address.is_loopback()
+                || address == std::net::IpAddr::V4(std::net::Ipv4Addr::new(169, 254, 170, 2))
+                || address == std::net::IpAddr::V4(std::net::Ipv4Addr::new(169, 254, 170, 23))
+                || address
+                    == std::net::IpAddr::V6(
+                        "fd00:ec2::23".parse().expect("the EKS credential address is valid"),
+                    )
+        });
+    if !approved {
+        return Err(format!(
+            "{name} must use HTTPS or an AWS-approved loopback/link-local credential host"
+        ));
+    }
+    Ok(())
 }
 
 fn install_rustls_provider() -> Result<(), String> {
@@ -1079,8 +1246,29 @@ fn identity_prefix(identity: &str) -> &str {
     identity.get(..12).unwrap_or(identity)
 }
 
-fn safe_store_error(operation: &str, error: impl std::fmt::Display) -> String {
-    format!("cannot {operation}: {error}")
+fn safe_store_error(operation: &str, error: ObjectStoreError) -> String {
+    // S3 error sources can include an untrusted response body. Do not copy the
+    // provider's text into Studio receipts or the in-memory action journal: a
+    // hostile endpoint could echo a session token that it received in a signed
+    // request. Variant names retain the useful operator-facing category.
+    let category = match error {
+        ObjectStoreError::NotFound { .. } => "the S3 object was not found",
+        ObjectStoreError::InvalidPath { .. } => "S3 returned an invalid object path",
+        ObjectStoreError::JoinError { .. } => "the S3 request worker stopped",
+        ObjectStoreError::NotSupported { .. } => "the S3 operation is not supported",
+        ObjectStoreError::AlreadyExists { .. } => "the S3 object already exists",
+        ObjectStoreError::Precondition { .. } => "an S3 request precondition failed",
+        ObjectStoreError::NotModified { .. } => "S3 reported that the object was not modified",
+        ObjectStoreError::NotImplemented { .. } => "the S3 operation is not implemented",
+        ObjectStoreError::PermissionDenied { .. } => "the S3 credentials lack permission",
+        ObjectStoreError::Unauthenticated { .. } => "the S3 credentials were not accepted",
+        ObjectStoreError::UnknownConfigurationKey { .. } => {
+            "the S3 client received an unsupported configuration key"
+        }
+        ObjectStoreError::Generic { .. } => "the S3 request or client configuration failed",
+        _ => "the S3 request failed",
+    };
+    format!("cannot {operation}: {category}")
 }
 
 fn environment_or(name: &str, fallback: &str) -> String {
@@ -1140,6 +1328,10 @@ mod tests {
     use object_store::memory::InMemory;
 
     use super::*;
+
+    fn os_environment(values: &[(&'static str, &'static str)]) -> Vec<(OsString, OsString)> {
+        values.iter().map(|(name, value)| (OsString::from(name), OsString::from(value))).collect()
+    }
 
     fn test_root(name: &str) -> PathBuf {
         static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1215,8 +1407,156 @@ mod tests {
         assert!(settings.validate().is_ok());
         settings.endpoint = "http://localhost:9000".to_owned();
         assert!(settings.validate().is_ok());
+        settings.endpoint = "http://[::1]:9000".to_owned();
+        assert!(settings.validate().is_ok());
         settings.endpoint = "https://access:secret@s3.example.test".to_owned();
         assert!(settings.validate().is_err());
+        settings.endpoint = "https://s3.example.test?destination=elsewhere".to_owned();
+        assert!(settings.validate().is_err());
+        settings.endpoint.clear();
+        assert!(settings.validate().is_err(), "allow HTTP requires an explicit endpoint");
+
+        settings.allow_http = false;
+        settings.bucket = "backups?redirect".to_owned();
+        assert!(settings.validate().is_err());
+        settings.bucket = "compatible_bucket.example".to_owned();
+        settings.region = "us/east/1".to_owned();
+        assert!(settings.validate().is_err());
+        settings.region = "us-east-1".to_owned();
+        settings.kms_key_id = "alias/backup\nforwarded-header".to_owned();
+        assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn aws_environment_cannot_override_validated_transport_signing_or_encryption() {
+        let settings = S3BackupSettings {
+            bucket: "studio-backups".to_owned(),
+            region: "us-east-2".to_owned(),
+            endpoint: "https://trusted-s3.example.test".to_owned(),
+            kms_key_id: "alias/terrabase-backups".to_owned(),
+            ..S3BackupSettings::default()
+        };
+        let environment = os_environment(&[
+            ("AWS_ACCESS_KEY_ID", "static-access-id"),
+            ("AWS_SECRET_ACCESS_KEY", "static-secret"),
+            ("AWS_SESSION_TOKEN", "static-session"),
+            ("AWS_ENDPOINT_URL_S3", "http://attacker.example.test"),
+            ("AWS_SKIP_SIGNATURE", "true"),
+            ("AWS_UNSIGNED_PAYLOAD", "true"),
+            ("AWS_ALLOW_HTTP", "true"),
+            ("AWS_ALLOW_INVALID_CERTIFICATES", "true"),
+            ("AWS_PROXY_URL", "http://attacker.example.test"),
+            ("AWS_IMDSV1_FALLBACK", "true"),
+            ("AWS_METADATA_ENDPOINT", "http://attacker.example.test"),
+            ("AWS_SERVER_SIDE_ENCRYPTION", "sse-c"),
+            ("AWS_SSE_CUSTOMER_KEY_BASE64", "secret-customer-key"),
+        ]);
+        let builder = configured_s3_builder(&settings, environment).unwrap();
+
+        assert_eq!(
+            builder.get_config_value(&AmazonS3ConfigKey::Endpoint).as_deref(),
+            Some("https://trusted-s3.example.test"),
+        );
+        assert_eq!(builder.get_config_value(&AmazonS3ConfigKey::S3Endpoint), None);
+        assert_eq!(
+            builder.get_config_value(&AmazonS3ConfigKey::SkipSignature).as_deref(),
+            Some("false"),
+        );
+        assert_eq!(
+            builder.get_config_value(&AmazonS3ConfigKey::UnsignedPayload).as_deref(),
+            Some("false"),
+        );
+        for key in ["aws_allow_http", "aws_allow_invalid_certificates"] {
+            let key = key.parse::<AmazonS3ConfigKey>().unwrap();
+            assert_eq!(builder.get_config_value(&key).as_deref(), Some("false"));
+        }
+        let proxy = "aws_proxy_url".parse::<AmazonS3ConfigKey>().unwrap();
+        assert_eq!(builder.get_config_value(&proxy), None);
+        assert_eq!(
+            builder.get_config_value(&AmazonS3ConfigKey::ImdsV1Fallback).as_deref(),
+            Some("false")
+        );
+        assert_eq!(builder.get_config_value(&AmazonS3ConfigKey::MetadataEndpoint), None);
+
+        let encryption = "aws_server_side_encryption".parse::<AmazonS3ConfigKey>().unwrap();
+        let kms_key = "aws_sse_kms_key_id".parse::<AmazonS3ConfigKey>().unwrap();
+        let customer_key = "aws_sse_customer_key_base64".parse::<AmazonS3ConfigKey>().unwrap();
+        assert_eq!(builder.get_config_value(&encryption).as_deref(), Some("aws:kms"));
+        assert_eq!(builder.get_config_value(&kms_key).as_deref(), Some("alias/terrabase-backups"),);
+        assert_eq!(builder.get_config_value(&customer_key), None);
+        assert_eq!(
+            builder.get_config_value(&AmazonS3ConfigKey::AccessKeyId).as_deref(),
+            Some("static-access-id"),
+        );
+        assert_eq!(
+            builder.get_config_value(&AmazonS3ConfigKey::SecretAccessKey).as_deref(),
+            Some("static-secret"),
+        );
+        assert_eq!(
+            builder.get_config_value(&AmazonS3ConfigKey::Token).as_deref(),
+            Some("static-session"),
+        );
+    }
+
+    #[test]
+    fn standard_aws_credential_provider_inputs_remain_available() {
+        install_rustls_provider().unwrap();
+        let settings = test_settings();
+        let providers = [
+            os_environment(&[
+                ("AWS_ACCESS_KEY_ID", "access"),
+                ("AWS_SECRET_ACCESS_KEY", "secret"),
+                ("AWS_SESSION_TOKEN", "session"),
+            ]),
+            os_environment(&[
+                ("AWS_WEB_IDENTITY_TOKEN_FILE", "/var/run/secrets/aws/token"),
+                ("AWS_ROLE_ARN", "arn:aws:iam::123456789012:role/backup"),
+                ("AWS_ROLE_SESSION_NAME", "terrabase-backup"),
+                ("AWS_ENDPOINT_URL_STS", "https://sts.example.test/assume-role"),
+            ]),
+            os_environment(&[(
+                "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+                "/v2/credentials/terrabase",
+            )]),
+            os_environment(&[
+                ("AWS_CONTAINER_CREDENTIALS_FULL_URI", "http://169.254.170.23/v1/credentials"),
+                ("AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", "/var/run/secrets/eks/token"),
+            ]),
+            Vec::new(),
+        ];
+        for environment in providers {
+            configured_s3_builder(&settings, environment).unwrap().build().unwrap();
+        }
+
+        assert!(
+            configured_s3_builder(
+                &settings,
+                os_environment(&[("AWS_ENDPOINT_URL_STS", "http://sts.example.test")]),
+            )
+            .is_err()
+        );
+        assert!(
+            configured_s3_builder(
+                &settings,
+                os_environment(&[
+                    ("AWS_CONTAINER_CREDENTIALS_FULL_URI", "http://attacker.example.test/token"),
+                    ("AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", "/var/run/secrets/eks/token"),
+                ]),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn s3_error_receipts_do_not_expose_provider_response_bodies() {
+        let marker = "AWS_SESSION_TOKEN=provider-echoed-secret";
+        let error = ObjectStoreError::Generic {
+            store: "test",
+            source: Box::new(std::io::Error::other(marker)),
+        };
+        let rendered = safe_store_error("test S3", error);
+        assert!(!rendered.contains(marker));
+        assert_eq!(rendered, "cannot test S3: the S3 request or client configuration failed");
     }
 
     #[test]

@@ -60,6 +60,20 @@ impl SegmentEncryption {
 
     fn cipher(&self, path: &Path, id: u64, level: u16) -> io::Result<(ArtifactCipher, PathBuf)> {
         let key = self.provider.load_or_create().map_err(encryption_io)?;
+        let cipher = self.build_cipher(key, id, level, load_or_create_ordinal(
+            &segment_ordinal_path(path),
+            segment_ordinal_path(path).exists(),
+        )?)?;
+        Ok((cipher, segment_ordinal_path(path)))
+    }
+
+    fn build_cipher(
+        &self,
+        key: crate::encryption::DatabaseKey,
+        id: u64,
+        level: u16,
+        next: u128,
+    ) -> io::Result<ArtifactCipher> {
         let scope = KeyScope::new_with_project(
             self.owner.environment().as_str(),
             self.owner.tenant(),
@@ -78,11 +92,9 @@ impl SegmentEncryption {
             Compression::None,
         )
         .map_err(encryption_io)?;
-        let ordinal_path = segment_ordinal_path(path);
-        let next = load_or_create_ordinal(&ordinal_path, ordinal_path.exists())?;
         let cipher = ArtifactCipher::with_next_ordinal(ProviderMode::LocalFile, key, context, next)
             .map_err(encryption_io)?;
-        Ok((cipher, ordinal_path))
+        Ok(cipher)
     }
 }
 
@@ -95,9 +107,13 @@ const CACHE_ENTRY_LIMIT: u64 = 8_192;
 /// immutable and readers come and go with compaction; the budget keeps
 /// the resident set bounded no matter how many small segments exist.
 const CACHE_ENTRY_BUDGET: usize = 262_144;
+/// The aggregate resident plaintext backing budget of encrypted readers.
+const PLAINTEXT_BYTE_BUDGET: usize = 256 * 1024 * 1024;
 
 /// The process-wide count of in-memory segment records.
 static CACHED_ENTRIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static RESIDENT_PLAINTEXT_BYTES: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 static SEGMENT_TEMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 type VerifiedSegment = (SegmentMeta, Vec<(Vec<u8>, u64)>, u64);
@@ -337,15 +353,48 @@ impl SegmentReader {
         }
         let (cipher, ordinal_path) = encryption.cipher(path, id, level)?;
         let next = load_or_create_ordinal(&ordinal_path, true)?;
+        if bytes.len() < 17 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "segment envelope ordinal"));
+        }
+        let mut ordinal_bytes = [0_u8; 16];
+        ordinal_bytes[4..].copy_from_slice(&bytes[5..17]);
+        let ordinal = u128::from_be_bytes(ordinal_bytes);
+        if ordinal.checked_add(1) != Some(next) {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "segment ordinal rollback"));
+        }
         let plaintext = cipher.open(&bytes).map_err(encryption_io)?;
         if plaintext.len() > crate::encryption::MAX_PLAINTEXT_BYTES {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "segment plaintext too large"));
         }
         let (mut meta, sparse, records_end) = verify_plaintext_segment(&plaintext, id, level)?;
         meta.byte_len = u64::try_from(bytes.len()).expect("segment file length fits u64");
-        let file = OpenOptions::new().read(true).open(path)?;
-        let _ = next; // Loading verifies the persisted ordinal state.
-        Ok(Self { file, plaintext: Some(plaintext), sparse, meta, records_end, cached: None })
+        let plaintext_len = plaintext.len();
+        let prior = RESIDENT_PLAINTEXT_BYTES.fetch_update(
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+            |used| used.checked_add(plaintext_len).filter(|total| *total <= PLAINTEXT_BYTE_BUDGET),
+        );
+        if prior.is_err() {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "encrypted segment plaintext budget exhausted",
+            ));
+        }
+        let file = match OpenOptions::new().read(true).open(path) {
+            Ok(file) => file,
+            Err(error) => {
+                RESIDENT_PLAINTEXT_BYTES.fetch_sub(plaintext_len, std::sync::atomic::Ordering::AcqRel);
+                return Err(error);
+            }
+        };
+        Ok(Self {
+            file,
+            plaintext: Some(plaintext),
+            sparse,
+            meta,
+            records_end,
+            cached: None,
+        })
     }
 
     /// Populates the decoded-record cache when this segment is small
@@ -483,8 +532,48 @@ impl SegmentReader {
     }
 }
 
+/// Decrypts and verifies a segment returned by a cold-tier source. The local
+/// ordinal sidecar is required. A remote-only copy without the sidecar is
+/// refused because its authenticated ordinal could otherwise be replayed.
+pub(super) fn decode_encrypted_segment_bytes(
+    bytes: &[u8],
+    local_path: &Path,
+    id: u64,
+    level: u16,
+    encryption: &SegmentEncryption,
+) -> io::Result<Vec<Entry>> {
+    let envelope_len = envelope_length_prefix(bytes).map_err(encryption_io)?;
+    if envelope_len != bytes.len() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "segment envelope trailing bytes"));
+    }
+    let ordinal_path = segment_ordinal_path(local_path);
+    if std::fs::symlink_metadata(&ordinal_path).is_err() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "missing segment ordinal"));
+    }
+    let (cipher, _) = encryption.cipher(local_path, id, level)?;
+    let next = load_or_create_ordinal(&ordinal_path, true)?;
+    if bytes.len() < 17 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "segment envelope ordinal"));
+    }
+    let mut ordinal_bytes = [0_u8; 16];
+    ordinal_bytes[4..].copy_from_slice(&bytes[5..17]);
+    let ordinal = u128::from_be_bytes(ordinal_bytes);
+    if ordinal.checked_add(1) != Some(next) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "segment ordinal rollback"));
+    }
+    let plaintext = cipher.open(bytes).map_err(encryption_io)?;
+    let (_, _, records_end) = verify_plaintext_segment(&plaintext, id, level)?;
+    decode_record_region(&plaintext[20..usize::try_from(records_end).expect("segment offset")])
+}
+
 impl Drop for SegmentReader {
     fn drop(&mut self) {
+        if let Some(plaintext) = &self.plaintext {
+            RESIDENT_PLAINTEXT_BYTES.fetch_sub(
+                plaintext.len(),
+                std::sync::atomic::Ordering::AcqRel,
+            );
+        }
         if let Some(cached) = self.cached.take() {
             CACHED_ENTRIES.fetch_sub(cached.len(), std::sync::atomic::Ordering::Relaxed);
         }
@@ -910,6 +999,16 @@ mod tests {
         assert!(!raw.windows(b"secret".len()).any(|window| window == b"secret"));
         let reader = SegmentReader::open_with_encryption(&path, 1, 0, &encryption).unwrap();
         assert_eq!(reader.meta().entry_count, 2);
+
+        // Reusing an immutable path consumes another ordinal. Restoring its
+        // older authenticated envelope must therefore fail even though the
+        // key and segment identity still match.
+        let newer_entries = vec![entry("t", "a", 3, b"newer")];
+        write_segment_with_encryption(&path, 1, 0, &newer_entries, Some(&encryption)).unwrap();
+        let newer_raw = std::fs::read(&path).unwrap();
+        std::fs::write(&path, &raw).unwrap();
+        assert!(SegmentReader::open_with_encryption(&path, 1, 0, &encryption).is_err());
+        std::fs::write(&path, newer_raw).unwrap();
 
         let mut tampered = raw.clone();
         *tampered.last_mut().unwrap() ^= 1;

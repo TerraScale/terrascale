@@ -31,6 +31,10 @@ struct Complete {
 
 #[derive(Clone, Debug, PartialEq)]
 struct Comparability {
+    run_digest: String,
+    candidate_digest: String,
+    workload_digest: String,
+    topology_digest: String,
     run_group: String,
     config_digest: String,
     controlled_host_identity: String,
@@ -61,7 +65,7 @@ struct Failure {
 enum Loaded {
     Missing,
     Failed(Failure),
-    Invalid(String),
+    Invalid(Failure),
     Complete(Complete),
 }
 
@@ -150,8 +154,13 @@ pub fn run(arguments: impl Iterator<Item = String>) -> Result<PathBuf, String> {
             }
             Loaded::Invalid(error) => {
                 rows.push(format!("| {workload} | {target} | invalid | — | — | — | — | — |"));
-                eprintln!("invalid {target}/{workload} result: {error}");
-                admission.push(format!("- {target}/{workload}: invalid — {error}"));
+                let reason = error.error.as_deref().unwrap_or("error not recorded");
+                eprintln!("invalid {target}/{workload} result: {reason}");
+                admission.push(format!(
+                    "- {target}/{workload}: invalid/raw — `{}` — {}",
+                    error.path,
+                    markdown_inline(reason)
+                ));
             }
             Loaded::Complete(document) => {
                 identities.entry(target).or_insert(document.identity.clone());
@@ -244,14 +253,27 @@ fn load(results: &Path, target: &str, workload: &str) -> Loaded {
     let path = attempts.pop().expect("attempt list is not empty");
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
-        Err(error) => return Loaded::Invalid(format!("cannot read {}: {error}", path.display())),
+        Err(error) => {
+            return Loaded::Invalid(Failure {
+                path: path.display().to_string(),
+                error: Some(format!("cannot read retained result: {error}")),
+            });
+        }
     };
     let document: Value = match serde_json::from_str(&text) {
         Ok(document) => document,
-        Err(error) => return Loaded::Invalid(format!("cannot parse {}: {error}", path.display())),
+        Err(error) => {
+            return Loaded::Invalid(Failure {
+                path: path.display().to_string(),
+                error: Some(format!("cannot parse retained result: {error}")),
+            });
+        }
     };
     let Some(fields) = document.as_object() else {
-        return Loaded::Invalid("document is not an object".to_owned());
+        return Loaded::Invalid(Failure {
+            path: path.display().to_string(),
+            error: Some("document is not an object".to_owned()),
+        });
     };
     match fields.get("status").and_then(Value::as_str) {
         Some("failed") => {
@@ -261,11 +283,18 @@ fn load(results: &Path, target: &str, workload: &str) -> Loaded {
             });
         }
         Some("complete") | None => {}
-        Some(status) => return Loaded::Invalid(format!("invalid status {status:?}")),
+        Some(status) => {
+            return Loaded::Invalid(Failure {
+                path: path.display().to_string(),
+                error: Some(format!("invalid status {status:?}")),
+            });
+        }
     }
     match validate_complete(&document, target, workload) {
         Ok(complete) => Loaded::Complete(complete),
-        Err(error) => Loaded::Invalid(error),
+        Err(error) => {
+            Loaded::Invalid(Failure { path: path.display().to_string(), error: Some(error) })
+        }
     }
 }
 
@@ -339,6 +368,9 @@ fn validate_complete(document: &Value, target: &str, workload: &str) -> Result<C
     if unix <= 0.0 || unix.fract() != 0.0 || cpus <= 0.0 || cpus.fract() != 0.0 {
         return Err("invalid environment counters".to_owned());
     }
+    if target == "terrabase" && is_diagnostic_result(fields, &identity) {
+        return Err("diagnostic qualification result is not decision-grade evidence".to_owned());
+    }
     let comparability =
         validate_comparability(fields.get("comparability"), config, environment, target)?;
     let values =
@@ -378,6 +410,16 @@ fn validate_complete(document: &Value, target: &str, workload: &str) -> Result<C
     Ok(Complete { identity, samples, comparability })
 }
 
+fn is_diagnostic_result(fields: &serde_json::Map<String, Value>, identity: &str) -> bool {
+    const DIAGNOSTIC_SERVER_IDENTITY: &str = "tbep-qualification-harness/network-mtls/v1";
+    const DIAGNOSTIC_SOURCE_IDENTITY: &str =
+        "source identity: terrabase-rust-diagnostic-qualification/v1";
+    identity == DIAGNOSTIC_SERVER_IDENTITY
+        || fields.get("limits").and_then(Value::as_array).is_some_and(|limits| {
+            limits.iter().any(|limit| limit.as_str() == Some(DIAGNOSTIC_SOURCE_IDENTITY))
+        })
+}
+
 fn validate_comparability(
     value: Option<&Value>,
     config: &serde_json::Map<String, Value>,
@@ -393,6 +435,21 @@ fn validate_comparability(
             .map(str::to_owned)
             .ok_or_else(|| format!("comparability.{name} is not a non-empty string"))
     };
+    let digest = |name: &str| -> Result<String, String> {
+        let value = string(name)?;
+        if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(format!("comparability.{name} is not a SHA-256 digest"));
+        }
+        Ok(value)
+    };
+    // These four digests are the join key for decision-grade evidence. A
+    // result can contain perfectly valid timings and still be diagnostic if
+    // it cannot prove which run, candidate, workload, and topology produced
+    // them.
+    let run_digest = digest("run_digest")?;
+    let candidate_digest = digest("candidate_digest")?;
+    let workload_digest = digest("workload_digest")?;
+    let topology_digest = digest("topology_digest")?;
     let run_group = string("run_group")?;
     if run_group == "unassigned" {
         return Err("comparability.run_group is unassigned".to_owned());
@@ -458,7 +515,16 @@ fn validate_comparability(
     if target == "terrabase" && boundary_class == "unknown" {
         return Err("TerraBase boundary class is unknown".to_owned());
     }
+    if boundary_class == "diagnostic-qualification"
+        || boundary_class.eq_ignore_ascii_case("diagnostic")
+    {
+        return Err("diagnostic qualification is not decision-grade evidence".to_owned());
+    }
     Ok(Comparability {
+        run_digest,
+        candidate_digest,
+        workload_digest,
+        topology_digest,
         run_group,
         config_digest,
         controlled_host_identity,
@@ -511,6 +577,10 @@ fn differing_field(left: &Comparability, right: &Comparability) -> Option<&'stat
         ($($field:ident),+ $(,)?) => { $(if left.$field != right.$field { return Some(stringify!($field)); })+ };
     }
     compare!(
+        run_digest,
+        candidate_digest,
+        workload_digest,
+        topology_digest,
         run_group,
         config_digest,
         controlled_host_identity,
@@ -647,6 +717,10 @@ mod tests {
             "config":{"seed_documents":1,"operations":2,"samples":1,"concurrency":1,"warmup_operations":0,"noise_percent":5.0},
             "environment":{"observed_identity":"PostgreSQL test","endpoint":"tcp","client_transport":"TCP","unix_seconds":1,"kernel":"Linux test","logical_cpus":1},
             "comparability":{
+                "run_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "candidate_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "workload_digest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "topology_digest":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
                 "run_group":"test-run", "config_digest":metrics::config_digest(&config),
                 "controlled_host_identity":"Linux test;logical-cpus=1", "time_window":"test-window",
                 "window_start_unix_seconds":1, "window_end_unix_seconds":1,
@@ -699,6 +773,71 @@ mod tests {
             differing_field(&left.comparability, &right.comparability),
             Some("boundary_class")
         );
+    }
+
+    #[test]
+    fn run_candidate_workload_and_topology_digests_are_join_keys() {
+        let left = validate_complete(&valid(), "postgresql", "read").expect("valid fixture");
+        for (field, replacement) in [
+            ("run_digest", "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"),
+            (
+                "candidate_digest",
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            ),
+            ("workload_digest", "1111111111111111111111111111111111111111111111111111111111111111"),
+            ("topology_digest", "2222222222222222222222222222222222222222222222222222222222222222"),
+        ] {
+            let mut right_value = valid();
+            right_value["comparability"][field] = serde_json::json!(replacement);
+            let right = validate_complete(&right_value, "postgresql", "read")
+                .expect("digest mutation remains individually valid");
+            assert_eq!(differing_field(&left.comparability, &right.comparability), Some(field));
+        }
+    }
+
+    #[test]
+    fn diagnostic_complete_result_is_invalid_and_keeps_its_raw_path() {
+        let directory = temporary_results();
+        let mut document = valid();
+        document["target"] = serde_json::json!("terrabase");
+        document["environment"]["observed_identity"] =
+            serde_json::json!("tbep-qualification-harness/network-mtls/v1");
+        let path = directory.join("terrabase-read-300-1-0.json");
+        fs::write(&path, serde_json::to_vec(&document).expect("diagnostic JSON"))
+            .expect("diagnostic result");
+        let Loaded::Invalid(failure) = load(&directory, "terrabase", "read") else {
+            panic!("diagnostic complete result must not be admitted");
+        };
+        assert_eq!(failure.path, path.display().to_string());
+        assert!(failure.error.expect("reason").contains("diagnostic"));
+        fs::remove_dir_all(directory).expect("remove temporary results");
+    }
+
+    #[test]
+    fn side_identities_are_rendered_once_across_workloads() {
+        let results = temporary_results();
+        let history = temporary_results();
+        for workload in WORKLOADS {
+            let mut document = valid();
+            document["workload"] = serde_json::json!(workload);
+            fs::write(
+                results.join(format!("postgresql-{workload}-1-0.json")),
+                serde_json::to_vec(&document).expect("result JSON"),
+            )
+            .expect("result");
+        }
+        let output = run([
+            "--results".to_owned(),
+            results.display().to_string(),
+            "--history-dir".to_owned(),
+            history.display().to_string(),
+        ]
+        .into_iter())
+        .expect("history output");
+        let rendered = fs::read_to_string(output).expect("history document");
+        assert_eq!(rendered.matches("- **postgresql**:").count(), 1);
+        fs::remove_dir_all(results).expect("remove results");
+        fs::remove_dir_all(history).expect("remove history");
     }
 
     #[test]

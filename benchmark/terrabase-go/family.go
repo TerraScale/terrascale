@@ -92,6 +92,9 @@ func marshalFamily(message proto.Message) ([]byte, error) {
 	if message == nil {
 		return nil, localError("family payload is nil")
 	}
+	if hasFamilyUnknown(message.ProtoReflect()) {
+		return nil, localError("family payload contains unknown fields")
+	}
 	options := proto.MarshalOptions{Deterministic: true}
 	if size := options.Size(message); size == 0 {
 		return nil, localError("family payload has no oneof variant")
@@ -155,6 +158,18 @@ func familyIdentifier(field, value string) error {
 	if value == "" || len(value) > 255 || value != strings.TrimSpace(value) ||
 		!utf8.ValidString(value) || hasControl(value) {
 		return localError("family field %s is invalid", field)
+	}
+	return nil
+}
+
+func familyDigest(field, value string) error {
+	if len(value) != 64 {
+		return localError("family field %s must be a 64-character digest", field)
+	}
+	for _, character := range value {
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')) {
+			return localError("family field %s is not a lowercase hexadecimal digest", field)
+		}
 	}
 	return nil
 }
@@ -334,6 +349,60 @@ func validateFamilyRequest(payload *v1.FamilyRequestPayload) error {
 			return localError("family archival read is missing")
 		}
 		return familyIdentifier("document", operation.ArchivalRead.Document)
+	case *v1.FamilyRequestPayload_AttachmentContentRead:
+		if operation.AttachmentContentRead == nil {
+			return localError("family attachment content read is missing")
+		}
+		value := operation.AttachmentContentRead
+		if err := familyDigest("digest", value.Digest); err != nil {
+			return err
+		}
+		switch readRange := value.Range.(type) {
+		case *v1.FamilyAttachmentContentRead_Bytes:
+			if readRange.Bytes == nil {
+				return localError("family attachment content byte range is missing")
+			}
+			if readRange.Bytes.To != nil && *readRange.Bytes.To < readRange.Bytes.From {
+				return localError("family attachment content range is invalid")
+			}
+		case *v1.FamilyAttachmentContentRead_Suffix:
+			if readRange.Suffix == 0 {
+				return localError("family attachment content suffix is invalid")
+			}
+		case nil:
+		default:
+			return localError("family attachment content range is unsupported")
+		}
+		return nil
+	case *v1.FamilyRequestPayload_AttachmentContentWrite:
+		if operation.AttachmentContentWrite == nil {
+			return localError("family attachment content write is missing")
+		}
+		value := operation.AttachmentContentWrite
+		if value.ExpectedDigest != nil {
+			if len(*value.ExpectedDigest) != 64 {
+				return localError("family field expected_digest must be 64 bytes")
+			}
+		}
+		if err := familyList("segments", len(value.Segments)); err != nil {
+			return err
+		}
+		total := 0
+		for _, segment := range value.Segments {
+			if len(segment) > 64*1024 || total > 8*1024*1024-len(segment) {
+				return localError("family attachment content segments exceed their size bound")
+			}
+			total += len(segment)
+		}
+		return nil
+	case *v1.FamilyRequestPayload_AttachmentContentDelete:
+		if operation.AttachmentContentDelete == nil {
+			return localError("family attachment content delete is missing")
+		}
+		if len(operation.AttachmentContentDelete.Digest) != 64 {
+			return localError("family field digest must be 64 bytes")
+		}
+		return nil
 	case *v1.FamilyRequestPayload_AttachmentWrite:
 		if operation.AttachmentWrite == nil {
 			return localError("family attachment write is missing")
@@ -692,6 +761,14 @@ func validateFamilyResponse(payload *v1.FamilyResponsePayload) error {
 			return localError("family write response is missing")
 		}
 		return nil
+	case *v1.FamilyResponsePayload_AttachmentContent:
+		if result.AttachmentContent == nil {
+			return localError("family attachment content response is missing")
+		}
+		if err := familyList("chunks", len(result.AttachmentContent.Chunks)); err != nil {
+			return err
+		}
+		return nil
 	default:
 		return localError("family response payload has an unsupported result")
 	}
@@ -703,7 +780,9 @@ func FamilyRequestFamily(payload *v1.FamilyRequestPayload) (Family, error) {
 		return "", localError("family request payload has no operation")
 	}
 	switch payload.GetOperation().(type) {
-	case *v1.FamilyRequestPayload_AttachmentRead, *v1.FamilyRequestPayload_AttachmentWrite:
+	case *v1.FamilyRequestPayload_AttachmentRead, *v1.FamilyRequestPayload_AttachmentWrite,
+		*v1.FamilyRequestPayload_AttachmentContentRead, *v1.FamilyRequestPayload_AttachmentContentWrite,
+		*v1.FamilyRequestPayload_AttachmentContentDelete:
 		return FamilyAttachment, nil
 	case *v1.FamilyRequestPayload_CounterRead, *v1.FamilyRequestPayload_CounterWrite:
 		return FamilyCounter, nil
@@ -733,7 +812,8 @@ func FamilyRequestIsWrite(payload *v1.FamilyRequestPayload) (bool, error) {
 	case *v1.FamilyRequestPayload_AttachmentWrite, *v1.FamilyRequestPayload_CounterWrite,
 		*v1.FamilyRequestPayload_TimeSeriesWrite, *v1.FamilyRequestPayload_RevisionWrite,
 		*v1.FamilyRequestPayload_CompareExchangeWrite, *v1.FamilyRequestPayload_IdentityWrite,
-		*v1.FamilyRequestPayload_LifecycleWrite, *v1.FamilyRequestPayload_ArchivalWrite:
+		*v1.FamilyRequestPayload_LifecycleWrite, *v1.FamilyRequestPayload_ArchivalWrite,
+		*v1.FamilyRequestPayload_AttachmentContentWrite, *v1.FamilyRequestPayload_AttachmentContentDelete:
 		return true, nil
 	default:
 		return false, nil
@@ -748,6 +828,8 @@ func FamilyResponseFamily(payload *v1.FamilyResponsePayload) (Family, error) {
 	}
 	switch payload.GetResult().(type) {
 	case *v1.FamilyResponsePayload_Attachment:
+		return FamilyAttachment, nil
+	case *v1.FamilyResponsePayload_AttachmentContent:
 		return FamilyAttachment, nil
 	case *v1.FamilyResponsePayload_Counter:
 		return FamilyCounter, nil
@@ -860,6 +942,15 @@ func EncodeFamilyLifecycleWrite(v *v1.FamilyLifecycleWrite) ([]byte, error) {
 func EncodeFamilyArchivalWrite(v *v1.FamilyArchivalWrite) ([]byte, error) {
 	return EncodeFamilyRequest(&v1.FamilyRequestPayload{Operation: &v1.FamilyRequestPayload_ArchivalWrite{ArchivalWrite: v}})
 }
+func EncodeFamilyAttachmentContentRead(v *v1.FamilyAttachmentContentRead) ([]byte, error) {
+	return EncodeFamilyRequest(&v1.FamilyRequestPayload{Operation: &v1.FamilyRequestPayload_AttachmentContentRead{AttachmentContentRead: v}})
+}
+func EncodeFamilyAttachmentContentWrite(v *v1.FamilyAttachmentContentWrite) ([]byte, error) {
+	return EncodeFamilyRequest(&v1.FamilyRequestPayload{Operation: &v1.FamilyRequestPayload_AttachmentContentWrite{AttachmentContentWrite: v}})
+}
+func EncodeFamilyAttachmentContentDelete(v *v1.FamilyAttachmentContentDelete) ([]byte, error) {
+	return EncodeFamilyRequest(&v1.FamilyRequestPayload{Operation: &v1.FamilyRequestPayload_AttachmentContentDelete{AttachmentContentDelete: v}})
+}
 
 func EncodeFamilyAttachmentResponse(v *v1.FamilyAttachmentResponse) ([]byte, error) {
 	return EncodeFamilyResponse(&v1.FamilyResponsePayload{Result: &v1.FamilyResponsePayload_Attachment{Attachment: v}})
@@ -887,6 +978,9 @@ func EncodeFamilyArchivalResponse(v *v1.FamilyArchivalResponse) ([]byte, error) 
 }
 func EncodeFamilyWriteReceiptResponse(v *v1.FamilyWriteReceiptResponse) ([]byte, error) {
 	return EncodeFamilyResponse(&v1.FamilyResponsePayload{Result: &v1.FamilyResponsePayload_Write{Write: v}})
+}
+func EncodeFamilyAttachmentContentResponse(v *v1.FamilyAttachmentContentResponse) ([]byte, error) {
+	return EncodeFamilyResponse(&v1.FamilyResponsePayload{Result: &v1.FamilyResponsePayload_AttachmentContent{AttachmentContent: v}})
 }
 
 func DecodeFamilyAttachmentRead(encoded []byte) (*v1.FamilyAttachmentRead, error) {
@@ -1065,6 +1159,39 @@ func DecodeFamilyArchivalWrite(encoded []byte) (*v1.FamilyArchivalWrite, error) 
 	}
 	return v.ArchivalWrite, nil
 }
+func DecodeFamilyAttachmentContentRead(encoded []byte) (*v1.FamilyAttachmentContentRead, error) {
+	p, err := DecodeFamilyRequest(encoded)
+	if err != nil {
+		return nil, err
+	}
+	v, ok := p.GetOperation().(*v1.FamilyRequestPayload_AttachmentContentRead)
+	if !ok || v.AttachmentContentRead == nil {
+		return nil, localError("family payload is not attachment content read")
+	}
+	return v.AttachmentContentRead, nil
+}
+func DecodeFamilyAttachmentContentWrite(encoded []byte) (*v1.FamilyAttachmentContentWrite, error) {
+	p, err := DecodeFamilyRequest(encoded)
+	if err != nil {
+		return nil, err
+	}
+	v, ok := p.GetOperation().(*v1.FamilyRequestPayload_AttachmentContentWrite)
+	if !ok || v.AttachmentContentWrite == nil {
+		return nil, localError("family payload is not attachment content write")
+	}
+	return v.AttachmentContentWrite, nil
+}
+func DecodeFamilyAttachmentContentDelete(encoded []byte) (*v1.FamilyAttachmentContentDelete, error) {
+	p, err := DecodeFamilyRequest(encoded)
+	if err != nil {
+		return nil, err
+	}
+	v, ok := p.GetOperation().(*v1.FamilyRequestPayload_AttachmentContentDelete)
+	if !ok || v.AttachmentContentDelete == nil {
+		return nil, localError("family payload is not attachment content delete")
+	}
+	return v.AttachmentContentDelete, nil
+}
 
 func DecodeFamilyAttachmentResponse(encoded []byte) (*v1.FamilyAttachmentResponse, error) {
 	p, err := DecodeFamilyResponse(encoded)
@@ -1165,9 +1292,14 @@ func DecodeFamilyWriteReceiptResponse(encoded []byte) (*v1.FamilyWriteReceiptRes
 	}
 	return v.Write, nil
 }
-
-// The current checked-in Go bindings predate FamilyAttachmentContent* arms
-// present in family.proto/Rust. They cannot be exposed safely until bindings
-// are regenerated; callers should use the generic family methods only for the
-// generated arms above in this version.
-var ErrFamilyAttachmentContentUnsupported = localError("attachment content family arms are unavailable in generated Go bindings")
+func DecodeFamilyAttachmentContentResponse(encoded []byte) (*v1.FamilyAttachmentContentResponse, error) {
+	p, err := DecodeFamilyResponse(encoded)
+	if err != nil {
+		return nil, err
+	}
+	v, ok := p.GetResult().(*v1.FamilyResponsePayload_AttachmentContent)
+	if !ok || v.AttachmentContent == nil {
+		return nil, localError("family payload is not attachment content response")
+	}
+	return v.AttachmentContent, nil
+}

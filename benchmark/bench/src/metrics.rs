@@ -78,6 +78,14 @@ pub struct Environment {
 /// run claims to share with another side.
 #[derive(Clone, Debug, Serialize)]
 pub struct Comparability {
+    /// Digest of the invocation shared by every side in one run.
+    pub run_digest: String,
+    /// Digest of the exact candidate artifact under test.
+    pub candidate_digest: String,
+    /// Digest of the immutable workload manifest.
+    pub workload_digest: String,
+    /// Digest of the admitted execution topology.
+    pub topology_digest: String,
     /// A caller-provided token shared by every side in one run.
     pub run_group: String,
     /// SHA-256 of the canonical lane configuration.
@@ -147,6 +155,7 @@ pub fn comparability(
         .unwrap_or_else(|_| (environment.unix_seconds / 3_600).to_string());
     let run_group =
         std::env::var("TERRABASE_BENCH_RUN_GROUP").unwrap_or_else(|_| "unassigned".to_owned());
+    let digest = |name: &str| std::env::var(name).unwrap_or_else(|_| "unassigned".to_owned());
     let (boundary_class, durability, server_configuration) = match target {
         "terrabase" => (
             boundary.unwrap_or("unknown").to_owned(),
@@ -166,6 +175,10 @@ pub fn comparability(
         ),
     };
     Comparability {
+        run_digest: digest("TERRABASE_BENCH_RUN_DIGEST"),
+        candidate_digest: digest("TERRABASE_BENCH_CANDIDATE_DIGEST"),
+        workload_digest: digest("TERRABASE_BENCH_WORKLOAD_DIGEST"),
+        topology_digest: digest("TERRABASE_BENCH_TOPOLOGY_DIGEST"),
         run_group,
         config_digest: config_digest(config),
         controlled_host_identity: host,
