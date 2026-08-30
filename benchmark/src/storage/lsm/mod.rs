@@ -558,11 +558,8 @@ impl LsmStorage {
     fn collect_range(&self, start: &[u8], end: &[u8], sequence: u64) -> Vec<Entry> {
         let mut merged: Vec<Entry> = Vec::new();
         for source in std::iter::once(&self.memtable).chain(self.frozen.iter()) {
-            for entry in source.iter() {
-                if entry.key.sequence() <= sequence
-                    && entry.key.user_key() >= start
-                    && entry.key.user_key() < end
-                {
+            for entry in source.range_between(start, end) {
+                if entry.key.sequence() <= sequence {
                     merged.push(entry);
                 }
             }

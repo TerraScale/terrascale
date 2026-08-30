@@ -173,6 +173,15 @@ impl InternalKey {
         &self.bytes
     }
 
+    /// The first internal key of one user key's version chain: internal
+    /// order sorts a user key's records by descending sequence with puts
+    /// before deletions, so this is the smallest internal key whose user
+    /// key is the given bytes — the exact range bound a user-key range
+    /// scan needs.
+    pub(super) fn first_of_user_key(user_key: Vec<u8>) -> Self {
+        Self { bytes: user_key, sequence: u64::MAX, deletion: false }
+    }
+
     /// Returns the keyspace tag byte.
     pub(super) fn tag(&self) -> u8 {
         self.bytes.first().copied().unwrap_or(0)

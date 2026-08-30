@@ -39,6 +39,21 @@ impl MemTable {
         self.entries.iter().map(|(key, value)| Entry { key: key.clone(), value: value.clone() })
     }
 
+    /// Iterates the entries whose user keys lie in `[start, end)`, in sorted
+    /// internal-key order. A range scan instead of a filtered full
+    /// iteration: point reads must not walk the whole write buffer.
+    pub(super) fn range_between(
+        &self,
+        start: &[u8],
+        end: &[u8],
+    ) -> impl Iterator<Item = Entry> + '_ {
+        let lower = InternalKey::first_of_user_key(start.to_vec());
+        let upper = InternalKey::first_of_user_key(end.to_vec());
+        self.entries
+            .range(lower..upper)
+            .map(|(key, value)| Entry { key: key.clone(), value: value.clone() })
+    }
+
     /// The number of entries held.
     #[cfg(test)]
     pub(super) fn len(&self) -> usize {
