@@ -6,6 +6,10 @@ use crate::identity::{
 };
 
 fn signed_payload() -> PrincipalContextPayload {
+    signed_payload_with_session("01ARZ3NDEKTSV4RRFFQ69G5FB5")
+}
+
+fn signed_payload_with_session(session: &str) -> PrincipalContextPayload {
     PrincipalContextPayload::try_new(
         "production",
         "spiffe://terrascale/gateway",
@@ -13,7 +17,7 @@ fn signed_payload() -> PrincipalContextPayload {
         "terrascale.database",
         scope(),
         PrincipalUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB4").unwrap(),
-        PrincipalSessionUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB5").unwrap(),
+        PrincipalSessionUlid::from_text(session).unwrap(),
         PrincipalGrantUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB6").unwrap(),
         AuthorizationPolicyUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB7").unwrap(),
         BTreeSet::from([Action::Read, Action::Query]),
@@ -29,12 +33,7 @@ fn signed_verifier(
     signer: &PrincipalContextSigner,
     mode: AuthorizationCryptoMode,
 ) -> PrincipalContextVerifier {
-    let key = PrincipalContextKey::new(
-        signer.key_id(),
-        signer.public_key().unwrap(),
-        signer.provenance(),
-    )
-    .unwrap();
+    let key = PrincipalContextKey::new(signer.key_id(), signer.public_key().unwrap()).unwrap();
     PrincipalContextVerifier::new(
         mode,
         "production",
@@ -52,12 +51,7 @@ fn test_signer(key_id: &str) -> PrincipalContextSigner {
         &aws_lc_rs::rand::SystemRandom::new(),
     )
     .unwrap();
-    PrincipalContextSigner::from_pkcs8(
-        key_id,
-        der.as_ref().to_vec(),
-        SigningKeyProvenance::LocalDevelopment,
-    )
-    .unwrap()
+    PrincipalContextSigner::from_pkcs8(key_id, der.as_ref().to_vec()).unwrap()
 }
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -254,7 +248,6 @@ fn signed_context_rejects_wrong_binding_time_key_and_replay() {
         PrincipalContextKeySet::try_new([PrincipalContextKey::new(
             signer.key_id(),
             signer.public_key().unwrap(),
-            signer.provenance(),
         )
         .unwrap()])
         .unwrap(),
@@ -267,23 +260,32 @@ fn signed_context_rejects_wrong_binding_time_key_and_replay() {
     assert_eq!(wrong_key.verify(&envelope, 1_100), Err(AuthorizationError::UnknownContextKey));
 
     let mut guard = PrincipalContextReplayGuard::new();
-    assert!(verifier.verify_with_replay(&envelope, 1_100, b"channel-a", &mut guard).is_ok());
+    assert!(
+        verifier.verify_with_replay(&envelope, 1_100, payload.session_id(), &mut guard).is_ok()
+    );
     assert_eq!(
-        verifier.verify_with_replay(&envelope, 1_100, b"channel-a", &mut guard),
+        verifier.verify_with_replay(&envelope, 1_100, payload.session_id(), &mut guard),
         Err(AuthorizationError::ContextReplay)
     );
-    assert!(verifier.verify_with_replay(&envelope, 1_100, b"channel-b", &mut guard).is_ok());
+    let different_channel = signed_payload_with_session("01ARZ3NDEKTSV4RRFFQ69G5FB8");
+    let different_channel = signer
+        .sign(&different_channel, AuthorizationCryptoMode::LocalDevelopment)
+        .unwrap();
+    assert_eq!(
+        verifier.verify_with_replay(
+            &different_channel,
+            1_100,
+            PrincipalSessionUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB8").unwrap(),
+            &mut guard,
+        ),
+        Err(AuthorizationError::ContextReplay)
+    );
 }
 
 #[test]
 fn signed_context_rejects_development_keys_in_production() {
     let signer = test_signer("local-prod");
-    let key = PrincipalContextKey::new(
-        signer.key_id(),
-        signer.public_key().unwrap(),
-        SigningKeyProvenance::LocalDevelopment,
-    )
-    .unwrap();
+    let key = PrincipalContextKey::new(signer.key_id(), signer.public_key().unwrap()).unwrap();
     assert!(matches!(
         PrincipalContextVerifier::new(
             AuthorizationCryptoMode::ProductionFips,

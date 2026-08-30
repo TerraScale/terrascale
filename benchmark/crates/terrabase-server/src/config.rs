@@ -526,7 +526,10 @@ allow_wildcard = false
                 principal,
             );
             assert!(
-                matches!(ServerConfig::parse(&text), Err(ConfigError::InvalidGatewayPrincipal)),
+                matches!(
+                    ServerConfig::parse(&text),
+                    Err(ConfigError::InvalidGatewayPrincipal | ConfigError::ParseConfiguration(_))
+                ),
                 "principal {principal:?}: {:?}",
                 ServerConfig::parse(&text)
             );

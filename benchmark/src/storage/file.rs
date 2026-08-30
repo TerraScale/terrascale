@@ -1028,7 +1028,19 @@ fn verify_or_create_format(dir: &Path) -> Result<FormatOpen, StorageOpenError> {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let mut entries = fs::read_dir(dir).map_err(|_| StorageOpenError::Unavailable)?;
-            if entries.next().transpose().map_err(|_| StorageOpenError::Unavailable)?.is_some() {
+            let mut foreign = false;
+            for entry in entries {
+                let entry = entry.map_err(|_| StorageOpenError::Unavailable)?;
+                let name = entry.file_name();
+                if name != "owner.tbv1"
+                    && name != "manifest.tmp"
+                    && !name.to_str().is_some_and(|name| name.starts_with("owner.tbv1.tmp-"))
+                {
+                    foreign = true;
+                    break;
+                }
+            }
+            if foreign {
                 // A missing marker beside any durable artifact is loss, not a
                 // fresh location. Recreating it could select the wrong format
                 // and erase acknowledged state.

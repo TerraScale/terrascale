@@ -44,8 +44,9 @@ pub mod tiers;
 pub mod types;
 pub mod usage;
 
-#[cfg(test)]
-mod benchmarks;
+#[cfg(any(test, feature = "bench-tools"))]
+#[doc(hidden)]
+pub mod benchmarks;
 
 pub use adapters::platform::{PlatformAdapter, PlatformError};
 pub use adapters::protocol::{

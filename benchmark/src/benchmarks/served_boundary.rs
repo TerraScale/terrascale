@@ -6,6 +6,8 @@
 //! setup, the official Go adapter, and retained-result validation live in
 //! `served_runner`.
 
+#![allow(dead_code, reason = "the served benchmark boundary is a test-only qualification harness")]
+
 use std::path::{Path, PathBuf};
 
 use super::lane::Workload;

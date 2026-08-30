@@ -232,6 +232,14 @@ fn validate_location(location: &Path) -> Result<(), OwnershipError> {
     while let Some(entry) = entries.next() {
         let entry = entry.map_err(|_| OwnershipError::Unavailable)?;
         let name = entry.file_name();
+        let entry_type = entry.file_type().map_err(|_| OwnershipError::Unavailable)?;
+        if entry_type.is_symlink() {
+            if name == FILE_NAME {
+                return Err(OwnershipError::InvalidLocation);
+            }
+            has_other = true;
+            continue;
+        }
         if name == FILE_NAME
             || name == "format.tmp"
             || name == "manifest.tmp"

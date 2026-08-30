@@ -61,7 +61,7 @@ pub enum SigningKeyProvenance {
 }
 
 /// A bounded, typed principal-context payload.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct PrincipalContextPayload {
     environment: String,
     gateway_spiffe_principal: String,
@@ -77,6 +77,12 @@ pub struct PrincipalContextPayload {
     policy_generation: u64,
     issued_at: u64,
     expires_at: u64,
+}
+
+impl std::fmt::Debug for PrincipalContextPayload {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("PrincipalContextPayload").finish_non_exhaustive()
+    }
 }
 
 impl PrincipalContextPayload {
@@ -142,6 +148,11 @@ impl PrincipalContextPayload {
     }
 
     /// Returns the canonical payload bytes used as the signature input.
+    ///
+    /// # Panics
+    ///
+    /// This method cannot panic for a payload produced by [`Self::try_new`],
+    /// because its action and claim counts are bounded there.
     #[must_use]
     pub fn canonical_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(512);
@@ -287,17 +298,36 @@ impl PrincipalContextSigner {
     ///
     /// Returns [`AuthorizationError::ContextSigningFailed`] for an invalid
     /// key or key identifier.
-    pub fn from_pkcs8(
+    pub(crate) fn from_pkcs8(
         key_id: &str,
         private_key: Vec<u8>,
-        provenance: SigningKeyProvenance,
     ) -> Result<Self, AuthorizationError> {
         if !valid_key_id(key_id) {
             return Err(AuthorizationError::InvalidIdentifier);
         }
         EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &private_key)
             .map_err(|_| AuthorizationError::ContextSigningFailed)?;
-        Ok(Self { key_id: key_id.to_owned(), private_key: Zeroizing::new(private_key), provenance })
+        Ok(Self {
+            key_id: key_id.to_owned(),
+            private_key: Zeroizing::new(private_key),
+            provenance: SigningKeyProvenance::LocalDevelopment,
+        })
+    }
+
+    pub(crate) fn from_authority_pkcs8(
+        key_id: &str,
+        private_key: Vec<u8>,
+    ) -> Result<Self, AuthorizationError> {
+        if !valid_key_id(key_id) {
+            return Err(AuthorizationError::InvalidIdentifier);
+        }
+        EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &private_key)
+            .map_err(|_| AuthorizationError::ContextSigningFailed)?;
+        Ok(Self {
+            key_id: key_id.to_owned(),
+            private_key: Zeroizing::new(private_key),
+            provenance: SigningKeyProvenance::Production,
+        })
     }
 
     /// Returns the key identifier.
@@ -373,15 +403,29 @@ impl PrincipalContextKey {
     /// # Errors
     ///
     /// Returns an error for an invalid key identifier or public-key shape.
-    pub fn new(
+    pub fn new(key_id: &str, public_key: Vec<u8>) -> Result<Self, AuthorizationError> {
+        if !valid_key_id(key_id) || public_key.len() != 65 || public_key.first() != Some(&4) {
+            return Err(AuthorizationError::InvalidIdentifier);
+        }
+        Ok(Self {
+            key_id: key_id.to_owned(),
+            public_key,
+            provenance: SigningKeyProvenance::LocalDevelopment,
+        })
+    }
+
+    pub(crate) fn from_authority(
         key_id: &str,
         public_key: Vec<u8>,
-        provenance: SigningKeyProvenance,
     ) -> Result<Self, AuthorizationError> {
         if !valid_key_id(key_id) || public_key.len() != 65 || public_key.first() != Some(&4) {
             return Err(AuthorizationError::InvalidIdentifier);
         }
-        Ok(Self { key_id: key_id.to_owned(), public_key, provenance })
+        Ok(Self {
+            key_id: key_id.to_owned(),
+            public_key,
+            provenance: SigningKeyProvenance::Production,
+        })
     }
 
     /// Returns the key identifier.
@@ -514,6 +558,11 @@ impl PrincipalContextEnvelope {
     }
 
     /// Returns the canonical envelope bytes.
+    ///
+    /// # Panics
+    ///
+    /// This method cannot panic for an envelope produced by this module,
+    /// because its key, payload, and signature lengths are bounded.
     #[must_use]
     pub fn as_bytes(&self) -> Vec<u8> {
         let mut bytes =
@@ -554,7 +603,7 @@ impl std::fmt::Debug for PrincipalContextEnvelope {
 /// Bounded replay state for one channel-binding owner boundary.
 #[derive(Debug, Default)]
 pub struct PrincipalContextReplayGuard {
-    seen: BTreeSet<[u8; 32]>,
+    seen: BTreeMap<PrincipalGrantUlid, u64>,
 }
 
 impl PrincipalContextReplayGuard {
@@ -574,6 +623,11 @@ impl PrincipalContextReplayGuard {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.seen.is_empty()
+    }
+
+    /// Removes replay entries whose signed grants have expired.
+    pub fn prune_expired(&mut self, now: u64) {
+        self.seen.retain(|_, expires_at| *expires_at > now);
     }
 }
 
@@ -696,18 +750,21 @@ impl PrincipalContextVerifier {
         &self,
         envelope: &PrincipalContextEnvelope,
         now: u64,
-        channel_binding: &[u8],
+        channel_binding: PrincipalSessionUlid,
         guard: &mut PrincipalContextReplayGuard,
     ) -> Result<PrincipalContext, AuthorizationError> {
+        guard.prune_expired(now);
         let context = self.verify(envelope, now)?;
-        let token = replay_token(context.grant_id(), channel_binding);
-        if guard.seen.contains(&token) {
+        if context.session_id() != channel_binding {
+            return Err(AuthorizationError::ContextBindingMismatch);
+        }
+        if guard.seen.contains_key(&context.grant_id()) {
             return Err(AuthorizationError::ContextReplay);
         }
         if guard.seen.len() >= MAX_REPLAY_ENTRIES {
             return Err(AuthorizationError::ContextReplayGuardFull);
         }
-        guard.seen.insert(token);
+        guard.seen.insert(context.grant_id(), context.expires_at());
         Ok(context)
     }
 }
@@ -887,17 +944,6 @@ impl<'a> Cursor<'a> {
         }
         Ok(value)
     }
-}
-
-fn replay_token(grant: PrincipalGrantUlid, channel_binding: &[u8]) -> [u8; 32] {
-    let mut input = Vec::with_capacity(32 + channel_binding.len());
-    input.extend_from_slice(b"terrabase/principal-context/replay/v1\0");
-    input.extend_from_slice(&grant.as_bytes());
-    input.extend_from_slice(channel_binding);
-    let digest = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, &input);
-    let mut token = [0u8; 32];
-    token.copy_from_slice(digest.as_ref());
-    token
 }
 
 impl Drop for PrincipalContextSigner {

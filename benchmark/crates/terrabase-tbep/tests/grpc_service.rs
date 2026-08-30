@@ -289,6 +289,8 @@ fn identified<T>(message: T) -> Request<T> {
     let mut request = Request::new(message);
     request.metadata_mut().insert("x-tb-principal", "operator".parse().unwrap());
     request.metadata_mut().insert("x-tb-tenant", "tenant-a".parse().unwrap());
+    request.metadata_mut().insert("x-tb-project", "project-a".parse().unwrap());
+    request.metadata_mut().insert("x-tb-database", "database-a".parse().unwrap());
     request
 }
 

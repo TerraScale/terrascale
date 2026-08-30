@@ -681,4 +681,13 @@ mod hostile_fixtures {
                 .any(|line| line.contains("allowance mismatch"))
         );
     }
+
+    #[test]
+    fn fingerprint_hash_implementation_matches_sha256() {
+        let digest = sha256(b"abc");
+        assert_eq!(
+            digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
 }

@@ -703,11 +703,7 @@ impl HealthReport {
     /// Returns the status code an adapter should use for a readiness probe.
     #[must_use]
     pub fn readiness_status_code(&self) -> u16 {
-        if self.is_ready() {
-            200
-        } else {
-            503
-        }
+        if self.is_ready() { 200 } else { 503 }
     }
 
     /// Returns the status code an adapter should use for a health probe.

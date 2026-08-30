@@ -31,6 +31,9 @@ path = "src/lib.rs"
 default = ["local-crypto"]
 local-crypto = ["aws-lc-rs/non-fips"]
 production-fips = ["aws-lc-rs/fips"]
+# Enables the audited served benchmark command. This is kept opt-in so the
+# engine's normal library build does not include benchmark orchestration.
+bench-tools = []
 
 [[test]]
 name = "observability"

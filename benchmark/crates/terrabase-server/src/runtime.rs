@@ -209,7 +209,7 @@ fn open_readonly(path: &Path) -> Result<File, DaemonError> {
 fn valid_pem(text: &str, private: bool) -> bool {
     let mut blocks = 0usize;
     let mut private_block = false;
-    let mut lines = text.split('\n').peekable();
+    let mut lines = text.split('\n');
     while let Some(raw_line) = lines.next() {
         let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
         if line.is_empty() {
@@ -442,6 +442,31 @@ mod tests {
         assert!(matches!(error, DaemonError::SecretFile));
         assert!(!error.to_string().contains(oversized.to_string_lossy().as_ref()));
         std::fs::remove_file(&oversized).expect("temporary PEM removes");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn opened_pem_handle_is_stable_when_path_is_replaced() {
+        let path = write_temporary(
+            "pem-replacement-original",
+            b"-----BEGIN CERTIFICATE-----\nAQ==\n-----END CERTIFICATE-----\n",
+        );
+        let replacement = temporary_path("pem-replacement-new");
+        let mut opened = open_readonly(&path).expect("PEM opens");
+        std::fs::rename(&path, &replacement).expect("original PEM moves aside");
+        std::fs::write(
+            &path,
+            b"-----BEGIN CERTIFICATE-----\nnot-base64\n-----END CERTIFICATE-----\n",
+        )
+        .expect("replacement PEM writes");
+
+        let mut bytes = Vec::new();
+        opened.read_to_end(&mut bytes).expect("opened PEM reads");
+        assert_eq!(bytes, b"-----BEGIN CERTIFICATE-----\nAQ==\n-----END CERTIFICATE-----\n");
+        assert!(matches!(read_pem(&path, false), Err(DaemonError::SecretFile)));
+
+        std::fs::remove_file(&path).expect("replacement PEM removes");
+        std::fs::remove_file(&replacement).expect("original PEM removes");
     }
 
     #[cfg(unix)]

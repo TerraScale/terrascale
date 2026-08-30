@@ -312,13 +312,6 @@ impl ResourceScope {
 /// verifier-owned seam to create it; this module does not parse or verify
 /// claims, tokens, passwords, signatures, or cryptographic keys.
 #[derive(Clone, Debug)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the verified gateway seam is consumed when transport integration lands"
-    )
-)]
 pub(crate) struct VerifiedPrincipalInput {
     pub(crate) scope: ResourceScope,
     pub(crate) environment: String,
@@ -363,13 +356,6 @@ impl fmt::Debug for PrincipalContext {
 
 impl PrincipalContext {
     /// Constructs an opaque context from already verified gateway input.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the verified gateway seam is consumed when transport integration lands"
-        )
-    )]
     pub(crate) fn from_verified(input: VerifiedPrincipalInput) -> Result<Self, AuthorizationError> {
         if !valid_identifier(&input.environment)
             || !valid_identifier(&input.gateway_spiffe_principal)
@@ -729,6 +715,11 @@ impl PolicyRule {
     }
 
     /// Creates a grant with its durable typed identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthorizationError::InvalidIdentifier`] when the collection
+    /// selector is malformed.
     pub fn try_new_with_id(
         grant_id: PrincipalGrantUlid,
         operation: Operation,
@@ -812,6 +803,7 @@ impl PolicyRule {
 /// A validated, versioned, deterministic authorization policy AST.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Policy {
+    #[allow(clippy::struct_field_names)]
     policy_id: AuthorizationPolicyUlid,
     version: u16,
     generation: u64,
@@ -845,6 +837,10 @@ impl Policy {
     }
 
     /// Publishes a policy with its durable typed identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same publication errors as [`Self::try_new`].
     pub fn try_new_with_id<I, S>(
         policy_id: AuthorizationPolicyUlid,
         generation: u64,

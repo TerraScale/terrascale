@@ -6,6 +6,8 @@
 //! remain in `served_boundary`; this module only runs processes and validates
 //! their retained output.
 
+#![allow(dead_code, reason = "the served benchmark runner is a test-only qualification harness")]
+
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};

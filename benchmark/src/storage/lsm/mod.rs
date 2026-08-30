@@ -1916,7 +1916,19 @@ fn verify_or_create_format(dir: &Path) -> Result<FormatOpen, LsmOpenError> {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let mut entries = fs::read_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
-            if entries.next().transpose().map_err(|_| LsmOpenError::Unavailable)?.is_some() {
+            let mut foreign = false;
+            for entry in entries {
+                let entry = entry.map_err(|_| LsmOpenError::Unavailable)?;
+                let name = entry.file_name();
+                if name != "owner.tbv1"
+                    && name != "format.tmp"
+                    && !name.to_str().is_some_and(|name| name.starts_with("owner.tbv1.tmp-"))
+                {
+                    foreign = true;
+                    break;
+                }
+            }
+            if foreign {
                 return Err(LsmOpenError::FormatMismatch);
             }
             let mut file = fs::File::create(&path).map_err(|_| LsmOpenError::Unavailable)?;

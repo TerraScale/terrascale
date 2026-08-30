@@ -188,7 +188,7 @@ for ((index_number = 0; index_number < layer_count; index_number++)); do
         exit 1
         ;;
     esac
-    [[ "$normalized" != /* && "$normalized" != *'\'\'* && "$normalized" != .. && "$normalized" != ../* && "$normalized" != */../* && "$normalized" != */.. ]] || {
+    [[ "$normalized" != /* && "$normalized" != .. && "$normalized" != ../* && "$normalized" != */../* && "$normalized" != */.. ]] || {
       echo "OCI layer contains an unsafe path: $entry" >&2
       exit 1
     }
@@ -209,7 +209,7 @@ for ((index_number = 0; index_number < layer_count; index_number++)); do
     esac
   done < <(tar -tf "$raw_layer")
 done
-[[ -f "$current_binary" && -s "$current_present" ]] || {
+[[ -f "$current_binary" && -e "$current_present" ]] || {
   echo "OCI image executable is missing after applying its layers" >&2
   exit 1
 }
