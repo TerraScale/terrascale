@@ -48,6 +48,7 @@ src/query/vector.rs	1	3207e228f95f329183b39e3922fbc435438d52ae8fad35cc750b7e62e9
 src/storage/file.rs	1	9118c25b18e2ded928c75638a98aea70f0039853c543fa46889e201ee181aba2	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 src/storage/lsm/mod.rs	1	17d6d2777e887a491cfcbef90bc4e92de3919b1202d1285219f50db88c5574c9	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 src/storage/lsm/tests.rs	4	90fef79918abe65553c6d4b4bc8a73fc98501f5e5e77bc13c50fb520514d029e	persisted	Persisted LSM marker compatibility assertions for N-1 directories and readers.
+src/storage/ownership.rs	2	0000000000000000000000000000000000000000000000000000000000000000	persisted	Persisted storage marker compatibility check.
 src/storage/root.rs	2	2950cfb5ebe7c023098162c84ee98d722720ee4100a907b5e9d158b4a9defe4a	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 src/storage/tests.rs	1	067e6555f0dd0dcb170601d8e9276be823bc9a3ae9eb0bd1598cccfd0620ef6c	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 tests/architecture/dependency_direction.rs	2	a6c6b439c80e4b7940765cbe22bd3d78b7db6f1ea932a07f1f4f83390388a1da	policy	Reviewed N-1 source alias and its architecture assertion.
@@ -56,6 +57,6 @@ tests/query/vector_conformance_vectors.rs	1	f39e5de7832918c50e9f5c26ccc5074de818
 tests/query/vector_search.rs	1	d107e11326b35ee8fb66661160ffa2f1e1958616949d2ff9cd102a563b24d199	historical	Exact historical issue or ticket identifier retained as source provenance.
 tests/recovery/backup_public_construction.rs	3	2956891100287d4fa155973589e7e2c0966b186d964c1746caca42331dbf8ed6	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 tests/recovery/restore_public.rs	1	b46f4395ca6b23678cb7af8cc1646139426d418992995004632a9611cfc3c07f	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
-docs/rename/README.md	0	0000000000000000000000000000000000000000000000000000000000000000	policy	Migration policy names retired source identities explicitly.
-docs/adr/0037-s3-recovery-point-repository.md	0	0000000000000000000000000000000000000000000000000000000000000000	persisted	Persisted manifest filename compatibility.
-crates/terrabase-studio/src/s3_backup.rs	0	0000000000000000000000000000000000000000000000000000000000000000	persisted	Persisted manifest filename compatibility.
+docs/rename/README.md	6	0000000000000000000000000000000000000000000000000000000000000000	policy	Migration policy names retired source identities explicitly.
+docs/adr/0037-s3-recovery-point-repository.md	1	0000000000000000000000000000000000000000000000000000000000000000	persisted	Persisted manifest filename compatibility.
+crates/terrabase-studio/src/s3_backup.rs	1	0000000000000000000000000000000000000000000000000000000000000000	persisted	Persisted manifest filename compatibility.

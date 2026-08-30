@@ -525,10 +525,11 @@ allow_wildcard = false
                 "spiffe://terrascale.tech/prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV",
                 principal,
             );
-            assert!(matches!(
-                ServerConfig::parse(&text),
-                Err(ConfigError::InvalidGatewayPrincipal)
-            ));
+            assert!(
+                matches!(ServerConfig::parse(&text), Err(ConfigError::InvalidGatewayPrincipal)),
+                "principal {principal:?}: {:?}",
+                ServerConfig::parse(&text)
+            );
         }
     }
 

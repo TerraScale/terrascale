@@ -2114,22 +2114,15 @@ pub fn redact_diagnostic(input: &str) -> String {
         // delimiter.  Prefer the delimiter interpretation when the portion
         // before it is itself a sensitive key, so `Authorization:Bearer`
         // cannot hide behind one oversized candidate.
-        if !input.as_bytes().get(key_end).is_some_and(|byte| *byte == b'=' || *byte == b':') {
-            if let Some(relative) = input[start..key_end].rfind(':') {
-                let prefix_end = start + relative;
-                if is_secret_key(&input[start..prefix_end]) {
-                    key_end = prefix_end;
-                }
-            }
+        if let Some(prefix_end) = sensitive_colon_prefix_end(input, start, key_end) {
+            key_end = prefix_end;
         }
         let key = &input[start..key_end];
-        if is_secret_key(key) {
-            if let Some((value_start, value_end)) = secret_value_range(input, key_end, key) {
-                output.push_str(&input[start..value_start]);
-                output.push_str("[REDACTED]");
-                scan = value_end;
-                continue;
-            }
+        if let Some((value_start, value_end)) = secret_redaction_range(input, key_end, key) {
+            output.push_str(&input[start..value_start]);
+            output.push_str("[REDACTED]");
+            scan = value_end;
+            continue;
         }
         output.push_str(&input[start..key_end]);
         scan = key_end;
@@ -2213,6 +2206,19 @@ fn is_secret_key(key: &str) -> bool {
     SECRET_KEY_ALIASES.iter().any(|alias| has_secret_suffix(key, alias))
 }
 
+fn sensitive_colon_prefix_end(input: &str, start: usize, key_end: usize) -> Option<usize> {
+    if input.as_bytes().get(key_end).is_some_and(|byte| *byte == b'=' || *byte == b':') {
+        return None;
+    }
+    let relative = input[start..key_end].rfind(':')?;
+    let prefix_end = start + relative;
+    is_secret_key(&input[start..prefix_end]).then_some(prefix_end)
+}
+
+fn secret_redaction_range(input: &str, key_end: usize, key: &str) -> Option<(usize, usize)> {
+    is_secret_key(key).then(|| secret_value_range(input, key_end, key)).flatten()
+}
+
 fn has_secret_suffix(key: &str, alias: &str) -> bool {
     let key = trim_unicode_tricks(key);
     if ascii_eq_ignore_case(key, alias) {
@@ -2220,6 +2226,7 @@ fn has_secret_suffix(key: &str, alias: &str) -> bool {
     }
     let Some(offset) = key.len().checked_sub(alias.len()) else { return false };
     offset > 0
+        && key.is_char_boundary(offset)
         && key[..offset].chars().next_back().is_some_and(is_namespace_separator)
         && ascii_eq_ignore_case(&key[offset..], alias)
 }
@@ -2242,12 +2249,14 @@ fn ascii_eq_ignore_case(value: &str, expected: &str) -> bool {
             .all(|(value, expected)| value.eq_ignore_ascii_case(&expected))
 }
 
-fn secret_value_range(
-    input: &str,
-    key_end: usize,
-    key: &str,
-) -> Option<(usize, usize)> {
+fn secret_value_range(input: &str, key_end: usize, key: &str) -> Option<(usize, usize)> {
     let mut cursor = key_end;
+    // JSON-like and shell-like quoted keys carry a closing quote before the
+    // assignment delimiter (`"password": ...`).
+    if input[cursor..].chars().next().is_some_and(|character| character == '"' || character == '\'')
+    {
+        cursor += input[cursor..].chars().next().expect("checked above").len_utf8();
+    }
     skip_whitespace(input, &mut cursor);
     let bare_bearer = has_secret_suffix(key, "bearer")
         && ascii_eq_ignore_case(trim_unicode_tricks(key), "bearer");

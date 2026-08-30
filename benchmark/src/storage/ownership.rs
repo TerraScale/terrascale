@@ -72,6 +72,17 @@ pub struct DatabaseOwner {
 }
 
 impl DatabaseOwner {
+    /// Builds a typed owner tuple from its canonical environment text.
+    pub fn try_new(
+        environment: impl AsRef<str>,
+        tenant: TenantUlid,
+        project: ProjectUlid,
+        database: DatabaseUlid,
+        region: RegionCode,
+    ) -> Result<Self, OwnershipError> {
+        Ok(Self::new(EnvironmentName::try_new(environment)?, tenant, project, database, region))
+    }
+
     /// Builds a typed owner tuple.
     #[must_use]
     pub const fn new(
@@ -136,13 +147,20 @@ pub(crate) enum OwnershipMode {
 
 /// Why durable owner metadata could not be opened or validated.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum OwnershipError {
+pub enum OwnershipError {
+    /// The environment contains invalid or unbounded identity text.
     InvalidEnvironment,
+    /// The location or owner metadata path is not a safe regular location.
     InvalidLocation,
+    /// The directory contains bytes that are not a TerraBase location.
     ForeignLocation,
+    /// The owner record is truncated, oversized, malformed, or improperly protected.
     Corrupt,
+    /// The supplied owner differs from the durable owner tuple.
     Mismatch,
+    /// The local and production ownership modes differ.
     ModeMismatch,
+    /// An owner metadata operation could not complete.
     Unavailable,
 }
 
@@ -272,7 +290,15 @@ fn encode_record(owner: &DatabaseOwner, mode: OwnershipMode) -> Vec<u8> {
     bytes.extend_from_slice(&owner.project.as_bytes());
     bytes.extend_from_slice(&owner.database.as_bytes());
     bytes.extend_from_slice(&owner.region.as_bytes());
+    let checksum = checksum(&bytes);
+    bytes.extend_from_slice(&checksum.to_le_bytes());
     bytes
+}
+
+fn checksum(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
+        hash.wrapping_mul(0x100000001b3).wrapping_add(u64::from(*byte))
+    })
 }
 
 fn push_string(bytes: &mut Vec<u8>, value: &str) {
@@ -302,7 +328,15 @@ fn read_record(path: &Path) -> Result<(DatabaseOwner, OwnershipMode), OwnershipE
     if bytes.len() > MAX_RECORD_BYTES {
         return Err(OwnershipError::Corrupt);
     }
-    let mut reader = RecordReader { bytes: &bytes, offset: 0 };
+    if bytes.len() < 8 {
+        return Err(OwnershipError::Corrupt);
+    }
+    let body_len = bytes.len() - 8;
+    let expected = u64::from_le_bytes(bytes[body_len..].try_into().expect("fixed checksum"));
+    if checksum(&bytes[..body_len]) != expected {
+        return Err(OwnershipError::Corrupt);
+    }
+    let mut reader = RecordReader { bytes: &bytes[..body_len], offset: 0 };
     if reader.take(MAGIC.len()) != Some(MAGIC.as_slice()) || reader.byte() != Some(VERSION) {
         return Err(OwnershipError::Corrupt);
     }

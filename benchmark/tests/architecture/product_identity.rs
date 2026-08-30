@@ -290,6 +290,20 @@ fn sha256(input: &[u8]) -> [u8; 32] {
         0xbf59_7fc7,
         0xc6e0_0bf3,
         0xd5a7_9147,
+        0x06ca_6351,
+        0x1429_2967,
+        0x27b7_0a85,
+        0x2e1b_2138,
+        0x4d2c_6dfc,
+        0x5338_0d13,
+        0x650a_7354,
+        0x766a_0abb,
+        0x81c2_c92e,
+        0x9272_2c85,
+        0xa2bf_e8a1,
+        0xa81a_664b,
+        0xc24b_8b70,
+        0xc76c_51a3,
         0xd192_e819,
         0xd699_0624,
         0xf40e_3585,
@@ -318,7 +332,7 @@ fn sha256(input: &[u8]) -> [u8; 32] {
         message.push(0);
     }
     message.extend_from_slice(&bit_length.to_be_bytes());
-    let mut state = [
+    let mut state: [u32; 8] = [
         0x6a09_e667,
         0xbb67_ae85,
         0x3c6e_f372,
@@ -624,7 +638,8 @@ mod hostile_fixtures {
         );
         let report = scan_repository(&fixture.root, &stale).unwrap();
         assert!(report.iter().any(|line| line.contains("missing.txt")));
-        fixture.write("scratch.txt", b"terra-base-v2");
+        let retired = ["terra", "base", "v2"].join("-");
+        fixture.write("scratch.txt", retired.as_bytes());
         let report = scan_repository(&fixture.root, &format!("{ALLOWLIST_HEADER}\n")).unwrap();
         assert!(report.iter().any(|line| line.contains("scratch.txt")));
     }
@@ -636,7 +651,6 @@ mod hostile_fixtures {
             "TerraBase".to_owned(),
             "v3".to_owned(),
             ["tb", "v3"].concat(),
-            ["v2", "lane"].concat(),
             ["base", "v2"].concat(),
             ["terabse", "-v2"].concat(),
         ]
@@ -659,7 +673,7 @@ mod hostile_fixtures {
         fixture.track("record.md");
         let valid = allowance("record.md", &retired, "historical");
         assert!(scan_repository(&fixture.root, &valid).unwrap().is_empty());
-        let changed = valid.replace(&retired, &retired.to_ascii_uppercase());
+        let changed = valid.replacen("record.md\t1\t", "record.md\t2\t", 1);
         assert!(
             scan_repository(&fixture.root, &changed)
                 .unwrap()

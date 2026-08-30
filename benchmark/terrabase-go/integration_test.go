@@ -5,6 +5,8 @@ package terrabase
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"os"
@@ -75,7 +77,8 @@ func TestProductionHarnessInterop(t *testing.T) {
 	clientRoot := write("client-root.pem", pki.caPEM)
 	storage := t.TempDir()
 
-	command := exec.Command(binary, serverCert, serverKey, clientRoot, storage)
+	command := exec.Command(binary, serverCert, serverKey, clientRoot, storage,
+		testGatewayPrincipal, "tenant-go", "project-go", "database-go")
 	stdin, err := command.StdinPipe()
 	if err != nil {
 		t.Fatalf("the harness stdin could not be piped: %v", err)
@@ -116,6 +119,19 @@ func TestProductionHarnessInterop(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("the harness did not announce its listener within 30s")
 	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(pki.caPEM) {
+		t.Fatal("the test CA could not be loaded")
+	}
+	legacyTLS := &tls.Config{
+		RootCAs: roots, Certificates: []tls.Certificate{mustTLSCertificate(t, pki.clientPEM, pki.clientKey)},
+		ServerName: "localhost", MinVersion: tls.VersionTLS12, MaxVersion: tls.VersionTLS12,
+	}
+	legacy, err := tls.Dial("tcp", "127.0.0.1:"+port, legacyTLS)
+	if err == nil {
+		_ = legacy.Close()
+		t.Fatal("the production listener accepted a TLS 1.2 handshake")
+	}
 
 	client, err := Dial("127.0.0.1:"+port,
 		WithRootCerts(pki.caPEM),
@@ -149,7 +165,7 @@ func TestProductionHarnessInterop(t *testing.T) {
 	}
 	outcome, err := client.DocumentWrite(ctx,
 		DocumentPut{Collection: "books", ID: "ddia", Body: body},
-		ExpectAbsent(), AckRegionalQuorum, "go-integration-write-1")
+		ExpectAbsent(), AckLocalSynced, "go-integration-write-1")
 	if err != nil {
 		t.Fatalf("the write against the real engine failed: %v", err)
 	}
@@ -236,6 +252,15 @@ func TestProductionHarnessInterop(t *testing.T) {
 	if errors.Is(context.DeadlineExceeded, ctx.Err()) {
 		t.Fatal("the interop lane overran its deadline")
 	}
+}
+
+func mustTLSCertificate(t *testing.T, certPEM, keyPEM []byte) tls.Certificate {
+	t.Helper()
+	pair, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatalf("the test client certificate could not be loaded: %v", err)
+	}
+	return pair
 }
 
 // harnessBinary resolves the harness executable, building it with

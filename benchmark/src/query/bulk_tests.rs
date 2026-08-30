@@ -685,10 +685,7 @@ fn bulk_runs_record_audit_entries_on_the_engine() {
 
 #[test]
 fn bulk_options_bounds_are_the_documented_constants() {
-    assert_eq!(
-        MAX_BULK_PAGE_DOCUMENTS, 4096,
-        "the documented server batch bound"
-    );
+    assert_eq!(MAX_BULK_PAGE_DOCUMENTS, 4096, "the documented server batch bound");
     let options = BulkByQueryOptions::new();
     assert_eq!(options.page_documents(), MAX_BULK_PAGE_DOCUMENTS);
     assert!(!options.details());

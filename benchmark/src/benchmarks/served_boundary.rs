@@ -11,9 +11,8 @@ use std::path::{Path, PathBuf};
 use super::lane::Workload;
 use super::lane_run::SideFacts;
 use super::served_runner::{
-    ADAPTER_CONTRACT_IDENTITY, QUALIFICATION_SERVER_IDENTITY,
-    QUALIFICATION_SOURCE_IDENTITY, QUALIFICATION_TRANSPORT_IDENTITY, ServedRunnerConfig,
-    ServedRunnerError, run_served_runner,
+    ADAPTER_CONTRACT_IDENTITY, QUALIFICATION_SERVER_IDENTITY, QUALIFICATION_SOURCE_IDENTITY,
+    QUALIFICATION_TRANSPORT_IDENTITY, ServedRunnerConfig, ServedRunnerError, run_served_runner,
 };
 
 const MAX_PRINCIPAL_BYTES: usize = 128;
@@ -93,11 +92,9 @@ impl ServedBoundaryConfig {
 
     fn validate_diagnostic_policy(&self) -> Result<(), String> {
         if matches!(self.runner.workload, Workload::DocumentWrite | Workload::Mixed) {
-            return Err(
-                "single-member qualification cannot substantiate regional quorum writes; \
+            return Err("single-member qualification cannot substantiate regional quorum writes; \
                  mutation workloads require a packaged RF=2 production Member boundary"
-                    .to_owned(),
-            );
+                .to_owned());
         }
         if self.runner.server_identity != QUALIFICATION_SERVER_IDENTITY {
             return Err(format!(
@@ -207,10 +204,7 @@ impl std::error::Error for ServedBoundaryError {}
 pub(crate) fn run_served_boundary(
     config: &ServedBoundaryConfig,
 ) -> Result<ServedBoundaryResult, ServedBoundaryError> {
-    config.validate().map_err(|reason| ServedBoundaryError {
-        reason,
-        retained_path: None,
-    })?;
+    config.validate().map_err(|reason| ServedBoundaryError { reason, retained_path: None })?;
     let result = run_served_runner(&config.runner).map_err(ServedBoundaryError::from)?;
     Ok(ServedBoundaryResult {
         facts: result.facts,
@@ -231,8 +225,7 @@ mod tests {
         ServedRunnerConfig {
             lane: LaneConfig::COMMISSIONING_TRIAL,
             workload,
-            qualification_harness_executable: std::env::current_exe()
-                .expect("test executable"),
+            qualification_harness_executable: std::env::current_exe().expect("test executable"),
             go_executable: PathBuf::from("go"),
             go_workdir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("terrabase-go"),
             adapter_executable: None,

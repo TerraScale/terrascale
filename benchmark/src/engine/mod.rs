@@ -32,6 +32,7 @@ mod patch_tests;
 #[cfg(test)]
 mod tests;
 
+pub use crate::storage::DatabaseOwner;
 pub use ingest::{
     BulkIngestRequest, IngestBatchReceipt, IngestConflictMode, IngestReceipt, IngestRefusal,
     IngestRefusalReason, IngestStream, IngestTermination, MAX_INGEST_BATCH_DOCUMENTS,

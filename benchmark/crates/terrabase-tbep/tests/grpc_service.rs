@@ -19,11 +19,11 @@ use terrabase_tbep::host::HostingError;
 use terrabase_tbep::host::SyncDeliveryHost;
 use terrabase_tbep::host::TbepNotification;
 use terrabase_tbep::proto::terrabase::v1 as pb;
-use terrabase_tbep::proto::terrabase::v1::backbone_client::BackboneClient;
-use terrabase_tbep::proto::terrabase::v1::channel_client::ChannelClient;
-use terrabase_tbep::proto::terrabase::v1::engine_client::EngineClient;
-use terrabase_tbep::proto::terrabase::v1::maintenance_client::MaintenanceClient;
-use terrabase_tbep::proto::terrabase::v1::sync_client::SyncClient;
+use terrabase_tbep::proto::terrabase::v1::backbone_service_client::BackboneServiceClient;
+use terrabase_tbep::proto::terrabase::v1::channel_service_client::ChannelServiceClient;
+use terrabase_tbep::proto::terrabase::v1::engine_service_client::EngineServiceClient;
+use terrabase_tbep::proto::terrabase::v1::maintenance_service_client::MaintenanceServiceClient;
+use terrabase_tbep::proto::terrabase::v1::sync_service_client::SyncServiceClient;
 use terrabase_tbep::registry;
 use terrabase_tbep::value::TbepValue;
 use tonic::Request;
@@ -39,7 +39,7 @@ impl TbepHost for FixedHost {
         &self,
         request: &registry::ChannelBindRequest,
     ) -> Result<registry::ChannelBindResponse, HostingError> {
-        Ok(registry::ChannelBindResponse { tenant: request.tenant.clone(), serving_instance: 7 })
+        Ok(registry::ChannelBindResponse { scope: request.scope.clone(), serving_instance: 7 })
     }
 
     fn document_read(
@@ -311,7 +311,7 @@ async fn unbound_calls_fail_closed_with_the_channel_code() {
     ));
     let mut listener = server.serve_uds(&socket).expect("the server binds");
     let channel = connect(socket.clone()).await;
-    let mut engine = EngineClient::new(channel);
+    let mut engine = EngineServiceClient::new(channel);
 
     let status = engine
         .document_read(Request::new(pb::EngineServiceDocumentReadRequest {
@@ -335,7 +335,7 @@ async fn mutations_require_their_idempotency_key() {
     ));
     let mut listener = server.serve_uds(&socket).expect("the server binds");
     let channel = connect(socket.clone()).await;
-    let mut engine = EngineClient::new(channel);
+    let mut engine = EngineServiceClient::new(channel);
 
     let status = engine
         .document_write(identified(pb::EngineServiceDocumentWriteRequest {
@@ -398,17 +398,19 @@ async fn bind_write_read_and_delete_round_trip() {
     let mut listener = server.serve_uds(&socket).expect("the server binds");
     let channel = connect(socket.clone()).await;
 
-    let mut channels = ChannelClient::new(channel.clone());
+    let mut channels = ChannelServiceClient::new(channel.clone());
     let bound = channels
         .bind(Request::new(pb::ChannelServiceBindRequest {
             principal: "operator".into(),
             tenant: "tenant-a".into(),
+            project: "project-a".into(),
+            database: "database-a".into(),
         }))
         .await
         .expect("the bind answers");
     assert_eq!(bound.into_inner().serving_instance, 7);
 
-    let mut engine = EngineClient::new(channel.clone());
+    let mut engine = EngineServiceClient::new(channel.clone());
     let written = engine
         .document_write(mutation(pb::EngineServiceDocumentWriteRequest {
             document: Some(pb::DocumentPut {
@@ -428,11 +430,8 @@ async fn bind_write_read_and_delete_round_trip() {
     match written.into_inner().outcome.expect("the outcome rides").outcome {
         Some(pb::write_outcome::Outcome::Committed(receipt)) => {
             assert_eq!(receipt.sequence, 4);
-            assert_eq!(
-                receipt.acknowledgement,
-                pb::Acknowledgement::AcknowledgementRegionalQuorum as i32
-            );
-            assert_eq!(receipt.backup, pb::BackupOutcome::BackupOutcomeFull as i32);
+            assert_eq!(receipt.acknowledgement, pb::Acknowledgement::RegionalQuorum as i32);
+            assert_eq!(receipt.backup, pb::BackupOutcome::Full as i32);
         }
         other => panic!("unexpected write outcome {other:?}"),
     }
@@ -480,7 +479,7 @@ async fn bounds_fail_closed_before_the_host_runs() {
     ));
     let mut listener = server.serve_uds(&socket).expect("the server binds");
     let channel = connect(socket.clone()).await;
-    let mut engine = EngineClient::new(channel);
+    let mut engine = EngineServiceClient::new(channel);
 
     let status = engine
         .document_read(identified(pb::EngineServiceDocumentReadRequest {
@@ -504,7 +503,7 @@ async fn identity_metadata_bounds_fail_closed() {
     ));
     let mut listener = server.serve_uds(&socket).expect("the server binds");
     let channel = connect(socket.clone()).await;
-    let mut engine = EngineClient::new(channel);
+    let mut engine = EngineServiceClient::new(channel);
     let mut request = Request::new(pb::EngineServiceDocumentReadRequest {
         collection: "orders".into(),
         document: "d-1".into(),
@@ -539,12 +538,10 @@ async fn hostile_values_fail_closed_before_the_host_runs() {
     ));
     let mut listener = server.serve_uds(&socket).expect("the server binds");
     let channel = connect(socket.clone()).await;
-    let mut engine = EngineClient::new(channel);
+    let mut engine = EngineServiceClient::new(channel);
     let mut list = Vec::with_capacity(4097);
     for _ in 0..=4096 {
-        list.push(pb::Value {
-            kind: Some(pb::value::Kind::Null(pb::NullValue::NullValueNull as i32)),
-        });
+        list.push(pb::Value { kind: Some(pb::value::Kind::Null(pb::NullValue::Null as i32)) });
     }
     let status = engine
         .document_write(mutation(pb::EngineServiceDocumentWriteRequest {
@@ -597,7 +594,7 @@ async fn sync_tokens_are_bounded_before_the_host_runs() {
     ));
     let mut listener = server.serve_uds(&socket).expect("the server binds");
     let channel = connect(socket.clone()).await;
-    let mut sync = SyncClient::new(channel);
+    let mut sync = SyncServiceClient::new(channel);
     let status = sync
         .session_setup(identified(pb::SyncServiceSessionSetupRequest {
             collection: "orders".into(),
@@ -685,7 +682,7 @@ async fn the_backbone_stream_delivers_confirmation_batches_and_close() {
     ));
     let mut listener = server.serve_uds(&socket).expect("the server binds");
     let channel = connect(socket.clone()).await;
-    let mut backbone = BackboneClient::new(channel);
+    let mut backbone = BackboneServiceClient::new(channel);
 
     let mut stream = backbone
         .subscribe(identified(pb::BackboneServiceSubscribeRequest {
@@ -702,7 +699,7 @@ async fn the_backbone_stream_delivers_confirmation_batches_and_close() {
     let first =
         stream.message().await.expect("the confirmation arrives").expect("the stream is open");
     match first.event.expect("the event rides") {
-        pb::backbone_stream_event::Event::Subscribed(response) => {
+        pb::subscribe_response::Event::Subscribed(response) => {
             assert_eq!(response.subscription_id, 11);
             assert_eq!(response.start_sequence, 5);
         }
@@ -745,7 +742,7 @@ async fn the_backbone_stream_delivers_confirmation_batches_and_close() {
         .event
         .expect("the event rides")
     {
-        pb::backbone_stream_event::Event::Batch(batch) => {
+        pb::subscribe_response::Event::Batch(batch) => {
             assert_eq!(batch.events.len(), 1);
             assert_eq!(batch.next_sequence, 6);
         }
@@ -759,7 +756,7 @@ async fn the_backbone_stream_delivers_confirmation_batches_and_close() {
         .event
         .expect("the event rides")
     {
-        pb::backbone_stream_event::Event::Trigger(trigger) => {
+        pb::subscribe_response::Event::Trigger(trigger) => {
             assert_eq!(trigger.sequence, 6);
         }
         other => panic!("unexpected trigger event {other:?}"),
@@ -772,7 +769,7 @@ async fn the_backbone_stream_delivers_confirmation_batches_and_close() {
         .event
         .expect("the event rides")
     {
-        pb::backbone_stream_event::Event::Closed(closed) => {
+        pb::subscribe_response::Event::Closed(closed) => {
             assert_eq!(closed.reason, pb::SubscriptionCloseReason::Replaced as i32);
         }
         other => panic!("unexpected close event {other:?}"),
@@ -793,7 +790,7 @@ async fn the_real_sync_delivery_core_serves_one_session_over_grpc() {
     ));
     let mut listener = server.serve_uds(&socket).expect("the server binds");
     let channel = connect(socket.clone()).await;
-    let mut sync = SyncClient::new(channel);
+    let mut sync = SyncServiceClient::new(channel);
 
     let setup = sync
         .session_setup(identified(pb::SyncServiceSessionSetupRequest {
@@ -869,7 +866,7 @@ async fn maintenance_answers_topology_health_and_shutdown() {
     ));
     let mut listener = server.serve_uds(&socket).expect("the server binds");
     let channel = connect(socket.clone()).await;
-    let mut maintenance = MaintenanceClient::new(channel);
+    let mut maintenance = MaintenanceServiceClient::new(channel);
 
     let topology = maintenance
         .topology_read(identified(pb::MaintenanceServiceTopologyReadRequest {}))

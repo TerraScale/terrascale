@@ -17,7 +17,7 @@ use std::{
 use crate::engine::EngineConfigError;
 use crate::identity::{DatabaseUlid, ProjectUlid, TenantUlid};
 use crate::regions::RegionCode;
-use crate::storage::{DatabaseOwner, EnvironmentName};
+pub use crate::storage::{DatabaseOwner, EnvironmentName};
 use crate::{Engine, EngineConfig, EngineOpenError, EngineShutdownError};
 
 /// The maximum UTF-8 byte length of a database identity.
@@ -42,8 +42,9 @@ pub struct DatabaseId {
 impl DatabaseId {
     /// Creates a database identity accepted by the Member catalog.
     ///
-    /// Only the exact 26-character uppercase Crockford form accepted by
-    /// [`DatabaseUlid`] is valid.  The identity is never used directly as a
+    /// Canonical ULID text is used for scoped production entries. Other
+    /// bounded safe text is retained only for the explicit local-development
+    /// compatibility constructor. The identity is never used directly as a
     /// filesystem path.
     pub fn try_new(value: impl AsRef<str>) -> Result<Self, CatalogValidationError> {
         let value = value.as_ref();
@@ -63,8 +64,8 @@ impl DatabaseId {
 
     /// Returns the canonical identity text.
     #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.text
+    pub fn as_str(&self) -> String {
+        self.text.clone()
     }
 
     /// Returns the wrapped ADR 0027 identity.
@@ -232,6 +233,8 @@ pub enum CatalogValidationError {
     DuplicateDatabaseLocation,
     /// Two entries carry the same typed production scope.
     DuplicateDatabaseScope,
+    /// A production catalog entry has no typed owner scope.
+    UnscopedDatabase,
     /// The environment identity is malformed.
     InvalidEnvironment,
     /// Admission limits are zero or outside the accepted bound.
@@ -426,6 +429,20 @@ impl Member {
                 lifecycle: Mutex::new(LifecycleState::Serving),
             }),
         })
+    }
+
+    /// Opens a production catalog. Every specification must carry a typed
+    /// [`DatabaseScope`]; compatibility string specifications are refused.
+    pub fn open_production(
+        root: impl AsRef<Path>,
+        specifications: impl IntoIterator<Item = DatabaseSpec>,
+        limits: AdmissionLimits,
+    ) -> Result<Self, MemberOpenError> {
+        let specifications: Vec<_> = specifications.into_iter().collect();
+        if specifications.iter().any(|spec| spec.scope.is_none()) {
+            return Err(MemberOpenError::Validation(CatalogValidationError::UnscopedDatabase));
+        }
+        Self::open(root, specifications, limits)
     }
 
     /// Returns the configured root as validated at startup.

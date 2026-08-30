@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const testGatewayPrincipal = "spiffe://terrascale.test/gateway/database-api"
+const testGatewayPrincipal = "spiffe://terrascale.tech/test/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV"
 
 // testPKI is one throwaway certificate hierarchy built with the
 // standard library alone: a root CA, one server certificate for the

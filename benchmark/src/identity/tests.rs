@@ -70,6 +70,10 @@ const ENTITY_IDENTITY_NAMES: &[&str] = &[
     "terrabase::identity::TenantUlid",
     "terrabase::identity::ProjectUlid",
     "terrabase::identity::DatabaseUlid",
+    "terrabase::identity::PrincipalUlid",
+    "terrabase::identity::AuthorizationPolicyUlid",
+    "terrabase::identity::PrincipalSessionUlid",
+    "terrabase::identity::PrincipalGrantUlid",
     "terrabase::identity::CollectionInstanceUlid",
     "terrabase::identity::DocumentUlid",
     "terrabase::identity::DocumentIncarnationUlid",
@@ -494,9 +498,9 @@ fn the_region_boundary_row_accepts_only_registered_uppercase_codes() {
     }
 
     // The identity surface itself: the ADR's entity list is exactly the
-    // twenty-three typed identities above, and none of them is a Region —
+    // twenty-seven typed identities above, and none of them is a Region —
     // a Region has no ULID.
-    assert_eq!(ENTITY_IDENTITY_NAMES.len(), 23);
+    assert_eq!(ENTITY_IDENTITY_NAMES.len(), 27);
     assert!(
         ENTITY_IDENTITY_NAMES.iter().all(|name| !name.contains("Region")),
         "no entity identity type is a Region identity",

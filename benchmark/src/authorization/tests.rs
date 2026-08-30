@@ -231,7 +231,7 @@ fn signed_context_is_canonical_authenticated_and_bound() {
     assert_eq!(context.policy_id(), payload.policy_id());
 
     let mut tampered = encoded;
-    tampered[12 + 4] ^= 1;
+    tampered[12 + envelope.key_id().len() + 4] ^= 1;
     let tampered = PrincipalContextEnvelope::from_bytes(&tampered).unwrap();
     assert_eq!(verifier.verify(&tampered, 1_100), Err(AuthorizationError::InvalidContextSignature));
 }

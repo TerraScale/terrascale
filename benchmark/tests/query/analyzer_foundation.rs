@@ -25,12 +25,7 @@ fn v1_default_analyzer_names_resolve_and_unknown_names_fail_closed() {
     }
 
     // The closed set refuses arbitrary and custom analyzer names.
-    for name in [
-        "SimpleAnalyzer",
-        "StopAnalyzer",
-        "KeywordTokenizer",
-        "MyAnalyzer",
-    ] {
+    for name in ["SimpleAnalyzer", "StopAnalyzer", "KeywordTokenizer", "MyAnalyzer"] {
         assert_eq!(
             Analyzer::resolve(name),
             Err(AnalyzerError::UnknownAnalyzer),

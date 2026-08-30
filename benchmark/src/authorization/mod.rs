@@ -18,8 +18,8 @@ mod signed;
 
 pub use signed::{
     AuthorizationCryptoMode, PrincipalContextEnvelope, PrincipalContextKey, PrincipalContextKeySet,
-    PrincipalContextPayload, PrincipalContextReplayGuard, PrincipalContextVerifier,
-    PrincipalContextSigner, SigningKeyProvenance,
+    PrincipalContextPayload, PrincipalContextReplayGuard, PrincipalContextSigner,
+    PrincipalContextVerifier, SigningKeyProvenance,
 };
 
 /// The canonical version of the engine authorization policy language.
