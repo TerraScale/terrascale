@@ -203,6 +203,29 @@ describe("TerraScaleHttp request policy", () => {
     );
   });
 
+  test("preserves flat error messages used by existing API routes", async () => {
+    const http = new TerraScaleHttp({
+      apiBaseUrl: "https://api.terrascale.test",
+      fetch: async () =>
+        Response.json(
+          { error: "A valid projectId is required.", code: "validation_error" },
+          { status: 400 },
+        ),
+    });
+
+    const result = await http.request({
+      method: "GET",
+      path: "/api/v1/projects/invalid/usage",
+      routeName: "usage.getProjectUsage",
+    });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.error.message, "A valid projectId is required.");
+      assert.equal(result.error.code, "validation_error");
+    }
+  });
+
   test("retries transient document reads in order and stops on deterministic responses", async () => {
     const statuses = [503, 429, 400];
     const requests: Request[] = [];

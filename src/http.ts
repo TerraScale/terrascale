@@ -501,6 +501,7 @@ function errorFromResponse(response: Response, body: unknown): TerraScaleError {
     code,
     message:
       stringProperty(source, "message") ??
+      stringProperty(source, "error") ??
       stringProperty(source, "detail") ??
       stringProperty(source, "title") ??
       (response.statusText || "The TerraScale API request failed."),
