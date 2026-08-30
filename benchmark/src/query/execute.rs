@@ -713,7 +713,7 @@ fn resolve_references(
         pending.extend(super::includes::referenced_ids(document, query.includes()));
     }
     if pending.len() > max_references {
-        return Err(QueryError::CandidateBoundExceeded);
+        return Err(reference_bound_error(query));
     }
 
     let mut resolved = BTreeMap::<String, Document>::new();
@@ -747,7 +747,7 @@ fn resolve_references(
                     resolved.insert(document.id().as_str().to_owned(), document.clone());
                     discovered.push(document.clone());
                     if resolved.len() > max_references {
-                        return Err(QueryError::CandidateBoundExceeded);
+                        return Err(reference_bound_error(query));
                     }
                 }
             }
@@ -776,10 +776,18 @@ fn resolve_references(
             ));
         }
         if pending.len() > max_references {
-            return Err(QueryError::CandidateBoundExceeded);
+            return Err(reference_bound_error(query));
         }
     }
     Ok(resolved.into_values().collect())
+}
+
+fn reference_bound_error(query: &NormalizedQuery) -> QueryError {
+    if query.includes().is_empty() {
+        QueryError::CandidateBoundExceeded
+    } else {
+        QueryError::IncludeBoundExceeded
+    }
 }
 
 /// Sorts nothing and reads no data: this is the bounded materialization step
