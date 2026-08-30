@@ -54,9 +54,9 @@ Consequences, stated exactly:
   "running the corpus" — the arbiter when two harnesses disagree about
   what a vector means. A native harness that makes the checks named
   here, on the same data, is conformance-equivalent.
-- SE-09 (TypeScript `@terrascale/sdk`) and SE-10 (TerraScale.DotNet)
-  own their harness implementations and their CI wiring; this record
-  fixes the contract both implement.
+- Retired public SDK harnesses owned their own implementations and CI wiring.
+  This record preserves only the historical corpus contract. It is not a
+  current client requirement.
 
 ## The corpus contract
 

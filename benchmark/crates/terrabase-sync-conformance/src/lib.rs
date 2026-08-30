@@ -3,7 +3,7 @@
 //! The SE-04 golden-vector corpus
 //! (`crates/terrabase-sync-core/vectors/terrascale.sync.v2/`) is the
 //! compatibility contract of `terrascale.sync.v2` (PD-2026-08-26-12
-//! D1): every SDK implementation — TypeScript, C#, any later language —
+//! D1): the Rust engine, Go gateway, and every public SDK implementation
 //! passes the same vectors in its own CI, natively, with no Rust
 //! toolchain. This crate is the kit that makes that runnable and
 //! verifiable, and it owns the ADR 0024 extension corpus

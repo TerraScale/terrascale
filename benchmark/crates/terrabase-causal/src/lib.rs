@@ -692,10 +692,19 @@ impl DottedVersion {
         self.dot
     }
 
+    /// Reports whether this dotted version has the required shape: the
+    /// event dot is not part of the context it is attached to. A dot and its
+    /// context are separate causal facts; admitting the dot itself would
+    /// make an event appear to happen before itself.
+    #[must_use]
+    pub fn is_well_formed(&self) -> bool {
+        !self.context.contains(self.dot)
+    }
+
     /// Reports whether this event happened before `other`.
     #[must_use]
     pub fn happens_before(&self, other: &Self) -> bool {
-        other.context.contains(self.dot)
+        self.dot != other.dot && other.context.contains(self.dot)
     }
 
     /// Reports whether neither event observed the other.
@@ -1523,7 +1532,11 @@ impl CanonicalDecode for DottedVersion {
         let actor = read_actor(&mut reader)?;
         let counter =
             OriginCounter::new(reader.leb_u64()?).map_err(|_| DecodeError::ZeroReserved)?;
-        finish(reader, DottedVersion::new(context, Dot::new(actor, counter)))
+        let version = DottedVersion::new(context, Dot::new(actor, counter));
+        if !version.is_well_formed() {
+            return Err(DecodeError::NonCanonical);
+        }
+        finish(reader, version)
     }
 }
 
@@ -1819,6 +1832,20 @@ mod tests {
     }
 
     #[test]
+    fn dotted_versions_reject_self_causality_at_the_wire_boundary() {
+        let event = dot(actor(9, 1), 1);
+        let mut context = CausalContext::new();
+        context.insert(event);
+        let malformed = DottedVersion::new(context, event);
+        assert!(!malformed.is_well_formed());
+        assert!(!malformed.happens_before(&malformed));
+        assert_eq!(
+            DottedVersion::decode_canonical(&malformed.canonical_bytes()),
+            Err(DecodeError::NonCanonical)
+        );
+    }
+
+    #[test]
     fn hlc_uses_standard_max_rule_and_refuses_future_skew_and_wrap() {
         let mut clock = HybridLogicalClock::restore(HlcTimestamp::new(100, 2));
         assert_eq!(clock.send(99).unwrap(), HlcTimestamp::new(100, 3));
@@ -1921,7 +1948,7 @@ mod tests {
     #[test]
     fn all_native_causal_values_round_trip_strictly() {
         let a = actor(1, 256);
-        let d = dot(a, 9);
+        let d = dot(a, 10);
         let commit = CommitId::new(
             DatabaseId::from_bytes([4; 16]),
             PartitionId::new(12),

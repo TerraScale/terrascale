@@ -121,8 +121,9 @@ consistency, deadline, and result bounds. They do not expose a generic TBEP
 frame or direct Member endpoint.
 
 SDK builders lower to the same canonical AST and golden vectors as text. A
-builder is not a second query language. Rust, C#, and TypeScript conformance
-must agree on canonical AST, parameters, errors, ordering, and result digest.
+builder is not a second query language. Rust, the Go gateway, and public SDK
+conformance must agree on canonical AST, parameters, errors, ordering, and
+result digest.
 
 ## Required evidence
 

@@ -42,8 +42,12 @@ import (
 //     directory is a temp dir destroyed with the test, so no
 //     durability-across-restart claim is made.
 //   - One standalone instance: no cluster, replication observation, or
-//     failover behavior is exercised; the sync, family, schema, and
-//     tier seams are covered by the offline fake-server suite instead.
+//     failover behavior is exercised. The harness's engine host does
+//     not serve backbone delivery (the sync-delivery host beside it
+//     does), so the subscription stream itself is covered by the
+//     offline fake-server suite; this lane only checks its refusal
+//     decodes into the typed error model. The sync, family, schema,
+//     and tier seams are likewise fake-suite territory.
 func TestProductionHarnessInterop(t *testing.T) {
 	harnessSetting := os.Getenv("TERRABASE_HARNESS")
 	if harnessSetting == "" {
@@ -177,17 +181,26 @@ func TestProductionHarnessInterop(t *testing.T) {
 		t.Fatalf("the query returned the wrong document: %+v", result.Documents[0])
 	}
 
+	// The harness's durable engine host does not serve backbone
+	// delivery — the sync-delivery host beside it does — so the stream
+	// opens and its first frame is refused with the closed
+	// operation_refused code. That refusal is a live check of the
+	// typed error model: the code and detail must decode from the
+	// real engine's status details.
 	subscription, err := client.Subscribe(ctx, 1, []string{"books"}, FromLive())
 	if err != nil {
-		t.Fatalf("the subscription against the real engine failed: %v", err)
+		t.Fatalf("the subscription stream could not open: %v", err)
 	}
-	event, err := subscription.Recv()
-	if err != nil {
-		t.Fatalf("the subscription confirmation failed: %v", err)
+	_, streamErr := subscription.Recv()
+	var refusal *Error
+	if !errors.As(streamErr, &refusal) {
+		t.Fatalf("the subscription refusal must decode into the typed error, got %v", streamErr)
 	}
-	confirmation, ok := event.Confirmed()
-	if !ok || confirmation.SubscriptionID != 1 {
-		t.Fatalf("the subscription confirmation is wrong: ok=%v frame=%+v", ok, confirmation)
+	if refusal.Code != CodeOperationRefused || refusal.Detail == "" {
+		t.Fatalf("the subscription refusal must carry its engine code and detail, got %+v", refusal)
+	}
+	if !errors.Is(streamErr, ErrOperationRefused) {
+		t.Fatalf("the subscription refusal must answer ErrOperationRefused, got %v", streamErr)
 	}
 	if err := subscription.Close(); err != nil {
 		t.Fatalf("the subscription close failed: %v", err)

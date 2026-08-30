@@ -4,7 +4,7 @@
 name = "terrabase-cluster"
 version = "0.1.0"
 edition = "2021"
-license = "LicenseRef-TerraScale-Pending"
+license = "MIT"
 publish = false
 
 [dependencies]

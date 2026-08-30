@@ -26,8 +26,8 @@
 //! component is metadata only (ADR 0027: never trusted for causality,
 //! authorization, conflict resolution, expiry, or durability).
 
-// TerraBase, FlatBuffers, and MessagePack are proper names of the product and
-// its codecs, not items to link, so the dense documentation keeps them plain.
+// TerraBase and ULID are proper names, not items to link, so the dense
+// documentation keeps them plain.
 #![allow(clippy::doc_markdown)]
 
 use std::fmt;
@@ -278,8 +278,8 @@ impl Ulid {
 
     /// Constructs a value from a decoded wire frame. Every 16-byte pattern is
     /// a representable ULID, so unlike the text and slice parsers this
-    /// constructor is infallible; private FlatBuffers and public MessagePack
-    /// fields decode through it after their own frame-length validation
+    /// constructor is infallible; private TBEP protobuf fields decode through
+    /// it after their own field-length validation
     /// (ADR 0027 'Canonical representation').
     #[must_use]
     pub const fn from_bytes(bytes: [u8; ULID_BINARY_BYTES]) -> Self {

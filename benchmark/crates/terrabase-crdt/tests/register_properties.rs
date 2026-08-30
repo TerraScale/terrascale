@@ -1,10 +1,12 @@
 #![allow(missing_docs)]
 
 use terrabase_causal::{
-    ActorId, CausalContext, Dot, DottedVersion, HlcTimestamp, MutationOrdinal, OriginCounter,
-    ReplicaEpoch, ReplicaId,
+    ActorId, CanonicalEncode, CausalContext, Dot, DottedVersion, HlcTimestamp, MutationOrdinal,
+    OriginCounter, ReplicaEpoch, ReplicaId,
 };
-use terrabase_crdt::{Candidate, LwwRegister, MvRegister};
+use terrabase_crdt::{
+    Candidate, DecodeError, DecodeLimits, LwwRegister, MvRegister, RegisterCodec,
+};
 
 fn actor(byte: u8) -> ActorId {
     ActorId::new(ReplicaId::from_bytes([byte; 16]), ReplicaEpoch::new(1).unwrap())
@@ -129,4 +131,21 @@ fn removal_is_a_candidate_and_can_win_by_the_concurrent_key() {
     let merged = value.join(&removal);
     assert!(merged.winner().unwrap().is_remove());
     assert_eq!(merged.materialize(), None);
+}
+
+#[test]
+fn register_decoder_rejects_candidate_that_observes_its_own_dot() {
+    let dot = Dot::new(actor(7), OriginCounter::new(1).unwrap());
+    let mut context = CausalContext::new();
+    context.insert(dot);
+    let malformed = LwwRegister::from_candidate(Candidate::new(
+        Some("value".to_owned()),
+        DottedVersion::new(context, dot),
+        MutationOrdinal::new(0),
+        HlcTimestamp::new(1, 0),
+    ));
+    assert_eq!(
+        RegisterCodec::decode_lww::<String>(&malformed.canonical_bytes(), DecodeLimits::default()),
+        Err(DecodeError::NonCanonicalContext)
+    );
 }

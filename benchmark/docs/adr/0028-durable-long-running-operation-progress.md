@@ -122,16 +122,16 @@ Completed creation may return a result reference; clients retrieve the result
 with an ordinary typed operation rather than replaying the original mutation.
 Operation records and results have an explicit retention and expiry response.
 
-The public reactive WebSocket sends generated MessagePack operation snapshots
-and deltas under ADR 0025. Each update carries the operation ULID, progress
-generation, monotone update sequence, state, stage, units, timestamps, and
-typed result or error. Reconnect uses the public view checkpoint; unavailable
-history sends a fresh authorized operation snapshot. Polling is a supported
-status fallback, not the engine's execution or correctness mechanism.
+Private TBEP gRPC sends typed operation snapshots and deltas to the Go gateway.
+Each update carries the operation ULID, progress generation, monotone update
+sequence, state, stage, units, timestamps, and typed result or error.
+Unavailable history sends a fresh authorized operation snapshot. Public
+polling through the gateway is a supported status fallback, not the engine's
+execution or correctness mechanism.
 
-Both SDKs expose the same typed `Operation<T>` handle with wait, observe,
-refresh, and conditional cancel operations. The Dashboard and Operations
-Studio use that SDK contract and display indeterminate progress honestly.
+Public SDKs expose the same typed `Operation<T>` behavior for wait, observe,
+refresh, and conditional cancellation. The private Studio reads the engine's
+typed operation state directly and displays indeterminate progress honestly.
 
 ## Adding a Region
 

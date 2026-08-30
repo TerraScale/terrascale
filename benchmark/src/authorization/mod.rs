@@ -914,28 +914,37 @@ pub fn evaluate(
         return AuthorizationDecision::Deny(DenialReason::ActionNotGranted);
     }
     let operation = Operation::from(request.action);
-    let Some(rule) = policy.rules.iter().find(|rule| {
+    let mut matched_rule = false;
+    for rule in policy.rules.iter().filter(|rule| {
         rule.operation == operation
             && (rule.collection == request.collection || rule.collection == "*")
-    }) else {
-        return AuthorizationDecision::Deny(DenialReason::NoMatchingRule);
-    };
-    if !rule.claim_predicates.iter().all(|predicate| {
-        let Some(document_value) = request.fields.get(&predicate.field) else {
-            return false;
-        };
-        let Some(claim_value) = context.claims.0.get(&predicate.claim) else {
-            return false;
-        };
-        compare(document_value, claim_value, predicate.comparison)
-    }) || !rule
-        .relationship
-        .as_ref()
-        .is_none_or(|relationship| request.relationship_evidence.contains(&relationship.key()))
-    {
-        return AuthorizationDecision::Deny(DenialReason::PredicateFailed);
+    }) {
+        matched_rule = true;
+        let claims_match = rule.claim_predicates.iter().all(|predicate| {
+            let Some(document_value) = request.fields.get(&predicate.field) else {
+                return false;
+            };
+            let Some(claim_value) = context.claims.0.get(&predicate.claim) else {
+                return false;
+            };
+            compare(document_value, claim_value, predicate.comparison)
+        });
+        let relationship_matches = rule
+            .relationship
+            .as_ref()
+            .is_none_or(|relationship| request.relationship_evidence.contains(&relationship.key()));
+        // Grants are alternatives: a failed conditional grant must not mask
+        // a later grant for the same operation and collection. Rules are in
+        // canonical order, so the first successful projection is stable.
+        if claims_match && relationship_matches {
+            return AuthorizationDecision::Allow { fields: rule.projection.apply(&request.fields) };
+        }
     }
-    AuthorizationDecision::Allow { fields: rule.projection.apply(&request.fields) }
+    if matched_rule {
+        AuthorizationDecision::Deny(DenialReason::PredicateFailed)
+    } else {
+        AuthorizationDecision::Deny(DenialReason::NoMatchingRule)
+    }
 }
 
 fn compare(left: &AttributeValue, right: &AttributeValue, comparison: ClaimComparison) -> bool {

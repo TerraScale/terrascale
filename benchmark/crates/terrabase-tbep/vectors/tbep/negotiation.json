@@ -1,7 +1,7 @@
 {
   "adversarial": [],
   "category": "negotiation",
-  "description": "Connection-open capability and version negotiation (p0-protocol-compatibility-contract section 1): the client names its supported wire versions and capabilities; the peers select the highest common version and unknown capabilities are ignored.",
+  "description": "Connection-open capability and version negotiation (ADR 0025): the client names its supported wire versions and capabilities; the peers select the highest common version and unknown capabilities are ignored.",
   "frames": [
     {
       "body": "929309020192ad71756572792d73757266616365b17175616e74756d2d74756e6e656c696e67",

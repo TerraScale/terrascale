@@ -2,7 +2,6 @@ package terrabase_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -105,7 +104,7 @@ func Example() {
 	defer subscription.Close()
 	for {
 		event, err := subscription.Recv()
-		if errors.Is(err, context.Canceled) || err != nil {
+		if err != nil {
 			break // the stream ended: shutdown, close frame, or teardown
 		}
 		if confirmation, ok := event.Confirmed(); ok {

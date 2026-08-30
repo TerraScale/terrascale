@@ -17,11 +17,15 @@
 //! Removing a dependency is always allowed; stale allow-list entries are
 //! deliberately not errors so cleanup lanes do not fight this gate.
 //!
-//! Review note (2026-08-30): the product package was renamed from
-//! `terrabase-v2` to `terrabase`. The root manifest and workspace dependency
-//! keys use the canonical `terrabase` target, and the N-1 dependency-alias
-//! window closed on 2026-08-30: every consumer declares the canonical
-//! package.
+//! Review note (2026-08-30): the product package rename to the canonical
+//! `terrabase` identity is complete. The root manifest and workspace
+//! dependency keys use that target, and the N-1 dependency-alias window is
+//! closed: every consumer declares the canonical package.
+//!
+//! Review note (2026-08-30): `terrabase-server` is the production composition
+//! boundary accepted by GOAL.md PRG-P0-02. It sits above TBEP, depends only on
+//! TBEP and the engine, and is a workspace member so every release gate builds
+//! and tests the daemon.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -44,6 +48,7 @@ const LAYERS: &[(&str, u32)] = &[
     ("terrabase-replication-core", 4),
     ("terrabase-cluster", 5),
     ("terrabase-tbep", 6),
+    ("terrabase-server", 7),
 ];
 
 /// The frozen internal-dependency allow-list: every `(consumer, provider)`
@@ -71,6 +76,8 @@ const ALLOWED_EDGES: &[(&str, &str)] = &[
     ("terrabase-tbep", "terrabase"),
     ("terrabase-tbep", "terrabase-sync-core"),
     ("terrabase-tbep", "terrabase-cluster"),
+    ("terrabase-server", "terrabase"),
+    ("terrabase-server", "terrabase-tbep"),
 ];
 
 /// The engine-core package (`terrabase`) must stay dependency-minimal:

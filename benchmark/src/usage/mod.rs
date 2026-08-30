@@ -12,7 +12,10 @@ use std::{
     fmt,
 };
 
-use crate::{replication::RegionId, types::TenantId};
+use crate::{
+    regions::RegionCode,
+    types::{StorageSequence, TenantId},
+};
 
 /// The canonical version of the usage segment encoding.
 pub const USAGE_FORMAT_VERSION: u16 = 1;
@@ -31,6 +34,19 @@ pub const MAX_SEGMENT_BYTES: usize = 64 * 1024;
 
 /// The maximum sequence interval width of one bounded segment.
 pub const MAX_SEQUENCE_SPAN: u64 = 1_000_000;
+
+/// The largest usage page one Engine call returns.
+pub const MAX_USAGE_PAGE_SIZE: u32 = 256;
+
+/// The largest opaque continuation the usage page API accepts.
+pub const MAX_USAGE_CONTINUATION_BYTES: usize = 1_024;
+
+/// Largest admitted-request cost accepted in one authoritative fact.
+pub const MAX_ADMITTED_REQUEST_UNITS_PER_FACT: i128 = 1_000_000;
+
+/// Largest public-egress observation accepted in one authoritative fact.
+/// Larger streams must record independently idempotent bounded chunks.
+pub const MAX_PUBLIC_EGRESS_BYTES_PER_FACT: i128 = 1_099_511_627_776;
 
 /// Typed failures in the usage domain.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -81,6 +97,18 @@ pub enum UsageError {
     FactCommitMismatch,
     /// A fact identity was reused for different durable bytes.
     FactIdentityConflict,
+    /// A usage command carried a zero or negative unit count.
+    InvalidIntegerUnits,
+    /// A trusted usage event carried the zero Unix timestamp.
+    InvalidTimestamp,
+    /// A usage page requested zero items or more than the fixed bound.
+    InvalidPageSize,
+    /// A usage continuation was empty or exceeded its fixed byte bound.
+    InvalidContinuation,
+    /// A usage command named a Region outside the production GRU/SFO/FRA set.
+    InvalidUsageRegion,
+    /// A usage command exceeded its selected meter's per-fact unit bound.
+    UsageUnitsExceeded,
 }
 
 impl fmt::Display for UsageError {
@@ -109,6 +137,12 @@ impl fmt::Display for UsageError {
             Self::InvalidDurabilityBinding => "usage durability binding is invalid",
             Self::FactCommitMismatch => "usage fact commit binding does not match",
             Self::FactIdentityConflict => "usage fact identity has different bytes",
+            Self::InvalidIntegerUnits => "usage integer units must be positive",
+            Self::InvalidTimestamp => "usage event timestamp must be nonzero",
+            Self::InvalidPageSize => "usage page size is outside its bound",
+            Self::InvalidContinuation => "usage continuation is outside its byte bound",
+            Self::InvalidUsageRegion => "usage Region is outside the production set",
+            Self::UsageUnitsExceeded => "usage integer units exceed the meter bound",
         })
     }
 }
@@ -195,7 +229,7 @@ pub struct UsageScope {
     project_id: UsageScopeId,
     database_id: UsageScopeId,
     partition_id: UsageScopeId,
-    region_id: RegionId,
+    region_id: RegionCode,
 }
 
 impl UsageScope {
@@ -205,8 +239,9 @@ impl UsageScope {
         project_id: &str,
         database_id: &str,
         partition_id: &str,
-        region_id: RegionId,
+        region_id: RegionCode,
     ) -> Result<Self, UsageError> {
+        validate_usage_region(region_id)?;
         Ok(Self {
             tenant_id,
             project_id: UsageScopeId::try_new(project_id)?,
@@ -242,7 +277,7 @@ impl UsageScope {
 
     /// Returns the Region identity.
     #[must_use]
-    pub fn region_id(&self) -> &RegionId {
+    pub const fn region_id(&self) -> &RegionCode {
         &self.region_id
     }
 }
@@ -635,7 +670,7 @@ impl UsageFact {
         let database = reader.string()?;
         let partition = reader.string()?;
         let region =
-            RegionId::try_new(&reader.string()?).map_err(|_| UsageError::InvalidIdentifier)?;
+            RegionCode::from_text(&reader.string()?).map_err(|_| UsageError::InvalidIdentifier)?;
         let scope = UsageScope::try_new(tenant, &project, &database, &partition, region)?;
         let identity = decode_identity(&mut reader)?;
         let window = MeasurementWindow { start_millis: reader.u64()?, end_millis: reader.u64()? };
@@ -741,42 +776,553 @@ impl DurableUsageFact {
 }
 
 /// An idempotent in-memory index of durable usage facts.
+///
+/// Minting identities are scoped by the complete usage scope. A stable request
+/// identity is not globally unique: two tenants may legitimately use the same
+/// idempotency key without colliding in the authoritative ledger.
 #[derive(Clone, Debug, Default)]
 pub struct UsageFactLedger {
-    facts: BTreeMap<MintingIdentity, DurableUsageFact>,
+    facts: BTreeMap<(UsageScope, MintingIdentity), DurableUsageFact>,
 }
 
 impl UsageFactLedger {
     /// Inserts one fact, refusing identity reuse with different bytes.
     pub fn insert(&mut self, durable: DurableUsageFact) -> Result<bool, UsageError> {
+        let scope = durable.fact.scope.clone();
         let identity = durable.fact.identity().clone();
-        if let Some(existing) = self.facts.get(&identity) {
+        let key = (scope, identity);
+        if let Some(existing) = self.facts.get(&key) {
             if existing == &durable {
                 return Ok(false);
             }
             return Err(UsageError::FactIdentityConflict);
         }
-        self.facts.insert(identity, durable);
+        self.facts.insert(key, durable);
         Ok(true)
     }
 
-    /// Returns facts in stable minting-identity order.
+    /// Returns facts in stable scope and minting-identity order.
     pub fn facts(&self) -> impl Iterator<Item = &DurableUsageFact> {
         self.facts.values()
     }
 
-    /// Returns the fact for one stable minting identity.
+    /// Returns the fact for one scoped complete minting identity.
     #[must_use]
-    pub fn get(&self, id: &UsageFactId) -> Option<&DurableUsageFact> {
-        self.facts.values().find(|fact| fact.fact.identity().id() == id)
-    }
-
-    /// Returns the fact for one complete minting identity.
-    #[must_use]
-    pub fn get_by_identity(&self, identity: &MintingIdentity) -> Option<&DurableUsageFact> {
-        self.facts.get(identity)
+    pub fn get_by_identity(
+        &self,
+        scope: &UsageScope,
+        identity: &MintingIdentity,
+    ) -> Option<&DurableUsageFact> {
+        self.facts.get(&(scope.clone(), identity.clone()))
     }
 }
+
+/// Trusted accounting context attached atomically to one origin mutation.
+///
+/// Tenant identity is deliberately absent. The Engine binds it from the
+/// authenticated [`TenantScope`](crate::types::TenantScope), so a payload can
+/// never select another tenant. The serving boundary is responsible for
+/// authenticating the remaining placement and admission fields before it
+/// constructs this value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UsageAdmissionContext {
+    project_id: UsageScopeId,
+    database_id: UsageScopeId,
+    partition_id: UsageScopeId,
+    origin_region: RegionCode,
+    request_id: UsageFactId,
+    accepted_at_millis: u64,
+    meter_version: u32,
+    integer_units: i128,
+}
+
+impl UsageAdmissionContext {
+    /// Creates a validated admitted-request context.
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_new(
+        project_id: &str,
+        database_id: &str,
+        partition_id: &str,
+        origin_region: RegionCode,
+        request_id: UsageFactId,
+        accepted_at_millis: u64,
+        meter_version: u32,
+        integer_units: i128,
+    ) -> Result<Self, UsageError> {
+        if integer_units <= 0 {
+            return Err(UsageError::InvalidIntegerUnits);
+        }
+        if integer_units > MAX_ADMITTED_REQUEST_UNITS_PER_FACT {
+            return Err(UsageError::UsageUnitsExceeded);
+        }
+        if accepted_at_millis == 0 {
+            return Err(UsageError::InvalidTimestamp);
+        }
+        validate_usage_region(origin_region)?;
+        if MeterCatalog::initial().get(MeterKind::AdmittedRequestUnits, meter_version).is_none() {
+            return Err(UsageError::UnknownMeterDefinition);
+        }
+        Ok(Self {
+            project_id: UsageScopeId::try_new(project_id)?,
+            database_id: UsageScopeId::try_new(database_id)?,
+            partition_id: UsageScopeId::try_new(partition_id)?,
+            origin_region,
+            request_id,
+            accepted_at_millis,
+            meter_version,
+            integer_units,
+        })
+    }
+
+    /// Returns the Project identity.
+    #[must_use]
+    pub const fn project_id(&self) -> &UsageScopeId {
+        &self.project_id
+    }
+
+    /// Returns the Database identity.
+    #[must_use]
+    pub const fn database_id(&self) -> &UsageScopeId {
+        &self.database_id
+    }
+
+    /// Returns the Partition identity.
+    #[must_use]
+    pub const fn partition_id(&self) -> &UsageScopeId {
+        &self.partition_id
+    }
+
+    /// Returns the admitted origin Region.
+    #[must_use]
+    pub const fn origin_region(&self) -> &RegionCode {
+        &self.origin_region
+    }
+
+    /// Returns the stable admitted-request identity.
+    #[must_use]
+    pub const fn request_id(&self) -> &UsageFactId {
+        &self.request_id
+    }
+
+    /// Returns the trusted admission time in Unix milliseconds.
+    #[must_use]
+    pub const fn accepted_at_millis(&self) -> u64 {
+        self.accepted_at_millis
+    }
+
+    /// Returns the admitted-request meter version.
+    #[must_use]
+    pub const fn meter_version(&self) -> u32 {
+        self.meter_version
+    }
+
+    /// Returns the positive integer request units.
+    #[must_use]
+    pub const fn integer_units(&self) -> i128 {
+        self.integer_units
+    }
+
+    /// Builds the tenant-bound domain fact after the Engine validates scope.
+    pub(crate) fn fact_for(&self, tenant: TenantId) -> Result<UsageFact, UsageError> {
+        let definition = MeterCatalog::initial()
+            .get(MeterKind::AdmittedRequestUnits, self.meter_version)
+            .copied()
+            .ok_or(UsageError::UnknownMeterDefinition)?;
+        let scope = UsageScope {
+            tenant_id: tenant,
+            project_id: self.project_id.clone(),
+            database_id: self.database_id.clone(),
+            partition_id: self.partition_id.clone(),
+            region_id: self.origin_region.clone(),
+        };
+        UsageFact::try_new(
+            definition,
+            scope,
+            MintingIdentity::StableAdmittedRequest(self.request_id.clone()),
+            MeasurementWindow::instant(self.accepted_at_millis),
+            self.integer_units,
+        )
+    }
+
+    /// Returns canonical bytes used to bind this context into an operation
+    /// digest. Tenant is added by the caller's existing request digest.
+    pub(crate) fn digest_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        push_string(&mut bytes, self.project_id.as_str());
+        push_string(&mut bytes, self.database_id.as_str());
+        push_string(&mut bytes, self.partition_id.as_str());
+        push_string(&mut bytes, self.origin_region.as_str());
+        push_string(&mut bytes, self.request_id.as_str());
+        bytes.extend_from_slice(&self.accepted_at_millis.to_le_bytes());
+        bytes.extend_from_slice(&self.meter_version.to_le_bytes());
+        bytes.extend_from_slice(&self.integer_units.to_le_bytes());
+        bytes
+    }
+}
+
+/// The closed meters accepted by the standalone usage-record command.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum UsageRecordMeter {
+    /// One admitted read, query, stream, or other non-mutation request.
+    AdmittedRequestUnits,
+    /// Public response or change-stream egress bytes.
+    PublicEgressBytes,
+}
+
+impl UsageRecordMeter {
+    const fn meter_kind(self) -> MeterKind {
+        match self {
+            Self::AdmittedRequestUnits => MeterKind::AdmittedRequestUnits,
+            Self::PublicEgressBytes => MeterKind::PublicEgressBytes,
+        }
+    }
+}
+
+const fn usage_record_unit_limit(meter: UsageRecordMeter) -> i128 {
+    match meter {
+        UsageRecordMeter::AdmittedRequestUnits => MAX_ADMITTED_REQUEST_UNITS_PER_FACT,
+        UsageRecordMeter::PublicEgressBytes => MAX_PUBLIC_EGRESS_BYTES_PER_FACT,
+    }
+}
+
+const fn validate_usage_region(region: RegionCode) -> Result<(), UsageError> {
+    if matches!(region, RegionCode::GRU | RegionCode::SFO | RegionCode::FRA) {
+        Ok(())
+    } else {
+        Err(UsageError::InvalidUsageRegion)
+    }
+}
+
+/// One bounded, idempotent standalone usage-record command.
+///
+/// A command carries exactly one fact. That fixed bound prevents a caller
+/// from turning accounting into an unbounded WAL append.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UsageRecordRequest {
+    meter: UsageRecordMeter,
+    project_id: UsageScopeId,
+    database_id: UsageScopeId,
+    partition_id: UsageScopeId,
+    origin_region: RegionCode,
+    fact_id: UsageFactId,
+    recorded_at_millis: u64,
+    meter_version: u32,
+    integer_units: i128,
+}
+
+impl UsageRecordRequest {
+    /// Creates one validated standalone usage command.
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_new(
+        meter: UsageRecordMeter,
+        project_id: &str,
+        database_id: &str,
+        partition_id: &str,
+        origin_region: RegionCode,
+        fact_id: UsageFactId,
+        recorded_at_millis: u64,
+        meter_version: u32,
+        integer_units: i128,
+    ) -> Result<Self, UsageError> {
+        if integer_units <= 0 {
+            return Err(UsageError::InvalidIntegerUnits);
+        }
+        if integer_units > usage_record_unit_limit(meter) {
+            return Err(UsageError::UsageUnitsExceeded);
+        }
+        if recorded_at_millis == 0 {
+            return Err(UsageError::InvalidTimestamp);
+        }
+        validate_usage_region(origin_region)?;
+        if MeterCatalog::initial().get(meter.meter_kind(), meter_version).is_none() {
+            return Err(UsageError::UnknownMeterDefinition);
+        }
+        Ok(Self {
+            meter,
+            project_id: UsageScopeId::try_new(project_id)?,
+            database_id: UsageScopeId::try_new(database_id)?,
+            partition_id: UsageScopeId::try_new(partition_id)?,
+            origin_region,
+            fact_id,
+            recorded_at_millis,
+            meter_version,
+            integer_units,
+        })
+    }
+
+    /// Returns the closed meter selected by the command.
+    #[must_use]
+    pub const fn meter(&self) -> UsageRecordMeter {
+        self.meter
+    }
+
+    /// Returns the Project identity.
+    #[must_use]
+    pub const fn project_id(&self) -> &UsageScopeId {
+        &self.project_id
+    }
+
+    /// Returns the Database identity.
+    #[must_use]
+    pub const fn database_id(&self) -> &UsageScopeId {
+        &self.database_id
+    }
+
+    /// Returns the Partition identity.
+    #[must_use]
+    pub const fn partition_id(&self) -> &UsageScopeId {
+        &self.partition_id
+    }
+
+    /// Returns the admitted origin Region.
+    #[must_use]
+    pub const fn origin_region(&self) -> &RegionCode {
+        &self.origin_region
+    }
+
+    /// Returns the stable fact identity.
+    #[must_use]
+    pub const fn fact_id(&self) -> &UsageFactId {
+        &self.fact_id
+    }
+
+    /// Returns the trusted event time in Unix milliseconds.
+    #[must_use]
+    pub const fn recorded_at_millis(&self) -> u64 {
+        self.recorded_at_millis
+    }
+
+    /// Returns the selected meter version.
+    #[must_use]
+    pub const fn meter_version(&self) -> u32 {
+        self.meter_version
+    }
+
+    /// Returns the positive integer units.
+    #[must_use]
+    pub const fn integer_units(&self) -> i128 {
+        self.integer_units
+    }
+
+    /// Builds the tenant-bound domain fact after the Engine validates scope.
+    pub(crate) fn fact_for(&self, tenant: TenantId) -> Result<UsageFact, UsageError> {
+        let kind = self.meter.meter_kind();
+        let definition = MeterCatalog::initial()
+            .get(kind, self.meter_version)
+            .copied()
+            .ok_or(UsageError::UnknownMeterDefinition)?;
+        let scope = UsageScope {
+            tenant_id: tenant,
+            project_id: self.project_id.clone(),
+            database_id: self.database_id.clone(),
+            partition_id: self.partition_id.clone(),
+            region_id: self.origin_region.clone(),
+        };
+        let identity = match self.meter {
+            UsageRecordMeter::AdmittedRequestUnits => {
+                MintingIdentity::StableAdmittedRequest(self.fact_id.clone())
+            }
+            UsageRecordMeter::PublicEgressBytes => {
+                MintingIdentity::PublicResponse(self.fact_id.clone())
+            }
+        };
+        UsageFact::try_new(
+            definition,
+            scope,
+            identity,
+            MeasurementWindow::instant(self.recorded_at_millis),
+            self.integer_units,
+        )
+    }
+}
+
+/// An opaque, bounded usage-page continuation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UsageContinuation(Vec<u8>);
+
+impl UsageContinuation {
+    /// Validates and wraps bytes received from the private API.
+    pub fn try_new(bytes: Vec<u8>) -> Result<Self, UsageError> {
+        if bytes.is_empty() || bytes.len() > MAX_USAGE_CONTINUATION_BYTES {
+            return Err(UsageError::InvalidContinuation);
+        }
+        Ok(Self(bytes))
+    }
+
+    /// Returns the opaque bytes for private-protocol transport.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub(crate) fn from_trusted_bytes(bytes: Vec<u8>) -> Self {
+        debug_assert!(!bytes.is_empty() && bytes.len() <= MAX_USAGE_CONTINUATION_BYTES);
+        Self(bytes)
+    }
+}
+
+/// One validated stable-snapshot usage-page request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UsagePageRequest {
+    window: Option<MeasurementWindow>,
+    page_size: u32,
+    continuation: Option<UsageContinuation>,
+}
+
+impl UsagePageRequest {
+    /// Creates a request with a page size in `1..=256`.
+    // This constructor must remain non-const: `continuation` owns a
+    // heap-backed buffer, and const functions cannot drop that value.
+    pub fn try_new(
+        window: Option<MeasurementWindow>,
+        page_size: u32,
+        continuation: Option<UsageContinuation>,
+    ) -> Result<Self, UsageError> {
+        if page_size == 0 || page_size > MAX_USAGE_PAGE_SIZE {
+            return Err(UsageError::InvalidPageSize);
+        }
+        Ok(Self { window, page_size, continuation })
+    }
+
+    /// Returns the optional half-open measurement-window filter.
+    #[must_use]
+    pub const fn window(&self) -> Option<MeasurementWindow> {
+        self.window
+    }
+
+    /// Returns the requested page bound.
+    #[must_use]
+    pub const fn page_size(&self) -> u32 {
+        self.page_size
+    }
+
+    /// Returns the opaque continuation, when this is not the first page.
+    #[must_use]
+    pub const fn continuation(&self) -> Option<&UsageContinuation> {
+        self.continuation.as_ref()
+    }
+}
+
+/// One immutable page of authoritative durable usage facts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UsagePage {
+    facts: Vec<DurableUsageFact>,
+    snapshot_sequence: StorageSequence,
+    continuation: Option<UsageContinuation>,
+}
+
+impl UsagePage {
+    pub(crate) fn new(
+        facts: Vec<DurableUsageFact>,
+        snapshot_sequence: StorageSequence,
+        continuation: Option<UsageContinuation>,
+    ) -> Self {
+        Self { facts, snapshot_sequence, continuation }
+    }
+
+    /// Returns the facts in authoritative sequence and identity order.
+    #[must_use]
+    pub fn facts(&self) -> &[DurableUsageFact] {
+        &self.facts
+    }
+
+    /// Returns the fixed storage high-water shared by every page.
+    #[must_use]
+    pub const fn snapshot_sequence(&self) -> StorageSequence {
+        self.snapshot_sequence
+    }
+
+    /// Returns the next opaque continuation, or `None` when complete.
+    #[must_use]
+    pub const fn continuation(&self) -> Option<&UsageContinuation> {
+        self.continuation.as_ref()
+    }
+}
+
+/// The durable outcome of one idempotent standalone usage command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UsageRecordReceipt {
+    fact_id: UsageFactId,
+    sequence: StorageSequence,
+    replica_epoch: u64,
+    already_recorded: bool,
+}
+
+impl UsageRecordReceipt {
+    pub(crate) fn new(
+        fact_id: UsageFactId,
+        sequence: StorageSequence,
+        replica_epoch: u64,
+        already_recorded: bool,
+    ) -> Self {
+        Self { fact_id, sequence, replica_epoch, already_recorded }
+    }
+
+    /// Returns the stable fact identity.
+    #[must_use]
+    pub const fn fact_id(&self) -> &UsageFactId {
+        &self.fact_id
+    }
+
+    /// Returns the durable storage sequence allocated to the fact.
+    #[must_use]
+    pub const fn sequence(&self) -> StorageSequence {
+        self.sequence
+    }
+
+    /// Returns the replica-set epoch that durably accepted the fact.
+    #[must_use]
+    pub const fn replica_epoch(&self) -> u64 {
+        self.replica_epoch
+    }
+
+    /// Reports whether this call replayed an already durable fact.
+    #[must_use]
+    pub const fn already_recorded(&self) -> bool {
+        self.already_recorded
+    }
+}
+
+/// Typed failures at the Engine usage-command boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UsageCommandError {
+    /// The request or continuation failed structural validation.
+    InvalidRequest,
+    /// The tenant scope belongs to another Engine.
+    ScopeMismatch,
+    /// The usage identity does not bind to the mutation operation identity.
+    IdentityMismatch,
+    /// One scoped fact identity was reused for different content.
+    IdentityConflict,
+    /// A usage-bearing mutation requested weaker than synced durability.
+    RequiresSynced,
+    /// The selected legacy storage backend cannot persist usage facts.
+    UnsupportedBackend,
+    /// The location contains legacy facts that cannot be billed truthfully.
+    UsageUnavailable,
+    /// Persisted usage bytes are corrupt or semantically inconsistent.
+    CorruptStorage,
+    /// Durable storage could not complete the command.
+    StorageUnavailable,
+}
+
+impl fmt::Display for UsageCommandError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidRequest => "invalid usage request",
+            Self::ScopeMismatch => "usage scope belongs to another engine",
+            Self::IdentityMismatch => "usage identity does not match the mutation identity",
+            Self::IdentityConflict => "usage identity is already bound to different content",
+            Self::RequiresSynced => "usage-bearing mutation requires synced durability",
+            Self::UnsupportedBackend => "storage backend does not support durable usage",
+            Self::UsageUnavailable => "authoritative usage is unavailable for this location",
+            Self::CorruptStorage => "persisted usage is corrupt",
+            Self::StorageUnavailable => "durable usage storage is unavailable",
+        })
+    }
+}
+
+impl std::error::Error for UsageCommandError {}
 
 /// One half-open measurement window `[start, end)` in Unix milliseconds.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -984,7 +1530,8 @@ impl UsageSegment {
         let database = reader.string()?;
         let partition = reader.string()?;
         let region_text = reader.string()?;
-        let region = RegionId::try_new(&region_text).map_err(|_| UsageError::InvalidIdentifier)?;
+        let region =
+            RegionCode::from_text(&region_text).map_err(|_| UsageError::InvalidIdentifier)?;
         let scope = UsageScope::try_new(tenant, &project, &database, &partition, region)?;
         let replica_epoch = reader.u64()?;
         let interval = SequenceInterval::try_new(reader.u64()?, reader.u64()?)?;

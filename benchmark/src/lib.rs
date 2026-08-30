@@ -28,6 +28,7 @@ pub mod engine;
 pub mod families;
 pub mod identity;
 pub mod index;
+pub mod observability;
 pub mod operations;
 pub mod query;
 pub mod regions;

@@ -12,5 +12,6 @@
 mod dependency_direction;
 mod extension_reference_features;
 mod forbidden_imports;
+mod product_identity;
 
 mod fsx;

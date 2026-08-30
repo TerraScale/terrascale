@@ -1,0 +1,83 @@
+# `terrabase-studio` — the operator-side web UI of the TerraBase engine.
+#
+# Standalone workspace root on purpose, exactly like `bench/`: the engine
+# workspace at the repository root stays zero-dependency (its architecture
+# gate freezes the engine core at `blake3`), so anything that must speak HTTP
+# lives outside that closure. This crate only *drives* the engine through its
+# public library surface (`terrabase::Engine` and friends); it never reaches
+# into private engine modules and it is not a TBEP client — `terrabase-go` is
+# the only customer-facing client, and the studio is an operator lane.
+[package]
+name = "terrabase-studio"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "MIT"
+description = "TerraBase Studio: loopback operator web UI over the engine's in-process public API"
+publish = false
+
+[workspace]
+
+[dependencies]
+# The engine itself, driven only through its public library surface.
+terrabase = { path = "../.." }
+
+# The cluster lifecycle crate, for the surfaces it genuinely exposes
+# in-process: the standalone durability acknowledgement model and the cluster
+# identity rules. The studio does not drive `ClusterHost`/`ClusterMember`
+# from a page — those need real member locations on disk, which the
+# Replication page states plainly.
+terrabase-cluster = { path = "../terrabase-cluster" }
+
+# HTTP choice: axum rather than a hand-rolled or lower-level HTTP crate.
+# The studio needs three things a raw hyper or tiny_http server would make us
+# write by hand — typed routing, HTML/form extraction, and a first-class SSE
+# response body. axum supplies all three on top of the tokio runtime the SSE
+# lane already needs, and it is the one HTTP crate the studio brief names.
+# MIT/Apache-2.0.
+axum = { version = "0.8", default-features = false, features = [
+  "http1",
+  "form",
+  "query",
+  "tokio",
+] }
+
+# The async runtime: one multi-thread executor for the HTTP listeners and the
+# long-lived SSE connection, plus `spawn_blocking` to keep the engine's
+# synchronous, file-syncing calls off the executor threads.
+tokio = { version = "1", default-features = false, features = [
+  "fs",
+  "rt-multi-thread",
+  "macros",
+  "net",
+  "signal",
+  "sync",
+  "time",
+] }
+
+# `ReceiverStream` turns the metrics task's channel into the stream axum's
+# SSE body consumes, which is what carries the one live connection.
+tokio-stream = { version = "0.1", default-features = false, features = [
+  "sync",
+] }
+
+# Only used for the studio's own tiny sidecar state file (the tenant list and
+# action journal the engine does not expose in-process) and for parsing the
+# JSON the document editor textarea submits. The engine itself stays
+# serde-free.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# S3 is the durable backup destination. The engine remains HTTP-free; Studio
+# owns credentials, SigV4, TLS, retries, and the temporary transfer staging
+# needed to drive the engine's verified archive seam.
+object_store = { version = "0.14.1", default-features = false, features = ["aws"] }
+futures-util = "0.3"
+
+[dev-dependencies]
+tower = { version = "0.5", default-features = false, features = ["util"] }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3

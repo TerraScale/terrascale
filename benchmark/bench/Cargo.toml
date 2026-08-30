@@ -14,7 +14,7 @@ name = "terrabase-bench-lane"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
-license = "LicenseRef-TerraScale-Pending"
+license = "MIT"
 description = "Operator-side reference drivers (PostgreSQL, RavenDB) for the TerraBase benchmark lane"
 publish = false
 

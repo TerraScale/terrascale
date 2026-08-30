@@ -13,20 +13,18 @@ per `LaneConfig::RECORD_MINIMUM`.
 
 ## Sides
 
-- **terrabase**: terrabase c127305-lane (durable engine, Synced commits)
 - **postgresql**: PostgreSQL 18.6 on x86_64-pc-linux-gnu, compiled by clang version 21.1.8, 64-bit
 - **ravendb**: RavenDB 7.2.5, build 72029 (server-reported /build/version)
 
 ## Results (median across samples)
 
-| workload | side | ops/s | p50 µs (median–max) | p95 µs | p99 µs | sample wall ms |
-| --- | --- | --- | --- | --- | --- | --- |
-| read | terrabase | 1123 | 870–884 | 993 | 1626 | 8908 |
-| read | postgresql | 99595 | 148–151 | 215 | 279 | 100 |
-| read | ravendb | 12468 | 446–531 | 1685 | 22518 | 802 |
-| write | postgresql | 2577 | 6000–6001 | 6219 | 8978 | 3881 |
-| write | ravendb | 3058 | 4967–5025 | 6797 | 8499 | 3270 |
-| query | postgresql | 94621 | 153–163 | 227 | 300 | 106 |
-| query | ravendb | 3192 | 1236–1395 | 25840 | 34080 | 3133 |
-| mixed | postgresql | 8184 | 154–160 | 6042 | 6394 | 1222 |
-| mixed | ravendb | 3547 | 1765–1971 | 15011 | 21236 | 2820 |
+| workload | side | status | ops/s | p50 µs (median–max) | p95 µs | p99 µs | sample wall ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| read | postgresql | complete | 99595 | 148–151 | 215 | 279 | 100 |
+| read | ravendb | complete | 12468 | 446–531 | 1685 | 22518 | 802 |
+| write | postgresql | complete | 2577 | 6000–6001 | 6219 | 8978 | 3881 |
+| write | ravendb | complete | 3058 | 4967–5025 | 6797 | 8499 | 3270 |
+| query | postgresql | complete | 94621 | 153–163 | 227 | 300 | 106 |
+| query | ravendb | complete | 3192 | 1236–1395 | 25840 | 34080 | 3133 |
+| mixed | postgresql | complete | 8184 | 154–160 | 6042 | 6394 | 1222 |
+| mixed | ravendb | complete | 3547 | 1765–1971 | 15011 | 21236 | 2820 |

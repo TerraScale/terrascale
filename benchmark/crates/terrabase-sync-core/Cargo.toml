@@ -9,7 +9,7 @@ name = "terrabase-sync-core"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
-license = "LicenseRef-TerraScale-Pending"
+license = "MIT"
 description = "TerraBase sync-core seam: server-authoritative journal materialization over native CRDTs, checkpoints, budgeted deltas, frames"
 publish = false
 

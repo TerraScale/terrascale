@@ -2,10 +2,8 @@
 //
 // This file is the contract of record between the Rust engine
 // (`terrabase-tbep`, served by tonic) and every client, led by the
-// terrabase-go client in this repository. It supersedes the retired
-// MessagePack registry (`schema/tbep-registry.json`) and the retired
-// FlatBuffers schema (`schema/tbep.fbs`); see
-// docs/adr/0028-tbep-grpc.md.
+// terrabase-go client in this repository. See
+// docs/adr/0025-private-protobuf-grpc.md.
 //
 // Identity: `terrabase.engine.protocol`, registry lineage 1.x, gRPC
 // protocol generation 2 (gRPC replaces the custom framing of wire
@@ -1383,6 +1381,305 @@ func (DenialSeam) EnumDescriptor() ([]byte, []int) {
 	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{24}
 }
 
+// The closed usage meter vocabulary. Meter versions are immutable and travel
+// beside this kind so a consumer never guesses which accounting rule applied.
+type UsageMeter int32
+
+const (
+	UsageMeter_USAGE_METER_UNSPECIFIED            UsageMeter = 0
+	UsageMeter_USAGE_METER_STORED_BYTE_HOURS      UsageMeter = 1
+	UsageMeter_USAGE_METER_ADMITTED_REQUEST_UNITS UsageMeter = 2
+	UsageMeter_USAGE_METER_PUBLIC_EGRESS_BYTES    UsageMeter = 3
+	UsageMeter_USAGE_METER_ACTIVE_REGION_SEATS    UsageMeter = 4
+	UsageMeter_USAGE_METER_BACKUP_BYTE_HOURS      UsageMeter = 5
+	UsageMeter_USAGE_METER_RESTORE_WORK           UsageMeter = 6
+)
+
+// Enum value maps for UsageMeter.
+var (
+	UsageMeter_name = map[int32]string{
+		0: "USAGE_METER_UNSPECIFIED",
+		1: "USAGE_METER_STORED_BYTE_HOURS",
+		2: "USAGE_METER_ADMITTED_REQUEST_UNITS",
+		3: "USAGE_METER_PUBLIC_EGRESS_BYTES",
+		4: "USAGE_METER_ACTIVE_REGION_SEATS",
+		5: "USAGE_METER_BACKUP_BYTE_HOURS",
+		6: "USAGE_METER_RESTORE_WORK",
+	}
+	UsageMeter_value = map[string]int32{
+		"USAGE_METER_UNSPECIFIED":            0,
+		"USAGE_METER_STORED_BYTE_HOURS":      1,
+		"USAGE_METER_ADMITTED_REQUEST_UNITS": 2,
+		"USAGE_METER_PUBLIC_EGRESS_BYTES":    3,
+		"USAGE_METER_ACTIVE_REGION_SEATS":    4,
+		"USAGE_METER_BACKUP_BYTE_HOURS":      5,
+		"USAGE_METER_RESTORE_WORK":           6,
+	}
+)
+
+func (x UsageMeter) Enum() *UsageMeter {
+	p := new(UsageMeter)
+	*p = x
+	return p
+}
+
+func (x UsageMeter) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (UsageMeter) Descriptor() protoreflect.EnumDescriptor {
+	return file_terrabase_v1_engine_proto_enumTypes[25].Descriptor()
+}
+
+func (UsageMeter) Type() protoreflect.EnumType {
+	return &file_terrabase_v1_engine_proto_enumTypes[25]
+}
+
+func (x UsageMeter) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use UsageMeter.Descriptor instead.
+func (UsageMeter) EnumDescriptor() ([]byte, []int) {
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{25}
+}
+
+// The integer unit carried by one usage fact.
+type UsageUnit int32
+
+const (
+	UsageUnit_USAGE_UNIT_UNSPECIFIED  UsageUnit = 0
+	UsageUnit_USAGE_UNIT_BYTE_HOUR    UsageUnit = 1
+	UsageUnit_USAGE_UNIT_REQUEST_UNIT UsageUnit = 2
+	UsageUnit_USAGE_UNIT_BYTE         UsageUnit = 3
+	UsageUnit_USAGE_UNIT_SEAT_HOUR    UsageUnit = 4
+	UsageUnit_USAGE_UNIT_RESTORE_WORK UsageUnit = 5
+)
+
+// Enum value maps for UsageUnit.
+var (
+	UsageUnit_name = map[int32]string{
+		0: "USAGE_UNIT_UNSPECIFIED",
+		1: "USAGE_UNIT_BYTE_HOUR",
+		2: "USAGE_UNIT_REQUEST_UNIT",
+		3: "USAGE_UNIT_BYTE",
+		4: "USAGE_UNIT_SEAT_HOUR",
+		5: "USAGE_UNIT_RESTORE_WORK",
+	}
+	UsageUnit_value = map[string]int32{
+		"USAGE_UNIT_UNSPECIFIED":  0,
+		"USAGE_UNIT_BYTE_HOUR":    1,
+		"USAGE_UNIT_REQUEST_UNIT": 2,
+		"USAGE_UNIT_BYTE":         3,
+		"USAGE_UNIT_SEAT_HOUR":    4,
+		"USAGE_UNIT_RESTORE_WORK": 5,
+	}
+)
+
+func (x UsageUnit) Enum() *UsageUnit {
+	p := new(UsageUnit)
+	*p = x
+	return p
+}
+
+func (x UsageUnit) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (UsageUnit) Descriptor() protoreflect.EnumDescriptor {
+	return file_terrabase_v1_engine_proto_enumTypes[26].Descriptor()
+}
+
+func (UsageUnit) Type() protoreflect.EnumType {
+	return &file_terrabase_v1_engine_proto_enumTypes[26]
+}
+
+func (x UsageUnit) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use UsageUnit.Descriptor instead.
+func (UsageUnit) EnumDescriptor() ([]byte, []int) {
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{26}
+}
+
+// The scope at which the meter charges one unit.
+type UsageChargeScope int32
+
+const (
+	UsageChargeScope_USAGE_CHARGE_SCOPE_UNSPECIFIED        UsageChargeScope = 0
+	UsageChargeScope_USAGE_CHARGE_SCOPE_ACTIVE_REGION_COPY UsageChargeScope = 1
+	UsageChargeScope_USAGE_CHARGE_SCOPE_ADMITTED_REQUEST   UsageChargeScope = 2
+	UsageChargeScope_USAGE_CHARGE_SCOPE_PUBLIC_EGRESS      UsageChargeScope = 3
+	UsageChargeScope_USAGE_CHARGE_SCOPE_ACTIVE_REGION_SEAT UsageChargeScope = 4
+	UsageChargeScope_USAGE_CHARGE_SCOPE_BACKUP_COPY        UsageChargeScope = 5
+	UsageChargeScope_USAGE_CHARGE_SCOPE_EXPLICIT_RESTORE   UsageChargeScope = 6
+)
+
+// Enum value maps for UsageChargeScope.
+var (
+	UsageChargeScope_name = map[int32]string{
+		0: "USAGE_CHARGE_SCOPE_UNSPECIFIED",
+		1: "USAGE_CHARGE_SCOPE_ACTIVE_REGION_COPY",
+		2: "USAGE_CHARGE_SCOPE_ADMITTED_REQUEST",
+		3: "USAGE_CHARGE_SCOPE_PUBLIC_EGRESS",
+		4: "USAGE_CHARGE_SCOPE_ACTIVE_REGION_SEAT",
+		5: "USAGE_CHARGE_SCOPE_BACKUP_COPY",
+		6: "USAGE_CHARGE_SCOPE_EXPLICIT_RESTORE",
+	}
+	UsageChargeScope_value = map[string]int32{
+		"USAGE_CHARGE_SCOPE_UNSPECIFIED":        0,
+		"USAGE_CHARGE_SCOPE_ACTIVE_REGION_COPY": 1,
+		"USAGE_CHARGE_SCOPE_ADMITTED_REQUEST":   2,
+		"USAGE_CHARGE_SCOPE_PUBLIC_EGRESS":      3,
+		"USAGE_CHARGE_SCOPE_ACTIVE_REGION_SEAT": 4,
+		"USAGE_CHARGE_SCOPE_BACKUP_COPY":        5,
+		"USAGE_CHARGE_SCOPE_EXPLICIT_RESTORE":   6,
+	}
+)
+
+func (x UsageChargeScope) Enum() *UsageChargeScope {
+	p := new(UsageChargeScope)
+	*p = x
+	return p
+}
+
+func (x UsageChargeScope) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (UsageChargeScope) Descriptor() protoreflect.EnumDescriptor {
+	return file_terrabase_v1_engine_proto_enumTypes[27].Descriptor()
+}
+
+func (UsageChargeScope) Type() protoreflect.EnumType {
+	return &file_terrabase_v1_engine_proto_enumTypes[27]
+}
+
+func (x UsageChargeScope) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use UsageChargeScope.Descriptor instead.
+func (UsageChargeScope) EnumDescriptor() ([]byte, []int) {
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{27}
+}
+
+// The stable event identity that prevents retries and replicas from minting a
+// second fact.
+type UsageMintingRule int32
+
+const (
+	UsageMintingRule_USAGE_MINTING_RULE_UNSPECIFIED             UsageMintingRule = 0
+	UsageMintingRule_USAGE_MINTING_RULE_ACCEPTED_ORIGIN_COMMIT  UsageMintingRule = 1
+	UsageMintingRule_USAGE_MINTING_RULE_STABLE_ADMITTED_REQUEST UsageMintingRule = 2
+	UsageMintingRule_USAGE_MINTING_RULE_PUBLIC_RESPONSE         UsageMintingRule = 3
+	UsageMintingRule_USAGE_MINTING_RULE_ACTIVE_REGION_HOUR      UsageMintingRule = 4
+	UsageMintingRule_USAGE_MINTING_RULE_BACKUP_BYTE_HOUR        UsageMintingRule = 5
+	UsageMintingRule_USAGE_MINTING_RULE_EXPLICIT_RESTORE        UsageMintingRule = 6
+)
+
+// Enum value maps for UsageMintingRule.
+var (
+	UsageMintingRule_name = map[int32]string{
+		0: "USAGE_MINTING_RULE_UNSPECIFIED",
+		1: "USAGE_MINTING_RULE_ACCEPTED_ORIGIN_COMMIT",
+		2: "USAGE_MINTING_RULE_STABLE_ADMITTED_REQUEST",
+		3: "USAGE_MINTING_RULE_PUBLIC_RESPONSE",
+		4: "USAGE_MINTING_RULE_ACTIVE_REGION_HOUR",
+		5: "USAGE_MINTING_RULE_BACKUP_BYTE_HOUR",
+		6: "USAGE_MINTING_RULE_EXPLICIT_RESTORE",
+	}
+	UsageMintingRule_value = map[string]int32{
+		"USAGE_MINTING_RULE_UNSPECIFIED":             0,
+		"USAGE_MINTING_RULE_ACCEPTED_ORIGIN_COMMIT":  1,
+		"USAGE_MINTING_RULE_STABLE_ADMITTED_REQUEST": 2,
+		"USAGE_MINTING_RULE_PUBLIC_RESPONSE":         3,
+		"USAGE_MINTING_RULE_ACTIVE_REGION_HOUR":      4,
+		"USAGE_MINTING_RULE_BACKUP_BYTE_HOUR":        5,
+		"USAGE_MINTING_RULE_EXPLICIT_RESTORE":        6,
+	}
+)
+
+func (x UsageMintingRule) Enum() *UsageMintingRule {
+	p := new(UsageMintingRule)
+	*p = x
+	return p
+}
+
+func (x UsageMintingRule) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (UsageMintingRule) Descriptor() protoreflect.EnumDescriptor {
+	return file_terrabase_v1_engine_proto_enumTypes[28].Descriptor()
+}
+
+func (UsageMintingRule) Type() protoreflect.EnumType {
+	return &file_terrabase_v1_engine_proto_enumTypes[28]
+}
+
+func (x UsageMintingRule) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use UsageMintingRule.Descriptor instead.
+func (UsageMintingRule) EnumDescriptor() ([]byte, []int) {
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{28}
+}
+
+// Record admits only facts whose public-boundary work cannot be attached to
+// an engine mutation. One call records one fact and is idempotent by the
+// (meter, fact_id) identity. x-tb-idempotency-key must equal fact_id.
+type UsageRecordMeter int32
+
+const (
+	UsageRecordMeter_USAGE_RECORD_METER_UNSPECIFIED            UsageRecordMeter = 0
+	UsageRecordMeter_USAGE_RECORD_METER_ADMITTED_REQUEST_UNITS UsageRecordMeter = 1
+	UsageRecordMeter_USAGE_RECORD_METER_PUBLIC_EGRESS_BYTES    UsageRecordMeter = 2
+)
+
+// Enum value maps for UsageRecordMeter.
+var (
+	UsageRecordMeter_name = map[int32]string{
+		0: "USAGE_RECORD_METER_UNSPECIFIED",
+		1: "USAGE_RECORD_METER_ADMITTED_REQUEST_UNITS",
+		2: "USAGE_RECORD_METER_PUBLIC_EGRESS_BYTES",
+	}
+	UsageRecordMeter_value = map[string]int32{
+		"USAGE_RECORD_METER_UNSPECIFIED":            0,
+		"USAGE_RECORD_METER_ADMITTED_REQUEST_UNITS": 1,
+		"USAGE_RECORD_METER_PUBLIC_EGRESS_BYTES":    2,
+	}
+)
+
+func (x UsageRecordMeter) Enum() *UsageRecordMeter {
+	p := new(UsageRecordMeter)
+	*p = x
+	return p
+}
+
+func (x UsageRecordMeter) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (UsageRecordMeter) Descriptor() protoreflect.EnumDescriptor {
+	return file_terrabase_v1_engine_proto_enumTypes[29].Descriptor()
+}
+
+func (UsageRecordMeter) Type() protoreflect.EnumType {
+	return &file_terrabase_v1_engine_proto_enumTypes[29]
+}
+
+func (x UsageRecordMeter) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use UsageRecordMeter.Descriptor instead.
+func (UsageRecordMeter) EnumDescriptor() ([]byte, []int) {
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{29}
+}
+
 // The closed engine error vocabulary, carried in gRPC status details.
 type ErrorCode int32
 
@@ -1409,6 +1706,8 @@ const (
 	ErrorCode_ERROR_CODE_BACKUP_CLUSTER_IMMUTABLE  ErrorCode = 19
 	ErrorCode_ERROR_CODE_COLD_TIER_UNAVAILABLE     ErrorCode = 20
 	ErrorCode_ERROR_CODE_FRONTIER_UNREACHABLE      ErrorCode = 21
+	ErrorCode_ERROR_CODE_USAGE_UNAVAILABLE         ErrorCode = 22
+	ErrorCode_ERROR_CODE_USAGE_CORRUPT             ErrorCode = 23
 )
 
 // Enum value maps for ErrorCode.
@@ -1436,6 +1735,8 @@ var (
 		19: "ERROR_CODE_BACKUP_CLUSTER_IMMUTABLE",
 		20: "ERROR_CODE_COLD_TIER_UNAVAILABLE",
 		21: "ERROR_CODE_FRONTIER_UNREACHABLE",
+		22: "ERROR_CODE_USAGE_UNAVAILABLE",
+		23: "ERROR_CODE_USAGE_CORRUPT",
 	}
 	ErrorCode_value = map[string]int32{
 		"ERROR_CODE_UNSPECIFIED":               0,
@@ -1460,6 +1761,8 @@ var (
 		"ERROR_CODE_BACKUP_CLUSTER_IMMUTABLE":  19,
 		"ERROR_CODE_COLD_TIER_UNAVAILABLE":     20,
 		"ERROR_CODE_FRONTIER_UNREACHABLE":      21,
+		"ERROR_CODE_USAGE_UNAVAILABLE":         22,
+		"ERROR_CODE_USAGE_CORRUPT":             23,
 	}
 )
 
@@ -1474,11 +1777,11 @@ func (x ErrorCode) String() string {
 }
 
 func (ErrorCode) Descriptor() protoreflect.EnumDescriptor {
-	return file_terrabase_v1_engine_proto_enumTypes[25].Descriptor()
+	return file_terrabase_v1_engine_proto_enumTypes[30].Descriptor()
 }
 
 func (ErrorCode) Type() protoreflect.EnumType {
-	return &file_terrabase_v1_engine_proto_enumTypes[25]
+	return &file_terrabase_v1_engine_proto_enumTypes[30]
 }
 
 func (x ErrorCode) Number() protoreflect.EnumNumber {
@@ -1487,7 +1790,7 @@ func (x ErrorCode) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ErrorCode.Descriptor instead.
 func (ErrorCode) EnumDescriptor() ([]byte, []int) {
-	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{25}
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{30}
 }
 
 // One ordered map entry of an object value. Object fields are canonically
@@ -3259,6 +3562,7 @@ type DocumentWriteRequest struct {
 	Expected      *ExpectedVersion       `protobuf:"bytes,2,opt,name=expected,proto3" json:"expected,omitempty"`
 	OperationId   string                 `protobuf:"bytes,3,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"` // <= 128 bytes.
 	Ack           Acknowledgement        `protobuf:"varint,4,opt,name=ack,proto3,enum=terrabase.v1.Acknowledgement" json:"ack,omitempty"`
+	Usage         *UsageAdmissionContext `protobuf:"bytes,5,opt,name=usage,proto3" json:"usage,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3321,6 +3625,13 @@ func (x *DocumentWriteRequest) GetAck() Acknowledgement {
 	return Acknowledgement_ACK_UNSPECIFIED
 }
 
+func (x *DocumentWriteRequest) GetUsage() *UsageAdmissionContext {
+	if x != nil {
+		return x.Usage
+	}
+	return nil
+}
+
 type DocumentWriteResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Outcome       *WriteOutcome          `protobuf:"bytes,1,opt,name=outcome,proto3" json:"outcome,omitempty"`
@@ -3372,6 +3683,7 @@ type DocumentDeleteRequest struct {
 	Expected      *ExpectedVersion       `protobuf:"bytes,3,opt,name=expected,proto3" json:"expected,omitempty"`
 	OperationId   string                 `protobuf:"bytes,4,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"` // <= 128 bytes.
 	Ack           Acknowledgement        `protobuf:"varint,5,opt,name=ack,proto3,enum=terrabase.v1.Acknowledgement" json:"ack,omitempty"`
+	Usage         *UsageAdmissionContext `protobuf:"bytes,6,opt,name=usage,proto3" json:"usage,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3441,6 +3753,13 @@ func (x *DocumentDeleteRequest) GetAck() Acknowledgement {
 	return Acknowledgement_ACK_UNSPECIFIED
 }
 
+func (x *DocumentDeleteRequest) GetUsage() *UsageAdmissionContext {
+	if x != nil {
+		return x.Usage
+	}
+	return nil
+}
+
 type DocumentDeleteResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Outcome       *WriteOutcome          `protobuf:"bytes,1,opt,name=outcome,proto3" json:"outcome,omitempty"`
@@ -3489,6 +3808,7 @@ type DocumentBatchRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Items         []*BatchWrite          `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"` // 1..=256 items.
 	Ack           Acknowledgement        `protobuf:"varint,2,opt,name=ack,proto3,enum=terrabase.v1.Acknowledgement" json:"ack,omitempty"`
+	Usage         *UsageAdmissionContext `protobuf:"bytes,3,opt,name=usage,proto3" json:"usage,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3535,6 +3855,13 @@ func (x *DocumentBatchRequest) GetAck() Acknowledgement {
 		return x.Ack
 	}
 	return Acknowledgement_ACK_UNSPECIFIED
+}
+
+func (x *DocumentBatchRequest) GetUsage() *UsageAdmissionContext {
+	if x != nil {
+		return x.Usage
+	}
+	return nil
 }
 
 type DocumentBatchResponse struct {
@@ -3934,6 +4261,7 @@ type FamilyWriteRequest struct {
 	RequestCodec  string                 `protobuf:"bytes,3,opt,name=request_codec,json=requestCodec,proto3" json:"request_codec,omitempty"`
 	Request       []byte                 `protobuf:"bytes,4,opt,name=request,proto3" json:"request,omitempty"`
 	OperationId   string                 `protobuf:"bytes,5,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"` // <= 128 bytes.
+	Usage         *UsageAdmissionContext `protobuf:"bytes,6,opt,name=usage,proto3" json:"usage,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4001,6 +4329,13 @@ func (x *FamilyWriteRequest) GetOperationId() string {
 		return x.OperationId
 	}
 	return ""
+}
+
+func (x *FamilyWriteRequest) GetUsage() *UsageAdmissionContext {
+	if x != nil {
+		return x.Usage
+	}
+	return nil
 }
 
 type FamilyWriteResponse struct {
@@ -5127,6 +5462,7 @@ type SyncMutationSubmitRequest struct {
 	SessionId     uint64                 `protobuf:"varint,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	Document      string                 `protobuf:"bytes,2,opt,name=document,proto3" json:"document,omitempty"` // <= 64 bytes.
 	Change        *SyncChange            `protobuf:"bytes,3,opt,name=change,proto3" json:"change,omitempty"`
+	Usage         *UsageAdmissionContext `protobuf:"bytes,4,opt,name=usage,proto3" json:"usage,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5178,6 +5514,13 @@ func (x *SyncMutationSubmitRequest) GetDocument() string {
 func (x *SyncMutationSubmitRequest) GetChange() *SyncChange {
 	if x != nil {
 		return x.Change
+	}
+	return nil
+}
+
+func (x *SyncMutationSubmitRequest) GetUsage() *UsageAdmissionContext {
+	if x != nil {
+		return x.Usage
 	}
 	return nil
 }
@@ -8171,6 +8514,604 @@ func (x *SupervisionShutdownResponse) GetInFlight() uint32 {
 	return 0
 }
 
+// Trusted admission data attached atomically to one origin mutation. Tenant
+// scope comes only from the authenticated channel metadata. request_id must
+// equal x-tb-idempotency-key so commit replay and usage replay share one
+// identity. The admitted-request meter and unit are implied.
+type UsageAdmissionContext struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Project          string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`                               // 1..=255 bytes.
+	Database         string                 `protobuf:"bytes,2,opt,name=database,proto3" json:"database,omitempty"`                             // 1..=255 bytes.
+	Partition        string                 `protobuf:"bytes,3,opt,name=partition,proto3" json:"partition,omitempty"`                           // 1..=255 bytes.
+	OriginRegion     string                 `protobuf:"bytes,4,opt,name=origin_region,json=originRegion,proto3" json:"origin_region,omitempty"` // 1..=255 bytes.
+	RequestId        string                 `protobuf:"bytes,5,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`          // 1..=128 bytes.
+	AcceptedAtMillis uint64                 `protobuf:"varint,6,opt,name=accepted_at_millis,json=acceptedAtMillis,proto3" json:"accepted_at_millis,omitempty"`
+	MeterVersion     uint32                 `protobuf:"varint,7,opt,name=meter_version,json=meterVersion,proto3" json:"meter_version,omitempty"`
+	IntegerUnits     string                 `protobuf:"bytes,8,opt,name=integer_units,json=integerUnits,proto3" json:"integer_units,omitempty"` // Canonical positive i128, <= 39 bytes.
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *UsageAdmissionContext) Reset() {
+	*x = UsageAdmissionContext{}
+	mi := &file_terrabase_v1_engine_proto_msgTypes[112]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UsageAdmissionContext) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UsageAdmissionContext) ProtoMessage() {}
+
+func (x *UsageAdmissionContext) ProtoReflect() protoreflect.Message {
+	mi := &file_terrabase_v1_engine_proto_msgTypes[112]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UsageAdmissionContext.ProtoReflect.Descriptor instead.
+func (*UsageAdmissionContext) Descriptor() ([]byte, []int) {
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{112}
+}
+
+func (x *UsageAdmissionContext) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *UsageAdmissionContext) GetDatabase() string {
+	if x != nil {
+		return x.Database
+	}
+	return ""
+}
+
+func (x *UsageAdmissionContext) GetPartition() string {
+	if x != nil {
+		return x.Partition
+	}
+	return ""
+}
+
+func (x *UsageAdmissionContext) GetOriginRegion() string {
+	if x != nil {
+		return x.OriginRegion
+	}
+	return ""
+}
+
+func (x *UsageAdmissionContext) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *UsageAdmissionContext) GetAcceptedAtMillis() uint64 {
+	if x != nil {
+		return x.AcceptedAtMillis
+	}
+	return 0
+}
+
+func (x *UsageAdmissionContext) GetMeterVersion() uint32 {
+	if x != nil {
+		return x.MeterVersion
+	}
+	return 0
+}
+
+func (x *UsageAdmissionContext) GetIntegerUnits() string {
+	if x != nil {
+		return x.IntegerUnits
+	}
+	return ""
+}
+
+type UsageRecordRequest struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Meter            UsageRecordMeter       `protobuf:"varint,1,opt,name=meter,proto3,enum=terrabase.v1.UsageRecordMeter" json:"meter,omitempty"`
+	Project          string                 `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`                               // 1..=255 bytes.
+	Database         string                 `protobuf:"bytes,3,opt,name=database,proto3" json:"database,omitempty"`                             // 1..=255 bytes.
+	Partition        string                 `protobuf:"bytes,4,opt,name=partition,proto3" json:"partition,omitempty"`                           // 1..=255 bytes.
+	OriginRegion     string                 `protobuf:"bytes,5,opt,name=origin_region,json=originRegion,proto3" json:"origin_region,omitempty"` // 1..=255 bytes.
+	FactId           string                 `protobuf:"bytes,6,opt,name=fact_id,json=factId,proto3" json:"fact_id,omitempty"`                   // 1..=128 bytes.
+	RecordedAtMillis uint64                 `protobuf:"varint,7,opt,name=recorded_at_millis,json=recordedAtMillis,proto3" json:"recorded_at_millis,omitempty"`
+	MeterVersion     uint32                 `protobuf:"varint,8,opt,name=meter_version,json=meterVersion,proto3" json:"meter_version,omitempty"`
+	IntegerUnits     string                 `protobuf:"bytes,9,opt,name=integer_units,json=integerUnits,proto3" json:"integer_units,omitempty"` // Canonical positive i128, <= 39 bytes.
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *UsageRecordRequest) Reset() {
+	*x = UsageRecordRequest{}
+	mi := &file_terrabase_v1_engine_proto_msgTypes[113]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UsageRecordRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UsageRecordRequest) ProtoMessage() {}
+
+func (x *UsageRecordRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_terrabase_v1_engine_proto_msgTypes[113]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UsageRecordRequest.ProtoReflect.Descriptor instead.
+func (*UsageRecordRequest) Descriptor() ([]byte, []int) {
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{113}
+}
+
+func (x *UsageRecordRequest) GetMeter() UsageRecordMeter {
+	if x != nil {
+		return x.Meter
+	}
+	return UsageRecordMeter_USAGE_RECORD_METER_UNSPECIFIED
+}
+
+func (x *UsageRecordRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *UsageRecordRequest) GetDatabase() string {
+	if x != nil {
+		return x.Database
+	}
+	return ""
+}
+
+func (x *UsageRecordRequest) GetPartition() string {
+	if x != nil {
+		return x.Partition
+	}
+	return ""
+}
+
+func (x *UsageRecordRequest) GetOriginRegion() string {
+	if x != nil {
+		return x.OriginRegion
+	}
+	return ""
+}
+
+func (x *UsageRecordRequest) GetFactId() string {
+	if x != nil {
+		return x.FactId
+	}
+	return ""
+}
+
+func (x *UsageRecordRequest) GetRecordedAtMillis() uint64 {
+	if x != nil {
+		return x.RecordedAtMillis
+	}
+	return 0
+}
+
+func (x *UsageRecordRequest) GetMeterVersion() uint32 {
+	if x != nil {
+		return x.MeterVersion
+	}
+	return 0
+}
+
+func (x *UsageRecordRequest) GetIntegerUnits() string {
+	if x != nil {
+		return x.IntegerUnits
+	}
+	return ""
+}
+
+type UsageRecordResponse struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Sequence        uint64                 `protobuf:"varint,1,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	ReplicaEpoch    uint64                 `protobuf:"varint,2,opt,name=replica_epoch,json=replicaEpoch,proto3" json:"replica_epoch,omitempty"`
+	AlreadyRecorded bool                   `protobuf:"varint,3,opt,name=already_recorded,json=alreadyRecorded,proto3" json:"already_recorded,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *UsageRecordResponse) Reset() {
+	*x = UsageRecordResponse{}
+	mi := &file_terrabase_v1_engine_proto_msgTypes[114]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UsageRecordResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UsageRecordResponse) ProtoMessage() {}
+
+func (x *UsageRecordResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_terrabase_v1_engine_proto_msgTypes[114]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UsageRecordResponse.ProtoReflect.Descriptor instead.
+func (*UsageRecordResponse) Descriptor() ([]byte, []int) {
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{114}
+}
+
+func (x *UsageRecordResponse) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *UsageRecordResponse) GetReplicaEpoch() uint64 {
+	if x != nil {
+		return x.ReplicaEpoch
+	}
+	return 0
+}
+
+func (x *UsageRecordResponse) GetAlreadyRecorded() bool {
+	if x != nil {
+		return x.AlreadyRecorded
+	}
+	return false
+}
+
+// One WAL-durable, canonically encoded usage fact. The signed quantity is a
+// canonical base-10 i128 string because protobuf has no portable i128 scalar.
+// Consumers deduplicate on (minting_rule, fact_id) and preserve the canonical
+// bytes for audit. The tenant must equal the identity metadata bound to the RPC.
+type UsageFact struct {
+	state                  protoimpl.MessageState `protogen:"open.v1"`
+	FactId                 string                 `protobuf:"bytes,1,opt,name=fact_id,json=factId,proto3" json:"fact_id,omitempty"` // 1..=255 bytes.
+	Meter                  UsageMeter             `protobuf:"varint,2,opt,name=meter,proto3,enum=terrabase.v1.UsageMeter" json:"meter,omitempty"`
+	MeterVersion           uint32                 `protobuf:"varint,3,opt,name=meter_version,json=meterVersion,proto3" json:"meter_version,omitempty"`
+	Unit                   UsageUnit              `protobuf:"varint,4,opt,name=unit,proto3,enum=terrabase.v1.UsageUnit" json:"unit,omitempty"`
+	ChargeScope            UsageChargeScope       `protobuf:"varint,5,opt,name=charge_scope,json=chargeScope,proto3,enum=terrabase.v1.UsageChargeScope" json:"charge_scope,omitempty"`
+	MintingRule            UsageMintingRule       `protobuf:"varint,6,opt,name=minting_rule,json=mintingRule,proto3,enum=terrabase.v1.UsageMintingRule" json:"minting_rule,omitempty"`
+	Tenant                 string                 `protobuf:"bytes,7,opt,name=tenant,proto3" json:"tenant,omitempty"`        // 1..=64 bytes.
+	Project                string                 `protobuf:"bytes,8,opt,name=project,proto3" json:"project,omitempty"`      // 1..=255 bytes.
+	Database               string                 `protobuf:"bytes,9,opt,name=database,proto3" json:"database,omitempty"`    // 1..=255 bytes.
+	Partition              string                 `protobuf:"bytes,10,opt,name=partition,proto3" json:"partition,omitempty"` // 1..=255 bytes.
+	Region                 string                 `protobuf:"bytes,11,opt,name=region,proto3" json:"region,omitempty"`       // 1..=255 bytes.
+	MeasurementStartMillis uint64                 `protobuf:"varint,12,opt,name=measurement_start_millis,json=measurementStartMillis,proto3" json:"measurement_start_millis,omitempty"`
+	MeasurementEndMillis   uint64                 `protobuf:"varint,13,opt,name=measurement_end_millis,json=measurementEndMillis,proto3" json:"measurement_end_millis,omitempty"`
+	IntegerDelta           string                 `protobuf:"bytes,14,opt,name=integer_delta,json=integerDelta,proto3" json:"integer_delta,omitempty"` // Canonical signed i128, <= 40 bytes and nonzero.
+	Sequence               uint64                 `protobuf:"varint,15,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	ReplicaEpoch           uint64                 `protobuf:"varint,16,opt,name=replica_epoch,json=replicaEpoch,proto3" json:"replica_epoch,omitempty"`
+	FormatVersion          uint32                 `protobuf:"varint,17,opt,name=format_version,json=formatVersion,proto3" json:"format_version,omitempty"`
+	Canonical              []byte                 `protobuf:"bytes,18,opt,name=canonical,proto3" json:"canonical,omitempty"` // Canonical durable fact envelope, <= 64 KiB.
+	Checksum               []byte                 `protobuf:"bytes,19,opt,name=checksum,proto3" json:"checksum,omitempty"`   // Exactly 32 bytes; the envelope's trailing checksum.
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *UsageFact) Reset() {
+	*x = UsageFact{}
+	mi := &file_terrabase_v1_engine_proto_msgTypes[115]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UsageFact) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UsageFact) ProtoMessage() {}
+
+func (x *UsageFact) ProtoReflect() protoreflect.Message {
+	mi := &file_terrabase_v1_engine_proto_msgTypes[115]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UsageFact.ProtoReflect.Descriptor instead.
+func (*UsageFact) Descriptor() ([]byte, []int) {
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{115}
+}
+
+func (x *UsageFact) GetFactId() string {
+	if x != nil {
+		return x.FactId
+	}
+	return ""
+}
+
+func (x *UsageFact) GetMeter() UsageMeter {
+	if x != nil {
+		return x.Meter
+	}
+	return UsageMeter_USAGE_METER_UNSPECIFIED
+}
+
+func (x *UsageFact) GetMeterVersion() uint32 {
+	if x != nil {
+		return x.MeterVersion
+	}
+	return 0
+}
+
+func (x *UsageFact) GetUnit() UsageUnit {
+	if x != nil {
+		return x.Unit
+	}
+	return UsageUnit_USAGE_UNIT_UNSPECIFIED
+}
+
+func (x *UsageFact) GetChargeScope() UsageChargeScope {
+	if x != nil {
+		return x.ChargeScope
+	}
+	return UsageChargeScope_USAGE_CHARGE_SCOPE_UNSPECIFIED
+}
+
+func (x *UsageFact) GetMintingRule() UsageMintingRule {
+	if x != nil {
+		return x.MintingRule
+	}
+	return UsageMintingRule_USAGE_MINTING_RULE_UNSPECIFIED
+}
+
+func (x *UsageFact) GetTenant() string {
+	if x != nil {
+		return x.Tenant
+	}
+	return ""
+}
+
+func (x *UsageFact) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *UsageFact) GetDatabase() string {
+	if x != nil {
+		return x.Database
+	}
+	return ""
+}
+
+func (x *UsageFact) GetPartition() string {
+	if x != nil {
+		return x.Partition
+	}
+	return ""
+}
+
+func (x *UsageFact) GetRegion() string {
+	if x != nil {
+		return x.Region
+	}
+	return ""
+}
+
+func (x *UsageFact) GetMeasurementStartMillis() uint64 {
+	if x != nil {
+		return x.MeasurementStartMillis
+	}
+	return 0
+}
+
+func (x *UsageFact) GetMeasurementEndMillis() uint64 {
+	if x != nil {
+		return x.MeasurementEndMillis
+	}
+	return 0
+}
+
+func (x *UsageFact) GetIntegerDelta() string {
+	if x != nil {
+		return x.IntegerDelta
+	}
+	return ""
+}
+
+func (x *UsageFact) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *UsageFact) GetReplicaEpoch() uint64 {
+	if x != nil {
+		return x.ReplicaEpoch
+	}
+	return 0
+}
+
+func (x *UsageFact) GetFormatVersion() uint32 {
+	if x != nil {
+		return x.FormatVersion
+	}
+	return 0
+}
+
+func (x *UsageFact) GetCanonical() []byte {
+	if x != nil {
+		return x.Canonical
+	}
+	return nil
+}
+
+func (x *UsageFact) GetChecksum() []byte {
+	if x != nil {
+		return x.Checksum
+	}
+	return nil
+}
+
+// Reads one stable, tenant-bound snapshot. Window bounds are an all-or-none
+// half-open pair. The continuation is opaque and bound to the tenant, exact
+// filters, and snapshot sequence selected by the first page.
+type UsageExportRequest struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	WindowStartMillis *uint64                `protobuf:"varint,1,opt,name=window_start_millis,json=windowStartMillis,proto3,oneof" json:"window_start_millis,omitempty"`
+	WindowEndMillis   *uint64                `protobuf:"varint,2,opt,name=window_end_millis,json=windowEndMillis,proto3,oneof" json:"window_end_millis,omitempty"`
+	PageSize          uint32                 `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"` // 1..=256 facts.
+	Continuation      []byte                 `protobuf:"bytes,4,opt,name=continuation,proto3" json:"continuation,omitempty"`          // <= 1024 bytes; empty starts a snapshot.
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *UsageExportRequest) Reset() {
+	*x = UsageExportRequest{}
+	mi := &file_terrabase_v1_engine_proto_msgTypes[116]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UsageExportRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UsageExportRequest) ProtoMessage() {}
+
+func (x *UsageExportRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_terrabase_v1_engine_proto_msgTypes[116]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UsageExportRequest.ProtoReflect.Descriptor instead.
+func (*UsageExportRequest) Descriptor() ([]byte, []int) {
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{116}
+}
+
+func (x *UsageExportRequest) GetWindowStartMillis() uint64 {
+	if x != nil && x.WindowStartMillis != nil {
+		return *x.WindowStartMillis
+	}
+	return 0
+}
+
+func (x *UsageExportRequest) GetWindowEndMillis() uint64 {
+	if x != nil && x.WindowEndMillis != nil {
+		return *x.WindowEndMillis
+	}
+	return 0
+}
+
+func (x *UsageExportRequest) GetPageSize() uint32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *UsageExportRequest) GetContinuation() []byte {
+	if x != nil {
+		return x.Continuation
+	}
+	return nil
+}
+
+// Facts are ordered by (sequence, minting_rule, fact_id). An empty
+// continuation completes the snapshot. Facts committed after
+// snapshot_sequence are excluded from every page in this response chain.
+type UsageExportResponse struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Facts            []*UsageFact           `protobuf:"bytes,1,rep,name=facts,proto3" json:"facts,omitempty"`               // <= 256 facts.
+	Continuation     []byte                 `protobuf:"bytes,2,opt,name=continuation,proto3" json:"continuation,omitempty"` // <= 1024 bytes.
+	SnapshotSequence uint64                 `protobuf:"varint,3,opt,name=snapshot_sequence,json=snapshotSequence,proto3" json:"snapshot_sequence,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *UsageExportResponse) Reset() {
+	*x = UsageExportResponse{}
+	mi := &file_terrabase_v1_engine_proto_msgTypes[117]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UsageExportResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UsageExportResponse) ProtoMessage() {}
+
+func (x *UsageExportResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_terrabase_v1_engine_proto_msgTypes[117]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UsageExportResponse.ProtoReflect.Descriptor instead.
+func (*UsageExportResponse) Descriptor() ([]byte, []int) {
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{117}
+}
+
+func (x *UsageExportResponse) GetFacts() []*UsageFact {
+	if x != nil {
+		return x.Facts
+	}
+	return nil
+}
+
+func (x *UsageExportResponse) GetContinuation() []byte {
+	if x != nil {
+		return x.Continuation
+	}
+	return nil
+}
+
+func (x *UsageExportResponse) GetSnapshotSequence() uint64 {
+	if x != nil {
+		return x.SnapshotSequence
+	}
+	return 0
+}
+
 type TierConfigureRequest struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	PolicyId           string                 `protobuf:"bytes,1,opt,name=policy_id,json=policyId,proto3" json:"policy_id,omitempty"` // <= 128 bytes.
@@ -8185,7 +9126,7 @@ type TierConfigureRequest struct {
 
 func (x *TierConfigureRequest) Reset() {
 	*x = TierConfigureRequest{}
-	mi := &file_terrabase_v1_engine_proto_msgTypes[112]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[118]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8197,7 +9138,7 @@ func (x *TierConfigureRequest) String() string {
 func (*TierConfigureRequest) ProtoMessage() {}
 
 func (x *TierConfigureRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_engine_proto_msgTypes[112]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[118]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8210,7 +9151,7 @@ func (x *TierConfigureRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TierConfigureRequest.ProtoReflect.Descriptor instead.
 func (*TierConfigureRequest) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{112}
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{118}
 }
 
 func (x *TierConfigureRequest) GetPolicyId() string {
@@ -8266,7 +9207,7 @@ type TierConfigureResponse struct {
 
 func (x *TierConfigureResponse) Reset() {
 	*x = TierConfigureResponse{}
-	mi := &file_terrabase_v1_engine_proto_msgTypes[113]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[119]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8278,7 +9219,7 @@ func (x *TierConfigureResponse) String() string {
 func (*TierConfigureResponse) ProtoMessage() {}
 
 func (x *TierConfigureResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_engine_proto_msgTypes[113]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[119]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8291,7 +9232,7 @@ func (x *TierConfigureResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TierConfigureResponse.ProtoReflect.Descriptor instead.
 func (*TierConfigureResponse) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{113}
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{119}
 }
 
 func (x *TierConfigureResponse) GetPolicyId() string {
@@ -8323,7 +9264,7 @@ type TierInspectRequest struct {
 
 func (x *TierInspectRequest) Reset() {
 	*x = TierInspectRequest{}
-	mi := &file_terrabase_v1_engine_proto_msgTypes[114]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[120]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8335,7 +9276,7 @@ func (x *TierInspectRequest) String() string {
 func (*TierInspectRequest) ProtoMessage() {}
 
 func (x *TierInspectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_engine_proto_msgTypes[114]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[120]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8348,7 +9289,7 @@ func (x *TierInspectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TierInspectRequest.ProtoReflect.Descriptor instead.
 func (*TierInspectRequest) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{114}
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{120}
 }
 
 type TierInspectResponse struct {
@@ -8364,7 +9305,7 @@ type TierInspectResponse struct {
 
 func (x *TierInspectResponse) Reset() {
 	*x = TierInspectResponse{}
-	mi := &file_terrabase_v1_engine_proto_msgTypes[115]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[121]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8376,7 +9317,7 @@ func (x *TierInspectResponse) String() string {
 func (*TierInspectResponse) ProtoMessage() {}
 
 func (x *TierInspectResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_engine_proto_msgTypes[115]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[121]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8389,7 +9330,7 @@ func (x *TierInspectResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TierInspectResponse.ProtoReflect.Descriptor instead.
 func (*TierInspectResponse) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{115}
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{121}
 }
 
 func (x *TierInspectResponse) GetConfigured() bool {
@@ -8435,7 +9376,7 @@ type TierDryRunRequest struct {
 
 func (x *TierDryRunRequest) Reset() {
 	*x = TierDryRunRequest{}
-	mi := &file_terrabase_v1_engine_proto_msgTypes[116]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[122]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8447,7 +9388,7 @@ func (x *TierDryRunRequest) String() string {
 func (*TierDryRunRequest) ProtoMessage() {}
 
 func (x *TierDryRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_engine_proto_msgTypes[116]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[122]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8460,7 +9401,7 @@ func (x *TierDryRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TierDryRunRequest.ProtoReflect.Descriptor instead.
 func (*TierDryRunRequest) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{116}
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{122}
 }
 
 type TierDryRunResponse struct {
@@ -8472,7 +9413,7 @@ type TierDryRunResponse struct {
 
 func (x *TierDryRunResponse) Reset() {
 	*x = TierDryRunResponse{}
-	mi := &file_terrabase_v1_engine_proto_msgTypes[117]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[123]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8484,7 +9425,7 @@ func (x *TierDryRunResponse) String() string {
 func (*TierDryRunResponse) ProtoMessage() {}
 
 func (x *TierDryRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_engine_proto_msgTypes[117]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[123]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8497,7 +9438,7 @@ func (x *TierDryRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TierDryRunResponse.ProtoReflect.Descriptor instead.
 func (*TierDryRunResponse) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{117}
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{123}
 }
 
 func (x *TierDryRunResponse) GetReceipt() *TierMoveReceipt {
@@ -8515,7 +9456,7 @@ type TierExplainRequest struct {
 
 func (x *TierExplainRequest) Reset() {
 	*x = TierExplainRequest{}
-	mi := &file_terrabase_v1_engine_proto_msgTypes[118]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[124]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8527,7 +9468,7 @@ func (x *TierExplainRequest) String() string {
 func (*TierExplainRequest) ProtoMessage() {}
 
 func (x *TierExplainRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_engine_proto_msgTypes[118]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[124]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8540,7 +9481,7 @@ func (x *TierExplainRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TierExplainRequest.ProtoReflect.Descriptor instead.
 func (*TierExplainRequest) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{118}
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{124}
 }
 
 type TierExplainResponse struct {
@@ -8552,7 +9493,7 @@ type TierExplainResponse struct {
 
 func (x *TierExplainResponse) Reset() {
 	*x = TierExplainResponse{}
-	mi := &file_terrabase_v1_engine_proto_msgTypes[119]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[125]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8564,7 +9505,7 @@ func (x *TierExplainResponse) String() string {
 func (*TierExplainResponse) ProtoMessage() {}
 
 func (x *TierExplainResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_engine_proto_msgTypes[119]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[125]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8577,7 +9518,7 @@ func (x *TierExplainResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TierExplainResponse.ProtoReflect.Descriptor instead.
 func (*TierExplainResponse) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{119}
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{125}
 }
 
 func (x *TierExplainResponse) GetReceipt() *TierMoveReceipt {
@@ -8595,7 +9536,7 @@ type TierRunRequest struct {
 
 func (x *TierRunRequest) Reset() {
 	*x = TierRunRequest{}
-	mi := &file_terrabase_v1_engine_proto_msgTypes[120]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[126]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8607,7 +9548,7 @@ func (x *TierRunRequest) String() string {
 func (*TierRunRequest) ProtoMessage() {}
 
 func (x *TierRunRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_engine_proto_msgTypes[120]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[126]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8620,7 +9561,7 @@ func (x *TierRunRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TierRunRequest.ProtoReflect.Descriptor instead.
 func (*TierRunRequest) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{120}
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{126}
 }
 
 type TierRunResponse struct {
@@ -8632,7 +9573,7 @@ type TierRunResponse struct {
 
 func (x *TierRunResponse) Reset() {
 	*x = TierRunResponse{}
-	mi := &file_terrabase_v1_engine_proto_msgTypes[121]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[127]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8644,7 +9585,7 @@ func (x *TierRunResponse) String() string {
 func (*TierRunResponse) ProtoMessage() {}
 
 func (x *TierRunResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_engine_proto_msgTypes[121]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[127]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8657,7 +9598,7 @@ func (x *TierRunResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TierRunResponse.ProtoReflect.Descriptor instead.
 func (*TierRunResponse) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{121}
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{127}
 }
 
 func (x *TierRunResponse) GetReceipt() *TierMoveReceipt {
@@ -8675,7 +9616,7 @@ type TierPauseRequest struct {
 
 func (x *TierPauseRequest) Reset() {
 	*x = TierPauseRequest{}
-	mi := &file_terrabase_v1_engine_proto_msgTypes[122]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[128]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8687,7 +9628,7 @@ func (x *TierPauseRequest) String() string {
 func (*TierPauseRequest) ProtoMessage() {}
 
 func (x *TierPauseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_engine_proto_msgTypes[122]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[128]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8700,7 +9641,7 @@ func (x *TierPauseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TierPauseRequest.ProtoReflect.Descriptor instead.
 func (*TierPauseRequest) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{122}
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{128}
 }
 
 type TierPauseResponse struct {
@@ -8712,7 +9653,7 @@ type TierPauseResponse struct {
 
 func (x *TierPauseResponse) Reset() {
 	*x = TierPauseResponse{}
-	mi := &file_terrabase_v1_engine_proto_msgTypes[123]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[129]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8724,7 +9665,7 @@ func (x *TierPauseResponse) String() string {
 func (*TierPauseResponse) ProtoMessage() {}
 
 func (x *TierPauseResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_engine_proto_msgTypes[123]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[129]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8737,7 +9678,7 @@ func (x *TierPauseResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TierPauseResponse.ProtoReflect.Descriptor instead.
 func (*TierPauseResponse) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{123}
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{129}
 }
 
 func (x *TierPauseResponse) GetPaused() bool {
@@ -8755,7 +9696,7 @@ type TierResumeRequest struct {
 
 func (x *TierResumeRequest) Reset() {
 	*x = TierResumeRequest{}
-	mi := &file_terrabase_v1_engine_proto_msgTypes[124]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[130]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8767,7 +9708,7 @@ func (x *TierResumeRequest) String() string {
 func (*TierResumeRequest) ProtoMessage() {}
 
 func (x *TierResumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_engine_proto_msgTypes[124]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[130]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8780,7 +9721,7 @@ func (x *TierResumeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TierResumeRequest.ProtoReflect.Descriptor instead.
 func (*TierResumeRequest) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{124}
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{130}
 }
 
 type TierResumeResponse struct {
@@ -8792,7 +9733,7 @@ type TierResumeResponse struct {
 
 func (x *TierResumeResponse) Reset() {
 	*x = TierResumeResponse{}
-	mi := &file_terrabase_v1_engine_proto_msgTypes[125]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[131]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8804,7 +9745,7 @@ func (x *TierResumeResponse) String() string {
 func (*TierResumeResponse) ProtoMessage() {}
 
 func (x *TierResumeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_engine_proto_msgTypes[125]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[131]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8817,7 +9758,7 @@ func (x *TierResumeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TierResumeResponse.ProtoReflect.Descriptor instead.
 func (*TierResumeResponse) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{125}
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{131}
 }
 
 func (x *TierResumeResponse) GetPaused() bool {
@@ -8838,7 +9779,7 @@ type TbepError struct {
 
 func (x *TbepError) Reset() {
 	*x = TbepError{}
-	mi := &file_terrabase_v1_engine_proto_msgTypes[126]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[132]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8850,7 +9791,7 @@ func (x *TbepError) String() string {
 func (*TbepError) ProtoMessage() {}
 
 func (x *TbepError) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_engine_proto_msgTypes[126]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[132]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8863,7 +9804,7 @@ func (x *TbepError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TbepError.ProtoReflect.Descriptor instead.
 func (*TbepError) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{126}
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{132}
 }
 
 func (x *TbepError) GetCode() ErrorCode {
@@ -8893,7 +9834,7 @@ type Any struct {
 
 func (x *Any) Reset() {
 	*x = Any{}
-	mi := &file_terrabase_v1_engine_proto_msgTypes[127]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[133]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8905,7 +9846,7 @@ func (x *Any) String() string {
 func (*Any) ProtoMessage() {}
 
 func (x *Any) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_engine_proto_msgTypes[127]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[133]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8918,7 +9859,7 @@ func (x *Any) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Any.ProtoReflect.Descriptor instead.
 func (*Any) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{127}
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{133}
 }
 
 func (x *Any) GetTypeUrl() string {
@@ -8947,7 +9888,7 @@ type RpcStatus struct {
 
 func (x *RpcStatus) Reset() {
 	*x = RpcStatus{}
-	mi := &file_terrabase_v1_engine_proto_msgTypes[128]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[134]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8959,7 +9900,7 @@ func (x *RpcStatus) String() string {
 func (*RpcStatus) ProtoMessage() {}
 
 func (x *RpcStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_engine_proto_msgTypes[128]
+	mi := &file_terrabase_v1_engine_proto_msgTypes[134]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8972,7 +9913,7 @@ func (x *RpcStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RpcStatus.ProtoReflect.Descriptor instead.
 func (*RpcStatus) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{128}
+	return file_terrabase_v1_engine_proto_rawDescGZIP(), []int{134}
 }
 
 func (x *RpcStatus) GetCode() int32 {
@@ -9114,14 +10055,15 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"\x14DocumentReadResponse\x12\x14\n" +
 	"\x05found\x18\x01 \x01(\bR\x05found\x126\n" +
 	"\bdocument\x18\x02 \x01(\v2\x1a.terrabase.v1.DocumentBodyR\bdocument\x12\x1a\n" +
-	"\bposition\x18\x03 \x01(\x04R\bposition\"\xdc\x01\n" +
+	"\bposition\x18\x03 \x01(\x04R\bposition\"\x97\x02\n" +
 	"\x14DocumentWriteRequest\x125\n" +
 	"\bdocument\x18\x01 \x01(\v2\x19.terrabase.v1.DocumentPutR\bdocument\x129\n" +
 	"\bexpected\x18\x02 \x01(\v2\x1d.terrabase.v1.ExpectedVersionR\bexpected\x12!\n" +
 	"\foperation_id\x18\x03 \x01(\tR\voperationId\x12/\n" +
-	"\x03ack\x18\x04 \x01(\x0e2\x1d.terrabase.v1.AcknowledgementR\x03ack\"M\n" +
+	"\x03ack\x18\x04 \x01(\x0e2\x1d.terrabase.v1.AcknowledgementR\x03ack\x129\n" +
+	"\x05usage\x18\x05 \x01(\v2#.terrabase.v1.UsageAdmissionContextR\x05usage\"M\n" +
 	"\x15DocumentWriteResponse\x124\n" +
-	"\aoutcome\x18\x01 \x01(\v2\x1a.terrabase.v1.WriteOutcomeR\aoutcome\"\xe2\x01\n" +
+	"\aoutcome\x18\x01 \x01(\v2\x1a.terrabase.v1.WriteOutcomeR\aoutcome\"\x9d\x02\n" +
 	"\x15DocumentDeleteRequest\x12\x1e\n" +
 	"\n" +
 	"collection\x18\x01 \x01(\tR\n" +
@@ -9129,12 +10071,14 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"\bdocument\x18\x02 \x01(\tR\bdocument\x129\n" +
 	"\bexpected\x18\x03 \x01(\v2\x1d.terrabase.v1.ExpectedVersionR\bexpected\x12!\n" +
 	"\foperation_id\x18\x04 \x01(\tR\voperationId\x12/\n" +
-	"\x03ack\x18\x05 \x01(\x0e2\x1d.terrabase.v1.AcknowledgementR\x03ack\"N\n" +
+	"\x03ack\x18\x05 \x01(\x0e2\x1d.terrabase.v1.AcknowledgementR\x03ack\x129\n" +
+	"\x05usage\x18\x06 \x01(\v2#.terrabase.v1.UsageAdmissionContextR\x05usage\"N\n" +
 	"\x16DocumentDeleteResponse\x124\n" +
-	"\aoutcome\x18\x01 \x01(\v2\x1a.terrabase.v1.WriteOutcomeR\aoutcome\"w\n" +
+	"\aoutcome\x18\x01 \x01(\v2\x1a.terrabase.v1.WriteOutcomeR\aoutcome\"\xb2\x01\n" +
 	"\x14DocumentBatchRequest\x12.\n" +
 	"\x05items\x18\x01 \x03(\v2\x18.terrabase.v1.BatchWriteR\x05items\x12/\n" +
-	"\x03ack\x18\x02 \x01(\x0e2\x1d.terrabase.v1.AcknowledgementR\x03ack\"M\n" +
+	"\x03ack\x18\x02 \x01(\x0e2\x1d.terrabase.v1.AcknowledgementR\x03ack\x129\n" +
+	"\x05usage\x18\x03 \x01(\v2#.terrabase.v1.UsageAdmissionContextR\x05usage\"M\n" +
 	"\x15DocumentBatchResponse\x124\n" +
 	"\aoutcome\x18\x01 \x01(\v2\x1a.terrabase.v1.WriteOutcomeR\aoutcome\"\x90\x01\n" +
 	"\x13QueryExecuteRequest\x12\x19\n" +
@@ -9158,13 +10102,14 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"\arequest\x18\x04 \x01(\fR\arequest\"W\n" +
 	"\x12FamilyReadResponse\x12%\n" +
 	"\x0eresponse_codec\x18\x01 \x01(\tR\rresponseCodec\x12\x1a\n" +
-	"\bresponse\x18\x02 \x01(\fR\bresponse\"\xa2\x01\n" +
+	"\bresponse\x18\x02 \x01(\fR\bresponse\"\xdd\x01\n" +
 	"\x12FamilyWriteRequest\x12\x16\n" +
 	"\x06family\x18\x01 \x01(\tR\x06family\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12#\n" +
 	"\rrequest_codec\x18\x03 \x01(\tR\frequestCodec\x12\x18\n" +
 	"\arequest\x18\x04 \x01(\fR\arequest\x12!\n" +
-	"\foperation_id\x18\x05 \x01(\tR\voperationId\"X\n" +
+	"\foperation_id\x18\x05 \x01(\tR\voperationId\x129\n" +
+	"\x05usage\x18\x06 \x01(\v2#.terrabase.v1.UsageAdmissionContextR\x05usage\"X\n" +
 	"\x13FamilyWriteResponse\x12%\n" +
 	"\x0eresponse_codec\x18\x01 \x01(\tR\rresponseCodec\x12\x1a\n" +
 	"\bresponse\x18\x02 \x01(\fR\bresponse\"\x9a\x01\n" +
@@ -9251,12 +10196,13 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"checkpoint\":\n" +
 	"\x19SyncCheckpointAckResponse\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\x04R\tsessionId\"\x88\x01\n" +
+	"session_id\x18\x01 \x01(\x04R\tsessionId\"\xc3\x01\n" +
 	"\x19SyncMutationSubmitRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\x04R\tsessionId\x12\x1a\n" +
 	"\bdocument\x18\x02 \x01(\tR\bdocument\x120\n" +
-	"\x06change\x18\x03 \x01(\v2\x18.terrabase.v1.SyncChangeR\x06change\"t\n" +
+	"\x06change\x18\x03 \x01(\v2\x18.terrabase.v1.SyncChangeR\x06change\x129\n" +
+	"\x05usage\x18\x04 \x01(\v2#.terrabase.v1.UsageAdmissionContextR\x05usage\"t\n" +
 	"\x1aSyncMutationSubmitResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\x04R\tsessionId\x127\n" +
@@ -9481,7 +10427,63 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"\x06reason\x18\x01 \x01(\x0e2\x1c.terrabase.v1.ShutdownReasonR\x06reason\"k\n" +
 	"\x1bSupervisionShutdownResponse\x12/\n" +
 	"\x05state\x18\x01 \x01(\x0e2\x19.terrabase.v1.HealthStateR\x05state\x12\x1b\n" +
-	"\tin_flight\x18\x02 \x01(\rR\binFlight\"\x88\x02\n" +
+	"\tin_flight\x18\x02 \x01(\rR\binFlight\"\xa7\x02\n" +
+	"\x15UsageAdmissionContext\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12\x1a\n" +
+	"\bdatabase\x18\x02 \x01(\tR\bdatabase\x12\x1c\n" +
+	"\tpartition\x18\x03 \x01(\tR\tpartition\x12#\n" +
+	"\rorigin_region\x18\x04 \x01(\tR\foriginRegion\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x05 \x01(\tR\trequestId\x12,\n" +
+	"\x12accepted_at_millis\x18\x06 \x01(\x04R\x10acceptedAtMillis\x12#\n" +
+	"\rmeter_version\x18\a \x01(\rR\fmeterVersion\x12#\n" +
+	"\rinteger_units\x18\b \x01(\tR\fintegerUnits\"\xd4\x02\n" +
+	"\x12UsageRecordRequest\x124\n" +
+	"\x05meter\x18\x01 \x01(\x0e2\x1e.terrabase.v1.UsageRecordMeterR\x05meter\x12\x18\n" +
+	"\aproject\x18\x02 \x01(\tR\aproject\x12\x1a\n" +
+	"\bdatabase\x18\x03 \x01(\tR\bdatabase\x12\x1c\n" +
+	"\tpartition\x18\x04 \x01(\tR\tpartition\x12#\n" +
+	"\rorigin_region\x18\x05 \x01(\tR\foriginRegion\x12\x17\n" +
+	"\afact_id\x18\x06 \x01(\tR\x06factId\x12,\n" +
+	"\x12recorded_at_millis\x18\a \x01(\x04R\x10recordedAtMillis\x12#\n" +
+	"\rmeter_version\x18\b \x01(\rR\fmeterVersion\x12#\n" +
+	"\rinteger_units\x18\t \x01(\tR\fintegerUnits\"\x81\x01\n" +
+	"\x13UsageRecordResponse\x12\x1a\n" +
+	"\bsequence\x18\x01 \x01(\x04R\bsequence\x12#\n" +
+	"\rreplica_epoch\x18\x02 \x01(\x04R\freplicaEpoch\x12)\n" +
+	"\x10already_recorded\x18\x03 \x01(\bR\x0falreadyRecorded\"\xe7\x05\n" +
+	"\tUsageFact\x12\x17\n" +
+	"\afact_id\x18\x01 \x01(\tR\x06factId\x12.\n" +
+	"\x05meter\x18\x02 \x01(\x0e2\x18.terrabase.v1.UsageMeterR\x05meter\x12#\n" +
+	"\rmeter_version\x18\x03 \x01(\rR\fmeterVersion\x12+\n" +
+	"\x04unit\x18\x04 \x01(\x0e2\x17.terrabase.v1.UsageUnitR\x04unit\x12A\n" +
+	"\fcharge_scope\x18\x05 \x01(\x0e2\x1e.terrabase.v1.UsageChargeScopeR\vchargeScope\x12A\n" +
+	"\fminting_rule\x18\x06 \x01(\x0e2\x1e.terrabase.v1.UsageMintingRuleR\vmintingRule\x12\x16\n" +
+	"\x06tenant\x18\a \x01(\tR\x06tenant\x12\x18\n" +
+	"\aproject\x18\b \x01(\tR\aproject\x12\x1a\n" +
+	"\bdatabase\x18\t \x01(\tR\bdatabase\x12\x1c\n" +
+	"\tpartition\x18\n" +
+	" \x01(\tR\tpartition\x12\x16\n" +
+	"\x06region\x18\v \x01(\tR\x06region\x128\n" +
+	"\x18measurement_start_millis\x18\f \x01(\x04R\x16measurementStartMillis\x124\n" +
+	"\x16measurement_end_millis\x18\r \x01(\x04R\x14measurementEndMillis\x12#\n" +
+	"\rinteger_delta\x18\x0e \x01(\tR\fintegerDelta\x12\x1a\n" +
+	"\bsequence\x18\x0f \x01(\x04R\bsequence\x12#\n" +
+	"\rreplica_epoch\x18\x10 \x01(\x04R\freplicaEpoch\x12%\n" +
+	"\x0eformat_version\x18\x11 \x01(\rR\rformatVersion\x12\x1c\n" +
+	"\tcanonical\x18\x12 \x01(\fR\tcanonical\x12\x1a\n" +
+	"\bchecksum\x18\x13 \x01(\fR\bchecksum\"\xe9\x01\n" +
+	"\x12UsageExportRequest\x123\n" +
+	"\x13window_start_millis\x18\x01 \x01(\x04H\x00R\x11windowStartMillis\x88\x01\x01\x12/\n" +
+	"\x11window_end_millis\x18\x02 \x01(\x04H\x01R\x0fwindowEndMillis\x88\x01\x01\x12\x1b\n" +
+	"\tpage_size\x18\x03 \x01(\rR\bpageSize\x12\"\n" +
+	"\fcontinuation\x18\x04 \x01(\fR\fcontinuationB\x16\n" +
+	"\x14_window_start_millisB\x14\n" +
+	"\x12_window_end_millis\"\x95\x01\n" +
+	"\x13UsageExportResponse\x12-\n" +
+	"\x05facts\x18\x01 \x03(\v2\x17.terrabase.v1.UsageFactR\x05facts\x12\"\n" +
+	"\fcontinuation\x18\x02 \x01(\fR\fcontinuation\x12+\n" +
+	"\x11snapshot_sequence\x18\x03 \x01(\x04R\x10snapshotSequence\"\x88\x02\n" +
 	"\x14TierConfigureRequest\x12\x1b\n" +
 	"\tpolicy_id\x18\x01 \x01(\tR\bpolicyId\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\rR\aversion\x12*\n" +
@@ -9657,7 +10659,43 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"DenialSeam\x12\x1b\n" +
 	"\x17DENIAL_SEAM_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19DENIAL_SEAM_SERVE_REQUEST\x10\x01\x12\x1e\n" +
-	"\x1aDENIAL_SEAM_APPLY_DELIVERY\x10\x02*\xfc\x05\n" +
+	"\x1aDENIAL_SEAM_APPLY_DELIVERY\x10\x02*\xff\x01\n" +
+	"\n" +
+	"UsageMeter\x12\x1b\n" +
+	"\x17USAGE_METER_UNSPECIFIED\x10\x00\x12!\n" +
+	"\x1dUSAGE_METER_STORED_BYTE_HOURS\x10\x01\x12&\n" +
+	"\"USAGE_METER_ADMITTED_REQUEST_UNITS\x10\x02\x12#\n" +
+	"\x1fUSAGE_METER_PUBLIC_EGRESS_BYTES\x10\x03\x12#\n" +
+	"\x1fUSAGE_METER_ACTIVE_REGION_SEATS\x10\x04\x12!\n" +
+	"\x1dUSAGE_METER_BACKUP_BYTE_HOURS\x10\x05\x12\x1c\n" +
+	"\x18USAGE_METER_RESTORE_WORK\x10\x06*\xaa\x01\n" +
+	"\tUsageUnit\x12\x1a\n" +
+	"\x16USAGE_UNIT_UNSPECIFIED\x10\x00\x12\x18\n" +
+	"\x14USAGE_UNIT_BYTE_HOUR\x10\x01\x12\x1b\n" +
+	"\x17USAGE_UNIT_REQUEST_UNIT\x10\x02\x12\x13\n" +
+	"\x0fUSAGE_UNIT_BYTE\x10\x03\x12\x18\n" +
+	"\x14USAGE_UNIT_SEAT_HOUR\x10\x04\x12\x1b\n" +
+	"\x17USAGE_UNIT_RESTORE_WORK\x10\x05*\xa8\x02\n" +
+	"\x10UsageChargeScope\x12\"\n" +
+	"\x1eUSAGE_CHARGE_SCOPE_UNSPECIFIED\x10\x00\x12)\n" +
+	"%USAGE_CHARGE_SCOPE_ACTIVE_REGION_COPY\x10\x01\x12'\n" +
+	"#USAGE_CHARGE_SCOPE_ADMITTED_REQUEST\x10\x02\x12$\n" +
+	" USAGE_CHARGE_SCOPE_PUBLIC_EGRESS\x10\x03\x12)\n" +
+	"%USAGE_CHARGE_SCOPE_ACTIVE_REGION_SEAT\x10\x04\x12\"\n" +
+	"\x1eUSAGE_CHARGE_SCOPE_BACKUP_COPY\x10\x05\x12'\n" +
+	"#USAGE_CHARGE_SCOPE_EXPLICIT_RESTORE\x10\x06*\xba\x02\n" +
+	"\x10UsageMintingRule\x12\"\n" +
+	"\x1eUSAGE_MINTING_RULE_UNSPECIFIED\x10\x00\x12-\n" +
+	")USAGE_MINTING_RULE_ACCEPTED_ORIGIN_COMMIT\x10\x01\x12.\n" +
+	"*USAGE_MINTING_RULE_STABLE_ADMITTED_REQUEST\x10\x02\x12&\n" +
+	"\"USAGE_MINTING_RULE_PUBLIC_RESPONSE\x10\x03\x12)\n" +
+	"%USAGE_MINTING_RULE_ACTIVE_REGION_HOUR\x10\x04\x12'\n" +
+	"#USAGE_MINTING_RULE_BACKUP_BYTE_HOUR\x10\x05\x12'\n" +
+	"#USAGE_MINTING_RULE_EXPLICIT_RESTORE\x10\x06*\x91\x01\n" +
+	"\x10UsageRecordMeter\x12\"\n" +
+	"\x1eUSAGE_RECORD_METER_UNSPECIFIED\x10\x00\x12-\n" +
+	")USAGE_RECORD_METER_ADMITTED_REQUEST_UNITS\x10\x01\x12*\n" +
+	"&USAGE_RECORD_METER_PUBLIC_EGRESS_BYTES\x10\x02*\xbc\x06\n" +
 	"\tErrorCode\x12\x1a\n" +
 	"\x16ERROR_CODE_UNSPECIFIED\x10\x00\x12\"\n" +
 	"\x1eERROR_CODE_UNSUPPORTED_VERSION\x10\x01\x12 \n" +
@@ -9681,7 +10719,9 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"#ERROR_CODE_BACKUP_CLUSTER_READ_ONLY\x10\x12\x12'\n" +
 	"#ERROR_CODE_BACKUP_CLUSTER_IMMUTABLE\x10\x13\x12$\n" +
 	" ERROR_CODE_COLD_TIER_UNAVAILABLE\x10\x14\x12#\n" +
-	"\x1fERROR_CODE_FRONTIER_UNREACHABLE\x10\x152V\n" +
+	"\x1fERROR_CODE_FRONTIER_UNREACHABLE\x10\x15\x12 \n" +
+	"\x1cERROR_CODE_USAGE_UNAVAILABLE\x10\x16\x12\x1c\n" +
+	"\x18ERROR_CODE_USAGE_CORRUPT\x10\x172V\n" +
 	"\aChannel\x12K\n" +
 	"\x04Bind\x12 .terrabase.v1.ChannelBindRequest\x1a!.terrabase.v1.ChannelBindResponse2\xc0\x05\n" +
 	"\x06Engine\x12U\n" +
@@ -9723,7 +10763,10 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"\fTopologyRead\x12!.terrabase.v1.TopologyReadRequest\x1a\".terrabase.v1.TopologyReadResponse\x12R\n" +
 	"\vAdminStatus\x12 .terrabase.v1.AdminStatusRequest\x1a!.terrabase.v1.AdminStatusResponse\x12d\n" +
 	"\x11SupervisionHealth\x12&.terrabase.v1.SupervisionHealthRequest\x1a'.terrabase.v1.SupervisionHealthResponse\x12j\n" +
-	"\x13SupervisionShutdown\x12(.terrabase.v1.SupervisionShutdownRequest\x1a).terrabase.v1.SupervisionShutdownResponse2\xa4\x04\n" +
+	"\x13SupervisionShutdown\x12(.terrabase.v1.SupervisionShutdownRequest\x1a).terrabase.v1.SupervisionShutdownResponse2\xa5\x01\n" +
+	"\x05Usage\x12M\n" +
+	"\x06Record\x12 .terrabase.v1.UsageRecordRequest\x1a!.terrabase.v1.UsageRecordResponse\x12M\n" +
+	"\x06Export\x12 .terrabase.v1.UsageExportRequest\x1a!.terrabase.v1.UsageExportResponse2\xa4\x04\n" +
 	"\x04Tier\x12T\n" +
 	"\tConfigure\x12\".terrabase.v1.TierConfigureRequest\x1a#.terrabase.v1.TierConfigureResponse\x12N\n" +
 	"\aInspect\x12 .terrabase.v1.TierInspectRequest\x1a!.terrabase.v1.TierInspectResponse\x12K\n" +
@@ -9731,7 +10774,7 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"\aExplain\x12 .terrabase.v1.TierExplainRequest\x1a!.terrabase.v1.TierExplainResponse\x12B\n" +
 	"\x03Run\x12\x1c.terrabase.v1.TierRunRequest\x1a\x1d.terrabase.v1.TierRunResponse\x12H\n" +
 	"\x05Pause\x12\x1e.terrabase.v1.TierPauseRequest\x1a\x1f.terrabase.v1.TierPauseResponse\x12K\n" +
-	"\x06Resume\x12\x1f.terrabase.v1.TierResumeRequest\x1a .terrabase.v1.TierResumeResponseBCZAgit.terrascale.tech/TerraScale/TerraBase/go/tbep/gen/terrabase/v1b\x06proto3"
+	"\x06Resume\x12\x1f.terrabase.v1.TierResumeRequest\x1a .terrabase.v1.TierResumeResponseB.Z,terrascale.tech/terrabase-go/terrabase/v1;v1b\x06proto3"
 
 var (
 	file_terrabase_v1_engine_proto_rawDescOnce sync.Once
@@ -9745,8 +10788,8 @@ func file_terrabase_v1_engine_proto_rawDescGZIP() []byte {
 	return file_terrabase_v1_engine_proto_rawDescData
 }
 
-var file_terrabase_v1_engine_proto_enumTypes = make([]protoimpl.EnumInfo, 26)
-var file_terrabase_v1_engine_proto_msgTypes = make([]protoimpl.MessageInfo, 129)
+var file_terrabase_v1_engine_proto_enumTypes = make([]protoimpl.EnumInfo, 31)
+var file_terrabase_v1_engine_proto_msgTypes = make([]protoimpl.MessageInfo, 135)
 var file_terrabase_v1_engine_proto_goTypes = []any{
 	(NullValue)(0),                         // 0: terrabase.v1.NullValue
 	(Acknowledgement)(0),                   // 1: terrabase.v1.Acknowledgement
@@ -9773,320 +10816,346 @@ var file_terrabase_v1_engine_proto_goTypes = []any{
 	(ConflictOutcomeKind)(0),               // 22: terrabase.v1.ConflictOutcomeKind
 	(ReplicationStatus)(0),                 // 23: terrabase.v1.ReplicationStatus
 	(DenialSeam)(0),                        // 24: terrabase.v1.DenialSeam
-	(ErrorCode)(0),                         // 25: terrabase.v1.ErrorCode
-	(*ValueEntry)(nil),                     // 26: terrabase.v1.ValueEntry
-	(*ValueList)(nil),                      // 27: terrabase.v1.ValueList
-	(*Value)(nil),                          // 28: terrabase.v1.Value
-	(*ValueMap)(nil),                       // 29: terrabase.v1.ValueMap
-	(*TierMoveReason)(nil),                 // 30: terrabase.v1.TierMoveReason
-	(*TierMoveReceipt)(nil),                // 31: terrabase.v1.TierMoveReceipt
-	(*CommitReceipt)(nil),                  // 32: terrabase.v1.CommitReceipt
-	(*ExpectedVersion)(nil),                // 33: terrabase.v1.ExpectedVersion
-	(*ExpectedAbsent)(nil),                 // 34: terrabase.v1.ExpectedAbsent
-	(*ExpectedAny)(nil),                    // 35: terrabase.v1.ExpectedAny
-	(*WriteOutcome)(nil),                   // 36: terrabase.v1.WriteOutcome
-	(*WriteConflict)(nil),                  // 37: terrabase.v1.WriteConflict
-	(*WriteRejected)(nil),                  // 38: terrabase.v1.WriteRejected
-	(*ChangeEvent)(nil),                    // 39: terrabase.v1.ChangeEvent
-	(*SubscriptionStart)(nil),              // 40: terrabase.v1.SubscriptionStart
-	(*SubscriptionLive)(nil),               // 41: terrabase.v1.SubscriptionLive
-	(*MutationOutcome)(nil),                // 42: terrabase.v1.MutationOutcome
-	(*MutationRejected)(nil),               // 43: terrabase.v1.MutationRejected
-	(*SyncField)(nil),                      // 44: terrabase.v1.SyncField
-	(*SyncChange)(nil),                     // 45: terrabase.v1.SyncChange
-	(*SyncPut)(nil),                        // 46: terrabase.v1.SyncPut
-	(*SyncDelete)(nil),                     // 47: terrabase.v1.SyncDelete
-	(*DocumentBody)(nil),                   // 48: terrabase.v1.DocumentBody
-	(*DocumentPut)(nil),                    // 49: terrabase.v1.DocumentPut
-	(*BatchWrite)(nil),                     // 50: terrabase.v1.BatchWrite
-	(*DocumentReadRequest)(nil),            // 51: terrabase.v1.DocumentReadRequest
-	(*DocumentReadResponse)(nil),           // 52: terrabase.v1.DocumentReadResponse
-	(*DocumentWriteRequest)(nil),           // 53: terrabase.v1.DocumentWriteRequest
-	(*DocumentWriteResponse)(nil),          // 54: terrabase.v1.DocumentWriteResponse
-	(*DocumentDeleteRequest)(nil),          // 55: terrabase.v1.DocumentDeleteRequest
-	(*DocumentDeleteResponse)(nil),         // 56: terrabase.v1.DocumentDeleteResponse
-	(*DocumentBatchRequest)(nil),           // 57: terrabase.v1.DocumentBatchRequest
-	(*DocumentBatchResponse)(nil),          // 58: terrabase.v1.DocumentBatchResponse
-	(*QueryExecuteRequest)(nil),            // 59: terrabase.v1.QueryExecuteRequest
-	(*QueryExecuteResponse)(nil),           // 60: terrabase.v1.QueryExecuteResponse
-	(*QueryCancelRequest)(nil),             // 61: terrabase.v1.QueryCancelRequest
-	(*QueryCancelResponse)(nil),            // 62: terrabase.v1.QueryCancelResponse
-	(*FamilyReadRequest)(nil),              // 63: terrabase.v1.FamilyReadRequest
-	(*FamilyReadResponse)(nil),             // 64: terrabase.v1.FamilyReadResponse
-	(*FamilyWriteRequest)(nil),             // 65: terrabase.v1.FamilyWriteRequest
-	(*FamilyWriteResponse)(nil),            // 66: terrabase.v1.FamilyWriteResponse
-	(*BackboneSubscribeRequest)(nil),       // 67: terrabase.v1.BackboneSubscribeRequest
-	(*BackboneSubscribeResponse)(nil),      // 68: terrabase.v1.BackboneSubscribeResponse
-	(*BackboneAcknowledgeRequest)(nil),     // 69: terrabase.v1.BackboneAcknowledgeRequest
-	(*BackboneAcknowledgeResponse)(nil),    // 70: terrabase.v1.BackboneAcknowledgeResponse
-	(*BackboneUnsubscribeRequest)(nil),     // 71: terrabase.v1.BackboneUnsubscribeRequest
-	(*BackboneUnsubscribeResponse)(nil),    // 72: terrabase.v1.BackboneUnsubscribeResponse
-	(*SubscriptionBatch)(nil),              // 73: terrabase.v1.SubscriptionBatch
-	(*TriggerNotification)(nil),            // 74: terrabase.v1.TriggerNotification
-	(*SubscriptionClosed)(nil),             // 75: terrabase.v1.SubscriptionClosed
-	(*BackboneStreamEvent)(nil),            // 76: terrabase.v1.BackboneStreamEvent
-	(*SyncSessionSetupRequest)(nil),        // 77: terrabase.v1.SyncSessionSetupRequest
-	(*SyncSessionSetupResponse)(nil),       // 78: terrabase.v1.SyncSessionSetupResponse
-	(*SyncDeltaPullRequest)(nil),           // 79: terrabase.v1.SyncDeltaPullRequest
-	(*SyncDeltaPullResponse)(nil),          // 80: terrabase.v1.SyncDeltaPullResponse
-	(*SyncSnapshotPullRequest)(nil),        // 81: terrabase.v1.SyncSnapshotPullRequest
-	(*SyncSnapshotPullResponse)(nil),       // 82: terrabase.v1.SyncSnapshotPullResponse
-	(*SyncCheckpointAckRequest)(nil),       // 83: terrabase.v1.SyncCheckpointAckRequest
-	(*SyncCheckpointAckResponse)(nil),      // 84: terrabase.v1.SyncCheckpointAckResponse
-	(*SyncMutationSubmitRequest)(nil),      // 85: terrabase.v1.SyncMutationSubmitRequest
-	(*SyncMutationSubmitResponse)(nil),     // 86: terrabase.v1.SyncMutationSubmitResponse
-	(*SyncSessionCloseRequest)(nil),        // 87: terrabase.v1.SyncSessionCloseRequest
-	(*SyncSessionCloseResponse)(nil),       // 88: terrabase.v1.SyncSessionCloseResponse
-	(*SchemaViolation)(nil),                // 89: terrabase.v1.SchemaViolation
-	(*TransformLiteral)(nil),               // 90: terrabase.v1.TransformLiteral
-	(*FieldTransformStep)(nil),             // 91: terrabase.v1.FieldTransformStep
-	(*SchemaMigrationContract)(nil),        // 92: terrabase.v1.SchemaMigrationContract
-	(*PlanProblem)(nil),                    // 93: terrabase.v1.PlanProblem
-	(*TransformCounts)(nil),                // 94: terrabase.v1.TransformCounts
-	(*MigrationState)(nil),                 // 95: terrabase.v1.MigrationState
-	(*MigrationPlan)(nil),                  // 96: terrabase.v1.MigrationPlan
-	(*MigrationReceipt)(nil),               // 97: terrabase.v1.MigrationReceipt
-	(*SchemaDeclareRequest)(nil),           // 98: terrabase.v1.SchemaDeclareRequest
-	(*SchemaDeclareResponse)(nil),          // 99: terrabase.v1.SchemaDeclareResponse
-	(*SchemaStatusRequest)(nil),            // 100: terrabase.v1.SchemaStatusRequest
-	(*SchemaStatusResponse)(nil),           // 101: terrabase.v1.SchemaStatusResponse
-	(*SchemaValidateRequest)(nil),          // 102: terrabase.v1.SchemaValidateRequest
-	(*SchemaValidateResponse)(nil),         // 103: terrabase.v1.SchemaValidateResponse
-	(*MigrationStatusRequest)(nil),         // 104: terrabase.v1.MigrationStatusRequest
-	(*MigrationStatusResponse)(nil),        // 105: terrabase.v1.MigrationStatusResponse
-	(*MigrationDryRunRequest)(nil),         // 106: terrabase.v1.MigrationDryRunRequest
-	(*MigrationDryRunResponse)(nil),        // 107: terrabase.v1.MigrationDryRunResponse
-	(*MigrationApplyRequest)(nil),          // 108: terrabase.v1.MigrationApplyRequest
-	(*MigrationApplyResponse)(nil),         // 109: terrabase.v1.MigrationApplyResponse
-	(*ReplicationConflictsRequest)(nil),    // 110: terrabase.v1.ReplicationConflictsRequest
-	(*ClockStamp)(nil),                     // 111: terrabase.v1.ClockStamp
-	(*ConflictOutcome)(nil),                // 112: terrabase.v1.ConflictOutcome
-	(*ConflictRecord)(nil),                 // 113: terrabase.v1.ConflictRecord
-	(*ReplicationConflictsResponse)(nil),   // 114: terrabase.v1.ReplicationConflictsResponse
-	(*ReplicationFencedRequest)(nil),       // 115: terrabase.v1.ReplicationFencedRequest
-	(*FencedRecord)(nil),                   // 116: terrabase.v1.FencedRecord
-	(*ReplicationFencedResponse)(nil),      // 117: terrabase.v1.ReplicationFencedResponse
-	(*ReplicationDepositionsRequest)(nil),  // 118: terrabase.v1.ReplicationDepositionsRequest
-	(*DepositionRecord)(nil),               // 119: terrabase.v1.DepositionRecord
-	(*ReplicationDepositionsResponse)(nil), // 120: terrabase.v1.ReplicationDepositionsResponse
-	(*ReplicationCursorRequest)(nil),       // 121: terrabase.v1.ReplicationCursorRequest
-	(*ReplicationCursorResponse)(nil),      // 122: terrabase.v1.ReplicationCursorResponse
-	(*ReplicationHealthRequest)(nil),       // 123: terrabase.v1.ReplicationHealthRequest
-	(*ReplicationHealthResponse)(nil),      // 124: terrabase.v1.ReplicationHealthResponse
-	(*ReplicationDenialsRequest)(nil),      // 125: terrabase.v1.ReplicationDenialsRequest
-	(*DenialRecord)(nil),                   // 126: terrabase.v1.DenialRecord
-	(*ReplicationDenialsResponse)(nil),     // 127: terrabase.v1.ReplicationDenialsResponse
-	(*ChannelBindRequest)(nil),             // 128: terrabase.v1.ChannelBindRequest
-	(*ChannelBindResponse)(nil),            // 129: terrabase.v1.ChannelBindResponse
-	(*TopologyReadRequest)(nil),            // 130: terrabase.v1.TopologyReadRequest
-	(*TopologyReadResponse)(nil),           // 131: terrabase.v1.TopologyReadResponse
-	(*AdminStatusRequest)(nil),             // 132: terrabase.v1.AdminStatusRequest
-	(*AdminStatusResponse)(nil),            // 133: terrabase.v1.AdminStatusResponse
-	(*SupervisionHealthRequest)(nil),       // 134: terrabase.v1.SupervisionHealthRequest
-	(*SupervisionHealthResponse)(nil),      // 135: terrabase.v1.SupervisionHealthResponse
-	(*SupervisionShutdownRequest)(nil),     // 136: terrabase.v1.SupervisionShutdownRequest
-	(*SupervisionShutdownResponse)(nil),    // 137: terrabase.v1.SupervisionShutdownResponse
-	(*TierConfigureRequest)(nil),           // 138: terrabase.v1.TierConfigureRequest
-	(*TierConfigureResponse)(nil),          // 139: terrabase.v1.TierConfigureResponse
-	(*TierInspectRequest)(nil),             // 140: terrabase.v1.TierInspectRequest
-	(*TierInspectResponse)(nil),            // 141: terrabase.v1.TierInspectResponse
-	(*TierDryRunRequest)(nil),              // 142: terrabase.v1.TierDryRunRequest
-	(*TierDryRunResponse)(nil),             // 143: terrabase.v1.TierDryRunResponse
-	(*TierExplainRequest)(nil),             // 144: terrabase.v1.TierExplainRequest
-	(*TierExplainResponse)(nil),            // 145: terrabase.v1.TierExplainResponse
-	(*TierRunRequest)(nil),                 // 146: terrabase.v1.TierRunRequest
-	(*TierRunResponse)(nil),                // 147: terrabase.v1.TierRunResponse
-	(*TierPauseRequest)(nil),               // 148: terrabase.v1.TierPauseRequest
-	(*TierPauseResponse)(nil),              // 149: terrabase.v1.TierPauseResponse
-	(*TierResumeRequest)(nil),              // 150: terrabase.v1.TierResumeRequest
-	(*TierResumeResponse)(nil),             // 151: terrabase.v1.TierResumeResponse
-	(*TbepError)(nil),                      // 152: terrabase.v1.TbepError
-	(*Any)(nil),                            // 153: terrabase.v1.Any
-	(*RpcStatus)(nil),                      // 154: terrabase.v1.RpcStatus
+	(UsageMeter)(0),                        // 25: terrabase.v1.UsageMeter
+	(UsageUnit)(0),                         // 26: terrabase.v1.UsageUnit
+	(UsageChargeScope)(0),                  // 27: terrabase.v1.UsageChargeScope
+	(UsageMintingRule)(0),                  // 28: terrabase.v1.UsageMintingRule
+	(UsageRecordMeter)(0),                  // 29: terrabase.v1.UsageRecordMeter
+	(ErrorCode)(0),                         // 30: terrabase.v1.ErrorCode
+	(*ValueEntry)(nil),                     // 31: terrabase.v1.ValueEntry
+	(*ValueList)(nil),                      // 32: terrabase.v1.ValueList
+	(*Value)(nil),                          // 33: terrabase.v1.Value
+	(*ValueMap)(nil),                       // 34: terrabase.v1.ValueMap
+	(*TierMoveReason)(nil),                 // 35: terrabase.v1.TierMoveReason
+	(*TierMoveReceipt)(nil),                // 36: terrabase.v1.TierMoveReceipt
+	(*CommitReceipt)(nil),                  // 37: terrabase.v1.CommitReceipt
+	(*ExpectedVersion)(nil),                // 38: terrabase.v1.ExpectedVersion
+	(*ExpectedAbsent)(nil),                 // 39: terrabase.v1.ExpectedAbsent
+	(*ExpectedAny)(nil),                    // 40: terrabase.v1.ExpectedAny
+	(*WriteOutcome)(nil),                   // 41: terrabase.v1.WriteOutcome
+	(*WriteConflict)(nil),                  // 42: terrabase.v1.WriteConflict
+	(*WriteRejected)(nil),                  // 43: terrabase.v1.WriteRejected
+	(*ChangeEvent)(nil),                    // 44: terrabase.v1.ChangeEvent
+	(*SubscriptionStart)(nil),              // 45: terrabase.v1.SubscriptionStart
+	(*SubscriptionLive)(nil),               // 46: terrabase.v1.SubscriptionLive
+	(*MutationOutcome)(nil),                // 47: terrabase.v1.MutationOutcome
+	(*MutationRejected)(nil),               // 48: terrabase.v1.MutationRejected
+	(*SyncField)(nil),                      // 49: terrabase.v1.SyncField
+	(*SyncChange)(nil),                     // 50: terrabase.v1.SyncChange
+	(*SyncPut)(nil),                        // 51: terrabase.v1.SyncPut
+	(*SyncDelete)(nil),                     // 52: terrabase.v1.SyncDelete
+	(*DocumentBody)(nil),                   // 53: terrabase.v1.DocumentBody
+	(*DocumentPut)(nil),                    // 54: terrabase.v1.DocumentPut
+	(*BatchWrite)(nil),                     // 55: terrabase.v1.BatchWrite
+	(*DocumentReadRequest)(nil),            // 56: terrabase.v1.DocumentReadRequest
+	(*DocumentReadResponse)(nil),           // 57: terrabase.v1.DocumentReadResponse
+	(*DocumentWriteRequest)(nil),           // 58: terrabase.v1.DocumentWriteRequest
+	(*DocumentWriteResponse)(nil),          // 59: terrabase.v1.DocumentWriteResponse
+	(*DocumentDeleteRequest)(nil),          // 60: terrabase.v1.DocumentDeleteRequest
+	(*DocumentDeleteResponse)(nil),         // 61: terrabase.v1.DocumentDeleteResponse
+	(*DocumentBatchRequest)(nil),           // 62: terrabase.v1.DocumentBatchRequest
+	(*DocumentBatchResponse)(nil),          // 63: terrabase.v1.DocumentBatchResponse
+	(*QueryExecuteRequest)(nil),            // 64: terrabase.v1.QueryExecuteRequest
+	(*QueryExecuteResponse)(nil),           // 65: terrabase.v1.QueryExecuteResponse
+	(*QueryCancelRequest)(nil),             // 66: terrabase.v1.QueryCancelRequest
+	(*QueryCancelResponse)(nil),            // 67: terrabase.v1.QueryCancelResponse
+	(*FamilyReadRequest)(nil),              // 68: terrabase.v1.FamilyReadRequest
+	(*FamilyReadResponse)(nil),             // 69: terrabase.v1.FamilyReadResponse
+	(*FamilyWriteRequest)(nil),             // 70: terrabase.v1.FamilyWriteRequest
+	(*FamilyWriteResponse)(nil),            // 71: terrabase.v1.FamilyWriteResponse
+	(*BackboneSubscribeRequest)(nil),       // 72: terrabase.v1.BackboneSubscribeRequest
+	(*BackboneSubscribeResponse)(nil),      // 73: terrabase.v1.BackboneSubscribeResponse
+	(*BackboneAcknowledgeRequest)(nil),     // 74: terrabase.v1.BackboneAcknowledgeRequest
+	(*BackboneAcknowledgeResponse)(nil),    // 75: terrabase.v1.BackboneAcknowledgeResponse
+	(*BackboneUnsubscribeRequest)(nil),     // 76: terrabase.v1.BackboneUnsubscribeRequest
+	(*BackboneUnsubscribeResponse)(nil),    // 77: terrabase.v1.BackboneUnsubscribeResponse
+	(*SubscriptionBatch)(nil),              // 78: terrabase.v1.SubscriptionBatch
+	(*TriggerNotification)(nil),            // 79: terrabase.v1.TriggerNotification
+	(*SubscriptionClosed)(nil),             // 80: terrabase.v1.SubscriptionClosed
+	(*BackboneStreamEvent)(nil),            // 81: terrabase.v1.BackboneStreamEvent
+	(*SyncSessionSetupRequest)(nil),        // 82: terrabase.v1.SyncSessionSetupRequest
+	(*SyncSessionSetupResponse)(nil),       // 83: terrabase.v1.SyncSessionSetupResponse
+	(*SyncDeltaPullRequest)(nil),           // 84: terrabase.v1.SyncDeltaPullRequest
+	(*SyncDeltaPullResponse)(nil),          // 85: terrabase.v1.SyncDeltaPullResponse
+	(*SyncSnapshotPullRequest)(nil),        // 86: terrabase.v1.SyncSnapshotPullRequest
+	(*SyncSnapshotPullResponse)(nil),       // 87: terrabase.v1.SyncSnapshotPullResponse
+	(*SyncCheckpointAckRequest)(nil),       // 88: terrabase.v1.SyncCheckpointAckRequest
+	(*SyncCheckpointAckResponse)(nil),      // 89: terrabase.v1.SyncCheckpointAckResponse
+	(*SyncMutationSubmitRequest)(nil),      // 90: terrabase.v1.SyncMutationSubmitRequest
+	(*SyncMutationSubmitResponse)(nil),     // 91: terrabase.v1.SyncMutationSubmitResponse
+	(*SyncSessionCloseRequest)(nil),        // 92: terrabase.v1.SyncSessionCloseRequest
+	(*SyncSessionCloseResponse)(nil),       // 93: terrabase.v1.SyncSessionCloseResponse
+	(*SchemaViolation)(nil),                // 94: terrabase.v1.SchemaViolation
+	(*TransformLiteral)(nil),               // 95: terrabase.v1.TransformLiteral
+	(*FieldTransformStep)(nil),             // 96: terrabase.v1.FieldTransformStep
+	(*SchemaMigrationContract)(nil),        // 97: terrabase.v1.SchemaMigrationContract
+	(*PlanProblem)(nil),                    // 98: terrabase.v1.PlanProblem
+	(*TransformCounts)(nil),                // 99: terrabase.v1.TransformCounts
+	(*MigrationState)(nil),                 // 100: terrabase.v1.MigrationState
+	(*MigrationPlan)(nil),                  // 101: terrabase.v1.MigrationPlan
+	(*MigrationReceipt)(nil),               // 102: terrabase.v1.MigrationReceipt
+	(*SchemaDeclareRequest)(nil),           // 103: terrabase.v1.SchemaDeclareRequest
+	(*SchemaDeclareResponse)(nil),          // 104: terrabase.v1.SchemaDeclareResponse
+	(*SchemaStatusRequest)(nil),            // 105: terrabase.v1.SchemaStatusRequest
+	(*SchemaStatusResponse)(nil),           // 106: terrabase.v1.SchemaStatusResponse
+	(*SchemaValidateRequest)(nil),          // 107: terrabase.v1.SchemaValidateRequest
+	(*SchemaValidateResponse)(nil),         // 108: terrabase.v1.SchemaValidateResponse
+	(*MigrationStatusRequest)(nil),         // 109: terrabase.v1.MigrationStatusRequest
+	(*MigrationStatusResponse)(nil),        // 110: terrabase.v1.MigrationStatusResponse
+	(*MigrationDryRunRequest)(nil),         // 111: terrabase.v1.MigrationDryRunRequest
+	(*MigrationDryRunResponse)(nil),        // 112: terrabase.v1.MigrationDryRunResponse
+	(*MigrationApplyRequest)(nil),          // 113: terrabase.v1.MigrationApplyRequest
+	(*MigrationApplyResponse)(nil),         // 114: terrabase.v1.MigrationApplyResponse
+	(*ReplicationConflictsRequest)(nil),    // 115: terrabase.v1.ReplicationConflictsRequest
+	(*ClockStamp)(nil),                     // 116: terrabase.v1.ClockStamp
+	(*ConflictOutcome)(nil),                // 117: terrabase.v1.ConflictOutcome
+	(*ConflictRecord)(nil),                 // 118: terrabase.v1.ConflictRecord
+	(*ReplicationConflictsResponse)(nil),   // 119: terrabase.v1.ReplicationConflictsResponse
+	(*ReplicationFencedRequest)(nil),       // 120: terrabase.v1.ReplicationFencedRequest
+	(*FencedRecord)(nil),                   // 121: terrabase.v1.FencedRecord
+	(*ReplicationFencedResponse)(nil),      // 122: terrabase.v1.ReplicationFencedResponse
+	(*ReplicationDepositionsRequest)(nil),  // 123: terrabase.v1.ReplicationDepositionsRequest
+	(*DepositionRecord)(nil),               // 124: terrabase.v1.DepositionRecord
+	(*ReplicationDepositionsResponse)(nil), // 125: terrabase.v1.ReplicationDepositionsResponse
+	(*ReplicationCursorRequest)(nil),       // 126: terrabase.v1.ReplicationCursorRequest
+	(*ReplicationCursorResponse)(nil),      // 127: terrabase.v1.ReplicationCursorResponse
+	(*ReplicationHealthRequest)(nil),       // 128: terrabase.v1.ReplicationHealthRequest
+	(*ReplicationHealthResponse)(nil),      // 129: terrabase.v1.ReplicationHealthResponse
+	(*ReplicationDenialsRequest)(nil),      // 130: terrabase.v1.ReplicationDenialsRequest
+	(*DenialRecord)(nil),                   // 131: terrabase.v1.DenialRecord
+	(*ReplicationDenialsResponse)(nil),     // 132: terrabase.v1.ReplicationDenialsResponse
+	(*ChannelBindRequest)(nil),             // 133: terrabase.v1.ChannelBindRequest
+	(*ChannelBindResponse)(nil),            // 134: terrabase.v1.ChannelBindResponse
+	(*TopologyReadRequest)(nil),            // 135: terrabase.v1.TopologyReadRequest
+	(*TopologyReadResponse)(nil),           // 136: terrabase.v1.TopologyReadResponse
+	(*AdminStatusRequest)(nil),             // 137: terrabase.v1.AdminStatusRequest
+	(*AdminStatusResponse)(nil),            // 138: terrabase.v1.AdminStatusResponse
+	(*SupervisionHealthRequest)(nil),       // 139: terrabase.v1.SupervisionHealthRequest
+	(*SupervisionHealthResponse)(nil),      // 140: terrabase.v1.SupervisionHealthResponse
+	(*SupervisionShutdownRequest)(nil),     // 141: terrabase.v1.SupervisionShutdownRequest
+	(*SupervisionShutdownResponse)(nil),    // 142: terrabase.v1.SupervisionShutdownResponse
+	(*UsageAdmissionContext)(nil),          // 143: terrabase.v1.UsageAdmissionContext
+	(*UsageRecordRequest)(nil),             // 144: terrabase.v1.UsageRecordRequest
+	(*UsageRecordResponse)(nil),            // 145: terrabase.v1.UsageRecordResponse
+	(*UsageFact)(nil),                      // 146: terrabase.v1.UsageFact
+	(*UsageExportRequest)(nil),             // 147: terrabase.v1.UsageExportRequest
+	(*UsageExportResponse)(nil),            // 148: terrabase.v1.UsageExportResponse
+	(*TierConfigureRequest)(nil),           // 149: terrabase.v1.TierConfigureRequest
+	(*TierConfigureResponse)(nil),          // 150: terrabase.v1.TierConfigureResponse
+	(*TierInspectRequest)(nil),             // 151: terrabase.v1.TierInspectRequest
+	(*TierInspectResponse)(nil),            // 152: terrabase.v1.TierInspectResponse
+	(*TierDryRunRequest)(nil),              // 153: terrabase.v1.TierDryRunRequest
+	(*TierDryRunResponse)(nil),             // 154: terrabase.v1.TierDryRunResponse
+	(*TierExplainRequest)(nil),             // 155: terrabase.v1.TierExplainRequest
+	(*TierExplainResponse)(nil),            // 156: terrabase.v1.TierExplainResponse
+	(*TierRunRequest)(nil),                 // 157: terrabase.v1.TierRunRequest
+	(*TierRunResponse)(nil),                // 158: terrabase.v1.TierRunResponse
+	(*TierPauseRequest)(nil),               // 159: terrabase.v1.TierPauseRequest
+	(*TierPauseResponse)(nil),              // 160: terrabase.v1.TierPauseResponse
+	(*TierResumeRequest)(nil),              // 161: terrabase.v1.TierResumeRequest
+	(*TierResumeResponse)(nil),             // 162: terrabase.v1.TierResumeResponse
+	(*TbepError)(nil),                      // 163: terrabase.v1.TbepError
+	(*Any)(nil),                            // 164: terrabase.v1.Any
+	(*RpcStatus)(nil),                      // 165: terrabase.v1.RpcStatus
 }
 var file_terrabase_v1_engine_proto_depIdxs = []int32{
-	28,  // 0: terrabase.v1.ValueEntry.value:type_name -> terrabase.v1.Value
-	28,  // 1: terrabase.v1.ValueList.items:type_name -> terrabase.v1.Value
+	33,  // 0: terrabase.v1.ValueEntry.value:type_name -> terrabase.v1.Value
+	33,  // 1: terrabase.v1.ValueList.items:type_name -> terrabase.v1.Value
 	0,   // 2: terrabase.v1.Value.null:type_name -> terrabase.v1.NullValue
-	27,  // 3: terrabase.v1.Value.list:type_name -> terrabase.v1.ValueList
-	29,  // 4: terrabase.v1.Value.map:type_name -> terrabase.v1.ValueMap
-	26,  // 5: terrabase.v1.ValueMap.entries:type_name -> terrabase.v1.ValueEntry
+	32,  // 3: terrabase.v1.Value.list:type_name -> terrabase.v1.ValueList
+	34,  // 4: terrabase.v1.Value.map:type_name -> terrabase.v1.ValueMap
+	31,  // 5: terrabase.v1.ValueMap.entries:type_name -> terrabase.v1.ValueEntry
 	5,   // 6: terrabase.v1.TierMoveReceipt.decision:type_name -> terrabase.v1.TierDecision
-	30,  // 7: terrabase.v1.TierMoveReceipt.reasons:type_name -> terrabase.v1.TierMoveReason
+	35,  // 7: terrabase.v1.TierMoveReceipt.reasons:type_name -> terrabase.v1.TierMoveReason
 	1,   // 8: terrabase.v1.CommitReceipt.acknowledgement:type_name -> terrabase.v1.Acknowledgement
 	2,   // 9: terrabase.v1.CommitReceipt.backup:type_name -> terrabase.v1.BackupOutcome
-	34,  // 10: terrabase.v1.ExpectedVersion.absent:type_name -> terrabase.v1.ExpectedAbsent
-	35,  // 11: terrabase.v1.ExpectedVersion.any:type_name -> terrabase.v1.ExpectedAny
-	32,  // 12: terrabase.v1.WriteOutcome.committed:type_name -> terrabase.v1.CommitReceipt
-	37,  // 13: terrabase.v1.WriteOutcome.conflict:type_name -> terrabase.v1.WriteConflict
-	38,  // 14: terrabase.v1.WriteOutcome.rejected:type_name -> terrabase.v1.WriteRejected
+	39,  // 10: terrabase.v1.ExpectedVersion.absent:type_name -> terrabase.v1.ExpectedAbsent
+	40,  // 11: terrabase.v1.ExpectedVersion.any:type_name -> terrabase.v1.ExpectedAny
+	37,  // 12: terrabase.v1.WriteOutcome.committed:type_name -> terrabase.v1.CommitReceipt
+	42,  // 13: terrabase.v1.WriteOutcome.conflict:type_name -> terrabase.v1.WriteConflict
+	43,  // 14: terrabase.v1.WriteOutcome.rejected:type_name -> terrabase.v1.WriteRejected
 	6,   // 15: terrabase.v1.WriteRejected.reason:type_name -> terrabase.v1.WriteReason
 	9,   // 16: terrabase.v1.ChangeEvent.kind:type_name -> terrabase.v1.ChangeKind
-	41,  // 17: terrabase.v1.SubscriptionStart.live:type_name -> terrabase.v1.SubscriptionLive
-	32,  // 18: terrabase.v1.MutationOutcome.applied:type_name -> terrabase.v1.CommitReceipt
-	43,  // 19: terrabase.v1.MutationOutcome.rejected:type_name -> terrabase.v1.MutationRejected
+	46,  // 17: terrabase.v1.SubscriptionStart.live:type_name -> terrabase.v1.SubscriptionLive
+	37,  // 18: terrabase.v1.MutationOutcome.applied:type_name -> terrabase.v1.CommitReceipt
+	48,  // 19: terrabase.v1.MutationOutcome.rejected:type_name -> terrabase.v1.MutationRejected
 	10,  // 20: terrabase.v1.MutationRejected.reason:type_name -> terrabase.v1.MutationReason
-	28,  // 21: terrabase.v1.SyncField.value:type_name -> terrabase.v1.Value
-	46,  // 22: terrabase.v1.SyncChange.put:type_name -> terrabase.v1.SyncPut
-	47,  // 23: terrabase.v1.SyncChange.delete:type_name -> terrabase.v1.SyncDelete
-	44,  // 24: terrabase.v1.SyncPut.fields:type_name -> terrabase.v1.SyncField
-	28,  // 25: terrabase.v1.DocumentBody.body:type_name -> terrabase.v1.Value
-	28,  // 26: terrabase.v1.DocumentPut.body:type_name -> terrabase.v1.Value
-	49,  // 27: terrabase.v1.BatchWrite.document:type_name -> terrabase.v1.DocumentPut
-	33,  // 28: terrabase.v1.BatchWrite.expected:type_name -> terrabase.v1.ExpectedVersion
+	33,  // 21: terrabase.v1.SyncField.value:type_name -> terrabase.v1.Value
+	51,  // 22: terrabase.v1.SyncChange.put:type_name -> terrabase.v1.SyncPut
+	52,  // 23: terrabase.v1.SyncChange.delete:type_name -> terrabase.v1.SyncDelete
+	49,  // 24: terrabase.v1.SyncPut.fields:type_name -> terrabase.v1.SyncField
+	33,  // 25: terrabase.v1.DocumentBody.body:type_name -> terrabase.v1.Value
+	33,  // 26: terrabase.v1.DocumentPut.body:type_name -> terrabase.v1.Value
+	54,  // 27: terrabase.v1.BatchWrite.document:type_name -> terrabase.v1.DocumentPut
+	38,  // 28: terrabase.v1.BatchWrite.expected:type_name -> terrabase.v1.ExpectedVersion
 	3,   // 29: terrabase.v1.DocumentReadRequest.level:type_name -> terrabase.v1.ReadLevel
-	48,  // 30: terrabase.v1.DocumentReadResponse.document:type_name -> terrabase.v1.DocumentBody
-	49,  // 31: terrabase.v1.DocumentWriteRequest.document:type_name -> terrabase.v1.DocumentPut
-	33,  // 32: terrabase.v1.DocumentWriteRequest.expected:type_name -> terrabase.v1.ExpectedVersion
+	53,  // 30: terrabase.v1.DocumentReadResponse.document:type_name -> terrabase.v1.DocumentBody
+	54,  // 31: terrabase.v1.DocumentWriteRequest.document:type_name -> terrabase.v1.DocumentPut
+	38,  // 32: terrabase.v1.DocumentWriteRequest.expected:type_name -> terrabase.v1.ExpectedVersion
 	1,   // 33: terrabase.v1.DocumentWriteRequest.ack:type_name -> terrabase.v1.Acknowledgement
-	36,  // 34: terrabase.v1.DocumentWriteResponse.outcome:type_name -> terrabase.v1.WriteOutcome
-	33,  // 35: terrabase.v1.DocumentDeleteRequest.expected:type_name -> terrabase.v1.ExpectedVersion
-	1,   // 36: terrabase.v1.DocumentDeleteRequest.ack:type_name -> terrabase.v1.Acknowledgement
-	36,  // 37: terrabase.v1.DocumentDeleteResponse.outcome:type_name -> terrabase.v1.WriteOutcome
-	50,  // 38: terrabase.v1.DocumentBatchRequest.items:type_name -> terrabase.v1.BatchWrite
-	1,   // 39: terrabase.v1.DocumentBatchRequest.ack:type_name -> terrabase.v1.Acknowledgement
-	36,  // 40: terrabase.v1.DocumentBatchResponse.outcome:type_name -> terrabase.v1.WriteOutcome
-	3,   // 41: terrabase.v1.QueryExecuteRequest.level:type_name -> terrabase.v1.ReadLevel
-	48,  // 42: terrabase.v1.QueryExecuteResponse.documents:type_name -> terrabase.v1.DocumentBody
-	7,   // 43: terrabase.v1.QueryExecuteResponse.terminal:type_name -> terrabase.v1.QueryTerminal
-	8,   // 44: terrabase.v1.QueryCancelResponse.outcome:type_name -> terrabase.v1.CancelOutcome
-	40,  // 45: terrabase.v1.BackboneSubscribeRequest.from:type_name -> terrabase.v1.SubscriptionStart
-	39,  // 46: terrabase.v1.SubscriptionBatch.events:type_name -> terrabase.v1.ChangeEvent
-	13,  // 47: terrabase.v1.SubscriptionClosed.reason:type_name -> terrabase.v1.SubscriptionCloseReason
-	68,  // 48: terrabase.v1.BackboneStreamEvent.subscribed:type_name -> terrabase.v1.BackboneSubscribeResponse
-	73,  // 49: terrabase.v1.BackboneStreamEvent.batch:type_name -> terrabase.v1.SubscriptionBatch
-	74,  // 50: terrabase.v1.BackboneStreamEvent.trigger:type_name -> terrabase.v1.TriggerNotification
-	75,  // 51: terrabase.v1.BackboneStreamEvent.closed:type_name -> terrabase.v1.SubscriptionClosed
-	45,  // 52: terrabase.v1.SyncMutationSubmitRequest.change:type_name -> terrabase.v1.SyncChange
-	42,  // 53: terrabase.v1.SyncMutationSubmitResponse.outcome:type_name -> terrabase.v1.MutationOutcome
-	15,  // 54: terrabase.v1.SchemaViolation.kind:type_name -> terrabase.v1.ViolationKind
-	18,  // 55: terrabase.v1.FieldTransformStep.kind:type_name -> terrabase.v1.FieldTransform
-	90,  // 56: terrabase.v1.FieldTransformStep.default:type_name -> terrabase.v1.TransformLiteral
-	16,  // 57: terrabase.v1.FieldTransformStep.coercion:type_name -> terrabase.v1.Coercion
-	28,  // 58: terrabase.v1.SchemaMigrationContract.target:type_name -> terrabase.v1.Value
-	91,  // 59: terrabase.v1.SchemaMigrationContract.transforms:type_name -> terrabase.v1.FieldTransformStep
-	19,  // 60: terrabase.v1.PlanProblem.kind:type_name -> terrabase.v1.PlanProblemKind
-	17,  // 61: terrabase.v1.PlanProblem.rejection:type_name -> terrabase.v1.TransformRejection
-	89,  // 62: terrabase.v1.PlanProblem.violations:type_name -> terrabase.v1.SchemaViolation
-	20,  // 63: terrabase.v1.MigrationState.kind:type_name -> terrabase.v1.MigrationStateKind
-	94,  // 64: terrabase.v1.MigrationPlan.transform_counts:type_name -> terrabase.v1.TransformCounts
-	93,  // 65: terrabase.v1.MigrationPlan.problems:type_name -> terrabase.v1.PlanProblem
-	94,  // 66: terrabase.v1.MigrationReceipt.transform_counts:type_name -> terrabase.v1.TransformCounts
-	21,  // 67: terrabase.v1.MigrationReceipt.rollback_limit:type_name -> terrabase.v1.RollbackLimitKind
-	28,  // 68: terrabase.v1.SchemaDeclareRequest.schema:type_name -> terrabase.v1.Value
-	28,  // 69: terrabase.v1.SchemaValidateRequest.document:type_name -> terrabase.v1.Value
-	89,  // 70: terrabase.v1.SchemaValidateResponse.violations:type_name -> terrabase.v1.SchemaViolation
-	95,  // 71: terrabase.v1.MigrationStatusResponse.state:type_name -> terrabase.v1.MigrationState
-	92,  // 72: terrabase.v1.MigrationDryRunRequest.contract:type_name -> terrabase.v1.SchemaMigrationContract
-	96,  // 73: terrabase.v1.MigrationDryRunResponse.plan:type_name -> terrabase.v1.MigrationPlan
-	92,  // 74: terrabase.v1.MigrationApplyRequest.contract:type_name -> terrabase.v1.SchemaMigrationContract
-	97,  // 75: terrabase.v1.MigrationApplyResponse.receipt:type_name -> terrabase.v1.MigrationReceipt
-	22,  // 76: terrabase.v1.ConflictOutcome.kind:type_name -> terrabase.v1.ConflictOutcomeKind
-	111, // 77: terrabase.v1.ConflictRecord.clocks:type_name -> terrabase.v1.ClockStamp
-	112, // 78: terrabase.v1.ConflictRecord.outcome:type_name -> terrabase.v1.ConflictOutcome
-	113, // 79: terrabase.v1.ReplicationConflictsResponse.records:type_name -> terrabase.v1.ConflictRecord
-	116, // 80: terrabase.v1.ReplicationFencedResponse.records:type_name -> terrabase.v1.FencedRecord
-	119, // 81: terrabase.v1.ReplicationDepositionsResponse.records:type_name -> terrabase.v1.DepositionRecord
-	23,  // 82: terrabase.v1.ReplicationHealthResponse.status:type_name -> terrabase.v1.ReplicationStatus
-	24,  // 83: terrabase.v1.DenialRecord.seam:type_name -> terrabase.v1.DenialSeam
-	126, // 84: terrabase.v1.ReplicationDenialsResponse.records:type_name -> terrabase.v1.DenialRecord
-	14,  // 85: terrabase.v1.TopologyReadResponse.binding:type_name -> terrabase.v1.BindingKind
-	4,   // 86: terrabase.v1.TopologyReadResponse.cluster_mode:type_name -> terrabase.v1.ClusterMode
-	11,  // 87: terrabase.v1.SupervisionHealthResponse.state:type_name -> terrabase.v1.HealthState
-	12,  // 88: terrabase.v1.SupervisionShutdownRequest.reason:type_name -> terrabase.v1.ShutdownReason
-	11,  // 89: terrabase.v1.SupervisionShutdownResponse.state:type_name -> terrabase.v1.HealthState
-	31,  // 90: terrabase.v1.TierDryRunResponse.receipt:type_name -> terrabase.v1.TierMoveReceipt
-	31,  // 91: terrabase.v1.TierExplainResponse.receipt:type_name -> terrabase.v1.TierMoveReceipt
-	31,  // 92: terrabase.v1.TierRunResponse.receipt:type_name -> terrabase.v1.TierMoveReceipt
-	25,  // 93: terrabase.v1.TbepError.code:type_name -> terrabase.v1.ErrorCode
-	153, // 94: terrabase.v1.RpcStatus.details:type_name -> terrabase.v1.Any
-	128, // 95: terrabase.v1.Channel.Bind:input_type -> terrabase.v1.ChannelBindRequest
-	51,  // 96: terrabase.v1.Engine.DocumentRead:input_type -> terrabase.v1.DocumentReadRequest
-	53,  // 97: terrabase.v1.Engine.DocumentWrite:input_type -> terrabase.v1.DocumentWriteRequest
-	55,  // 98: terrabase.v1.Engine.DocumentDelete:input_type -> terrabase.v1.DocumentDeleteRequest
-	57,  // 99: terrabase.v1.Engine.DocumentBatch:input_type -> terrabase.v1.DocumentBatchRequest
-	59,  // 100: terrabase.v1.Engine.QueryExecute:input_type -> terrabase.v1.QueryExecuteRequest
-	61,  // 101: terrabase.v1.Engine.QueryCancel:input_type -> terrabase.v1.QueryCancelRequest
-	63,  // 102: terrabase.v1.Engine.FamilyRead:input_type -> terrabase.v1.FamilyReadRequest
-	65,  // 103: terrabase.v1.Engine.FamilyWrite:input_type -> terrabase.v1.FamilyWriteRequest
-	67,  // 104: terrabase.v1.Backbone.Subscribe:input_type -> terrabase.v1.BackboneSubscribeRequest
-	69,  // 105: terrabase.v1.Backbone.Acknowledge:input_type -> terrabase.v1.BackboneAcknowledgeRequest
-	71,  // 106: terrabase.v1.Backbone.Unsubscribe:input_type -> terrabase.v1.BackboneUnsubscribeRequest
-	77,  // 107: terrabase.v1.Sync.SessionSetup:input_type -> terrabase.v1.SyncSessionSetupRequest
-	79,  // 108: terrabase.v1.Sync.DeltaPull:input_type -> terrabase.v1.SyncDeltaPullRequest
-	81,  // 109: terrabase.v1.Sync.SnapshotPull:input_type -> terrabase.v1.SyncSnapshotPullRequest
-	83,  // 110: terrabase.v1.Sync.CheckpointAck:input_type -> terrabase.v1.SyncCheckpointAckRequest
-	85,  // 111: terrabase.v1.Sync.MutationSubmit:input_type -> terrabase.v1.SyncMutationSubmitRequest
-	87,  // 112: terrabase.v1.Sync.SessionClose:input_type -> terrabase.v1.SyncSessionCloseRequest
-	98,  // 113: terrabase.v1.Schema.Declare:input_type -> terrabase.v1.SchemaDeclareRequest
-	100, // 114: terrabase.v1.Schema.Status:input_type -> terrabase.v1.SchemaStatusRequest
-	102, // 115: terrabase.v1.Schema.Validate:input_type -> terrabase.v1.SchemaValidateRequest
-	104, // 116: terrabase.v1.Schema.MigrationStatus:input_type -> terrabase.v1.MigrationStatusRequest
-	106, // 117: terrabase.v1.Schema.MigrationDryRun:input_type -> terrabase.v1.MigrationDryRunRequest
-	108, // 118: terrabase.v1.Schema.MigrationApply:input_type -> terrabase.v1.MigrationApplyRequest
-	110, // 119: terrabase.v1.Replication.Conflicts:input_type -> terrabase.v1.ReplicationConflictsRequest
-	115, // 120: terrabase.v1.Replication.Fenced:input_type -> terrabase.v1.ReplicationFencedRequest
-	118, // 121: terrabase.v1.Replication.Depositions:input_type -> terrabase.v1.ReplicationDepositionsRequest
-	121, // 122: terrabase.v1.Replication.Cursor:input_type -> terrabase.v1.ReplicationCursorRequest
-	123, // 123: terrabase.v1.Replication.Health:input_type -> terrabase.v1.ReplicationHealthRequest
-	125, // 124: terrabase.v1.Replication.Denials:input_type -> terrabase.v1.ReplicationDenialsRequest
-	130, // 125: terrabase.v1.Maintenance.TopologyRead:input_type -> terrabase.v1.TopologyReadRequest
-	132, // 126: terrabase.v1.Maintenance.AdminStatus:input_type -> terrabase.v1.AdminStatusRequest
-	134, // 127: terrabase.v1.Maintenance.SupervisionHealth:input_type -> terrabase.v1.SupervisionHealthRequest
-	136, // 128: terrabase.v1.Maintenance.SupervisionShutdown:input_type -> terrabase.v1.SupervisionShutdownRequest
-	138, // 129: terrabase.v1.Tier.Configure:input_type -> terrabase.v1.TierConfigureRequest
-	140, // 130: terrabase.v1.Tier.Inspect:input_type -> terrabase.v1.TierInspectRequest
-	142, // 131: terrabase.v1.Tier.DryRun:input_type -> terrabase.v1.TierDryRunRequest
-	144, // 132: terrabase.v1.Tier.Explain:input_type -> terrabase.v1.TierExplainRequest
-	146, // 133: terrabase.v1.Tier.Run:input_type -> terrabase.v1.TierRunRequest
-	148, // 134: terrabase.v1.Tier.Pause:input_type -> terrabase.v1.TierPauseRequest
-	150, // 135: terrabase.v1.Tier.Resume:input_type -> terrabase.v1.TierResumeRequest
-	129, // 136: terrabase.v1.Channel.Bind:output_type -> terrabase.v1.ChannelBindResponse
-	52,  // 137: terrabase.v1.Engine.DocumentRead:output_type -> terrabase.v1.DocumentReadResponse
-	54,  // 138: terrabase.v1.Engine.DocumentWrite:output_type -> terrabase.v1.DocumentWriteResponse
-	56,  // 139: terrabase.v1.Engine.DocumentDelete:output_type -> terrabase.v1.DocumentDeleteResponse
-	58,  // 140: terrabase.v1.Engine.DocumentBatch:output_type -> terrabase.v1.DocumentBatchResponse
-	60,  // 141: terrabase.v1.Engine.QueryExecute:output_type -> terrabase.v1.QueryExecuteResponse
-	62,  // 142: terrabase.v1.Engine.QueryCancel:output_type -> terrabase.v1.QueryCancelResponse
-	64,  // 143: terrabase.v1.Engine.FamilyRead:output_type -> terrabase.v1.FamilyReadResponse
-	66,  // 144: terrabase.v1.Engine.FamilyWrite:output_type -> terrabase.v1.FamilyWriteResponse
-	76,  // 145: terrabase.v1.Backbone.Subscribe:output_type -> terrabase.v1.BackboneStreamEvent
-	70,  // 146: terrabase.v1.Backbone.Acknowledge:output_type -> terrabase.v1.BackboneAcknowledgeResponse
-	72,  // 147: terrabase.v1.Backbone.Unsubscribe:output_type -> terrabase.v1.BackboneUnsubscribeResponse
-	78,  // 148: terrabase.v1.Sync.SessionSetup:output_type -> terrabase.v1.SyncSessionSetupResponse
-	80,  // 149: terrabase.v1.Sync.DeltaPull:output_type -> terrabase.v1.SyncDeltaPullResponse
-	82,  // 150: terrabase.v1.Sync.SnapshotPull:output_type -> terrabase.v1.SyncSnapshotPullResponse
-	84,  // 151: terrabase.v1.Sync.CheckpointAck:output_type -> terrabase.v1.SyncCheckpointAckResponse
-	86,  // 152: terrabase.v1.Sync.MutationSubmit:output_type -> terrabase.v1.SyncMutationSubmitResponse
-	88,  // 153: terrabase.v1.Sync.SessionClose:output_type -> terrabase.v1.SyncSessionCloseResponse
-	99,  // 154: terrabase.v1.Schema.Declare:output_type -> terrabase.v1.SchemaDeclareResponse
-	101, // 155: terrabase.v1.Schema.Status:output_type -> terrabase.v1.SchemaStatusResponse
-	103, // 156: terrabase.v1.Schema.Validate:output_type -> terrabase.v1.SchemaValidateResponse
-	105, // 157: terrabase.v1.Schema.MigrationStatus:output_type -> terrabase.v1.MigrationStatusResponse
-	107, // 158: terrabase.v1.Schema.MigrationDryRun:output_type -> terrabase.v1.MigrationDryRunResponse
-	109, // 159: terrabase.v1.Schema.MigrationApply:output_type -> terrabase.v1.MigrationApplyResponse
-	114, // 160: terrabase.v1.Replication.Conflicts:output_type -> terrabase.v1.ReplicationConflictsResponse
-	117, // 161: terrabase.v1.Replication.Fenced:output_type -> terrabase.v1.ReplicationFencedResponse
-	120, // 162: terrabase.v1.Replication.Depositions:output_type -> terrabase.v1.ReplicationDepositionsResponse
-	122, // 163: terrabase.v1.Replication.Cursor:output_type -> terrabase.v1.ReplicationCursorResponse
-	124, // 164: terrabase.v1.Replication.Health:output_type -> terrabase.v1.ReplicationHealthResponse
-	127, // 165: terrabase.v1.Replication.Denials:output_type -> terrabase.v1.ReplicationDenialsResponse
-	131, // 166: terrabase.v1.Maintenance.TopologyRead:output_type -> terrabase.v1.TopologyReadResponse
-	133, // 167: terrabase.v1.Maintenance.AdminStatus:output_type -> terrabase.v1.AdminStatusResponse
-	135, // 168: terrabase.v1.Maintenance.SupervisionHealth:output_type -> terrabase.v1.SupervisionHealthResponse
-	137, // 169: terrabase.v1.Maintenance.SupervisionShutdown:output_type -> terrabase.v1.SupervisionShutdownResponse
-	139, // 170: terrabase.v1.Tier.Configure:output_type -> terrabase.v1.TierConfigureResponse
-	141, // 171: terrabase.v1.Tier.Inspect:output_type -> terrabase.v1.TierInspectResponse
-	143, // 172: terrabase.v1.Tier.DryRun:output_type -> terrabase.v1.TierDryRunResponse
-	145, // 173: terrabase.v1.Tier.Explain:output_type -> terrabase.v1.TierExplainResponse
-	147, // 174: terrabase.v1.Tier.Run:output_type -> terrabase.v1.TierRunResponse
-	149, // 175: terrabase.v1.Tier.Pause:output_type -> terrabase.v1.TierPauseResponse
-	151, // 176: terrabase.v1.Tier.Resume:output_type -> terrabase.v1.TierResumeResponse
-	136, // [136:177] is the sub-list for method output_type
-	95,  // [95:136] is the sub-list for method input_type
-	95,  // [95:95] is the sub-list for extension type_name
-	95,  // [95:95] is the sub-list for extension extendee
-	0,   // [0:95] is the sub-list for field type_name
+	143, // 34: terrabase.v1.DocumentWriteRequest.usage:type_name -> terrabase.v1.UsageAdmissionContext
+	41,  // 35: terrabase.v1.DocumentWriteResponse.outcome:type_name -> terrabase.v1.WriteOutcome
+	38,  // 36: terrabase.v1.DocumentDeleteRequest.expected:type_name -> terrabase.v1.ExpectedVersion
+	1,   // 37: terrabase.v1.DocumentDeleteRequest.ack:type_name -> terrabase.v1.Acknowledgement
+	143, // 38: terrabase.v1.DocumentDeleteRequest.usage:type_name -> terrabase.v1.UsageAdmissionContext
+	41,  // 39: terrabase.v1.DocumentDeleteResponse.outcome:type_name -> terrabase.v1.WriteOutcome
+	55,  // 40: terrabase.v1.DocumentBatchRequest.items:type_name -> terrabase.v1.BatchWrite
+	1,   // 41: terrabase.v1.DocumentBatchRequest.ack:type_name -> terrabase.v1.Acknowledgement
+	143, // 42: terrabase.v1.DocumentBatchRequest.usage:type_name -> terrabase.v1.UsageAdmissionContext
+	41,  // 43: terrabase.v1.DocumentBatchResponse.outcome:type_name -> terrabase.v1.WriteOutcome
+	3,   // 44: terrabase.v1.QueryExecuteRequest.level:type_name -> terrabase.v1.ReadLevel
+	53,  // 45: terrabase.v1.QueryExecuteResponse.documents:type_name -> terrabase.v1.DocumentBody
+	7,   // 46: terrabase.v1.QueryExecuteResponse.terminal:type_name -> terrabase.v1.QueryTerminal
+	8,   // 47: terrabase.v1.QueryCancelResponse.outcome:type_name -> terrabase.v1.CancelOutcome
+	143, // 48: terrabase.v1.FamilyWriteRequest.usage:type_name -> terrabase.v1.UsageAdmissionContext
+	45,  // 49: terrabase.v1.BackboneSubscribeRequest.from:type_name -> terrabase.v1.SubscriptionStart
+	44,  // 50: terrabase.v1.SubscriptionBatch.events:type_name -> terrabase.v1.ChangeEvent
+	13,  // 51: terrabase.v1.SubscriptionClosed.reason:type_name -> terrabase.v1.SubscriptionCloseReason
+	73,  // 52: terrabase.v1.BackboneStreamEvent.subscribed:type_name -> terrabase.v1.BackboneSubscribeResponse
+	78,  // 53: terrabase.v1.BackboneStreamEvent.batch:type_name -> terrabase.v1.SubscriptionBatch
+	79,  // 54: terrabase.v1.BackboneStreamEvent.trigger:type_name -> terrabase.v1.TriggerNotification
+	80,  // 55: terrabase.v1.BackboneStreamEvent.closed:type_name -> terrabase.v1.SubscriptionClosed
+	50,  // 56: terrabase.v1.SyncMutationSubmitRequest.change:type_name -> terrabase.v1.SyncChange
+	143, // 57: terrabase.v1.SyncMutationSubmitRequest.usage:type_name -> terrabase.v1.UsageAdmissionContext
+	47,  // 58: terrabase.v1.SyncMutationSubmitResponse.outcome:type_name -> terrabase.v1.MutationOutcome
+	15,  // 59: terrabase.v1.SchemaViolation.kind:type_name -> terrabase.v1.ViolationKind
+	18,  // 60: terrabase.v1.FieldTransformStep.kind:type_name -> terrabase.v1.FieldTransform
+	95,  // 61: terrabase.v1.FieldTransformStep.default:type_name -> terrabase.v1.TransformLiteral
+	16,  // 62: terrabase.v1.FieldTransformStep.coercion:type_name -> terrabase.v1.Coercion
+	33,  // 63: terrabase.v1.SchemaMigrationContract.target:type_name -> terrabase.v1.Value
+	96,  // 64: terrabase.v1.SchemaMigrationContract.transforms:type_name -> terrabase.v1.FieldTransformStep
+	19,  // 65: terrabase.v1.PlanProblem.kind:type_name -> terrabase.v1.PlanProblemKind
+	17,  // 66: terrabase.v1.PlanProblem.rejection:type_name -> terrabase.v1.TransformRejection
+	94,  // 67: terrabase.v1.PlanProblem.violations:type_name -> terrabase.v1.SchemaViolation
+	20,  // 68: terrabase.v1.MigrationState.kind:type_name -> terrabase.v1.MigrationStateKind
+	99,  // 69: terrabase.v1.MigrationPlan.transform_counts:type_name -> terrabase.v1.TransformCounts
+	98,  // 70: terrabase.v1.MigrationPlan.problems:type_name -> terrabase.v1.PlanProblem
+	99,  // 71: terrabase.v1.MigrationReceipt.transform_counts:type_name -> terrabase.v1.TransformCounts
+	21,  // 72: terrabase.v1.MigrationReceipt.rollback_limit:type_name -> terrabase.v1.RollbackLimitKind
+	33,  // 73: terrabase.v1.SchemaDeclareRequest.schema:type_name -> terrabase.v1.Value
+	33,  // 74: terrabase.v1.SchemaValidateRequest.document:type_name -> terrabase.v1.Value
+	94,  // 75: terrabase.v1.SchemaValidateResponse.violations:type_name -> terrabase.v1.SchemaViolation
+	100, // 76: terrabase.v1.MigrationStatusResponse.state:type_name -> terrabase.v1.MigrationState
+	97,  // 77: terrabase.v1.MigrationDryRunRequest.contract:type_name -> terrabase.v1.SchemaMigrationContract
+	101, // 78: terrabase.v1.MigrationDryRunResponse.plan:type_name -> terrabase.v1.MigrationPlan
+	97,  // 79: terrabase.v1.MigrationApplyRequest.contract:type_name -> terrabase.v1.SchemaMigrationContract
+	102, // 80: terrabase.v1.MigrationApplyResponse.receipt:type_name -> terrabase.v1.MigrationReceipt
+	22,  // 81: terrabase.v1.ConflictOutcome.kind:type_name -> terrabase.v1.ConflictOutcomeKind
+	116, // 82: terrabase.v1.ConflictRecord.clocks:type_name -> terrabase.v1.ClockStamp
+	117, // 83: terrabase.v1.ConflictRecord.outcome:type_name -> terrabase.v1.ConflictOutcome
+	118, // 84: terrabase.v1.ReplicationConflictsResponse.records:type_name -> terrabase.v1.ConflictRecord
+	121, // 85: terrabase.v1.ReplicationFencedResponse.records:type_name -> terrabase.v1.FencedRecord
+	124, // 86: terrabase.v1.ReplicationDepositionsResponse.records:type_name -> terrabase.v1.DepositionRecord
+	23,  // 87: terrabase.v1.ReplicationHealthResponse.status:type_name -> terrabase.v1.ReplicationStatus
+	24,  // 88: terrabase.v1.DenialRecord.seam:type_name -> terrabase.v1.DenialSeam
+	131, // 89: terrabase.v1.ReplicationDenialsResponse.records:type_name -> terrabase.v1.DenialRecord
+	14,  // 90: terrabase.v1.TopologyReadResponse.binding:type_name -> terrabase.v1.BindingKind
+	4,   // 91: terrabase.v1.TopologyReadResponse.cluster_mode:type_name -> terrabase.v1.ClusterMode
+	11,  // 92: terrabase.v1.SupervisionHealthResponse.state:type_name -> terrabase.v1.HealthState
+	12,  // 93: terrabase.v1.SupervisionShutdownRequest.reason:type_name -> terrabase.v1.ShutdownReason
+	11,  // 94: terrabase.v1.SupervisionShutdownResponse.state:type_name -> terrabase.v1.HealthState
+	29,  // 95: terrabase.v1.UsageRecordRequest.meter:type_name -> terrabase.v1.UsageRecordMeter
+	25,  // 96: terrabase.v1.UsageFact.meter:type_name -> terrabase.v1.UsageMeter
+	26,  // 97: terrabase.v1.UsageFact.unit:type_name -> terrabase.v1.UsageUnit
+	27,  // 98: terrabase.v1.UsageFact.charge_scope:type_name -> terrabase.v1.UsageChargeScope
+	28,  // 99: terrabase.v1.UsageFact.minting_rule:type_name -> terrabase.v1.UsageMintingRule
+	146, // 100: terrabase.v1.UsageExportResponse.facts:type_name -> terrabase.v1.UsageFact
+	36,  // 101: terrabase.v1.TierDryRunResponse.receipt:type_name -> terrabase.v1.TierMoveReceipt
+	36,  // 102: terrabase.v1.TierExplainResponse.receipt:type_name -> terrabase.v1.TierMoveReceipt
+	36,  // 103: terrabase.v1.TierRunResponse.receipt:type_name -> terrabase.v1.TierMoveReceipt
+	30,  // 104: terrabase.v1.TbepError.code:type_name -> terrabase.v1.ErrorCode
+	164, // 105: terrabase.v1.RpcStatus.details:type_name -> terrabase.v1.Any
+	133, // 106: terrabase.v1.Channel.Bind:input_type -> terrabase.v1.ChannelBindRequest
+	56,  // 107: terrabase.v1.Engine.DocumentRead:input_type -> terrabase.v1.DocumentReadRequest
+	58,  // 108: terrabase.v1.Engine.DocumentWrite:input_type -> terrabase.v1.DocumentWriteRequest
+	60,  // 109: terrabase.v1.Engine.DocumentDelete:input_type -> terrabase.v1.DocumentDeleteRequest
+	62,  // 110: terrabase.v1.Engine.DocumentBatch:input_type -> terrabase.v1.DocumentBatchRequest
+	64,  // 111: terrabase.v1.Engine.QueryExecute:input_type -> terrabase.v1.QueryExecuteRequest
+	66,  // 112: terrabase.v1.Engine.QueryCancel:input_type -> terrabase.v1.QueryCancelRequest
+	68,  // 113: terrabase.v1.Engine.FamilyRead:input_type -> terrabase.v1.FamilyReadRequest
+	70,  // 114: terrabase.v1.Engine.FamilyWrite:input_type -> terrabase.v1.FamilyWriteRequest
+	72,  // 115: terrabase.v1.Backbone.Subscribe:input_type -> terrabase.v1.BackboneSubscribeRequest
+	74,  // 116: terrabase.v1.Backbone.Acknowledge:input_type -> terrabase.v1.BackboneAcknowledgeRequest
+	76,  // 117: terrabase.v1.Backbone.Unsubscribe:input_type -> terrabase.v1.BackboneUnsubscribeRequest
+	82,  // 118: terrabase.v1.Sync.SessionSetup:input_type -> terrabase.v1.SyncSessionSetupRequest
+	84,  // 119: terrabase.v1.Sync.DeltaPull:input_type -> terrabase.v1.SyncDeltaPullRequest
+	86,  // 120: terrabase.v1.Sync.SnapshotPull:input_type -> terrabase.v1.SyncSnapshotPullRequest
+	88,  // 121: terrabase.v1.Sync.CheckpointAck:input_type -> terrabase.v1.SyncCheckpointAckRequest
+	90,  // 122: terrabase.v1.Sync.MutationSubmit:input_type -> terrabase.v1.SyncMutationSubmitRequest
+	92,  // 123: terrabase.v1.Sync.SessionClose:input_type -> terrabase.v1.SyncSessionCloseRequest
+	103, // 124: terrabase.v1.Schema.Declare:input_type -> terrabase.v1.SchemaDeclareRequest
+	105, // 125: terrabase.v1.Schema.Status:input_type -> terrabase.v1.SchemaStatusRequest
+	107, // 126: terrabase.v1.Schema.Validate:input_type -> terrabase.v1.SchemaValidateRequest
+	109, // 127: terrabase.v1.Schema.MigrationStatus:input_type -> terrabase.v1.MigrationStatusRequest
+	111, // 128: terrabase.v1.Schema.MigrationDryRun:input_type -> terrabase.v1.MigrationDryRunRequest
+	113, // 129: terrabase.v1.Schema.MigrationApply:input_type -> terrabase.v1.MigrationApplyRequest
+	115, // 130: terrabase.v1.Replication.Conflicts:input_type -> terrabase.v1.ReplicationConflictsRequest
+	120, // 131: terrabase.v1.Replication.Fenced:input_type -> terrabase.v1.ReplicationFencedRequest
+	123, // 132: terrabase.v1.Replication.Depositions:input_type -> terrabase.v1.ReplicationDepositionsRequest
+	126, // 133: terrabase.v1.Replication.Cursor:input_type -> terrabase.v1.ReplicationCursorRequest
+	128, // 134: terrabase.v1.Replication.Health:input_type -> terrabase.v1.ReplicationHealthRequest
+	130, // 135: terrabase.v1.Replication.Denials:input_type -> terrabase.v1.ReplicationDenialsRequest
+	135, // 136: terrabase.v1.Maintenance.TopologyRead:input_type -> terrabase.v1.TopologyReadRequest
+	137, // 137: terrabase.v1.Maintenance.AdminStatus:input_type -> terrabase.v1.AdminStatusRequest
+	139, // 138: terrabase.v1.Maintenance.SupervisionHealth:input_type -> terrabase.v1.SupervisionHealthRequest
+	141, // 139: terrabase.v1.Maintenance.SupervisionShutdown:input_type -> terrabase.v1.SupervisionShutdownRequest
+	144, // 140: terrabase.v1.Usage.Record:input_type -> terrabase.v1.UsageRecordRequest
+	147, // 141: terrabase.v1.Usage.Export:input_type -> terrabase.v1.UsageExportRequest
+	149, // 142: terrabase.v1.Tier.Configure:input_type -> terrabase.v1.TierConfigureRequest
+	151, // 143: terrabase.v1.Tier.Inspect:input_type -> terrabase.v1.TierInspectRequest
+	153, // 144: terrabase.v1.Tier.DryRun:input_type -> terrabase.v1.TierDryRunRequest
+	155, // 145: terrabase.v1.Tier.Explain:input_type -> terrabase.v1.TierExplainRequest
+	157, // 146: terrabase.v1.Tier.Run:input_type -> terrabase.v1.TierRunRequest
+	159, // 147: terrabase.v1.Tier.Pause:input_type -> terrabase.v1.TierPauseRequest
+	161, // 148: terrabase.v1.Tier.Resume:input_type -> terrabase.v1.TierResumeRequest
+	134, // 149: terrabase.v1.Channel.Bind:output_type -> terrabase.v1.ChannelBindResponse
+	57,  // 150: terrabase.v1.Engine.DocumentRead:output_type -> terrabase.v1.DocumentReadResponse
+	59,  // 151: terrabase.v1.Engine.DocumentWrite:output_type -> terrabase.v1.DocumentWriteResponse
+	61,  // 152: terrabase.v1.Engine.DocumentDelete:output_type -> terrabase.v1.DocumentDeleteResponse
+	63,  // 153: terrabase.v1.Engine.DocumentBatch:output_type -> terrabase.v1.DocumentBatchResponse
+	65,  // 154: terrabase.v1.Engine.QueryExecute:output_type -> terrabase.v1.QueryExecuteResponse
+	67,  // 155: terrabase.v1.Engine.QueryCancel:output_type -> terrabase.v1.QueryCancelResponse
+	69,  // 156: terrabase.v1.Engine.FamilyRead:output_type -> terrabase.v1.FamilyReadResponse
+	71,  // 157: terrabase.v1.Engine.FamilyWrite:output_type -> terrabase.v1.FamilyWriteResponse
+	81,  // 158: terrabase.v1.Backbone.Subscribe:output_type -> terrabase.v1.BackboneStreamEvent
+	75,  // 159: terrabase.v1.Backbone.Acknowledge:output_type -> terrabase.v1.BackboneAcknowledgeResponse
+	77,  // 160: terrabase.v1.Backbone.Unsubscribe:output_type -> terrabase.v1.BackboneUnsubscribeResponse
+	83,  // 161: terrabase.v1.Sync.SessionSetup:output_type -> terrabase.v1.SyncSessionSetupResponse
+	85,  // 162: terrabase.v1.Sync.DeltaPull:output_type -> terrabase.v1.SyncDeltaPullResponse
+	87,  // 163: terrabase.v1.Sync.SnapshotPull:output_type -> terrabase.v1.SyncSnapshotPullResponse
+	89,  // 164: terrabase.v1.Sync.CheckpointAck:output_type -> terrabase.v1.SyncCheckpointAckResponse
+	91,  // 165: terrabase.v1.Sync.MutationSubmit:output_type -> terrabase.v1.SyncMutationSubmitResponse
+	93,  // 166: terrabase.v1.Sync.SessionClose:output_type -> terrabase.v1.SyncSessionCloseResponse
+	104, // 167: terrabase.v1.Schema.Declare:output_type -> terrabase.v1.SchemaDeclareResponse
+	106, // 168: terrabase.v1.Schema.Status:output_type -> terrabase.v1.SchemaStatusResponse
+	108, // 169: terrabase.v1.Schema.Validate:output_type -> terrabase.v1.SchemaValidateResponse
+	110, // 170: terrabase.v1.Schema.MigrationStatus:output_type -> terrabase.v1.MigrationStatusResponse
+	112, // 171: terrabase.v1.Schema.MigrationDryRun:output_type -> terrabase.v1.MigrationDryRunResponse
+	114, // 172: terrabase.v1.Schema.MigrationApply:output_type -> terrabase.v1.MigrationApplyResponse
+	119, // 173: terrabase.v1.Replication.Conflicts:output_type -> terrabase.v1.ReplicationConflictsResponse
+	122, // 174: terrabase.v1.Replication.Fenced:output_type -> terrabase.v1.ReplicationFencedResponse
+	125, // 175: terrabase.v1.Replication.Depositions:output_type -> terrabase.v1.ReplicationDepositionsResponse
+	127, // 176: terrabase.v1.Replication.Cursor:output_type -> terrabase.v1.ReplicationCursorResponse
+	129, // 177: terrabase.v1.Replication.Health:output_type -> terrabase.v1.ReplicationHealthResponse
+	132, // 178: terrabase.v1.Replication.Denials:output_type -> terrabase.v1.ReplicationDenialsResponse
+	136, // 179: terrabase.v1.Maintenance.TopologyRead:output_type -> terrabase.v1.TopologyReadResponse
+	138, // 180: terrabase.v1.Maintenance.AdminStatus:output_type -> terrabase.v1.AdminStatusResponse
+	140, // 181: terrabase.v1.Maintenance.SupervisionHealth:output_type -> terrabase.v1.SupervisionHealthResponse
+	142, // 182: terrabase.v1.Maintenance.SupervisionShutdown:output_type -> terrabase.v1.SupervisionShutdownResponse
+	145, // 183: terrabase.v1.Usage.Record:output_type -> terrabase.v1.UsageRecordResponse
+	148, // 184: terrabase.v1.Usage.Export:output_type -> terrabase.v1.UsageExportResponse
+	150, // 185: terrabase.v1.Tier.Configure:output_type -> terrabase.v1.TierConfigureResponse
+	152, // 186: terrabase.v1.Tier.Inspect:output_type -> terrabase.v1.TierInspectResponse
+	154, // 187: terrabase.v1.Tier.DryRun:output_type -> terrabase.v1.TierDryRunResponse
+	156, // 188: terrabase.v1.Tier.Explain:output_type -> terrabase.v1.TierExplainResponse
+	158, // 189: terrabase.v1.Tier.Run:output_type -> terrabase.v1.TierRunResponse
+	160, // 190: terrabase.v1.Tier.Pause:output_type -> terrabase.v1.TierPauseResponse
+	162, // 191: terrabase.v1.Tier.Resume:output_type -> terrabase.v1.TierResumeResponse
+	149, // [149:192] is the sub-list for method output_type
+	106, // [106:149] is the sub-list for method input_type
+	106, // [106:106] is the sub-list for extension type_name
+	106, // [106:106] is the sub-list for extension extendee
+	0,   // [0:106] is the sub-list for field type_name
 }
 
 func init() { file_terrabase_v1_engine_proto_init() }
@@ -10136,15 +11205,16 @@ func file_terrabase_v1_engine_proto_init() {
 		(*TransformLiteral_Integer)(nil),
 		(*TransformLiteral_Text)(nil),
 	}
+	file_terrabase_v1_engine_proto_msgTypes[116].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_terrabase_v1_engine_proto_rawDesc), len(file_terrabase_v1_engine_proto_rawDesc)),
-			NumEnums:      26,
-			NumMessages:   129,
+			NumEnums:      31,
+			NumMessages:   135,
 			NumExtensions: 0,
-			NumServices:   8,
+			NumServices:   9,
 		},
 		GoTypes:           file_terrabase_v1_engine_proto_goTypes,
 		DependencyIndexes: file_terrabase_v1_engine_proto_depIdxs,

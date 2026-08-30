@@ -1182,6 +1182,41 @@ impl super::StoragePort for FileStorage {
         self.table_at(sequence).tenant_documents(tenant)
     }
 
+    fn documents_in_collection_at(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        collection: &CollectionName,
+    ) -> Vec<Document> {
+        // The root table is an in-memory decoded map, so the collection bound
+        // saves only the clones of other collections' documents — the decode
+        // saving belongs to the LSM backend, whose records live encoded.
+        self.table_at(sequence)
+            .tenant_documents(tenant)
+            .into_iter()
+            .filter(|document| document.collection() == collection)
+            .collect()
+    }
+
+    fn read_documents_in_collection_at(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        ids: &[DocumentId],
+    ) -> Vec<Document> {
+        let table = self.table_at(sequence);
+        let mut documents: Vec<Document> = ids
+            .iter()
+            .filter_map(|id| table.document(&StorageKey::new(tenant, collection, id)))
+            .collect();
+        // Canonical key order of one collection is identifier order; the
+        // caller's identifier list arrives in posting-list order, so the
+        // surviving documents are ordered here once, by their own keys.
+        documents.sort_by(|left, right| left.id().cmp(right.id()));
+        documents
+    }
+
     fn documents_at_from(
         &self,
         sequence: StorageSequence,

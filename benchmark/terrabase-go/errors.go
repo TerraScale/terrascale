@@ -1,8 +1,10 @@
 package terrabase
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -41,6 +43,8 @@ const (
 	CodeBackupClusterImmutable
 	CodeColdTierUnavailable
 	CodeFrontierUnreachable
+	CodeUsageUnavailable
+	CodeUsageCorrupt
 )
 
 // String names the code as the engine vocabulary spells it.
@@ -90,6 +94,10 @@ func (c Code) String() string {
 		return "cold_tier_unavailable"
 	case CodeFrontierUnreachable:
 		return "frontier_unreachable"
+	case CodeUsageUnavailable:
+		return "usage_unavailable"
+	case CodeUsageCorrupt:
+		return "usage_corrupt"
 	default:
 		return fmt.Sprintf("unknown(%d)", uint8(c))
 	}
@@ -121,11 +129,17 @@ var (
 	ErrBackupClusterImmutable  = &Error{Code: CodeBackupClusterImmutable}
 	ErrColdTierUnavailable     = &Error{Code: CodeColdTierUnavailable}
 	ErrFrontierUnreachable     = &Error{Code: CodeFrontierUnreachable}
+	ErrUsageUnavailable        = &Error{Code: CodeUsageUnavailable}
+	ErrUsageCorrupt            = &Error{Code: CodeUsageCorrupt}
 )
 
-// tbepErrorTypeURL is the detail type URL the engine packs into gRPC
-// trailing status details.
-const tbepErrorTypeURL = "type.googleapis.com/terrabase.v1.TbepError"
+// tbepErrorTypeSuffix is the detail type URL the engine packs into
+// gRPC trailing status details; matching on the suffix tolerates any
+// type-URL prefix a future server might use.
+const (
+	tbepErrorTypeSuffix = "/terrabase.v1.TbepError"
+	maxErrorDetailBytes = 512
+)
 
 // Error is one refused RPC: the closed engine code and its bounded
 // detail. Every sentinel above is a *Error carrying only its code, so
@@ -170,10 +184,16 @@ func localError(format string, arguments ...any) *Error {
 	return &Error{Code: CodeInvalidRequest, Detail: fmt.Sprintf(format, arguments...)}
 }
 
+// contractError reports a response that violated the selected TBEP contract.
+// It is local detection of an engine-side failure, not invalid caller input.
+func contractError(format string, arguments ...any) *Error {
+	return &Error{Code: CodeEngineFailure, Detail: fmt.Sprintf(format, arguments...)}
+}
+
 // interpret maps one gRPC failure into the typed error model. A status
 // whose details carry a TbepError becomes *Error; a transport-level
-// failure (unavailable, deadline, cancellation) is returned untouched
-// so standard errors.Is and context checks keep working.
+// failure remains a gRPC status. Cancellation and deadline failures also
+// unwrap to their context sentinel so errors.Is checks work.
 func interpret(err error) error {
 	if err == nil {
 		return nil
@@ -184,14 +204,37 @@ func interpret(err error) error {
 	}
 	tbep := engineDetail(failure)
 	if tbep == nil {
+		switch failure.Code() {
+		case codes.Canceled:
+			return &contextStatusError{cause: context.Canceled, status: failure}
+		case codes.DeadlineExceeded:
+			return &contextStatusError{cause: context.DeadlineExceeded, status: failure}
+		}
 		return err
+	}
+	detail := tbep.GetDetail()
+	if len(detail) > maxErrorDetailBytes || !utf8.ValidString(detail) {
+		return &Error{
+			Code:     CodeEngineFailure,
+			Detail:   "the engine returned an invalid error detail",
+			grpcCode: failure.Code(),
+		}
 	}
 	return &Error{
 		Code:     codeFromProto(int32(tbep.GetCode())),
-		Detail:   tbep.GetDetail(),
+		Detail:   detail,
 		grpcCode: failure.Code(),
 	}
 }
+
+type contextStatusError struct {
+	cause  error
+	status *status.Status
+}
+
+func (e *contextStatusError) Error() string              { return e.status.Err().Error() }
+func (e *contextStatusError) Unwrap() error              { return e.cause }
+func (e *contextStatusError) GRPCStatus() *status.Status { return e.status }
 
 // engineDetail extracts the TbepError detail of one status, tolerating
 // both a registry-resolved detail and a raw Any.
@@ -201,7 +244,7 @@ func engineDetail(failure *status.Status) *v1.TbepError {
 		case *v1.TbepError:
 			return typed
 		case *anypb.Any:
-			if !strings.HasSuffix(typed.GetTypeUrl(), "/terrabase.v1.TbepError") {
+			if !strings.HasSuffix(typed.GetTypeUrl(), tbepErrorTypeSuffix) {
 				continue
 			}
 			decoded := new(v1.TbepError)
@@ -259,6 +302,10 @@ func codeFromProto(code int32) Code {
 		return CodeColdTierUnavailable
 	case v1.ErrorCode_ERROR_CODE_FRONTIER_UNREACHABLE:
 		return CodeFrontierUnreachable
+	case v1.ErrorCode_ERROR_CODE_USAGE_UNAVAILABLE:
+		return CodeUsageUnavailable
+	case v1.ErrorCode_ERROR_CODE_USAGE_CORRUPT:
+		return CodeUsageCorrupt
 	default:
 		return CodeUnspecified
 	}

@@ -167,6 +167,10 @@ pub enum HostingError {
     /// A cluster mode change attempt met the immutable identity
     /// (error code `backup_cluster_immutable`, P5).
     ClusterImmutable(String),
+    /// Authoritative usage is unavailable on this host or backend.
+    UsageUnavailable(String),
+    /// Persisted usage failed canonical or checksum verification.
+    UsageCorrupt(String),
 }
 
 impl HostingError {
@@ -182,6 +186,8 @@ impl HostingError {
             Self::EngineFailure(_) => ErrorCode::EngineFailure,
             Self::ClusterReadOnly(_) => ErrorCode::BackupClusterReadOnly,
             Self::ClusterImmutable(_) => ErrorCode::BackupClusterImmutable,
+            Self::UsageUnavailable(_) => ErrorCode::UsageUnavailable,
+            Self::UsageCorrupt(_) => ErrorCode::UsageCorrupt,
         }
     }
 
@@ -194,6 +200,8 @@ impl HostingError {
             | Self::SessionRefused(detail)
             | Self::ClusterReadOnly(detail)
             | Self::ClusterImmutable(detail)
+            | Self::UsageUnavailable(detail)
+            | Self::UsageCorrupt(detail)
             | Self::SubscriptionRefused(detail)
             | Self::CheckpointRefused(detail)
             | Self::EngineFailure(detail) => detail.clone(),
@@ -525,6 +533,41 @@ pub trait TbepHost: Send + Sync {
     ///
     /// Returns the host's typed refusal.
     fn topology_read(&self, tenant: &str) -> Result<TopologyReadResponse, HostingError>;
+
+    /// Records one trusted, tenant-bound usage fact idempotently.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::UsageUnavailable`] until the host owns an
+    /// authoritative durable usage port.
+    fn usage_record(
+        &self,
+        tenant: &str,
+        request: &crate::registry::UsageRecordRequest,
+        idempotency_key: &str,
+    ) -> Result<crate::registry::UsageRecordResponse, HostingError> {
+        let _ = (tenant, request, idempotency_key);
+        Err(HostingError::UsageUnavailable(
+            "authoritative usage recording is unavailable on this host".into(),
+        ))
+    }
+
+    /// Exports one stable page of authoritative, tenant-bound usage facts.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::UsageUnavailable`] until the host owns an
+    /// authoritative durable usage port.
+    fn usage_export(
+        &self,
+        tenant: &str,
+        request: &crate::registry::UsageExportRequest,
+    ) -> Result<crate::registry::UsageExportResponse, HostingError> {
+        let _ = (tenant, request);
+        Err(HostingError::UsageUnavailable(
+            "authoritative usage export is unavailable on this host".into(),
+        ))
+    }
 
     /// Serves one replication conflict observation.
     ///
@@ -1811,6 +1854,7 @@ mod tests {
                         name: "f".into(),
                         value: TbepValue::Integer(1),
                     }]),
+                    usage: None,
                 },
                 key,
             )
@@ -1961,6 +2005,7 @@ mod tests {
                 session_id: session,
                 document: "d-01".into(),
                 change: SyncChange::Put(fields),
+                usage: None,
             },
             key,
         )

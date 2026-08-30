@@ -400,10 +400,10 @@ fn check_document_source(
 
 /// Reports whether one exact document identity exists in the snapshot view.
 ///
-/// The probe pages the W4-CA-7 windowed read in canonical key order and
-/// stops at the collection or identifier boundary, so it never materializes
-/// the tenant; its cost is the number of documents ordered before the target
-/// inside the tenant, a tracer-scale limit recorded in the design record.
+/// Exact selectors use the keyed snapshot seam so validation remains bounded
+/// even when many documents precede the target in canonical key order. The
+/// lookup is collection-scoped and snapshot-bound, so it cannot accidentally
+/// accept an identifier from another collection or a later snapshot.
 fn document_exists(
     engine: &Engine,
     scope: &TenantScope,
@@ -411,33 +411,10 @@ fn document_exists(
     collection: &CollectionName,
     id: &DocumentId,
 ) -> Result<bool, StreamError> {
-    let mut after: Option<DocumentId> = None;
-    let window = u32::try_from(MAX_WINDOW_READS_PER_BATCH).unwrap_or(u32::MAX);
-    for _ in 0..MAX_WINDOW_READS_PER_BATCH {
-        let page = engine
-            .snapshot_documents_from(scope, snapshot, after, window)
-            .map_err(|error| map_engine_error(&error))?;
-        let Some(last) = page.last() else {
-            return Ok(false);
-        };
-        for document in &page {
-            let key_collection = document.collection().as_str();
-            let key_id = document.id().as_str();
-            if key_collection == collection.as_str() && key_id == id.as_str() {
-                return Ok(true);
-            }
-            if key_collection == collection.as_str() && key_id > id.as_str() {
-                return Ok(false);
-            }
-            if key_collection > collection.as_str() {
-                return Ok(false);
-            }
-        }
-        after = Some(last.id().clone());
-    }
-    // The probe spent its window bound without reaching the boundary: the
-    // identifier is beyond this probe's reach in canonical order.
-    Ok(false)
+    let documents = engine
+        .snapshot_documents_by_ids(scope, snapshot, collection, std::slice::from_ref(id))
+        .map_err(|error| map_engine_error(&error))?;
+    Ok(!documents.is_empty())
 }
 
 /// Validates one query plan as a stream source.
@@ -535,6 +512,32 @@ fn document_batch(
     check_signal(&selector.deadline(), &selector.cancellation())?;
     if exhausted {
         return Ok(terminal_batch(binding, CursorPosition::Documents { after, exhausted: true }));
+    }
+    // An exact selector has at most one result. Serve it through the keyed
+    // snapshot seam instead of scanning the tenant prefix to find it; this
+    // keeps both source validation and delivery bounded for deep keys.
+    if let Some(id) = selector.id() {
+        let documents = engine
+            .snapshot_documents_by_ids(
+                scope,
+                snapshot,
+                selector.collection(),
+                std::slice::from_ref(id),
+            )
+            .map_err(|error| map_engine_error(&error))?;
+        let items = documents
+            .into_iter()
+            .filter(|document| selector_matches(selector, document))
+            .map(StreamItem::Document)
+            .collect();
+        return Ok(super::StreamBatch {
+            items,
+            next_cursor: binding
+                .cursor(CursorPosition::Documents { after: Some(id.clone()), exhausted: true }),
+            completion: Some(StreamCompletion::EndOfStream),
+            index_generation: None,
+            includes: crate::query::IncludeSet::default(),
+        });
     }
     let limit_index = usize::try_from(limit).unwrap_or(usize::MAX);
     let mut items: Vec<StreamItem> = Vec::new();

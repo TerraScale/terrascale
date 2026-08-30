@@ -3,6 +3,8 @@
 //!
 //! This module owns the automatic lifecycle of optimizer-created indexes
 //! against the engine-owned [`IndexCatalog`](crate::index::IndexCatalog):
+//! the coverage catch-up (a namespace whose published segment trails the
+//! latest publication is rebuilt to it, one rebuild per namespace per pass),
 //! the query-path supersede (a partial match widens the mapping into the
 //! covering identity), the background surpass pass (an auto index another
 //! auto index of the same collection completely serves is retired; a
@@ -12,7 +14,9 @@
 //! it is deleted). Every transition records the measured value and the
 //! threshold that produced it, exactly as V1's observer commands do, and no
 //! transition issues while a namespace's usage report is missing — V1's
-//! fail-closed observer rule (AX-21).
+//! fail-closed observer rule (AX-21), which the catch-up honors too: a
+//! namespace no query has ever been observed using is left for the first
+//! query that selects it.
 //!
 //! # Where the pass runs
 //!
@@ -203,18 +207,53 @@ pub(crate) const MAX_RETAINED_RETIRED: usize = 16;
 
 /// Runs one lifecycle maintenance pass over the catalog (ADR 0010 D-4).
 ///
-/// The pass advances pending supersessions (driving the replacement's
-/// catch-up build when it is behind), runs the revision-guarded surpass
-/// pass, retires idle auto indexes past their thresholds, and advances the
-/// pending supersessions once more so a zero drain — V1's test mode —
-/// resolves in the same pass. It is bounded, holds no lock across an Engine
-/// call (builds happen through the builder's private-build-then-publish
-/// path), and never touches an explicit index.
+/// The pass first drives the coverage catch-up of every namespace whose
+/// published segment trails the latest publication, then advances pending
+/// supersessions (driving the replacement's catch-up build when it is
+/// behind), runs the revision-guarded surpass pass, retires idle auto
+/// indexes past their thresholds, and advances the pending supersessions
+/// once more so a zero drain — V1's test mode — resolves in the same pass.
+/// It is bounded, holds no lock across an Engine call (builds happen through
+/// the builder's private-build-then-publish path), and never transitions an
+/// explicit index.
 pub(crate) fn maintain(engine: &Engine, catalog: &IndexCatalog, engine_identity: u128) {
+    advance_catch_up_rebuilds(engine, catalog, engine_identity);
     advance_pending_supersessions(engine, catalog, engine_identity);
     surpass_pass(engine, catalog, engine_identity);
     retire_idle_indexes(catalog);
     advance_pending_supersessions(engine, catalog, engine_identity);
+}
+
+/// Drives one catch-up rebuild of every namespace whose published coverage
+/// trails the latest observed publication: the coverage repair of the
+/// lifecycle pass.
+///
+/// Without this step one published commit would strand every registered
+/// index at its pre-commit coverage forever. The executor's
+/// snapshot-isolation guard only trusts a segment that covers exactly the
+/// querying snapshot's sequence, and before this pass existed nothing ever
+/// rebuilt a segment after its first publication — the index kept reporting
+/// Active while every later query took the bounded scan, forever.
+///
+/// The rebuild target is derived from publication events only — the latest
+/// delta's covered sequence, never the storage watermark, which a
+/// rejected-after-allocation commit can advance without publishing anything.
+/// A watermark ahead of the latest publication therefore leaves the pass
+/// idle (queries take the bounded scan for that window) and the next
+/// successful commit heals the gap, because it advances the delta and this
+/// pass catches every reported namespace up to it.
+///
+/// The work is bounded: one rebuild per namespace per pass, through the same
+/// compare-and-publish builder the supersession catch-up uses, so a write
+/// burst costs one bounded catch-up sweep on the next query and a
+/// concurrently-caught-up namespace's rebuild is simply rejected as stale
+/// inside the builder.
+fn advance_catch_up_rebuilds(engine: &Engine, catalog: &IndexCatalog, engine_identity: u128) {
+    let Some(delta) = catalog.delta() else { return };
+    for namespace in catalog.catch_up_candidates() {
+        let _ =
+            IndexBuilder::new(catalog, engine).rebuild_from(&namespace, &delta, engine_identity);
+    }
 }
 
 /// Widens one demand with the fields of the partially matching auto indexes

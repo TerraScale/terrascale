@@ -461,6 +461,9 @@ impl DurabilityCoordinator {
                 expected_epoch: self.membership.epoch,
             });
         }
+        if !self.membership.all_members().contains(&ack.member) {
+            return Err(DurabilityError::UnknownMember { member: ack.member });
+        }
         if self
             .membership
             .members_of(&ack.region)
@@ -816,6 +819,20 @@ mod tests {
             )),
             Err(DurabilityError::StaleMembership { .. })
         ));
+    }
+
+    #[test]
+    fn acknowledgements_distinguish_unknown_members_from_wrong_seats() {
+        let mut coordinator = DurabilityCoordinator::new(membership(&["r1"]));
+        let region = RegionId::try_new("r1").unwrap();
+        let unknown = DurableAck::new("op".into(), id("not-seated"), region.clone(), 1, 1);
+        assert_eq!(
+            coordinator.record_ack(unknown),
+            Err(DurabilityError::UnknownMember { member: id("not-seated") })
+        );
+        let wrong_region = RegionId::try_new("r2").unwrap();
+        let wrong_seat = DurableAck::new("op".into(), id("m0a"), wrong_region, 1, 1);
+        assert_eq!(coordinator.record_ack(wrong_seat), Err(DurabilityError::WrongSeat));
     }
 
     #[test]

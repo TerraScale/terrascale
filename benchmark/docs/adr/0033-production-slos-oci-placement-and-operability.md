@@ -15,11 +15,11 @@ and a continuous thirty-day soak on the real three-Region production shape are
 mandatory before GA. Resetting a failed soak requires a new uninterrupted
 thirty-day window on the corrected release candidate.
 
-TerraBase is proprietary closed-source software. TerraScale distributes
-engine binaries, symbols, schemas, and private generated bindings only through
-authenticated private Oracle Cloud Infrastructure artifact repositories and
-production delivery paths. Public SDKs and documentation expose no engine
-source or private TBEP contract.
+TerraBase source and every repository-owned Rust crate use the MIT License.
+Production artifacts, symbols, schemas, and private generated bindings still
+move through authenticated TerraScale artifact repositories and production
+delivery paths. The private TBEP contract is an internal service boundary, not
+a supported public client API.
 
 The supported engine targets are 64-bit Linux
 `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`. GA requires native
@@ -37,8 +37,8 @@ all internal product state and every public contract. The initial catalog is:
 | `SFO` | `us-sanjose-1` | Separate OCI fault domains in its availability domain |
 | `FRA` | `eu-frankfurt-1` | Separate OCI availability domains and fault domains |
 
-The engine and private TBEP use a typed fixed three-byte ASCII value. REST and
-public MessagePack use the same three characters as a string. Parsers reject
+The engine and private TBEP use a typed fixed three-byte ASCII value. Public
+REST uses the same three characters as a string. Parsers reject
 lowercase, aliases, wrong lengths, non-ASCII text, and unregistered codes; they
 never normalize input. A retired code remains reserved and cannot later name a
 different TerraScale geography.
@@ -66,7 +66,7 @@ Regions.
 
 The default TerraBase Member uses OCI Ampere flexible compute on ARM64 Linux.
 The Orchestrator admits the exact Ampere generation independently in each
-Region only after availability, capacity, price, and TerraBase.Benchmark
+Region only after availability, capacity, price, and repository benchmark
 evidence pass. The initial admission profile starts at 8 OCPUs, 96 GiB of
 memory, and 6.8 TB of performance-qualified OCI Block Volume capacity per
 Member. Cost efficiency is measured as cost per admitted durable operation.
@@ -161,7 +161,7 @@ available to an already-authorized reactive client in every selected Region
 within 500 ms at p99. Each Region pair must also stay at or below twice its
 measured direct-path p99 round-trip time plus 100 ms. Both limits apply. Clock
 uncertainty, source acknowledgement, destination application, authorization,
-view maintenance, and WebSocket publication are part of the measurement. Tests
+view maintenance, and gateway publication are part of the measurement. Tests
 do not subtract queueing or failed attempts.
 
 These latency values are GA gates under the load and dataset declared by ADR
@@ -187,6 +187,8 @@ at least one independently verified recovery point every day. Ordinary backup
 retention cannot exceed ninety days unless a recorded legal hold or explicit
 compliant customer policy requires more. Restore always creates a new cluster,
 new active database-key version, and verified frontier before traffic moves.
+ADR 0037 stores these recovery points directly in an S3-compatible bucket. A
+persistent backup block volume is not part of the production design.
 
 For a healthy multi-Region database, public routing must recover from complete
 loss of one Region within five minutes. A one-Region database cannot claim that
@@ -256,5 +258,5 @@ optional-tier combination, and intentional Tier 1 and Tier 3 disablement.
 
 Every customer-visible receipt and support artifact uses airport `RegionCode`
 values. A CI boundary scan fails if an OCI Region identifier or `SJC` appears in
-OpenAPI, SDKs, public MessagePack, TQL, checkpoints, placement contracts,
+OpenAPI, SDKs, TQL, checkpoints, placement contracts,
 customer fixtures, examples, customer-visible logs, or customer receipts.

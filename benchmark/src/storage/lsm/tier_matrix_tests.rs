@@ -304,6 +304,7 @@ fn put(storage: &mut LsmStorage, tenant_id: &TenantId, operation: &str, id: &str
         digest: write_set_digest(tenant_id, std::slice::from_ref(&write)),
         snapshot_sequence: snapshot,
         durability: LocalDurability::Synced,
+        usage_admission: None,
         writes: vec![write],
     };
     assert!(
@@ -327,6 +328,7 @@ fn delete(storage: &mut LsmStorage, tenant_id: &TenantId, operation: &str, id: &
         digest: write_set_digest(tenant_id, std::slice::from_ref(&write)),
         snapshot_sequence: snapshot,
         durability: LocalDurability::Synced,
+        usage_admission: None,
         writes: vec![write],
     };
     assert!(

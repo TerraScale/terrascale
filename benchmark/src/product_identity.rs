@@ -1,10 +1,9 @@
 //! Product naming and compatibility identifiers.
 //!
-//! `TerraBase` is the canonical product and Cargo package name, and the
-//! rename cutover is complete: the N-1 `terrabase_v2` dependency-alias
-//! window closed on 2026-08-30, so every consumer declares the canonical
-//! `terrabase` package. Persisted and canonical-hash identifiers are
-//! format identities, not branding. Readers must retain them until the
+//! `TerraBase` is the canonical product and `terrabase` is its canonical
+//! source/package identity. The rename cutover is complete: consumers must
+//! declare the canonical package. Persisted and canonical-hash identifiers
+//! are format identities, not branding. Readers must retain them until the
 //! corresponding artifacts have been rewritten or expired under ADR 0031.
 
 /// Canonical product name used by new user-facing metadata.
@@ -12,6 +11,9 @@ pub const PRODUCT_NAME: &str = "TerraBase";
 
 /// Canonical Cargo package name.
 pub const PACKAGE_NAME: &str = "terrabase";
+
+/// Canonical library target used by Rust source imports.
+pub const LIBRARY_NAME: &str = "terrabase";
 
 /// The date the N-1 dependency-alias window closed and the canonical
 /// package name became the only accepted dependency key.
@@ -36,6 +38,7 @@ pub const LEGACY_PERSISTED_IDENTIFIERS: &[&str] = &[
 pub fn canonical_rename_is_active() -> bool {
     PRODUCT_NAME == "TerraBase"
         && PACKAGE_NAME == env!("CARGO_PKG_NAME")
+        && LIBRARY_NAME == "terrabase"
         && !LEGACY_PERSISTED_IDENTIFIERS.is_empty()
 }
 
@@ -48,6 +51,7 @@ mod tests {
         assert!(canonical_rename_is_active());
         assert_eq!(PRODUCT_NAME, "TerraBase");
         assert_eq!(PACKAGE_NAME, "terrabase");
+        assert_eq!(LIBRARY_NAME, "terrabase");
         assert_eq!(RENAME_CUTOVER_COMPLETED, "2026-08-30");
         assert!(
             LEGACY_PERSISTED_IDENTIFIERS
@@ -60,11 +64,30 @@ mod tests {
     fn the_alias_window_is_closed_everywhere_in_source() {
         // The retired alias must not appear as a dependency key anywhere in
         // the workspace manifests: the cutover date is only meaningful if
-        // the source agrees with it.
-        let manifest = std::fs::read_to_string("Cargo.toml").expect("root manifest is readable");
-        assert!(
-            !manifest.contains("terrabase_v2"),
-            "the root manifest still names the retired alias"
-        );
+        // every source agrees with it.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut manifests = vec![root.join("Cargo.toml")];
+        for entry in std::fs::read_dir(root.join("crates")).expect("crates directory is readable") {
+            let path = entry.expect("crate entry is readable").path().join("Cargo.toml");
+            if path.is_file() {
+                manifests.push(path);
+            }
+        }
+        manifests.push(root.join("bench/Cargo.toml"));
+        manifests.push(root.join("crates/terrabase-studio/Cargo.toml"));
+        for path in manifests {
+            let manifest = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("{} is readable: {error}", path.display()));
+            assert!(
+                !manifest.contains(concat!("terrabase", "_v2")),
+                "{} retains the retired dependency alias",
+                path.display()
+            );
+            assert!(
+                !manifest.contains(concat!("terrabase", "-v2")),
+                "{} retains the retired package identity",
+                path.display()
+            );
+        }
     }
 }

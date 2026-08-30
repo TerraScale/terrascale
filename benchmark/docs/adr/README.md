@@ -8,7 +8,7 @@ material choice and must not be treated as release authorization.
 ## Accepted decisions
 
 - [0001 — Independent Rust repository and storage format](0001-independent-rust-repository-and-storage-format.md)
-- [0006 — Operations Studio on Vinext](0006-operations-studio-on-vinext.md)
+- [0006 — Private Operations Studio on Datastar](0006-operations-studio-on-datastar.md)
 - [0007 — NoSQL, optional schemas, and migrations](0007-nosql-optional-schemas-and-migrations.md)
 - [0009 — TQL query language](0009-tql-query-language.md)
 - [0010 — Automatic indexing and query optimizer](0010-auto-indexing-and-query-optimizer.md)
@@ -18,7 +18,7 @@ material choice and must not be treated as release authorization.
 - [0022 — Native causal model and CRDT algebra](0022-native-causal-model-and-crdt-algebra.md)
 - [0023 — Native replication, repair, and compaction](0023-native-replication-repair-and-compaction.md)
 - [0024 — Reactive query sync state machine](0024-reactive-query-sync-state-machine.md)
-- [0025 — Private FlatBuffers and public MessagePack](0025-private-flatbuffers-and-public-messagepack.md)
+- [0025 — Private protobuf and gRPC protocol](0025-private-protobuf-grpc.md)
 - [0026 — Decision-grade performance gates](0026-decision-grade-performance-gates.md)
 - [0027 — ULID object identities](0027-ulid-object-identities.md)
 - [0028 — Durable long-running operation progress](0028-durable-long-running-operation-progress.md)
@@ -27,8 +27,10 @@ material choice and must not be treated as release authorization.
 - [0031 — Rolling upgrades and format activation](0031-rolling-upgrades-and-format-activation.md)
 - [0032 — Public contract limits and compatibility](0032-public-contract-limits-and-compatibility.md)
 - [0033 — Production SLOs, OCI placement, and operability](0033-production-slos-oci-placement-and-operability.md)
-- [0034 — Sole production gateway and host retirement](0034-sole-production-gateway-and-host-retirement.md)
+- [0034 — Sole production Go gateway](0034-sole-production-go-gateway.md)
 - [0035 — One-Region `GlobalDurable` semantics](0035-one-region-global-durable-semantics.md)
+- [0036 — Private Prometheus and Grafana observability](0036-private-prometheus-and-grafana-observability.md)
+- [0037 — S3 recovery-point repository](0037-s3-recovery-point-repository.md)
 
 ## Authoring and release rules
 

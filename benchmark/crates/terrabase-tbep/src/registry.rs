@@ -1,9 +1,8 @@
 //! The TBEP domain registry: the typed frame bodies and closed
 //! vocabularies the hosting seam (`crate::host`) serves.
 //!
-//! Hand-maintained source. The retired schema-derived generator and its
-//! `MessagePack` bindings were removed with the gRPC migration (ADR 0028):
-//! `proto/terrabase/v1/engine.proto` is the contract of record, and the
+//! Hand-maintained domain source. Under ADR 0025,
+//! `proto/terrabase/v1/engine.proto` is the wire contract of record, and the
 //! gRPC layer (`crate::grpc`) converts between these domain types and the
 //! generated protobuf types. Bounds validation stays fail-closed here so
 //! every serving path checks the same limits.
@@ -20,7 +19,7 @@ use crate::value::TbepValue;
 /// The protocol identity string.
 pub const IDENTITY: &str = "terrabase.engine.protocol";
 /// The registry version (additive changes bump the minor).
-pub const REGISTRY_VERSION: &str = "1.3";
+pub const REGISTRY_VERSION: &str = "1.4";
 /// The wire version every frame carries; unknown versions fail closed.
 pub const WIRE_VERSION: u8 = 1;
 /// The decode bound: larger frames are rejected before any field parses.
@@ -114,6 +113,10 @@ pub enum ErrorCode {
     ColdTierUnavailable,
     /// The `frontier_unreachable` row (code 22).
     FrontierUnreachable,
+    /// The `usage_unavailable` row (code 23).
+    UsageUnavailable,
+    /// The `usage_corrupt` row (code 24).
+    UsageCorrupt,
 }
 
 impl ErrorCode {
@@ -143,6 +146,8 @@ impl ErrorCode {
             Self::BackupClusterImmutable => 20,
             Self::ColdTierUnavailable => 21,
             Self::FrontierUnreachable => 22,
+            Self::UsageUnavailable => 23,
+            Self::UsageCorrupt => 24,
         }
     }
 
@@ -175,6 +180,8 @@ impl ErrorCode {
             20 => Some(Self::BackupClusterImmutable),
             21 => Some(Self::ColdTierUnavailable),
             22 => Some(Self::FrontierUnreachable),
+            23 => Some(Self::UsageUnavailable),
+            24 => Some(Self::UsageCorrupt),
             _ => None,
         }
     }
@@ -1683,6 +1690,8 @@ pub struct DocumentWriteRequest {
     pub operation_id: String,
     /// The `ack` field.
     pub ack: Option<Acknowledgement>,
+    /// Trusted usage admission attached to the same transaction.
+    pub usage: Option<UsageAdmissionContext>,
 }
 
 impl DocumentWriteRequest {
@@ -1729,6 +1738,8 @@ pub struct DocumentDeleteRequest {
     pub operation_id: String,
     /// The `ack` field.
     pub ack: Option<Acknowledgement>,
+    /// Trusted usage admission attached to the same transaction.
+    pub usage: Option<UsageAdmissionContext>,
 }
 
 impl DocumentDeleteRequest {
@@ -1771,6 +1782,8 @@ pub struct DocumentBatchRequest {
     pub items: Vec<BatchWrite>,
     /// The `ack` field.
     pub ack: Option<Acknowledgement>,
+    /// Trusted usage admission attached to the same transaction.
+    pub usage: Option<UsageAdmissionContext>,
 }
 
 impl DocumentBatchRequest {
@@ -1954,6 +1967,8 @@ pub struct FamilyWriteRequest {
     pub request: Vec<u8>,
     /// The `operation_id` field.
     pub operation_id: String,
+    /// Trusted usage admission attached to the same transaction.
+    pub usage: Option<UsageAdmissionContext>,
 }
 
 impl FamilyWriteRequest {
@@ -2306,6 +2321,8 @@ pub struct SyncMutationSubmitRequest {
     pub document: String,
     /// The `change` field.
     pub change: SyncChange,
+    /// Trusted usage admission attached to the same transaction.
+    pub usage: Option<UsageAdmissionContext>,
 }
 
 impl SyncMutationSubmitRequest {
@@ -2461,6 +2478,431 @@ impl AdminStatusResponse {
         crate::value::check_str_bound(&self.registry_version, 32, "registry_version")?;
         Ok(())
     }
+}
+
+/// The closed usage meter vocabulary.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum UsageMeter {
+    /// Stored bytes multiplied by elapsed hours for one active Region copy.
+    StoredByteHours,
+    /// Units assigned by the admitted-request cost table.
+    AdmittedRequestUnits,
+    /// Public response and change-stream bytes.
+    PublicEgressBytes,
+    /// Active Region seats multiplied by elapsed hours.
+    ActiveRegionSeats,
+    /// Immutable backup bytes multiplied by elapsed hours.
+    BackupByteHours,
+    /// Explicit restore work.
+    RestoreWork,
+}
+
+/// The integer unit of one usage fact.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UsageUnit {
+    /// Bytes multiplied by hours.
+    ByteHour,
+    /// One admitted request cost unit.
+    RequestUnit,
+    /// One public byte.
+    Byte,
+    /// One active Region seat multiplied by hours.
+    SeatHour,
+    /// One explicit restore work unit.
+    RestoreWork,
+}
+
+/// The scope at which one usage meter charges.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UsageChargeScope {
+    /// One selected active Region copy.
+    ActiveRegionCopy,
+    /// One admitted request.
+    AdmittedRequest,
+    /// One public response or change-stream delivery.
+    PublicEgress,
+    /// One selected active Region seat.
+    ActiveRegionSeat,
+    /// One immutable backup copy.
+    BackupCopy,
+    /// One explicit restore operation.
+    ExplicitRestore,
+}
+
+/// The stable event identity that controls usage minting.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum UsageMintingRule {
+    /// Mint once for an accepted origin commit.
+    AcceptedOriginCommit,
+    /// Mint once for a stable admitted request identity.
+    StableAdmittedRequest,
+    /// Mint once for one public response or change-stream delivery.
+    PublicResponse,
+    /// Mint once for an active Region interval.
+    ActiveRegionHour,
+    /// Mint once for an immutable backup interval.
+    BackupByteHour,
+    /// Mint once for explicit restore work.
+    ExplicitRestore,
+}
+
+impl UsageMintingRule {
+    /// Returns the protocol discriminant used in stable fact ordering.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::AcceptedOriginCommit => 1,
+            Self::StableAdmittedRequest => 2,
+            Self::PublicResponse => 3,
+            Self::ActiveRegionHour => 4,
+            Self::BackupByteHour => 5,
+            Self::ExplicitRestore => 6,
+        }
+    }
+}
+
+impl UsageMeter {
+    /// Returns the fixed unit, charge scope, and minting rule of this meter.
+    #[must_use]
+    pub const fn contract(self) -> (UsageUnit, UsageChargeScope, UsageMintingRule) {
+        match self {
+            Self::StoredByteHours => (
+                UsageUnit::ByteHour,
+                UsageChargeScope::ActiveRegionCopy,
+                UsageMintingRule::AcceptedOriginCommit,
+            ),
+            Self::AdmittedRequestUnits => (
+                UsageUnit::RequestUnit,
+                UsageChargeScope::AdmittedRequest,
+                UsageMintingRule::StableAdmittedRequest,
+            ),
+            Self::PublicEgressBytes => {
+                (UsageUnit::Byte, UsageChargeScope::PublicEgress, UsageMintingRule::PublicResponse)
+            }
+            Self::ActiveRegionSeats => (
+                UsageUnit::SeatHour,
+                UsageChargeScope::ActiveRegionSeat,
+                UsageMintingRule::ActiveRegionHour,
+            ),
+            Self::BackupByteHours => (
+                UsageUnit::ByteHour,
+                UsageChargeScope::BackupCopy,
+                UsageMintingRule::BackupByteHour,
+            ),
+            Self::RestoreWork => (
+                UsageUnit::RestoreWork,
+                UsageChargeScope::ExplicitRestore,
+                UsageMintingRule::ExplicitRestore,
+            ),
+        }
+    }
+}
+
+/// Trusted usage admission attached atomically to one origin mutation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UsageAdmissionContext {
+    /// The Project identity.
+    pub project: String,
+    /// The Database identity.
+    pub database: String,
+    /// The Partition identity.
+    pub partition: String,
+    /// The Region that admitted the request.
+    pub origin_region: String,
+    /// The stable admitted request identity.
+    pub request_id: String,
+    /// The trusted admission time in Unix milliseconds.
+    pub accepted_at_millis: u64,
+    /// The immutable admitted-request meter version.
+    pub meter_version: u32,
+    /// The canonical positive i128 request units.
+    pub integer_units: String,
+}
+
+impl UsageAdmissionContext {
+    /// Validates the trusted scope, time, meter, and retry-identity pairing.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first invalid or out-of-bounds field.
+    pub fn validate_for_key(&self, idempotency_key: &str) -> Result<(), crate::value::BodyError> {
+        usage_identifier(&self.project, 255, "project")?;
+        usage_identifier(&self.database, 255, "database")?;
+        usage_identifier(&self.partition, 255, "partition")?;
+        usage_identifier(&self.origin_region, 255, "origin_region")?;
+        usage_identifier(&self.request_id, 128, "request_id")?;
+        if self.request_id != idempotency_key
+            || self.accepted_at_millis == 0
+            || self.meter_version == 0
+        {
+            return Err(invalid_usage("usage_admission"));
+        }
+        positive_i128(&self.integer_units, "integer_units")
+    }
+}
+
+/// The closed meter set accepted by standalone usage recording.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UsageRecordMeter {
+    /// Admitted request units for a read or query.
+    AdmittedRequestUnits,
+    /// Public response or change-stream bytes.
+    PublicEgressBytes,
+}
+
+/// One bounded, idempotent standalone usage record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UsageRecordRequest {
+    /// The admitted standalone meter.
+    pub meter: UsageRecordMeter,
+    /// The Project identity.
+    pub project: String,
+    /// The Database identity.
+    pub database: String,
+    /// The Partition identity.
+    pub partition: String,
+    /// The Region that observed the work.
+    pub origin_region: String,
+    /// The stable fact identity.
+    pub fact_id: String,
+    /// The trusted recording time in Unix milliseconds.
+    pub recorded_at_millis: u64,
+    /// The immutable meter version.
+    pub meter_version: u32,
+    /// The canonical positive i128 units.
+    pub integer_units: String,
+}
+
+impl UsageRecordRequest {
+    /// Validates the record and its idempotency-key pairing.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first invalid or out-of-bounds field.
+    pub fn validate_for_key(&self, idempotency_key: &str) -> Result<(), crate::value::BodyError> {
+        usage_identifier(&self.project, 255, "project")?;
+        usage_identifier(&self.database, 255, "database")?;
+        usage_identifier(&self.partition, 255, "partition")?;
+        usage_identifier(&self.origin_region, 255, "origin_region")?;
+        usage_identifier(&self.fact_id, 128, "fact_id")?;
+        if self.fact_id != idempotency_key
+            || self.recorded_at_millis == 0
+            || self.meter_version == 0
+        {
+            return Err(invalid_usage("usage_record"));
+        }
+        positive_i128(&self.integer_units, "integer_units")
+    }
+}
+
+/// The durable receipt of one standalone usage record.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UsageRecordResponse {
+    /// The durable usage sequence.
+    pub sequence: u64,
+    /// The replica-set epoch.
+    pub replica_epoch: u64,
+    /// Whether this request replayed the already durable fact.
+    pub already_recorded: bool,
+}
+
+impl UsageRecordResponse {
+    /// Validates the durable receipt.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a durable identity is zero.
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        if self.sequence == 0 || self.replica_epoch == 0 {
+            return Err(invalid_usage("usage_record_receipt"));
+        }
+        Ok(())
+    }
+}
+
+/// One WAL-durable, canonically encoded usage fact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UsageFact {
+    /// The stable minting identity.
+    pub fact_id: String,
+    /// The closed meter kind.
+    pub meter: UsageMeter,
+    /// The immutable meter version.
+    pub meter_version: u32,
+    /// The meter's integer unit.
+    pub unit: UsageUnit,
+    /// The meter's charge scope.
+    pub charge_scope: UsageChargeScope,
+    /// The minting rule represented by the stable identity.
+    pub minting_rule: UsageMintingRule,
+    /// The tenant identity, which must match the RPC metadata binding.
+    pub tenant: String,
+    /// The Project identity.
+    pub project: String,
+    /// The Database identity.
+    pub database: String,
+    /// The Partition identity.
+    pub partition: String,
+    /// The origin Region identity.
+    pub region: String,
+    /// The inclusive measurement-window start in Unix milliseconds.
+    pub measurement_start_millis: u64,
+    /// The exclusive measurement-window end in Unix milliseconds.
+    pub measurement_end_millis: u64,
+    /// The canonical signed i128 delta.
+    pub integer_delta: String,
+    /// The WAL commit sequence.
+    pub sequence: u64,
+    /// The replica-set epoch.
+    pub replica_epoch: u64,
+    /// The canonical encoding version.
+    pub format_version: u32,
+    /// The canonical durable fact envelope.
+    pub canonical: Vec<u8>,
+    /// The canonical envelope checksum.
+    pub checksum: Vec<u8>,
+}
+
+impl UsageFact {
+    /// Validates the usage vocabulary, bounds, and canonical envelope shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first invalid or out-of-bounds field.
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        usage_identifier(&self.fact_id, 255, "fact_id")?;
+        usage_identifier(&self.tenant, 64, "tenant")?;
+        usage_identifier(&self.project, 255, "project")?;
+        usage_identifier(&self.database, 255, "database")?;
+        usage_identifier(&self.partition, 255, "partition")?;
+        usage_identifier(&self.region, 255, "region")?;
+        if self.meter_version == 0
+            || self.sequence == 0
+            || self.replica_epoch == 0
+            || self.format_version == 0
+            || (self.unit, self.charge_scope, self.minting_rule) != self.meter.contract()
+            || self.measurement_end_millis < self.measurement_start_millis
+        {
+            return Err(invalid_usage("usage_fact"));
+        }
+        crate::value::check_str_bound(&self.integer_delta, 40, "integer_delta")?;
+        let delta =
+            self.integer_delta.parse::<i128>().map_err(|_| invalid_usage("integer_delta"))?;
+        if delta == 0 || delta.to_string() != self.integer_delta {
+            return Err(invalid_usage("integer_delta"));
+        }
+        usage_bytes(&self.canonical, 65_536, "canonical")?;
+        if self.checksum.len() != 32 || !self.canonical.ends_with(&self.checksum) {
+            return Err(invalid_usage("checksum"));
+        }
+        Ok(())
+    }
+}
+
+/// A tenant-bound stable-snapshot usage export request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UsageExportRequest {
+    /// Optional inclusive half-open window start.
+    pub window_start_millis: Option<u64>,
+    /// Optional exclusive half-open window end.
+    pub window_end_millis: Option<u64>,
+    /// Requested page size.
+    pub page_size: u32,
+    /// Opaque continuation from the preceding page.
+    pub continuation: Vec<u8>,
+}
+
+impl UsageExportRequest {
+    /// Validates the all-or-none window, page, and continuation bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first invalid or out-of-bounds field.
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        match (self.window_start_millis, self.window_end_millis) {
+            (None, None) => {}
+            (Some(start), Some(end)) if start < end => {}
+            _ => return Err(invalid_usage("window")),
+        }
+        if self.page_size == 0
+            || usize::try_from(self.page_size).unwrap_or(usize::MAX) > MAX_LIST_ITEMS
+        {
+            return Err(invalid_usage("page_size"));
+        }
+        usage_bytes(&self.continuation, 1024, "continuation")
+    }
+}
+
+/// One stable-snapshot page of authoritative usage facts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UsageExportResponse {
+    /// Facts ordered by sequence, minting rule, and stable identity.
+    pub facts: Vec<UsageFact>,
+    /// Opaque continuation; empty when the snapshot is complete.
+    pub continuation: Vec<u8>,
+    /// The durable high-water fixed by the first page.
+    pub snapshot_sequence: u64,
+}
+
+impl UsageExportResponse {
+    /// Validates response bounds, fact shapes, and strict order.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first invalid or out-of-bounds field.
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_list_bound(&self.facts, MAX_LIST_ITEMS, "facts")?;
+        usage_bytes(&self.continuation, 1024, "continuation")?;
+        let mut previous: Option<(u64, u8, &str)> = None;
+        for fact in &self.facts {
+            fact.validate()?;
+            if fact.sequence > self.snapshot_sequence {
+                return Err(invalid_usage("snapshot_sequence"));
+            }
+            let current = (fact.sequence, fact.minting_rule.code(), fact.fact_id.as_str());
+            if previous.is_some_and(|value| value >= current) {
+                return Err(invalid_usage("facts"));
+            }
+            previous = Some(current);
+        }
+        Ok(())
+    }
+}
+
+fn invalid_usage(field: &'static str) -> crate::value::BodyError {
+    crate::value::BodyError::NotInVocabulary { field }
+}
+
+fn usage_identifier(
+    value: &str,
+    bound: u64,
+    field: &'static str,
+) -> Result<(), crate::value::BodyError> {
+    crate::value::check_str_bound(value, bound, field)?;
+    if value.is_empty() || value != value.trim() || value.chars().any(char::is_control) {
+        return Err(invalid_usage(field));
+    }
+    Ok(())
+}
+
+fn usage_bytes(
+    value: &[u8],
+    bound: usize,
+    field: &'static str,
+) -> Result<(), crate::value::BodyError> {
+    if value.len() > bound {
+        return Err(crate::value::BodyError::StringTooLong { field, bound });
+    }
+    Ok(())
+}
+
+fn positive_i128(value: &str, field: &'static str) -> Result<(), crate::value::BodyError> {
+    crate::value::check_str_bound(value, 39, field)?;
+    let parsed = value.parse::<i128>().map_err(|_| invalid_usage(field))?;
+    if parsed <= 0 || parsed.to_string() != value {
+        return Err(invalid_usage(field));
+    }
+    Ok(())
 }
 
 /// The `replication_conflicts_request` frame body.

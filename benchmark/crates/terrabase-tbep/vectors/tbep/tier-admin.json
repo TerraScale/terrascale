@@ -1,7 +1,7 @@
 {
   "adversarial": [],
   "category": "tier-admin",
-  "description": "The Storage Tier Mover's typed administration (p0-protocol-compatibility-contract section 4): configure carries its idempotency key; inspect and the dry run are reads; the receipt names the decision and its ordered reasons.",
+  "description": "The Storage Tier Mover's typed administration (ADR 0025): configure carries its idempotency key; inspect and the dry run are reads; the receipt names the decision and its ordered reasons.",
   "frames": [
     {
       "body": "96a470726f6403ce04000000010290",

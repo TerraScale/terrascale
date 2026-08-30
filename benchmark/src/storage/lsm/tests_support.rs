@@ -56,6 +56,7 @@ pub(crate) fn seed_segments(storage: &mut LsmStorage, count: u64) {
             ),
             snapshot_sequence: StorageSequence::new(0),
             durability: LocalDurability::Synced,
+            usage_admission: None,
             writes: vec![StagedWrite::Put { document, expected: ExpectedVersion::Any }],
         };
         assert!(matches!(

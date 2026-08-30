@@ -3,6 +3,7 @@ package terrabase
 import (
 	"context"
 	"io"
+	"sync/atomic"
 
 	v1 "terrascale.tech/terrabase-go/terrabase/v1"
 )
@@ -48,29 +49,68 @@ func (e Event) ClosedEvent() (Closed, bool) {
 }
 
 func eventFrom(frame *v1.BackboneStreamEvent) (Event, error) {
+	if frame == nil {
+		return Event{}, contractError("the engine sent a nil subscription frame")
+	}
 	switch typed := frame.GetEvent().(type) {
 	case *v1.BackboneStreamEvent_Subscribed:
+		if typed.Subscribed == nil {
+			return Event{}, contractError("the engine sent an empty subscription confirmation")
+		}
 		return Event{confirmed: true, confirmation: Confirmation{
 			SubscriptionID: typed.Subscribed.GetSubscriptionId(),
 			StartSequence:  typed.Subscribed.GetStartSequence(),
 		}}, nil
 	case *v1.BackboneStreamEvent_Batch:
+		if typed.Batch == nil || len(typed.Batch.GetEvents()) > maxBatchItems || typed.Batch.GetNextSequence() < typed.Batch.GetFromSequence() {
+			return Event{}, contractError("the engine sent an invalid subscription batch")
+		}
 		batch := Batch{
 			SubscriptionID: typed.Batch.GetSubscriptionId(),
 			FromSequence:   typed.Batch.GetFromSequence(),
 			NextSequence:   typed.Batch.GetNextSequence(),
 		}
+		var previous uint64
 		for _, change := range typed.Batch.GetEvents() {
+			if change == nil {
+				return Event{}, contractError("the engine sent a nil subscription change")
+			}
+			kind, ok := changeKindFrom(change.GetKind())
+			if !ok {
+				return Event{}, contractError("the engine sent an unknown subscription change kind")
+			}
+			if err := boundName("subscription change collection", change.GetCollection(), maxCollectionBytes); err != nil {
+				return Event{}, contractError("the engine sent an invalid subscription change collection")
+			}
+			if err := boundName("subscription change document", change.GetDocument(), maxDocumentBytes); err != nil {
+				return Event{}, contractError("the engine sent an invalid subscription change document")
+			}
+			if err := optionalName("subscription change operation id", change.GetOperationId(), maxOperationBytes); err != nil {
+				return Event{}, contractError("the engine sent an invalid subscription change operation id")
+			}
+			if change.GetSequence() < typed.Batch.GetFromSequence() || change.GetSequence() >= typed.Batch.GetNextSequence() || previous != 0 && change.GetSequence() <= previous {
+				return Event{}, contractError("the engine sent subscription changes outside strict sequence order")
+			}
 			batch.Events = append(batch.Events, ChangeEvent{
 				Sequence:    change.GetSequence(),
 				OperationID: change.GetOperationId(),
-				Kind:        changeKindFrom(change.GetKind()),
+				Kind:        kind,
 				Collection:  change.GetCollection(),
 				Document:    change.GetDocument(),
 			})
+			previous = change.GetSequence()
 		}
 		return Event{batch: &batch}, nil
 	case *v1.BackboneStreamEvent_Trigger:
+		if typed.Trigger == nil {
+			return Event{}, contractError("the engine sent an empty subscription trigger")
+		}
+		if err := boundName("subscription trigger collection", typed.Trigger.GetCollection(), maxCollectionBytes); err != nil {
+			return Event{}, contractError("the engine sent an invalid subscription trigger collection")
+		}
+		if err := optionalName("subscription trigger operation id", typed.Trigger.GetOperationId(), maxOperationBytes); err != nil {
+			return Event{}, contractError("the engine sent an invalid subscription trigger operation id")
+		}
 		return Event{trigger: &Trigger{
 			SubscriptionID: typed.Trigger.GetSubscriptionId(),
 			Collection:     typed.Trigger.GetCollection(),
@@ -78,12 +118,19 @@ func eventFrom(frame *v1.BackboneStreamEvent) (Event, error) {
 			OperationID:    typed.Trigger.GetOperationId(),
 		}}, nil
 	case *v1.BackboneStreamEvent_Closed:
+		if typed.Closed == nil {
+			return Event{}, contractError("the engine sent an empty subscription close frame")
+		}
+		reason, ok := closeReasonFrom(typed.Closed.GetReason())
+		if !ok {
+			return Event{}, contractError("the engine sent an unknown subscription close reason")
+		}
 		return Event{closed: &Closed{
 			SubscriptionID: typed.Closed.GetSubscriptionId(),
-			Reason:         closeReasonFrom(typed.Closed.GetReason()),
+			Reason:         reason,
 		}}, nil
 	default:
-		return Event{}, localError("the engine sent a subscription frame outside the contract")
+		return Event{}, contractError("the engine sent a subscription frame outside the contract")
 	}
 }
 
@@ -98,7 +145,9 @@ type Subscription struct {
 	stream v1.Backbone_SubscribeClient
 	ctx    context.Context
 	cancel context.CancelFunc
-	id     uint64
+	id     atomic.Uint64
+	confirmed bool
+	closed    bool
 }
 
 // Subscribe opens one backbone subscription. The stream first delivers
@@ -111,8 +160,8 @@ func (c *Client) Subscribe(ctx context.Context, subscriptionID uint64, collectio
 		return nil, localError("a subscription carries at most %d collections, got %d", maxCollections, len(collections))
 	}
 	for index, collection := range collections {
-		if collection == "" || len(collection) > maxCollectionBytes {
-			return nil, localError("subscription collection %d must be 1..=%d bytes", index, maxCollectionBytes)
+		if err := boundName("subscription collection", collection, maxCollectionBytes); err != nil {
+			return nil, localError("subscription collection %d must be canonical text of 1..=%d bytes", index, maxCollectionBytes)
 		}
 	}
 	ctx, err := c.outgoing(ctx, false, "")
@@ -129,11 +178,13 @@ func (c *Client) Subscribe(ctx context.Context, subscriptionID uint64, collectio
 		cancel()
 		return nil, interpret(err)
 	}
-	return &Subscription{client: c, stream: stream, ctx: streamCtx, cancel: cancel, id: subscriptionID}, nil
+	subscription := &Subscription{client: c, stream: stream, ctx: streamCtx, cancel: cancel}
+	subscription.id.Store(subscriptionID)
+	return subscription, nil
 }
 
 // ID is the subscription identity this stream serves.
-func (s *Subscription) ID() uint64 { return s.id }
+func (s *Subscription) ID() uint64 { return s.id.Load() }
 
 // Context is the subscription stream's own context: it is canceled by
 // Close and by the end of the parent context of Subscribe.
@@ -156,7 +207,26 @@ func (s *Subscription) Recv() (Event, error) {
 		return Event{}, err
 	}
 	if confirmation, ok := event.Confirmed(); ok {
-		s.id = confirmation.SubscriptionID
+		if s.confirmed || s.closed || confirmation.SubscriptionID != s.id.Load() {
+			return Event{}, contractError("the engine sent an invalid subscription confirmation sequence")
+		}
+		s.confirmed = true
+		return event, nil
+	}
+	if !s.confirmed || s.closed {
+		return Event{}, contractError("the engine sent a subscription frame outside its lifecycle")
+	}
+	var eventID uint64
+	if batch, ok := event.BatchEvent(); ok {
+		eventID = batch.SubscriptionID
+	} else if trigger, ok := event.TriggerEvent(); ok {
+		eventID = trigger.SubscriptionID
+	} else if closed, ok := event.ClosedEvent(); ok {
+		eventID = closed.SubscriptionID
+		s.closed = true
+	}
+	if eventID != s.id.Load() {
+		return Event{}, contractError("the engine sent a frame for another subscription")
 	}
 	return event, nil
 }
@@ -164,7 +234,7 @@ func (s *Subscription) Recv() (Event, error) {
 // Acknowledge acknowledges the subscription through one backbone
 // sequence: the engine releases its retention before it.
 func (s *Subscription) Acknowledge(ctx context.Context, throughSequence uint64) (uint64, error) {
-	response, err := s.client.backboneAcknowledge(ctx, s.id, throughSequence)
+	response, err := s.client.backboneAcknowledge(ctx, s.id.Load(), throughSequence)
 	if err != nil {
 		return 0, err
 	}
@@ -174,7 +244,7 @@ func (s *Subscription) Acknowledge(ctx context.Context, throughSequence uint64) 
 // Unsubscribe closes the subscription on the engine side; the stream
 // ends on its own.
 func (s *Subscription) Unsubscribe(ctx context.Context) error {
-	return s.client.backboneUnsubscribe(ctx, s.id)
+	return s.client.backboneUnsubscribe(ctx, s.id.Load())
 }
 
 // Close cancels the subscription stream. It does not unsubscribe: an
@@ -198,6 +268,9 @@ func (c *Client) backboneAcknowledge(ctx context.Context, subscriptionID, throug
 	if err != nil {
 		return 0, interpret(err)
 	}
+	if response == nil || response.GetSubscriptionId() != subscriptionID || response.GetAcknowledgedThrough() > throughSequence {
+		return 0, contractError("the engine returned an invalid subscription acknowledgement")
+	}
 	return response.GetAcknowledgedThrough(), nil
 }
 
@@ -207,9 +280,12 @@ func (c *Client) backboneUnsubscribe(ctx context.Context, subscriptionID uint64)
 	if err != nil {
 		return err
 	}
-	_, err = c.backbone.Unsubscribe(ctx, &v1.BackboneUnsubscribeRequest{SubscriptionId: subscriptionID})
+	response, err := c.backbone.Unsubscribe(ctx, &v1.BackboneUnsubscribeRequest{SubscriptionId: subscriptionID})
 	if err != nil {
 		return interpret(err)
+	}
+	if response == nil || response.GetSubscriptionId() != subscriptionID {
+		return contractError("the engine returned an invalid unsubscribe response")
 	}
 	return nil
 }

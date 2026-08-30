@@ -242,7 +242,10 @@ impl MonotonicGenerator {
     /// always inside the 80-bit component.
     pub fn generate(&self) -> Ulid {
         loop {
-            let observed = (self.clock)();
+            // The production clock is already clamped, but the injectable
+            // clock is public for deterministic callers. Keep that seam
+            // within ULID's representable timestamp range as well.
+            let observed = (self.clock)().min(MAX_TIMESTAMP_MILLIS);
             let step = {
                 let mut state = self.lock();
                 let previous = state.previous;

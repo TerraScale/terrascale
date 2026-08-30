@@ -1,0 +1,19 @@
+FROM gcr.io/distroless/cc-debian12@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f
+
+ARG TERRABASE_VERSION
+ARG TERRABASE_REVISION
+ARG TERRABASE_CREATED
+
+LABEL org.opencontainers.image.title="TerraBase Server" \
+      org.opencontainers.image.description="Authenticated private TBEP database server" \
+      org.opencontainers.image.version="${TERRABASE_VERSION}" \
+      org.opencontainers.image.revision="${TERRABASE_REVISION}" \
+      org.opencontainers.image.created="${TERRABASE_CREATED}" \
+      org.opencontainers.image.source="https://git.terrascale.tech/TerraScale/TerraBase" \
+      org.opencontainers.image.licenses="MIT"
+
+COPY --chown=65532:65532 rootfs/ /
+
+USER 65532:65532
+WORKDIR /var/lib/terrabase
+ENTRYPOINT ["/usr/local/bin/terrabase-server"]

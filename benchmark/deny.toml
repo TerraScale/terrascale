@@ -32,12 +32,6 @@ allow = [
 ]
 confidence-threshold = 0.8
 
-[licenses.private]
-# Workspace packages cannot be published while the distribution license is
-# still an owner decision. Dependency licenses remain subject to the allowlist
-# above; the separate repository license gate validates this pending marker.
-ignore = true
-
 [bans]
 multiple-versions = "deny"
 wildcards = "deny"

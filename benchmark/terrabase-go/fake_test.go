@@ -27,15 +27,22 @@ type fakeTBEP struct {
 	v1.UnimplementedSchemaServer
 	v1.UnimplementedReplicationServer
 	v1.UnimplementedMaintenanceServer
+	v1.UnimplementedUsageServer
 	v1.UnimplementedTierServer
 
-	mu         sync.Mutex
-	documents  map[string]*v1.DocumentBody
-	sequence   uint64
-	changes    []*v1.ChangeEvent
-	principals []string
-	tenants    []string
-	keys       []string
+	mu                  sync.Mutex
+	documents           map[string]*v1.DocumentBody
+	sequence            uint64
+	changes             []*v1.ChangeEvent
+	principals          []string
+	tenants             []string
+	keys                []string
+	admissions          []*v1.UsageAdmissionContext
+	usageFacts          map[string]*v1.UsageRecordResponse
+	usageTenantOverride string
+	// bindTenant lets boundary tests model a compromised or buggy host
+	// returning a tenant other than the one requested by the caller.
+	bindTenant string
 	// failCode, when set, refuses the next engine mutation with the
 	// engine-shaped error of that code; unregistered answers a code
 	// outside the closed vocabulary instead.
@@ -44,7 +51,10 @@ type fakeTBEP struct {
 }
 
 func newFakeTBEP() *fakeTBEP {
-	return &fakeTBEP{documents: map[string]*v1.DocumentBody{}}
+	return &fakeTBEP{
+		documents:  map[string]*v1.DocumentBody{},
+		usageFacts: map[string]*v1.UsageRecordResponse{},
+	}
 }
 
 // register wires every service of the contract onto one server.
@@ -56,6 +66,7 @@ func (fake *fakeTBEP) register(server *grpc.Server) {
 	v1.RegisterSchemaServer(server, fake)
 	v1.RegisterReplicationServer(server, fake)
 	v1.RegisterMaintenanceServer(server, fake)
+	v1.RegisterUsageServer(server, fake)
 	v1.RegisterTierServer(server, fake)
 }
 
@@ -152,6 +163,31 @@ func (fake *fakeTBEP) lastTenant() string {
 	return fake.tenants[len(fake.tenants)-1]
 }
 
+func (fake *fakeTBEP) admitUsage(usage *v1.UsageAdmissionContext, key string) error {
+	if usage == nil {
+		return nil
+	}
+	if usage.GetRequestId() != key {
+		return engineStatus(codes.InvalidArgument, v1.ErrorCode_ERROR_CODE_IDEMPOTENCY_PAIRING,
+			"the usage admission request identity differs from the idempotency key")
+	}
+	copied := *usage
+	fake.mu.Lock()
+	fake.admissions = append(fake.admissions, &copied)
+	fake.mu.Unlock()
+	return nil
+}
+
+func (fake *fakeTBEP) lastAdmission() *v1.UsageAdmissionContext {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.admissions) == 0 {
+		return nil
+	}
+	copied := *fake.admissions[len(fake.admissions)-1]
+	return &copied
+}
+
 // put stores one document and records the backbone change.
 func (fake *fakeTBEP) put(collection, id string, body *v1.Value) *v1.CommitReceipt {
 	fake.mu.Lock()
@@ -210,7 +246,11 @@ func (fake *fakeTBEP) Bind(_ context.Context, request *v1.ChannelBindRequest) (*
 		return nil, engineStatus(codes.InvalidArgument, v1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
 			"a bind carries no application identity")
 	}
-	return &v1.ChannelBindResponse{Tenant: request.GetTenant(), ServingInstance: 7}, nil
+	tenant := request.GetTenant()
+	if fake.bindTenant != "" {
+		tenant = fake.bindTenant
+	}
+	return &v1.ChannelBindResponse{Tenant: tenant, ServingInstance: 7}, nil
 }
 
 // --- Engine ---
@@ -232,7 +272,11 @@ func (fake *fakeTBEP) DocumentWrite(ctx context.Context, request *v1.DocumentWri
 	if _, _, err := fake.identityOf(ctx); err != nil {
 		return nil, err
 	}
-	if _, err := fake.idempotencyOf(ctx); err != nil {
+	key, err := fake.idempotencyOf(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := fake.admitUsage(request.GetUsage(), key); err != nil {
 		return nil, err
 	}
 	if failure := fake.plannedFailure(); failure != nil {
@@ -257,7 +301,11 @@ func (fake *fakeTBEP) DocumentDelete(ctx context.Context, request *v1.DocumentDe
 	if _, _, err := fake.identityOf(ctx); err != nil {
 		return nil, err
 	}
-	if _, err := fake.idempotencyOf(ctx); err != nil {
+	key, err := fake.idempotencyOf(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := fake.admitUsage(request.GetUsage(), key); err != nil {
 		return nil, err
 	}
 	if failure := fake.plannedFailure(); failure != nil {
@@ -278,7 +326,11 @@ func (fake *fakeTBEP) DocumentBatch(ctx context.Context, request *v1.DocumentBat
 	if _, _, err := fake.identityOf(ctx); err != nil {
 		return nil, err
 	}
-	if _, err := fake.idempotencyOf(ctx); err != nil {
+	key, err := fake.idempotencyOf(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := fake.admitUsage(request.GetUsage(), key); err != nil {
 		return nil, err
 	}
 	if failure := fake.plannedFailure(); failure != nil {
@@ -347,7 +399,11 @@ func (fake *fakeTBEP) FamilyWrite(ctx context.Context, request *v1.FamilyWriteRe
 	if _, _, err := fake.identityOf(ctx); err != nil {
 		return nil, err
 	}
-	if _, err := fake.idempotencyOf(ctx); err != nil {
+	key, err := fake.idempotencyOf(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := fake.admitUsage(request.GetUsage(), key); err != nil {
 		return nil, err
 	}
 	return &v1.FamilyWriteResponse{
@@ -475,7 +531,11 @@ func (fake *fakeTBEP) MutationSubmit(ctx context.Context, request *v1.SyncMutati
 	if _, _, err := fake.identityOf(ctx); err != nil {
 		return nil, err
 	}
-	if _, err := fake.idempotencyOf(ctx); err != nil {
+	key, err := fake.idempotencyOf(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := fake.admitUsage(request.GetUsage(), key); err != nil {
 		return nil, err
 	}
 	if request.GetDocument() == "out-of-order" {
@@ -488,6 +548,7 @@ func (fake *fakeTBEP) MutationSubmit(ctx context.Context, request *v1.SyncMutati
 			Sequence:        5,
 			Version:         1,
 			Acknowledgement: v1.Acknowledgement_ACK_REGIONAL_QUORUM,
+			Backup:          v1.BackupOutcome_BACKUP_NONE,
 		}}}}, nil
 }
 
@@ -693,6 +754,88 @@ func (fake *fakeTBEP) SupervisionShutdown(ctx context.Context, request *v1.Super
 	return &v1.SupervisionShutdownResponse{
 		State:    v1.HealthState_HEALTH_STATE_DRAINING,
 		InFlight: 0,
+	}, nil
+}
+
+// --- Usage ---
+
+func (fake *fakeTBEP) Record(ctx context.Context, request *v1.UsageRecordRequest) (*v1.UsageRecordResponse, error) {
+	if _, _, err := fake.identityOf(ctx); err != nil {
+		return nil, err
+	}
+	key, err := fake.idempotencyOf(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if key != request.GetFactId() {
+		return nil, engineStatus(codes.InvalidArgument, v1.ErrorCode_ERROR_CODE_IDEMPOTENCY_PAIRING,
+			"the usage fact identity differs from the idempotency key")
+	}
+	if failure := fake.plannedFailure(); failure != nil {
+		return nil, failure
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if previous := fake.usageFacts[request.GetFactId()]; previous != nil {
+		copied := *previous
+		copied.AlreadyRecorded = true
+		return &copied, nil
+	}
+	fake.sequence++
+	receipt := &v1.UsageRecordResponse{Sequence: fake.sequence, ReplicaEpoch: 7}
+	fake.usageFacts[request.GetFactId()] = receipt
+	copied := *receipt
+	return &copied, nil
+}
+
+func (fake *fakeTBEP) Export(ctx context.Context, request *v1.UsageExportRequest) (*v1.UsageExportResponse, error) {
+	_, tenant, err := fake.identityOf(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if failure := fake.plannedFailure(); failure != nil {
+		return nil, failure
+	}
+	if fake.usageTenantOverride != "" {
+		tenant = fake.usageTenantOverride
+	}
+	checksum := make([]byte, usageChecksumBytes)
+	for index := range checksum {
+		checksum[index] = byte(index + 1)
+	}
+	sequence := uint64(1)
+	factID := "fact-1"
+	continuation := []byte("page-2")
+	if string(request.GetContinuation()) == "page-2" {
+		sequence = 2
+		factID = "fact-2"
+		continuation = nil
+	}
+	canonical := append([]byte("usage-envelope:"+factID+":"), checksum...)
+	return &v1.UsageExportResponse{
+		Facts: []*v1.UsageFact{{
+			FactId:                 factID,
+			Meter:                  v1.UsageMeter_USAGE_METER_ADMITTED_REQUEST_UNITS,
+			MeterVersion:           1,
+			Unit:                   v1.UsageUnit_USAGE_UNIT_REQUEST_UNIT,
+			ChargeScope:            v1.UsageChargeScope_USAGE_CHARGE_SCOPE_ADMITTED_REQUEST,
+			MintingRule:            v1.UsageMintingRule_USAGE_MINTING_RULE_STABLE_ADMITTED_REQUEST,
+			Tenant:                 tenant,
+			Project:                "project-a",
+			Database:               "database-a",
+			Partition:              "partition-a",
+			Region:                 "gru",
+			MeasurementStartMillis: 1000,
+			MeasurementEndMillis:   1001,
+			IntegerDelta:           "1",
+			Sequence:               sequence,
+			ReplicaEpoch:           7,
+			FormatVersion:          1,
+			Canonical:              canonical,
+			Checksum:               checksum,
+		}},
+		Continuation:     continuation,
+		SnapshotSequence: 2,
 	}, nil
 }
 

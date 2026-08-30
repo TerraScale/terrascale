@@ -152,6 +152,11 @@ impl StorageKey {
         &self.tenant
     }
 
+    /// Returns the collection component of this canonical key.
+    pub(super) fn collection(&self) -> &str {
+        &self.collection
+    }
+
     /// Returns the document identifier text.
     pub(super) fn document(&self) -> &str {
         &self.document
@@ -169,7 +174,10 @@ impl StorageKey {
         let tenant = reader.read_string()?;
         let collection = reader.read_string()?;
         let document = reader.read_string()?;
-        if tenant.is_empty() || collection.is_empty() || document.is_empty() {
+        if TenantId::try_new(&tenant).is_err()
+            || CollectionName::try_new(&collection).is_err()
+            || crate::types::DocumentId::try_new(&document).is_err()
+        {
             return None;
         }
         Some(Self { tenant, collection, document })

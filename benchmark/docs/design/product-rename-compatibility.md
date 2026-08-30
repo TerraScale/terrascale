@@ -56,13 +56,9 @@ the generator cutover does not reject an identity recorded before the rename.
 
 ## Identifiers already independent of the old product name
 
-TBEP's wire contract is the generated protobuf/gRPC schema of ADR 0028
-(`crates/terrabase-tbep/proto/terrabase/v1/engine.proto`); the retired
-FlatBuffers file identifier and its field and union numbers left with the
-retired framing, and only the golden vectors under
-`crates/terrabase-tbep/vectors/` still record that history. Public sync
-keeps `terrascale.sync.v2.msgpack`, numeric message
-tags, and `TSN` and `TSS` native payload magics. LSM segment magics use the
+TBEP's wire contract is the generated protobuf/gRPC schema of ADR 0025
+(`crates/terrabase-tbep/proto/terrabase/v1/engine.proto`). Reactive result-view
+semantics keep the `TSN` and `TSS` native payload magics. LSM segment magics use the
 `TBLSM*` family. Usage and deletion checksums use versioned `terrascale.*`
 domains. Their meanings are protocol contracts, so the product rename does not
 alter them.

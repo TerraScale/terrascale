@@ -1,10 +1,9 @@
 //! `terrabase-tbep` — the `TerraBase` Engine Protocol engine server.
 //!
-//! TBEP is the Go↔Rust process-to-process wire protocol (ADR 0028):
+//! TBEP is the Go↔Rust process-to-process wire protocol (ADR 0025):
 //! gRPC over the protobuf contract in `proto/terrabase/v1/engine.proto`,
-//! served by tonic. The retired custom `MessagePack` and `FlatBuffers`
-//! framings (and their generators) are gone; the closed typed operation
-//! set, backbone subscription streams, sync-delivery operations,
+//! served by tonic. The closed typed operation set, backbone subscription
+//! streams, sync-delivery operations,
 //! topology/admin reads, and supervision operations all ride gRPC now.
 //!
 //! Layout:

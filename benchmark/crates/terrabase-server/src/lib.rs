@@ -1,0 +1,13 @@
+//! Production composition boundary for the TerraBase engine daemon.
+//!
+//! This crate opens one durable engine location, serves the existing TBEP
+//! implementation over mandatory mutual TLS, optionally exposes a local UDS,
+//! and publishes private Prometheus and lifecycle probes. It contains no
+//! database or protocol implementation of its own.
+
+pub mod config;
+pub mod http;
+pub mod runtime;
+
+pub use config::ServerConfig;
+pub use runtime::run;

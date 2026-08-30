@@ -17,9 +17,9 @@
 //! 26-character uppercase Crockford text form ([`Ulid::to_text`]) and one
 //! accepted 16-byte unsigned big-endian binary form ([`Ulid::to_bytes`]),
 //! compared in unsigned lexicographic byte order, which is the ULID
-//! chronological order. Private FlatBuffers and public MessagePack carry the
-//! 16 binary bytes; REST, logs, operator displays, and TQL literals carry the
-//! canonical text (ADR 0027).
+//! chronological order. Private TBEP protobuf fields carry the 16 binary
+//! bytes; REST, logs, operator displays, and TQL literals carry the canonical
+//! text (ADR 0027).
 //!
 //! The typed newtypes below are the ADR's entity list. Each wraps the 16-byte
 //! value and is `Debug`/`Clone`/`Copy`/`Eq`/`Ord`/`Hash`, so a
@@ -44,8 +44,8 @@
 //! for causality, authorization, conflict resolution, expiry, durability, or
 //! proof of creation time.
 
-// TerraBase, FlatBuffers, and MessagePack are proper names of the product and
-// its codecs, not items to link, so the dense documentation keeps them plain.
+// TerraBase and ULID are proper names, not items to link, so the dense
+// documentation keeps them plain.
 #![allow(clippy::doc_markdown)]
 
 mod generate;

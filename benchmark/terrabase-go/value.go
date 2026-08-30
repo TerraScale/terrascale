@@ -6,6 +6,9 @@
 package terrabase
 
 import (
+	"math"
+	"unicode/utf8"
+
 	v1 "terrascale.tech/terrabase-go/terrabase/v1"
 )
 
@@ -77,12 +80,21 @@ func valueToProtoDepth(value Value, depth int) (*v1.Value, error) {
 	case uint64:
 		return uint64ToProto(typed)
 	case float32:
+		if math.IsNaN(float64(typed)) || math.IsInf(float64(typed), 0) {
+			return nil, localError("value number must be finite")
+		}
 		return &v1.Value{Kind: &v1.Value_Number{Number: float64(typed)}}, nil
 	case float64:
+		if math.IsNaN(typed) || math.IsInf(typed, 0) {
+			return nil, localError("value number must be finite")
+		}
 		return &v1.Value{Kind: &v1.Value_Number{Number: typed}}, nil
 	case string:
 		if len(typed) > maxTextBytes {
 			return nil, localError("value text exceeds %d bytes", maxTextBytes)
+		}
+		if !utf8.ValidString(typed) {
+			return nil, localError("value text is not valid UTF-8")
 		}
 		return &v1.Value{Kind: &v1.Value_Text{Text: typed}}, nil
 	case []Value:
@@ -106,6 +118,9 @@ func valueToProtoDepth(value Value, depth int) (*v1.Value, error) {
 		for name, item := range typed {
 			if name == "" || len(name) > maxNameBytes {
 				return nil, localError("value map name must be 1..=%d bytes", maxNameBytes)
+			}
+			if !utf8.ValidString(name) || hasControl(name) {
+				return nil, localError("value map name carries invalid characters")
 			}
 			converted, err := valueToProtoDepth(item, depth+1)
 			if err != nil {
@@ -143,6 +158,13 @@ func uint64ToProto(number uint64) (*v1.Value, error) {
 // representation. Objects decode as map[string]Value, lists as
 // []Value; a value carrying no kind is refused.
 func valueFromProto(value *v1.Value) (Value, error) {
+	return valueFromProtoDepth(value, 0)
+}
+
+func valueFromProtoDepth(value *v1.Value, depth int) (Value, error) {
+	if depth > maxDetailIndent {
+		return nil, localError("the engine sent a value nested beyond %d levels", maxDetailIndent)
+	}
 	if value == nil {
 		return nil, localError("the engine sent a value carrying no kind")
 	}
@@ -154,13 +176,22 @@ func valueFromProto(value *v1.Value) (Value, error) {
 	case *v1.Value_Integer:
 		return kind.Integer, nil
 	case *v1.Value_Number:
+		if math.IsNaN(kind.Number) || math.IsInf(kind.Number, 0) {
+			return nil, localError("the engine sent a non-finite number")
+		}
 		return kind.Number, nil
 	case *v1.Value_Text:
+		if len(kind.Text) > maxTextBytes {
+			return nil, localError("the engine sent value text beyond %d bytes", maxTextBytes)
+		}
 		return kind.Text, nil
 	case *v1.Value_List:
+		if len(kind.List.GetItems()) > maxListItems {
+			return nil, localError("the engine sent a value list beyond %d items", maxListItems)
+		}
 		items := make([]Value, 0, len(kind.List.GetItems()))
 		for _, item := range kind.List.GetItems() {
-			converted, err := valueFromProto(item)
+			converted, err := valueFromProtoDepth(item, depth+1)
 			if err != nil {
 				return nil, err
 			}
@@ -168,9 +199,18 @@ func valueFromProto(value *v1.Value) (Value, error) {
 		}
 		return items, nil
 	case *v1.Value_Map:
+		if len(kind.Map.GetEntries()) > maxMapEntries {
+			return nil, localError("the engine sent a value map beyond %d entries", maxMapEntries)
+		}
 		entries := make(map[string]Value, len(kind.Map.GetEntries()))
 		for _, entry := range kind.Map.GetEntries() {
-			converted, err := valueFromProto(entry.GetValue())
+			if entry.GetName() == "" || len(entry.GetName()) > maxNameBytes {
+				return nil, localError("the engine sent a map name outside 1..=%d bytes", maxNameBytes)
+			}
+			if _, exists := entries[entry.GetName()]; exists {
+				return nil, localError("the engine sent duplicate map name %q", entry.GetName())
+			}
+			converted, err := valueFromProtoDepth(entry.GetValue(), depth+1)
 			if err != nil {
 				return nil, localError("map field %q: %s", entry.GetName(), localDetail(err))
 			}

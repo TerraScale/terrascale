@@ -1,5 +1,5 @@
 # `terrabase-tbep` — the TerraBase Engine Protocol (TBEP) engine server
-# crate (ticket SE-14, charter PD-2026-08-26-02; ADR 0028: gRPC).
+# crate (ticket SE-14, charter PD-2026-08-26-02; ADR 0025: gRPC).
 #
 # Standalone workspace member: the engine workspace at the repository
 # root stays zero-dependency and untouched.
@@ -14,7 +14,7 @@ name = "terrabase-tbep"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
-license = "LicenseRef-TerraScale-Pending"
+license = "MIT"
 description = "TerraBase engine server behind the TBEP gRPC contract"
 publish = false
 
@@ -26,7 +26,7 @@ missing_docs = "deny"
 pedantic = "warn"
 
 [dependencies]
-# The gRPC serving stack (ADR 0028): tonic over tokio, prost messages,
+# The gRPC serving stack (ADR 0025): tonic over tokio, prost messages,
 # rustls TLS with the `ring` provider — the same pins
 # `terrabase-member-transport` qualified for its member lanes.
 tonic = { version = "0.14", default-features = false, features = [

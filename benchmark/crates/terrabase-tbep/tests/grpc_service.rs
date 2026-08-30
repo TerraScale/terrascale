@@ -351,6 +351,24 @@ async fn mutations_require_their_idempotency_key() {
         .expect_err("a keyless mutation fails");
     assert_eq!(status.code(), tonic::Code::InvalidArgument);
     assert_eq!(tbep_code(&status), Some(pb::ErrorCode::IdempotencyPairing));
+
+    let mut duplicate = identified(pb::DocumentWriteRequest {
+        document: Some(pb::DocumentPut {
+            id: "d-1".into(),
+            collection: "orders".into(),
+            body: Some(value_pb()),
+        }),
+        expected: Some(pb::ExpectedVersion {
+            discipline: Some(pb::expected_version::Discipline::Any(pb::ExpectedAny {})),
+        }),
+        operation_id: "op-1".into(),
+        ack: 0,
+    });
+    duplicate.metadata_mut().append("x-tb-idempotency-key", "op-1".parse().unwrap());
+    duplicate.metadata_mut().append("x-tb-idempotency-key", "op-2".parse().unwrap());
+    let status = engine.document_write(duplicate).await.expect_err("duplicate keys fail closed");
+    assert_eq!(status.code(), tonic::Code::InvalidArgument);
+    assert_eq!(tbep_code(&status), Some(pb::ErrorCode::IdempotencyPairing));
     listener.shutdown();
 }
 
@@ -465,6 +483,182 @@ async fn bounds_fail_closed_before_the_host_runs() {
     assert_eq!(status.code(), tonic::Code::InvalidArgument);
     assert_eq!(tbep_code(&status), Some(pb::ErrorCode::InvalidRequest));
     listener.shutdown();
+}
+
+#[tokio::test]
+async fn identity_metadata_bounds_fail_closed() {
+    let socket = socket_path("identity-bounds");
+    let server = Arc::new(TbepGrpcServer::new(
+        Arc::new(FixedHost { feed: Mutex::new(None) }) as Arc<dyn TbepHost>,
+        pb::BindingKind::Local,
+    ));
+    let mut listener = server.serve_uds(&socket).expect("the server binds");
+    let channel = connect(socket.clone()).await;
+    let mut engine = EngineClient::new(channel);
+    let mut request = Request::new(pb::DocumentReadRequest {
+        collection: "orders".into(),
+        document: "d-1".into(),
+        level: 0,
+    });
+    request.metadata_mut().insert("x-tb-principal", "p".repeat(129).parse().unwrap());
+    request.metadata_mut().insert("x-tb-tenant", "tenant-a".parse().unwrap());
+    let status = engine.document_read(request).await.expect_err("an oversized principal fails");
+    assert_eq!(status.code(), tonic::Code::Unauthenticated);
+    assert_eq!(tbep_code(&status), Some(pb::ErrorCode::UnboundChannel));
+
+    let mut duplicate = Request::new(pb::DocumentReadRequest {
+        collection: "orders".into(),
+        document: "d-1".into(),
+        level: 0,
+    });
+    duplicate.metadata_mut().insert("x-tb-principal", "operator".parse().unwrap());
+    duplicate.metadata_mut().insert("x-tb-tenant", "tenant-a".parse().unwrap());
+    duplicate.metadata_mut().append("x-tb-tenant", "tenant-b".parse().unwrap());
+    let status = engine.document_read(duplicate).await.expect_err("duplicate identity fails");
+    assert_eq!(status.code(), tonic::Code::Unauthenticated);
+    assert_eq!(tbep_code(&status), Some(pb::ErrorCode::UnboundChannel));
+    listener.shutdown();
+}
+
+#[tokio::test]
+async fn hostile_values_fail_closed_before_the_host_runs() {
+    let socket = socket_path("hostile-values");
+    let server = Arc::new(TbepGrpcServer::new(
+        Arc::new(FixedHost { feed: Mutex::new(None) }) as Arc<dyn TbepHost>,
+        pb::BindingKind::Local,
+    ));
+    let mut listener = server.serve_uds(&socket).expect("the server binds");
+    let channel = connect(socket.clone()).await;
+    let mut engine = EngineClient::new(channel);
+    let mut list = Vec::with_capacity(4097);
+    for _ in 0..=4096 {
+        list.push(pb::Value { kind: Some(pb::value::Kind::Null(pb::NullValue::Null as i32)) });
+    }
+    let status = engine
+        .document_write(mutation(pb::DocumentWriteRequest {
+            document: Some(pb::DocumentPut {
+                id: "d-1".into(),
+                collection: "orders".into(),
+                body: Some(pb::Value {
+                    kind: Some(pb::value::Kind::List(pb::ValueList { items: list })),
+                }),
+            }),
+            expected: Some(pb::ExpectedVersion {
+                discipline: Some(pb::expected_version::Discipline::Any(pb::ExpectedAny {})),
+            }),
+            operation_id: "op-1".into(),
+            ack: 0,
+        }))
+        .await
+        .expect_err("an oversized value list fails");
+    assert_eq!(status.code(), tonic::Code::InvalidArgument);
+    assert_eq!(tbep_code(&status), Some(pb::ErrorCode::InvalidRequest));
+
+    let status = engine
+        .document_write(mutation(pb::DocumentWriteRequest {
+            document: Some(pb::DocumentPut {
+                id: "d-1".into(),
+                collection: "orders".into(),
+                body: Some(pb::Value { kind: Some(pb::value::Kind::Number(f64::NAN)) }),
+            }),
+            expected: Some(pb::ExpectedVersion {
+                discipline: Some(pb::expected_version::Discipline::Any(pb::ExpectedAny {})),
+            }),
+            operation_id: "op-1".into(),
+            ack: 0,
+        }))
+        .await
+        .expect_err("a non-finite value fails");
+    assert_eq!(status.code(), tonic::Code::InvalidArgument);
+    assert_eq!(tbep_code(&status), Some(pb::ErrorCode::InvalidRequest));
+    listener.shutdown();
+}
+
+#[tokio::test]
+async fn sync_tokens_are_bounded_before_the_host_runs() {
+    let socket = socket_path("sync-token-bounds");
+    let server = Arc::new(TbepGrpcServer::new(
+        Arc::new(FixedHost { feed: Mutex::new(None) }) as Arc<dyn TbepHost>,
+        pb::BindingKind::Local,
+    ));
+    let mut listener = server.serve_uds(&socket).expect("the server binds");
+    let channel = connect(socket.clone()).await;
+    let mut sync = SyncClient::new(channel);
+    let status = sync
+        .session_setup(identified(pb::SyncSessionSetupRequest {
+            collection: "orders".into(),
+            resume: vec![0; 1058],
+        }))
+        .await
+        .expect_err("an oversized resume token fails");
+    assert_eq!(status.code(), tonic::Code::InvalidArgument);
+    assert_eq!(tbep_code(&status), Some(pb::ErrorCode::InvalidRequest));
+    listener.shutdown();
+}
+
+#[test]
+fn uds_does_not_unlink_an_existing_non_socket() {
+    let path = socket_path("existing-file");
+    std::fs::write(&path, b"operator data").expect("the fixture file writes");
+    let server = Arc::new(TbepGrpcServer::new(
+        Arc::new(FixedHost { feed: Mutex::new(None) }) as Arc<dyn TbepHost>,
+        pb::BindingKind::Local,
+    ));
+    let error = match server.serve_uds(&path) {
+        Ok(_) => panic!("a regular path is refused"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+    assert_eq!(std::fs::read(&path).expect("the fixture remains"), b"operator data");
+    std::fs::remove_file(path).expect("the fixture removes");
+}
+
+#[cfg(unix)]
+#[test]
+fn uds_does_not_unlink_an_existing_socket() {
+    let path = socket_path("existing-socket");
+    let owner = std::os::unix::net::UnixListener::bind(&path).expect("the owner binds");
+    let server = Arc::new(TbepGrpcServer::new(
+        Arc::new(FixedHost { feed: Mutex::new(None) }) as Arc<dyn TbepHost>,
+        pb::BindingKind::Local,
+    ));
+    let error = match server.serve_uds(&path) {
+        Ok(_) => panic!("an existing socket path is refused"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+    assert!(std::os::unix::net::UnixStream::connect(&path).is_ok());
+    drop(owner);
+    std::fs::remove_file(path).expect("the fixture removes");
+}
+
+#[test]
+fn tls_requires_a_client_ca_for_production() {
+    let server = Arc::new(TbepGrpcServer::new(
+        Arc::new(FixedHost { feed: Mutex::new(None) }) as Arc<dyn TbepHost>,
+        pb::BindingKind::NetworkMtls,
+    ));
+    let error = match server.serve_tls(
+        std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+        "server-certificate",
+        "server-key",
+        None,
+    ) {
+        Ok(_) => panic!("TCP TLS without a client CA must fail closed"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+
+    let error = match server.serve_tls(
+        std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+        "server-certificate",
+        "server-key",
+        Some("  \n"),
+    ) {
+        Ok(_) => panic!("an empty client CA must fail closed"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
 }
 
 #[tokio::test]

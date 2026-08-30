@@ -426,7 +426,14 @@ impl RetainedIndex {
     /// Records a bound the writer just appended durably (LSM compaction,
     /// P1): the same merge the scan path applies to bound records.
     pub(crate) fn declare_bound(&mut self, bound: u64, head: u64) {
-        self.bound = Some(self.bound.map_or((bound, head), |(prior, _)| (prior.max(bound), head)));
+        self.bound = Some(match self.bound {
+            None => (bound, head),
+            Some((prior_bound, _prior_head)) if bound > prior_bound => (bound, head),
+            Some((prior_bound, prior_head)) if bound == prior_bound => {
+                (prior_bound, prior_head.max(head))
+            }
+            Some(previous) => previous,
+        });
     }
 
     /// Returns every retained fact, in append order.
@@ -716,5 +723,15 @@ mod tests {
         assert!(scan.mid_file_damage);
         assert_eq!(scan.good_bytes, 0);
         std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn in_memory_bound_never_regresses_on_a_retry() {
+        let mut index = RetainedIndex::default();
+        index.declare_bound(10, 20);
+        index.declare_bound(5, 6);
+        assert_eq!(index.declared_bound(), Some(10));
+        index.declare_bound(10, 30);
+        assert_eq!(index.bound, Some((10, 30)));
     }
 }

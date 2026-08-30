@@ -507,6 +507,32 @@ fn document_stream_missing_documents_and_invalid_selectors_return_typed_errors()
 }
 
 #[test]
+fn exact_document_selector_reaches_targets_beyond_window_probe_bound() {
+    let (dir, engine) = open_engine("doc-exact-keyed-lookup");
+    let tenant_scope = scope(&engine, "t1");
+
+    // The old existence probe stopped after 64 windows of 64 documents. Put
+    // the target after that boundary to ensure exact validation uses the
+    // keyed snapshot seam rather than a bounded prefix scan.
+    let prefix = numbered_documents("users", 4_096, 4);
+    commit_documents(&engine, "t1", "op-prefix", &as_refs(&prefix));
+    commit_document(&engine, "t1", "op-target", "users", "target", "value");
+
+    let store = engine.streams();
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let source = StreamSource::Documents(selector("users").with_id(document_id("target")));
+    let cursor = store.open(&tenant_scope, &snapshot, source.clone()).expect("target exists");
+    let batch = pull(&store, &tenant_scope, &snapshot, &source, cursor, 1).expect("batch");
+    assert_eq!(batch.items().len(), 1);
+    assert!(
+        matches!(batch.items()[0], StreamItem::Document(ref document) if document.id().as_str() == "target")
+    );
+    assert_eq!(batch.completion(), Some(StreamCompletion::EndOfStream));
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn query_stream_reports_the_index_generation_it_used() {
     let (dir, engine) = open_engine("query-generation");
     let tenant_scope = scope(&engine, "t1");

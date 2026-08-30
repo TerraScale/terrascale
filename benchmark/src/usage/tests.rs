@@ -1,12 +1,16 @@
 use super::*;
 
 fn scope() -> UsageScope {
+    scope_for("tenant-a")
+}
+
+fn scope_for(tenant: &str) -> UsageScope {
     UsageScope::try_new(
-        TenantId::try_new("tenant-a").expect("tenant"),
+        TenantId::try_new(tenant).expect("tenant"),
         "project-a",
         "database-a",
         "partition-a",
-        RegionId::try_new("gru").expect("region"),
+        RegionCode::GRU,
     )
     .expect("scope")
 }
@@ -81,7 +85,7 @@ fn facts_are_integer_scoped_and_match_their_minting_rule() {
     )
     .expect("fact");
     assert_eq!(fact.delta(), 3);
-    assert_eq!(fact.scope().region_id().as_str(), "gru");
+    assert_eq!(fact.scope().region_id().as_str(), "GRU");
     assert_eq!(
         UsageFact::try_new(
             definition(MeterKind::AdmittedRequestUnits),
@@ -159,6 +163,155 @@ fn durable_fact_ledger_is_idempotent_and_fences_reuse() {
     )
     .expect("durable fact");
     assert_eq!(ledger.insert(different), Err(UsageError::FactIdentityConflict));
+}
+
+#[test]
+fn durable_fact_identities_are_scoped_and_do_not_collide_across_tenants() {
+    let identity =
+        MintingIdentity::StableAdmittedRequest(UsageFactId::try_new("request-1").expect("id"));
+    let fact_for = |tenant: &str| {
+        UsageFact::try_new(
+            definition(MeterKind::AdmittedRequestUnits),
+            scope_for(tenant),
+            identity.clone(),
+            MeasurementWindow::instant(10),
+            1,
+        )
+        .expect("fact")
+    };
+    let first = DurableUsageFact::try_new(fact_for("tenant-a"), 1, 1).expect("first");
+    let second = DurableUsageFact::try_new(fact_for("tenant-b"), 2, 1).expect("second");
+    let mut ledger = UsageFactLedger::default();
+    assert_eq!(ledger.insert(first), Ok(true));
+    assert_eq!(ledger.insert(second), Ok(true));
+    assert_eq!(ledger.facts().count(), 2);
+    assert!(ledger.get_by_identity(&scope_for("tenant-a"), &identity).is_some());
+    assert!(ledger.get_by_identity(&scope_for("tenant-b"), &identity).is_some());
+}
+
+#[test]
+fn admitted_usage_context_builds_only_a_real_scoped_request_unit_fact() {
+    let context = UsageAdmissionContext::try_new(
+        "project-a",
+        "database-a",
+        "partition-a",
+        RegionCode::GRU,
+        UsageFactId::try_new("request-1").expect("id"),
+        1_788_105_600_000,
+        1,
+        7,
+    )
+    .expect("context");
+    let fact = context.fact_for(TenantId::try_new("tenant-a").expect("tenant")).expect("fact");
+    assert_eq!(fact.meter(), MeterKind::AdmittedRequestUnits);
+    assert_eq!(fact.scope(), &scope());
+    assert_eq!(fact.window(), MeasurementWindow::instant(1_788_105_600_000));
+    assert_eq!(fact.delta(), 7);
+    assert!(
+        matches!(fact.identity(), MintingIdentity::StableAdmittedRequest(id) if id.as_str() == "request-1")
+    );
+    assert!(!context.digest_bytes().is_empty());
+
+    let invalid = |timestamp, units, version| {
+        UsageAdmissionContext::try_new(
+            "project-a",
+            "database-a",
+            "partition-a",
+            RegionCode::GRU,
+            UsageFactId::try_new("request-1").expect("id"),
+            timestamp,
+            version,
+            units,
+        )
+    };
+    assert_eq!(invalid(0, 1, 1), Err(UsageError::InvalidTimestamp));
+    assert_eq!(invalid(1, 0, 1), Err(UsageError::InvalidIntegerUnits));
+    assert_eq!(invalid(1, -1, 1), Err(UsageError::InvalidIntegerUnits));
+    assert_eq!(invalid(1, 1, 2), Err(UsageError::UnknownMeterDefinition));
+    assert_eq!(
+        invalid(1, MAX_ADMITTED_REQUEST_UNITS_PER_FACT + 1, 1),
+        Err(UsageError::UsageUnitsExceeded)
+    );
+    assert_eq!(
+        UsageAdmissionContext::try_new(
+            "project-a",
+            "database-a",
+            "partition-a",
+            RegionCode::from_text("JFK").expect("shaped code"),
+            UsageFactId::try_new("request-1").expect("id"),
+            1,
+            1,
+            1,
+        ),
+        Err(UsageError::InvalidUsageRegion)
+    );
+}
+
+#[test]
+fn standalone_usage_record_is_closed_bounded_and_tenant_bound() {
+    for (meter, expected_kind, expected_rule) in [
+        (
+            UsageRecordMeter::AdmittedRequestUnits,
+            MeterKind::AdmittedRequestUnits,
+            MintingRule::StableAdmittedRequest,
+        ),
+        (
+            UsageRecordMeter::PublicEgressBytes,
+            MeterKind::PublicEgressBytes,
+            MintingRule::PublicResponseBytes,
+        ),
+    ] {
+        let request = UsageRecordRequest::try_new(
+            meter,
+            "project-a",
+            "database-a",
+            "partition-a",
+            RegionCode::GRU,
+            UsageFactId::try_new("fact-1").expect("id"),
+            1_788_105_600_000,
+            1,
+            11,
+        )
+        .expect("request");
+        let fact = request.fact_for(TenantId::try_new("tenant-b").expect("tenant")).expect("fact");
+        assert_eq!(fact.meter(), expected_kind);
+        assert_eq!(fact.identity().rule(), expected_rule);
+        assert_eq!(fact.scope().tenant_id().as_str(), "tenant-b");
+        assert_eq!(fact.delta(), 11);
+    }
+}
+
+#[test]
+fn usage_page_shapes_enforce_their_public_bounds() {
+    assert_eq!(UsagePageRequest::try_new(None, 0, None), Err(UsageError::InvalidPageSize));
+    assert_eq!(
+        UsagePageRequest::try_new(None, MAX_USAGE_PAGE_SIZE + 1, None),
+        Err(UsageError::InvalidPageSize)
+    );
+    assert_eq!(UsageContinuation::try_new(Vec::new()), Err(UsageError::InvalidContinuation));
+    assert_eq!(
+        UsageContinuation::try_new(vec![0; MAX_USAGE_CONTINUATION_BYTES + 1]),
+        Err(UsageError::InvalidContinuation)
+    );
+    let continuation = UsageContinuation::try_new(vec![1, 2, 3]).expect("continuation");
+    let request = UsagePageRequest::try_new(
+        Some(MeasurementWindow::interval(10, 20).expect("window")),
+        MAX_USAGE_PAGE_SIZE,
+        Some(continuation.clone()),
+    )
+    .expect("page request");
+    assert_eq!(request.continuation(), Some(&continuation));
+    assert_eq!(request.page_size(), MAX_USAGE_PAGE_SIZE);
+
+    let receipt = UsageRecordReceipt::new(
+        UsageFactId::try_new("fact-1").expect("id"),
+        StorageSequence::new(9),
+        3,
+        true,
+    );
+    assert_eq!(receipt.sequence().get(), 9);
+    assert_eq!(receipt.replica_epoch(), 3);
+    assert!(receipt.already_recorded());
 }
 
 #[test]

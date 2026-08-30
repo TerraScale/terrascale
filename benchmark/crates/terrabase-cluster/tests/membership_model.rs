@@ -1060,10 +1060,10 @@ fn focused_stale_epoch_refusals_are_typed_across_an_overlapping_transition() {
         Err(DurabilityError::DuplicateAcknowledgement { .. })
     ));
     // A retired member cannot ack into the new configuration: m0 is
-    // no longer seated, so its acknowledgment refuses WrongSeat.
+    // no longer selected, so its acknowledgment refuses UnknownMember.
     assert!(matches!(
         coordinator.record_ack(DurableAck::new("after".to_owned(), m0, r1.clone(), 4, 8)),
-        Err(DurabilityError::WrongSeat)
+        Err(DurabilityError::UnknownMember { .. })
     ));
     // The new configuration commits through the overlapping member.
     let receipt = coordinator

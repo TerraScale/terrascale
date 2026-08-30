@@ -104,6 +104,7 @@ pub(super) fn merge_l0(storage: &mut LsmStorage) -> Option<(u64, u64)> {
         entry.key.tag() != Keyspace::History.tag() || entry.key.sequence() >= floor
     });
     let dir = storage.dir().to_path_buf();
+    let manifest_before = storage.manifest.clone();
     let id = storage.manifest.allocate_segment_id();
     let path = super::segment_path(&dir, id);
     segment::write_segment(&path, id, 1, &merged).ok()?;
@@ -123,12 +124,19 @@ pub(super) fn merge_l0(storage: &mut LsmStorage) -> Option<(u64, u64)> {
     storage.manifest.segments.retain(|meta| !removed.contains(&meta.id));
     storage.manifest.segments.push(meta);
     storage.manifest.epoch += 1;
-    let publish_ok = storage.manifest.publish(&dir).is_ok();
-    if publish_ok {
-        for id in removed {
-            storage.readers.remove(&id);
-            let _ = std::fs::remove_file(super::segment_path(&dir, id));
-        }
+    if storage.manifest.publish(&dir).is_err() {
+        // Keep the in-memory view aligned with the durable manifest. The
+        // output was written before publication, so a failed rename must not
+        // make this process serve an unreferenced segment or report a merge
+        // that recovery will not observe.
+        storage.manifest = manifest_before;
+        storage.readers.remove(&id);
+        let _ = std::fs::remove_file(super::segment_path(&dir, id));
+        return None;
+    }
+    for id in removed {
+        storage.readers.remove(&id);
+        let _ = std::fs::remove_file(super::segment_path(&dir, id));
     }
     Some((removed_before, 1))
 }

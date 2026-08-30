@@ -258,9 +258,10 @@ impl SegmentReader {
     /// when `end` is `None`).
     fn cached_between(&self, from: Option<&[u8]>, end: Option<&[u8]>) -> Option<Vec<Entry>> {
         let cached = self.cached.as_ref()?;
-        let low = from.map_or(0, |from| cached.partition_point(|entry| entry.key.user_key() < from));
-        let high =
-            end.map_or(cached.len(), |end| cached.partition_point(|entry| entry.key.user_key() < end));
+        let low =
+            from.map_or(0, |from| cached.partition_point(|entry| entry.key.user_key() < from));
+        let high = end
+            .map_or(cached.len(), |end| cached.partition_point(|entry| entry.key.user_key() < end));
         Some(cached[low..high].to_vec())
     }
 
@@ -293,6 +294,7 @@ impl SegmentReader {
 
     /// Reads the records from the first whose user key is `>= from` (or the
     /// first record when `from` is `None`) to the end of the segment.
+    #[cfg(test)]
     pub(super) fn read_from(&mut self, from: Option<&[u8]>) -> io::Result<Vec<Entry>> {
         let Some(from) = from else {
             return self.read_all();

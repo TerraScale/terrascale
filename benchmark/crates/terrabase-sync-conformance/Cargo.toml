@@ -19,7 +19,7 @@ name = "terrabase-sync-conformance"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
-license = "LicenseRef-TerraScale-Pending"
+license = "MIT"
 description = "TerraBase sync.v2 protocol conformance kit: reference harness, corpus manifest, conformance reports"
 publish = false
 

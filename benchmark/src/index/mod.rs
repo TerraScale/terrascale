@@ -437,8 +437,11 @@ fn check_row(
 struct EpochState {
     next_generation: u64,
     published: Option<IndexSegment>,
-    /// (generation, covered sequence) of every publication, in publish order.
-    history: Vec<(u64, u64)>,
+    /// A bounded suffix of (generation, covered sequence) publications, in
+    /// publish order. Older entries cannot answer a retained snapshot after
+    /// storage has moved past the corresponding coverage window, so dropping
+    /// them makes such a lookup fail closed rather than growing forever.
+    history: VecDeque<(u64, u64)>,
 }
 
 /// The auto-index lifecycle state of one namespace: present only for
@@ -629,6 +632,11 @@ struct OptimizerState {
     retired: BTreeMap<String, VecDeque<RetiredRecord>>,
     last_surpass_revision: Option<u64>,
 }
+
+/// Maximum generation observations retained per namespace epoch. The query
+/// path only needs the suffix that can still describe recent snapshots; an
+/// older snapshot with no retained observation is reported as not ready.
+const MAX_GENERATION_HISTORY: usize = 1024;
 
 /// The lifecycle clock: the one time source the lifecycle state machine
 /// measures against. Production reads the monotonic instant; the test seam
@@ -1187,6 +1195,41 @@ impl IndexCatalog {
                 replacement: pending.replacement.clone(),
                 target: pending.target.clone(),
                 target_covered: pending.target_covered,
+            })
+            .collect()
+    }
+
+    /// Returns every definition-carrying namespace whose published covered
+    /// sequence trails the latest observed publication: the catch-up work of
+    /// the next lifecycle pass, in catalog order. The sequence each must
+    /// reach is the caller's latest publication delta — publication events
+    /// only, never the storage watermark.
+    ///
+    /// A namespace that has never published counts as behind — its
+    /// registration owes a segment. A namespace without a usage report
+    /// (`last_queried == None`) is excluded: the fail-closed observer rule
+    /// that gates every other lifecycle action (AX-21) also keeps a
+    /// registration no query has ever been observed using out of the query
+    /// path's rebuild work. The first query that selects such a namespace
+    /// reports it, and from then on the pass keeps its coverage current.
+    /// Explicit indexes are included: the catch-up is a publication repair,
+    /// not a lifecycle transition, and the executor's snapshot-isolation
+    /// guard demands current coverage of any segment it trusts.
+    pub(crate) fn catch_up_candidates(&self) -> Vec<IndexNamespace> {
+        let state = self.state.lock().expect("index lock");
+        let Some(target) = state.delta.as_ref().map(IndexDelta::covered_sequence) else {
+            return Vec::new();
+        };
+        state
+            .namespaces
+            .iter()
+            .filter(|(_, entry)| entry.last_queried.is_some())
+            .filter_map(|(key, entry)| {
+                if entry.covered_sequence().is_some_and(|covered| covered >= target) {
+                    return None;
+                }
+                let (tenant, name) = key.split_once('\u{1f}')?;
+                IndexNamespace::try_new(TenantId::try_new(tenant).ok()?, name).ok()
             })
             .collect()
     }
@@ -1897,7 +1940,10 @@ impl IndexCatalog {
         let covered_sequence = segment.covered_sequence();
         segment.epoch = epoch;
         segment.generation = generation;
-        epoch_state.history.push((generation, covered_sequence));
+        epoch_state.history.push_back((generation, covered_sequence));
+        while epoch_state.history.len() > MAX_GENERATION_HISTORY {
+            epoch_state.history.pop_front();
+        }
         epoch_state.published = Some(segment);
         // A publication changes catalog truth, so cached selections of every
         // shape invalidate with this revision.

@@ -1,0 +1,30 @@
+[package]
+name = "terrabase-server"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "MIT"
+description = "Production TerraBase engine daemon"
+publish = false
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+
+[lints.clippy]
+pedantic = "warn"
+
+[dependencies]
+terrabase = { path = "../.." }
+terrabase-tbep = { path = "../terrabase-tbep" }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", default-features = false, features = [
+  "rt-multi-thread",
+  "macros",
+  "net",
+  "signal",
+  "sync",
+  "time",
+] }
+toml = "0.9"

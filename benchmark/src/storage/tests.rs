@@ -57,6 +57,7 @@ fn intent(operation: &str, writes: Vec<StagedWrite>, durability: LocalDurability
         operation: OperationId::try_new(operation).expect("valid identifier"),
         snapshot_sequence: StorageSequence::new(0),
         durability,
+        usage_admission: None,
         writes,
     }
 }
@@ -1826,6 +1827,7 @@ fn intent_for(
         operation: OperationId::try_new(operation).expect("valid identifier"),
         snapshot_sequence: StorageSequence::new(0),
         durability,
+        usage_admission: None,
         writes,
     }
 }
@@ -2187,6 +2189,7 @@ fn publication_history_lets_a_follower_replay_puts_and_deletes_idempotently() {
             operation: commit.operation_id().clone(),
             snapshot_sequence,
             durability: LocalDurability::Written,
+            usage_admission: None,
             writes,
         })
     };
@@ -2488,6 +2491,7 @@ fn journal_deletes_resolve_the_exact_key_across_duplicate_identifiers() {
             operation: commit.operation_id().clone(),
             snapshot_sequence,
             durability: LocalDurability::Written,
+            usage_admission: None,
             writes,
         });
         assert!(matches!(outcome, CommitResult::Committed(_)), "the follower applies the commit");

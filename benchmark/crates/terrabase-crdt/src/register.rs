@@ -387,7 +387,10 @@ fn decode_state<T: CanonicalValue>(
     let mut candidates = Vec::with_capacity(count);
     for _ in 0..count {
         let candidate = decode_candidate(reader, limits)?;
-        if !context.contains(candidate.dot()) || !context.dominates(candidate.version.context()) {
+        if !candidate.version().is_well_formed()
+            || !context.contains(candidate.dot())
+            || !context.dominates(candidate.version.context())
+        {
             return Err(DecodeError::NonCanonicalContext);
         }
         if candidates

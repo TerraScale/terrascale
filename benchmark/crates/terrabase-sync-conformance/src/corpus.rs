@@ -6,7 +6,7 @@
 //! This module is the reference semantics of "running the corpus": the
 //! per-language harness contract documented in
 //! `docs/sync/terrascale-sync-v2-conformance.md` describes exactly these
-//! steps and check names, so a TypeScript or C# harness that makes the
+//! steps and check names, so a Go gateway or public SDK harness that makes the
 //! same checks on the same data is conformance-equivalent to this one.
 
 use std::collections::BTreeMap;

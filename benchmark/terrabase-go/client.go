@@ -6,14 +6,19 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
+	"net/url"
+	"strings"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/stats"
 
 	v1 "terrascale.tech/terrabase-go/terrabase/v1"
 )
@@ -43,7 +48,7 @@ const (
 	maxQueryItems       = 1 << 20
 	maxBatchItems       = 256
 	maxCollections      = 64 // per subscription
-	maxFamilyNameBytes  = 128
+	maxFamilyNameBytes  = 64
 	maxFamilyCodecBytes = 64
 	maxSyncTokenBytes   = 1057 // sync checkpoints and cursors
 	maxTierPolicyBytes  = 128
@@ -78,9 +83,22 @@ type Client struct {
 	schema       v1.SchemaClient
 	replication  v1.ReplicationClient
 	maintenance  v1.MaintenanceClient
+	usage        v1.UsageClient
 	tier         v1.TierClient
 	bound        atomic.Pointer[identity]
+	binding      atomic.Uint32
+	closed       atomic.Bool
+	connection   *connectionState
+	ownsConn     bool
 	defaultLevel ReadLevel
+}
+
+// ErrClientClosed reports use of a logical client or shared transport after
+// Close. It is a local lifecycle error, not an engine refusal.
+var ErrClientClosed = errors.New("terrabase: client is closed")
+
+type connectionState struct {
+	closed atomic.Bool
 }
 
 // Option configures one Dial. The default transport is TLS against the
@@ -90,11 +108,15 @@ type Client struct {
 type Option func(*dialConfig) error
 
 type dialConfig struct {
-	tlsConfig *tls.Config
-	transport credentials.TransportCredentials
-	authority string
-	level     ReadLevel
-	dialer    func(context.Context, string) (net.Conn, error)
+	tlsConfig          *tls.Config
+	transport          credentials.TransportCredentials
+	insecure           bool
+	authority          string
+	level              ReadLevel
+	dialer             func(context.Context, string) (net.Conn, error)
+	unaryInterceptors  []grpc.UnaryClientInterceptor
+	streamInterceptors []grpc.StreamClientInterceptor
+	statsHandler       stats.Handler
 }
 
 // WithRootCerts trusts the given PEM bundle as the engine's root
@@ -129,6 +151,7 @@ func WithClientCert(certPEM, keyPEM []byte) Option {
 func WithInsecure() Option {
 	return func(config *dialConfig) error {
 		config.transport = insecure.NewCredentials()
+		config.insecure = true
 		return nil
 	}
 }
@@ -138,6 +161,9 @@ func WithInsecure() Option {
 // differs from the certificate name.
 func WithAuthority(authority string) Option {
 	return func(config *dialConfig) error {
+		if err := boundName("authority", authority, 255); err != nil {
+			return err
+		}
 		config.authority = authority
 		return nil
 	}
@@ -151,6 +177,10 @@ func WithTransportCredentials(transport credentials.TransportCredentials) Option
 			return fmt.Errorf("terrabase: transport credentials are nil")
 		}
 		config.transport = transport
+		// grpc's insecure credentials intentionally expose their security
+		// protocol. Track that too, so the escape hatch cannot bypass the
+		// development-only address gate by wrapping the option.
+		config.insecure = transport.Info().SecurityProtocol == "insecure"
 		return nil
 	}
 }
@@ -159,6 +189,9 @@ func WithTransportCredentials(transport credentials.TransportCredentials) Option
 // query uses unless its own parameter says otherwise.
 func WithDefaultReadLevel(level ReadLevel) Option {
 	return func(config *dialConfig) error {
+		if !level.valid() {
+			return localError("the default read level is outside the closed vocabulary")
+		}
 		config.level = level
 		return nil
 	}
@@ -176,11 +209,51 @@ func WithContextDialer(dialer func(context.Context, string) (net.Conn, error)) O
 	}
 }
 
+// WithUnaryInterceptor adds one unary client interceptor. Use it for bounded
+// transport metrics, tracing, and other gateway instrumentation. Interceptors
+// run in option order.
+func WithUnaryInterceptor(interceptor grpc.UnaryClientInterceptor) Option {
+	return func(config *dialConfig) error {
+		if interceptor == nil {
+			return fmt.Errorf("terrabase: the unary interceptor is nil")
+		}
+		config.unaryInterceptors = append(config.unaryInterceptors, interceptor)
+		return nil
+	}
+}
+
+// WithStreamInterceptor adds one streaming client interceptor. Use it for
+// bounded transport metrics and tracing of backbone subscriptions.
+func WithStreamInterceptor(interceptor grpc.StreamClientInterceptor) Option {
+	return func(config *dialConfig) error {
+		if interceptor == nil {
+			return fmt.Errorf("terrabase: the stream interceptor is nil")
+		}
+		config.streamInterceptors = append(config.streamInterceptors, interceptor)
+		return nil
+	}
+}
+
+// WithStatsHandler sets the gRPC transport stats handler used for connection
+// and RPC instrumentation.
+func WithStatsHandler(handler stats.Handler) Option {
+	return func(config *dialConfig) error {
+		if handler == nil {
+			return fmt.Errorf("terrabase: the stats handler is nil")
+		}
+		if config.statsHandler != nil {
+			return fmt.Errorf("terrabase: the stats handler is already configured")
+		}
+		config.statsHandler = handler
+		return nil
+	}
+}
+
 // ensureTLS allocates the shared TLS configuration the certificate
 // options compose into.
 func (config *dialConfig) ensureTLS() *tls.Config {
 	if config.tlsConfig == nil {
-		config.tlsConfig = &tls.Config{}
+		config.tlsConfig = &tls.Config{MinVersion: tls.VersionTLS13}
 	}
 	return config.tlsConfig
 }
@@ -189,11 +262,35 @@ func (config *dialConfig) ensureTLS() *tls.Config {
 // client. The connection is lazy: the first RPC establishes it. Call
 // Close when done.
 func Dial(target string, options ...Option) (*Client, error) {
+	conn, config, err := dialConnection(target, options...)
+	if err != nil {
+		return nil, err
+	}
+	state := &connectionState{}
+	client := newClient(conn, state)
+	client.defaultLevel = config.level
+	client.ownsConn = true
+	return client, nil
+}
+
+func dialConnection(target string, options ...Option) (*grpc.ClientConn, dialConfig, error) {
 	config := dialConfig{}
 	for _, option := range options {
-		if err := option(&config); err != nil {
-			return nil, err
+		if option == nil {
+			return nil, dialConfig{}, fmt.Errorf("terrabase: a dial option is nil")
 		}
+		if err := option(&config); err != nil {
+			return nil, dialConfig{}, err
+		}
+	}
+	if target == "" {
+		return nil, dialConfig{}, fmt.Errorf("terrabase: the dial target is empty")
+	}
+	if config.insecure && !insecureTargetAllowed(target, config.dialer != nil) {
+		return nil, dialConfig{}, fmt.Errorf("terrabase: plaintext transport is development-only and is allowed only for Unix sockets, in-memory dialers, or loopback TCP")
+	}
+	if config.transport != nil && config.tlsConfig != nil {
+		return nil, dialConfig{}, fmt.Errorf("terrabase: custom or insecure transport credentials cannot be combined with TLS certificate options")
 	}
 	transport := config.transport
 	if transport == nil {
@@ -205,45 +302,113 @@ func Dial(target string, options ...Option) (*Client, error) {
 			}
 			transport = credentials.NewTLS(tlsConfig)
 		} else {
-			transport = credentials.NewTLS(nil)
+			transport = credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS13})
 		}
 	}
-	dialOptions := []grpc.DialOption{grpc.WithTransportCredentials(transport)}
+	// Match the server's 16 MiB per-RPC contract. gRPC's default receive
+	// limit is smaller, which would turn valid family and sync payloads into
+	// an opaque transport failure before the client can map them.
+	dialOptions := []grpc.DialOption{
+		grpc.WithTransportCredentials(transport),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(maxFrameBytes),
+			grpc.MaxCallSendMsgSize(maxFrameBytes),
+		),
+	}
 	if config.authority != "" {
 		dialOptions = append(dialOptions, grpc.WithAuthority(config.authority))
 	}
 	if config.dialer != nil {
 		dialOptions = append(dialOptions, grpc.WithContextDialer(config.dialer))
 	}
+	if len(config.unaryInterceptors) != 0 {
+		dialOptions = append(dialOptions, grpc.WithChainUnaryInterceptor(config.unaryInterceptors...))
+	}
+	if len(config.streamInterceptors) != 0 {
+		dialOptions = append(dialOptions, grpc.WithChainStreamInterceptor(config.streamInterceptors...))
+	}
+	if config.statsHandler != nil {
+		dialOptions = append(dialOptions, grpc.WithStatsHandler(config.statsHandler))
+	}
 	conn, err := grpc.NewClient(target, dialOptions...)
 	if err != nil {
-		return nil, fmt.Errorf("terrabase: dial %s: %w", target, err)
+		return nil, dialConfig{}, fmt.Errorf("terrabase: dial %s: %w", target, err)
 	}
-	client := NewClient(conn)
-	client.defaultLevel = config.level
-	return client, nil
+	return conn, config, nil
+}
+
+// insecureTargetAllowed keeps plaintext explicitly local. The target is
+// inspected before grpc creates its lazy connection, so a typo cannot defer
+// this safety decision until the first RPC. A custom dialer is accepted for
+// a non-network target (bufconn and similar in-memory test lanes), while
+// targets that name TCP endpoints must still be loopback-only.
+func insecureTargetAllowed(target string, customDialer bool) bool {
+	parsed, err := url.Parse(target)
+	endpoint := target
+	knownScheme := false
+	if err == nil && parsed.Scheme != "" {
+		switch strings.ToLower(parsed.Scheme) {
+		case "unix", "unix-abstract":
+			return true
+		case "passthrough", "dns", "ipv4", "ipv6":
+			knownScheme = true
+		}
+	}
+	if knownScheme {
+		endpoint = strings.TrimPrefix(parsed.Path, "/")
+		if endpoint == "" {
+			endpoint = parsed.Host
+		}
+	}
+	if endpoint == "" {
+		return false
+	}
+	host, _, splitErr := net.SplitHostPort(endpoint)
+	if splitErr != nil {
+		// passthrough:///bufnet and other named in-memory targets are safe
+		// only when the caller supplied the dialer that gives them meaning.
+		return customDialer && knownScheme && strings.EqualFold(parsed.Scheme, "passthrough")
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // NewClient wraps one existing gRPC connection; the transport options
 // of Dial were applied when that connection was created.
 func NewClient(conn grpc.ClientConnInterface) *Client {
-	return &Client{
-		conn:        conn,
-		channel:     v1.NewChannelClient(conn),
-		engine:      v1.NewEngineClient(conn),
-		backbone:    v1.NewBackboneClient(conn),
-		sync:        v1.NewSyncClient(conn),
-		schema:      v1.NewSchemaClient(conn),
-		replication: v1.NewReplicationClient(conn),
-		maintenance: v1.NewMaintenanceClient(conn),
-		tier:        v1.NewTierClient(conn),
+	return newClient(conn, &connectionState{})
+}
+
+func newClient(conn grpc.ClientConnInterface, state *connectionState) *Client {
+	client := &Client{conn: conn, connection: state}
+	if conn == nil {
+		client.closed.Store(true)
+		return client
 	}
+	bounded := boundedClientConn{ClientConnInterface: conn}
+	client.channel = v1.NewChannelClient(bounded)
+	client.engine = v1.NewEngineClient(bounded)
+	client.backbone = v1.NewBackboneClient(bounded)
+	client.sync = v1.NewSyncClient(bounded)
+	client.schema = v1.NewSchemaClient(bounded)
+	client.replication = v1.NewReplicationClient(bounded)
+	client.maintenance = v1.NewMaintenanceClient(bounded)
+	client.usage = v1.NewUsageClient(bounded)
+	client.tier = v1.NewTierClient(bounded)
+	return client
 }
 
 // Close tears down the underlying connection when this client owns
 // one created by Dial.
 func (c *Client) Close() error {
-	if c.conn == nil {
+	if c == nil || !c.closed.CompareAndSwap(false, true) || !c.ownsConn || c.conn == nil {
+		return nil
+	}
+	if c.connection != nil && !c.connection.closed.CompareAndSwap(false, true) {
 		return nil
 	}
 	closer, ok := c.conn.(interface{ Close() error })
@@ -253,10 +418,23 @@ func (c *Client) Close() error {
 	return closer.Close()
 }
 
+func (c *Client) available() error {
+	if c == nil || c.closed.Load() || c.connection == nil || c.connection.closed.Load() {
+		return ErrClientClosed
+	}
+	return nil
+}
+
 // outgoing pairs the caller's context with the bound identity (and,
 // for mutations, the idempotency key) the engine's conventions
 // require.
 func (c *Client) outgoing(ctx context.Context, mutation bool, key string) (context.Context, error) {
+	if err := c.available(); err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		return nil, localError("the context is nil")
+	}
 	bound := c.bound.Load()
 	if bound == nil {
 		return nil, &Error{
@@ -264,18 +442,32 @@ func (c *Client) outgoing(ctx context.Context, mutation bool, key string) (conte
 			Detail: "the client carries no bound channel identity; call Bind first",
 		}
 	}
-	pairs := []string{
-		principalMetadata, bound.principal,
-		tenantMetadata, bound.tenant,
+	md := metadata.MD{}
+	if existing, ok := metadata.FromOutgoingContext(ctx); ok {
+		md = existing.Copy()
 	}
+	// Replace caller-provided identity values. Appending would leave a
+	// duplicate that either creates an ambiguous server identity or lets a
+	// permissive test double observe the caller's spoofed first value.
+	md.Set(principalMetadata, bound.principal)
+	md.Set(tenantMetadata, bound.tenant)
 	if mutation {
-		if key == "" {
-			return nil, localError("the mutation carries no idempotency key")
+		if key == "" || strings.TrimSpace(key) == "" {
+			return nil, &Error{
+				Code:   CodeIdempotencyPairing,
+				Detail: "the mutation carries no idempotency key",
+			}
 		}
 		if len(key) > MaxIdempotencyBytes {
 			return nil, &Error{
 				Code:   CodeIdempotencyPairing,
 				Detail: fmt.Sprintf("the idempotency key exceeds %d bytes", MaxIdempotencyBytes),
+			}
+		}
+		if !utf8.ValidString(key) {
+			return nil, &Error{
+				Code:   CodeIdempotencyPairing,
+				Detail: "the idempotency key is not valid UTF-8",
 			}
 		}
 		for index := 0; index < len(key); index++ {
@@ -286,9 +478,9 @@ func (c *Client) outgoing(ctx context.Context, mutation bool, key string) (conte
 				}
 			}
 		}
-		pairs = append(pairs, idempotencyMetadata, key)
+		md.Set(idempotencyMetadata, key)
 	}
-	return metadata.AppendToOutgoingContext(ctx, pairs...), nil
+	return metadata.NewOutgoingContext(ctx, md), nil
 }
 
 // CallOption tunes one call.
@@ -296,6 +488,8 @@ type CallOption func(*callConfig)
 
 type callConfig struct {
 	idempotencyKey string
+	idempotencySet bool
+	usageAdmission *UsageAdmissionContext
 }
 
 // WithIdempotencyKey names the retry identity of one mutation. Without
@@ -303,26 +497,49 @@ type callConfig struct {
 // identity gets a fresh random key: safe for first attempts, never for
 // retries.
 func WithIdempotencyKey(key string) CallOption {
-	return func(config *callConfig) { config.idempotencyKey = key }
+	return func(config *callConfig) {
+		config.idempotencyKey = key
+		config.idempotencySet = true
+	}
 }
 
 // retryKey resolves the idempotency key of one mutation.
 func retryKey(operationID string, options []CallOption) (string, error) {
+	key, _, err := retryCall(operationID, options, false)
+	return key, err
+}
+
+func retryCall(operationID string, options []CallOption, allowUsage bool) (string, *v1.UsageAdmissionContext, error) {
 	config := callConfig{}
 	for _, option := range options {
+		if option == nil {
+			return "", nil, &Error{Code: CodeIdempotencyPairing, Detail: "a mutation call option is nil"}
+		}
 		option(&config)
 	}
-	if config.idempotencyKey != "" {
-		return config.idempotencyKey, nil
+	var key string
+	if config.idempotencySet {
+		key = config.idempotencyKey
+	} else if operationID != "" {
+		key = operationID
+	} else {
+		buffer := make([]byte, 16)
+		if _, err := rand.Read(buffer); err != nil {
+			return "", nil, fmt.Errorf("terrabase: the idempotency key could not be generated: %w", err)
+		}
+		key = hex.EncodeToString(buffer)
 	}
-	if operationID != "" {
-		return operationID, nil
+	if config.usageAdmission == nil {
+		return key, nil, nil
 	}
-	buffer := make([]byte, 16)
-	if _, err := rand.Read(buffer); err != nil {
-		return "", fmt.Errorf("terrabase: the idempotency key could not be generated: %w", err)
+	if !allowUsage {
+		return "", nil, localError("this mutation does not accept a usage admission context")
 	}
-	return hex.EncodeToString(buffer), nil
+	usage, err := config.usageAdmission.protoForKey(key)
+	if err != nil {
+		return "", nil, err
+	}
+	return key, usage, nil
 }
 
 // boundName validates one required bounded identifier field locally,
@@ -334,6 +551,9 @@ func boundName(field, value string, limit int) error {
 	if len(value) > limit {
 		return localError("the %s exceeds %d bytes", field, limit)
 	}
+	if !utf8.ValidString(value) || hasControl(value) {
+		return localError("the %s carries invalid metadata characters", field)
+	}
 	return nil
 }
 
@@ -342,7 +562,19 @@ func optionalName(field, value string, limit int) error {
 	if len(value) > limit {
 		return localError("the %s exceeds %d bytes", field, limit)
 	}
+	if value != "" && (!utf8.ValidString(value) || hasControl(value)) {
+		return localError("the %s carries invalid metadata characters", field)
+	}
 	return nil
+}
+
+func hasControl(value string) bool {
+	for index := 0; index < len(value); index++ {
+		if value[index] < 0x20 || value[index] == 0x7f {
+			return true
+		}
+	}
+	return false
 }
 
 // levelOf resolves the effective read level of one call.
@@ -362,18 +594,47 @@ func (c *Client) levelOf(level ReadLevel) ReadLevel {
 // The transport is expected to be mTLS in production; the metadata
 // names the identity, it does not authenticate it.
 func (c *Client) Bind(ctx context.Context, principal, tenant string) (Binding, error) {
+	if err := c.available(); err != nil {
+		return Binding{}, err
+	}
+	if ctx == nil {
+		return Binding{}, localError("the context is nil")
+	}
 	if err := boundName("principal", principal, maxIdentityBytes); err != nil {
 		return Binding{}, err
 	}
 	if err := boundName("tenant", tenant, maxTenantBytes); err != nil {
 		return Binding{}, err
 	}
+	if !c.binding.CompareAndSwap(0, 1) {
+		return Binding{}, &Error{
+			Code:   CodeAlreadyBound,
+			Detail: "the logical client is already bound or a bind is in progress",
+		}
+	}
+	boundSuccessfully := false
+	defer func() {
+		if !boundSuccessfully {
+			c.binding.Store(0)
+		}
+	}()
 	response, err := c.channel.Bind(ctx, &v1.ChannelBindRequest{Principal: principal, Tenant: tenant})
 	if err != nil {
 		return Binding{}, interpret(err)
 	}
-	c.bound.Store(&identity{principal: principal, tenant: response.GetTenant()})
-	return Binding{Tenant: response.GetTenant(), ServingInstance: response.GetServingInstance()}, nil
+	if response == nil {
+		return Binding{}, contractError("the engine returned no channel binding")
+	}
+	// A server must return the tenant that was bound. Storing a different
+	// tenant would silently redirect every later metadata-bearing request.
+	boundTenant := response.GetTenant()
+	if boundTenant != tenant || boundName("bound tenant", boundTenant, maxTenantBytes) != nil {
+		return Binding{}, localError("the engine returned a tenant different from the requested binding")
+	}
+	c.bound.Store(&identity{principal: principal, tenant: boundTenant})
+	c.binding.Store(2)
+	boundSuccessfully = true
+	return Binding{Tenant: boundTenant, ServingInstance: response.GetServingInstance()}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -383,6 +644,9 @@ func (c *Client) Bind(ctx context.Context, principal, tenant string) (Binding, e
 // DocumentRead reads one document at the given consistency level. The
 // second return is false when the collection holds no such document.
 func (c *Client) DocumentRead(ctx context.Context, collection, document string, level ReadLevel) (Document, bool, error) {
+	if !level.valid() {
+		return Document{}, false, localError("the read level is outside the closed vocabulary")
+	}
 	if err := boundName("collection", collection, maxCollectionBytes); err != nil {
 		return Document{}, false, err
 	}
@@ -401,7 +665,13 @@ func (c *Client) DocumentRead(ctx context.Context, collection, document string, 
 	if err != nil {
 		return Document{}, false, interpret(err)
 	}
+	if response == nil {
+		return Document{}, false, contractError("the engine returned no document read response")
+	}
 	if !response.GetFound() {
+		if response.GetDocument() != nil {
+			return Document{}, false, contractError("the engine returned a document in a not-found response")
+		}
 		return Document{}, false, nil
 	}
 	read, err := documentFrom(response.GetDocument())
@@ -416,6 +686,9 @@ func (c *Client) DocumentRead(ctx context.Context, collection, document string, 
 // expected-version discipline. Conflict and refusal are outcomes, not
 // errors: read them off the returned WriteOutcome.
 func (c *Client) DocumentWrite(ctx context.Context, put DocumentPut, expected Expected, ack Acknowledgement, operationID string, options ...CallOption) (WriteOutcome, error) {
+	if !ack.valid() {
+		return WriteOutcome{}, localError("the acknowledgement is outside the closed vocabulary")
+	}
 	if err := boundName("collection", put.Collection, maxCollectionBytes); err != nil {
 		return WriteOutcome{}, err
 	}
@@ -429,7 +702,7 @@ func (c *Client) DocumentWrite(ctx context.Context, put DocumentPut, expected Ex
 	if err != nil {
 		return WriteOutcome{}, err
 	}
-	key, err := retryKey(operationID, options)
+	key, usage, err := retryCall(operationID, options, true)
 	if err != nil {
 		return WriteOutcome{}, err
 	}
@@ -446,16 +719,23 @@ func (c *Client) DocumentWrite(ctx context.Context, put DocumentPut, expected Ex
 		Expected:    expected.proto(),
 		OperationId: operationID,
 		Ack:         ack.proto(),
+		Usage:       usage,
 	})
 	if err != nil {
 		return WriteOutcome{}, interpret(err)
 	}
-	return writeOutcomeFrom(response.GetOutcome()), nil
+	if response == nil {
+		return WriteOutcome{}, contractError("the engine returned no document write response")
+	}
+	return writeOutcomeFrom(response.GetOutcome())
 }
 
 // DocumentDelete deletes one document under the expected-version
 // discipline.
 func (c *Client) DocumentDelete(ctx context.Context, collection, document string, expected Expected, ack Acknowledgement, operationID string, options ...CallOption) (WriteOutcome, error) {
+	if !ack.valid() {
+		return WriteOutcome{}, localError("the acknowledgement is outside the closed vocabulary")
+	}
 	if err := boundName("collection", collection, maxCollectionBytes); err != nil {
 		return WriteOutcome{}, err
 	}
@@ -465,7 +745,7 @@ func (c *Client) DocumentDelete(ctx context.Context, collection, document string
 	if err := optionalName("operation id", operationID, maxOperationBytes); err != nil {
 		return WriteOutcome{}, err
 	}
-	key, err := retryKey(operationID, options)
+	key, usage, err := retryCall(operationID, options, true)
 	if err != nil {
 		return WriteOutcome{}, err
 	}
@@ -479,16 +759,23 @@ func (c *Client) DocumentDelete(ctx context.Context, collection, document string
 		Expected:    expected.proto(),
 		OperationId: operationID,
 		Ack:         ack.proto(),
+		Usage:       usage,
 	})
 	if err != nil {
 		return WriteOutcome{}, interpret(err)
 	}
-	return writeOutcomeFrom(response.GetOutcome()), nil
+	if response == nil {
+		return WriteOutcome{}, contractError("the engine returned no document delete response")
+	}
+	return writeOutcomeFrom(response.GetOutcome())
 }
 
 // DocumentBatch applies one atomic batch of puts. Each item carries
 // its own expected-version discipline and operation identity.
 func (c *Client) DocumentBatch(ctx context.Context, items []BatchItem, ack Acknowledgement, options ...CallOption) (WriteOutcome, error) {
+	if !ack.valid() {
+		return WriteOutcome{}, localError("the acknowledgement is outside the closed vocabulary")
+	}
 	if len(items) == 0 || len(items) > maxBatchItems {
 		return WriteOutcome{}, localError("a batch carries 1..=%d items, got %d", maxBatchItems, len(items))
 	}
@@ -517,7 +804,7 @@ func (c *Client) DocumentBatch(ctx context.Context, items []BatchItem, ack Ackno
 			OperationId: item.OperationID,
 		})
 	}
-	key, err := retryKey("", options)
+	key, usage, err := retryCall("", options, true)
 	if err != nil {
 		return WriteOutcome{}, err
 	}
@@ -525,19 +812,28 @@ func (c *Client) DocumentBatch(ctx context.Context, items []BatchItem, ack Ackno
 	if err != nil {
 		return WriteOutcome{}, err
 	}
-	response, err := c.engine.DocumentBatch(ctx, &v1.DocumentBatchRequest{Items: batch, Ack: ack.proto()})
+	response, err := c.engine.DocumentBatch(ctx, &v1.DocumentBatchRequest{Items: batch, Ack: ack.proto(), Usage: usage})
 	if err != nil {
 		return WriteOutcome{}, interpret(err)
 	}
-	return writeOutcomeFrom(response.GetOutcome()), nil
+	if response == nil {
+		return WriteOutcome{}, contractError("the engine returned no document batch response")
+	}
+	return writeOutcomeFrom(response.GetOutcome())
 }
 
 // QueryExecute executes one query bound to queryID; the identifier is
 // the handle QueryCancel cancels. maxItems of zero lets the engine
 // choose its bound.
 func (c *Client) QueryExecute(ctx context.Context, queryID uint64, text string, maxItems uint32, level ReadLevel) (QueryResult, error) {
+	if !level.valid() {
+		return QueryResult{}, localError("the read level is outside the closed vocabulary")
+	}
 	if text == "" || len(text) > maxQueryTextBytes {
 		return QueryResult{}, localError("query text is 1..=%d bytes", maxQueryTextBytes)
+	}
+	if !utf8.ValidString(text) {
+		return QueryResult{}, localError("query text is not valid UTF-8")
 	}
 	if maxItems > maxQueryItems {
 		return QueryResult{}, localError("the query item bound exceeds %d", maxQueryItems)
@@ -555,9 +851,27 @@ func (c *Client) QueryExecute(ctx context.Context, queryID uint64, text string, 
 	if err != nil {
 		return QueryResult{}, interpret(err)
 	}
+	if response == nil {
+		return QueryResult{}, contractError("the engine returned no query response")
+	}
+	limit := int(maxItems)
+	if limit == 0 {
+		limit = maxQueryItems
+	}
+	if len(response.GetDocuments()) > limit {
+		return QueryResult{}, contractError("the engine returned more query documents than the requested bound")
+	}
+	truncated := false
+	switch response.GetTerminal() {
+	case v1.QueryTerminal_QUERY_TERMINAL_COMPLETE:
+	case v1.QueryTerminal_QUERY_TERMINAL_TRUNCATED:
+		truncated = true
+	default:
+		return QueryResult{}, contractError("the engine returned an unknown query terminal state")
+	}
 	result := QueryResult{
 		Count:     int(response.GetCount()),
-		Truncated: response.GetTerminal() == v1.QueryTerminal_QUERY_TERMINAL_TRUNCATED,
+		Truncated: truncated,
 		Position:  response.GetPosition(),
 	}
 	for _, body := range response.GetDocuments() {
@@ -580,7 +894,14 @@ func (c *Client) QueryCancel(ctx context.Context, queryID uint64) (CancelOutcome
 	if err != nil {
 		return 0, interpret(err)
 	}
-	return cancelOutcomeFrom(response.GetOutcome()), nil
+	if response == nil {
+		return 0, contractError("the engine returned no query cancellation response")
+	}
+	outcome, ok := cancelOutcomeFrom(response.GetOutcome())
+	if !ok {
+		return 0, contractError("the engine returned an unknown query cancellation outcome")
+	}
+	return outcome, nil
 }
 
 // FamilyRead reads one typed family value (attachment, counter, time
@@ -612,7 +933,10 @@ func (c *Client) FamilyRead(ctx context.Context, family Family, name string, cod
 	if err != nil {
 		return FamilyResponse{}, interpret(err)
 	}
-	return FamilyResponse{Codec: response.GetResponseCodec(), Payload: response.GetResponse()}, nil
+	if response == nil {
+		return FamilyResponse{}, contractError("the engine returned no family read response")
+	}
+	return familyResponseFrom(response)
 }
 
 // FamilyWrite writes one typed family value under an operation
@@ -633,7 +957,7 @@ func (c *Client) FamilyWrite(ctx context.Context, family Family, name string, co
 	if len(request) > maxFrameBytes {
 		return FamilyResponse{}, localError("the family request exceeds %d bytes", maxFrameBytes)
 	}
-	key, err := retryKey(operationID, options)
+	key, usage, err := retryCall(operationID, options, true)
 	if err != nil {
 		return FamilyResponse{}, err
 	}
@@ -647,11 +971,34 @@ func (c *Client) FamilyWrite(ctx context.Context, family Family, name string, co
 		RequestCodec: codec,
 		Request:      request,
 		OperationId:  operationID,
+		Usage:        usage,
 	})
 	if err != nil {
 		return FamilyResponse{}, interpret(err)
 	}
-	return FamilyResponse{Codec: response.GetResponseCodec(), Payload: response.GetResponse()}, nil
+	if response == nil {
+		return FamilyResponse{}, contractError("the engine returned no family write response")
+	}
+	return familyResponseFrom(response)
+}
+
+func familyResponseFrom(response interface {
+	GetResponseCodec() string
+	GetResponse() []byte
+}) (FamilyResponse, error) {
+	if response == nil {
+		return FamilyResponse{}, contractError("the engine returned no family response")
+	}
+	if err := optionalName("family response codec", response.GetResponseCodec(), maxFamilyCodecBytes); err != nil {
+		return FamilyResponse{}, contractError("the engine returned an invalid family response codec")
+	}
+	if len(response.GetResponse()) > maxFrameBytes {
+		return FamilyResponse{}, contractError("the engine returned an oversized family response")
+	}
+	return FamilyResponse{
+		Codec:   response.GetResponseCodec(),
+		Payload: append([]byte(nil), response.GetResponse()...),
+	}, nil
 }
 
 // validate checks the closed family vocabulary locally.
@@ -774,7 +1121,7 @@ func (c *Client) SyncMutationSubmit(ctx context.Context, sessionID uint64, docum
 	if err != nil {
 		return MutationOutcome{}, err
 	}
-	key, err := retryKey(operationID, options)
+	key, usage, err := retryCall(operationID, options, true)
 	if err != nil {
 		return MutationOutcome{}, err
 	}
@@ -786,11 +1133,15 @@ func (c *Client) SyncMutationSubmit(ctx context.Context, sessionID uint64, docum
 		SessionId: sessionID,
 		Document:  document,
 		Change:    converted,
+		Usage:     usage,
 	})
 	if err != nil {
 		return MutationOutcome{}, interpret(err)
 	}
-	return mutationOutcomeFrom(response.GetOutcome()), nil
+	if response == nil {
+		return MutationOutcome{}, contractError("the engine returned no sync mutation response")
+	}
+	return mutationOutcomeFrom(response.GetOutcome())
 }
 
 // SyncSessionClose closes one sync session.
@@ -1160,12 +1511,27 @@ func (c *Client) SupervisionHealth(ctx context.Context) (SupervisionReport, erro
 	if err != nil {
 		return SupervisionReport{}, interpret(err)
 	}
+	state := healthStateFrom(response.GetState())
+	if state == 0 {
+		return SupervisionReport{}, contractError("the engine returned an unknown supervision health state")
+	}
 	return SupervisionReport{
-		State:         healthStateFrom(response.GetState()),
+		State:         state,
 		Sessions:      response.GetSessions(),
 		Subscriptions: response.GetSubscriptions(),
 		FramesServed:  response.GetFramesServed(),
 	}, nil
+}
+
+// Readiness reports whether the engine may admit gateway traffic. Starting,
+// draining, and stopped engines answer Ready false without turning health into
+// a transport error.
+func (c *Client) Readiness(ctx context.Context) (Readiness, error) {
+	report, err := c.SupervisionHealth(ctx)
+	if err != nil {
+		return Readiness{}, err
+	}
+	return Readiness{Ready: report.State == HealthServing, Report: report}, nil
 }
 
 // SupervisionShutdown asks the engine to begin a supervised shutdown.

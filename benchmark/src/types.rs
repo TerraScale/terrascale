@@ -209,7 +209,12 @@ impl Deadline {
         if duration.is_zero() {
             return Err(RequestValidationError::InvalidDeadline);
         }
-        Ok(Self { instant: Instant::now() + duration })
+        // `Instant` has a finite representation.  A caller-controlled
+        // duration must not turn that representation limit into a panic at a
+        // public construction boundary.
+        let instant =
+            Instant::now().checked_add(duration).ok_or(RequestValidationError::InvalidDeadline)?;
+        Ok(Self { instant })
     }
 
     pub(crate) fn instant(self) -> Instant {
@@ -469,6 +474,11 @@ mod tests {
         assert_eq!(Deadline::after(Duration::ZERO), Err(RequestValidationError::InvalidDeadline));
         let deadline = Deadline::after(Duration::from_secs(30)).expect("valid deadline");
         assert!(!deadline.is_expired());
+    }
+
+    #[test]
+    fn deadline_rejects_duration_that_overflows_instant() {
+        assert_eq!(Deadline::after(Duration::MAX), Err(RequestValidationError::InvalidDeadline));
     }
 
     #[test]

@@ -118,7 +118,7 @@ impl ResultEtag {
 /// across engines, builds, machines, or workloads; it is not a latency
 /// guarantee, budget, or service level; and it proves nothing about speed.
 /// Under the charter's hard-data rule (PD-2026-08-26-03) no performance
-/// claim may rest on this number — only TerraBase.Benchmark receipts from
+/// claim may rest on this number — only repository benchmark receipts from
 /// the exclusive benchmark lane carry performance evidence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DiagnosticDuration(Duration);

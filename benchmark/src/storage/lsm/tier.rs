@@ -17,12 +17,11 @@
 //! lands with P4's TBEP admin operations.
 #![allow(dead_code, reason = "P2 quorum acceptance and P4 typed administration wire the callers")]
 
-use std::{fs::File, io, path::Path};
+use std::{collections::BTreeSet, fs::File, io, path::Path};
 
 use super::{
     LsmStorage, codec,
     internal::Entry,
-    manifest::SegmentManifest,
     object_store::{ObjectKey, ObjectStore, ObjectStoreError},
     segment::SegmentMeta,
 };
@@ -96,14 +95,27 @@ impl TierManifest {
         let epoch = reader.read_u64()?;
         let home_region = reader.read_string()?;
         let previous_raw = reader.read_u64()?;
+        if previous_raw != 0 && previous_raw >= epoch {
+            return None;
+        }
         let count = reader.read_u32()? as usize;
+        if count > 65_536 {
+            return None;
+        }
         let mut objects = Vec::with_capacity(count.min(1024));
         for _ in 0..count {
             let segment_id = reader.read_u64()?;
             let level = reader.read_u16()?;
             let key = reader.read_string()?;
             let byte_len = reader.read_u64()?;
-            let verified = reader.read_u8()? != 0;
+            let verified = match reader.read_u8()? {
+                0 => false,
+                1 => true,
+                _ => return None,
+            };
+            if !valid_object_key(&key) || byte_len == 0 {
+                return None;
+            }
             objects.push(TierObject {
                 segment_id,
                 level,
@@ -113,6 +125,13 @@ impl TierManifest {
             });
         }
         if reader.remaining() != 0 {
+            return None;
+        }
+        let mut segment_ids = BTreeSet::new();
+        let mut object_keys = BTreeSet::new();
+        if objects.iter().any(|object| {
+            !segment_ids.insert(object.segment_id) || !object_keys.insert(object.object_key.clone())
+        }) {
             return None;
         }
         Some(Self {
@@ -151,6 +170,14 @@ impl TierManifest {
         let bytes = std::fs::read(dir.join("TIERMANIFEST")).ok()?;
         Self::decode(&bytes)
     }
+}
+
+fn valid_object_key(key: &str) -> bool {
+    let Some(digest) = key.strip_prefix("fnv1a-") else {
+        return false;
+    };
+    digest.len() == 16
+        && digest.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 /// One versioned tier-move policy (contract §2).
@@ -658,19 +685,26 @@ impl LsmStorage {
     /// the copy was reclaimed.
     pub(crate) fn demote_segment(&mut self, segment_id: u64) -> bool {
         let before = self.manifest.segments.len();
-        self.manifest.segments.retain(|meta| meta.id != segment_id);
+        if !self.manifest.segments.iter().any(|meta| meta.id == segment_id) {
+            return false;
+        }
+        // Publish the active-manifest removal before dropping the NVMe copy.
+        // If the rename fails, leaving both the manifest entry and its local
+        // file is safe; deleting first would make a failed demotion reopen as
+        // a missing named segment.
+        let mut manifest = self.manifest.clone();
+        manifest.segments.retain(|meta| meta.id != segment_id);
+        manifest.epoch += 1;
+        if manifest.publish(&self.dir).is_err() {
+            return false;
+        }
+        self.manifest = manifest;
         self.readers.remove(&segment_id);
         let path = super::segment_path(&self.dir, segment_id);
         match std::fs::remove_file(&path) {
             Ok(()) => {}
             Err(_) if !path.exists() => {}
             Err(_) => return false,
-        }
-        // Keep the naming manifest consistent with the reclaim.
-        let mut manifest: SegmentManifest = self.manifest.clone();
-        manifest.epoch += 1;
-        if manifest.publish(&self.dir).is_ok() {
-            self.manifest = manifest;
         }
         self.manifest.segments.len() < before || !path.exists()
     }

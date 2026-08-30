@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Renders the benchmark history table from the lane's results documents.
 
-Every row is derived from a `bench/results/<target>-<workload>.json`
+Every row is derived from a retained `bench/results/<target>-<workload>-*.json`
 document the lane actually wrote — nothing is hand-typed. The engine-side
 adapter (`src/benchmarks/`) owns every verdict; this script only tabulates
 the facts those documents record, so a table can never mint a claim the
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import pathlib
 import statistics
 import sys
@@ -22,12 +23,66 @@ WORKLOADS = ["read", "write", "query", "mixed"]
 TARGETS = ["terrabase", "postgresql", "ravendb"]
 
 
+def _attempt_key(path: pathlib.Path, target: str, workload: str) -> tuple[int, int, str]:
+    """Match Rust's retained-attempt ordering.
+
+    The reference driver writes a nanosecond epoch stamp as the first field
+    after ``<target>-<workload>-``. Filename fields are authoritative; mtime
+    is only a fallback for manually named attempts that lack that stamp.
+    """
+    prefix = f"{target}-{workload}-"
+    suffix = path.name[len(prefix) : -len(".json")]
+    stamp = suffix.split("-", 1)[0]
+    if stamp.isdigit():
+        return (1, int(stamp), path.name)
+    try:
+        modified = path.stat().st_mtime_ns
+    except OSError:
+        modified = -1
+    return (0, modified, path.name)
+
+
 def load(results: pathlib.Path, target: str, workload: str) -> dict | None:
-    path = results / f"{target}-{workload}.json"
-    if not path.exists():
+    # The driver never overwrites an attempt. If any retained attempt exists,
+    # the newest one is authoritative—even when it failed or is malformed.
+    paths = list(results.glob(f"{target}-{workload}-*.json"))
+    legacy = results / f"{target}-{workload}.json"
+    if not paths and legacy.is_file():
+        paths = [legacy]
+    if not paths:
         return None
-    with path.open() as handle:
-        return json.load(handle)
+    path = max(paths, key=lambda candidate: _attempt_key(candidate, target, workload))
+    try:
+        with path.open() as handle:
+            document = json.load(handle)
+    except (OSError, json.JSONDecodeError) as error:
+        return {"status": "invalid", "error": f"cannot read {path.name}: {error}"}
+    if not isinstance(document, dict):
+        return {"status": "invalid", "error": f"{path.name} is not a JSON object"}
+    status = document.get("status", "complete")
+    if not isinstance(status, str) or status not in {"complete", "failed"}:
+        return {"status": "invalid", "error": f"{path.name} has invalid status"}
+    if status == "complete":
+        if document.get("target") != target or document.get("workload") != workload:
+            return {"status": "invalid", "error": f"{path.name} identity does not match its lane"}
+        samples = document.get("samples")
+        required = {
+            "operations",
+            "wall_seconds",
+            "throughput_ops_per_s",
+            "p50_us",
+            "p95_us",
+            "p99_us",
+        }
+        if not isinstance(samples, list) or not samples:
+            return {"status": "invalid", "error": f"{path.name} has no complete samples"}
+        for sample in samples:
+            if not isinstance(sample, dict) or not required <= sample.keys():
+                return {"status": "invalid", "error": f"{path.name} has an invalid sample"}
+            numbers = [sample[key] for key in required]
+            if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) for value in numbers):
+                return {"status": "invalid", "error": f"{path.name} has non-finite sample values"}
+    return document
 
 
 def med(values: list[float]) -> float:
@@ -65,19 +120,23 @@ def main() -> int:
             if document is None:
                 continue
             identities[target] = revision_of(document)
+            status = document.get("status", "complete")
             samples = document.get("samples", [])
-            rows.append(
-                "| {workload} | {target} | {ops:.0f} | {p50:.0f}–{p50max:.0f} | {p95:.0f} | {p99:.0f} | {wall:.0f} |".format(
-                    workload=workload,
-                    target=target,
-                    ops=med([s["throughput_ops_per_s"] for s in samples]),
-                    p50=med([s["p50_us"] for s in samples]),
-                    p50max=max((s["p50_us"] for s in samples), default=0.0),
-                    p95=med([s["p95_us"] for s in samples]),
-                    p99=med([s["p99_us"] for s in samples]),
-                    wall=med([s["wall_seconds"] for s in samples]) * 1000.0,
-                )
-            )
+            if status == "complete" and samples:
+                row = "| {workload} | {target} | {status} | {ops:.0f} | {p50:.0f}–{p50max:.0f} | {p95:.0f} | {p99:.0f} | {wall:.0f} |".format(
+                        workload=workload,
+                        target=target,
+                        status=status,
+                        ops=med([s["throughput_ops_per_s"] for s in samples]),
+                        p50=med([s["p50_us"] for s in samples]),
+                        p50max=max((s["p50_us"] for s in samples), default=0.0),
+                        p95=med([s["p95_us"] for s in samples]),
+                        p99=med([s["p99_us"] for s in samples]),
+                        wall=med([s["wall_seconds"] for s in samples]) * 1000.0,
+                    )
+            else:
+                row = f"| {workload} | {target} | {status} | — | — | — | — | — |"
+            rows.append(row)
 
     if not rows:
         print("no results documents found under", arguments.results, file=sys.stderr)
@@ -107,8 +166,8 @@ def main() -> int:
         "",
         "## Results (median across samples)",
         "",
-        "| workload | side | ops/s | p50 µs (median–max) | p95 µs | p99 µs | sample wall ms |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| workload | side | status | ops/s | p50 µs (median–max) | p95 µs | p99 µs | sample wall ms |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
         *rows,
         "",
     ]

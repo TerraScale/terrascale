@@ -355,6 +355,35 @@ fn early_hold_release_ends_at_release_time_and_extends_deadlines() {
 }
 
 #[test]
+fn hold_cannot_be_ended_before_it_was_recorded() {
+    let mut workflow = admitted();
+    workflow.record_hold(legal_hold(HoldKind::Legal, T0 + 10, T0 + DAY)).expect("hold records");
+    let authority = HoldAuthorityId::try_new("authority-1").expect("authority");
+    assert_eq!(workflow.end_hold(&authority, T0 + 9), Err(DeletionError::InvalidHoldWindow));
+    assert!(workflow.hold_ends.is_empty(), "an invalid release does not mutate state");
+}
+
+#[test]
+fn verification_deadlines_saturate_at_the_u64_boundary() {
+    let mut workflow = DeletionWorkflow::request(
+        DeletionRequestId::try_new("del-near-max").expect("request"),
+        DeletionScope::try_new(TenantId::try_new("tenant-a").expect("tenant"), "subject-a")
+            .expect("scope"),
+        selected(),
+        u64::MAX - 1,
+        u64::MAX - 1,
+    )
+    .expect("request");
+    workflow
+        .admit(GlobalDurableAdmission::new(selected(), u64::MAX - 1), full_plan())
+        .expect("admit");
+    record_all(&mut workflow, u64::MAX);
+    let verification = workflow.verify(u64::MAX).expect("the saturated deadline is inclusive");
+    assert_eq!(verification.live_deadline_at_millis(), u64::MAX);
+    assert_eq!(verification.backup_deadline_at_millis(), u64::MAX);
+}
+
+#[test]
 fn hold_records_validate_their_window_and_retained_fields() {
     let error = HoldRecord::try_new(HoldKind::Legal, "authority-1", T0, T0, &["field"])
         .expect_err("empty window");

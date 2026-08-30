@@ -74,6 +74,10 @@ pub struct Environment {
 /// The results document one driven side emits.
 #[derive(Debug, Serialize)]
 pub struct RunResults {
+    /// `complete` for a run that produced every requested sample. Failed and
+    /// invalid attempts use a separate failure document and are never parsed
+    /// as comparable facts.
+    pub status: &'static str,
     /// Which reference this is.
     pub target: &'static str,
     /// The workload measured.
@@ -86,6 +90,29 @@ pub struct RunResults {
     pub samples: Vec<Sample>,
     /// Honest limits this driver knows about its own side, stated on the
     /// receipt rather than implied.
+    pub limits: Vec<String>,
+}
+
+/// A failed attempt retained beside successful results. Keeping the failure
+/// document makes missing samples visible without allowing partial numbers to
+/// enter a comparison.
+#[derive(Debug, Serialize)]
+pub struct FailureResults {
+    /// Always `failed` for this document shape.
+    pub status: &'static str,
+    /// The target that was being driven.
+    pub target: &'static str,
+    /// The workload that was being driven.
+    pub workload: String,
+    /// The requested lane configuration.
+    pub config: LaneConfig,
+    /// The concrete setup or operation failure.
+    pub error: String,
+    /// Host and endpoint facts captured even when setup failed.
+    pub environment: Environment,
+    /// No partial sample is ever retained as a fact.
+    pub samples: Vec<Sample>,
+    /// Why this document cannot be compared.
     pub limits: Vec<String>,
 }
 
@@ -106,9 +133,7 @@ pub fn host_environment(
         kernel: std::fs::read_to_string("/proc/sys/kernel/osrelease")
             .map(|text| format!("Linux {}", text.trim()))
             .unwrap_or_else(|_| "unknown".to_owned()),
-        logical_cpus: std::thread::available_parallelism()
-            .map(|count| count.get())
-            .unwrap_or(0),
+        logical_cpus: std::thread::available_parallelism().map(|count| count.get()).unwrap_or(0),
     }
 }
 

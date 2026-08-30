@@ -55,7 +55,7 @@
 //! [`ReplicaDoc`] plane: it tracks durable counter prefixes and bounded
 //! received ranges without importing or extending replica state.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use terrabase_causal::{
@@ -1103,8 +1103,13 @@ fn decode_batch(bytes: &[u8]) -> Result<Vec<ReplicaOp>, DecodeError> {
     }
     let count = reader.bounded(MAX_OPS_PER_BATCH)?;
     let mut ops = Vec::with_capacity(count);
+    let mut seen_dots = BTreeSet::new();
     for _ in 0..count {
-        ops.push(decode_op(&mut reader)?);
+        let op = decode_op(&mut reader)?;
+        if !seen_dots.insert(op.dot) {
+            return Err(DecodeError::InvalidValue);
+        }
+        ops.push(op);
     }
     if !reader.done() {
         return Err(DecodeError::TrailingBytes);
@@ -1118,6 +1123,11 @@ fn decode_op(reader: &mut Reader<'_>) -> Result<ReplicaOp, DecodeError> {
     let physical = reader.leb_u64()?;
     let logical = u32::try_from(reader.leb_u64()?).map_err(|_| DecodeError::InvalidValue)?;
     let observed = decode_context(reader)?;
+    // A dotted version's event is never part of the context it carries.
+    // Otherwise the event is self-causal and replay can vary by arrival.
+    if observed.contains(dot) {
+        return Err(DecodeError::NonCanonicalContext);
+    }
     let mutation = match reader.byte()? {
         1 => {
             let document = decode_str(reader)?;
@@ -1250,8 +1260,13 @@ fn decode_snapshot(bytes: &[u8]) -> Result<DecodedSnapshot, DecodeError> {
         let document = decode_str(&mut reader)?;
         let delete_count = reader.bounded(reader.limits.max_candidates)?;
         let mut deletes = Vec::with_capacity(delete_count);
+        let mut seen_deletes = BTreeSet::new();
         for _ in 0..delete_count {
-            deletes.push(decode_dot(&mut reader)?);
+            let dot = decode_dot(&mut reader)?;
+            if !seen_deletes.insert(dot) {
+                return Err(DecodeError::InvalidValue);
+            }
+            deletes.push(dot);
         }
         let field_count = reader.bounded(reader.limits.max_candidates)?;
         let mut fields = BTreeMap::new();
@@ -1269,8 +1284,13 @@ fn decode_snapshot(bytes: &[u8]) -> Result<DecodedSnapshot, DecodeError> {
     }
     let op_count = reader.bounded(MAX_OPS_PER_BATCH)?;
     let mut ops = Vec::with_capacity(op_count);
+    let mut seen_dots = BTreeSet::new();
     for _ in 0..op_count {
-        ops.push(decode_op(&mut reader)?);
+        let op = decode_op(&mut reader)?;
+        if !seen_dots.insert(op.dot) {
+            return Err(DecodeError::InvalidValue);
+        }
+        ops.push(op);
     }
     if !reader.done() {
         return Err(DecodeError::TrailingBytes);
@@ -1283,4 +1303,45 @@ fn decode_snapshot(bytes: &[u8]) -> Result<DecodedSnapshot, DecodeError> {
         docs,
         ops,
     })
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::*;
+
+    fn operation(dot: Dot, observed: CausalContext) -> ReplicaOp {
+        ReplicaOp {
+            dot,
+            hlc: HlcTimestamp::new(1, 0),
+            observed,
+            mutation: ReplicaMutation::Delete { document: "doc".to_owned() },
+        }
+    }
+
+    fn batch(ops: &[ReplicaOp]) -> Vec<u8> {
+        let mut bytes = vec![EXCHANGE_CODEC_VERSION];
+        encode_u64(ops.len() as u64, &mut bytes);
+        for op in ops {
+            encode_op(op, &mut bytes);
+        }
+        bytes
+    }
+
+    #[test]
+    fn operation_decoder_rejects_self_causal_context() {
+        let dot = Dot::new(actor_from_peer(1), OriginCounter::new(1).expect("nonzero counter"));
+        let mut observed = CausalContext::new();
+        observed.insert(dot);
+        assert_eq!(
+            decode_batch(&batch(&[operation(dot, observed)])),
+            Err(DecodeError::NonCanonicalContext)
+        );
+    }
+
+    #[test]
+    fn operation_decoder_rejects_duplicate_dots_in_one_batch() {
+        let dot = Dot::new(actor_from_peer(1), OriginCounter::new(1).expect("nonzero counter"));
+        let op = operation(dot, CausalContext::new());
+        assert_eq!(decode_batch(&batch(&[op.clone(), op])), Err(DecodeError::InvalidValue));
+    }
 }

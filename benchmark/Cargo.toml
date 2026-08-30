@@ -3,7 +3,7 @@ name = "terrabase"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
-license = "LicenseRef-TerraScale-Pending"
+license = "MIT"
 description = "TerraBase Rust engine foundation"
 repository = "ssh://git@git.terrascale.tech/TerraScale/TerraBase.git"
 readme = "README.md"
@@ -20,11 +20,16 @@ members = [
   "crates/terrabase-cluster",
   "crates/terrabase-replication-core",
   "crates/terrabase-tbep",
+  "crates/terrabase-server",
 ]
 
 [lib]
 name = "terrabase"
 path = "src/lib.rs"
+
+[[test]]
+name = "observability"
+path = "tests/observability/main.rs"
 
 [dependencies]
 blake3 = "1.8.2"
@@ -50,7 +55,7 @@ debug = 1
 [package.metadata.terrabase]
 status = "engine-under-active-development"
 status_note = "Native storage, engine, query, automatic index, replication, sync, backup, and recovery modules remain under qualification. See README 'Honest implementation status' for current limits."
-license_gate = "pending-before-release"
+license_gate = "satisfied-mit"
 canonical_product_name = "TerraBase"
 canonical_package_name = "terrabase"
 rename_cutover_completed = "2026-08-30"

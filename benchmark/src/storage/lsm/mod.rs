@@ -86,6 +86,7 @@ const ACTIVE_FORMAT_MAGIC: &[u8; 8] = b"TBLSMACT";
 const ACTIVE_FORMAT_DOMAIN: &[u8] = b"terrabase.lsm-format.v2\0";
 const ACTIVE_FORMAT_RESERVED: usize = 8;
 const INITIAL_WAL_EPOCH: u64 = 1;
+static TRACE_BATCHES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
 enum FormatState {
     Legacy,
@@ -276,11 +277,8 @@ impl LsmStorage {
         for meta in &manifest.segments {
             let mut reader = SegmentReader::open(&segment_path(dir, meta.id), meta.id, meta.level)
                 .map_err(|_| LsmOpenError::FormatMismatch)?;
-            let verified_entries = if reader.meta() != meta {
-                None
-            } else {
-                reader.read_all().ok()
-            };
+            let verified_entries =
+                if reader.meta() == meta { reader.read_all().ok() } else { None };
             let entries = verified_entries.ok_or(LsmOpenError::FormatMismatch)?;
             segment_documents.extend(
                 entries
@@ -390,8 +388,8 @@ impl LsmStorage {
             pending_flips: Vec::new(),
             faults: FaultPlan::empty(),
         };
-        engine.rebuild_indexes_from_segments();
-        engine.rebuild_indexes_from_cold_tier();
+        engine.rebuild_indexes_from_segments()?;
+        engine.rebuild_indexes_from_cold_tier()?;
         let mut watermark = engine.sequence_watermark;
         if replay_wal {
             for entry in &wal_scan.entries {
@@ -438,15 +436,14 @@ impl LsmStorage {
 
     /// Rebuilds the ledger, history, and floor state by scanning the named
     /// segments' non-document keyspaces.
-    fn rebuild_indexes_from_segments(&mut self) {
+    fn rebuild_indexes_from_segments(&mut self) -> Result<(), LsmOpenError> {
         let metas: Vec<SegmentMeta> = self.manifest.segments.clone();
         for meta in metas {
             let Some(reader) = self.readers.get(&meta.id) else {
                 continue;
             };
-            let Ok(entries) = reader.borrow_mut().read_all() else {
-                continue;
-            };
+            let entries =
+                reader.borrow_mut().read_all().map_err(|_| LsmOpenError::FormatMismatch)?;
             for entry in entries {
                 let tag = entry.key.tag();
                 if tag == internal::Keyspace::Ledger.tag()
@@ -457,25 +454,28 @@ impl LsmStorage {
                 }
             }
         }
+        Ok(())
     }
 
     /// Rebuilds indexes and the publication watermark from verified cold
     /// segments as well as `NVMe` segments. Demotion intentionally removes the
     /// latter from the active segment manifest, so omitting this pass would
     /// make a reopen advertise an older sequence and hide the demoted range.
-    fn rebuild_indexes_from_cold_tier(&mut self) {
-        let Some(tier_manifest) = tier::TierManifest::read(&self.dir) else {
-            return;
-        };
+    fn rebuild_indexes_from_cold_tier(&mut self) -> Result<(), LsmOpenError> {
+        let tier_path = self.dir.join("TIERMANIFEST");
+        if !tier_path.exists() {
+            return Ok(());
+        }
+        let tier_manifest =
+            tier::TierManifest::read(&self.dir).ok_or(LsmOpenError::FormatMismatch)?;
         let active_ids: BTreeSet<u64> = self.manifest.segments.iter().map(|meta| meta.id).collect();
         for object in tier_manifest
             .objects
             .iter()
             .filter(|object| object.verified && !active_ids.contains(&object.segment_id))
         {
-            let Ok(entries) = tier::read_cold_segment_entries(self, object.segment_id) else {
-                continue;
-            };
+            let entries = tier::read_cold_segment_entries(self, object.segment_id)
+                .map_err(|_| LsmOpenError::FormatMismatch)?;
             for entry in entries {
                 self.sequence_watermark = self.sequence_watermark.max(entry.key.sequence());
                 let tag = entry.key.tag();
@@ -489,6 +489,7 @@ impl LsmStorage {
                 }
             }
         }
+        Ok(())
     }
 
     /// Records one documents-keyspace entry in the identifier index.
@@ -501,10 +502,7 @@ impl LsmStorage {
             return;
         }
         if let Some((tenant, collection, document)) = decode_document_key(entry.key.user_key()) {
-            self.identifier_index
-                .entry((tenant, document))
-                .or_default()
-                .insert(collection);
+            self.identifier_index.entry((tenant, document)).or_default().insert(collection);
         }
     }
 
@@ -523,11 +521,29 @@ impl LsmStorage {
                     (reader.read_string(), reader.read_string())
                 {
                     let key = (tenant, operation);
-                    if self
-                        .ledger_index
-                        .get(&key)
-                        .is_none_or(|prior| prior.sequence <= record.sequence)
-                    {
+                    let replace = match self.ledger_index.get(&key) {
+                        None => true,
+                        Some(prior) if prior.sequence < record.sequence => true,
+                        Some(prior) if prior.sequence > record.sequence => false,
+                        Some(prior) => {
+                            // A same-sequence ledger entry may only be the
+                            // post-publication durability flip. Any other
+                            // disagreement means two outcomes claim one
+                            // operation sequence and recovery must fail
+                            // closed instead of choosing by segment order.
+                            let compatible_flip = prior.digest == record.digest
+                                && prior.root == record.root
+                                && prior.requested == record.requested
+                                && prior.committed == record.committed
+                                && (prior.post_publish_synced || record.post_publish_synced)
+                                && prior.rejection == record.rejection;
+                            if !compatible_flip {
+                                self.usage_corrupt = true;
+                            }
+                            record.post_publish_synced && !prior.post_publish_synced
+                        }
+                    };
+                    if replace {
                         self.ledger_index.insert(key, record);
                     }
                 }
@@ -536,12 +552,23 @@ impl LsmStorage {
             && let Some(commit) = decode_history_value(&entry.value)
             && self.history_floor.is_none_or(|floor| commit.sequence().get() >= floor)
         {
-            self.history_index.insert(commit.sequence().get(), commit);
+            let sequence = commit.sequence().get();
+            if let Some(prior) = self.history_index.get(&sequence)
+                && prior != &commit
+            {
+                self.usage_corrupt = true;
+            } else {
+                self.history_index.insert(sequence, commit);
+            }
         } else if tag == internal::Keyspace::Meta.tag()
             && let Some(bound) = decode_meta_bound(&entry.value)
             && meta_label(entry.key.user_key()) == META_HISTORY_FLOOR
         {
-            self.history_floor = Some(bound);
+            // The same meta key has one version per reclaim pass. Internal
+            // key order is newest-first, but a segment scan can merge
+            // multiple segments in either order; never let an older floor
+            // reopen a history range already reclaimed by a newer one.
+            self.history_floor = Some(self.history_floor.map_or(bound, |prior| prior.max(bound)));
         } else if tag == internal::Keyspace::Meta.tag()
             && let Some(fact) = decode_usage_entry(entry)
         {
@@ -673,9 +700,8 @@ impl LsmStorage {
         id: &DocumentId,
         sequence: u64,
     ) -> Option<Document> {
-        let collections = self
-            .identifier_index
-            .get(&(tenant.as_str().to_owned(), id.as_str().to_owned()))?;
+        let collections =
+            self.identifier_index.get(&(tenant.as_str().to_owned(), id.as_str().to_owned()))?;
         for collection in collections {
             let Some(collection) = CollectionName::try_new(collection).ok() else {
                 continue;
@@ -697,28 +723,38 @@ impl LsmStorage {
 
     /// Encodes, appends, and applies one commit batch.
     pub(crate) fn commit_intent(&mut self, intent: &CommitIntent) -> CommitResult {
-        self.commit_batch(vec![intent.clone()], false)
+        self.commit_batch(std::slice::from_ref(intent), false)
             .pop()
             .expect("a one-intent batch returns one result")
     }
 
-    /// Commits a batch of intents under one durable append, one WAL sync,
-    /// and one frontier advance: the group-commit shape.
+    /// Commits a batch of intents under one durable append and one WAL
+    /// sync: the group-commit shape.
     ///
     /// The batch is exactly equivalent to committing each intent alone in
     /// order — every step below runs per intent in sequence order except
     /// the file syncs, which run once for the whole batch. A waiter's
-    /// acknowledgement still implies its records are durable (the batch's
-    /// single sync covers them), and a crash mid-batch leaves the same
-    /// states a crash between serial commits would.
-    /// Commits a batch of intents under one durable append and one WAL
-    /// sync. When `defer_flips` is set and the batch carries `Synced`
-    /// intents, the flip records' sync is deferred to the next batch or
-    /// the idle flush — the saturated group-commit shape.
+    /// acknowledgement still implies its records are durable, and a crash
+    /// mid-batch leaves the same states a crash between serial commits
+    /// would.
+    ///
+    /// `defer_flips` selects the pipelined shape on locations the
+    /// coordinated frontier does not govern (the legacy format): the batch
+    /// appends, publishes, and returns **without any file sync**, and the
+    /// caller — the group-commit leader — performs the one `fdatasync`
+    /// itself, outside the storage lock, before it answers the batch's
+    /// waiters. The flip records' append moves to the next batch's durable
+    /// append or the idle flush, exactly where a saturated batch's deferred
+    /// flips already ride. An activated location ignores the request and
+    /// runs the fully synchronous publication order: its coordinated
+    /// frontier's slot write is the durability proof and stays under the
+    /// lock. A serial caller (a batch of one) never asks for the pipelined
+    /// shape and keeps the byte-identical order: append, sync, flip
+    /// append, flip sync, then the answer.
     #[allow(clippy::too_many_lines)]
     pub(crate) fn commit_batch(
         &mut self,
-        intents: Vec<CommitIntent>,
+        intents: &[CommitIntent],
         defer_flips: bool,
     ) -> Vec<CommitResult> {
         let mut results: Vec<Option<CommitResult>> = intents.iter().map(|_| None).collect();
@@ -743,15 +779,13 @@ impl LsmStorage {
             || self.faults.fire(FaultPoint::PointerPublish).is_err()
         {
             for item in &prepared {
-                results[item.index] =
-                    Some(CommitResult::Rejected(CommitRejection::Storage));
+                results[item.index] = Some(CommitResult::Rejected(CommitRejection::Storage));
             }
             return results.into_iter().map(Option::unwrap).collect();
         }
         let any_synced = prepared.iter().any(|item| item.synced);
-        let mut durable: Vec<Entry> = Vec::with_capacity(
-            prepared.iter().map(|item| item.durable_batch.len()).sum(),
-        );
+        let mut durable: Vec<Entry> =
+            Vec::with_capacity(prepared.iter().map(|item| item.durable_batch.len()).sum());
         durable.extend(std::mem::take(&mut self.pending_flips));
         for item in &prepared {
             durable.extend(item.durable_batch.iter().cloned());
@@ -762,9 +796,19 @@ impl LsmStorage {
             }
             return results.into_iter().map(Option::unwrap).collect();
         };
-        static TRACE_BATCHES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        let trace = *TRACE_BATCHES.get_or_init(|| std::env::var_os("TERRABASE_TRACE_BATCHES").is_some());
+        let trace =
+            *TRACE_BATCHES.get_or_init(|| std::env::var_os("TERRABASE_TRACE_BATCHES").is_some());
         let trace_started = std::time::Instant::now();
+        if defer_flips && self.activation.is_none() {
+            return self.publish_appended_batch_without_sync(
+                &prepared,
+                results,
+                append,
+                any_synced,
+                trace,
+                trace_started,
+            );
+        }
         if any_synced && self.faults.fire(FaultPoint::ReadyLedgerSync).is_err() {
             if self.activation.is_some() {
                 self.frontier_poisoned = true;
@@ -779,10 +823,7 @@ impl LsmStorage {
             }
             return results.into_iter().map(Option::unwrap).collect();
         }
-        if self
-            .witness_wal_append(&append, any_synced, FaultPoint::ReadyFrontierSync)
-            .is_err()
-        {
+        if self.witness_wal_append(&append, any_synced, FaultPoint::ReadyFrontierSync).is_err() {
             for item in &prepared {
                 results[item.index] = Some(self.finish_publication(
                     &item.entries,
@@ -793,8 +834,7 @@ impl LsmStorage {
             }
             return results.into_iter().map(Option::unwrap).collect();
         }
-        let pointer_fault =
-            any_synced && self.faults.fire(FaultPoint::PointerSync).is_err();
+        let pointer_fault = any_synced && self.faults.fire(FaultPoint::PointerSync).is_err();
         let directory_fault =
             any_synced && !pointer_fault && self.faults.fire(FaultPoint::DirectorySync).is_err();
         if pointer_fault || directory_fault {
@@ -805,12 +845,8 @@ impl LsmStorage {
             };
             for item in &prepared {
                 let cause = if item.synced { cause } else { None };
-                results[item.index] = Some(self.finish_publication(
-                    &item.entries,
-                    &item.ledger_entry,
-                    cause,
-                    false,
-                ));
+                results[item.index] =
+                    Some(self.finish_publication(&item.entries, &item.ledger_entry, cause, false));
             }
             return results.into_iter().map(Option::unwrap).collect();
         }
@@ -868,6 +904,98 @@ impl LsmStorage {
         if trace {
             eprintln!(
                 "terrabase commit batch: {} intents, {:.1}ms total",
+                prepared.len(),
+                trace_started.elapsed().as_secs_f64() * 1_000.0
+            );
+        }
+        results.into_iter().map(Option::unwrap).collect()
+    }
+
+    /// Publishes one already-appended batch without touching the file
+    /// again: the lock-held half of the pipelined group-commit shape
+    /// ([`Self::commit_batch`] with `defer_flips` set on a legacy
+    /// location).
+    ///
+    /// Everything here is lock-held CPU work plus the caller's already
+    /// completed `write()`: the fault gates keep their positions relative
+    /// to publication, the disposable legacy frontier shadow advances in
+    /// memory only (the bounded flush point persists it, exactly as the
+    /// lazy witness path does), and the flip records are *stashed*, not
+    /// appended — the next batch's durable append or the idle flush
+    /// carries them, which is precisely where a saturated batch's deferred
+    /// flips already ride. The caller performs the one `fdatasync` that
+    /// proves the batch's main frame durable before any waiter is
+    /// answered; a `Synced` receipt therefore still implies its frame is
+    /// durable at answer time, while a crash before the flip lands leaves
+    /// the honest `Written` resolution recovery always reports for an
+    /// unwitnessed flip.
+    ///
+    /// The sync-side fault points (`StorageFrontierSync`,
+    /// `ReadyFrontierSync`, `PointerSync`, `DirectorySync`) guard steps
+    /// this path does not take — there is no sync under the lock — so they
+    /// do not fire here; a serial caller never reaches this path and keeps
+    /// the complete firing order.
+    fn publish_appended_batch_without_sync(
+        &mut self,
+        prepared: &[PreparedCommit],
+        mut results: Vec<Option<CommitResult>>,
+        append: wal::WalAppend,
+        any_synced: bool,
+        trace: bool,
+        trace_started: std::time::Instant,
+    ) -> Vec<CommitResult> {
+        // The ledger-witness gate keeps its position — after the append,
+        // before publication — and its outcome.
+        if any_synced && self.faults.fire(FaultPoint::ReadyLedgerSync).is_err() {
+            for item in prepared {
+                results[item.index] = Some(self.finish_publication(
+                    &item.entries,
+                    &item.ledger_entry,
+                    Some(UnknownCause::ResponseInterrupted),
+                    false,
+                ));
+            }
+            return results.into_iter().map(Option::unwrap).collect();
+        }
+        // The disposable shadow advances in memory only; the flush point
+        // persists it in one slot write (the lazy-advance contract).
+        if self
+            .wal_frontier
+            .as_mut()
+            .is_some_and(|frontier| frontier.advance_lazy(&append).is_err())
+        {
+            self.frontier_poisoned = true;
+        }
+        // The flip records: stashed for the next batch's durable append or
+        // the idle flush. Their append therefore still happens strictly
+        // after this batch's witness — the ordering that makes a recovered
+        // flip record proof the sync completed.
+        let synced_items: Vec<&PreparedCommit> =
+            prepared.iter().filter(|item| item.synced).collect();
+        let flip_witnessed = if synced_items.is_empty() {
+            true
+        } else if self.faults.fire(FaultPoint::PublishedLedgerSync).is_err() {
+            false
+        } else {
+            self.pending_flips = synced_items.iter().map(|item| item.flip.clone()).collect();
+            true
+        };
+        for item in prepared {
+            let cause = if item.synced && !flip_witnessed {
+                Some(UnknownCause::PublishedLedgerSync)
+            } else {
+                None
+            };
+            results[item.index] = Some(self.finish_publication(
+                &item.entries,
+                &item.ledger_entry,
+                cause,
+                item.synced && flip_witnessed,
+            ));
+        }
+        if trace {
+            eprintln!(
+                "terrabase commit batch: {} intents, {:.1}ms appended+published (witness pipelined)",
                 prepared.len(),
                 trace_started.elapsed().as_secs_f64() * 1_000.0
             );
@@ -1311,6 +1439,36 @@ fn tenant_prefix(tenant: &TenantId) -> Vec<u8> {
     bytes
 }
 
+/// The half-open documents-keyspace bounds of one tenant's collection: the
+/// inclusive prefix every key of the collection extends, and the exclusive
+/// bound one byte above it.
+///
+/// Canonical key order is `(tenant, collection, identifier)` with NUL
+/// separators, so the collection's keyspace is exactly the keys that start
+/// with `tag, tenant NUL, collection NUL`. Bumping that trailing NUL to
+/// `0x01` names the first key above every one of them and below every other
+/// collection's keyspace — the same bound shape
+/// [`internal::tenant_upper_bound`] uses for the tenant — because no legal
+/// identifier may begin with a byte at or below `0x01` (identifiers reject
+/// control characters) and no legal collection name may contain NUL.
+fn collection_bounds(tenant: &TenantId, collection: &CollectionName) -> (Vec<u8>, Vec<u8>) {
+    let mut start = tenant_prefix(tenant);
+    bytes_extend_identifier(&mut start, collection.as_str());
+    let mut end = start.clone();
+    if let Some(byte) = end.last_mut() {
+        *byte = byte.wrapping_add(1);
+    }
+    (start, end)
+}
+
+/// Appends one identifier in the same order-preserving encoding
+/// [`internal::InternalKey`] uses, so locally built bounds and key-built
+/// ranges always agree on order.
+fn bytes_extend_identifier(out: &mut Vec<u8>, value: &str) {
+    out.extend_from_slice(value.as_bytes());
+    out.push(0);
+}
+
 /// Decodes one documents-keyspace user key into its three parts.
 fn decode_document_key(user_key: &[u8]) -> Option<(String, String, String)> {
     let mut parts = user_key[1..].split(|byte| *byte == 0);
@@ -1356,9 +1514,7 @@ fn persisted_entry_is_semantically_valid(entry: &Entry) -> bool {
         };
         record.sequence == entry.key.sequence()
             && if record.committed {
-                record.rejection.is_none()
-                    && record.root.len() == 32
-                    && record.root.bytes().all(|byte| byte.is_ascii_hexdigit())
+                record.rejection.is_none() && valid_root_binding(record.sequence, &record.root)
             } else {
                 record.rejection.is_some() && record.root.is_empty() && !record.post_publish_synced
             }
@@ -1377,6 +1533,17 @@ fn persisted_entry_is_semantically_valid(entry: &Entry) -> bool {
     } else {
         false
     }
+}
+
+/// Checks the canonical root spelling carried by a persisted ledger entry.
+/// The first half is the publication sequence; accepting uppercase or a
+/// mismatched sequence would let recovery select a root identity unrelated to
+/// the operation that produced it.
+fn valid_root_binding(sequence: u64, root: &str) -> bool {
+    sequence != 0
+        && root.len() == 32
+        && root.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        && u64::from_str_radix(&root[..16], 16) == Ok(sequence)
 }
 
 /// Returns the meta label of one meta-keyspace user key.
@@ -1749,6 +1916,23 @@ fn recover_active_wal(
 ) -> Result<(WalFrontier, bool), LsmOpenError> {
     let mut frontier = WalFrontier::open_active(dir, store_id).map_err(map_frontier_open_error)?;
     if manifest.checkpoint.is_some() && frontier.epoch_established(manifest.live_epoch) {
+        // Both next-epoch slots prove that the checkpoint protocol reached
+        // its final pre-truncation stage, but they do not prove the bytes
+        // currently present in the old WAL. Verify that any remaining prefix
+        // is exactly the checkpoint anchor before discarding it; otherwise a
+        // damaged or unexpectedly extended WAL could be erased silently.
+        let checkpoint = manifest.checkpoint.ok_or(LsmOpenError::FormatMismatch)?;
+        if scan.total_bytes != 0 {
+            if scan.mid_file_damage {
+                return Err(LsmOpenError::FormatMismatch);
+            }
+            let old = VerifiedStream::for_wal(wal_path, scan, store_id, checkpoint.anchor.epoch)
+                .map_err(|_| LsmOpenError::Unavailable)?;
+            if old.final_anchor() != checkpoint.anchor || scan.good_bytes != checkpoint.anchor.bytes
+            {
+                return Err(LsmOpenError::FormatMismatch);
+            }
+        }
         if scan.total_bytes != 0 {
             wal.truncate(0).map_err(|_| LsmOpenError::Unavailable)?;
         }
@@ -1914,11 +2098,11 @@ impl StoragePort for LsmStorage {
     }
 
     fn commit_batch(&mut self, intents: Vec<CommitIntent>, defer_flips: bool) -> Vec<CommitResult> {
-        LsmStorage::commit_batch(self, intents, defer_flips)
+        LsmStorage::commit_batch(self, &intents, defer_flips)
     }
 
     fn flush_pending_flips(&mut self) {
-        LsmStorage::flush_pending_flips(self)
+        LsmStorage::flush_pending_flips(self);
     }
 
     fn resolve_operation(
@@ -1969,6 +2153,54 @@ impl StoragePort for LsmStorage {
 
     fn documents_at(&self, sequence: StorageSequence, tenant: &TenantId) -> Vec<Document> {
         tenant_documents_at(self, tenant, sequence.get())
+    }
+
+    fn documents_in_collection_at(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        collection: &CollectionName,
+    ) -> Vec<Document> {
+        let (start, end) = collection_bounds(tenant, collection);
+        self.collect_range(&start, &end, sequence.get())
+            .into_iter()
+            .filter(|entry| !entry.key.is_deletion())
+            .filter_map(|entry| {
+                let mut reader = codec::Reader::new(&entry.value);
+                codec::decode_document(&mut reader)
+            })
+            .collect()
+    }
+
+    fn read_documents_in_collection_at(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        ids: &[DocumentId],
+    ) -> Vec<Document> {
+        let mut documents: Vec<Document> = Vec::with_capacity(ids.len());
+        for id in ids {
+            // The lookup key's own sequence is irrelevant to the range the
+            // point read computes; zero is a valid stand-in, exactly as the
+            // single-key read above uses it.
+            let key = InternalKey::document(tenant, collection, id, 0);
+            let Some((deletion, value)) = self.newest_document_entry(&key, sequence.get()) else {
+                continue;
+            };
+            if deletion {
+                continue;
+            }
+            let mut reader = codec::Reader::new(&value);
+            if let Some(document) = codec::decode_document(&mut reader) {
+                documents.push(document);
+            }
+        }
+        // One collection's canonical order is identifier order; order the
+        // survivors once, by their own keys, so the batched keyed read and a
+        // scan of the collection agree on order.
+        documents.sort_by(|left, right| left.id().cmp(right.id()));
+        documents
     }
 
     fn documents_at_from(
@@ -2230,7 +2462,6 @@ impl LsmStorage {
             return Err(());
         };
         self.witness_wal_append(&append, true, FaultPoint::PublishedFrontierSync)
-            .map_err(|()| ())
     }
 }
 
@@ -2440,7 +2671,12 @@ impl LsmStorage {
         if self.faults.fire(FaultPoint::CompactionEvidenceSync).is_err()
             || self.retained.sync().is_err()
         {
-            if self.activation.is_some() {
+            // The bytes have not yet been bound by the retained frontier. A
+            // failed sync therefore cannot authorize a declaration; roll the
+            // unbound suffix back so a same-process retry cannot append an
+            // indistinguishable duplicate. If rollback itself fails, poison
+            // the handle and require recovery to establish the stream again.
+            if self.retained.truncate(start).is_err() {
                 self.frontier_poisoned = true;
             }
             return Err(());

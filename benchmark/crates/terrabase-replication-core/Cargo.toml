@@ -15,7 +15,7 @@ name = "terrabase-replication-core"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
-license = "LicenseRef-TerraScale-Pending"
+license = "MIT"
 description = "TerraBase leaderless multi-writer replication core: per-Member native CRDT replicas, frontier summaries, member-to-member delta exchange"
 publish = false
 

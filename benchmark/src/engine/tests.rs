@@ -24,6 +24,7 @@ use crate::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
     OperationId, RetryDisposition, StorageSequence, TenantId, TenantScope,
 };
+use crate::usage::{UsageAdmissionContext, UsageFactId};
 
 fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1421,6 +1422,32 @@ fn begin_rejects_invalid_operation_id() {
         .expect("the reservation is released when the transaction ends");
     second.put(document("doc-1", "users", "value"), ExpectedVersion::New).expect("stages");
     assert!(matches!(second.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+}
+
+#[test]
+fn usage_admission_requires_synced_commit_durability() {
+    let (_dir, engine) = open_engine("usage-admission-durability");
+    let scope = tenant_scope(&engine, "tenant-a");
+    let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+    let mut transaction = engine.begin(&scope, snapshot, operation("op-admitted")).expect("begins");
+    let context = UsageAdmissionContext::try_new(
+        "project-a",
+        "database-a",
+        "partition-a",
+        crate::RegionCode::GRU,
+        UsageFactId::try_new("op-admitted").expect("request id"),
+        1_788_105_600_000,
+        1,
+        7,
+    )
+    .expect("admission context");
+    transaction.attach_usage_admission(context).expect("attaches");
+    transaction.put(document("doc-1", "users", "value"), ExpectedVersion::New).expect("stages");
+
+    assert_eq!(
+        transaction.commit(LocalDurability::Written),
+        CommitOutcome::Rejected(CommitError::UsageRequiresSynced)
+    );
 }
 
 #[test]

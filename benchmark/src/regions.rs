@@ -5,7 +5,7 @@
 //! uppercase three-letter airport code (GOAL.md "Canonical Region identity
 //! and OCI mapping"; ADR 0033 "Canonical Region identity"). The engine and
 //! the private TBEP carry the value as the typed fixed three-byte ASCII
-//! form [`RegionCode::as_bytes`]; REST and public `MessagePack` carry the
+//! form [`RegionCode::as_bytes`]; REST carries the
 //! same three characters as a string via [`RegionCode::as_str`] and
 //! [`std::fmt::Display`].
 //!
@@ -151,7 +151,7 @@ impl RegionCode {
     }
 
     /// Returns the same three characters as a string — the form REST and
-    /// public `MessagePack` carry.
+    /// public REST carries.
     ///
     /// # Panics
     ///

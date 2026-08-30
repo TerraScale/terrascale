@@ -53,6 +53,40 @@ pub use compaction::{
 use crate::types::{
     CollectionName, Document, DocumentId, LocalDurability, OperationId, StorageSequence, TenantId,
 };
+use crate::usage::{DurableUsageFact, MeasurementWindow, MintingRule, UsageFact, UsageFactId};
+
+/// Storage-side usage command failures, mapped to the public Engine contract.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum UsageStorageError {
+    /// The selected storage backend predates durable usage facts.
+    UnsupportedBackend,
+    /// The location contains legacy facts that cannot be billed truthfully.
+    UsageUnavailable,
+    /// Persisted usage is malformed or contradicts its durable binding.
+    Corrupt,
+    /// One scoped fact identity is already bound to different content.
+    IdentityConflict,
+    /// Durable storage could not complete the command.
+    Unavailable,
+}
+
+/// The total order used by usage export and its continuation cursor.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct UsageFactPosition {
+    pub(crate) sequence: u64,
+    pub(crate) rule: MintingRule,
+    pub(crate) id: UsageFactId,
+}
+
+impl UsageFactPosition {
+    pub(crate) fn of(fact: &DurableUsageFact) -> Self {
+        Self {
+            sequence: fact.sequence(),
+            rule: fact.fact().identity().rule(),
+            id: fact.fact().identity().id().clone(),
+        }
+    }
+}
 
 /// The private storage adapter seam the Engine depends on.
 ///
@@ -67,11 +101,7 @@ pub(crate) trait StoragePort: Send {
     /// under one shared durable append where the implementation supports
     /// it (group commit). The default commits each intent alone, which is
     /// exactly the serial behavior.
-    fn commit_batch(
-        &mut self,
-        intents: Vec<CommitIntent>,
-        defer_flips: bool,
-    ) -> Vec<CommitResult> {
+    fn commit_batch(&mut self, intents: Vec<CommitIntent>, defer_flips: bool) -> Vec<CommitResult> {
         let _ = defer_flips;
         intents.into_iter().map(|intent| self.commit(intent)).collect()
     }
@@ -86,6 +116,30 @@ pub(crate) trait StoragePort: Send {
         tenant: &TenantId,
         operation: &OperationId,
     ) -> Option<OperationResolution>;
+
+    /// Appends one standalone authoritative usage fact durably and
+    /// idempotently. The default rejects legacy backends.
+    fn record_usage(
+        &mut self,
+        _tenant: &TenantId,
+        _fact: UsageFact,
+    ) -> Result<(DurableUsageFact, bool), UsageStorageError> {
+        Err(UsageStorageError::UnsupportedBackend)
+    }
+
+    /// Returns at most `limit` tenant facts at or below the fixed snapshot,
+    /// ordered strictly after the optional continuation position. The Engine
+    /// asks for one extra row to decide whether another page exists.
+    fn usage_facts_page(
+        &self,
+        _tenant: &TenantId,
+        _snapshot: StorageSequence,
+        _after: Option<&UsageFactPosition>,
+        _window: Option<MeasurementWindow>,
+        _limit: u32,
+    ) -> Result<Vec<DurableUsageFact>, UsageStorageError> {
+        Err(UsageStorageError::UnsupportedBackend)
+    }
 
     /// Returns one document as the given read snapshot observed it.
     fn read_document_at(
@@ -114,6 +168,41 @@ pub(crate) trait StoragePort: Send {
     /// Returns every document of one tenant as the given read snapshot
     /// observed them, in canonical key order.
     fn documents_at(&self, sequence: StorageSequence, tenant: &TenantId) -> Vec<Document>;
+
+    /// Returns every document of one tenant's collection as the given read
+    /// snapshot observed them, in canonical key order.
+    ///
+    /// A query whose source is one collection needs no other collection's
+    /// documents, and this read stops at the collection's key range instead
+    /// of materializing (and in the LSM engine, decoding) the rest of the
+    /// tenant. Canonical order is the order of [`StoragePort::documents_at`]
+    /// restricted to the collection.
+    fn documents_in_collection_at(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        collection: &CollectionName,
+    ) -> Vec<Document>;
+
+    /// Returns the documents the given read snapshot observed at the named
+    /// exact keys of one tenant's collection, in canonical key order of the
+    /// requested identifiers.
+    ///
+    /// This is the batched form of [`StoragePort::read_document_in_collection_at`]:
+    /// each named key resolves by its exact `(tenant, collection, identifier)`
+    /// triple, a key absent at the snapshot (never written, or deleted at or
+    /// below it) contributes nothing, and one identifier is never resolved in
+    /// another collection. The result is the keyed-candidate fetch of the
+    /// index-narrowed query path: a bounded identifier set in, the surviving
+    /// documents out, in the same canonical order a scan of the collection
+    /// would have produced.
+    fn read_documents_in_collection_at(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        ids: &[DocumentId],
+    ) -> Vec<Document>;
 
     /// Returns one bounded window of a tenant's documents as the given read
     /// snapshot observed them, in canonical key order resuming at the

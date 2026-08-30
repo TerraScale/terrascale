@@ -20,6 +20,8 @@ const (
 	ReadLevelGlobalQuorum
 )
 
+func (level ReadLevel) valid() bool { return level <= ReadLevelGlobalQuorum }
+
 func (level ReadLevel) proto() v1.ReadLevel {
 	switch level {
 	case ReadLevelLocal:
@@ -45,6 +47,8 @@ const (
 	AckBackup
 )
 
+func (ack Acknowledgement) valid() bool { return ack <= AckBackup }
+
 func (ack Acknowledgement) proto() v1.Acknowledgement {
 	switch ack {
 	case AckGlobalQuorum:
@@ -56,16 +60,16 @@ func (ack Acknowledgement) proto() v1.Acknowledgement {
 	}
 }
 
-// acknowledgementFrom maps the engine's receipt acknowledgement; the
-// engine never answers unspecified, but a future value stays readable.
-func acknowledgementFrom(ack v1.Acknowledgement) Acknowledgement {
+func acknowledgementFrom(ack v1.Acknowledgement) (Acknowledgement, bool) {
 	switch ack {
+	case v1.Acknowledgement_ACK_REGIONAL_QUORUM:
+		return AckRegionalQuorum, true
 	case v1.Acknowledgement_ACK_GLOBAL_QUORUM:
-		return AckGlobalQuorum
+		return AckGlobalQuorum, true
 	case v1.Acknowledgement_ACK_BACKUP:
-		return AckBackup
+		return AckBackup, true
 	default:
-		return AckRegionalQuorum
+		return 0, false
 	}
 }
 
@@ -79,14 +83,16 @@ const (
 	BackupPartial
 )
 
-func backupOutcomeFrom(outcome v1.BackupOutcome) BackupOutcome {
+func backupOutcomeFrom(outcome v1.BackupOutcome) (BackupOutcome, bool) {
 	switch outcome {
+	case v1.BackupOutcome_BACKUP_NONE:
+		return BackupNone, true
 	case v1.BackupOutcome_BACKUP_FULL:
-		return BackupFull
+		return BackupFull, true
 	case v1.BackupOutcome_BACKUP_PARTIAL:
-		return BackupPartial
+		return BackupPartial, true
 	default:
-		return BackupNone
+		return 0, false
 	}
 }
 
@@ -139,17 +145,28 @@ type CommitReceipt struct {
 	Backup      BackupOutcome
 }
 
-func commitReceiptFrom(receipt *v1.CommitReceipt) CommitReceipt {
+func commitReceiptFrom(receipt *v1.CommitReceipt) (CommitReceipt, error) {
 	if receipt == nil {
-		return CommitReceipt{}
+		return CommitReceipt{}, contractError("the engine returned a committed outcome without a receipt")
+	}
+	ack, ok := acknowledgementFrom(receipt.GetAcknowledgement())
+	if !ok {
+		return CommitReceipt{}, contractError("the engine returned an unknown commit acknowledgement")
+	}
+	backup, ok := backupOutcomeFrom(receipt.GetBackup())
+	if !ok {
+		return CommitReceipt{}, contractError("the engine returned an unknown backup outcome")
+	}
+	if err := optionalName("operation id", receipt.GetOperationId(), maxOperationBytes); err != nil {
+		return CommitReceipt{}, contractError("the engine returned an invalid commit operation id")
 	}
 	return CommitReceipt{
 		Sequence:    receipt.GetSequence(),
 		Version:     receipt.GetVersion(),
 		OperationID: receipt.GetOperationId(),
-		Ack:         acknowledgementFrom(receipt.GetAcknowledgement()),
-		Backup:      backupOutcomeFrom(receipt.GetBackup()),
-	}
+		Ack:         ack,
+		Backup:      backup,
+	}, nil
 }
 
 // WriteReason is why a write was refused before commit.
@@ -215,20 +232,33 @@ func (outcome WriteOutcome) Conflict() bool { return outcome.conflict }
 // mutation before commit.
 func (outcome WriteOutcome) Refused() (WriteReason, bool) { return outcome.reason, outcome.refused }
 
-func writeOutcomeFrom(outcome *v1.WriteOutcome) WriteOutcome {
+func writeOutcomeFrom(outcome *v1.WriteOutcome) (WriteOutcome, error) {
+	if outcome == nil {
+		return WriteOutcome{}, contractError("the engine returned no write outcome")
+	}
 	switch typed := outcome.GetOutcome().(type) {
 	case *v1.WriteOutcome_Committed:
-		receipt := commitReceiptFrom(typed.Committed)
-		return WriteOutcome{commit: &receipt}
+		receipt, err := commitReceiptFrom(typed.Committed)
+		if err != nil {
+			return WriteOutcome{}, err
+		}
+		return WriteOutcome{commit: &receipt}, nil
 	case *v1.WriteOutcome_Conflict:
-		return WriteOutcome{conflict: true}
+		if typed.Conflict == nil {
+			return WriteOutcome{}, contractError("the engine returned an empty write conflict")
+		}
+		return WriteOutcome{conflict: true}, nil
 	case *v1.WriteOutcome_Rejected:
-		reason, _ := writeReasonFrom(typed.Rejected.GetReason())
-		return WriteOutcome{reason: reason, refused: true}
+		if typed.Rejected == nil {
+			return WriteOutcome{}, contractError("the engine returned an empty write refusal")
+		}
+		reason, ok := writeReasonFrom(typed.Rejected.GetReason())
+		if !ok {
+			return WriteOutcome{}, contractError("the engine returned an unknown write refusal reason")
+		}
+		return WriteOutcome{reason: reason, refused: true}, nil
 	default:
-		// The engine always answers one outcome; an empty frame maps to
-		// a refusal carrying no reason rather than a silent success.
-		return WriteOutcome{refused: true}
+		return WriteOutcome{}, contractError("the engine returned a write outcome outside the contract")
 	}
 }
 
@@ -248,7 +278,13 @@ type Document struct {
 
 func documentFrom(body *v1.DocumentBody) (Document, error) {
 	if body == nil {
-		return Document{}, nil
+		return Document{}, localError("the engine sent a document carrying no body")
+	}
+	if err := boundName("document id", body.GetId(), maxDocumentBytes); err != nil {
+		return Document{}, err
+	}
+	if err := boundName("collection", body.GetCollection(), maxCollectionBytes); err != nil {
+		return Document{}, err
 	}
 	decoded, err := valueFromProto(body.GetBody())
 	if err != nil {
@@ -294,14 +330,16 @@ const (
 	UnknownQuery
 )
 
-func cancelOutcomeFrom(outcome v1.CancelOutcome) CancelOutcome {
+func cancelOutcomeFrom(outcome v1.CancelOutcome) (CancelOutcome, bool) {
 	switch outcome {
+	case v1.CancelOutcome_CANCEL_OUTCOME_CANCELLED:
+		return Cancelled, true
 	case v1.CancelOutcome_CANCEL_OUTCOME_ALREADY_COMPLETE:
-		return AlreadyComplete
+		return AlreadyComplete, true
 	case v1.CancelOutcome_CANCEL_OUTCOME_UNKNOWN_QUERY:
-		return UnknownQuery
+		return UnknownQuery, true
 	default:
-		return Cancelled
+		return 0, false
 	}
 }
 
@@ -359,11 +397,15 @@ const (
 	ChangeDelete
 )
 
-func changeKindFrom(kind v1.ChangeKind) ChangeKind {
-	if kind == v1.ChangeKind_CHANGE_KIND_DELETE {
-		return ChangeDelete
+func changeKindFrom(kind v1.ChangeKind) (ChangeKind, bool) {
+	switch kind {
+	case v1.ChangeKind_CHANGE_KIND_PUT:
+		return ChangePut, true
+	case v1.ChangeKind_CHANGE_KIND_DELETE:
+		return ChangeDelete, true
+	default:
+		return 0, false
 	}
-	return ChangePut
 }
 
 // String names the change kind.
@@ -419,11 +461,15 @@ const (
 	CloseShuttingDown
 )
 
-func closeReasonFrom(reason v1.SubscriptionCloseReason) CloseReason {
-	if reason == v1.SubscriptionCloseReason_SUBSCRIPTION_CLOSE_REASON_SHUTTING_DOWN {
-		return CloseShuttingDown
+func closeReasonFrom(reason v1.SubscriptionCloseReason) (CloseReason, bool) {
+	switch reason {
+	case v1.SubscriptionCloseReason_SUBSCRIPTION_CLOSE_REASON_REPLACED:
+		return CloseReplaced, true
+	case v1.SubscriptionCloseReason_SUBSCRIPTION_CLOSE_REASON_SHUTTING_DOWN:
+		return CloseShuttingDown, true
+	default:
+		return 0, false
 	}
-	return CloseReplaced
 }
 
 // Closed is the close frame of one subscription stream.
@@ -508,16 +554,16 @@ const (
 	MutationSequenceOutOfOrder
 )
 
-func mutationReasonFrom(reason v1.MutationReason) MutationReason {
+func mutationReasonFrom(reason v1.MutationReason) (MutationReason, bool) {
 	switch reason {
 	case v1.MutationReason_MUTATION_REASON_SCOPE_REFUSED:
-		return MutationScopeRefused
+		return MutationScopeRefused, true
 	case v1.MutationReason_MUTATION_REASON_INVALID_BODY:
-		return MutationInvalidBody
+		return MutationInvalidBody, true
 	case v1.MutationReason_MUTATION_REASON_SEQUENCE_OUT_OF_ORDER:
-		return MutationSequenceOutOfOrder
+		return MutationSequenceOutOfOrder, true
 	default:
-		return MutationScopeRefused
+		return 0, false
 	}
 }
 
@@ -556,15 +602,28 @@ func (outcome MutationOutcome) Refused() (MutationReason, bool) {
 	return outcome.reason, outcome.refused
 }
 
-func mutationOutcomeFrom(outcome *v1.MutationOutcome) MutationOutcome {
+func mutationOutcomeFrom(outcome *v1.MutationOutcome) (MutationOutcome, error) {
+	if outcome == nil {
+		return MutationOutcome{}, contractError("the engine returned no sync mutation outcome")
+	}
 	switch typed := outcome.GetOutcome().(type) {
 	case *v1.MutationOutcome_Applied:
-		receipt := commitReceiptFrom(typed.Applied)
-		return MutationOutcome{receipt: &receipt}
+		receipt, err := commitReceiptFrom(typed.Applied)
+		if err != nil {
+			return MutationOutcome{}, err
+		}
+		return MutationOutcome{receipt: &receipt}, nil
 	case *v1.MutationOutcome_Rejected:
-		return MutationOutcome{reason: mutationReasonFrom(typed.Rejected.GetReason()), refused: true}
+		if typed.Rejected == nil {
+			return MutationOutcome{}, contractError("the engine returned an empty sync mutation refusal")
+		}
+		reason, ok := mutationReasonFrom(typed.Rejected.GetReason())
+		if !ok {
+			return MutationOutcome{}, contractError("the engine returned an unknown sync mutation refusal reason")
+		}
+		return MutationOutcome{reason: reason, refused: true}, nil
 	default:
-		return MutationOutcome{reason: MutationInvalidBody, refused: true}
+		return MutationOutcome{}, contractError("the engine returned a sync mutation outcome outside the contract")
 	}
 }
 
@@ -1194,8 +1253,10 @@ func healthStateFrom(state v1.HealthState) HealthState {
 		return HealthDraining
 	case v1.HealthState_HEALTH_STATE_STOPPED:
 		return HealthStopped
-	default:
+	case v1.HealthState_HEALTH_STATE_SERVING:
 		return HealthServing
+	default:
+		return 0
 	}
 }
 
@@ -1221,6 +1282,13 @@ type SupervisionReport struct {
 	Sessions      uint32
 	Subscriptions uint32
 	FramesServed  uint64
+}
+
+// Readiness is the gateway-facing admission answer derived from the engine's
+// typed supervision state. Ready is true only while the engine is serving.
+type Readiness struct {
+	Ready  bool
+	Report SupervisionReport
 }
 
 // ShutdownReason is why the engine was asked to shut down.

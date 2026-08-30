@@ -482,11 +482,11 @@ for commits, request digests, causal summaries, Merkle nodes, snapshot chunks,
 and manifests. Each domain has a fixed ASCII prefix and codec major version.
 A checksum proves identity and corruption detection, not authorization.
 
-Generated FlatBuffers tables are the bounded private TBEP control envelope
-under ADR 0025. Native CRDT and snapshot bytes are opaque length-bounded vectors
-inside that envelope. A payload is validated against its declared native codec
-before any progress acknowledgment. Public MessagePack never carries raw CRDT,
-causal, snapshot, or replication payloads.
+Generated protobuf messages are the bounded private TBEP control envelope under
+ADR 0025. Native CRDT and snapshot bytes are opaque length-bounded fields inside
+that envelope. A payload is validated against its declared native codec before
+any progress acknowledgment. The Go gateway never receives raw CRDT, causal,
+snapshot, or replication payloads.
 
 Compression occurs after canonical encoding. The receiver authenticates the
 frame, enforces compressed and declared uncompressed bounds, decompresses into
@@ -515,11 +515,11 @@ validated native commits. Reactive sync consumes committed materialized change
 summaries and query dependencies. It does not expose raw CRDT state to public
 clients.
 
-`terrabase-replication-core` and `terrabase-sync-core` are rewritten against
-these native contracts. `terrabase-sync-conformance`, TBEP schemas, generated
-Rust and C# bindings, vectors, benchmarks, host tests, and SDK conformance
-replace every Loro codec or type. The old sync spike is deleted. No adapter
-translates live Loro state into native state because no customer data exists.
+`terrabase-replication-core` and `terrabase-sync-core` use these native
+contracts. `terrabase-sync-conformance`, the TBEP protobuf schema, generated
+Rust and Go bindings, vectors, benchmarks, gateway tests, and SDK conformance
+replace every Loro codec or type. No adapter translates live Loro state into
+native state because no customer data exists.
 
 ## Validation and failure behavior
 

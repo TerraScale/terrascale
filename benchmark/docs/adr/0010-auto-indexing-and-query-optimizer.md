@@ -165,7 +165,7 @@ retirement handoff, relationship indexes, full-text capability, authorization
 filtering, reactive plan continuity, hostile query shapes, and noisy-tenant
 isolation.
 
-Performance claims require TerraBase.Benchmark receipts for write
+Performance claims require repository benchmark receipts for write
 amplification, build time, storage, memory, selection latency, query latency,
 maintenance cost, and recovery. RavenDB or TerraBase V1 behavior is not an
 acceptance baseline.

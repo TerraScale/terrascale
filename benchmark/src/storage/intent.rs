@@ -4,6 +4,7 @@ use crate::types::{
     CollectionName, Document, DocumentId, ExpectedVersion, LocalDurability, OperationId,
     StorageSequence, TenantId,
 };
+use crate::usage::UsageAdmissionContext;
 
 use super::root::StorageRootId;
 
@@ -52,6 +53,9 @@ pub(crate) struct CommitIntent {
     pub(crate) snapshot_sequence: StorageSequence,
     /// The requested local durability point.
     pub(crate) durability: LocalDurability,
+    /// Trusted usage admission bound atomically to this origin mutation.
+    /// Replication, repair, and internal writes carry `None` and never mint.
+    pub(crate) usage_admission: Option<UsageAdmissionContext>,
     /// The staged writes to publish atomically.
     pub(crate) writes: Vec<StagedWrite>,
 }

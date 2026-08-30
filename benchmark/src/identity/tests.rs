@@ -7,12 +7,11 @@
 //! ordering, storage-key ordering, hash-to-bucket placement, concurrent
 //! generation, and the Region boundary row (a Region has no ULID; only
 //! registered uppercase airport `RegionCode` values are accepted). The rows
-//! here are engine-side evidence, not a qualification claim: MessagePack and
-//! FlatBuffers representation rows land with their own codecs
-//! (ADR 0025), and cross-language agreement lands when the C# and TypeScript
-//! wrappers exist.
+//! here are engine-side evidence, not a qualification claim: protobuf
+//! representation and Rust-to-Go agreement land with the private TBEP
+//! conformance corpus under ADR 0025.
 
-// FlatBuffers and MessagePack are proper names, not items to link.
+// TerraBase and ULID are proper names, not items to link.
 #![allow(clippy::doc_markdown)]
 
 use std::collections::HashSet;
@@ -363,6 +362,13 @@ fn a_backwards_clock_never_breaks_monotonicity() {
     let second = stepped_back.generate();
     assert!(second > first);
     assert_eq!(second.timestamp_millis(), FIXED_MILLIS);
+}
+
+#[test]
+fn an_overflowing_clock_is_clamped_to_the_ulid_timestamp_range() {
+    let generator = MonotonicGenerator::with_clock(Arc::new(|| u64::MAX));
+    let value = generator.generate();
+    assert_eq!(value.timestamp_millis(), MAX_TIMESTAMP_MILLIS);
 }
 
 #[test]

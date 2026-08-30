@@ -73,6 +73,7 @@ fn fresh_intent(
         operation: OperationId::try_new(operation).expect("valid identifier"),
         snapshot_sequence: storage.published_state().0,
         durability,
+        usage_admission: None,
         writes,
     }
 }

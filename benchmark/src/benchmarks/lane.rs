@@ -10,7 +10,7 @@
 //! itself as not recordable rather than silently counting as a baseline.
 
 /// The benchmark lane's configuration for one run.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct LaneConfig {
     /// Documents seeded into each side before any measurement.
     pub seed_documents: usize,
@@ -49,6 +49,32 @@ impl LaneConfig {
         warmup_operations: 16,
         noise_percent: 5.0,
     };
+
+    /// Validates counts before a worker barrier is constructed. A remainder
+    /// after slot fan-out would otherwise disappear from the measured run.
+    pub(crate) fn validate(&self) -> Result<(), LaneError> {
+        if self.seed_documents == 0 {
+            return Err(LaneError::Invalid("seed documents must be greater than zero"));
+        }
+        if self.operations == 0 {
+            return Err(LaneError::Invalid("operations per sample must be greater than zero"));
+        }
+        if self.samples == 0 {
+            return Err(LaneError::Invalid("samples must be greater than zero"));
+        }
+        if self.concurrency == 0 {
+            return Err(LaneError::Invalid("concurrency must be greater than zero"));
+        }
+        if !self.operations.is_multiple_of(self.concurrency) {
+            return Err(LaneError::Invalid(
+                "operations per sample must be divisible by concurrency",
+            ));
+        }
+        if !self.noise_percent.is_finite() || !(0.0..=100.0).contains(&self.noise_percent) {
+            return Err(LaneError::Invalid("noise percentage must be finite and in 0..=100"));
+        }
+        Ok(())
+    }
 
     /// Returns the configuration with a different seed-document count.
     pub(crate) const fn with_seed_documents(mut self, seed_documents: usize) -> Self {
@@ -118,6 +144,8 @@ pub(crate) enum LaneError {
         /// What was configured.
         configured: usize,
     },
+    /// The configuration cannot produce a complete, comparable window.
+    Invalid(&'static str),
 }
 
 /// The owner accountable for closing the sync-path workload slots
@@ -281,7 +309,7 @@ impl Workload {
                 "the interval from a commit's acknowledgement to the consumer's delivery \
                  observation, per link: client link — commit publication, the content-free \
                  trigger, and the checkpoint-bounded delta the triggered client pulls \
-                 (sync-core apply/serve through the C# host); member link — commit to the \
+                 (sync-core apply/serve through the private Go gateway); member link — commit to the \
                  pushed or catch-up-delivered batch a member applies (member-transport \
                  push/catch-up and apply)"
             }
@@ -375,7 +403,7 @@ impl Workload {
         match self {
             Self::SessionCycle => Some((
                 "the comparable session plane is the TBEP UDS host session, which needs the \
-                 C# host process beside the engine; this in-process lane drives the engine \
+                 private TBEP server and Go client beside the engine; this in-process lane drives the engine \
                  core only, so the session workload waits for the host-mode lane run",
                 "SE-15 follow-up owner: the benchmark lane owner, with the SE-08 host \
                  surface",
@@ -383,7 +411,7 @@ impl Workload {
             Self::SyncCommitToDeliveryLatency | Self::SyncDeliveryThroughput => Some((
                 "a wall-clock sync-path quantity needs the SE-15 statistical gate with both \
                  reference baselines run and the served sync plane beside the engine — the \
-                 C# host/TBEP client link and the member-transport lane; this in-process \
+                 private TBEP/Go client link and the member-transport lane; this in-process \
                  lane drives the engine core only, and the sync plane lives in the sibling \
                  crates the zero-dependency engine crate cannot call, so the workload waits \
                  for the served-lane run beside the references",

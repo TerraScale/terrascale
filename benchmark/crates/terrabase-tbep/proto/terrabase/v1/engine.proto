@@ -2,10 +2,8 @@
 //
 // This file is the contract of record between the Rust engine
 // (`terrabase-tbep`, served by tonic) and every client, led by the
-// terrabase-go client in this repository. It supersedes the retired
-// MessagePack registry (`schema/tbep-registry.json`) and the retired
-// FlatBuffers schema (`schema/tbep.fbs`); see
-// docs/adr/0028-tbep-grpc.md.
+// terrabase-go client in this repository. See
+// docs/adr/0025-private-protobuf-grpc.md.
 //
 // Identity: `terrabase.engine.protocol`, registry lineage 1.x, gRPC
 // protocol generation 2 (gRPC replaces the custom framing of wire
@@ -349,6 +347,7 @@ message DocumentWriteRequest {
   ExpectedVersion expected = 2;
   string operation_id = 3; // <= 128 bytes.
   Acknowledgement ack = 4;
+  UsageAdmissionContext usage = 5;
 }
 
 message DocumentWriteResponse {
@@ -361,6 +360,7 @@ message DocumentDeleteRequest {
   ExpectedVersion expected = 3;
   string operation_id = 4; // <= 128 bytes.
   Acknowledgement ack = 5;
+  UsageAdmissionContext usage = 6;
 }
 
 message DocumentDeleteResponse {
@@ -370,6 +370,7 @@ message DocumentDeleteResponse {
 message DocumentBatchRequest {
   repeated BatchWrite items = 1; // 1..=256 items.
   Acknowledgement ack = 2;
+  UsageAdmissionContext usage = 3;
 }
 
 message DocumentBatchResponse {
@@ -418,6 +419,7 @@ message FamilyWriteRequest {
   string request_codec = 3;
   bytes request = 4;
   string operation_id = 5; // <= 128 bytes.
+  UsageAdmissionContext usage = 6;
 }
 
 message FamilyWriteResponse {
@@ -544,6 +546,7 @@ message SyncMutationSubmitRequest {
   uint64 session_id = 1;
   string document = 2; // <= 64 bytes.
   SyncChange change = 3;
+  UsageAdmissionContext usage = 4;
 }
 
 message SyncMutationSubmitResponse {
@@ -942,6 +945,142 @@ message SupervisionShutdownResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Authoritative usage facts
+// ---------------------------------------------------------------------------
+
+// The closed usage meter vocabulary. Meter versions are immutable and travel
+// beside this kind so a consumer never guesses which accounting rule applied.
+enum UsageMeter {
+  USAGE_METER_UNSPECIFIED = 0;
+  USAGE_METER_STORED_BYTE_HOURS = 1;
+  USAGE_METER_ADMITTED_REQUEST_UNITS = 2;
+  USAGE_METER_PUBLIC_EGRESS_BYTES = 3;
+  USAGE_METER_ACTIVE_REGION_SEATS = 4;
+  USAGE_METER_BACKUP_BYTE_HOURS = 5;
+  USAGE_METER_RESTORE_WORK = 6;
+}
+
+// The integer unit carried by one usage fact.
+enum UsageUnit {
+  USAGE_UNIT_UNSPECIFIED = 0;
+  USAGE_UNIT_BYTE_HOUR = 1;
+  USAGE_UNIT_REQUEST_UNIT = 2;
+  USAGE_UNIT_BYTE = 3;
+  USAGE_UNIT_SEAT_HOUR = 4;
+  USAGE_UNIT_RESTORE_WORK = 5;
+}
+
+// The scope at which the meter charges one unit.
+enum UsageChargeScope {
+  USAGE_CHARGE_SCOPE_UNSPECIFIED = 0;
+  USAGE_CHARGE_SCOPE_ACTIVE_REGION_COPY = 1;
+  USAGE_CHARGE_SCOPE_ADMITTED_REQUEST = 2;
+  USAGE_CHARGE_SCOPE_PUBLIC_EGRESS = 3;
+  USAGE_CHARGE_SCOPE_ACTIVE_REGION_SEAT = 4;
+  USAGE_CHARGE_SCOPE_BACKUP_COPY = 5;
+  USAGE_CHARGE_SCOPE_EXPLICIT_RESTORE = 6;
+}
+
+// The stable event identity that prevents retries and replicas from minting a
+// second fact.
+enum UsageMintingRule {
+  USAGE_MINTING_RULE_UNSPECIFIED = 0;
+  USAGE_MINTING_RULE_ACCEPTED_ORIGIN_COMMIT = 1;
+  USAGE_MINTING_RULE_STABLE_ADMITTED_REQUEST = 2;
+  USAGE_MINTING_RULE_PUBLIC_RESPONSE = 3;
+  USAGE_MINTING_RULE_ACTIVE_REGION_HOUR = 4;
+  USAGE_MINTING_RULE_BACKUP_BYTE_HOUR = 5;
+  USAGE_MINTING_RULE_EXPLICIT_RESTORE = 6;
+}
+
+// Trusted admission data attached atomically to one origin mutation. Tenant
+// scope comes only from the authenticated channel metadata. request_id must
+// equal x-tb-idempotency-key so commit replay and usage replay share one
+// identity. The admitted-request meter and unit are implied.
+message UsageAdmissionContext {
+  string project = 1;       // 1..=255 bytes.
+  string database = 2;      // 1..=255 bytes.
+  string partition = 3;     // 1..=255 bytes.
+  string origin_region = 4; // 1..=255 bytes.
+  string request_id = 5;    // 1..=128 bytes.
+  uint64 accepted_at_millis = 6;
+  uint32 meter_version = 7;
+  string integer_units = 8; // Canonical positive i128, <= 39 bytes.
+}
+
+// Record admits only facts whose public-boundary work cannot be attached to
+// an engine mutation. One call records one fact and is idempotent by the
+// (meter, fact_id) identity. x-tb-idempotency-key must equal fact_id.
+enum UsageRecordMeter {
+  USAGE_RECORD_METER_UNSPECIFIED = 0;
+  USAGE_RECORD_METER_ADMITTED_REQUEST_UNITS = 1;
+  USAGE_RECORD_METER_PUBLIC_EGRESS_BYTES = 2;
+}
+
+message UsageRecordRequest {
+  UsageRecordMeter meter = 1;
+  string project = 2;       // 1..=255 bytes.
+  string database = 3;      // 1..=255 bytes.
+  string partition = 4;     // 1..=255 bytes.
+  string origin_region = 5; // 1..=255 bytes.
+  string fact_id = 6;       // 1..=128 bytes.
+  uint64 recorded_at_millis = 7;
+  uint32 meter_version = 8;
+  string integer_units = 9; // Canonical positive i128, <= 39 bytes.
+}
+
+message UsageRecordResponse {
+  uint64 sequence = 1;
+  uint64 replica_epoch = 2;
+  bool already_recorded = 3;
+}
+
+// One WAL-durable, canonically encoded usage fact. The signed quantity is a
+// canonical base-10 i128 string because protobuf has no portable i128 scalar.
+// Consumers deduplicate on (minting_rule, fact_id) and preserve the canonical
+// bytes for audit. The tenant must equal the identity metadata bound to the RPC.
+message UsageFact {
+  string fact_id = 1; // 1..=255 bytes.
+  UsageMeter meter = 2;
+  uint32 meter_version = 3;
+  UsageUnit unit = 4;
+  UsageChargeScope charge_scope = 5;
+  UsageMintingRule minting_rule = 6;
+  string tenant = 7;      // 1..=64 bytes.
+  string project = 8;     // 1..=255 bytes.
+  string database = 9;    // 1..=255 bytes.
+  string partition = 10;  // 1..=255 bytes.
+  string region = 11;     // 1..=255 bytes.
+  uint64 measurement_start_millis = 12;
+  uint64 measurement_end_millis = 13;
+  string integer_delta = 14; // Canonical signed i128, <= 40 bytes and nonzero.
+  uint64 sequence = 15;
+  uint64 replica_epoch = 16;
+  uint32 format_version = 17;
+  bytes canonical = 18; // Canonical durable fact envelope, <= 64 KiB.
+  bytes checksum = 19;  // Exactly 32 bytes; the envelope's trailing checksum.
+}
+
+// Reads one stable, tenant-bound snapshot. Window bounds are an all-or-none
+// half-open pair. The continuation is opaque and bound to the tenant, exact
+// filters, and snapshot sequence selected by the first page.
+message UsageExportRequest {
+  optional uint64 window_start_millis = 1;
+  optional uint64 window_end_millis = 2;
+  uint32 page_size = 3;   // 1..=256 facts.
+  bytes continuation = 4; // <= 1024 bytes; empty starts a snapshot.
+}
+
+// Facts are ordered by (sequence, minting_rule, fact_id). An empty
+// continuation completes the snapshot. Facts committed after
+// snapshot_sequence are excluded from every page in this response chain.
+message UsageExportResponse {
+  repeated UsageFact facts = 1; // <= 256 facts.
+  bytes continuation = 2;       // <= 1024 bytes.
+  uint64 snapshot_sequence = 3;
+}
+
+// ---------------------------------------------------------------------------
 // Tier administration
 // ---------------------------------------------------------------------------
 
@@ -1028,6 +1167,8 @@ enum ErrorCode {
   ERROR_CODE_BACKUP_CLUSTER_IMMUTABLE = 19;
   ERROR_CODE_COLD_TIER_UNAVAILABLE = 20;
   ERROR_CODE_FRONTIER_UNREACHABLE = 21;
+  ERROR_CODE_USAGE_UNAVAILABLE = 22;
+  ERROR_CODE_USAGE_CORRUPT = 23;
 }
 
 // The machine-readable failure detail of one refused RPC.
@@ -1119,6 +1260,12 @@ service Maintenance {
   rpc AdminStatus(AdminStatusRequest) returns (AdminStatusResponse);
   rpc SupervisionHealth(SupervisionHealthRequest) returns (SupervisionHealthResponse);
   rpc SupervisionShutdown(SupervisionShutdownRequest) returns (SupervisionShutdownResponse);
+}
+
+// Tenant-bound export of authoritative WAL-durable usage facts.
+service Usage {
+  rpc Record(UsageRecordRequest) returns (UsageRecordResponse);
+  rpc Export(UsageExportRequest) returns (UsageExportResponse);
 }
 
 // Tier administration.

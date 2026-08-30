@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"strings"
 	"testing"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
 
 	v1 "terrascale.tech/terrabase-go/terrabase/v1"
@@ -62,14 +64,22 @@ func TestBindRequiresIdentity(t *testing.T) {
 		t.Fatalf("an unbound read must answer ErrUnboundChannel, got %v", err)
 	}
 	binding := mustBind(t, client)
+	ctx := context.Background()
 	if binding.Tenant != "tenant-a" || binding.ServingInstance != 7 {
 		t.Fatalf("the bind answer is wrong: %+v", binding)
 	}
-	if _, _, err := client.DocumentRead(context.Background(), "books", "ddia", ReadLevelDefault); err != nil {
+	if _, _, err := client.DocumentRead(ctx, "books", "ddia", ReadLevelDefault); err != nil {
 		t.Fatalf("the bound read failed: %v", err)
 	}
 	if fake.lastTenant() != "tenant-a" {
 		t.Fatalf("the engine did not see the tenant, got %q", fake.lastTenant())
+	}
+	spoofed := metadata.NewOutgoingContext(ctx, metadata.Pairs(tenantMetadata, "attacker"))
+	if _, _, err := client.DocumentRead(spoofed, "books", "ddia", ReadLevelDefault); err != nil {
+		t.Fatalf("a caller metadata value must not break a bound read: %v", err)
+	}
+	if fake.lastTenant() != "tenant-a" {
+		t.Fatalf("the caller must not override the bound tenant, got %q", fake.lastTenant())
 	}
 }
 
@@ -84,6 +94,17 @@ func TestBindValidation(t *testing.T) {
 	}
 	if _, err := client.Bind(context.Background(), "orders-api", strings.Repeat("t", 65)); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("an oversized tenant must be refused locally, got %v", err)
+	}
+}
+
+func TestBindRejectsTenantChange(t *testing.T) {
+	client, fake := startFake(t)
+	fake.bindTenant = "other-tenant"
+	if _, err := client.Bind(context.Background(), "orders-api", "tenant-a"); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("a bind response changing tenants must be refused, got %v", err)
+	}
+	if _, _, err := client.DocumentRead(context.Background(), "books", "doc", ReadLevelDefault); !errors.Is(err, ErrUnboundChannel) {
+		t.Fatalf("a refused bind must not establish identity, got %v", err)
 	}
 }
 
@@ -286,6 +307,8 @@ func TestEveryCodeMapsToItsSentinel(t *testing.T) {
 		{v1.ErrorCode_ERROR_CODE_BACKUP_CLUSTER_IMMUTABLE, ErrBackupClusterImmutable},
 		{v1.ErrorCode_ERROR_CODE_COLD_TIER_UNAVAILABLE, ErrColdTierUnavailable},
 		{v1.ErrorCode_ERROR_CODE_FRONTIER_UNREACHABLE, ErrFrontierUnreachable},
+		{v1.ErrorCode_ERROR_CODE_USAGE_UNAVAILABLE, ErrUsageUnavailable},
+		{v1.ErrorCode_ERROR_CODE_USAGE_CORRUPT, ErrUsageCorrupt},
 	}
 	for _, pair := range pairs {
 		err := interpret(engineStatus(9, pair.code, "detail"))
@@ -403,6 +426,43 @@ func TestLocalValidation(t *testing.T) {
 		DocumentPut{Collection: "books", ID: "doc", Body: struct{}{}},
 		ExpectAny(), AckDefault, "op-1"); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("an unknown value type must be refused, got %v", err)
+	}
+}
+
+func TestHostileValuesAreRejectedOnBothBoundaries(t *testing.T) {
+	if _, err := documentFrom(nil); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("a found document without a body must be rejected, got %v", err)
+	}
+	if _, err := valueToProto(math.NaN()); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("NaN must not be encoded, got %v", err)
+	}
+	if _, err := valueToProto(string([]byte{0xff})); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("invalid UTF-8 must not be encoded, got %v", err)
+	}
+
+	duplicate := &v1.Value{Kind: &v1.Value_Map{Map: &v1.ValueMap{Entries: []*v1.ValueEntry{
+		{Name: "same", Value: &v1.Value{Kind: &v1.Value_Integer{Integer: 1}}},
+		{Name: "same", Value: &v1.Value{Kind: &v1.Value_Integer{Integer: 2}}},
+	}}}}
+	if _, err := valueFromProto(duplicate); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("duplicate map names must be rejected, got %v", err)
+	}
+	tooMany := make([]*v1.Value, maxListItems+1)
+	for index := range tooMany {
+		tooMany[index] = &v1.Value{Kind: &v1.Value_Null{Null: v1.NullValue_NULL}}
+	}
+	if _, err := valueFromProto(&v1.Value{Kind: &v1.Value_List{List: &v1.ValueList{Items: tooMany}}}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("oversized lists must be rejected, got %v", err)
+	}
+	nested := &v1.Value{Kind: &v1.Value_Null{Null: v1.NullValue_NULL}}
+	for index := 0; index <= maxDetailIndent; index++ {
+		nested = &v1.Value{Kind: &v1.Value_List{List: &v1.ValueList{Items: []*v1.Value{nested}}}}
+	}
+	if _, err := valueFromProto(nested); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("deeply nested values must be rejected, got %v", err)
+	}
+	if _, err := valueFromProto(&v1.Value{Kind: &v1.Value_Number{Number: math.Inf(1)}}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("infinite numbers must be rejected, got %v", err)
 	}
 }
 

@@ -2,23 +2,63 @@ name: terrabase checks
 
 on:
   push:
-    branches: [develop, main]
+    branches: [develop]
   pull_request:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Forgejo's runner provides the GitHub-compatible context for workflow and
+  # ref values; using it also keeps this file portable to local act runs.
+  group: terrabase-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  RUSTDOCFLAGS: "-D warnings"
 
 jobs:
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: https://data.forgejo.org/actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: terrabase-go/go.mod
+          cache: false
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: https://github.com/dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           toolchain: 1.97.1
           components: rustfmt, clippy
+      - name: Cache Cargo dependencies
+        uses: https://data.forgejo.org/actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            bench/target
+            crates/terrabase-studio/target
+          key: ${{ runner.os }}-rust-1.97.1-${{ hashFiles('rust-toolchain.toml', '**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-1.97.1-
+      - name: Workspace metadata (locked)
+        run: cargo metadata --locked --format-version 1 --no-deps
       - name: Format
         run: cargo fmt --all -- --check
-      - name: Build
+      - name: Build (debug)
         run: cargo check --workspace --locked
+      - name: Build (release)
+        run: cargo build --workspace --locked --release
       # Dev profile first: debug_assert! contracts compile out under
       # --release, so a release-only run cannot gate them (SE-07 warden
       # repair: an off-by-one frame-header assertion was green in every
@@ -40,21 +80,104 @@ jobs:
         run: |
           cargo fmt --manifest-path bench/Cargo.toml -- --check
           cargo check --manifest-path bench/Cargo.toml --locked
+          cargo build --manifest-path bench/Cargo.toml --locked --release
+          cargo test --manifest-path bench/Cargo.toml --locked
           cargo clippy --manifest-path bench/Cargo.toml --all-targets --locked -- -D warnings
+          cargo doc --manifest-path bench/Cargo.toml --no-deps --locked
+          python3 bench/scripts/render-history.py
+          git diff --exit-code -- docs/evidence/benchmarks/benchmark-history.md
+      # Studio owns a separate workspace so the engine's dependency budget
+      # remains explicit. It is nevertheless a release deliverable and gets
+      # the same format, build, test, Clippy, and documentation gates.
+      - name: Standalone Studio
+        run: |
+          cargo fmt --manifest-path crates/terrabase-studio/Cargo.toml -- --check
+          cargo check --manifest-path crates/terrabase-studio/Cargo.toml --locked
+          cargo build --manifest-path crates/terrabase-studio/Cargo.toml --locked --release
+          cargo test --manifest-path crates/terrabase-studio/Cargo.toml --locked
+          cargo clippy --manifest-path crates/terrabase-studio/Cargo.toml --all-targets --all-features --locked -- -D warnings
+          cargo doc --manifest-path crates/terrabase-studio/Cargo.toml --no-deps --locked
+      - name: Release packaging definitions
+        run: |
+          jq --exit-status empty .terrascale/deploy.json
+          bash -n deploy/release/candidate.sh deploy/release/package.sh deploy/release/sign.sh deploy/release/verify.sh
+          python3 -m py_compile deploy/release/generate_sbom.py
+          python3 deploy/release/generate_sbom.py --help >/dev/null
+          grep -q '@sha256:' deploy/release/Containerfile.server
+          grep -q '@sha256:' deploy/release/Containerfile.studio
+          ! grep -q 'target-cpu=native' .terrascale/deploy.json deploy/release/Containerfile.*
+          ! grep -q 'tbep-production-harness' .terrascale/deploy.json deploy/release/Containerfile.*
+      - name: Observability assets
+        run: |
+          # Parse every committed JSON/YAML asset, including deployment,
+          # protocol, vector, dashboard, and workflow files. This keeps the
+          # gate independent of a path that may later be renamed.
+          while IFS= read -r path; do
+            [ -f "$path" ] || continue
+            case "$path" in
+              *.json) jq --exit-status . "$path" >/dev/null ;;
+              *.yml|*.yaml) yq eval '.' "$path" >/dev/null ;;
+            esac
+          done < <(git ls-files '*.json' '*.yml' '*.yaml')
+          jq -e '.. | strings | select(contains("terrabase_requests_total"))' deploy/observability/grafana-dashboard.json >/dev/null
+          yq -e '.. | select(tag == "!!str") | select(test("terrabase_ready"))' deploy/observability/prometheus-rules.yml >/dev/null
       - name: Install pinned cargo-deny
         run: cargo install cargo-deny --version 0.20.2 --locked
-      - name: Dependency, license, and advisory audit
-        run: cargo deny check
+      - name: Dependency, license, and advisory audits
+        run: |
+          cargo deny --all-features --locked check
+          cargo deny --manifest-path bench/Cargo.toml --config bench/deny.toml --locked check
+          cargo deny --manifest-path crates/terrabase-studio/Cargo.toml --config crates/terrabase-studio/deny.toml --locked check
+
+      # The protobuf is the TBEP contract of record. Regeneration must be
+      # clean, so a schema edit cannot silently ship stale Go bindings.
+      - name: Schema and generated-binding drift
+        env:
+          GOBIN: ${{ github.workspace }}/.ci-bin
+        run: |
+          mkdir -p "$GOBIN"
+          go install github.com/bufbuild/buf/cmd/buf@v1.50.0
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+          export PATH="$GOBIN:$PATH"
+          buf lint
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            buf breaking --against ".git#branch=${GITHUB_BASE_REF}"
+          else
+            buf breaking --against '.git#branch=develop'
+          fi
+          # Generate the sole permitted network client into an isolated
+          # directory and compare it with the checked-in Go bindings.
+          active_dir="$(mktemp -d)"
+          active_template="$(mktemp)"
+          sed "s#out: terrabase-go#out: ${active_dir}#" buf.gen.yaml > "$active_template"
+          buf generate --template "$active_template"
+          normalize_generated() {
+            sed -E '/^\/\/ (versions:|[-[:space:]]*protoc|source:)/d' "$1"
+          }
+          diff -u <(normalize_generated "$active_dir/terrabase/v1/engine.pb.go") <(normalize_generated terrabase-go/terrabase/v1/engine.pb.go)
+          diff -u <(normalize_generated "$active_dir/terrabase/v1/engine_grpc.pb.go") <(normalize_generated terrabase-go/terrabase/v1/engine_grpc.pb.go)
 
   # The Go client (terrabase-go) is the only client allowed to communicate
   # with the engine (AGENTS.md). Its build and tests gate with the engine.
   go-client:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: https://data.forgejo.org/actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version-file: terrabase-go/go.mod
-      - name: Build and test
-        run: go test ./...
+          cache: true
+      - name: Module integrity
+        run: go mod verify
+        working-directory: terrabase-go
+      - name: Build, vet, and test
+        run: |
+          go list -mod=readonly ./...
+          go vet -mod=readonly ./...
+          go test -mod=readonly ./...
         working-directory: terrabase-go

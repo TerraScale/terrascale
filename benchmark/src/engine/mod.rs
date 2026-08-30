@@ -58,12 +58,17 @@ use crate::{
         self, CommitIntent, CommitPublicationEvent, CommitResult, CompactionError,
         CompactionReceipt, CompactionRequest, LedgerFrontierActivationError,
         LedgerFrontierActivationReceipt, LedgerFrontierActivationRequest, LedgerFrontierStatus,
-        PublishedCommit, StagedWrite, StoragePort,
+        PublishedCommit, StagedWrite, StoragePort, UsageFactPosition, UsageStorageError,
     },
     streaming::StreamStore,
     types::{
         CollectionName, Document, DocumentId, ExpectedVersion, IndexGenerationSet, LocalDurability,
         OperationId, ReadSnapshot, RetryDisposition, StorageSequence, TenantId, TenantScope,
+    },
+    usage::{
+        DurableUsageFact, MeasurementWindow, MintingRule, UsageAdmissionContext, UsageCommandError,
+        UsageContinuation, UsageFactId, UsagePage, UsagePageRequest, UsageRecordReceipt,
+        UsageRecordRequest,
     },
 };
 
@@ -89,6 +94,192 @@ pub(crate) const MAX_PUBLICATION_SINKS: usize = 64;
 /// origin stamp — the same disclosed degradation post-restart history
 /// serving already documents on `StampedCommit`.
 const ORIGIN_STAMP: ReplicationClockStamp = ReplicationClockStamp::new(0, 0);
+
+const USAGE_CONTINUATION_MAGIC: &[u8; 8] = b"TBUCUR01";
+const USAGE_CONTINUATION_DOMAIN: &[u8] = b"terrascale.usage.continuation.v1\0";
+
+/// Decoded state carried by one opaque usage continuation.
+struct UsageContinuationState {
+    tenant: TenantId,
+    snapshot: StorageSequence,
+    window: Option<MeasurementWindow>,
+    page_size: u32,
+    after: UsageFactPosition,
+}
+
+/// A bounded reader for the private usage-continuation encoding.
+struct UsageContinuationReader<'a> {
+    bytes: &'a [u8],
+    position: usize,
+}
+
+impl<'a> UsageContinuationReader<'a> {
+    const fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, position: 0 }
+    }
+
+    fn take(&mut self, count: usize) -> Option<&'a [u8]> {
+        let end = self.position.checked_add(count)?;
+        let value = self.bytes.get(self.position..end)?;
+        self.position = end;
+        Some(value)
+    }
+
+    fn u8(&mut self) -> Option<u8> {
+        self.take(1).map(|bytes| bytes[0])
+    }
+
+    fn u16(&mut self) -> Option<u16> {
+        Some(u16::from_le_bytes(self.take(2)?.try_into().ok()?))
+    }
+
+    fn u32(&mut self) -> Option<u32> {
+        Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?))
+    }
+
+    fn u64(&mut self) -> Option<u64> {
+        Some(u64::from_le_bytes(self.take(8)?.try_into().ok()?))
+    }
+
+    fn string(&mut self) -> Option<String> {
+        let length = usize::from(self.u16()?);
+        String::from_utf8(self.take(length)?.to_vec()).ok()
+    }
+
+    const fn is_empty(&self) -> bool {
+        self.position == self.bytes.len()
+    }
+}
+
+fn usage_rule_tag(rule: MintingRule) -> u8 {
+    match rule {
+        MintingRule::AcceptedOriginCommit => 0,
+        MintingRule::StableAdmittedRequest => 1,
+        MintingRule::PublicResponseBytes => 2,
+        MintingRule::ActiveRegionHour => 3,
+        MintingRule::BackupByteHour => 4,
+        MintingRule::ExplicitRestoreWork => 5,
+    }
+}
+
+fn usage_rule_from_tag(tag: u8) -> Option<MintingRule> {
+    Some(match tag {
+        0 => MintingRule::AcceptedOriginCommit,
+        1 => MintingRule::StableAdmittedRequest,
+        2 => MintingRule::PublicResponseBytes,
+        3 => MintingRule::ActiveRegionHour,
+        4 => MintingRule::BackupByteHour,
+        5 => MintingRule::ExplicitRestoreWork,
+        _ => return None,
+    })
+}
+
+fn push_usage_cursor_string(bytes: &mut Vec<u8>, value: &str) {
+    let length = u16::try_from(value.len()).expect("validated usage identifiers fit u16");
+    bytes.extend_from_slice(&length.to_le_bytes());
+    bytes.extend_from_slice(value.as_bytes());
+}
+
+fn usage_continuation_checksum(body: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(USAGE_CONTINUATION_DOMAIN);
+    hasher.update(body);
+    *hasher.finalize().as_bytes()
+}
+
+fn encode_usage_continuation(
+    tenant: &TenantId,
+    snapshot: StorageSequence,
+    request: &UsagePageRequest,
+    after: &UsageFactPosition,
+) -> UsageContinuation {
+    let mut bytes = Vec::with_capacity(128);
+    bytes.extend_from_slice(USAGE_CONTINUATION_MAGIC);
+    bytes.extend_from_slice(&snapshot.get().to_le_bytes());
+    bytes.extend_from_slice(&request.page_size().to_le_bytes());
+    match request.window() {
+        Some(window) => {
+            bytes.push(1);
+            bytes.extend_from_slice(&window.start_millis().to_le_bytes());
+            bytes.extend_from_slice(&window.end_millis().to_le_bytes());
+        }
+        None => bytes.push(0),
+    }
+    push_usage_cursor_string(&mut bytes, tenant.as_str());
+    bytes.extend_from_slice(&after.sequence.to_le_bytes());
+    bytes.push(usage_rule_tag(after.rule));
+    push_usage_cursor_string(&mut bytes, after.id.as_str());
+    let checksum = usage_continuation_checksum(&bytes);
+    bytes.extend_from_slice(&checksum);
+    UsageContinuation::from_trusted_bytes(bytes)
+}
+
+fn decode_usage_continuation(
+    continuation: &UsageContinuation,
+) -> Result<UsageContinuationState, UsageCommandError> {
+    let bytes = continuation.as_bytes();
+    if bytes.len() < USAGE_CONTINUATION_MAGIC.len() + 32 {
+        return Err(UsageCommandError::InvalidRequest);
+    }
+    let (body, checksum) = bytes.split_at(bytes.len() - 32);
+    if usage_continuation_checksum(body).as_slice() != checksum {
+        return Err(UsageCommandError::InvalidRequest);
+    }
+    let mut reader = UsageContinuationReader::new(body);
+    if reader.take(USAGE_CONTINUATION_MAGIC.len()) != Some(USAGE_CONTINUATION_MAGIC) {
+        return Err(UsageCommandError::InvalidRequest);
+    }
+    let snapshot = StorageSequence::new(reader.u64().ok_or(UsageCommandError::InvalidRequest)?);
+    let page_size = reader.u32().ok_or(UsageCommandError::InvalidRequest)?;
+    let window = match reader.u8().ok_or(UsageCommandError::InvalidRequest)? {
+        0 => None,
+        1 => Some(
+            MeasurementWindow::interval(
+                reader.u64().ok_or(UsageCommandError::InvalidRequest)?,
+                reader.u64().ok_or(UsageCommandError::InvalidRequest)?,
+            )
+            .map_err(|_| UsageCommandError::InvalidRequest)?,
+        ),
+        _ => return Err(UsageCommandError::InvalidRequest),
+    };
+    let tenant = TenantId::try_new(&reader.string().ok_or(UsageCommandError::InvalidRequest)?)
+        .map_err(|_| UsageCommandError::InvalidRequest)?;
+    let sequence = reader.u64().ok_or(UsageCommandError::InvalidRequest)?;
+    let rule = usage_rule_from_tag(reader.u8().ok_or(UsageCommandError::InvalidRequest)?)
+        .ok_or(UsageCommandError::InvalidRequest)?;
+    let id = UsageFactId::try_new(&reader.string().ok_or(UsageCommandError::InvalidRequest)?)
+        .map_err(|_| UsageCommandError::InvalidRequest)?;
+    if !reader.is_empty() || snapshot.get() == 0 || sequence == 0 || sequence > snapshot.get() {
+        return Err(UsageCommandError::InvalidRequest);
+    }
+    Ok(UsageContinuationState {
+        tenant,
+        snapshot,
+        window,
+        page_size,
+        after: UsageFactPosition { sequence, rule, id },
+    })
+}
+
+const fn map_usage_storage_error(error: UsageStorageError) -> UsageCommandError {
+    match error {
+        UsageStorageError::UnsupportedBackend => UsageCommandError::UnsupportedBackend,
+        UsageStorageError::UsageUnavailable => UsageCommandError::UsageUnavailable,
+        UsageStorageError::Corrupt => UsageCommandError::CorruptStorage,
+        UsageStorageError::IdentityConflict => UsageCommandError::IdentityConflict,
+        UsageStorageError::Unavailable => UsageCommandError::StorageUnavailable,
+    }
+}
+
+fn usage_bound_commit_digest(base: u64, context: Option<&UsageAdmissionContext>) -> u64 {
+    let Some(context) = context else { return base };
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"terrascale.commit.usage-admission.v1\0");
+    hasher.update(&base.to_le_bytes());
+    hasher.update(&context.digest_bytes());
+    let digest = hasher.finalize();
+    u64::from_le_bytes(digest.as_bytes()[..8].try_into().expect("blake3 has eight bytes"))
+}
 
 /// The production-visible, multi-subscriber registry of publication-event
 /// sinks (integrator action W4-CA-3).
@@ -431,6 +622,8 @@ pub enum CommitError {
     OperationIdReuse,
     /// The Engine closed before the commit reached storage.
     EngineClosed,
+    /// An authoritative usage-bearing mutation requested weaker durability.
+    UsageRequiresSynced,
     /// Durable storage failed before publication.
     StorageFailure,
 }
@@ -450,6 +643,7 @@ impl CommitError {
             Self::Conflict => RetryDisposition::NewOperation,
             Self::OperationIdReuse => RetryDisposition::Never,
             Self::EngineClosed => RetryDisposition::SameOperation,
+            Self::UsageRequiresSynced => RetryDisposition::SameOperation,
             Self::StorageFailure => RetryDisposition::AfterRecovery,
         }
     }
@@ -584,6 +778,19 @@ pub struct Engine {
     /// The group-commit mailbox: waiting intents and the leader flag.
     /// Shared through the [`Arc`] so cloned engines form one group.
     pub(crate) commit_mailbox: Arc<Mutex<CommitMailbox>>,
+    /// The arrival signal paired with [`Engine::commit_mailbox`]: every
+    /// enqueue notifies it, so a coalescing leader wakes per arrival
+    /// instead of polling on a sleep slice. A plain field, not mailbox
+    /// state, because the leader hands its guard to the wait and the
+    /// condvar must outlive that move.
+    commit_arrivals: std::sync::Condvar,
+    /// The pipelined group-commit witness: a shareable sync handle to the
+    /// LSM location's WAL, held by the Engine so a batch leader can
+    /// `fdatasync` its batch's bytes **outside** the storage lock while the
+    /// next batch's prepare and append take the lock. `None` (any non-LSM
+    /// backend, or an unopenable WAL) keeps every batch on the fully
+    /// synchronous publication order.
+    wal_sync: Option<crate::storage::lsm::wal::WalSyncHandle>,
 }
 
 /// The group-commit mailbox state.
@@ -652,6 +859,14 @@ impl Engine {
             }
         };
         let subscriptions = Arc::new(PublicationRegistry::new());
+        // The pipelined witness handle exists only on the LSM backend: the
+        // location's WAL is open by now, and `fdatasync` through this second
+        // descriptor covers every byte the storage port appended to the same
+        // file. A missing handle simply keeps the synchronous shape.
+        let wal_sync = match backend {
+            StorageBackend::Lsm => storage::lsm::wal::WalSyncHandle::try_open(&location),
+            StorageBackend::RootFiles => None,
+        };
         // W4-CA-3: register the Engine-owned index catalog's sink through the
         // production registry so index maintenance observes every publication.
         let indexes = Arc::new(crate::index::IndexCatalog::new());
@@ -669,113 +884,236 @@ impl Engine {
             bulk_audit: Arc::new(crate::query::bulk::BulkAuditJournal::new()),
             tier_control: Arc::new(Mutex::new(crate::tiers::TierControlState::default())),
             commit_mailbox: Arc::new(Mutex::new(CommitMailbox::default())),
+            commit_arrivals: std::sync::Condvar::new(),
+            wal_sync,
         })
     }
 
     /// Drains the group-commit mailbox until empty: one storage batch per
     /// drained group, one answer per waiter.
     ///
-    /// A drained group smaller than the expected wave width gets one
-    /// short harvest window before it commits: concurrent committers
-    /// arrive microseconds apart, and a leader that commits the first
-    /// arrival alone re-pays the whole sync cost per writer. The window
-    /// is bounded (a fraction of one sync's cost) and never applies once
-    /// the group is wide.
+    /// The pipelined shape (PG-shaped: appends overlap syncs): a wave is
+    /// prepared, appended, and published under the storage lock —
+    /// lock-held CPU work plus one `write()`, tens of microseconds — and
+    /// the leader then releases the lock and performs the batch's single
+    /// `fdatasync` itself, through the Engine's WAL sync handle, before it
+    /// answers the wave's waiters. The expensive sync therefore never
+    /// holds the storage mutex: the answered writers take it for their
+    /// snapshots and staged reads the moment the answers land, instead of
+    /// queueing behind a six-millisecond lock hold, so the next wave
+    /// re-forms while the leader is still between syncs. `fdatasync` on
+    /// the same inode covers every byte appended before it began, which
+    /// is the whole ordering argument: a waiter is answered only after a
+    /// sync that started after its batch's append returned, so its
+    /// receipt still implies its frame is durable.
+    ///
+    /// A group smaller than the wave width coalesces until the wave is
+    /// wide or arrivals go quiet: the mailbox condvar wakes the leader per
+    /// arrival, so a dense wave gathers to full width at once while sparse
+    /// traffic commits after one quiet gap instead of idling. A serial
+    /// caller — a batch of one on a quiescent engine — never asks for the
+    /// pipelined shape and keeps the byte-identical synchronous order:
+    /// append, sync, flip append, flip sync, then the answer.
     ///
     /// Called only by the current leader (see [`Transaction::commit`]);
     /// the `LeaderGuard` the caller holds clears the flag when this
     /// returns or panics.
     fn drive_commit_batches(&self) {
+        /// The floor of the wave width to gather toward: the minimum
+        /// concurrency worth one coalesce window. The leader raises its
+        /// target with every committed wave, so a saturated run gathers to
+        /// full width instead of splitting at the floor.
         const GROUP_HARVEST_WIDTH: usize = 8;
-        const GROUP_HARVEST_WINDOW: std::time::Duration = std::time::Duration::from_micros(250);
-        /// The widest harvest window: how long a narrow group keeps
+        /// A gap of this length with no arrival ends coalescing: arrivals
+        /// cluster within the writers' turnaround, and waiting past the gap
+        /// would only add latency to the wave.
+        const GROUP_QUIET_GAP: std::time::Duration = std::time::Duration::from_micros(150);
+        /// The widest coalesce window: how long a narrow group keeps
         /// collecting before it commits anyway.
-        const GROUP_HARVEST_WINDOW_MAX: std::time::Duration = std::time::Duration::from_millis(2);
-        /// How long a leader that deferred a flip sync lingers for the next
-        /// wave: one sync window, so the idle tail costs at most one extra
-        /// flush and a saturated run never pays a separate flip sync.
-        const GROUP_LINGER_WINDOW: std::time::Duration = std::time::Duration::from_millis(8);
-        let mut deferred_last = false;
+        const GROUP_HARVEST_WINDOW_MAX: std::time::Duration = std::time::Duration::from_micros(600);
+        /// How long an idle leader lingers for the next wave before it
+        /// flushes any deferred flip bytes and steps down. One turnaround
+        /// window: a saturated run always sees its next arrival inside it
+        /// (the arrivals carry the deferred flips in the next batch's
+        /// append), while a quiet engine pays at most one flush.
+        const GROUP_LINGER_WINDOW: std::time::Duration = std::time::Duration::from_micros(500);
+        // The wave width to gather toward. It starts at the harvest width
+        // and grows with every committed wave, so a saturated run's next
+        // wave coalesces to full width instead of splitting at the floor —
+        // the quiet gap still ends coalescing early whenever the traffic
+        // is genuinely narrower.
+        let mut wave_width = GROUP_HARVEST_WIDTH;
+        // Whether the last batch may have left deferred flip bytes in
+        // storage. Only a pipelined batch does; a leader with nothing to
+        // carry has no reason to linger before stepping down.
+        let mut carry_pending = false;
         loop {
-            let mut batch = {
-                let Ok(mut mailbox) = self.commit_mailbox.lock() else {
-                    return;
-                };
-                std::mem::take(&mut mailbox.queue)
-            };
+            let mut batch = self.take_queued_intents();
             if batch.is_empty() {
-                if deferred_last {
-                    // The previous batch deferred its flip sync: linger one
-                    // sync window for the next wave rather than paying a
-                    // separate flush now. Arrivals ride the next batch's
-                    // witness; a quiet window flushes and steps down.
-                    let deadline = std::time::Instant::now() + GROUP_LINGER_WINDOW;
-                    while std::time::Instant::now() < deadline {
-                        std::thread::sleep(GROUP_HARVEST_WINDOW);
-                        if self
-                            .commit_mailbox
-                            .lock()
-                            .is_ok_and(|mailbox| !mailbox.queue.is_empty())
-                        {
-                            break;
-                        }
-                    }
+                if carry_pending {
+                    // Nothing queued: the previous batch may have left
+                    // deferred flip bytes in storage, so linger one
+                    // turnaround window for the next wave — its append
+                    // carries them, which is the entire saving — and only a
+                    // quiet window flushes.
+                    self.wait_for_arrival(GROUP_LINGER_WINDOW);
+                    batch = self.take_queued_intents();
                 }
-                // Arrivals first: a wave that is already queued carries
-                // the deferred flips in its own witness, which is the
-                // entire saving, so a leader with arrivals skips the flush
-                // and keeps driving. A quiet leader flushes while it still
-                // holds leadership — arrivals during the flush join its
-                // next batch instead of racing a leaderless queue — and
-                // only then steps down atomically: the flag clear and the
-                // empty check share one lock hold, so nothing strands.
-                if self
-                    .commit_mailbox
-                    .lock()
-                    .is_ok_and(|mailbox| !mailbox.queue.is_empty())
-                {
+                if batch.is_empty() {
+                    // Flush while still holding leadership — arrivals
+                    // during the flush join the next loop's batch instead
+                    // of racing a leaderless queue — then step down
+                    // atomically: the flag clear and the empty check share
+                    // one lock hold, so nothing strands.
+                    if let Ok(mut storage) = self.lock_storage() {
+                        storage.port.flush_pending_flips();
+                    }
+                    let Ok(mut mailbox) = self.commit_mailbox.lock() else {
+                        return;
+                    };
+                    if mailbox.queue.is_empty() {
+                        mailbox.leader_active = false;
+                        return;
+                    }
                     continue;
                 }
-                if let Ok(mut storage) = self.lock_storage() {
-                    storage.port.flush_pending_flips();
-                }
-                let Ok(mut mailbox) = self.commit_mailbox.lock() else {
-                    return;
-                };
-                if mailbox.queue.is_empty() {
-                    mailbox.leader_active = false;
-                    return;
-                }
-                continue;
             }
-            if batch.len() < GROUP_HARVEST_WIDTH {
-                // Harvest in short slices until the group is wide or the
-                // window closes: concurrent committers arrive microseconds
-                // apart, and a leader that commits the first arrival alone
-                // re-pays the whole sync cost per writer.
-                let deadline = std::time::Instant::now() + GROUP_HARVEST_WINDOW_MAX;
-                while batch.len() < GROUP_HARVEST_WIDTH && std::time::Instant::now() < deadline {
-                    std::thread::sleep(GROUP_HARVEST_WINDOW);
-                    if let Ok(mut mailbox) = self.commit_mailbox.lock() {
-                        batch.append(&mut mailbox.queue);
-                    }
-                }
-            }
+            batch =
+                self.coalesce_wave(batch, wave_width, GROUP_QUIET_GAP, GROUP_HARVEST_WINDOW_MAX);
             let intents: Vec<storage::CommitIntent> =
                 batch.iter().map(|(intent, _)| intent.clone()).collect();
-            // A full-width batch is the saturated signal: defer its flip
-            // sync into the next batch's witness. Anything narrower —
-            // including every serial commit — syncs before answering.
-            let defer_flips = intents.len() >= GROUP_HARVEST_WIDTH;
-            deferred_last = defer_flips;
+            // Two or more concurrent committers is the pipelined signal:
+            // the batch appends and publishes under the lock, and the
+            // leader witnesses it outside the lock before answering. A
+            // solo batch — every serial commit — keeps the synchronous
+            // order, byte-identical to a direct storage commit.
+            let pipelined = intents.len() >= 2 && self.wal_sync.is_some();
+            carry_pending = pipelined;
+            wave_width = wave_width.max(batch.len().saturating_add(1));
             let results = match self.lock_storage() {
-                Ok(mut storage) => storage.port.commit_batch(intents, defer_flips),
-                Err(_) => vec![storage::CommitResult::Rejected(storage::CommitRejection::Storage); batch.len()],
+                Ok(mut storage) => storage.port.commit_batch(intents, pipelined),
+                Err(_) => vec![
+                    storage::CommitResult::Rejected(storage::CommitRejection::Storage);
+                    batch.len()
+                ],
             };
+            let results = if pipelined { self.witness_pipelined_batch(results) } else { results };
             for ((_, sender), result) in batch.into_iter().zip(results) {
                 let _ = sender.send(result);
             }
         }
+    }
+
+    /// Takes every queued intent, leaving the mailbox's queue empty.
+    fn take_queued_intents(
+        &self,
+    ) -> Vec<(storage::CommitIntent, std::sync::mpsc::SyncSender<storage::CommitResult>)> {
+        match self.commit_mailbox.lock() {
+            Ok(mut mailbox) => std::mem::take(&mut mailbox.queue),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// Waits until an intent arrives or `window` passes.
+    ///
+    /// Returns whether an arrival landed. A poisoned mailbox lock returns
+    /// immediately: the caller treats it as a quiet window and steps down,
+    /// which is the honest outcome for a commit path that can no longer
+    /// coordinate.
+    fn wait_for_arrival(&self, window: std::time::Duration) -> bool {
+        let Ok(mailbox) = self.commit_mailbox.lock() else {
+            return false;
+        };
+        if !mailbox.queue.is_empty() {
+            return true;
+        }
+        match self.commit_arrivals.wait_timeout(mailbox, window) {
+            Ok((guard, _)) => !guard.queue.is_empty(),
+            Err(_) => false,
+        }
+    }
+
+    /// Coalesces one narrow batch toward the wave width.
+    ///
+    /// Coalescing ends at the width, at the window's cap, or after one
+    /// quiet gap with no arrival — whichever comes first. Every wait holds
+    /// the mailbox lock through the condvar, so each arrival wakes the
+    /// leader immediately and the lock is never re-acquired while held.
+    fn coalesce_wave(
+        &self,
+        mut batch: Vec<(storage::CommitIntent, std::sync::mpsc::SyncSender<storage::CommitResult>)>,
+        width: usize,
+        quiet_gap: std::time::Duration,
+        window_max: std::time::Duration,
+    ) -> Vec<(storage::CommitIntent, std::sync::mpsc::SyncSender<storage::CommitResult>)> {
+        let Ok(mut mailbox) = self.commit_mailbox.lock() else {
+            return batch;
+        };
+        let deadline = std::time::Instant::now() + window_max;
+        while batch.len() < width && std::time::Instant::now() < deadline {
+            if !mailbox.queue.is_empty() {
+                batch.append(&mut mailbox.queue);
+                continue;
+            }
+            let gap = quiet_gap.min(deadline.saturating_duration_since(std::time::Instant::now()));
+            let Ok(waited) = self.commit_arrivals.wait_timeout(mailbox, gap) else {
+                return batch;
+            };
+            let (guard, timed_out) = waited;
+            mailbox = guard;
+            if timed_out.timed_out() && mailbox.queue.is_empty() {
+                // One quiet gap: the wave that is going to form has formed.
+                // Committing now beats idling for stragglers.
+                break;
+            }
+        }
+        batch
+    }
+
+    /// Witnesses one pipelined batch outside the storage lock and returns
+    /// the results its waiters may receive.
+    ///
+    /// The batch's bytes are already appended — the storage lock is
+    /// released — so reading the WAL length now, then `fdatasync`ing
+    /// through the Engine's handle, proves every byte up to that length
+    /// durable: any sync that starts after an append returns proves that
+    /// append, and this is one. Batches whose results claim no `Synced`
+    /// durability need no witness at all and answer immediately, exactly
+    /// as the in-lock path always skipped the sync for them.
+    ///
+    /// A failed sync mirrors the in-lock witness failure: every outcome in
+    /// the batch becomes the honest uncertain resolution, and the flush
+    /// attempt tells storage its durable tail is broken.
+    fn witness_pipelined_batch(
+        &self,
+        results: Vec<storage::CommitResult>,
+    ) -> Vec<storage::CommitResult> {
+        let Some(handle) = &self.wal_sync else {
+            return results;
+        };
+        let claims_synced = results.iter().any(|result| {
+            matches!(
+                result,
+                storage::CommitResult::Committed(receipt) if receipt.durability == LocalDurability::Synced
+            )
+        });
+        if !claims_synced {
+            return results;
+        }
+        // The batch's append completed before the storage lock released,
+        // and this leader is the only appender — it appends nothing else
+        // before this sync returns — so the sync that starts here covers
+        // exactly the wave's bytes and everything appended before them.
+        if handle.sync().is_ok() {
+            return results;
+        }
+        if let Ok(mut storage) = self.lock_storage() {
+            let _ = storage.port.flush();
+        }
+        vec![
+            storage::CommitResult::Unknown(storage::UnknownCause::ResponseInterrupted);
+            results.len()
+        ]
     }
 
     /// Returns the Storage Tier Mover's typed administration handle
@@ -865,6 +1203,96 @@ impl Engine {
         Ok(snapshot)
     }
 
+    /// Durably records one trusted, tenant-bound usage event.
+    ///
+    /// The command accepts exactly one fact and always reaches synced local
+    /// durability before returning. Replaying an identical scoped fact
+    /// identity returns its original sequence with `already_recorded = true`;
+    /// reusing the identity for different content fails closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UsageCommandError::ScopeMismatch`] for a scope from another
+    /// Engine, the typed storage availability and integrity errors otherwise.
+    pub fn record_usage(
+        &self,
+        scope: &TenantScope,
+        request: UsageRecordRequest,
+    ) -> Result<UsageRecordReceipt, UsageCommandError> {
+        self.validate_scope(scope).map_err(|_| UsageCommandError::ScopeMismatch)?;
+        let fact = request
+            .fact_for(scope.tenant().clone())
+            .map_err(|_| UsageCommandError::InvalidRequest)?;
+        let (durable, already_recorded) = {
+            let mut storage =
+                self.storage.lock().map_err(|_| UsageCommandError::StorageUnavailable)?;
+            storage.port.record_usage(scope.tenant(), fact).map_err(map_usage_storage_error)?
+        };
+        Ok(UsageRecordReceipt::new(
+            durable.fact().identity().id().clone(),
+            StorageSequence::new(durable.sequence()),
+            durable.replica_epoch(),
+            already_recorded,
+        ))
+    }
+
+    /// Returns one stable-snapshot page of authoritative usage facts.
+    ///
+    /// The first page fixes the location's current durable high-water.
+    /// Continuations bind tenant, filter, page size, snapshot, and the last
+    /// emitted `(sequence, minting rule, fact id)` position. Facts appended
+    /// after that snapshot never enter later pages.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UsageCommandError::InvalidRequest`] for a damaged,
+    /// cross-tenant, or filter-mismatched continuation and typed storage
+    /// availability or integrity failures otherwise.
+    pub fn usage_page(
+        &self,
+        scope: &TenantScope,
+        request: UsagePageRequest,
+    ) -> Result<UsagePage, UsageCommandError> {
+        self.validate_scope(scope).map_err(|_| UsageCommandError::ScopeMismatch)?;
+        let decoded = request.continuation().map(decode_usage_continuation).transpose()?;
+        if let Some(state) = &decoded
+            && (&state.tenant != scope.tenant()
+                || state.window != request.window()
+                || state.page_size != request.page_size())
+        {
+            return Err(UsageCommandError::InvalidRequest);
+        }
+        let mut storage = self.storage.lock().map_err(|_| UsageCommandError::StorageUnavailable)?;
+        let current = storage.port.published_state().0;
+        let snapshot = decoded.as_ref().map_or(current, |state| state.snapshot);
+        if snapshot > current {
+            return Err(UsageCommandError::InvalidRequest);
+        }
+        let after = decoded.as_ref().map(|state| &state.after);
+        let fetch = request.page_size().saturating_add(1);
+        let mut facts = storage
+            .port
+            .usage_facts_page(scope.tenant(), snapshot, after, request.window(), fetch)
+            .map_err(map_usage_storage_error)?;
+        drop(storage);
+        let has_more = facts.len() > request.page_size() as usize;
+        if has_more {
+            facts.truncate(request.page_size() as usize);
+        }
+        let continuation = if has_more {
+            let last = facts.last().ok_or(UsageCommandError::CorruptStorage)?;
+            Some(encode_usage_continuation(
+                scope.tenant(),
+                snapshot,
+                &request,
+                &UsageFactPosition::of(last),
+            ))
+        } else {
+            None
+        };
+        Ok(UsagePage::new(facts, snapshot, continuation))
+    }
+
     /// Begins an Engine-borrowing transaction.
     ///
     /// The snapshot's Engine identity, the requested scope, the snapshot
@@ -908,6 +1336,7 @@ impl Engine {
             snapshot,
             snapshot_sequence,
             operation,
+            usage_admission: None,
             writes: Vec::new(),
         })
     }
@@ -1054,6 +1483,82 @@ impl Engine {
         let documents = {
             let storage = self.lock_storage()?;
             storage.port.documents_at(snapshot.sequence(), scope.tenant())
+        };
+        Ok(documents)
+    }
+
+    /// Returns every document of one tenant's collection as the supplied read
+    /// snapshot observed them, in canonical key order.
+    ///
+    /// The collection-scoped form of [`Engine::snapshot_documents`], with the
+    /// same validation before any storage access: a query whose source is one
+    /// collection reads no other collection's documents, so the storage seam
+    /// stops at the collection's key range instead of materializing the rest
+    /// of the tenant. Crate-only: the query executor is the consumer.
+    ///
+    /// # Errors
+    ///
+    /// Returns the validation and storage failures of
+    /// [`Engine::snapshot_documents`].
+    pub(crate) fn snapshot_documents_in_collection(
+        &self,
+        scope: &TenantScope,
+        snapshot: &ReadSnapshot,
+        collection: &CollectionName,
+    ) -> Result<Vec<Document>, EngineError> {
+        if snapshot.engine_identity() != self.identity {
+            return Err(EngineError::SnapshotEngineMismatch);
+        }
+        self.validate_scope(scope)?;
+        if snapshot.tenant() != scope.tenant() {
+            return Err(EngineError::SnapshotTenantMismatch);
+        }
+        let documents = {
+            let storage = self.lock_storage()?;
+            storage.port.documents_in_collection_at(snapshot.sequence(), scope.tenant(), collection)
+        };
+        Ok(documents)
+    }
+
+    /// Returns the documents the supplied read snapshot observed at the named
+    /// exact keys of one tenant's collection, in canonical key order of the
+    /// requested identifiers.
+    ///
+    /// The batched keyed-candidate fetch of the index-narrowed query path:
+    /// each identifier resolves by its exact `(tenant, collection,
+    /// identifier)` key — the same resolution
+    /// [`Transaction::read_in_collection`] applies — so an identifier
+    /// reused in another collection is never misread here, and an identifier
+    /// absent at the snapshot contributes nothing. Validation matches
+    /// [`Engine::snapshot_documents`] before any storage access. Crate-only:
+    /// the query executor is the consumer.
+    ///
+    /// # Errors
+    ///
+    /// Returns the validation and storage failures of
+    /// [`Engine::snapshot_documents`].
+    pub(crate) fn snapshot_documents_by_ids(
+        &self,
+        scope: &TenantScope,
+        snapshot: &ReadSnapshot,
+        collection: &CollectionName,
+        ids: &[DocumentId],
+    ) -> Result<Vec<Document>, EngineError> {
+        if snapshot.engine_identity() != self.identity {
+            return Err(EngineError::SnapshotEngineMismatch);
+        }
+        self.validate_scope(scope)?;
+        if snapshot.tenant() != scope.tenant() {
+            return Err(EngineError::SnapshotTenantMismatch);
+        }
+        let documents = {
+            let storage = self.lock_storage()?;
+            storage.port.read_documents_in_collection_at(
+                snapshot.sequence(),
+                scope.tenant(),
+                collection,
+                ids,
+            )
         };
         Ok(documents)
     }
@@ -1433,6 +1938,7 @@ pub struct Transaction<'engine> {
     snapshot: ReadSnapshot,
     snapshot_sequence: StorageSequence,
     operation: OperationId,
+    usage_admission: Option<UsageAdmissionContext>,
     writes: Vec<StagedWrite>,
 }
 
@@ -1443,6 +1949,32 @@ impl Drop for Transaction<'_> {
 }
 
 impl Transaction<'_> {
+    /// Attaches trusted admitted-request accounting to this origin mutation.
+    ///
+    /// The stable request identity must equal the transaction operation
+    /// identity. This binds idempotent commit replay and the durable usage
+    /// fact to one identity. Replication, repair, and internal transactions
+    /// do not call this method and therefore never mint origin usage.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UsageCommandError::IdentityMismatch`] when the identities
+    /// differ and [`UsageCommandError::InvalidRequest`] when a context was
+    /// already attached.
+    pub fn attach_usage_admission(
+        &mut self,
+        context: UsageAdmissionContext,
+    ) -> Result<(), UsageCommandError> {
+        if context.request_id().as_str() != self.operation.as_str() {
+            return Err(UsageCommandError::IdentityMismatch);
+        }
+        if self.usage_admission.is_some() {
+            return Err(UsageCommandError::InvalidRequest);
+        }
+        self.usage_admission = Some(context);
+        Ok(())
+    }
+
     /// Reads one document as this transaction's snapshot observed it.
     ///
     /// A staged write is visible to later reads inside the same transaction;
@@ -1581,17 +2113,25 @@ impl Transaction<'_> {
     ///
     /// Concurrent publishers form one group: whichever caller becomes the
     /// batch leader drains every waiting intent into one storage batch, so
-    /// the batch's durable append and syncs are shared. A solo caller is a
-    /// batch of one and behaves exactly as a serial commit.
+    /// the batch's durable append and witness are shared — and the witness
+    /// runs outside the storage lock, keeping the location readable while
+    /// a wave's sync is in flight. A solo caller is a batch of one and
+    /// behaves exactly as a serial commit.
     #[must_use]
     pub fn commit(mut self, durability: LocalDurability) -> CommitOutcome {
         let writes = std::mem::take(&mut self.writes);
+        let usage_admission = self.usage_admission.take();
+        if usage_admission.is_some() && durability != LocalDurability::Synced {
+            return CommitOutcome::Rejected(CommitError::UsageRequiresSynced);
+        }
+        let write_digest = storage::write_set_digest(self.scope.tenant(), &writes);
         let intent = CommitIntent {
             tenant: self.scope.tenant().clone(),
             operation: self.operation.clone(),
-            digest: storage::write_set_digest(self.scope.tenant(), &writes),
+            digest: usage_bound_commit_digest(write_digest, usage_admission.as_ref()),
             snapshot_sequence: self.snapshot_sequence,
             durability,
+            usage_admission,
             writes,
         };
         let engine = self.engine;
@@ -1609,6 +2149,9 @@ impl Transaction<'_> {
                 true
             }
         };
+        // Wake a coalescing leader at once: waves gather on arrival
+        // notifications, not on sleep-slice polls.
+        engine.commit_arrivals.notify_all();
         if become_leader {
             // A panic inside the driver must not strand the flag or the
             // waiters: the guard clears leadership on the way out, and the

@@ -9,8 +9,7 @@
 //! family commands commit atomically with the documents — the V1
 //! `IDocumentSession` observable contract mapped onto the engine seam.
 //!
-//! The ownership decision behind this placement (engine-side versus the
-//! C# host and the native SDKs) is
+//! The ownership decision behind this engine-side placement is
 //! `docs/sessions/gapd01-ownership-decision.md`; the rule-by-rule V1
 //! mapping is `docs/sessions/session-contract.md`.
 

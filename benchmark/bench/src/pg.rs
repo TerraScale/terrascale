@@ -20,7 +20,7 @@ use std::error::Error;
 use postgres::{Client, NoTls, Statement};
 
 use crate::config::LaneConfig;
-use crate::lane::{document, Backend, Slot};
+use crate::lane::{Backend, Slot, document};
 
 /// The environment variable that names the pinned server's endpoint at a
 /// lane run — the same variable `src/benchmarks/reference.rs` records. The
@@ -163,10 +163,8 @@ impl Slot for PostgreSqlSlot {
         let name = document::MEASURED_NAME.to_owned();
         let group = document::MEASURED_GROUP;
         let payload = document::payload();
-        let affected = self.connection.execute(
-            &self.write,
-            &[&tenant, &id, &name, &group, &payload],
-        )?;
+        let affected =
+            self.connection.execute(&self.write, &[&tenant, &id, &name, &group, &payload])?;
         assert_eq!(affected, 1, "a measured write must affect exactly one row");
         Ok(())
     }

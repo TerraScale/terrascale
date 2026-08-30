@@ -27,6 +27,7 @@
 //! (loopback or in-process boundary, single host, no cross-side sample
 //! interleaving) rather than hiding them.
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Barrier};
 use std::time::Instant;
 
@@ -35,7 +36,7 @@ use super::{
     gates::{self, MedianRange, ReferenceComparison},
     lane::{LaneConfig, Workload},
     record::REGRESSION_RULE,
-    vocabulary::{objective_status_line, ObjectiveStatus, ReferenceRun, Verdict},
+    vocabulary::{ObjectiveStatus, ReferenceRun, Verdict, objective_status_line},
 };
 
 /// The measured facts of one sample window, in the reference driver's
@@ -119,20 +120,27 @@ impl SideFacts {
 /// Panics if a measured operation fails: a window that cannot complete
 /// fails loudly rather than emitting a partial sample set, exactly as the
 /// reference executor does.
-pub(crate) fn sample_terrabase_side(lane: &TerraBaseLane, workload: Workload, config: LaneConfig) -> Vec<SampleFacts> {
+pub(crate) fn sample_terrabase_side(
+    lane: &TerraBaseLane,
+    workload: Workload,
+    config: LaneConfig,
+) -> Vec<SampleFacts> {
+    config.validate().expect("a benchmark lane requires a valid configuration");
     let per_slot_operations = config.operations / config.concurrency;
     let per_slot_warmup = config.warmup_operations / config.concurrency;
+    let warmup_remainder = config.warmup_operations % config.concurrency;
     let start = Arc::new(Barrier::new(config.concurrency + 1));
     let end = Arc::new(Barrier::new(config.concurrency + 1));
 
     std::thread::scope(|scope| -> Vec<SampleFacts> {
         let mut worker_samples = Vec::with_capacity(config.concurrency);
-        for _ in 0..config.concurrency {
+        for slot_index in 0..config.concurrency {
             let start = Arc::clone(&start);
             let end = Arc::clone(&end);
             worker_samples.push(scope.spawn(move || -> Vec<Vec<f64>> {
                 // Warm-up: real work, excluded from every measured sample.
-                for index in 0..per_slot_warmup {
+                let slot_warmup = per_slot_warmup + usize::from(slot_index < warmup_remainder);
+                for index in 0..slot_warmup {
                     let _ = lane.one_operation(workload.select_mixed(index), index);
                 }
                 let mut samples = Vec::with_capacity(config.samples);
@@ -160,8 +168,10 @@ pub(crate) fn sample_terrabase_side(lane: &TerraBaseLane, workload: Workload, co
             end.wait();
             walls.push(started.elapsed().as_secs_f64());
         }
-        let joined: Vec<Vec<Vec<f64>>> =
-            worker_samples.into_iter().map(|handle| handle.join().expect("a lane worker panicked")).collect();
+        let joined: Vec<Vec<Vec<f64>>> = worker_samples
+            .into_iter()
+            .map(|handle| handle.join().expect("a lane worker panicked"))
+            .collect();
         walls
             .into_iter()
             .enumerate()
@@ -170,11 +180,7 @@ pub(crate) fn sample_terrabase_side(lane: &TerraBaseLane, workload: Workload, co
                 for slot in &joined {
                     latencies.extend_from_slice(&slot[sample]);
                 }
-                SampleFacts::of(
-                    (per_slot_operations * config.concurrency) as u64,
-                    wall,
-                    latencies,
-                )
+                SampleFacts::of((per_slot_operations * config.concurrency) as u64, wall, latencies)
             })
             .collect()
     })
@@ -182,12 +188,14 @@ pub(crate) fn sample_terrabase_side(lane: &TerraBaseLane, workload: Workload, co
 
 /// The engine-side transport description recorded on the TerraBase facts
 /// document, so a receipt cannot mistake the boundary for a network one.
-pub(crate) const TERRABASE_TRANSPORT: &str =
-    "in-process durable engine library, LocalDurability::Synced commits, one shared engine across all concurrency slots";
+pub(crate) const TERRABASE_TRANSPORT: &str = "in-process durable engine library, LocalDurability::Synced commits, one shared engine across all concurrency slots";
 
 /// Classifies the TerraBase side against one reference side under the
 /// SE-15 gate, fail-closed on an absent side.
-pub(crate) fn classify(engine: &SideFacts, reference: Option<&SideFacts>) -> (ReferenceRun, ReferenceComparison, ObjectiveStatus, Verdict) {
+pub(crate) fn classify(
+    engine: &SideFacts,
+    reference: Option<&SideFacts>,
+) -> (ReferenceRun, ReferenceComparison, ObjectiveStatus, Verdict) {
     let Some(reference) = reference else {
         return (
             ReferenceRun::Unrun {
@@ -200,6 +208,19 @@ pub(crate) fn classify(engine: &SideFacts, reference: Option<&SideFacts>) -> (Re
         );
     };
     let run = ReferenceRun::Ran { identity: reference.observed_identity.clone() };
+    if engine.config != reference.config
+        || engine.workload != reference.workload
+        || engine.samples.len() != reference.samples.len()
+        || engine.client_transport.contains("in-process")
+            != reference.client_transport.contains("in-process")
+    {
+        return (
+            run,
+            ReferenceComparison { throughput: gates::Trend::Stable, p95: gates::Trend::Stable },
+            ObjectiveStatus::Inconclusive,
+            Verdict::Inconclusive,
+        );
+    }
     let comparison = ReferenceComparison {
         throughput: gates::classify_higher(
             &engine.throughput().unwrap_or(MedianRange { median: 0.0, min: 0.0, max: 0.0 }),
@@ -216,6 +237,195 @@ pub(crate) fn classify(engine: &SideFacts, reference: Option<&SideFacts>) -> (Re
     (run, comparison, status, verdict)
 }
 
+/// Checks that a result document came from the side and workload selected by
+/// the invoking lane. Filenames are operator input and cannot establish
+/// identity on their own.
+pub(crate) fn validate_reference_identity(
+    side: &SideFacts,
+    expected_target: &str,
+    expected_workload: &str,
+) -> Result<(), String> {
+    if side.target != expected_target {
+        return Err(format!(
+            "reference target {:?} does not match requested target {expected_target:?}",
+            side.target
+        ));
+    }
+    if side.workload != expected_workload {
+        return Err(format!(
+            "reference workload {:?} does not match requested workload {expected_workload:?}",
+            side.workload
+        ));
+    }
+    Ok(())
+}
+
+/// The outcome of selecting one retained reference attempt.
+///
+/// A failed or malformed newest attempt is deliberately distinct from a
+/// missing reference.  Callers may report either state as inconclusive, but
+/// must not silently fall back to an older successful attempt.
+#[derive(Debug)]
+pub(crate) enum ReferenceDocument {
+    /// No retained attempt or legacy result exists for this lane.
+    Missing,
+    /// The newest retained document is a complete, valid result.
+    Complete(SideFacts),
+    /// The newest retained document explicitly reports a failed run.
+    Failed { path: PathBuf, reason: String },
+    /// The newest retained document cannot be parsed or validated.
+    Invalid { path: PathBuf, reason: String },
+}
+
+impl ReferenceDocument {
+    fn side(&self) -> Option<&SideFacts> {
+        match self {
+            Self::Complete(side) => Some(side),
+            Self::Missing | Self::Failed { .. } | Self::Invalid { .. } => None,
+        }
+    }
+
+    fn note(&self, target: &str) -> Option<String> {
+        match self {
+            Self::Missing => {
+                Some(format!("- {target} reference: unrun — no retained result document was found"))
+            }
+            Self::Failed { path, reason } => Some(format!(
+                "- {target} reference: failed — {reason} (newest retained attempt: {})",
+                path.display()
+            )),
+            Self::Invalid { path, reason } => Some(format!(
+                "- {target} reference: invalid — {reason} (newest retained attempt: {})",
+                path.display()
+            )),
+            Self::Complete(_) => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RetainedCandidate {
+    path: PathBuf,
+    filename: String,
+    /// The nanosecond timestamp emitted by `bench/src/main.rs`.
+    timestamp: Option<u128>,
+    modified: Option<std::time::SystemTime>,
+}
+
+/// Selects the result file for one requested target/workload pair.
+///
+/// Retained attempts are ordered by their filename timestamp and then the
+/// complete filename. Filesystem mtime is only used for files whose name does
+/// not contain the driver's timestamp. The legacy exact filename is eligible
+/// only when no retained attempt exists at all.
+fn select_reference_path(
+    directory: &Path,
+    target: &str,
+    workload: &str,
+) -> Result<Option<PathBuf>, String> {
+    let prefix = format!("{target}-{workload}-");
+    let mut candidates = Vec::new();
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(None);
+        }
+        Err(error) => return Err(format!("cannot read {}: {error}", directory.display())),
+    };
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("cannot inspect results entry: {error}"))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("cannot inspect {}: {error}", entry.path().display()))?;
+        if !file_type.is_file() {
+            continue;
+        }
+        let filename = entry.file_name().to_string_lossy().into_owned();
+        if !filename.starts_with(&prefix) || !filename.ends_with(".json") {
+            continue;
+        }
+        let timestamp = filename
+            .strip_prefix(&prefix)
+            .and_then(|suffix| suffix.strip_suffix(".json"))
+            .and_then(|suffix| suffix.split('-').next())
+            .and_then(|stamp| stamp.parse::<u128>().ok());
+        let modified = entry.metadata().ok().and_then(|metadata| metadata.modified().ok());
+        candidates.push(RetainedCandidate { path: entry.path(), filename, timestamp, modified });
+    }
+    if candidates.is_empty() {
+        let legacy = directory.join(format!("{target}-{workload}.json"));
+        return Ok(legacy.is_file().then_some(legacy));
+    }
+    candidates.sort_by(|left, right| {
+        left.timestamp
+            .cmp(&right.timestamp)
+            .then_with(|| match (left.timestamp, right.timestamp) {
+                (Some(_), Some(_)) | (None, None) => left.modified.cmp(&right.modified),
+                (Some(_), None) => std::cmp::Ordering::Greater,
+                (None, Some(_)) => std::cmp::Ordering::Less,
+            })
+            .then_with(|| left.filename.cmp(&right.filename))
+    });
+    Ok(candidates.pop().map(|candidate| candidate.path))
+}
+
+/// Loads the newest retained attempt, preserving failed/invalid state for the
+/// caller instead of allowing an older successful file to mask it.
+pub(crate) fn read_reference_document(
+    directory: &Path,
+    target: &str,
+    workload: &str,
+) -> ReferenceDocument {
+    let path = match select_reference_path(directory, target, workload) {
+        Ok(Some(path)) => path,
+        Ok(None) => return ReferenceDocument::Missing,
+        Err(reason) => {
+            return ReferenceDocument::Invalid { path: directory.to_owned(), reason };
+        }
+    };
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) => {
+            return ReferenceDocument::Invalid {
+                path,
+                reason: format!("cannot read retained result: {error}"),
+            };
+        }
+    };
+    let parsed = match json::parse(&text) {
+        Ok(value) => value,
+        Err(error) => {
+            return ReferenceDocument::Invalid { path, reason: error.to_string() };
+        }
+    };
+    let status = match json::status(&parsed) {
+        Ok(status) => status,
+        Err(error) => {
+            return ReferenceDocument::Invalid { path, reason: error.to_string() };
+        }
+    };
+    if status == "failed" {
+        return ReferenceDocument::Failed {
+            path,
+            reason: json::failure_reason(&parsed).unwrap_or_else(|| "run failed".to_owned()),
+        };
+    }
+    if status != "complete" {
+        return ReferenceDocument::Invalid {
+            path,
+            reason: format!("result status {status:?} is not complete"),
+        };
+    }
+    let side = match json::reference_side(&parsed) {
+        Ok(side) => side,
+        Err(error) => return ReferenceDocument::Invalid { path, reason: error.to_string() },
+    };
+    if let Err(reason) = validate_reference_identity(&side, target, workload) {
+        return ReferenceDocument::Invalid { path, reason };
+    }
+    ReferenceDocument::Complete(side)
+}
+
 /// Renders one side's facts document in the reference driver's exact JSON
 /// shape (`bench/src/metrics.rs`), so both sides of a comparison are one
 /// format.
@@ -229,6 +439,7 @@ pub(crate) fn render_facts_json(
     use std::fmt::Write as _;
     let mut text = String::new();
     let _ = writeln!(text, "{{");
+    let _ = writeln!(text, "  \"status\": \"complete\",");
     let _ = writeln!(text, "  \"target\": {},", json_string(&side.target));
     let _ = writeln!(text, "  \"workload\": {},", json_string(&side.workload));
     let _ = writeln!(
@@ -287,14 +498,20 @@ pub(crate) fn render_workload_summary(
     let mut text = String::new();
     let _ = writeln!(text, "### workload: {workload}");
     let _ = writeln!(text);
-    let _ = writeln!(text, "| side | median ops/s | sample range ops/s | p50 us | p95 us | p99 us |");
+    let _ =
+        writeln!(text, "| side | median ops/s | sample range ops/s | p50 us | p95 us | p99 us |");
     let _ = writeln!(text, "| --- | --- | --- | --- | --- | --- |");
-    for (name, side) in [("terrabase", Some(engine)), ("postgresql", postgresql), ("ravendb", ravendb)] {
+    for (name, side) in
+        [("terrabase", Some(engine)), ("postgresql", postgresql), ("ravendb", ravendb)]
+    {
         let Some(side) = side else { continue };
         let tps = side.throughput().unwrap_or(MedianRange { median: 0.0, min: 0.0, max: 0.0 });
-        let median_p50 = MedianRange::of(&side.samples.iter().map(|s| s.p50_us).collect::<Vec<_>>());
-        let median_p95 = MedianRange::of(&side.samples.iter().map(|s| s.p95_us).collect::<Vec<_>>());
-        let median_p99 = MedianRange::of(&side.samples.iter().map(|s| s.p99_us).collect::<Vec<_>>());
+        let median_p50 =
+            MedianRange::of(&side.samples.iter().map(|s| s.p50_us).collect::<Vec<_>>());
+        let median_p95 =
+            MedianRange::of(&side.samples.iter().map(|s| s.p95_us).collect::<Vec<_>>());
+        let median_p99 =
+            MedianRange::of(&side.samples.iter().map(|s| s.p99_us).collect::<Vec<_>>());
         let _ = writeln!(
             text,
             "| {} | {:.0} | {:.0} – {:.0} | {:.1} | {:.1} | {:.1} |",
@@ -308,8 +525,18 @@ pub(crate) fn render_workload_summary(
         );
     }
     let _ = writeln!(text);
-    let _ = writeln!(text, "- objective ({}): `{}`", objective_status_line(pg_status), pg_verdict.as_str());
-    let _ = writeln!(text, "- versus ravendb: `{}` ({})", raven_verdict.as_str(), raven_status.as_str());
+    let _ = writeln!(
+        text,
+        "- objective ({}): `{}`",
+        objective_status_line(pg_status),
+        pg_verdict.as_str()
+    );
+    let _ = writeln!(
+        text,
+        "- versus ravendb: `{}` ({})",
+        raven_verdict.as_str(),
+        raven_status.as_str()
+    );
     let _ = writeln!(text);
     text
 }
@@ -366,6 +593,29 @@ pub(crate) mod json {
         Ok(value)
     }
 
+    /// Reads the result status before attempting to extract measured facts.
+    /// Older complete documents omitted this field, so absence remains
+    /// backwards-compatible while an explicit failure remains visible.
+    pub(crate) fn status(value: &Value) -> Result<&str, Error> {
+        let Value::Obj(fields) = value else {
+            return Err(Error("the document is not an object".to_owned()));
+        };
+        match fields.get("status") {
+            None => Ok("complete"),
+            Some(Value::Str(status)) => Ok(status.as_str()),
+            Some(_) => Err(Error("field status is not a string".to_owned())),
+        }
+    }
+
+    /// Returns a retained failure's operator-facing error, when present.
+    pub(crate) fn failure_reason(value: &Value) -> Option<String> {
+        let Value::Obj(fields) = value else { return None };
+        fields.get("error").and_then(|value| match value {
+            Value::Str(error) if !error.is_empty() => Some(error.clone()),
+            _ => None,
+        })
+    }
+
     fn skip_whitespace(bytes: &[char], position: &mut usize) {
         while *position < bytes.len() && bytes[*position].is_whitespace() {
             *position += 1;
@@ -397,7 +647,9 @@ pub(crate) mod json {
                             return Ok(Value::Arr(items));
                         }
                         other => {
-                            return Err(Error(format!("expected ',' or ']' in array, found {other:?}")))
+                            return Err(Error(format!(
+                                "expected ',' or ']' in array, found {other:?}"
+                            )));
                         }
                     }
                 }
@@ -428,7 +680,9 @@ pub(crate) mod json {
                             return Ok(Value::Obj(fields));
                         }
                         other => {
-                            return Err(Error(format!("expected ',' or '}}' in object, found {other:?}")))
+                            return Err(Error(format!(
+                                "expected ',' or '}}' in object, found {other:?}"
+                            )));
                         }
                     }
                 }
@@ -471,7 +725,10 @@ pub(crate) mod json {
                                     return Err(Error("truncated unicode escape".to_owned()));
                                 };
                                 *position += 1;
-                                code = code * 16 + digit.to_digit(16).ok_or_else(|| Error("bad hex digit".to_owned()))?;
+                                code = code * 16
+                                    + digit
+                                        .to_digit(16)
+                                        .ok_or_else(|| Error("bad hex digit".to_owned()))?;
                             }
                             text.push(char::from_u32(code).unwrap_or('\u{FFFD}'));
                         }
@@ -505,69 +762,211 @@ pub(crate) mod json {
             return Err(Error("the document is not an object".to_owned()));
         };
         let string = |key: &str| -> Result<String, Error> {
-            fields.get(key).and_then(|v| match v {
-                Value::Str(text) => Some(text.clone()),
-                _ => None,
-            }).ok_or_else(|| Error(format!("field {key} is not a string")))
+            fields
+                .get(key)
+                .and_then(|v| match v {
+                    Value::Str(text) => Some(text.clone()),
+                    _ => None,
+                })
+                .ok_or_else(|| Error(format!("field {key} is not a string")))
         };
         let environment = match fields.get("environment") {
             Some(Value::Obj(environment)) => environment,
             _ => return Err(Error("field environment is not an object".to_owned())),
         };
         let environment_string = |key: &str| -> Result<String, Error> {
-            environment.get(key).and_then(|v| match v {
-                Value::Str(text) => Some(text.clone()),
-                _ => None,
-            }).ok_or_else(|| Error(format!("field environment.{key} is not a string")))
+            environment
+                .get(key)
+                .and_then(|v| match v {
+                    Value::Str(text) => Some(text.clone()),
+                    _ => None,
+                })
+                .ok_or_else(|| Error(format!("field environment.{key} is not a string")))
         };
         let config = match fields.get("config") {
             Some(Value::Obj(config)) => config,
             _ => return Err(Error("field config is not an object".to_owned())),
         };
         let config_number = |key: &str| -> Result<f64, Error> {
-            config.get(key).and_then(|v| match v {
-                Value::Num(value) => Some(*value),
-                _ => None,
-            }).ok_or_else(|| Error(format!("field config.{key} is not a number")))
+            config
+                .get(key)
+                .and_then(|v| match v {
+                    Value::Num(value) => Some(*value),
+                    _ => None,
+                })
+                .ok_or_else(|| Error(format!("field config.{key} is not a number")))
         };
+        let config_usize = |key: &str| -> Result<usize, Error> {
+            let value = config_number(key)?;
+            if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
+                return Err(Error(format!("field config.{key} is not a non-negative integer")));
+            }
+            if value > usize::MAX as f64 {
+                return Err(Error(format!("field config.{key} is too large")));
+            }
+            Ok(value as usize)
+        };
+        let environment_number = |key: &str| -> Result<f64, Error> {
+            environment
+                .get(key)
+                .and_then(|v| match v {
+                    Value::Num(value) => Some(*value),
+                    _ => None,
+                })
+                .ok_or_else(|| Error(format!("field environment.{key} is not a number")))
+        };
+        let environment_usize = |key: &str| -> Result<usize, Error> {
+            let value = environment_number(key)?;
+            if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
+                return Err(Error(format!(
+                    "field environment.{key} is not a non-negative integer"
+                )));
+            }
+            if value > usize::MAX as f64 {
+                return Err(Error(format!("field environment.{key} is too large")));
+            }
+            Ok(value as usize)
+        };
+        let status = status(value)?;
+        if status != "complete" {
+            return Err(Error(format!("result status {status:?} is not a complete run")));
+        }
+        let target = string("target")?;
+        if !matches!(target.as_str(), "terrabase" | "postgresql" | "ravendb") {
+            return Err(Error(format!("unknown target {target:?}")));
+        }
+        let workload = string("workload")?;
+        if !matches!(workload.as_str(), "read" | "write" | "query" | "mixed") {
+            return Err(Error(format!("unknown workload {workload:?}")));
+        }
+        let config_seed_documents = config_usize("seed_documents")?;
+        let config_operations = config_usize("operations")?;
+        let config_samples = config_usize("samples")?;
+        let config_concurrency = config_usize("concurrency")?;
+        let config_warmup_operations = config_usize("warmup_operations")?;
+        let config_noise_percent = config_number("noise_percent")?;
+        if config_seed_documents == 0
+            || config_operations == 0
+            || config_samples == 0
+            || config_concurrency == 0
+        {
+            return Err(Error("config counts must be greater than zero".to_owned()));
+        }
+        if !config_operations.is_multiple_of(config_concurrency)
+            || !config_warmup_operations.is_multiple_of(config_concurrency)
+        {
+            return Err(Error(
+                "config operation counts must be divisible by concurrency".to_owned(),
+            ));
+        }
+        if !config_noise_percent.is_finite() || !(0.0..=100.0).contains(&config_noise_percent) {
+            return Err(Error("config noise_percent is not in 0..=100".to_owned()));
+        }
+        let observed_identity = environment_string("observed_identity")?;
+        let endpoint = environment_string("endpoint")?;
+        let client_transport = environment_string("client_transport")?;
+        if observed_identity.is_empty() || endpoint.is_empty() || client_transport.is_empty() {
+            return Err(Error(
+                "environment identity, endpoint, and transport must be non-empty".to_owned(),
+            ));
+        }
+        let unix_seconds = environment_usize("unix_seconds")?;
+        let kernel = environment_string("kernel")?;
+        let logical_cpus = environment_usize("logical_cpus")?;
+        if kernel.is_empty() || logical_cpus == 0 || unix_seconds == 0 {
+            return Err(Error(
+                "environment timestamp, kernel, and logical_cpus must be populated".to_owned(),
+            ));
+        }
         let samples = match fields.get("samples") {
             Some(Value::Arr(samples)) => samples,
             _ => return Err(Error("field samples is not an array".to_owned())),
         };
+        if samples.len() != config_samples {
+            return Err(Error(format!(
+                "samples has {} entries but config.samples is {config_samples}",
+                samples.len()
+            )));
+        }
         let mut parsed_samples = Vec::with_capacity(samples.len());
         for (index, sample) in samples.iter().enumerate() {
             let Value::Obj(sample) = sample else {
                 return Err(Error(format!("sample {index} is not an object")));
             };
             let sample_number = |key: &str| -> Result<f64, Error> {
-                sample.get(key).and_then(|v| match v {
-                    Value::Num(value) => Some(*value),
-                    _ => None,
-                }).ok_or_else(|| Error(format!("sample {index} field {key} is not a number")))
+                sample
+                    .get(key)
+                    .and_then(|v| match v {
+                        Value::Num(value) => Some(*value),
+                        _ => None,
+                    })
+                    .ok_or_else(|| Error(format!("sample {index} field {key} is not a number")))
             };
+            let operations = sample_number("operations")?;
+            if !operations.is_finite()
+                || operations < 0.0
+                || operations.fract() != 0.0
+                || operations > u64::MAX as f64
+            {
+                return Err(Error(format!("sample {index} operations is not a valid integer")));
+            }
+            let operations = operations as u64;
+            if operations != config_operations as u64 {
+                return Err(Error(format!(
+                    "sample {index} has {operations} operations, expected {config_operations}"
+                )));
+            }
+            let wall_seconds = sample_number("wall_seconds")?;
+            let throughput_ops_per_s = sample_number("throughput_ops_per_s")?;
+            let p50_us = sample_number("p50_us")?;
+            let p95_us = sample_number("p95_us")?;
+            let p99_us = sample_number("p99_us")?;
+            if !wall_seconds.is_finite()
+                || wall_seconds <= 0.0
+                || !throughput_ops_per_s.is_finite()
+                || throughput_ops_per_s <= 0.0
+                || !p50_us.is_finite()
+                || p50_us < 0.0
+                || !p95_us.is_finite()
+                || p95_us < p50_us
+                || !p99_us.is_finite()
+                || p99_us < p95_us
+            {
+                return Err(Error(format!(
+                    "sample {index} has invalid timing or percentile values"
+                )));
+            }
+            let expected_throughput = operations as f64 / wall_seconds;
+            let relative_error = (throughput_ops_per_s - expected_throughput).abs()
+                / expected_throughput.max(f64::MIN_POSITIVE);
+            if relative_error > 1.0e-6 {
+                return Err(Error(format!(
+                    "sample {index} throughput does not match wall_seconds"
+                )));
+            }
             parsed_samples.push(SampleFacts {
-                operations: sample_number("operations")? as u64,
-                wall_seconds: sample_number("wall_seconds")?,
-                throughput_ops_per_s: sample_number("throughput_ops_per_s")?,
-                p50_us: sample_number("p50_us")?,
-                p95_us: sample_number("p95_us")?,
-                p99_us: sample_number("p99_us")?,
+                operations,
+                wall_seconds,
+                throughput_ops_per_s,
+                p50_us,
+                p95_us,
+                p99_us,
             });
         }
         Ok(super::SideFacts {
-            target: string("target")?,
-            workload: string("workload")?,
+            target,
+            workload,
             config: LaneConfig {
-                seed_documents: config_number("seed_documents")? as usize,
-                operations: config_number("operations")? as usize,
-                samples: config_number("samples")? as usize,
-                concurrency: config_number("concurrency")? as usize,
-                warmup_operations: config_number("warmup_operations")? as usize,
-                noise_percent: config_number("noise_percent")?,
+                seed_documents: config_seed_documents,
+                operations: config_operations,
+                samples: config_samples,
+                concurrency: config_concurrency,
+                warmup_operations: config_warmup_operations,
+                noise_percent: config_noise_percent,
             },
-            observed_identity: environment_string("observed_identity")?,
-            endpoint: environment_string("endpoint")?,
-            client_transport: environment_string("client_transport")?,
+            observed_identity,
+            endpoint,
+            client_transport,
             samples: parsed_samples,
         })
     }
@@ -594,11 +993,7 @@ fn json_string(text: &str) -> String {
 
 /// Renders one number in JSON's shortest round-trip form.
 fn json_number(value: f64) -> String {
-    if value.is_finite() {
-        format!("{value}")
-    } else {
-        "0".to_owned()
-    }
+    if value.is_finite() { format!("{value}") } else { "0".to_owned() }
 }
 
 /// The regression rule line every recorded run carries.
@@ -614,14 +1009,42 @@ mod tests {
         SideFacts {
             target: "postgresql".to_owned(),
             workload: "read".to_owned(),
-            config: LaneConfig::RECORD_MINIMUM,
+            config: LaneConfig {
+                seed_documents: 1_000,
+                operations: 10,
+                samples: 3,
+                concurrency: 1,
+                warmup_operations: 0,
+                noise_percent: 5.0,
+            },
             observed_identity: "PostgreSQL 18.6".to_owned(),
             endpoint: "postgres://bench@127.0.0.1:55432/postgres".to_owned(),
             client_transport: "test transport".to_owned(),
             samples: vec![
-                SampleFacts { operations: 10, wall_seconds: 0.1, throughput_ops_per_s: 100.0, p50_us: 10.0, p95_us: 20.0, p99_us: 30.0 },
-                SampleFacts { operations: 10, wall_seconds: 0.1, throughput_ops_per_s: 102.0, p50_us: 10.0, p95_us: 20.0, p99_us: 30.0 },
-                SampleFacts { operations: 10, wall_seconds: 0.1, throughput_ops_per_s: 101.0, p50_us: 10.0, p95_us: 20.0, p99_us: 30.0 },
+                SampleFacts {
+                    operations: 10,
+                    wall_seconds: 0.1,
+                    throughput_ops_per_s: 100.0,
+                    p50_us: 10.0,
+                    p95_us: 20.0,
+                    p99_us: 30.0,
+                },
+                SampleFacts {
+                    operations: 10,
+                    wall_seconds: 10.0 / 102.0,
+                    throughput_ops_per_s: 102.0,
+                    p50_us: 10.0,
+                    p95_us: 20.0,
+                    p99_us: 30.0,
+                },
+                SampleFacts {
+                    operations: 10,
+                    wall_seconds: 10.0 / 101.0,
+                    throughput_ops_per_s: 101.0,
+                    p50_us: 10.0,
+                    p95_us: 20.0,
+                    p99_us: 30.0,
+                },
             ],
         }
     }
@@ -629,7 +1052,8 @@ mod tests {
     #[test]
     fn the_reader_round_trips_the_writer() {
         let side = facts();
-        let text = render_facts_json(&side, 1_700_000_000, "Linux test", 8, &["limit one".to_owned()]);
+        let text =
+            render_facts_json(&side, 1_700_000_000, "Linux test", 8, &["limit one".to_owned()]);
         let parsed = json::parse(&text).expect("renders parseable JSON");
         let read = json::reference_side(&parsed).expect("extracts the side");
         assert_eq!(read.target, side.target);
@@ -669,7 +1093,7 @@ mod tests {
     fn a_run_reference_classifies_through_the_gate() {
         let engine = SideFacts {
             target: "terrabase".to_owned(),
-            samples: (0..5)
+            samples: (0..3)
                 .map(|index| SampleFacts {
                     operations: 10,
                     wall_seconds: 0.01,
@@ -686,6 +1110,140 @@ mod tests {
         assert_eq!(comparison.throughput, gates::Trend::Better);
         assert_eq!(status, ObjectiveStatus::Met);
         assert_eq!(verdict, Verdict::V2Faster);
+    }
+
+    #[test]
+    fn an_in_process_boundary_cannot_claim_comparability_with_a_network_side() {
+        let engine = SideFacts {
+            client_transport: "in-process durable engine library".to_owned(),
+            ..facts()
+        };
+        let reference =
+            SideFacts { client_transport: "loopback TCP reference client".to_owned(), ..facts() };
+        let (_, _, status, verdict) = classify(&engine, Some(&reference));
+        assert_eq!((status, verdict), (ObjectiveStatus::Inconclusive, Verdict::Inconclusive));
+    }
+
+    #[test]
+    fn a_result_filename_cannot_override_target_or_workload_identity() {
+        let side = facts();
+        let target_error = validate_reference_identity(&side, "ravendb", "read")
+            .expect_err("a PostgreSQL document must not fill a RavenDB slot");
+        assert!(target_error.contains("target"), "{target_error}");
+        let workload_error = validate_reference_identity(&side, "postgresql", "write")
+            .expect_err("a read document must not fill a write slot");
+        assert!(workload_error.contains("workload"), "{workload_error}");
+        assert!(validate_reference_identity(&side, "postgresql", "read").is_ok());
+    }
+
+    fn temporary_results_directory() -> std::path::PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let directory = std::env::temp_dir()
+            .join(format!("terrabase-lane-reference-{}-{stamp}", std::process::id()));
+        std::fs::create_dir(&directory).expect("temporary results directory");
+        directory
+    }
+
+    fn write_reference_attempt(directory: &Path, name: &str, contents: &str) {
+        std::fs::write(directory.join(name), contents).expect("reference attempt");
+    }
+
+    fn complete_document(identity: &str) -> String {
+        let mut side = facts();
+        side.observed_identity = identity.to_owned();
+        render_facts_json(&side, 1_700_000_000, "Linux test", 8, &[])
+    }
+
+    #[test]
+    fn newest_retained_complete_attempt_wins_by_filename_timestamp() {
+        let directory = temporary_results_directory();
+        write_reference_attempt(
+            &directory,
+            "postgresql-read-100-9-0.json",
+            &complete_document("older"),
+        );
+        write_reference_attempt(
+            &directory,
+            "postgresql-read-200-1-0.json",
+            &complete_document("newer"),
+        );
+        let selected = read_reference_document(&directory, "postgresql", "read");
+        assert!(
+            matches!(selected, ReferenceDocument::Complete(ref side) if side.observed_identity == "newer")
+        );
+        std::fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[test]
+    fn newest_failed_attempt_blocks_fallback_to_an_older_success() {
+        let directory = temporary_results_directory();
+        write_reference_attempt(
+            &directory,
+            "postgresql-read-100-9-0.json",
+            &complete_document("older"),
+        );
+        write_reference_attempt(
+            &directory,
+            "postgresql-read-200-1-0.json",
+            r#"{"status":"failed","target":"postgresql","workload":"read","error":"connection refused"}"#,
+        );
+        let selected = read_reference_document(&directory, "postgresql", "read");
+        assert!(
+            matches!(selected, ReferenceDocument::Failed { reason, .. } if reason == "connection refused")
+        );
+        assert!(selected.side().is_none());
+        std::fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[test]
+    fn newest_malformed_attempt_blocks_fallback_to_an_older_success() {
+        let directory = temporary_results_directory();
+        write_reference_attempt(
+            &directory,
+            "postgresql-read-100-9-0.json",
+            &complete_document("older"),
+        );
+        write_reference_attempt(&directory, "postgresql-read-200-1-0.json", "{broken");
+        let selected = read_reference_document(&directory, "postgresql", "read");
+        assert!(matches!(selected, ReferenceDocument::Invalid { .. }));
+        assert!(selected.side().is_none());
+        std::fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[test]
+    fn legacy_exact_filename_is_used_only_without_retained_attempts() {
+        let directory = temporary_results_directory();
+        write_reference_attempt(&directory, "postgresql-read.json", &complete_document("legacy"));
+        let selected = read_reference_document(&directory, "postgresql", "read");
+        assert!(
+            matches!(selected, ReferenceDocument::Complete(ref side) if side.observed_identity == "legacy")
+        );
+        write_reference_attempt(
+            &directory,
+            "postgresql-read-100-9-0.json",
+            &complete_document("attempt"),
+        );
+        let selected = read_reference_document(&directory, "postgresql", "read");
+        assert!(
+            matches!(selected, ReferenceDocument::Complete(ref side) if side.observed_identity == "attempt")
+        );
+        std::fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[test]
+    fn the_reader_rejects_truncated_or_inconsistent_result_documents() {
+        let side = facts();
+        let text = render_facts_json(&side, 1_700_000_000, "Linux test", 8, &[]);
+        let mut parsed = json::parse(&text).expect("renders parseable JSON");
+        let json::Value::Obj(ref mut fields) = parsed else { panic!("object") };
+        let json::Value::Arr(samples) = fields.get_mut("samples").expect("samples") else {
+            panic!("array")
+        };
+        samples.pop();
+        assert!(json::reference_side(&parsed).is_err(), "truncated samples must not compare");
     }
 
     /// The recorded SE-15 comparison lane: runs the TerraBase side of the
@@ -729,13 +1287,6 @@ mod tests {
             Workload::Mixed,
         ];
 
-        let read_reference = |target: &str, workload: &str| -> Option<SideFacts> {
-            let path = references_dir.join(format!("{target}-{workload}.json"));
-            let text = std::fs::read_to_string(&path).expect("the reference results file is readable");
-            let parsed = json::parse(&text).expect("the reference results file is valid JSON");
-            Some(json::reference_side(&parsed).expect("the reference results file matches the schema"))
-        };
-
         let mut receipt = String::from("# SE-15 comparison lane receipt\n\n");
         receipt.push_str(&format!(
             "- source revision: {source_revision}\n- lane: {:?}\n- noise percent: {}%\n- both sides ran on this host, the engine side in-process and the references over their pinned loopback transports; per-sample order alternation across sides was not possible across the process boundary\n- regression rule: {}\n\n",
@@ -753,7 +1304,9 @@ mod tests {
                 target: "terrabase".to_owned(),
                 workload: name.to_owned(),
                 config,
-                observed_identity: format!("terrabase {source_revision} (durable engine, Synced commits)"),
+                observed_identity: format!(
+                    "terrabase {source_revision} (durable engine, Synced commits)"
+                ),
                 endpoint: lane.location_display(),
                 client_transport: TERRABASE_TRANSPORT.to_owned(),
                 samples,
@@ -779,14 +1332,25 @@ mod tests {
                 &limits,
             );
             let facts_path = references_dir.join(format!("terrabase-{name}.json"));
-            std::fs::write(&facts_path, facts_json).expect("the TerraBase facts document is writable");
+            std::fs::write(&facts_path, facts_json)
+                .expect("the TerraBase facts document is writable");
 
-            let postgresql = read_reference("postgresql", name);
-            let ravendb = read_reference("ravendb", name);
-            receipt.push_str(&render_workload_summary(name, &side, postgresql.as_ref(), ravendb.as_ref()));
+            let postgresql_document = read_reference_document(&references_dir, "postgresql", name);
+            let ravendb_document = read_reference_document(&references_dir, "ravendb", name);
+            if let Some(note) = postgresql_document.note("postgresql") {
+                receipt.push_str(&note);
+                receipt.push('\n');
+            }
+            if let Some(note) = ravendb_document.note("ravendb") {
+                receipt.push_str(&note);
+                receipt.push('\n');
+            }
+            let postgresql = postgresql_document.side();
+            let ravendb = ravendb_document.side();
+            receipt.push_str(&render_workload_summary(name, &side, postgresql, ravendb));
 
-            let (_, _, _, pg_verdict) = classify(&side, postgresql.as_ref());
-            let (_, _, _, raven_verdict) = classify(&side, ravendb.as_ref());
+            let (_, _, _, pg_verdict) = classify(&side, postgresql);
+            let (_, _, _, raven_verdict) = classify(&side, ravendb);
             println!(
                 "se15 lane {name}: terrabase median {:.0} ops/s (range {:.0}–{:.0}) — vs postgresql: {}, vs ravendb: {}",
                 side.throughput().map_or(0.0, |m| m.median),
@@ -797,7 +1361,8 @@ mod tests {
             );
         }
 
-        let receipt_path = references_dir.join(format!("se15-comparison-receipt-{source_revision}.md"));
+        let receipt_path =
+            references_dir.join(format!("se15-comparison-receipt-{source_revision}.md"));
         std::fs::write(&receipt_path, receipt).expect("the receipt is writable");
         println!("receipt written: {}", receipt_path.display());
     }
@@ -876,7 +1441,10 @@ mod tests {
                     });
                 }
                 let elapsed = started.elapsed().as_secs_f64();
-                println!("probe 16-thread indexed queries: {:.0} ops/s", iterations as f64 / elapsed);
+                println!(
+                    "probe 16-thread indexed queries: {:.0} ops/s",
+                    iterations as f64 / elapsed
+                );
             });
         }));
         if query_error.is_err() {
@@ -934,7 +1502,8 @@ mod tests {
 
     impl OperationIdProbe {
         fn new(index: u64) -> crate::types::OperationId {
-            crate::types::OperationId::try_new(&format!("probe-read-{index}")).expect("valid identifier")
+            crate::types::OperationId::try_new(&format!("probe-read-{index}"))
+                .expect("valid identifier")
         }
     }
 
@@ -943,7 +1512,8 @@ mod tests {
 
     impl DocumentIdProbe {
         fn of(index: u64) -> crate::types::DocumentId {
-            crate::types::DocumentId::try_new(&format!("seed-{}", index % 1_000)).expect("valid identifier")
+            crate::types::DocumentId::try_new(&format!("seed-{}", index % 1_000))
+                .expect("valid identifier")
         }
     }
 
@@ -988,7 +1558,10 @@ mod tests {
             for worker in 0..16_u64 {
                 scope.spawn(move || {
                     for index in 0..per_thread {
-                        lane_ref.commit_put_measured(worker * per_thread + index, crate::types::LocalDurability::Synced);
+                        lane_ref.commit_put_measured(
+                            worker * per_thread + index,
+                            crate::types::LocalDurability::Synced,
+                        );
                     }
                 });
             }
@@ -1005,7 +1578,11 @@ mod tests {
     fn config_as_tuple(config: LaneConfig) -> String {
         format!(
             "seed {} / ops {} / samples {} / concurrency {} / warmup {}",
-            config.seed_documents, config.operations, config.samples, config.concurrency, config.warmup_operations
+            config.seed_documents,
+            config.operations,
+            config.samples,
+            config.concurrency,
+            config.warmup_operations
         )
     }
 }

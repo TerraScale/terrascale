@@ -187,6 +187,25 @@ fn claim_predicates_and_field_projection_never_leak_denied_data() {
 }
 
 #[test]
+fn one_failed_conditional_grant_does_not_mask_another_grant() {
+    // Canonical ordering puts the `aaa` rule first. It cannot match because
+    // the request intentionally lacks that field; the `zzz` grant must still
+    // be considered and allow the operation.
+    let first =
+        PolicyRule::try_new(Operation::Read, "documents").expect("rule").with_claim_predicate(
+            ClaimPredicate::try_new("aaa", "org", ClaimComparison::Equals).expect("predicate"),
+        );
+    let second =
+        PolicyRule::try_new(Operation::Read, "documents").expect("rule").with_claim_predicate(
+            ClaimPredicate::try_new("zzz", "org", ClaimComparison::Equals).expect("predicate"),
+        );
+    let policy = Policy::try_new(1, ["aaa", "zzz"], [first, second]).expect("policy");
+    let mut authorized = request(Action::Read, 150);
+    authorized.fields.insert("zzz".to_owned(), AttributeValue::String("acme".to_owned()));
+    assert!(evaluate(&context(1), &policy, &authorized).is_allowed());
+}
+
+#[test]
 fn relationship_grants_require_matching_bounded_index_evidence() {
     let relationship =
         RelationshipPredicate::try_new("member", "users", 1, 10).expect("relationship");

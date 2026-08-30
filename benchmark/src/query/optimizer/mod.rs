@@ -55,6 +55,18 @@
 //! recorded when an index-dependent execution path exists, not a constant
 //! introduced speculatively here.
 //!
+//! Only the pass whose registration created the namespace runs the initial
+//! build. Concurrent queries racing one cold shape lose the registration
+//! race, select the existing namespace as their serving index, and build
+//! nothing — one cold shape costs one build however many queries arrive
+//! together. That leaves one deliberate gap: a namespace whose creator has
+//! not published yet — still building, or dead before it could — is
+//! registered but carries no segment, so those concurrent selections serve
+//! through the bounded scan (correct, only not accelerated). The gap is
+//! closed by the next lifecycle pass, whose coverage catch-up rebuilds every
+//! reported namespace that trails the latest publication; see
+//! [`lifecycle`].
+//!
 //! # Selection order (AX-13, adapted)
 //!
 //! Among complete candidates: an equivalent explicit index takes precedence
@@ -74,7 +86,10 @@
 //! this module's `lifecycle` submodule) runs at the head of every
 //! dynamic query's optimizer pass, so selection decides against
 //! post-maintenance truth and one public-seam query drives the whole state
-//! machine: a partial auto match widens the mapping into the covering union
+//! machine: a namespace whose published segment trails the latest
+//! publication is caught up first, one rebuild per namespace per pass, so
+//! one write never strands an Active index at stale coverage; a partial auto
+//! match widens the mapping into the covering union
 //! identity and supersedes the covered partials (AX-16); a background
 //! surpass pass retires auto indexes another auto index of the same
 //! collection completely serves and extends partially served ones into the
@@ -1208,19 +1223,36 @@ fn create_or_refuse(
         }
     };
     let namespace = registration.namespace().clone();
-    let build = initial_build(engine, catalog, &namespace, snapshot);
+    // Only the pass that created the namespace runs its initial build. A
+    // concurrent query that loses the registration race selects the existing
+    // namespace below, exactly as it would have selected a complete
+    // candidate, and does no build work: N threads racing one cold shape
+    // cost one build, not N (the concurrent cold-start shape), and the
+    // loser's compare-and-publish would only reject the build as stale.
+    let build =
+        registration.created().then(|| initial_build(engine, catalog, &namespace, snapshot));
     for target in &superseded {
         catalog.schedule_supersede(&namespace, target.namespace());
     }
     catalog.mark_queried(&namespace);
     catalog.remember_selection(shape, namespace.name());
     let basis = basis_of(catalog, &namespace, snapshot);
-    let outcome = if registration.created() {
-        SelectionOutcome::CreatedAutoIndex { name: namespace.name().to_owned(), build }
-    } else {
-        // Unreachable today — a registered definition with this shape would
-        // have been a complete candidate — but stays honest if that changes.
-        SelectionOutcome::ChosenIndex { name: namespace.name().to_owned(), kind: IndexKind::Auto }
+    let outcome = match (registration.created(), build) {
+        (true, Some(build)) => {
+            SelectionOutcome::CreatedAutoIndex { name: namespace.name().to_owned(), build }
+        }
+        // Reached when another pass already registered the same deterministic
+        // identity — normally the concurrent cold-start race, where that
+        // other pass created the namespace and owns the initial build, and
+        // occasionally a registered definition this demand widened into
+        // without the union becoming a complete candidate. The namespace is
+        // selected as-is; when its creator has not published yet (or died
+        // before it could), the selection stays correct through the bounded
+        // scan and the next lifecycle pass catches the segment up.
+        _ => SelectionOutcome::ChosenIndex {
+            name: namespace.name().to_owned(),
+            kind: IndexKind::Auto,
+        },
     };
     Ok(IndexSelectionRecord::new(
         tenant.clone(),

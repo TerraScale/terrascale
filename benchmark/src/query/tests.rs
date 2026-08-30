@@ -24,7 +24,7 @@ use super::{
     text,
 };
 use crate::{
-    engine::{CommitOutcome, Engine, EngineConfig},
+    engine::{CommitOutcome, Engine, EngineConfig, StorageBackend},
     operations::{QueryInput, QueryInputError, RequestValidationError, TqlQueryText},
     types::{
         Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue,
@@ -509,6 +509,82 @@ fn query_store_compiles_and_executes_against_supplied_snapshot() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// Proves the index-narrowed path structurally, without any timing claim: a
+/// collection of 5,000 documents answers an equality query whose posting list
+/// names two candidates by reading exactly those candidates, and the scanned
+/// count reports the candidate set, never the collection size a scan would
+/// have evaluated. Both storage backends run the same proof, because the
+/// keyed candidate fetch is a storage-port contract each backend implements.
+#[test]
+fn an_indexed_equality_query_reads_only_its_named_candidates() {
+    keyed_candidate_fetch_on_backend(StorageBackend::Lsm, "indexed-keyed-fetch-lsm");
+    keyed_candidate_fetch_on_backend(StorageBackend::RootFiles, "indexed-keyed-fetch-root");
+}
+
+/// Opens one engine on the named backend and proves the keyed candidate
+/// fetch of the index-narrowed path (see the test above).
+fn keyed_candidate_fetch_on_backend(backend: StorageBackend, tag: &str) {
+    let dir = location(tag);
+    std::fs::remove_dir_all(&dir).ok();
+    let config =
+        EngineConfig::durable(&dir).expect("durable location").with_storage_backend(backend);
+    let engine = Engine::open(config).expect("engine opens");
+    let tenant_scope = scope(&engine, "tenant-a");
+    let total = 5_000_usize;
+    let documents: Vec<Document> = (0..total)
+        .map(|index| {
+            let name = if index == 7 || index == total - 1 { "needle" } else { "hay" };
+            object_document(
+                &format!("doc-{index:05}"),
+                "users",
+                &[("name", DocumentValue::String(name.to_owned()))],
+            )
+        })
+        .collect();
+    commit_documents(&engine, &tenant_scope, "op-1", documents);
+    let store = engine.queries();
+    let query = spec(
+        "tenant-a",
+        "users",
+        predicate(vec![QueryCondition::Equals {
+            field: "name".to_owned(),
+            value: DocumentValue::String("needle".to_owned()),
+        }]),
+        QueryOrdering::default(),
+        projection_fields(&["name"]),
+        paging(0, None),
+        staleness(StalenessMode::Strict, Vec::new()),
+    );
+    let plan = store.compile(QueryInput::typed(query)).expect("compiles");
+
+    // The first execution registers and initially builds the automatic
+    // index before its data access; the second selects it. Both must answer
+    // identically, and both must report the two-candidate scan.
+    for round in 0..2 {
+        let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+        let result = store.execute(&plan, &snapshot).expect("executes");
+        assert_eq!(
+            row_ids(&result),
+            ["doc-00007", "doc-04999"],
+            "round {round} answers with exactly the needles"
+        );
+        assert_eq!(result.matched(), 2);
+        assert_eq!(
+            result.statistics().scanned(),
+            2,
+            "round {round} evaluated the two candidates the posting read named, \
+             not the 5,000 documents a collection scan would have evaluated"
+        );
+        assert_eq!(result.statistics().skipped(), 0);
+        assert!(
+            result.index_generation().is_some(),
+            "round {round} is served by the automatic index segment"
+        );
+    }
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn automatic_index_reads_are_collection_scoped_and_fall_back_for_an_uncovered_snapshot() {
     let (dir, engine) = open_engine("indexed-scope");
@@ -547,8 +623,11 @@ fn automatic_index_reads_are_collection_scoped_and_fall_back_for_an_uncovered_sn
     );
     assert!(indexed.index_generation().is_some(), "the automatic segment served the lookup");
 
-    // A later commit makes the published segment incomplete for the new cut.
-    // The executor must scan deterministically rather than omit the new match.
+    // A later commit makes the published segment incomplete for the new cut,
+    // and the optimizer pass that runs at the head of the next dynamic query
+    // catches the segment up to that commit before selection: one write does
+    // not strand the index at stale coverage. The healed segment serves the
+    // new cut, and the new match is found.
     commit_documents(
         &engine,
         &tenant_scope,
@@ -560,17 +639,53 @@ fn automatic_index_reads_are_collection_scoped_and_fall_back_for_an_uncovered_sn
         )],
     );
     let newer = engine.read_snapshot(&tenant_scope).expect("new snapshot");
-    let fallback = store.execute(&plan, &newer).expect("bounded fallback execution");
-    assert_eq!(row_ids(&fallback), ["new-user", "user"]);
+    let healed = store.execute(&plan, &newer).expect("caught-up execution");
+    assert_eq!(row_ids(&healed), ["new-user", "user"]);
+    assert_eq!(
+        healed.statistics().scanned(),
+        2,
+        "the caught-up segment narrows candidates at the new coverage"
+    );
+    assert!(
+        healed.index_generation().is_some(),
+        "the catch-up rebuild republished the segment for the new cut"
+    );
+
+    // A plan that names the index bypasses the optimizer pass entirely
+    // (AX-26), so nothing catches its segment up: executed against a cut the
+    // segment does not cover, the executor must scan deterministically
+    // rather than omit the new match — the answer never depends on index
+    // data.
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-3",
+        vec![object_document(
+            "late-user",
+            "users",
+            &[("name", DocumentValue::String("ada".into()))],
+        )],
+    );
+    let named = spec(
+        "tenant-a",
+        "users",
+        predicate(vec![QueryCondition::Equals {
+            field: "name".to_owned(),
+            value: DocumentValue::String("ada".to_owned()),
+        }]),
+        QueryOrdering::default(),
+        QueryProjection::whole_document(),
+        paging(0, None),
+        staleness(StalenessMode::AllowStale, vec![namespace("tenant-a", "Auto/users/ByName")]),
+    );
+    let named_plan = store.compile(QueryInput::typed(named)).expect("compiles");
+    let latest = engine.read_snapshot(&tenant_scope).expect("latest snapshot");
+    let fallback = store.execute(&named_plan, &latest).expect("bounded fallback execution");
+    assert_eq!(row_ids(&fallback), ["late-user", "new-user", "user"]);
     assert_eq!(
         fallback.statistics().scanned(),
-        3,
+        4,
         "an uncovered segment falls back to the full collection scan"
-    );
-    assert_eq!(
-        fallback.index_generation(),
-        None,
-        "a fallback scan does not claim an index generation"
     );
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();

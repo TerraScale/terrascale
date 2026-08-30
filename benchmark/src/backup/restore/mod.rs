@@ -1108,6 +1108,10 @@ impl Replay {
             digest: write_set_digest(tenant, &batch.writes),
             snapshot_sequence: storage.published_state().0,
             durability: LocalDurability::Synced,
+            // Restore replay is an internal mutation, not an origin request.
+            // It must never mint admitted-request usage without authenticated
+            // serving-boundary facts.
+            usage_admission: None,
             writes: batch.writes,
             operation,
         };

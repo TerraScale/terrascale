@@ -8,18 +8,17 @@ authority: ../../../GOAL.md
 
 ## Public operation coverage
 
-`TerraScale.Database` exposes every supported customer and administrative
-database operation through a named, typed REST contract. `TerraScale.DotNet`
-and `TerraScale.TypeScript` expose the same operation set, authorization
-requirements, errors, limits, idempotency behavior, durability choices, and
-reactive behavior where it applies. An operation is not public until both SDKs,
-OpenAPI, public examples, contract tests, and the service implementation agree.
+The Go `TerraScale.Database` gateway exposes every supported customer and
+administrative database operation through a named, typed REST contract. Public
+SDKs expose the same operation set, authorization requirements, errors,
+limits, idempotency behavior, durability choices, and reactive behavior where
+it applies. An operation is not public until OpenAPI, the supported SDKs,
+public examples, contract tests, and the service implementation agree.
 
-The first release uses `/api/v1`. Public clients never call TBEP, FlatBuffers,
-TerraBase, an OCI API, or an untyped raw HTTP escape hatch. Public reactive
-traffic uses only the bounded MessagePack protocol in ADR 0025. The Database
-API translates each supported public operation to a named private TBEP
-operation.
+The first release uses `/api/v1`. Public clients never call TBEP, TerraBase, an
+OCI API, or an untyped raw HTTP escape hatch. The gateway translates each
+supported public operation to a named private TBEP gRPC operation through
+`terrabase-go`. TerraBase owns no public wire encoding.
 
 ## Compatibility window
 
@@ -29,7 +28,7 @@ for twelve months. The service publishes the retirement date before successor
 GA and returns standard deprecation and sunset metadata during the overlap.
 Another public major cannot reach GA until the older of the two supported
 majors reaches its published sunset, so the service never creates an
-unmaintainable three-major overlap. Both SDKs publish supported releases and
+unmaintainable three-major overlap. Supported SDKs publish releases and
 security fixes for each admitted public major.
 
 Additive fields and operations may ship within a public major when old clients
@@ -68,8 +67,8 @@ enters the engine:
 | One HTTP request or mutation batch | 16 MiB |
 | Mutations in one batch | 1,000 |
 | Document nesting depth | 64 |
-| One public MessagePack message | 8 MiB |
-| MessagePack payload chunk | 4 MiB |
+| One reactive result event | 8 MiB |
+| One streamed payload chunk | 4 MiB |
 | Query page size | 100 by default, 1,000 maximum |
 | Query execution time | 5 seconds by default, 30 seconds maximum |
 | Relationship traversal depth | 5 |
@@ -84,7 +83,7 @@ length, allocation, collection count, or trailing data before materializing an
 unbounded object.
 
 Large snapshots, query results, and reset results use ordered chunks. No chunk
-may exceed 4 MiB and no MessagePack envelope may exceed 8 MiB. Each stream has
+may exceed 4 MiB and no reactive result event may exceed 8 MiB. Each stream has
 a declared total bound, sequence, checksum, deadline, and cancellation path.
 The receiver verifies every chunk before publication and discards incomplete
 streams after the bounded retention window.
@@ -107,5 +106,5 @@ and a dated recovery or major-version plan.
 Qualification generates boundary corpora for every limit and exercises exact,
 one-below, one-above, multiplication-overflow, truncated, duplicate-field,
 deeply nested, slow-stream, cancellation, and decompression-bomb cases in the
-Database API and both SDKs. Contract drift, missing SDK operations, generic raw
-routes, or different error meanings block release.
+Database API and supported SDKs. Contract drift, missing SDK operations,
+generic raw routes, or different error meanings block release.

@@ -593,7 +593,7 @@ pub enum RebuildStepOutcome {
 /// field-by-field mapping with V1 anchors is decision D7 of
 /// `docs/index/gapq18-lifecycle-staleness.md`. Rates and percentages are
 /// deliberately absent: they are performance statements, and only
-/// TerraBase.Benchmark receipts carry those (charter PD-2026-08-26-03).
+/// Repository benchmark receipts carry those (charter PD-2026-08-26-03).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IndexStatistics {
     tenant: TenantId,

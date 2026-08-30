@@ -153,6 +153,7 @@ pub fn run<B: Backend>(
     workload: Workload,
     config: LaneConfig,
 ) -> Result<RunResults, Box<dyn Error + Send + Sync>> {
+    config.validate()?;
     backend.setup(&config)?;
     backend.seed(&config)?;
 
@@ -162,50 +163,97 @@ pub fn run<B: Backend>(
         backend.client_transport(),
     );
 
-    let slots: Vec<_> = (0..config.concurrency)
-        .map(|_| backend.open_slot())
-        .collect::<Result<Vec<_>, _>>()?;
+    let slots: Vec<_> =
+        (0..config.concurrency).map(|_| backend.open_slot()).collect::<Result<Vec<_>, _>>()?;
 
     let per_slot_operations = config.operations / config.concurrency;
     let per_slot_warmup = config.warmup_operations / config.concurrency;
+    let warmup_remainder = config.warmup_operations % config.concurrency;
     let start = Arc::new(Barrier::new(config.concurrency + 1));
     let end = Arc::new(Barrier::new(config.concurrency + 1));
+    let warmup_end = Arc::new(Barrier::new(config.concurrency + 1));
+    let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let failure = Arc::new(std::sync::Mutex::new(None::<String>));
 
     let mut handles = Vec::with_capacity(slots.len());
-    for mut slot in slots {
+    for (slot_index, mut slot) in slots.into_iter().enumerate() {
         let start = Arc::clone(&start);
         let end = Arc::clone(&end);
-        handles.push(std::thread::spawn(move || -> Vec<Vec<f64>> {
+        let warmup_end = Arc::clone(&warmup_end);
+        let failed = Arc::clone(&failed);
+        let failure = Arc::clone(&failure);
+        handles.push(std::thread::spawn(move || -> Result<Vec<Vec<f64>>, String> {
             // Warm-up: real work, excluded from every measured sample.
-            for index in 0..per_slot_warmup {
-                let _ = one_op(
-                    &mut *slot,
-                    workload.select_mixed(index),
-                    index,
-                    config.seed_documents,
-                );
+            let mut warmup_error = None;
+            let slot_warmup = per_slot_warmup + usize::from(slot_index < warmup_remainder);
+            for index in 0..slot_warmup {
+                if let Err(error) =
+                    one_op(&mut *slot, workload.select_mixed(index), index, config.seed_documents)
+                {
+                    warmup_error = Some(format!("warm-up operation {index} failed: {error}"));
+                    break;
+                }
+            }
+            if let Some(error) = &warmup_error {
+                failed.store(true, std::sync::atomic::Ordering::Release);
+                if let Ok(mut message) = failure.lock() {
+                    message.get_or_insert_with(|| error.clone());
+                }
+            }
+            // Every slot reaches this barrier even after an error, so a bad
+            // warm-up cannot strand healthy slots before the coordinator can
+            // classify the run as invalid.
+            warmup_end.wait();
+            if let Some(error) = warmup_error {
+                return Err(error);
             }
             let mut samples = Vec::with_capacity(config.samples);
             for sample in 0..config.samples {
                 start.wait();
                 let mut latencies = Vec::with_capacity(per_slot_operations);
+                let mut sample_error = None;
                 for index in 0..per_slot_operations {
                     let window_index = sample * per_slot_operations + index;
                     let started = Instant::now();
-                    one_op(
+                    if let Err(error) = one_op(
                         &mut *slot,
                         workload.select_mixed(window_index),
                         window_index,
                         config.seed_documents,
-                    )
-                    .expect("a measured operation failed");
+                    ) {
+                        sample_error =
+                            Some(format!("measured operation {window_index} failed: {error}"));
+                        failed.store(true, std::sync::atomic::Ordering::Release);
+                        if let Ok(mut message) = failure.lock() {
+                            message.get_or_insert_with(|| sample_error.clone().unwrap_or_default());
+                        }
+                        break;
+                    }
                     latencies.push(started.elapsed().as_secs_f64() * 1_000_000.0);
                 }
                 end.wait();
+                if failed.load(std::sync::atomic::Ordering::Acquire) {
+                    return Err(sample_error.unwrap_or_else(|| {
+                        "another lane worker failed during the measured window".to_owned()
+                    }));
+                }
                 samples.push(latencies);
             }
-            samples
+            Ok(samples)
         }));
+    }
+
+    warmup_end.wait();
+    if failed.load(std::sync::atomic::Ordering::Acquire) {
+        let message = failure
+            .lock()
+            .ok()
+            .and_then(|message| message.clone())
+            .unwrap_or_else(|| "a lane warm-up operation failed".to_owned());
+        for handle in handles {
+            let _ = handle.join();
+        }
+        return Err(message.into());
     }
 
     // The coordinator times each sample from the start barrier's release
@@ -218,10 +266,26 @@ pub fn run<B: Backend>(
         let started = Instant::now();
         end.wait();
         walls.push(started.elapsed());
+        if failed.load(std::sync::atomic::Ordering::Acquire) {
+            break;
+        }
     }
     let mut thread_samples = Vec::with_capacity(handles.len());
     for handle in handles {
-        thread_samples.push(handle.join().map_err(|_| "a slot thread panicked")?);
+        thread_samples.push(
+            handle
+                .join()
+                .map_err(|_| "a slot thread panicked".to_owned())?
+                .map_err(|error| error.to_owned())?,
+        );
+    }
+    if failed.load(std::sync::atomic::Ordering::Acquire) {
+        let message = failure
+            .lock()
+            .ok()
+            .and_then(|message| message.clone())
+            .unwrap_or_else(|| "a measured lane operation failed".to_owned());
+        return Err(message.into());
     }
 
     let samples: Vec<Sample> = walls
@@ -237,6 +301,7 @@ pub fn run<B: Backend>(
         .collect();
 
     Ok(RunResults {
+        status: "complete",
         target: backend.target_name(),
         workload: workload.as_str().to_owned(),
         config,

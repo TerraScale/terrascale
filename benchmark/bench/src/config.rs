@@ -36,7 +36,65 @@ impl LaneConfig {
         warmup_operations: 1_000,
         noise_percent: 5.0,
     };
+
+    /// Validates the shape of a run before it can touch a reference server.
+    ///
+    /// A concurrency window must divide evenly so every slot executes the
+    /// same number of operations. Silently dropping the remainder would make
+    /// the JSON claim a different workload from the requested one.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.seed_documents == 0 {
+            return Err(ConfigError::Zero("seed_documents"));
+        }
+        if self.operations == 0 {
+            return Err(ConfigError::Zero("operations"));
+        }
+        if self.samples == 0 {
+            return Err(ConfigError::Zero("samples"));
+        }
+        if self.concurrency == 0 {
+            return Err(ConfigError::Zero("concurrency"));
+        }
+        if !self.operations.is_multiple_of(self.concurrency) {
+            return Err(ConfigError::NotDivisible {
+                operations: self.operations,
+                concurrency: self.concurrency,
+            });
+        }
+        if !self.noise_percent.is_finite() || !(0.0..=100.0).contains(&self.noise_percent) {
+            return Err(ConfigError::Noise(self.noise_percent));
+        }
+        Ok(())
+    }
 }
+
+/// Why a requested lane configuration cannot execute safely.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ConfigError {
+    /// A required positive count was zero.
+    Zero(&'static str),
+    /// The operation count would be truncated by slot fan-out.
+    NotDivisible { operations: usize, concurrency: usize },
+    /// The statistical noise setting is not a finite percentage.
+    Noise(f64),
+}
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Zero(field) => write!(formatter, "{field} must be greater than zero"),
+            Self::NotDivisible { operations, concurrency } => write!(
+                formatter,
+                "operation count {operations} is not divisible by concurrency {concurrency}"
+            ),
+            Self::Noise(value) => {
+                write!(formatter, "noise percentage {value} is not finite or in 0..=100")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {}
 
 /// The four CRUD-class workloads both sides drive, with V1's mixed ratio.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -119,5 +177,36 @@ impl Target {
             Self::PostgreSql => "postgresql",
             Self::RavenDb => "ravendb",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ConfigError, LaneConfig};
+
+    #[test]
+    fn rejects_zero_counts_and_non_divisible_windows() {
+        let mut config = LaneConfig::RECORD_MINIMUM;
+        config.concurrency = 0;
+        assert!(matches!(config.validate(), Err(ConfigError::Zero("concurrency"))));
+
+        let mut config = LaneConfig::RECORD_MINIMUM;
+        config.operations += 1;
+        assert!(matches!(config.validate(), Err(ConfigError::NotDivisible { .. })));
+
+        let mut config = LaneConfig::RECORD_MINIMUM;
+        config.warmup_operations += 1;
+        assert!(config.validate().is_ok(), "warm-up remainder is distributed across slots");
+    }
+
+    #[test]
+    fn rejects_non_finite_or_out_of_range_noise() {
+        let mut config = LaneConfig::RECORD_MINIMUM;
+        config.noise_percent = f64::NAN;
+        assert!(matches!(config.validate(), Err(ConfigError::Noise(_))));
+
+        config.noise_percent = 101.0;
+        assert!(matches!(config.validate(), Err(ConfigError::Noise(_))));
+        assert!(LaneConfig::RECORD_MINIMUM.validate().is_ok());
     }
 }

@@ -64,9 +64,9 @@ a time. A durable ADR 0028 operation performs rewrites and records their
 verified frontier. Contract removes old write behavior only after no admitted
 old writer remains.
 
-Protocol field IDs, union tags, MessagePack positions and tags, datatype codes,
-storage codes, and canonical meanings are never reused. An unknown required
-feature fails closed instead of being preserved as an opaque value.
+Protobuf field and enum identifiers, datatype codes, storage codes, and
+canonical meanings are never reused. Unknown required behavior fails closed
+instead of being preserved as an opaque value.
 
 ## Rollback boundary
 
@@ -98,7 +98,7 @@ operation set; it does not forward generic old payloads into the engine.
 ## Evidence
 
 Qualification covers every supported N/N-1 pairing, both upgrade directions,
-mixed Rust/C# bindings, canary halt, process and Region failure at each stage,
+mixed Rust and Go bindings, canary halt, process and Region failure at each stage,
 surge-member loss, joint membership, WAL and snapshot recovery, backup restore,
 key rotation, delayed clients, public-version overlap, pre-activation rollback,
 post-activation roll-forward, and twenty-four-hour mixed-version expiry.

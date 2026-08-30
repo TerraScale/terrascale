@@ -4,17 +4,14 @@
 //! [`EngineHost`] implements [`TbepHost`] over one `terrabase`
 //! `Engine` at a durable location: channel binds validate the tenant
 //! identifier, document writes commit at `Synced` through the engine's
-//! transaction path with the envelope's idempotency key as the
+//! transaction path with the RPC's idempotency key as the
 //! operation identity, and document reads serve the published body
-//! with its version. This is the serving spine the C# client exercises
-//! — `SyncDeliveryHost` remains the sync-session specialist beside it.
+//! with its version. This is the serving spine `terrabase-go` exercises;
+//! `SyncDeliveryHost` remains the sync-session specialist beside it.
 //!
-//! Honest limits of this landing: the sync-session family
-//! (backbone/sessions) and the family surfaces answer the typed refusal
-//! naming their landing. Served: V1-compatible queries, collection
-//! schemas, acknowledgement and read levels with positions, topology's
-//! honest standalone answer, query cancellation, and the Storage Tier
-//! Mover's typed administration.
+//! The host also serves queries, collection schemas, acknowledgement and read
+//! levels with positions, topology, query cancellation, and Storage Tier Mover
+//! administration. Unsupported operations fail with typed errors.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;

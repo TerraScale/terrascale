@@ -168,7 +168,11 @@ impl FrameCursor<'_> {
         }
         match self.read_u8()? {
             VALUE_NULL => Ok(DocumentValue::Null),
-            VALUE_BOOLEAN => Ok(DocumentValue::Boolean(self.read_u8()? == 1)),
+            VALUE_BOOLEAN => Ok(DocumentValue::Boolean(match self.read_u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err(BackupError::ChecksumMismatch),
+            })),
             VALUE_INTEGER => Ok(DocumentValue::Integer(i64::from_le_bytes(
                 self.read_array(8)?.try_into().expect("eight bytes"),
             ))),
@@ -197,7 +201,12 @@ impl FrameCursor<'_> {
                     let key =
                         String::from_utf8(key_bytes).map_err(|_| BackupError::ChecksumMismatch)?;
                     let value = self.read_value(depth + 1)?;
-                    fields.insert(key, value);
+                    if fields.insert(key, value).is_some() {
+                        // The writer serializes a BTreeMap, whose keys are
+                        // unique. Reject duplicate fields rather than
+                        // silently changing the value by last-write-wins.
+                        return Err(BackupError::ChecksumMismatch);
+                    }
                 }
                 Ok(DocumentValue::Object(fields))
             }

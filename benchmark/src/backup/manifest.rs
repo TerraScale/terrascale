@@ -289,6 +289,36 @@ impl BackupManifest {
         self.total_bytes
     }
 
+    /// Encodes this validated manifest in the canonical recovery-point
+    /// format.
+    ///
+    /// Object-store adapters use these bytes as the commit marker for a
+    /// recovery point. They upload every member first and this manifest last,
+    /// so a listed manifest never names a partially uploaded point.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        self.render().into_bytes()
+    }
+
+    /// Parses and validates one canonical recovery-point manifest.
+    ///
+    /// The same strict size, ordering, identity, and path checks used by the
+    /// filesystem restore path apply here. This lets an object-store adapter
+    /// select a chain before downloading its members without duplicating the
+    /// backup format parser.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackupError::ManifestInvalid`] when `bytes` are not one
+    /// complete canonical manifest.
+    pub fn decode(bytes: &[u8]) -> Result<Self, BackupError> {
+        if bytes.len() > MAX_MANIFEST_BYTES {
+            return Err(BackupError::ManifestInvalid);
+        }
+        let text = std::str::from_utf8(bytes).map_err(|_| BackupError::ManifestInvalid)?;
+        parse_manifest(text)
+    }
+
     /// Renders the complete manifest text, identity line included.
     pub(crate) fn render(&self) -> String {
         let mut lines = vec![HEADER.to_owned(), format!("identity {}", self.identity)];

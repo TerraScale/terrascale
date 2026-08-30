@@ -1,121 +1,106 @@
 # TerraBase
 
-TerraBase is the native Rust engine and protocol workspace for the
-TerraScale database product. It is under active development and is not a
-production or General Availability release. The repository contains meaningful
-correctness evidence, but its deterministic and loopback lanes do not qualify
-OCI placement, WAN behavior, production SLOs, or a thirty-day soak.
+TerraBase is TerraScale's private multi-Region database engine. The engine and
+repository-owned runtime services are written in Rust. The repository also
+contains `terrabase-go`, the only network client permitted to call TerraBase.
 
-The release plan, evidence limits, and open work are in
-[GOAL.md](GOAL.md). The 40-scenario qualification matrix is
-[docs/evidence/qualification-gap-sweep.md](docs/evidence/qualification-gap-sweep.md).
-Accepted architecture decisions are indexed in [docs/adr/README.md](docs/adr/README.md); a decision with
-`Proposed` status is not an implementation or release authorization.
+This checkout is pre-production. Local tests establish implementation facts,
+not OCI qualification. `ts-orchestrator` owns native x86_64 and ARM64 runs,
+GRU/SFO/FRA topology tests, failure injection, the thirty-day soak, and
+promotion of the exact candidate. [GOAL.md](GOAL.md) records the exit gates and
+current blockers.
 
-## Repository shape
+## Runtime boundary
 
-The root package and Rust library target are `terrabase` (`src/lib.rs`); the
-rename cutover completed 2026-08-30 and the previous dependency-alias window
-is closed. Its public engine modules
-cover authorization, backup and restore, deletion, documents
-and transactions, families, indexes, queries/TQL, regions, relationships,
-replication, sessions, sharding, storage, streaming, tiers, usage, and the
-platform/protocol adapter seams. The Cargo workspace also contains the native
-causal, CRDT, sync, conformance, member-transport, cluster,
-replication-core, and TBEP crates.
+```text
+public clients
+        -> TerraScale.Database gateway written in Go
+        -> terrabase-go
+        -> private protobuf/gRPC TBEP over HTTP/2 and production mTLS
+        -> TerraBase engine and durable storage
+```
 
-The durable engine path is `Engine::open` with an `EngineConfig::durable`
-location. Local commit acknowledgement is explicit:
+TerraBase has no public protocol, MessagePack endpoint, WebSocket endpoint, or
+supported client other than `terrabase-go`. Reactive result-view behavior is an
+engine contract exposed to the Go gateway through private TBEP gRPC.
+
+The engine owns storage, WAL, compaction, indexing, TQL query execution,
+causality, CRDT merge, replication, repair, membership acceptance, backup,
+restore, deletion, reactive state, and authoritative usage facts. A durable
+engine opens one filesystem location through `Engine::open` and
+`EngineConfig::durable`.
+
+Local commit acknowledgements mean:
 
 ```text
 Buffered -> Written -> Synced
 ```
 
-The names describe local storage progress; they do not promise replication,
-backup, or production durability. WAL/LSM, compaction, snapshots, backup,
-restore, replication, and recovery code each retain their own limits and
-receipts.
+These states describe local storage progress. They do not imply Region-loss
+durability. `GlobalDurable` must fail closed unless at least two active Regions
+participate.
 
-The intended product boundary is:
+## Repository map
 
-```text
-public clients / SDKs
-        -> TerraScale.Database service in TerraScale.Internals (product gateway and authorization boundary)
-        -> private TBEP
-        -> TerraBase engine and durable storage
-```
+- `src/` contains the Rust engine.
+- `crates/terrabase-tbep/` owns the protobuf schema, gRPC server, private host
+  boundary, vectors, and transport qualification harness.
+- `crates/terrabase-server/` is the production daemon composition. It is a
+  release deliverable and remains unready until every configured security and
+  runtime bound is enforced and the complete clustered host replaces the
+  standalone engine host.
+- `terrabase-go/` contains generated bindings and the sole network client.
+- `crates/terrabase-studio/` contains the owner-only loopback Studio. It uses
+  Axum, Datastar, Basecoat, and a vendored Monaco JSON editor with linting.
+- `bench/` is the benchmark driver. Markdown history under
+  `docs/evidence/benchmarks/` is the repository's comparison authority.
+- `deploy/observability/` contains the private Prometheus template, alert
+  rules, and canonical Grafana dashboard.
+- `docs/operations/s3-backup-and-restore.md` is the S3 setup, verification,
+  lifecycle, and restore runbook.
+- `docs/adr/` contains accepted architecture decisions.
+- `docs/evidence/` separates local lane facts from production qualification.
 
-The repository-local `host/`, `cli/`, and `studio/` trees are migration-source
-and development/conformance lanes. Their documentation is explicit about
-their current limitations; the trusted-header local host and direct TBEP mode
-must not become a public customer boundary. `TerraScale.Internals` permanently
-owns the Database service source. The standalone `TerraScale.Database`
-repository is transitional and may be retired only after provenance, generated
-binding parity, supported-operation cutover, and rollback evidence are accepted.
-The accepted runtime ownership decision is recorded in [ADR 0034](docs/adr/0034-sole-production-gateway-and-host-retirement.md).
+The Studio binds only to loopback, has no authentication, and opens one engine
+location in process. It is an owner diagnostic tool, not a customer or
+production metrics boundary. Monaco and Basecoat assets are served locally, so
+opening Studio does not contact a public CDN.
 
-## Protocols and trust boundaries
+## Development gates
 
-Private TBEP is owned by `crates/terrabase-tbep` and its registry, vectors,
-server, and transport tests. The public reactive sync contract is documented
-under `docs/sync/` and is separate from private TBEP. Protocol generation,
-hostile-input coverage, cross-language conformance, and migration evidence are
-release work even where a schema or focused test already exists. See ADR 0025,
-ADR 0024, and the protocol rows in the qualification matrix.
+The root workspace:
 
-The Rust library denies unsafe code and validates bounded identifiers, payloads,
-versions, generations, authorization evidence, and durability outcomes. The
-repository-local host currently uses a trusted local context gate rather than
-customer authentication. Production authentication, grants, key management,
-and OCI placement belong to the product gateway and control-plane owners; no
-local test is evidence that those production controls are complete.
-
-## Current evidence posture
-
-The latest matrix refresh is tied to the dated `develop` audit baseline
-`4075908` (2026-08-29), not a promise about a later branch tip, and
-distinguishes lane-scoped correctness from production qualification. It records
-lane evidence for native storage, replication, recovery, sync, region parsing,
-model checking, and deletion-domain invariants, while retaining explicit
-`partial`, `missing`, and `blocked-external` statuses for work that is not
-implemented or cannot be proven on this host. In particular, no benchmark
-receipt in this repository is a production latency or throughput claim.
-
-The dated audit baseline also carries the implementation work for the private
-protocol schema; generated artifacts remain governed by their schema owner and
-must pass regeneration, drift, hostile-decode, and cross-language checks before
-the protocol can be called production-ready.
-
-## Development
-
-Read [docs/development.md](docs/development.md) before changing code or
-evidence. The normal local checks are:
-
-```bash
+```sh
 cargo fmt --all -- --check
 cargo check --workspace --locked
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo doc --workspace --no-deps --locked
-cargo check --manifest-path bench/Cargo.toml --locked
-cargo deny check
+cargo deny --all-features --locked check
 ```
 
-CI owns the complete gate (`.forgejo/workflows/ci.yml`). Recovery, replication,
-compaction, backup, and performance work has additional lane and receipt
-requirements described by the relevant ADR and evidence document. Do not
-rewrite a receipt from memory: record the exact command, commit, environment,
-result, and honest limits.
+Standalone deliverables:
 
-## Documentation map
+```sh
+cargo test --manifest-path bench/Cargo.toml --locked
+cargo test --manifest-path crates/terrabase-studio/Cargo.toml --locked
+cd terrabase-go && go vet -mod=readonly ./... && go test -mod=readonly ./...
+```
 
-- [GOAL.md](GOAL.md) — repository production plan, dependencies, decisions,
-  acceptance evidence, risks, and exit gates.
-- [docs/adr/README.md](docs/adr/README.md) — durable architecture decisions; `Proposed` remains
-  proposed until its owner accepts it.
-- [docs/evidence](docs/evidence/) — lane receipts and qualification limits.
-- [docs/development.md](docs/development.md) — contributor and validation
-  contract.
-- [host/README.md](host/README.md), [cli/README.md](cli/README.md), and
-  [studio/README.md](studio/README.md) — migration-source and UI lane
-  contracts, not a production authorization to expose those surfaces.
+CI also checks protobuf generation drift, hostile input handling, architecture
+rules, dashboard queries, benchmark-history drift, licenses, and advisories.
+See [docs/development.md](docs/development.md) before changing code or evidence.
+
+## Production evidence
+
+The initial topology uses `GRU`, `SFO`, and `FRA`, with two active Members per
+selected Region and Partition. Production TCP requires TLS 1.3 and mutual
+workload authentication. Prometheus and Grafana remain private. Production
+encryption uses OCI Vault and the key lifecycle in ADR 0030; local generated
+keys are development-only and can never satisfy a production gate.
+
+Do not turn a loopback test, synthetic benchmark, skipped live test, or local
+fixture into a production claim. Candidate evidence must name the source,
+artifact, configuration, topology, command, result, and known limits.
+
+TerraBase is licensed under the [MIT License](LICENSE.md).

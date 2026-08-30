@@ -1,0 +1,1806 @@
+//! The HTTP surface: one router, server-rendered pages, and Datastar actions.
+
+use std::sync::Arc;
+
+use axum::Router;
+use axum::body::Body;
+use axum::extract::{DefaultBodyLimit, Form, Query, State};
+use axum::http::{HeaderValue, Request, StatusCode, header};
+use axum::middleware::{self, Next};
+use axum::response::{Html, Response};
+use axum::routing::{get, post};
+use serde::Deserialize;
+
+use crate::datastar::{self, MergeMode};
+use crate::engine_ops;
+use crate::html::{self, Tone};
+use crate::metrics;
+use crate::pages::{
+    backups, documents, indexes, metrics_page, overview, query, replication, tiers, usage,
+};
+use crate::s3_backup::{
+    BackupRunMode, S3BackupRepository, S3BackupSettings, backup_to_s3, restore_from_s3,
+    verify_s3_chain,
+};
+use crate::state::StudioState;
+
+/// Maximum encoded form body accepted by any action. This bounds JSON editor
+/// input and prevents a browser action from consuming unbounded memory while
+/// Axum deserializes it.
+const MAX_ACTION_BODY_BYTES: usize = 256 * 1024;
+
+/// The vendored Basecoat stylesheet, embedded so the binary is self-contained.
+const BASECOAT_CSS: &str = include_str!("../static/basecoat.css");
+/// The hand-written Datastar-protocol runtime.
+const STUDIO_JS: &str = include_str!("../static/studio.js");
+/// CSP sources required by the hand-written runtime and pinned Monaco asset.
+const CONTENT_SECURITY_POLICY_VALUE: &str = "default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self'; worker-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+/// Monaco 0.52.2 assets are vendored so the private Studio makes no CDN calls.
+const MONACO_LOADER: &[u8] = include_bytes!("../static/monaco/vs/loader.js");
+const MONACO_EDITOR_JS: &[u8] = include_bytes!("../static/monaco/vs/editor/editor.main.js");
+const MONACO_EDITOR_CSS: &[u8] = include_bytes!("../static/monaco/vs/editor/editor.main.css");
+const MONACO_WORKER_MAIN: &[u8] = include_bytes!("../static/monaco/vs/base/worker/workerMain.js");
+const MONACO_JSON_MODE: &[u8] = include_bytes!("../static/monaco/vs/language/json/jsonMode.js");
+const MONACO_JSON_WORKER: &[u8] = include_bytes!("../static/monaco/vs/language/json/jsonWorker.js");
+const MONACO_CODICON_FONT: &[u8] =
+    include_bytes!("../static/monaco/vs/base/browser/ui/codicons/codicon/codicon.ttf");
+
+/// Builds the studio's router.
+pub fn router(state: Arc<StudioState>) -> Router {
+    Router::new()
+        .route("/static/basecoat.css", get(stylesheet))
+        .route("/static/studio.js", get(runtime))
+        .route("/static/monaco/vs/loader.js", get(monaco_loader))
+        .route("/static/monaco/vs/editor/editor.main.js", get(monaco_editor_js))
+        .route("/static/monaco/vs/editor/editor.main.css", get(monaco_editor_css))
+        .route("/static/monaco/vs/base/worker/workerMain.js", get(monaco_worker_main))
+        .route("/static/monaco/vs/language/json/jsonMode.js", get(monaco_json_mode))
+        .route("/static/monaco/vs/language/json/jsonWorker.js", get(monaco_json_worker))
+        .route(
+            "/static/monaco/vs/base/browser/ui/codicons/codicon/codicon.ttf",
+            get(monaco_codicon_font),
+        )
+        .route("/", get(overview_page))
+        .route("/healthz", get(healthz))
+        .route("/readyz", get(readyz))
+        .route("/metrics", get(metrics_page_handler))
+        .route("/cluster", get(cluster_page))
+        .route("/documents", get(documents_page))
+        .route("/documents/rows", post(documents_rows))
+        .route("/documents/read", post(documents_read))
+        .route("/documents/put", post(documents_put))
+        .route("/documents/delete", post(documents_delete))
+        .route("/documents/sample", post(documents_sample))
+        .route("/documents/clear-view", post(documents_clear_view))
+        .route("/indexes", get(indexes_page))
+        .route("/indexes/create", post(indexes_create))
+        .route("/indexes/action", post(indexes_action))
+        .route("/query", get(query_page))
+        .route("/query/run", post(query_run))
+        .route("/query/tql", post(query_tql))
+        .route("/replication", get(replication_page))
+        .route("/replication/regions/admit", post(regions_admit))
+        .route("/replication/regions/retire", post(regions_retire))
+        .route("/replication/topology/add-region", post(topology_add_region))
+        .route("/replication/topology/remove-region", post(topology_remove_region))
+        .route("/replication/durability/submit", post(durability_submit))
+        .route("/replication/durability/toggle-member", post(durability_toggle_member))
+        .route("/tiers", get(tiers_page))
+        .route("/tiers/configure", post(tiers_configure))
+        .route("/tiers/pause", post(tiers_pause))
+        .route("/tiers/resume", post(tiers_resume))
+        .route("/tiers/dry-run", post(tiers_dry_run))
+        .route("/tiers/run", post(tiers_run))
+        .route("/usage", get(usage_page))
+        .route("/usage/record", post(usage_record))
+        .route("/backups", get(backups_page))
+        .route("/backup/configure", post(backup_configure))
+        .route("/backup/run", post(backup_run))
+        .route("/backup/verify", post(backup_verify))
+        .route("/backup/restore", post(backup_restore))
+        .route("/deletion/request", post(deletion_request))
+        .route("/deletion/admit", post(deletion_admit))
+        .route("/deletion/receipt", post(deletion_receipt))
+        .route("/deletion/hold", post(deletion_hold))
+        .route("/deletion/end-hold", post(deletion_end_hold))
+        .route("/deletion/verify", post(deletion_verify))
+        .route("/deletion/complete", post(deletion_complete))
+        .route("/maintenance/compact", post(maintenance_compact))
+        .route("/maintenance/maintain-indexes", post(maintenance_maintain_indexes))
+        .route("/metrics/prometheus", get(prometheus_metrics))
+        .route("/events/metrics", get(metrics_stream))
+        .layer(DefaultBodyLimit::max(MAX_ACTION_BODY_BYTES))
+        .layer(middleware::from_fn(security_headers))
+        .with_state(state)
+}
+
+/// Adds browser hardening headers to every Studio response. The Studio is a
+/// loopback-only owner tool with no authentication, so the listener refuses
+/// non-loopback binds and this middleware rejects cross-origin writes.
+async fn security_headers(request: Request<Body>, next: Next) -> Response {
+    if request.method() == axum::http::Method::POST && !same_origin(&request) {
+        let mut response = Response::new(axum::body::Body::from("cross-origin action refused\n"));
+        *response.status_mut() = StatusCode::FORBIDDEN;
+        response
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"));
+        return response;
+    }
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    headers.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(CONTENT_SECURITY_POLICY_VALUE),
+    );
+    response
+}
+
+/// Accepts state-changing requests only when their browser origin proves they
+/// are same-origin. Non-browser operators may omit browser metadata entirely;
+/// that is the explicit compatibility policy for curl/CLI clients. A
+/// `Sec-Fetch-Site` value without an `Origin` is browser metadata but not proof
+/// of this listener's origin, so it is rejected (including `same-site`).
+fn same_origin(request: &Request<Body>) -> bool {
+    let fetch_header = request.headers().get("sec-fetch-site");
+    let fetch_site = fetch_header.and_then(|value| value.to_str().ok());
+    let origin_header = request.headers().get(header::ORIGIN);
+    let origin = origin_header.and_then(|value| value.to_str().ok());
+    let host = request.headers().get(header::HOST).and_then(|value| value.to_str().ok());
+
+    // A malformed browser metadata header is not equivalent to an omitted
+    // one. The headerless exception below is deliberately limited to clients
+    // that sent no browser metadata at all.
+    if fetch_header.is_some() && fetch_site.is_none() {
+        return false;
+    }
+    if origin_header.is_some() && origin.is_none() {
+        return false;
+    }
+    if fetch_site.is_some_and(|value| value.eq_ignore_ascii_case("cross-site")) {
+        return false;
+    }
+    let Some(origin) = origin else {
+        // No browser-only headers means this is allowed as a non-browser
+        // operator request. If Sec-Fetch-Site is present, however, a browser
+        // asserted a relationship that cannot establish this exact origin.
+        return fetch_site.is_none();
+    };
+    let Some(host) = host else {
+        return false;
+    };
+    origin.eq_ignore_ascii_case(&format!("http://{host}"))
+        || origin.eq_ignore_ascii_case(&format!("https://{host}"))
+}
+
+/* ------------------------------------------------------------------ static */
+
+fn text(body: &'static str, kind: &'static str) -> Response {
+    let mut response = Response::new(body.to_owned().into());
+    response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static(kind));
+    response
+}
+
+async fn stylesheet() -> Response {
+    text(BASECOAT_CSS, "text/css; charset=utf-8")
+}
+
+async fn runtime() -> Response {
+    text(STUDIO_JS, "text/javascript; charset=utf-8")
+}
+
+fn asset(body: &'static [u8], kind: &'static str) -> Response {
+    let mut response = Response::new(axum::body::Body::from(body));
+    response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static(kind));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=31536000, immutable"),
+    );
+    response
+}
+
+async fn monaco_loader() -> Response {
+    asset(MONACO_LOADER, "text/javascript; charset=utf-8")
+}
+
+async fn monaco_editor_js() -> Response {
+    asset(MONACO_EDITOR_JS, "text/javascript; charset=utf-8")
+}
+
+async fn monaco_editor_css() -> Response {
+    asset(MONACO_EDITOR_CSS, "text/css; charset=utf-8")
+}
+
+async fn monaco_worker_main() -> Response {
+    asset(MONACO_WORKER_MAIN, "text/javascript; charset=utf-8")
+}
+
+async fn monaco_json_mode() -> Response {
+    asset(MONACO_JSON_MODE, "text/javascript; charset=utf-8")
+}
+
+async fn monaco_json_worker() -> Response {
+    asset(MONACO_JSON_WORKER, "text/javascript; charset=utf-8")
+}
+
+async fn monaco_codicon_font() -> Response {
+    asset(MONACO_CODICON_FONT, "font/ttf")
+}
+
+async fn prometheus_metrics(State(state): State<Arc<StudioState>>) -> Response {
+    let outcome =
+        on_blocking(state, |state| Ok(metrics::render_prometheus(&metrics::gather(state)))).await;
+    let (status, body) = match outcome {
+        Ok(body) => (axum::http::StatusCode::OK, body),
+        Err(failure) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("# metrics collection failed: {}\n", failure.replace(['\r', '\n'], " ")),
+        ),
+    };
+    let mut response = Response::new(body.into());
+    *response.status_mut() = status;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
+    );
+    response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+/* -------------------------------------------------------------- html pages */
+
+async fn overview_page(State(state): State<Arc<StudioState>>) -> Html<String> {
+    Html(on_blocking(state, |state| Ok(overview::render(state))).await.unwrap_or_else(page_failure))
+}
+
+async fn metrics_page_handler(State(state): State<Arc<StudioState>>) -> Html<String> {
+    Html(
+        on_blocking(state, |state| Ok(metrics_page::render(state)))
+            .await
+            .unwrap_or_else(page_failure),
+    )
+}
+
+async fn cluster_page(State(state): State<Arc<StudioState>>) -> Html<String> {
+    Html(
+        on_blocking(state, |state| Ok(replication::render(state)))
+            .await
+            .unwrap_or_else(page_failure),
+    )
+}
+
+async fn indexes_page(State(state): State<Arc<StudioState>>) -> Html<String> {
+    Html(on_blocking(state, |state| Ok(indexes::render(state))).await.unwrap_or_else(page_failure))
+}
+
+async fn healthz() -> Response {
+    text("ok\n", "text/plain; charset=utf-8")
+}
+
+async fn readyz(State(state): State<Arc<StudioState>>) -> Response {
+    match on_blocking(state, |state| {
+        engine_ops::published_sequence(state.engine.as_ref()).map(|_| ()).map_err(String::from)
+    })
+    .await
+    {
+        Ok(_) => text("ready\n", "text/plain; charset=utf-8"),
+        Err(error) => {
+            let mut response = text("not ready\n", "text/plain; charset=utf-8");
+            *response.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
+            response.headers_mut().insert(
+                axum::http::HeaderName::from_static("x-terrabase-readiness"),
+                HeaderValue::from_static("engine snapshot unavailable"),
+            );
+            let _ = error;
+            response
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct DocumentsQuery {
+    tenant: Option<String>,
+    collection: Option<String>,
+    page: Option<u64>,
+}
+
+async fn documents_page(
+    State(state): State<Arc<StudioState>>,
+    parameters: Query<DocumentsQuery>,
+) -> Html<String> {
+    let requested = parameters.0;
+    let fallback = documents::Selection::default_for(&state);
+    let selection = documents::Selection {
+        tenant: requested.tenant.unwrap_or(fallback.tenant),
+        collection: requested.collection.unwrap_or(fallback.collection),
+        page: requested.page.unwrap_or(0),
+    };
+    Html(
+        on_blocking(state, move |state| Ok(documents::render(state, &selection)))
+            .await
+            .unwrap_or_else(page_failure),
+    )
+}
+
+async fn query_page(
+    State(state): State<Arc<StudioState>>,
+    parameters: Query<DocumentsQuery>,
+) -> Html<String> {
+    let pair = parameters.0.tenant.zip(parameters.0.collection);
+    Html(
+        on_blocking(state, move |state| Ok(query::render(state, &pair)))
+            .await
+            .unwrap_or_else(page_failure),
+    )
+}
+
+async fn replication_page(State(state): State<Arc<StudioState>>) -> Html<String> {
+    Html(
+        on_blocking(state, |state| Ok(replication::render(state)))
+            .await
+            .unwrap_or_else(page_failure),
+    )
+}
+
+async fn tiers_page(State(state): State<Arc<StudioState>>) -> Html<String> {
+    Html(on_blocking(state, |state| Ok(tiers::render(state))).await.unwrap_or_else(page_failure))
+}
+
+async fn usage_page(State(state): State<Arc<StudioState>>) -> Html<String> {
+    Html(on_blocking(state, |state| Ok(usage::render(state))).await.unwrap_or_else(page_failure))
+}
+
+async fn backups_page(State(state): State<Arc<StudioState>>) -> Html<String> {
+    let points = load_remote_recovery_points(state.as_ref()).await;
+    Html(backups::render(state.as_ref(), points.as_deref()))
+}
+
+fn page_failure(message: String) -> String {
+    html::page(
+        "Unavailable",
+        "/",
+        "",
+        &format!(
+            "{}{}",
+            html::heading("The page did not render", "The engine refused the read."),
+            html::alert(Tone::Bad, "Failure", &message),
+        ),
+    )
+}
+
+/* --------------------------------------------------------------- documents */
+
+#[derive(Deserialize)]
+struct RowsForm {
+    tenant: String,
+    collection: String,
+    page: Option<u64>,
+}
+
+async fn documents_rows(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<RowsForm>,
+) -> Response {
+    let page = form.page.unwrap_or(0);
+    let outcome = on_blocking(state, move |state| {
+        state.observe(&form.tenant, Some(&form.collection));
+        let selection =
+            documents::Selection { tenant: form.tenant, collection: form.collection, page };
+        Ok(documents::rows_fragment(state, &selection))
+    })
+    .await;
+    merge(documents::ROWS_ID, outcome)
+}
+
+#[derive(Deserialize)]
+struct ReadForm {
+    tenant: String,
+    collection: String,
+    id: String,
+}
+
+async fn documents_read(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<ReadForm>,
+) -> Response {
+    let outcome = on_blocking(state, move |state| {
+        state.observe(&form.tenant, Some(&form.collection));
+        Ok(read_one(state, &form.tenant, &form.collection, &form.id))
+    })
+    .await;
+    merge(documents::VIEW_ID, outcome)
+}
+
+fn read_one(state: &StudioState, tenant: &str, collection: &str, id: &str) -> String {
+    let outcome = (|| {
+        let tenant = engine_ops::tenant(tenant)?;
+        let collection = engine_ops::collection(collection)?;
+        let id = engine_ops::document_id(id)?;
+        let session = engine_ops::session(state.engine.as_ref(), &tenant)?;
+        session.read(&collection, &id)
+    })();
+    match outcome {
+        Ok(Some(document)) => {
+            html::definition(&[
+                ("id", document.id().as_str().to_owned()),
+                ("collection", document.collection().as_str().to_owned()),
+                ("version", document.metadata().version().to_string()),
+            ]) + &format!(
+                "<pre class=\"mt-3 overflow-x-auto rounded-lg border bg-muted/40 p-4 text-xs leading-relaxed\">{}</pre>",
+                html::esc(&crate::json::to_display(document.value()))
+            )
+        }
+        Ok(None) => html::alert(
+            Tone::Warn,
+            "No such document",
+            &format!("`{id}` is absent from `{collection}` for tenant `{tenant}`."),
+        ),
+        Err(failure) => html::alert(Tone::Bad, "The read failed", &failure.0),
+    }
+}
+
+#[derive(Deserialize)]
+struct PutForm {
+    tenant: String,
+    collection: String,
+    id: String,
+    json: String,
+    expected: Option<String>,
+    version: Option<String>,
+}
+
+async fn documents_put(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<PutForm>,
+) -> Response {
+    let outcome = on_blocking(state, move |state| {
+        state.observe(&form.tenant, Some(&form.collection));
+        let tenant = engine_ops::tenant(&form.tenant)?;
+        let collection = engine_ops::collection(&form.collection)?;
+        let id = engine_ops::document_id(&form.id)?;
+        let expected = engine_ops::expected_version(
+            form.expected.as_deref().unwrap_or("any"),
+            form.version.as_deref().unwrap_or(""),
+        )?;
+        let parsed: serde_json::Value = serde_json::from_str(&form.json)
+            .map_err(|error| format!("the editor's JSON does not parse: {error}"))?;
+        let operation = state.next_operation()?;
+        commit_outcome(
+            state,
+            "documents/put",
+            engine_ops::put_document(
+                state.engine.as_ref(),
+                operation,
+                &tenant,
+                &collection,
+                &id,
+                crate::json::from_json(parsed),
+                expected,
+            ),
+        )
+    })
+    .await;
+    receipt("editor-receipt", outcome)
+}
+
+#[derive(Clone, Deserialize)]
+struct DeleteForm {
+    tenant: String,
+    collection: String,
+    id: String,
+}
+
+async fn documents_delete(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<DeleteForm>,
+) -> Response {
+    let refresh_state = Arc::clone(&state);
+    let refresh_form = form.clone();
+    let outcome = on_blocking(state, move |state| {
+        let tenant = engine_ops::tenant(&form.tenant)?;
+        let collection = engine_ops::collection(&form.collection)?;
+        let id = engine_ops::document_id(&form.id)?;
+        let operation = state.next_operation()?;
+        state.observe(&form.tenant, Some(&form.collection));
+        commit_outcome(
+            state,
+            "documents/delete",
+            engine_ops::delete_document(
+                state.engine.as_ref(),
+                operation,
+                &tenant,
+                &collection,
+                &id,
+                terrabase::ExpectedVersion::Any,
+            ),
+        )
+    })
+    .await;
+    let rows = on_blocking(refresh_state, move |state| {
+        state.observe(&refresh_form.tenant, Some(&refresh_form.collection));
+        Ok(documents::rows_fragment(
+            state,
+            &documents::Selection {
+                tenant: refresh_form.tenant,
+                collection: refresh_form.collection,
+                page: 0,
+            },
+        ))
+    })
+    .await;
+    response_with_refresh(
+        "delete-receipt",
+        outcome,
+        vec![datastar::merge_fragments(
+            &rows.unwrap_or_default(),
+            Some(&format!("#{}", documents::ROWS_ID)),
+            MergeMode::Outer,
+        )],
+    )
+}
+
+/// Answers with the protocol's removal event.
+///
+/// This is the one studio action that takes something off the page rather than
+/// merging a replacement in, so it exercises `datastar-remove-fragments`.
+async fn documents_clear_view() -> Response {
+    datastar::response(vec![datastar::remove_fragments(&format!("#{}", documents::VIEW_ID))])
+}
+
+#[derive(Deserialize)]
+struct IndexActionForm {
+    tenant: String,
+    name: String,
+    action: String,
+}
+
+#[derive(Deserialize)]
+struct IndexCreateForm {
+    tenant: String,
+    name: String,
+    collection: String,
+    fields: String,
+    capabilities: String,
+    priority: String,
+    lock: String,
+}
+
+async fn indexes_create(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<IndexCreateForm>,
+) -> Response {
+    let refresh_state = Arc::clone(&state);
+    let outcome = on_blocking(state, move |state| {
+        let result = indexes::create_index(
+            state,
+            &form.tenant,
+            &form.name,
+            &form.collection,
+            &form.fields,
+            &form.capabilities,
+            &form.priority,
+            &form.lock,
+        );
+        let rendered = result.as_ref().map_or_else(Clone::clone, Clone::clone);
+        state.record("indexes/create", rendered, result.is_ok());
+        result
+    })
+    .await;
+    let refresh = index_surface_refresh(refresh_state).await;
+    response_with_refresh(indexes::RECEIPT_ID, outcome, refresh)
+}
+
+async fn indexes_action(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<IndexActionForm>,
+) -> Response {
+    let refresh_state = Arc::clone(&state);
+    let outcome = on_blocking(state, move |state| {
+        let result = indexes::run_action(state, &form.tenant, &form.name, &form.action);
+        let rendered = result.as_ref().map_or_else(Clone::clone, Clone::clone);
+        state.record("indexes/action", rendered, result.is_ok());
+        result
+    })
+    .await;
+    let extra = index_surface_refresh(refresh_state).await;
+    response_with_refresh(indexes::RECEIPT_ID, outcome, extra)
+}
+
+async fn index_surface_refresh(state: Arc<StudioState>) -> Vec<String> {
+    on_blocking(state, |state| Ok(indexes::catalog_fragment(state)))
+        .await
+        .map(|markup| {
+            vec![datastar::merge_fragments(
+                &markup,
+                Some(&format!("#{}", indexes::CATALOG_ID)),
+                MergeMode::Outer,
+            )]
+        })
+        .unwrap_or_default()
+}
+
+async fn documents_sample(State(state): State<Arc<StudioState>>) -> Response {
+    let outcome = on_blocking(state, seed_sample).await;
+    receipt("sample-receipt", outcome)
+}
+
+/// Writes a small deterministic sample so a fresh location is not empty.
+#[cfg(test)]
+pub(crate) fn test_seed_sample(state: &StudioState) -> Result<String, String> {
+    seed_sample(state)
+}
+
+fn seed_sample(state: &StudioState) -> Result<String, String> {
+    let samples: [(&str, &str, serde_json::Value); 6] = [
+        ("demo", "users", serde_json::json!({"name": "Ada Lovelace", "level": 3, "active": true})),
+        ("demo", "users", serde_json::json!({"name": "Grace Hopper", "level": 9, "active": true})),
+        (
+            "demo",
+            "users",
+            serde_json::json!({"name": "Edsger Dijkstra", "level": 7, "active": false}),
+        ),
+        ("demo", "orders", serde_json::json!({"total": 1250, "currency": "USD", "lines": 3})),
+        ("demo", "orders", serde_json::json!({"total": 480, "currency": "EUR", "lines": 1})),
+        ("demo", "sessions", serde_json::json!({"minutes": 42, "region": "gru"})),
+    ];
+    let mut written = 0;
+    for (index, (tenant, collection, value)) in samples.iter().enumerate() {
+        let tenant = engine_ops::tenant(tenant)?;
+        let collection = engine_ops::collection(collection)?;
+        let id = engine_ops::document_id(&format!("sample-{index:03}"))?;
+        let operation = state.next_operation()?;
+        let outcome = engine_ops::put_document(
+            state.engine.as_ref(),
+            operation,
+            &tenant,
+            &collection,
+            &id,
+            crate::json::from_json(value.clone()),
+            terrabase::ExpectedVersion::Any,
+        )?;
+        if matches!(outcome, terrabase::CommitOutcome::Committed(_)) {
+            written += 1;
+        }
+        state.observe(tenant.as_str(), Some(collection.as_str()));
+    }
+    Ok(format!(
+        "wrote {written} sample document(s) across the demo tenant's users, orders, and sessions collections"
+    ))
+}
+
+/// Renders a commit outcome with its receipt, and journals the action.
+pub fn commit_outcome(
+    state: &StudioState,
+    action: &str,
+    outcome: Result<terrabase::CommitOutcome, engine_ops::OpError>,
+) -> Result<String, String> {
+    match outcome {
+        Ok(terrabase::CommitOutcome::Committed(receipt)) => {
+            let text = format!(
+                "committed operation `{}` at sequence {} ({:?} durability)",
+                receipt.operation_id().as_str(),
+                receipt.sequence().get(),
+                receipt.durability(),
+            );
+            state.record(action, text.clone(), true);
+            Ok(text)
+        }
+        Ok(terrabase::CommitOutcome::Rejected(rejection)) => {
+            let text = format!(
+                "rejected: {rejection:?} — retry policy {:?}",
+                rejection.retry_disposition()
+            );
+            state.record(action, text.clone(), false);
+            Err(text)
+        }
+        Ok(terrabase::CommitOutcome::Unknown(uncertain)) => {
+            let text = format!(
+                "outcome uncertain for operation `{}` ({:?}); resolve it by that identity before retrying",
+                uncertain.operation_id().as_str(),
+                uncertain.reason(),
+            );
+            state.record(action, text.clone(), false);
+            Err(text)
+        }
+        Err(failure) => {
+            state.record(action, failure.0.clone(), false);
+            Err(failure.0)
+        }
+    }
+}
+
+/* ------------------------------------------------------------------- query */
+
+#[derive(Deserialize)]
+struct QueryFormParts {
+    tenant: String,
+    collection: String,
+    field: Option<Vec<String>>,
+    kind: Option<Vec<String>>,
+    value: Option<Vec<String>>,
+    high: Option<Vec<String>>,
+    order: Option<String>,
+    direction: Option<String>,
+    offset: Option<String>,
+    limit: Option<String>,
+    projection: Option<String>,
+}
+
+async fn query_run(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<QueryFormParts>,
+) -> Response {
+    let tenant = form.tenant.clone();
+    let mut built = query::form_from_parts(query::RawQueryForm {
+        fields: form.field.unwrap_or_default(),
+        kinds: form.kind.unwrap_or_default(),
+        values: form.value.unwrap_or_default(),
+        highs: form.high.unwrap_or_default(),
+        order: form.order.unwrap_or_default(),
+        direction: form.direction.unwrap_or_else(|| "asc".to_owned()),
+        offset: form.offset.unwrap_or_else(|| "0".to_owned()),
+        limit: form.limit.unwrap_or_else(|| "25".to_owned()),
+        projection: form.projection.unwrap_or_default(),
+    });
+    if built.collection.trim().is_empty() {
+        built.collection = form.collection;
+    }
+    let outcome = on_blocking(state, move |state| {
+        if built.collection.trim().is_empty() {
+            return Err("choose a collection".to_owned());
+        }
+        state.observe(&tenant, Some(&built.collection));
+        Ok(query::result_fragment(state, &tenant, &built))
+    })
+    .await;
+    merge(query::RESULT_ID, outcome)
+}
+
+#[derive(Deserialize)]
+struct TqlForm {
+    tenant: String,
+    text: String,
+}
+
+async fn query_tql(State(state): State<Arc<StudioState>>, Form(form): Form<TqlForm>) -> Response {
+    let outcome = on_blocking(state, move |state| {
+        state.observe(&form.tenant, None);
+        Ok(query::tql_result_fragment(state, &form.tenant, &form.text))
+    })
+    .await;
+    merge(query::RESULT_ID, outcome)
+}
+
+/* ------------------------------------------------------------- replication */
+
+#[derive(Deserialize)]
+struct RegionForm {
+    code: String,
+}
+
+async fn regions_admit(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<RegionForm>,
+) -> Response {
+    let outcome = on_blocking(state, move |state| {
+        let mut catalog = state.regions.lock().unwrap_or_else(|poison| poison.into_inner());
+        let code = terrabase::RegionCode::from_text(form.code.trim().to_uppercase().as_str())
+            .map_err(|error| format!("`{}` is not a region code: {error:?}", form.code))?;
+        catalog
+            .admit(code)
+            .map_err(|error| format!("admission refused: {error:?}"))
+            .map(|()| format!("`{}` admitted; the catalog now holds it as active", code.as_str()))
+    })
+    .await;
+    receipt("region-receipt", outcome)
+}
+
+async fn regions_retire(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<RegionForm>,
+) -> Response {
+    let outcome = on_blocking(state, move |state| {
+        let mut catalog = state.regions.lock().unwrap_or_else(|poison| poison.into_inner());
+        let code = terrabase::RegionCode::from_text(form.code.trim().to_uppercase().as_str())
+            .map_err(|error| format!("`{}` is not a region code: {error:?}", form.code))?;
+        catalog
+            .retire(code)
+            .map_err(|error| format!("retirement refused: {error:?}"))
+            .map(|()| format!("`{}` retired from the active set", code.as_str()))
+    })
+    .await;
+    receipt("region-receipt", outcome)
+}
+
+#[derive(Deserialize)]
+struct TopologyAddForm {
+    region: String,
+    first: String,
+    second: String,
+}
+
+async fn topology_add_region(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<TopologyAddForm>,
+) -> Response {
+    let refresh_state = Arc::clone(&state);
+    let outcome = on_blocking(state, move |state| {
+        let mut spec = state.topology();
+        let region = replication::region_from_parts(&form.region, &form.first, &form.second)?;
+        if spec.regions.iter().any(|existing| existing.name == region.name) {
+            return Err(format!("region `{}` is already in the topology", region.name));
+        }
+        if spec.regions.len() >= terrabase::REGION_CEILING {
+            return Err(format!(
+                "the topology already has the maximum of {} regions",
+                terrabase::REGION_CEILING
+            ));
+        }
+        spec.regions.push(region);
+        state.set_topology(spec);
+        let view = state.topology_view();
+        Ok(if let Err(failure) = view {
+            format!("region added and persisted, but the view reports: {failure}")
+        } else {
+            "region added and the specification persisted".to_owned()
+        })
+    })
+    .await;
+    let refresh = on_blocking(refresh_state, |state| Ok(topology_fragment_of(state)))
+        .await
+        .unwrap_or_default();
+    response_with_refresh(TOPOLOGY_TARGET, outcome, refresh)
+}
+
+#[derive(Deserialize)]
+struct TopologyRemoveForm {
+    index: usize,
+}
+
+async fn topology_remove_region(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<TopologyRemoveForm>,
+) -> Response {
+    let refresh_state = Arc::clone(&state);
+    let outcome = on_blocking(state, move |state| {
+        let spec = state.topology();
+        let next = replication::without_region(&spec, form.index)?;
+        state.set_topology(next);
+        Ok("region removed and the specification persisted".to_owned())
+    })
+    .await;
+    let refresh = on_blocking(refresh_state, |state| Ok(topology_fragment_of(state)))
+        .await
+        .unwrap_or_default();
+    response_with_refresh(TOPOLOGY_TARGET, outcome, refresh)
+}
+
+const TOPOLOGY_TARGET: &str = "topology-table";
+
+fn topology_fragment_of(state: &StudioState) -> Vec<String> {
+    let spec = state.topology();
+    let mut rows = String::new();
+    for (index, region) in spec.regions.iter().enumerate() {
+        rows.push_str("<tr class=\"border-b transition-colors hover:bg-muted/50\">");
+        rows.push_str(&html::cell(&region.name));
+        rows.push_str(&html::cell(&region.members.join(", ")));
+        rows.push_str(&html::cell_raw(&format!(
+            "<button class=\"text-sm text-muted-foreground hover:text-foreground underline\" data-on-click=\"{}\">remove</button>",
+            html::attribute(&format!("$$post('/replication/topology/remove-region', {{ index: {index} }})"))
+        )));
+        rows.push_str("</tr>");
+    }
+    let table = html::table(&["region", "members", ""], &[rows], "No region in the topology.");
+    vec![datastar::merge_fragments(
+        &format!("<div id=\"{TOPOLOGY_TARGET}\">{table}</div>"),
+        Some(&format!("#{TOPOLOGY_TARGET}")),
+        MergeMode::Outer,
+    )]
+}
+
+#[derive(Deserialize)]
+struct DurabilityForm {
+    level: Option<String>,
+}
+
+async fn durability_submit(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<DurabilityForm>,
+) -> Response {
+    let level = form.level.unwrap_or_else(|| "regional".to_owned());
+    let outcome = on_blocking(state, move |state| {
+        let spec = state.topology();
+        let inactive = state.inactive_voter();
+        replication::submit_durability(
+            &spec,
+            &level,
+            inactive.as_deref(),
+            &format!("studio-{}", now_millis()),
+        )
+    })
+    .await;
+    receipt(replication::DURABILITY_ID, outcome)
+}
+
+async fn durability_toggle_member(State(state): State<Arc<StudioState>>) -> Response {
+    let outcome = on_blocking(state, |state| {
+        let spec = state.topology();
+        let membership = replication::build_membership(&spec)?;
+        let members = membership.all_members();
+        let current = state.inactive_voter();
+        let next = match current.as_deref() {
+            None => members.first().map(|member| member.as_str().to_owned()),
+            Some(active) => members
+                .iter()
+                .position(|member| member.as_str() == active)
+                .and_then(|position| members.get((position + 1) % members.len()))
+                .map(|member| member.as_str().to_owned())
+                .filter(|candidate| Some(candidate.as_str()) != current.as_deref()),
+        };
+        state.set_inactive_voter(next.clone());
+        Ok(match next {
+            Some(member) => format!("the model now treats `{member}` as inactive"),
+            None => "every voter is active again".to_owned(),
+        })
+    })
+    .await;
+    receipt(replication::DURABILITY_ID, outcome)
+}
+
+/* ------------------------------------------------------------------- tiers */
+
+#[derive(Deserialize)]
+struct TierConfigureForm {
+    policy_id: String,
+    version: String,
+    budget: String,
+    residence: String,
+    promotion: String,
+    pinned: Option<String>,
+}
+
+async fn tiers_configure(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<TierConfigureForm>,
+) -> Response {
+    let outcome = on_blocking(state, move |state| {
+        let policy = tiers::policy_from_parts(
+            &form.policy_id,
+            &form.version,
+            &form.budget,
+            &form.residence,
+            &form.promotion,
+            form.pinned.as_deref().unwrap_or(""),
+        )?;
+        state
+            .engine
+            .tiers()
+            .configure(policy)
+            .map(|policy| {
+                format!(
+                    "policy `{}` v{} configured with a budget of {}; the pause flag is cleared",
+                    policy.policy_id(),
+                    policy.version(),
+                    html::human_bytes(policy.nvme_budget_bytes())
+                )
+            })
+            .map_err(tiers::render_failure)
+    })
+    .await;
+    receipt("tier-receipt", outcome)
+}
+
+async fn tiers_pause(State(state): State<Arc<StudioState>>) -> Response {
+    let outcome = on_blocking(state, |state| {
+        let paused = state.engine.tiers().pause();
+        state.record("tiers/pause", format!("paused = {paused}"), true);
+        Ok(format!(
+            "pause returned {paused}: the mover now refuses real passes until it is resumed"
+        ))
+    })
+    .await;
+    receipt("tier-receipt", outcome)
+}
+
+async fn tiers_resume(State(state): State<Arc<StudioState>>) -> Response {
+    let outcome = on_blocking(state, |state| {
+        let paused = state.engine.tiers().resume();
+        state.record("tiers/resume", format!("paused = {paused}"), true);
+        Ok(format!("resume returned {paused}: real passes are accepted again"))
+    })
+    .await;
+    receipt("tier-receipt", outcome)
+}
+
+async fn tiers_dry_run(State(state): State<Arc<StudioState>>) -> Response {
+    let outcome = on_blocking(state, |state| {
+        state
+            .engine
+            .tiers()
+            .dry_run()
+            .map(|receipt| {
+                state.record("tiers/dry-run", format!("decision {:?}", receipt.decision()), true);
+                tiers::render_receipt(&receipt)
+            })
+            .map_err(tiers::render_failure)
+    })
+    .await;
+    receipt("tier-receipt", outcome)
+}
+
+async fn tiers_run(State(state): State<Arc<StudioState>>) -> Response {
+    let outcome = on_blocking(state, |state| {
+        state
+            .engine
+            .tiers()
+            .run()
+            .map(|receipt| {
+                state.record("tiers/run", format!("decision {:?}", receipt.decision()), true);
+                tiers::render_receipt(&receipt)
+            })
+            .map_err(tiers::render_failure)
+    })
+    .await;
+    receipt("tier-receipt", outcome)
+}
+
+/* ------------------------------------------------------------------- usage */
+
+#[derive(Deserialize)]
+struct UsageRecordForm {
+    tenant: String,
+    project: String,
+    partition: String,
+}
+
+async fn usage_record(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<UsageRecordForm>,
+) -> Response {
+    let refresh_state = Arc::clone(&state);
+    let outcome = on_blocking(state, move |state| {
+        let result = usage::record_segment(
+            state,
+            &form.tenant,
+            &form.project,
+            &form.partition,
+            now_millis(),
+        );
+        state.record(
+            "usage/record",
+            result.clone().unwrap_or_else(|failure| failure.clone()),
+            result.is_ok(),
+        );
+        result
+    })
+    .await;
+    let refresh = on_blocking(refresh_state, |state| {
+        Ok(format!("<div id=\"{}\">{}</div>", usage::LEDGER_ID, html::esc(&ledger_summary(state))))
+    })
+    .await;
+    let refresh = refresh
+        .map(|markup| {
+            vec![datastar::merge_fragments(
+                &markup,
+                Some(&format!("#{}", usage::LEDGER_ID)),
+                MergeMode::Inner,
+            )]
+        })
+        .unwrap_or_default();
+    response_with_refresh("usage-receipt", outcome, refresh)
+}
+
+fn ledger_summary(state: &StudioState) -> String {
+    let ledger = state.usage.lock().unwrap_or_else(|poison| poison.into_inner());
+    let totals = usage::fold(&ledger);
+    if totals.is_empty() {
+        return "No segment recorded yet.".to_owned();
+    }
+    totals
+        .iter()
+        .map(|total| format!("{:?}: {}", total.kind, total.total))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/* ----------------------------------------------------------------- backups */
+
+#[derive(Deserialize)]
+struct BackupRunForm {
+    tenants: Option<String>,
+    mode: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct BackupConfigureForm {
+    bucket: String,
+    region: String,
+    prefix: String,
+    endpoint: Option<String>,
+    kms_key_id: Option<String>,
+    incremental_interval_minutes: String,
+    full_interval_hours: String,
+    enabled: Option<String>,
+    virtual_hosted_style: Option<String>,
+    allow_http: Option<String>,
+}
+
+async fn backup_configure(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<BackupConfigureForm>,
+) -> Response {
+    let outcome = async {
+        let mut settings = S3BackupSettings {
+            enabled: form.enabled.is_some(),
+            bucket: form.bucket,
+            region: form.region,
+            prefix: form.prefix,
+            endpoint: form.endpoint.unwrap_or_default(),
+            virtual_hosted_style: form.virtual_hosted_style.is_some(),
+            allow_http: form.allow_http.is_some(),
+            incremental_interval_minutes: parse_positive(
+                &form.incremental_interval_minutes,
+                "incremental interval",
+            )?,
+            full_interval_hours: parse_positive(&form.full_interval_hours, "full interval")?,
+            kms_key_id: form.kms_key_id.unwrap_or_default(),
+        };
+        settings.normalize();
+        settings.validate()?;
+        let repository = S3BackupRepository::from_settings(&settings)?;
+        let count = repository.check().await?;
+        state.set_backup_settings(settings.clone())?;
+        let message = format!(
+            "S3 connection verified for s3://{}/{}; {count} recovery point(s) found; scheduler {}",
+            settings.bucket,
+            settings.prefix,
+            if settings.enabled { "enabled" } else { "disabled" },
+        );
+        state.record("backup/configure", message.clone(), true);
+        Ok(message)
+    }
+    .await;
+    if let Err(failure) = &outcome {
+        state.record("backup/configure", failure.clone(), false);
+    }
+    receipt("backup-configuration-receipt", outcome)
+}
+
+async fn backup_run(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<BackupRunForm>,
+) -> Response {
+    let outcome = async {
+        let _job = state.backup_job.lock().await;
+        let settings = state.backup_settings();
+        let repository = S3BackupRepository::from_settings(&settings)?;
+        let tenants = backups::parse_tenants(form.tenants.as_deref().unwrap_or(""))?;
+        let mode = match form.mode.as_deref() {
+            Some("full") => BackupRunMode::Full,
+            Some("automatic" | "") | None => BackupRunMode::Automatic,
+            Some(_) => return Err("the backup mode is invalid".to_owned()),
+        };
+        let receipt = backup_to_s3(
+            &repository,
+            Arc::clone(&state.engine),
+            &state.config.backup_scratch_dir(),
+            &settings,
+            mode,
+            tenants,
+        )
+        .await?;
+        let text = format!(
+            "recovery point {} committed to S3 ({} document(s), {}, {} object(s) uploaded)",
+            &receipt.result.manifest().identity()[..12],
+            receipt.result.manifest().documents(),
+            html::human_bytes(receipt.result.manifest().total_bytes()),
+            receipt.uploaded_objects,
+        );
+        state.record("backup/run", text, true);
+        Ok(receipt)
+    }
+    .await;
+    state.record_backup_run(outcome.is_ok());
+    if let Err(failure) = &outcome {
+        state.record("backup/run", failure.clone(), false);
+    }
+    let rendered = outcome.map(|upload| {
+        let receipt = backups::backup_receipt(
+            &upload.result,
+            &upload.destination,
+            upload.uploaded_objects,
+        );
+        format!(
+            "{}<pre class=\"mt-3 overflow-x-auto rounded-lg border bg-muted/40 p-4 text-xs leading-relaxed\">{}</pre>",
+            html::esc(&format!(
+                "Recovery point {} is committed in S3.",
+                upload.result.manifest().identity()
+            )),
+            html::esc(&receipt)
+        )
+    });
+    let chain = backup_chain_fragment(state.as_ref()).await;
+    receipt_with_refresh(
+        "backup-receipt",
+        rendered,
+        vec![datastar::merge_fragments(
+            &chain,
+            Some(&format!("#{}", backups::CHAIN_ID)),
+            MergeMode::Inner,
+        )],
+    )
+}
+
+async fn backup_verify(State(state): State<Arc<StudioState>>) -> Response {
+    let outcome = async {
+        let _job = state.backup_job.lock().await;
+        let repository = configured_backup_repository(state.as_ref())?;
+        let chain = verify_s3_chain(&repository, &state.config.backup_scratch_dir(), None).await?;
+        let message = format!(
+            "verified {} S3 recovery point(s); every member length and SHA-256 digest matched",
+            chain.len(),
+        );
+        state.record("backup/verify", message.clone(), true);
+        Ok(message)
+    }
+    .await;
+    if let Err(failure) = &outcome {
+        state.record("backup/verify", failure.clone(), false);
+    }
+    let chain = backup_chain_fragment(state.as_ref()).await;
+    receipt_with_refresh(
+        "backup-receipt",
+        outcome,
+        vec![datastar::merge_fragments(
+            &chain,
+            Some(&format!("#{}", backups::CHAIN_ID)),
+            MergeMode::Inner,
+        )],
+    )
+}
+
+#[derive(Deserialize)]
+struct BackupRestoreForm {
+    target: String,
+    identity: Option<String>,
+}
+
+async fn backup_restore(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<BackupRestoreForm>,
+) -> Response {
+    let outcome = async {
+        let _job = state.backup_job.lock().await;
+        let repository = configured_backup_repository(state.as_ref())?;
+        let target = backups::restore_target(&form.target)?;
+        let identity = form
+            .identity
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned);
+        let receipt = restore_from_s3(
+            &repository,
+            &state.config.backup_scratch_dir(),
+            target.clone(),
+            identity.as_deref(),
+        )
+        .await?;
+        let text = format!(
+            "restored {} into {} ({} document(s), {} member byte(s) verified)",
+            &receipt.selected_identity()[..12],
+            target.display(),
+            receipt.restored_documents(),
+            receipt.member_bytes_verified(),
+        );
+        state.record("backup/restore", text.clone(), true);
+        Ok(format!(
+            "{}<pre class=\"mt-3 overflow-x-auto rounded-lg border bg-muted/40 p-4 text-xs leading-relaxed\">{}</pre>",
+            html::esc(&text),
+            html::esc(&receipt.render())
+        ))
+    }
+    .await;
+    if let Err(failure) = &outcome {
+        state.record("backup/restore", failure.clone(), false);
+    }
+    receipt("restore-receipt", outcome)
+}
+
+fn configured_backup_repository(state: &StudioState) -> Result<S3BackupRepository, String> {
+    S3BackupRepository::from_settings(&state.backup_settings())
+}
+
+async fn load_remote_recovery_points(
+    state: &StudioState,
+) -> Result<Vec<crate::s3_backup::RemoteRecoveryPoint>, String> {
+    configured_backup_repository(state)?.list_recovery_points().await
+}
+
+async fn backup_chain_fragment(state: &StudioState) -> String {
+    let points = load_remote_recovery_points(state).await;
+    backups::chain_fragment(points.as_deref())
+}
+
+fn parse_positive(text: &str, label: &str) -> Result<u64, String> {
+    text.trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| format!("the {label} must be a positive whole number"))
+}
+
+/* ---------------------------------------------------------------- deletion */
+
+#[derive(Deserialize)]
+struct DeletionRequestForm {
+    request_id: String,
+    tenant: String,
+    subject: String,
+    regions: String,
+}
+
+async fn deletion_request(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<DeletionRequestForm>,
+) -> Response {
+    let refresh_state = Arc::clone(&state);
+    let outcome = on_blocking(state, move |state| {
+        let workflow = backups::workflow_from_parts(
+            &form.request_id,
+            &form.tenant,
+            &form.subject,
+            &form.regions,
+            now_millis(),
+        )?;
+        let mut ledger = state.deletions.lock().unwrap_or_else(|poison| poison.into_inner());
+        ledger
+            .submit(workflow)
+            .map_err(|error| format!("the ledger refused the workflow: {error:?}"))
+    })
+    .await;
+    let refresh = on_blocking(refresh_state, |state| Ok(backups::deletion_fragment(state)))
+        .await
+        .map(|markup| vec![fragment(DELETION_TARGET, &markup)])
+        .unwrap_or_default();
+    response_with_refresh(
+        DELETION_TARGET,
+        outcome.map(|outcome| format!("the ledger answered {outcome:?}")),
+        refresh,
+    )
+}
+
+#[derive(Deserialize)]
+struct DeletionTargetForm {
+    request_id: String,
+}
+
+async fn deletion_admit(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<DeletionTargetForm>,
+) -> Response {
+    let refresh_state = Arc::clone(&state);
+    let outcome = on_blocking(state, move |state| {
+        with_workflow(state, &form.request_id, |workflow| {
+            backups::admit_workflow(workflow, now_millis())
+        })
+    })
+    .await;
+    deletion_response(refresh_state, outcome).await
+}
+
+async fn deletion_receipt(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<DeletionTargetForm>,
+) -> Response {
+    let refresh_state = Arc::clone(&state);
+    let outcome = on_blocking(state, move |state| {
+        with_workflow(state, &form.request_id, |workflow| {
+            backups::record_receipt(workflow, now_millis())
+        })
+    })
+    .await;
+    deletion_response(refresh_state, outcome).await
+}
+
+async fn deletion_hold(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<DeletionTargetForm>,
+) -> Response {
+    let refresh_state = Arc::clone(&state);
+    let outcome = on_blocking(state, move |state| {
+        with_workflow(state, &form.request_id, |workflow| backups::add_hold(workflow, now_millis()))
+    })
+    .await;
+    deletion_response(refresh_state, outcome).await
+}
+
+async fn deletion_end_hold(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<DeletionTargetForm>,
+) -> Response {
+    let refresh_state = Arc::clone(&state);
+    let outcome = on_blocking(state, move |state| {
+        with_workflow(state, &form.request_id, |workflow| backups::end_hold(workflow, now_millis()))
+    })
+    .await;
+    deletion_response(refresh_state, outcome).await
+}
+
+async fn deletion_verify(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<DeletionTargetForm>,
+) -> Response {
+    let refresh_state = Arc::clone(&state);
+    let outcome = on_blocking(state, move |state| {
+        with_workflow(state, &form.request_id, |workflow| {
+            backups::verify_workflow(workflow, now_millis())
+        })
+    })
+    .await;
+    deletion_response(refresh_state, outcome).await
+}
+
+async fn deletion_complete(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<DeletionTargetForm>,
+) -> Response {
+    let refresh_state = Arc::clone(&state);
+    let outcome = on_blocking(state, move |state| {
+        with_workflow(state, &form.request_id, |workflow| {
+            backups::complete_workflow(workflow, now_millis())
+        })
+    })
+    .await;
+    deletion_response(refresh_state, outcome).await
+}
+
+const DELETION_TARGET: &str = "deletion-state";
+
+fn with_workflow<F>(state: &StudioState, request_id: &str, step: F) -> Result<String, String>
+where
+    F: FnOnce(&mut terrabase::deletion::DeletionWorkflow) -> Result<String, String>,
+{
+    let mut ledger = state.deletions.lock().unwrap_or_else(|poison| poison.into_inner());
+    let id = terrabase::deletion::DeletionRequestId::try_new(request_id.trim())
+        .map_err(|error| format!("request id: {error:?}"))?;
+    let workflow =
+        ledger.get_mut(&id).ok_or_else(|| format!("no deletion workflow named `{request_id}`"))?;
+    step(workflow)
+}
+
+async fn deletion_response(state: Arc<StudioState>, outcome: Result<String, String>) -> Response {
+    let refresh = on_blocking(state, |state| Ok(backups::deletion_fragment(state))).await;
+    response_with_refresh(
+        DELETION_TARGET,
+        outcome,
+        refresh.map(|markup| vec![fragment(DELETION_TARGET, &markup)]).unwrap_or_default(),
+    )
+}
+
+/* ------------------------------------------------------------- maintenance */
+
+#[derive(Deserialize)]
+struct CompactForm {
+    policy: Option<String>,
+}
+
+async fn maintenance_compact(
+    State(state): State<Arc<StudioState>>,
+    Query(form): Query<CompactForm>,
+) -> Response {
+    let policy = form.policy.unwrap_or_else(|| "reclaim".to_owned());
+    let refresh_state = Arc::clone(&state);
+    let outcome = on_blocking(state, move |state| {
+        let request = terrabase::CompactionRequest::new(match policy.as_str() {
+            "reclaim-history" => terrabase::CompactionPolicy::ReclaimHistory,
+            _ => terrabase::CompactionPolicy::Reclaim,
+        });
+        let receipt = engine_ops::compact(state.engine.as_ref(), request)?;
+        let text = format!(
+            "WAL {} → {}, journal {} → {}, {} root(s) removed, {} phase(s)",
+            html::human_bytes(receipt.wal_bytes_before()),
+            html::human_bytes(receipt.wal_bytes_after()),
+            html::human_bytes(receipt.journal_bytes_before()),
+            html::human_bytes(receipt.journal_bytes_after()),
+            receipt.roots_removed(),
+            receipt.phases().len(),
+        );
+        state.record("maintenance/compact", text.clone(), true);
+        Ok(format!(
+            "<pre class=\"overflow-x-auto rounded-lg border bg-muted/40 p-4 text-xs leading-relaxed\">{}</pre>",
+            html::esc(&text)
+        ))
+    })
+    .await;
+    let extra = metrics_refresh(&refresh_state).await;
+    response_with_refresh(html::RECEIPT_TARGET, outcome, extra)
+}
+
+async fn maintenance_maintain_indexes(State(state): State<Arc<StudioState>>) -> Response {
+    let refresh_state = Arc::clone(&state);
+    let outcome = on_blocking(state, |state| {
+        state.engine.maintain_indexes();
+        let text = "one auto-index lifecycle pass ran: idle, superseded, and retired automatic indexes were re-evaluated against the configured thresholds".to_owned();
+        state.record("maintenance/maintain-indexes", text.clone(), true);
+        Ok(text)
+    })
+    .await;
+    let extra = metrics_refresh(&refresh_state).await;
+    response_with_refresh(html::RECEIPT_TARGET, outcome, extra)
+}
+
+/* ------------------------------------------------------------- the stream */
+
+async fn metrics_stream(State(state): State<Arc<StudioState>>) -> Response {
+    let permit = match Arc::clone(&state.metrics_slots).try_acquire_owned() {
+        Ok(permit) => Arc::new(permit),
+        Err(_) => {
+            let mut response = text("too many metrics streams\n", "text/plain; charset=utf-8");
+            *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
+            return response;
+        }
+    };
+    let shutdown = state.shutdown_receiver();
+    datastar::periodic(metrics::REFRESH, shutdown, move || {
+        let state = Arc::clone(&state);
+        let permit = Arc::clone(&permit);
+        async move {
+            let _permit = permit;
+            let snapshot = match on_blocking(state, |state| Ok(metrics::gather(state))).await {
+                Ok(snapshot) => snapshot,
+                Err(_) => return Vec::new(),
+            };
+            vec![
+                datastar::merge_fragments(
+                    &metrics::render_panel(&snapshot),
+                    Some(&format!("#{}", metrics::PANEL_ID)),
+                    MergeMode::Outer,
+                ),
+                datastar::merge_signals(&metrics::sequence_signals(&snapshot), false),
+            ]
+        }
+    })
+}
+
+/* ---------------------------------------------------------------- helpers */
+
+async fn metrics_refresh(state: &Arc<StudioState>) -> Vec<String> {
+    on_blocking(Arc::clone(state), |state| {
+        let snapshot = metrics::gather(state);
+        Ok(datastar::merge_fragments(
+            &metrics::render_panel(&snapshot),
+            Some(&format!("#{}", metrics::PANEL_ID)),
+            MergeMode::Outer,
+        ))
+    })
+    .await
+    .map(|frame| vec![frame])
+    .unwrap_or_default()
+}
+
+/// Runs engine work on a blocking thread, keeping the executor responsive.
+///
+/// The engine's calls are synchronous and several of them fsync, so every unit
+/// of engine work runs here rather than on an executor thread. Each unit owns
+/// its own typed failure as `Result<T, String>`; a panic on the blocking
+/// thread surfaces as the string rather than taking the page down.
+async fn on_blocking<T, F>(state: Arc<StudioState>, work: F) -> Result<T, String>
+where
+    F: FnOnce(&StudioState) -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    let permit = Arc::clone(&state.blocking_slots)
+        .try_acquire_owned()
+        .map_err(|_| "Studio is busy; retry after an in-process operation finishes".to_owned())?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        work(&state)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tower::ServiceExt;
+
+    fn studio(name: &str) -> Arc<StudioState> {
+        let directory = std::env::temp_dir().join(format!(
+            "terrabase-studio-routes-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        ));
+        Arc::new(
+            StudioState::open(crate::state::Config {
+                data_dir: directory,
+                addr: crate::state::DEFAULT_ADDR.to_owned(),
+            })
+            .unwrap(),
+        )
+    }
+
+    fn post(headers: &[(&str, &str)]) -> Request<Body> {
+        let mut builder = Request::builder().method("POST").uri("/");
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        builder.body(Body::empty()).expect("test request")
+    }
+
+    #[test]
+    fn headerless_requests_are_allowed_for_non_browser_operators() {
+        assert!(same_origin(&post(&[])));
+    }
+
+    #[test]
+    fn same_site_without_origin_is_not_same_origin_proof() {
+        assert!(!same_origin(&post(&[
+            ("host", "127.0.0.1:8090"),
+            ("sec-fetch-site", "same-site"),
+        ])));
+    }
+
+    #[test]
+    fn matching_origin_and_host_are_allowed() {
+        assert!(same_origin(&post(&[
+            ("host", "127.0.0.1:8090"),
+            ("origin", "http://127.0.0.1:8090"),
+            ("sec-fetch-site", "same-origin"),
+        ])));
+    }
+
+    #[test]
+    fn cross_port_and_cross_origin_requests_are_rejected() {
+        assert!(!same_origin(&post(&[
+            ("host", "127.0.0.1:8090"),
+            ("origin", "http://127.0.0.1:8091"),
+        ])));
+        assert!(!same_origin(&post(&[
+            ("host", "127.0.0.1:8090"),
+            ("origin", "http://evil.example"),
+        ])));
+    }
+
+    #[test]
+    fn origin_without_host_is_rejected() {
+        assert!(!same_origin(&post(&[("origin", "http://127.0.0.1:8090")])));
+    }
+
+    #[test]
+    fn malformed_origin_is_rejected_instead_of_treated_as_absent() {
+        let request = Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("host", "127.0.0.1:8090")
+            .header(header::ORIGIN, HeaderValue::from_bytes(&[0xff]).expect("header bytes"))
+            .body(Body::empty())
+            .expect("test request");
+        assert!(!same_origin(&request));
+    }
+
+    #[test]
+    fn csp_allows_pinned_monaco_without_inline_script_execution() {
+        assert!(
+            CONTENT_SECURITY_POLICY_VALUE
+                .contains("script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net")
+        );
+        assert!(CONTENT_SECURITY_POLICY_VALUE.contains("worker-src 'self' data: blob:"));
+        assert!(!CONTENT_SECURITY_POLICY_VALUE.contains("script-src 'self' 'unsafe-inline'"));
+        assert!(CONTENT_SECURITY_POLICY_VALUE.contains("object-src 'none'"));
+        assert!(CONTENT_SECURITY_POLICY_VALUE.contains("frame-ancestors 'none'"));
+    }
+
+    #[tokio::test]
+    async fn oversized_form_bodies_are_rejected_before_deserialization() {
+        let response = router(studio("body-limit"))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/documents/put")
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .body(Body::from(vec![b'x'; MAX_ACTION_BODY_BYTES + 1]))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
+    async fn browser_policy_allows_the_runtime_and_pinned_monaco_only() {
+        let response = router(studio("csp"))
+            .oneshot(Request::builder().uri("/documents").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let policy =
+            response.headers().get(header::CONTENT_SECURITY_POLICY).unwrap().to_str().unwrap();
+        assert!(policy.contains("script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net"));
+        assert!(policy.contains("worker-src data: blob:"));
+        assert!(policy.contains("object-src 'none'"));
+    }
+
+    #[tokio::test]
+    async fn no_raw_storage_tbep_or_request_editor_routes_exist() {
+        let app = router(studio("closed-routes"));
+        for path in ["/tbep", "/raw", "/storage/files", "/request", "/shell"] {
+            let response = app
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn blocking_work_and_metrics_streams_have_finite_admission() {
+        let state = studio("admission");
+        let all_work = Arc::clone(&state.blocking_slots)
+            .acquire_many_owned(crate::state::MAX_BLOCKING_OPERATIONS as u32)
+            .await
+            .unwrap();
+        let failure = on_blocking(Arc::clone(&state), |_| Ok::<_, String>(())).await.unwrap_err();
+        assert!(failure.contains("Studio is busy"));
+        drop(all_work);
+
+        let mut streams = Vec::new();
+        for _ in 0..crate::state::MAX_METRICS_STREAMS {
+            let response = metrics_stream(State(Arc::clone(&state))).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            streams.push(response);
+        }
+        let rejected = metrics_stream(State(state)).await;
+        assert_eq!(rejected.status(), StatusCode::TOO_MANY_REQUESTS);
+        drop(streams);
+    }
+}
+
+fn fragment(id: &str, markup: &str) -> String {
+    datastar::merge_fragments(
+        &format!("<div id=\"{id}\">{markup}</div>", id = html::attribute(id), markup = markup),
+        Some(&format!("#{id}")),
+        MergeMode::Outer,
+    )
+}
+
+fn merge(id: &str, outcome: Result<String, String>) -> Response {
+    let markup = match outcome {
+        Ok(markup) => markup,
+        Err(failure) => html::alert(Tone::Bad, "The action failed", &failure),
+    };
+    datastar::response(vec![fragment(id, &markup)])
+}
+
+fn receipt(id: &str, outcome: Result<String, String>) -> Response {
+    receipt_with_refresh(id, outcome, Vec::new())
+}
+
+fn receipt_with_refresh(id: &str, outcome: Result<String, String>, extra: Vec<String>) -> Response {
+    response_with_refresh(id, outcome, extra)
+}
+
+fn response_with_refresh(
+    id: &str,
+    outcome: Result<String, String>,
+    extra: Vec<String>,
+) -> Response {
+    let markup = match &outcome {
+        Ok(text) => html::alert(Tone::Good, "", text),
+        Err(failure) => html::alert(Tone::Bad, "The action was refused", failure),
+    };
+    let mut frames = vec![fragment(id, &markup)];
+    frames.extend(extra);
+    datastar::response(frames)
+}
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}

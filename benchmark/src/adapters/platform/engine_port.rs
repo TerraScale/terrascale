@@ -348,6 +348,7 @@ fn map_commit_error(error: CommitError) -> EngineError {
         // disposition the commit contract gives it.
         CommitError::OperationIdReuse => EngineError::Conflict,
         CommitError::EngineClosed => EngineError::Closed(EngineClosed),
+        CommitError::UsageRequiresSynced => EngineError::InvalidDocument,
         CommitError::StorageFailure => EngineError::StorageFailure,
     }
 }

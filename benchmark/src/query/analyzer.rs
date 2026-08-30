@@ -22,7 +22,7 @@
 //! 1. **No arbitrary code.** An analyzer is a typed value. There is no
 //!    variant, field, or name anywhere in this contract that can carry
 //!    source code, and therefore nothing to compile, load, or execute. V1
-//!    compiles C# analyzer source at deployment; V2 rejects that entire
+//!    compiles user analyzer source at deployment; V2 rejects that entire
 //!    execution model — the charter's no-arbitrary-code rule
 //!    (PD-2026-08-26-08 D2) applied to the analysis surface, the same rule
 //!    that replaced RQL's JavaScript projections with typed TQL

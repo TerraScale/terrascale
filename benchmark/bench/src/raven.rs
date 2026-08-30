@@ -20,7 +20,7 @@ use std::time::Duration;
 use ureq::Agent;
 
 use crate::config::LaneConfig;
-use crate::lane::{document, Backend, Slot};
+use crate::lane::{Backend, Slot, document};
 
 /// The environment variable that names the pinned server's endpoint at a
 /// lane run, mirroring the PostgreSQL pin's variable. The value the

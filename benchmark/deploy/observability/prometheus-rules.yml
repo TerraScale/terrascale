@@ -1,0 +1,80 @@
+# Starting alert policy for the bounded TerraBase metric contract.
+# Review and pin thresholds against the accepted SLO/configuration before GA.
+groups:
+  - name: terrabase-availability
+    interval: 30s
+    rules:
+      - alert: TerraBaseScrapeMissing
+        expr: up{job="terrabase"} == 0
+        for: 5m
+        labels:
+          service: terrabase
+          severity: critical
+        annotations:
+          summary: TerraBase metrics scrape is unavailable
+          description: The private TerraBase metrics target has failed scraping for five minutes.
+
+      - alert: TerraBaseReadinessLost
+        expr: terrabase_ready == 0
+        for: 5m
+        labels:
+          service: terrabase
+          severity: critical
+        annotations:
+          summary: TerraBase is live but not ready
+          description: Required admission or dependency checks have not been healthy for five minutes.
+
+      - alert: TerraBaseComponentUnhealthy
+        expr: terrabase_component_health == 0
+        for: 5m
+        labels:
+          service: terrabase
+          severity: critical
+        annotations:
+          summary: A TerraBase component is unhealthy
+          description: A bounded component health gauge is zero; inspect the component label and runbook.
+
+      - alert: TerraBaseComponentDegraded
+        expr: terrabase_component_health == 0.5
+        for: 15m
+        labels:
+          service: terrabase
+          severity: warning
+        annotations:
+          summary: A TerraBase component is degraded
+          description: A bounded component is serving with reduced health or redundancy.
+
+      - alert: TerraBaseRequestErrorsHigh
+        expr: |
+          (
+            sum(rate(terrabase_requests_total{outcome=~"error|timeout"}[5m]))
+            /
+            clamp_min(sum(rate(terrabase_requests_total[5m])), 1)
+          ) > 0.01
+        for: 10m
+        labels:
+          service: terrabase
+          severity: warning
+        annotations:
+          summary: TerraBase engine error or timeout rate is high
+          description: Errors and timeouts exceed one percent for ten minutes; inspect operation and Region series.
+
+      - alert: TerraBaseReplicationLagHigh
+        expr: terrabase_replication_lag_seconds > 5
+        for: 10m
+        labels:
+          service: terrabase
+          severity: warning
+        annotations:
+          summary: TerraBase replication lag is high
+          description: A Region has exceeded the starting five-second lag threshold for ten minutes.
+
+      - alert: TerraBaseActiveMembersLow
+        expr: terrabase_active_members < 2
+        for: 5m
+        labels:
+          service: terrabase
+          severity: critical
+        annotations:
+          summary: TerraBase has fewer than two active members
+          description: Confirm the database's selected topology before treating this as a quorum incident.

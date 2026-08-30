@@ -47,7 +47,10 @@ impl TierPolicy {
         promotion_threshold: u32,
         pinned_segment_ids: Vec<u64>,
     ) -> Result<Self, TierAdminError> {
-        if policy_id.trim().is_empty() || policy_id.len() > 128 {
+        if policy_id.trim().is_empty()
+            || policy_id.len() > 128
+            || policy_id.chars().any(char::is_control)
+        {
             return Err(TierAdminError::InvalidPolicy);
         }
         if version == 0 || nvme_budget_bytes == 0 {
@@ -79,6 +82,19 @@ impl TierPolicy {
     #[must_use]
     pub const fn nvme_budget_bytes(&self) -> u64 {
         self.nvme_budget_bytes
+    }
+
+    /// Returns the minimum residence move count used by the policy's
+    /// hysteresis rule.
+    #[must_use]
+    pub const fn min_residence_moves(&self) -> u32 {
+        self.min_residence_moves
+    }
+
+    /// Returns the promotion threshold used by the policy.
+    #[must_use]
+    pub const fn promotion_threshold(&self) -> u32 {
+        self.promotion_threshold
     }
 
     /// Returns the pinned segments that never demote.
@@ -310,8 +326,8 @@ impl TierAdministration {
             policy.policy_id(),
             policy.version(),
             policy.nvme_budget_bytes(),
-            policy.min_residence_moves,
-            policy.promotion_threshold,
+            policy.min_residence_moves(),
+            policy.promotion_threshold(),
             policy.pinned_segment_ids().to_vec(),
         )?;
         let mut control = self.lock_control();
@@ -486,6 +502,8 @@ mod tests {
         let configured = tiers.configure(policy()).expect("configures");
         assert_eq!(configured.policy_id(), "prod");
         assert_eq!(configured.version(), 3);
+        assert_eq!(configured.min_residence_moves(), 1);
+        assert_eq!(configured.promotion_threshold(), 2);
         assert!(!tiers.inspect().paused(), "configure is fresh control");
         assert_eq!(tiers.policy(), Some(policy()));
     }
@@ -498,6 +516,10 @@ mod tests {
         );
         assert_eq!(
             TierPolicy::try_new("   ", 1, 1024, 1, 2, Vec::new()).err(),
+            Some(TierAdminError::InvalidPolicy)
+        );
+        assert_eq!(
+            TierPolicy::try_new("prod\nreceipt", 1, 1024, 1, 2, Vec::new()).err(),
             Some(TierAdminError::InvalidPolicy)
         );
         assert_eq!(

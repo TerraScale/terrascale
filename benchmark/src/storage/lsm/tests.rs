@@ -68,6 +68,7 @@ fn put_intent(
         ),
         snapshot_sequence: crate::types::StorageSequence::new(sequence),
         durability: LocalDurability::Synced,
+        usage_admission: None,
         writes: vec![StagedWrite::Put { document, expected: ExpectedVersion::Any }],
     }
 }
@@ -92,6 +93,7 @@ fn delete_intent(
         ),
         snapshot_sequence: crate::types::StorageSequence::new(sequence),
         durability: LocalDurability::Synced,
+        usage_admission: None,
         writes: vec![StagedWrite::Delete {
             collection: Some(CollectionName::try_new("orders").expect("valid collection")),
             id: DocumentId::try_new(id).expect("valid document"),
@@ -1215,6 +1217,7 @@ fn refused_or_partial_mutation_mints_no_usage_fact() {
         digest: 1,
         snapshot_sequence: crate::types::StorageSequence::new(0),
         durability: LocalDurability::Synced,
+        usage_admission: None,
         writes: Vec::new(),
     };
     assert!(matches!(engine.commit(invalid), CommitResult::Rejected(_)));

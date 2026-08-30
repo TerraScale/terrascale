@@ -6,5 +6,4 @@
 mod backup_public_construction;
 mod compaction_public;
 mod restore_public;
-mod schedule_public_chain;
 mod tombstone_retention_public;

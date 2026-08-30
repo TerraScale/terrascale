@@ -3,9 +3,11 @@
 //! Execution validates tenant, snapshot, and namespace bindings before any
 //! data access, evaluates the staleness policy against the index catalog, then
 //! uses a bounded exact-key posting list when one safely covers the snapshot
-//! (otherwise scanning the immutable snapshot view), orders, projects, and
-//! pages the matches with bounded deadline and cancellation checkpoints. It
-//! never mutates a document, a snapshot, or an index, and it publishes nothing.
+//! — fetching a small candidate set by keyed reads, and scanning only the
+//! immutable snapshot view of the source collection otherwise — orders,
+//! projects, and pages the matches with bounded deadline and cancellation
+//! checkpoints. It never mutates a document, a snapshot, or an index, and it
+//! publishes nothing.
 
 use std::time::Instant;
 use std::{collections::BTreeMap, collections::BTreeSet, sync::Arc};
@@ -163,10 +165,13 @@ pub(crate) fn execute_with_view(
 }
 
 /// Executes one plan, optionally narrowing the document candidates through a
-/// catalog segment selected by the optimizer. The generic `GenerationView`
-/// remains the test seam; only the production catalog can provide segment
-/// contents, so forged generation views continue to exercise the original
-/// scan path.
+/// catalog segment selected by the optimizer. The narrowing is decided before
+/// any document is materialized: an admitted bounded posting read with a
+/// small candidate set is fetched by keyed reads, every other shape scans the
+/// immutable snapshot view of the source collection. The generic
+/// `GenerationView` remains the test seam; only the production catalog can
+/// provide segment contents, so forged generation views continue to exercise
+/// the original scan path.
 fn execute_with_index(
     engine: &Engine,
     view: &dyn GenerationView,
@@ -203,15 +208,13 @@ fn execute_with_index(
     // The snapshot supplies the tenant binding and its own Engine identity;
     // the Engine validates both against its real identity inside the view.
     let scope = TenantScope::from_parts(snapshot.tenant().clone(), snapshot.engine_identity());
-    let documents =
-        engine.snapshot_documents(&scope, snapshot).map_err(|error| map_engine_error(&error))?;
 
-    // The document list is materialized, so no Engine or storage lock is held
-    // while candidate filtering, ordering, projecting, or paging. When an
-    // index read above succeeded, only its bounded candidate IDs are filtered;
-    // otherwise this is the complete source-collection scan. The accounting
-    // counts candidates — the FILTER accounting of V1's statistics — and
-    // saturates, so no count ever wraps.
+    // The index gate runs BEFORE any document is materialized. The gate is
+    // exactly the one the materialized path applied — the available
+    // generation above, and inside `indexed_candidates` the tenant binding,
+    // the segment's collection, and the snapshot-isolation guard that the
+    // segment covers exactly this snapshot's sequence — but reading it first
+    // lets a narrowed query fetch its candidates by key instead of scanning.
     let indexed_read = match (selected, catalog) {
         (Some(namespace), Some(catalog)) if view.available_generation(namespace).is_some() => {
             indexed_candidates(catalog, namespace, query, snapshot)?
@@ -220,6 +223,45 @@ fn execute_with_index(
     };
     let indexed_generation = indexed_read.as_ref().map(|read| read.generation);
     let indexed_ids = indexed_read.map(|read| read.ids.into_iter().collect::<BTreeSet<_>>());
+
+    // Loads and includes resolve identifiers across every collection of the
+    // tenant — a reference is an id, not a collection-qualified pointer — so
+    // a query carrying either clause keeps the whole-tenant view below.
+    let tenant_view_needed = !query.loads().is_empty() || !query.includes().is_empty();
+    let documents = if tenant_view_needed {
+        engine.snapshot_documents(&scope, snapshot).map_err(|error| map_engine_error(&error))?
+    } else if let (Some(collection), Some(ids)) =
+        (query.source().collection(), indexed_ids.as_ref())
+        && ids.len() <= KEYED_CANDIDATE_READS
+    {
+        // The keyed candidate fetch: the posting read above named a small,
+        // bounded identifier set, and each candidate resolves by its exact
+        // storage key — one seek and one decode per candidate — so nothing
+        // outside the candidate set is ever read.
+        let candidates: Vec<DocumentId> = ids.iter().cloned().collect();
+        engine
+            .snapshot_documents_by_ids(&scope, snapshot, collection, &candidates)
+            .map_err(|error| map_engine_error(&error))?
+    } else if let Some(collection) = query.source().collection() {
+        // The bounded source-collection scan: the fallback for an index read
+        // that was not admitted (no segment, an unsupported predicate shape,
+        // or a snapshot the segment does not exactly cover) and for candidate
+        // sets past the keyed bound, and the plain scan of a collection query
+        // that selected no index at all. It stops at the collection's key
+        // range instead of decoding the tenant's other collections.
+        engine
+            .snapshot_documents_in_collection(&scope, snapshot, collection)
+            .map_err(|error| map_engine_error(&error))?
+    } else {
+        Vec::new()
+    };
+
+    // The document list is materialized, so no Engine or storage lock is held
+    // while candidate filtering, ordering, projecting, or paging. When an
+    // index read above succeeded, only its bounded candidate IDs are filtered;
+    // otherwise this is the complete source-collection scan. The accounting
+    // counts candidates — the FILTER accounting of V1's statistics — and
+    // saturates, so no count ever wraps.
     let (matched, scanned, skipped) = collect_matches(query, &documents, indexed_ids.as_ref())?;
     // Reference resolution for the loads clause: one bounded id lookup per
     // load, served from the same materialized snapshot view. The map spans
@@ -365,6 +407,26 @@ struct IndexedCandidates {
 /// offsets require the complete candidate set, not only the returned page.
 const MAX_INDEX_READ_ROWS: usize = 65_536;
 const MAX_INDEX_READ_BYTES: usize = 4 * 1024 * 1024;
+
+/// The candidate bound below which an admitted index read fetches its
+/// candidates by keyed reads instead of scanning the source collection.
+///
+/// The decision runs before anything is materialized, so the tenant's size is
+/// not observable without paying the very scan the bound exists to avoid; the
+/// bound is therefore fixed. The trade it names: a keyed fetch costs one
+/// bounded seek plus one decode per candidate (`O(k)` keyed lookups), while a
+/// collection scan costs one merge walk and one decode per stored document
+/// (`O(n)`). At or below this bound the keyed path's total work stays within
+/// one bounded pass for any collection the auto-index policy considers worth
+/// serving (a selective predicate on a large collection — the shape the
+/// automatic index exists for), and above it the scan amortizes better, so
+/// the existing bounded scan with the candidate filter applies unchanged.
+///
+/// The bound sits far below [`MAX_INDEX_READ_ROWS`]: a posting list that
+/// would pass the posting read's own row bound but exceed this bound simply
+/// takes the scan, and no unbounded identifier set can ever reach the keyed
+/// path.
+const KEYED_CANDIDATE_READS: usize = 1024;
 
 fn map_lookup_error(error: IndexLookupError) -> QueryError {
     match error {

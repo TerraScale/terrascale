@@ -47,8 +47,8 @@ The normative value is the 128-bit ULID defined by the ULID specification:
 - fixed 16-byte unsigned big-endian binary representation; and
 - fixed 26-character uppercase Crockford Base32 text representation.
 
-Private FlatBuffers and public MessagePack carry ULIDs as exactly 16 binary
-bytes. Public REST, logs, operator displays, and TQL literals use the canonical
+Private TBEP protobuf fields carry ULIDs as exactly 16 binary bytes. Public
+REST, logs, operator displays, and TQL literals use the canonical
 26-character uppercase text. Decoders reject overflow, incorrect length,
 ambiguous characters, non-canonical text, and non-16-byte binary values. One
 semantic value therefore has one accepted binary form and one accepted text
@@ -98,20 +98,19 @@ applies to view plans, schemas, snapshots, chunks, and artifacts.
 
 ## Libraries and evidence
 
-Rust uses the `ulid` crate, C# uses Cysharp's `Ulid` package, and TypeScript
-uses the `ulid` npm package. Each dependency is pinned in its owning lockfile
-behind a small TerraScale-owned wrapper. The wrapper fixes cryptographically
-secure monotonic generation, strict parsing, 16-byte conversion, canonical
-text, equality, comparison, and serialization. Application code cannot select
-alternate formats or random sources.
+Rust uses the `ulid` crate behind a TerraScale-owned wrapper. Go bindings use a
+small repository-owned conversion layer over the fixed 16-byte protobuf field.
+Dependencies are pinned in their owning lockfiles. The wrappers fix
+cryptographically secure monotonic generation, strict parsing, 16-byte
+conversion, canonical text, equality, comparison, and serialization.
+Application code cannot select alternate formats or random sources.
 
 One cross-language corpus covers the ULID specification vectors, minimum and
 maximum values, same-millisecond monotonic generation, entropy overflow,
-invalid and ambiguous text, binary/text round trips, byte ordering, MessagePack
-and FlatBuffers representation, storage-key ordering, hash-to-bucket placement,
-and concurrent generation in every supported runtime. Dependency upgrades must
-pass this corpus and the identity lookup, insert, index, WAL, and protocol
-benchmarks.
+invalid and ambiguous text, binary/text round trips, byte ordering, protobuf
+representation, storage-key ordering, hash-to-bucket placement, and concurrent
+generation in every supported runtime. Dependency upgrades must pass this
+corpus and the identity lookup, insert, index, WAL, and protocol benchmarks.
 
 A separate Region boundary corpus accepts only registered uppercase airport
 `RegionCode` values. It proves that engine state, TBEP, public APIs, SDKs,

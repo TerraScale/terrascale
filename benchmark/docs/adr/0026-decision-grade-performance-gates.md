@@ -8,9 +8,11 @@ authority: ../../../GOAL.md
 
 ## Authority and readiness
 
-`TerraBase.Benchmark` is the sole authority for product performance claims. A
-local timing, microbenchmark, profiler result, simulator run, development LXC
-run, or unreviewed receipt is diagnostic evidence only.
+The Rust driver under `bench/`, its engine-side verdict code under
+`src/benchmarks/`, and the running Markdown history under
+`docs/evidence/benchmarks/` are the sole repository authority for product
+performance claims. A local timing, microbenchmark, profiler result, simulator
+run, development LXC run, or unreviewed receipt is diagnostic evidence only.
 
 A comparison starts only after the exact candidate, workload manifest, and
 protocol versions pass their functional, deterministic-correctness, durability,

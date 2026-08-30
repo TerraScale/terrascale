@@ -750,6 +750,56 @@ fn first_query_behavior_is_bounded_and_recorded() {
 }
 
 #[test]
+fn concurrent_cold_start_queries_all_answer_correctly() {
+    let (dir, engine) = open_engine("cold-start-herd");
+    commit_users(&engine, "tenant-a", "op-1", &[5, 3, 5]);
+
+    // Sixteen threads issue the same equality query against one fresh engine
+    // whose catalog holds no index for the shape yet. Exactly one
+    // registration creates the auto index and runs its initial build; the
+    // others select the registered namespace and serve their full correct
+    // answer through the bounded scan. Every thread must answer with the
+    // same correct result, no thread may panic, and no engine or catalog
+    // lock may be poisoned (a poisoned lock would fail every later call).
+    let spec = dynamic_spec("tenant-a", predicate(vec![equals("age", 5)]), Vec::new());
+    std::thread::scope(|thread_scope| {
+        let mut joined = Vec::new();
+        for _ in 0..16 {
+            let spec = spec.clone();
+            joined.push(thread_scope.spawn(|| {
+                let store = engine.queries();
+                let plan = store.compile(QueryInput::typed(spec)).expect("compiles");
+                let snapshot = engine.read_snapshot(&scope(&engine, "tenant-a")).expect("snapshot");
+                store.execute(&plan, &snapshot)
+            }));
+        }
+        for handle in joined {
+            let result = handle.join().expect("a cold-start query thread panicked");
+            let result = result.expect("a cold-start query executes");
+            let ids: Vec<&str> =
+                result.rows().iter().map(|row| row.document().id().as_str()).collect();
+            assert_eq!(ids, ["doc-op-1-0", "doc-op-1-2"], "every thread answers correctly");
+            assert_eq!(result.matched(), 2);
+        }
+    });
+
+    // The catalog is intact after the herd: the index exists, published once,
+    // and a later query still selects it.
+    let registered = definitions(&engine, "tenant-a");
+    assert_eq!(registered.len(), 1, "one cold shape registers one index");
+    assert_eq!(registered[0].name(), "Auto/users/ByAge");
+    assert_eq!(registered[0].published().map(|generation| generation.generation()), Some(1));
+    execute_dynamic(
+        &engine,
+        dynamic_spec("tenant-a", predicate(vec![equals("age", 5)]), Vec::new()),
+        "tenant-a",
+    )
+    .expect("the engine still serves the shape after the herd");
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn selection_records_are_bounded_engine_state() {
     let (dir, engine) = open_engine("record-bound");
     commit_users(&engine, "tenant-a", "op-1", &[5]);

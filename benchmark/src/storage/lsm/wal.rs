@@ -227,6 +227,37 @@ impl WalLog {
     }
 }
 
+/// A shareable sync handle to one open WAL file, held outside the storage
+/// lock so a group-commit leader can witness its batch's bytes without
+/// blocking the next batch's append (the pipelined group-commit shape).
+///
+/// `fdatasync` operates on the file's inode, not on the descriptor, so a
+/// sync through this handle covers every byte any writer appended to the
+/// same WAL before the sync began — including bytes written through
+/// [`WalLog`]'s own descriptor. That is the entire contract the engine's
+/// witness epoch needs: a sync that starts after a batch's append returns
+/// proves that batch durable.
+pub(crate) struct WalSyncHandle {
+    file: File,
+}
+
+impl WalSyncHandle {
+    /// Opens the WAL of the LSM location at `dir`, if it exists.
+    ///
+    /// `None` (absent or unreadable WAL) makes the caller fall back to the
+    /// fully synchronous commit shape, which needs no handle.
+    pub(crate) fn try_open(dir: &Path) -> Option<Self> {
+        let file = OpenOptions::new().read(true).write(true).open(dir.join("wal")).ok()?;
+        Some(Self { file })
+    }
+
+    /// Fdatasyncs the WAL: every byte appended before this call returns
+    /// durable, on the next batch's appends as well as this one's.
+    pub(crate) fn sync(&self) -> io::Result<()> {
+        self.file.sync_data()
+    }
+}
+
 /// Scans a WAL file from its start, returning verified entries and prefix.
 fn scan_file(file: &File) -> io::Result<WalScan> {
     let mut file = file;

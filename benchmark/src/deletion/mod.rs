@@ -1020,10 +1020,14 @@ impl DeletionWorkflow {
                 return Err(DeletionError::TerminalState);
             }
         }
-        let expires_at =
-            self.holds.get(authority).ok_or(DeletionError::UnknownHold)?.expires_at_millis();
         if self.hold_ends.contains_key(authority) {
             return Ok(HoldOutcome::AlreadyEnded);
+        }
+        let hold = self.holds.get(authority).ok_or(DeletionError::UnknownHold)?;
+        let expires_at = hold.expires_at_millis();
+        let recorded_at = hold.recorded_at_millis();
+        if now_millis < recorded_at {
+            return Err(DeletionError::InvalidHoldWindow);
         }
         let end = now_millis.min(expires_at);
         self.hold_ends.insert(authority.clone(), end);
@@ -1078,8 +1082,10 @@ impl DeletionWorkflow {
         self.verified_at = Some(now_millis);
         Ok(Verification {
             receipt_count: self.receipts.len(),
-            live_deadline_at_millis: self.requested_at_millis + LIVE_DEADLINE_MILLIS,
-            backup_deadline_at_millis: self.requested_at_millis + BACKUP_DEADLINE_MILLIS,
+            live_deadline_at_millis: self.requested_at_millis.saturating_add(LIVE_DEADLINE_MILLIS),
+            backup_deadline_at_millis: self
+                .requested_at_millis
+                .saturating_add(BACKUP_DEADLINE_MILLIS),
         })
     }
 
@@ -1199,14 +1205,14 @@ impl DeletionWorkflow {
                     merged = Some((merged_start, merged_end.max(end)));
                 }
                 Some((merged_start, merged_end)) => {
-                    covered += merged_end - merged_start;
+                    covered = covered.saturating_add(merged_end - merged_start);
                     merged = Some((start, end));
                 }
                 None => merged = Some((start, end)),
             }
         }
         if let Some((merged_start, merged_end)) = merged {
-            covered += merged_end - merged_start;
+            covered = covered.saturating_add(merged_end - merged_start);
         }
         covered
     }
@@ -1388,6 +1394,9 @@ impl DeletionWorkflow {
             }
             let hold = self.holds.get(authority).expect("checked");
             if *end > hold.expires_at_millis() {
+                return Err(DeletionError::InvalidHoldWindow);
+            }
+            if *end < hold.recorded_at_millis() {
                 return Err(DeletionError::InvalidHoldWindow);
             }
         }

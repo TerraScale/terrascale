@@ -1,7 +1,6 @@
 //! The TBEP domain value type and the shared bounds discipline.
 //!
-//! With the `MessagePack` wire retired (ADR 0028), what remains of the old
-//! codec module is the part every serving path shares: the recursive
+//! This module owns the part every serving path shares: the recursive
 //! document value ([`TbepValue`]) the hosting seam exchanges with the
 //! engine, and the fail-closed bound checks the domain registry's
 //! `validate` methods enforce. The gRPC layer converts [`TbepValue`]

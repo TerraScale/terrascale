@@ -95,12 +95,12 @@
 mod manifest;
 mod records;
 mod restore;
-mod schedule;
 mod sha256;
 #[cfg(test)]
 mod tests;
 
 pub use manifest::{BackupManifest, BackupMember, BackupTenantCount};
+pub use restore::RecoveryReceipt;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

@@ -83,9 +83,7 @@ impl RootTable {
         tenant: &TenantId,
         id: &DocumentId,
     ) -> Option<(StorageKey, Document)> {
-        let keys = self
-            .by_document
-            .get(&(tenant.as_str().to_owned(), id.as_str().to_owned()))?;
+        let keys = self.by_document.get(&(tenant.as_str().to_owned(), id.as_str().to_owned()))?;
         // The set is maintained in canonical key order, so its first entry
         // is exactly the scan's first match.
         let key = keys.iter().next()?;
@@ -236,6 +234,13 @@ impl RootTable {
         for _ in 0..count {
             let key = StorageKey::decode(reader)?;
             let document = codec::decode_document(reader)?;
+            // The key and value are independently encoded. A valid checksum
+            // must not allow them to describe different logical documents.
+            if document.collection().as_str() != key.collection()
+                || document.id().as_str() != key.document()
+            {
+                return None;
+            }
             by_document
                 .entry((key.tenant().to_owned(), key.document().to_owned()))
                 .or_default()
@@ -352,6 +357,9 @@ pub(crate) fn load_root_file(path: &Path) -> Result<Option<(u64, RootTable, Stor
     }
     let mut body_reader = Reader::new(body);
     let (sequence, table) = RootTable::decode_body(&mut body_reader).ok_or(())?;
+    if body_reader.remaining() != 0 {
+        return Err(());
+    }
     let id = StorageRootId(format!("{sequence:016x}{checksum:016x}"));
     Ok(Some((sequence, table, id)))
 }
@@ -407,6 +415,9 @@ pub(crate) fn read_manifest(dir: &Path) -> Option<(u64, StorageRootId)> {
     let mut body_reader = Reader::new(body);
     let sequence = body_reader.read_u64()?;
     let id = StorageRootId::from_encoded(&body_reader.read_string()?)?;
+    if body_reader.remaining() != 0 {
+        return None;
+    }
     Some((sequence, id))
 }
 
@@ -467,4 +478,39 @@ pub(crate) fn scan_newest_verifying_root(
         }
     }
     Ok(newest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::intent::StagedWrite;
+    use crate::types::{CollectionName, DocumentValue, ExpectedVersion};
+
+    #[test]
+    fn root_decoder_rejects_checksummed_trailing_bytes() {
+        let dir = std::env::temp_dir().join(format!(
+            "terrabase-root-trailing-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("test directory");
+        let tenant = TenantId::try_new("tenant").expect("tenant");
+        let document = Document::new(
+            DocumentId::try_new("doc").expect("document"),
+            CollectionName::try_new("orders").expect("collection"),
+            DocumentValue::String("value".to_owned()),
+        );
+        let table = RootTable::empty()
+            .apply(&tenant, &[StagedWrite::Put { document, expected: ExpectedVersion::Any }]);
+        let id = write_root_file(&dir, 1, &table, true).expect("root writes");
+        let path = root_file_path(&dir, &id);
+        let mut bytes = fs::read(&path).expect("root reads");
+        bytes.push(0xa5);
+        let checksum = codec::fnv1a(&bytes[16..]);
+        bytes[8..16].copy_from_slice(&checksum.to_le_bytes());
+        fs::write(&path, bytes).expect("hostile root writes");
+        assert!(load_root_file(&path).is_err(), "trailing bytes are not canonical root data");
+        fs::remove_dir_all(dir).expect("test cleanup");
+    }
 }

@@ -18,7 +18,7 @@ use std::{
 
 use super::{
     IndexBuilder, IndexCatalog, IndexDelta, IndexError, IndexKind, IndexLookupBounds,
-    IndexLookupError, RebuildOutcome,
+    IndexLookupError, IndexSegment, MAX_GENERATION_HISTORY, RebuildOutcome,
 };
 use crate::{
     engine::{CommitOutcome, CommitPublicationSink, Engine, EngineConfig},
@@ -262,6 +262,55 @@ fn index_generation_never_moves_backward_within_its_namespace_and_epoch() {
     );
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn generation_history_is_bounded_and_old_observations_fail_closed() {
+    let catalog = IndexCatalog::new();
+    let namespace = namespace("tenant-a", "bounded-history");
+    assert_eq!(catalog.ensure_namespace(&namespace, "age"), 1);
+
+    for sequence in 1..=MAX_GENERATION_HISTORY + 1 {
+        let segment = IndexSegment {
+            namespace_key: namespace.catalog_key(),
+            collection: None,
+            epoch: 0,
+            generation: 0,
+            covered_sequence: sequence as u64,
+            fields: vec!["age".to_owned()],
+            entries: BTreeMap::new(),
+        };
+        assert!(matches!(
+            catalog.publish(&namespace, segment),
+            Ok(RebuildOutcome::Published { .. })
+        ));
+    }
+
+    let state = catalog.state.lock().expect("index state");
+    let history = &state
+        .namespaces
+        .get(&namespace.catalog_key())
+        .expect("namespace")
+        .epochs
+        .get(&1)
+        .expect("epoch")
+        .history;
+    assert_eq!(history.len(), MAX_GENERATION_HISTORY);
+    assert_eq!(history.front().map(|(_, covered)| *covered), Some(2));
+    drop(state);
+
+    // A snapshot older than the retained suffix has no trustworthy
+    // generation witness. The query staleness seam therefore reports no
+    // observation instead of inventing one from a later publication.
+    let view = &catalog as &dyn crate::query::GenerationView;
+    assert_eq!(view.observed_generation(&namespace, StorageSequence::new(1)), None);
+    assert_eq!(
+        view.observed_generation(
+            &namespace,
+            StorageSequence::new((MAX_GENERATION_HISTORY + 1) as u64),
+        ),
+        Some(crate::query::ObservedGeneration::new(1, (MAX_GENERATION_HISTORY + 1) as u64))
+    );
 }
 
 #[test]
