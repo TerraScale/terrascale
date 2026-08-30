@@ -1796,6 +1796,15 @@ fn engine_opens_on_the_lsm_backend_and_serves_documents() {
         .with_storage_backend(crate::engine::StorageBackend::Lsm);
     let engine = Engine::open(config).unwrap();
     drop(engine);
+    assert!(dir.join("keys/local-database.key").is_file());
+    assert!(dir.join("wal.ordinal").is_file());
+    let reopened = Engine::open(
+        EngineConfig::durable(&dir)
+            .unwrap()
+            .with_storage_backend(crate::engine::StorageBackend::Lsm),
+    )
+    .expect("encrypted local location reopens");
+    drop(reopened);
     // The marker identifies the location as an LSM location.
     let marker = std::fs::read_to_string(dir.join("format")).unwrap();
     assert_eq!(marker.trim(), "TBV2LSM1");

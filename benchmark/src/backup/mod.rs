@@ -738,7 +738,13 @@ fn execute(
 
     let effective_start = effective_history_start(engine, plan)?;
     let mut writer = MemberWriter::new(staging.path().to_owned(), plan.member_bound_bytes);
-    let mut tenant_counts: BTreeMap<TenantId, (u64, u64)> = BTreeMap::new();
+    // Bind the complete selected scope even when a tenant contributes no
+    // records to this particular range. Object-store chain planners use the
+    // manifest scope to detect a requested tenant that is absent from the
+    // chain root; omitting zero-count tenants would let an empty incremental
+    // silently claim an expanded scope its root cannot restore.
+    let mut tenant_counts: BTreeMap<TenantId, (u64, u64)> =
+        tenants.iter().cloned().map(|tenant| (tenant, (0, 0))).collect();
     match plan.kind {
         BackupKind::Incremental { base } => {
             // The tombstone half of an incremental below the history bound

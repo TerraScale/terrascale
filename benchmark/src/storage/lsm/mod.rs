@@ -288,6 +288,33 @@ impl LsmStorage {
         Self::recover(dir, format.state, metrics, Some(encryption.wal), false)
     }
 
+    /// Opens a local-development encrypted WAL after the format marker has
+    /// been verified or created.  Creating the key only after this boundary
+    /// keeps an unformatted foreign directory from being adopted merely
+    /// because a `keys/` directory was created first.
+    pub(crate) fn open_with_local_encryption(
+        dir: &Path,
+        metrics: Arc<MetricsRegistry>,
+        owner: crate::storage::DatabaseOwner,
+    ) -> Result<Self, LsmOpenError> {
+        fs::create_dir_all(dir).map_err(|_| LsmOpenError::Unavailable)?;
+        let format = verify_or_create_format(dir)?;
+        if format.created {
+            super::root::sync_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
+        }
+        let key = crate::encryption::LocalFileKeyProvider::at_engine_location(dir)
+            .load_or_create()
+            .map_err(|_| LsmOpenError::Unavailable)?;
+        let key_version = crate::encryption::DatabaseKeyVersion::from_wire_bytes([0_u8; 16]);
+        Self::recover(
+            dir,
+            format.state,
+            metrics,
+            Some(wal::WalEncryptionConfig { owner, key, key_version }),
+            false,
+        )
+    }
+
     /// Opens an empty production location read-only until an authorized
     /// provider lease is wired. Any existing plaintext artifact is refused;
     /// callers cannot accidentally continue writing it.

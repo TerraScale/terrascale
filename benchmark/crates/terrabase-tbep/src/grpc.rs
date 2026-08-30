@@ -1973,6 +1973,7 @@ fn is_closed(event: &pb::SubscribeResponse) -> bool {
 pub struct SubscriptionStream {
     receiver: ReceiverStream<Result<pb::SubscribeResponse, Status>>,
     stop: Option<std::sync::mpsc::Sender<()>>,
+    pump: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Stream for SubscriptionStream {
@@ -1987,6 +1988,12 @@ impl Drop for SubscriptionStream {
     fn drop(&mut self) {
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(());
+        }
+        // The pump owns the synchronous host feed. Join it before releasing
+        // the stream so cancellation and graceful drain cannot leave a
+        // thread retaining the host after the RPC has ended.
+        if let Some(pump) = self.pump.take() {
+            let _ = pump.join();
         }
     }
 }
@@ -2352,7 +2359,7 @@ impl BackboneService for Arc<TbepGrpcServer> {
         // bridges it into the async response stream. A closed sender (the
         // client disconnected) ends the pump, which drops the feed and so
         // unsubscribes on the host side.
-        std::thread::Builder::new()
+        let pump = std::thread::Builder::new()
             .name("tbep-subscription".into())
             .spawn(move || {
                 loop {
@@ -2402,6 +2409,7 @@ impl BackboneService for Arc<TbepGrpcServer> {
         Ok(Response::new(SubscriptionStream {
             receiver: ReceiverStream::new(receiver),
             stop: Some(stop),
+            pump: Some(pump),
         }))
     }
 

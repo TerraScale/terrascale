@@ -525,8 +525,10 @@ fn encode_state(
     if snapshot.len() > MAX_SNAPSHOT_BYTES || operations.len() > MAX_OPERATION_IDS {
         return Err(DurableMemberError::Persistence);
     }
-    let snapshot_len = u64::try_from(snapshot.len()).map_err(|_| DurableMemberError::Persistence)?;
-    let operation_count = u32::try_from(operations.len()).map_err(|_| DurableMemberError::Persistence)?;
+    let snapshot_len =
+        u64::try_from(snapshot.len()).map_err(|_| DurableMemberError::Persistence)?;
+    let operation_count =
+        u32::try_from(operations.len()).map_err(|_| DurableMemberError::Persistence)?;
     let mut body = Vec::with_capacity(STATE_MAGIC.len() + 1 + 12 + snapshot.len());
     body.extend_from_slice(STATE_MAGIC);
     body.push(STATE_VERSION);
@@ -534,7 +536,7 @@ fn encode_state(
     body.extend_from_slice(&operation_count.to_le_bytes());
     body.extend_from_slice(snapshot);
     for operation in operations {
-        ensure_operation_capacity(operations, operation)?;
+        validate_operation_id(operation)?;
         let length = u32::try_from(operation.len()).map_err(|_| DurableMemberError::Persistence)?;
         body.extend_from_slice(&length.to_le_bytes());
         body.extend_from_slice(operation.as_bytes());
@@ -585,7 +587,8 @@ fn decode_state(bytes: &[u8]) -> Result<(Vec<u8>, BTreeSet<String>), DurableMemb
             .try_into()
             .map_err(|_| DurableMemberError::Persistence)?,
     );
-    let snapshot_len = usize::try_from(snapshot_len).map_err(|_| DurableMemberError::Persistence)?;
+    let snapshot_len =
+        usize::try_from(snapshot_len).map_err(|_| DurableMemberError::Persistence)?;
     if snapshot_len > MAX_SNAPSHOT_BYTES {
         return Err(DurableMemberError::Persistence);
     }
@@ -598,9 +601,8 @@ fn decode_state(bytes: &[u8]) -> Result<(Vec<u8>, BTreeSet<String>), DurableMemb
     if count > MAX_OPERATION_IDS {
         return Err(DurableMemberError::Persistence);
     }
-    let snapshot = take(body, &mut cursor, snapshot_len)
-        .ok_or(DurableMemberError::Persistence)?
-        .to_vec();
+    let snapshot =
+        take(body, &mut cursor, snapshot_len).ok_or(DurableMemberError::Persistence)?.to_vec();
     let mut operations = BTreeSet::new();
     for _ in 0..count {
         let length = u32::from_le_bytes(
@@ -680,12 +682,18 @@ fn ensure_operation_capacity(
     operations: &BTreeSet<String>,
     operation: &str,
 ) -> Result<(), DurableMemberError> {
-    if operation.is_empty()
-        || operation.len() > MAX_OPERATION_ID_BYTES
-        || operations.len() >= MAX_OPERATION_IDS
-    {
+    validate_operation_id(operation)?;
+    if operations.len() >= MAX_OPERATION_IDS {
         return Err(DurableMemberError::Persistence);
     }
+    Ok(())
+}
+
+fn validate_operation_id(operation: &str) -> Result<(), DurableMemberError> {
+    if operation.is_empty() || operation.len() > MAX_OPERATION_ID_BYTES {
+        return Err(DurableMemberError::Persistence);
+    }
+    OperationId::try_new(operation).map_err(|_| DurableMemberError::Persistence)?;
     Ok(())
 }
 
@@ -758,7 +766,7 @@ mod tests {
     }
 
     fn member(root: &Path, name: &str) -> (Member, DurableMember) {
-        let database = DatabaseSpec::new("database-a", root.join("database-a"));
+        let database = DatabaseSpec::new("database-a", "database-a");
         let catalog = Member::open(root, [database], AdmissionLimits::default()).expect("catalog");
         let lease = catalog
             .acquire(&terrabase::member::DatabaseId::try_new("database-a").expect("database"))
@@ -782,6 +790,44 @@ mod tests {
         assert_eq!(replica.progress().applied(), 1);
         replica.drain().expect("drain");
         catalog.close(std::time::Duration::from_secs(1)).expect("close");
+        let _ = fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn atomic_state_record_rejects_truncation_and_trailing_bytes() {
+        let operations = BTreeSet::from(["operation-a".to_owned()]);
+        let encoded = encode_state(b"snapshot", &operations).expect("encode");
+        let decoded = decode_state(&encoded).expect("decode");
+        assert_eq!(decoded, (b"snapshot".to_vec(), operations));
+        assert!(decode_state(&encoded[..encoded.len() - 1]).is_err());
+        let mut trailing = encoded;
+        trailing.push(0);
+        assert!(decode_state(&trailing).is_err());
+    }
+
+    #[test]
+    fn atomic_state_record_rejects_duplicate_or_oversized_operation_ids() {
+        let duplicate = BTreeSet::from(["operation-a".to_owned()]);
+        let mut encoded = encode_state(b"snapshot", &duplicate).expect("encode");
+        // Altering the operation count without recomputing the checksum is a
+        // malformed crash-state record and must fail closed.
+        let count_offset = STATE_MAGIC.len() + 1 + 8;
+        encoded[count_offset..count_offset + 4].copy_from_slice(&2_u32.to_le_bytes());
+        assert!(decode_state(&encoded).is_err());
+
+        let oversized = "x".repeat(MAX_OPERATION_ID_BYTES + 1);
+        let operations = BTreeSet::from([oversized]);
+        assert!(encode_state(b"snapshot", &operations).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_state_record_rejects_symlink_authority() {
+        let path = root("symlink");
+        let target = path.join("target");
+        fs::write(&target, b"not-a-state").expect("target");
+        std::os::unix::fs::symlink(&target, path.join(STATE)).expect("symlink");
+        assert!(read_state(&path).is_err());
         let _ = fs::remove_dir_all(path);
     }
 

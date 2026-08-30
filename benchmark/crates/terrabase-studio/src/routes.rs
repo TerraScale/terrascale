@@ -32,6 +32,8 @@ use crate::state::StudioState;
 /// 1 MiB document; allowing roughly 8x for JSON and form escaping plus form
 /// fields keeps that document usable without admitting an unbounded body.
 const MAX_ACTION_BODY_BYTES: usize = 9 * 1024 * 1024;
+/// Keep one schema declaration within the engine's one-document value ceiling.
+const MAX_SCHEMA_INPUT_BYTES: usize = 1 << 20;
 const MAX_CONFIRMATION_TARGET_BYTES: usize = 1_024;
 const MAX_CONFIRMATION_PHRASE_BYTES: usize = 128;
 const CONFIRM_TARGET_FIELD: &str = "confirm_target";
@@ -2056,6 +2058,11 @@ async fn family_schema_declare(
             .map_err(|_| "schema version is not an unsigned integer".to_owned())?;
         let version = terrabase::families::SchemaVersion::try_new(version)
             .map_err(|error| engine_ops::validation_error("schema version", error))?;
+        if form.schema.len() > MAX_SCHEMA_INPUT_BYTES {
+            return Err(format!(
+                "schema JSON exceeds the Studio limit of {MAX_SCHEMA_INPUT_BYTES} bytes"
+            ));
+        }
         let parsed: serde_json::Value = serde_json::from_str(&form.schema)
             .map_err(|error| format!("schema JSON does not parse: {error}"))?;
         let definition = terrabase::families::SchemaDefinition::from_json_schema(
@@ -2110,8 +2117,8 @@ async fn family_schema_declare(
 }
 
 /// Reads the public schema-validation family through a fresh engine snapshot.
-/// This is deliberately read-only: schema declaration needs a complete
-/// versioned contract and belongs in a dedicated migration/editor workflow.
+/// This is deliberately read-only; declaration is handled by the adjacent
+/// typed declaration route and editor.
 async fn family_validation(
     State(state): State<Arc<StudioState>>,
     Form(form): Form<FamilyValidationForm>,
@@ -2203,7 +2210,7 @@ async fn stream_documents(
             cancellation.clone(),
         )
         .map_err(|error| engine_ops::validation_error("stream selector", error))?;
-        if let Some(prefix) = form.prefix.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        if let Some(prefix) = form.prefix.as_deref().filter(|value| !value.is_empty()) {
             selector = selector
                 .with_prefix(prefix)
                 .map_err(|error| engine_ops::validation_error("stream prefix", error))?;
@@ -2426,6 +2433,18 @@ mod tests {
 
     fn security() -> SecurityState {
         SecurityState::try_new(crate::state::DEFAULT_ADDR).expect("default listener")
+    }
+
+    fn form_component(value: &str) -> String {
+        let mut encoded = String::new();
+        for byte in value.bytes() {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+                encoded.push(byte as char);
+            } else {
+                encoded.push_str(&format!("%{byte:02X}"));
+            }
+        }
+        encoded
     }
 
     #[test]
@@ -2891,6 +2910,94 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn schema_version_mismatch_is_refused_without_mutation() {
+        let state = studio("schema-version-mismatch");
+        let sequence_before = state.engine.published_sequence().expect("published sequence");
+        let schema = serde_json::json!({
+            "type": "object",
+            "x-terrabase-schema-version": 1,
+        })
+        .to_string();
+        let response = router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/families/schema/declare")
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .body(Body::from(format!(
+                        "tenant=demo&collection=users&version=2&schema={}&confirm_target=demo%2Fusers&confirm_phrase=declare%20schema",
+                        form_component(&schema),
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains("VersionMismatch"));
+        assert_eq!(state.engine.published_sequence().expect("published sequence"), sequence_before);
+        assert!(state.journal().iter().all(|entry| entry.action != "families/schema/declare"));
+    }
+
+    #[tokio::test]
+    async fn oversized_schema_input_is_refused_before_parsing_or_mutation() {
+        let state = studio("schema-input-limit");
+        let sequence_before = state.engine.published_sequence().expect("published sequence");
+        let schema = format!(
+            r#"{{"type":"object","x-terrabase-schema-version":1,"padding":"{}"}}"#,
+            "x".repeat(MAX_SCHEMA_INPUT_BYTES),
+        );
+        let response = router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/families/schema/declare")
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .body(Body::from(format!(
+                        "tenant=demo&collection=users&version=1&schema={}&confirm_target=demo%2Fusers&confirm_phrase=declare%20schema",
+                        form_component(&schema),
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains("schema JSON exceeds the Studio limit"));
+        assert_eq!(state.engine.published_sequence().expect("published sequence"), sequence_before);
+        assert!(state.journal().iter().all(|entry| entry.action != "families/schema/declare"));
+    }
+
+    #[tokio::test]
+    async fn changed_schema_confirmation_target_is_refused_without_observation_or_write() {
+        let state = studio("schema-confirmation-binding");
+        let tenants_before = state.tenants();
+        let sequence_before = state.engine.published_sequence().expect("published sequence");
+        let schema = r#"{"type":"object","x-terrabase-schema-version":1}"#;
+        let response = router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/families/schema/declare")
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .body(Body::from(format!(
+                        "tenant=other&collection=users&version=1&schema={}&confirm_target=demo%2Fusers&confirm_phrase=declare%20schema",
+                        form_component(schema),
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("confirmation does not match"));
+        assert_eq!(state.tenants(), tenants_before);
+        assert_eq!(state.engine.published_sequence().expect("published sequence"), sequence_before);
+        assert!(state.journal().iter().all(|entry| entry.action != "families/schema/declare"));
+    }
+
+    #[tokio::test]
     async fn document_stream_route_returns_a_bounded_snapshot_batch() {
         let state = studio("document-stream");
         test_seed_sample(state.as_ref()).expect("sample documents are durable");
@@ -2910,6 +3017,91 @@ mod tests {
         let body = String::from_utf8_lossy(&body);
         assert!(body.contains("sample-000"));
         assert!(body.contains("snapshot sequence"));
+    }
+
+    #[tokio::test]
+    async fn document_stream_rejects_invalid_prefixes() {
+        let state = studio("document-stream-prefix-bounds");
+        test_seed_sample(state.as_ref()).expect("sample documents are durable");
+        for prefix in ["bad\u{0}".to_owned(), "x".repeat(256)] {
+            let response = router(Arc::clone(&state))
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/streams/documents")
+                        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                        .body(Body::from(format!(
+                            "tenant=demo&collection=users&prefix={}&limit=20",
+                            form_component(&prefix),
+                        )))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+            assert!(String::from_utf8_lossy(&body).contains("stream prefix"));
+        }
+    }
+
+    #[tokio::test]
+    async fn document_stream_clamps_zero_and_oversized_limits() {
+        let state = studio("document-stream-limit-bounds");
+        test_seed_sample(state.as_ref()).expect("sample documents are durable");
+        for (limit, expected) in [("0", "1 item(s)"), ("10000", "6 item(s)")] {
+            let response = router(Arc::clone(&state))
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/streams/documents")
+                        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                        .body(Body::from(format!(
+                            "tenant=demo&collection=users&prefix=sample-&limit={limit}"
+                        )))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+            assert!(String::from_utf8_lossy(&body).contains(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn document_stream_escapes_json_before_rendering_html() {
+        let state = studio("document-stream-html-escaping");
+        let put = router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/documents/put")
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .body(Body::from(format!(
+                        "tenant=demo&collection=users&id=escaped&json={}&expected=any&version=1&confirm_target=demo%2Fusers%2Fescaped&confirm_phrase=replace%20document",
+                        form_component(r#"{"danger":"<tag>&\"quoted\""}"#),
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(put.status(), StatusCode::OK);
+        let stream = router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/streams/documents")
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .body(Body::from("tenant=demo&collection=users&prefix=escaped&limit=1"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(stream.into_body(), 1 << 20).await.unwrap();
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains("&lt;tag&gt;&amp;"));
+        assert!(body.contains("&quot;danger&quot;"));
+        assert!(!body.contains("<tag>"));
     }
 
     #[tokio::test]

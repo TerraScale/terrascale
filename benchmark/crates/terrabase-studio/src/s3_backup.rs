@@ -543,7 +543,7 @@ async fn backup_to_s3_with_points(
 ) -> Result<BackupUploadReceipt, String> {
     let scratch = ScratchDirectory::create(scratch_root, "upload")?;
     let fallback_tenants = tenants.clone();
-    let (plan, anchor) = select_backup_plan(settings, mode, points, tenants);
+    let (plan, anchor) = select_backup_plan(settings, mode, points, tenants)?;
     if let Some(anchor) = anchor {
         stage_manifests(scratch.path(), std::slice::from_ref(anchor)).await?;
     }
@@ -739,9 +739,7 @@ fn select_backup_plan<'points>(
     mode: BackupRunMode,
     points: &'points [RemoteRecoveryPoint],
     tenants: Vec<terrabase::TenantId>,
-) -> (terrabase::BackupPlan, Option<&'points RemoteRecoveryPoint>) {
-    let newest =
-        points.iter().max_by(|left, right| manifest_order(&left.manifest, &right.manifest));
+) -> Result<(terrabase::BackupPlan, Option<&'points RemoteRecoveryPoint>), String> {
     let newest_full = points
         .iter()
         .filter(|point| !matches!(point.manifest.kind(), BackupKind::Incremental { .. }))
@@ -751,19 +749,32 @@ fn select_backup_plan<'points>(
         unix_millis(SystemTime::now()).saturating_sub(last)
             >= duration_millis(settings.full_interval())
     });
-    let (mut plan, anchor) = match (mode, newest, full_is_due) {
-        (BackupRunMode::Full, _, _) | (_, None, _) | (_, _, true) => {
+    let (mut plan, anchor) = match (mode, points.is_empty(), full_is_due) {
+        (BackupRunMode::Full, _, _) | (_, true, _) | (_, _, true) => {
             (terrabase::BackupPlan::full(), None)
         }
-        (BackupRunMode::Automatic, Some(point), false) => (
-            terrabase::BackupPlan::incremental_since(point.manifest.boundary_sequence()),
-            Some(point),
-        ),
+        (BackupRunMode::Automatic, false, false) => {
+            // Do not extend an arbitrary content-hash winner when the
+            // repository contains forked heads at the same boundary.
+            let chain = select_chain(points, None)?;
+            let identity = chain
+                .last()
+                .map(|point| point.manifest.identity())
+                .ok_or_else(|| "the selected S3 recovery chain is empty".to_owned())?;
+            let point = points
+                .iter()
+                .find(|point| point.manifest.identity() == identity)
+                .ok_or_else(|| "the selected S3 recovery chain head disappeared".to_owned())?;
+            (
+                terrabase::BackupPlan::incremental_since(point.manifest.boundary_sequence()),
+                Some(point),
+            )
+        }
     };
     if !tenants.is_empty() {
         plan = plan.with_tenants(tenants);
     }
-    (plan, anchor)
+    Ok((plan, anchor))
 }
 
 fn scheduled_run_delay(
@@ -844,34 +855,123 @@ fn select_chain(
             .iter()
             .find(|point| point.manifest.identity() == identity)
             .ok_or_else(|| "the requested S3 recovery point does not exist".to_owned())?,
-        None => points
-            .iter()
-            .max_by(|left, right| manifest_order(&left.manifest, &right.manifest))
-            .ok_or_else(|| "S3 holds no recovery point".to_owned())?,
+        None => select_latest_head(points)?,
     };
     let mut chain = vec![head.clone()];
     let mut visited = BTreeSet::from([head.manifest.identity().to_owned()]);
     while let Some(base) = chain.last().and_then(|point| point.manifest.base_sequence()) {
-        let link = points
+        let current = chain
+            .last()
+            .ok_or_else(|| "the selected S3 recovery chain is empty".to_owned())?;
+        let required_tenants: BTreeSet<_> = chain
             .iter()
-            .filter(|point| {
-                point.manifest.boundary_sequence() == base
-                    && !visited.contains(point.manifest.identity())
-            })
-            .min_by(|left, right| {
-                (usize::from(left.manifest.base_sequence().is_some()), left.manifest.identity())
-                    .cmp(&(
-                        usize::from(right.manifest.base_sequence().is_some()),
-                        right.manifest.identity(),
-                    ))
-            })
-            .ok_or_else(|| "the selected S3 recovery chain is incomplete".to_owned())?;
+            .flat_map(|point| point.manifest.tenants().iter().map(|entry| entry.tenant()))
+            .collect();
+        let link = select_predecessor(points, current, base, &visited, &required_tenants)?;
         visited.insert(link.manifest.identity().to_owned());
         chain.push(link.clone());
     }
     chain.reverse();
     validate_chain(&chain)?;
     Ok(chain)
+}
+
+/// Selects a unique newest semantic head. An advancing incremental is the
+/// substantive frontier at its boundary; a subsequent self-bound
+/// incremental is redundant and cannot turn that linear history into a fork.
+fn select_latest_head(points: &[RemoteRecoveryPoint]) -> Result<&RemoteRecoveryPoint, String> {
+    let newest_boundary = points
+        .iter()
+        .map(|point| point.manifest.boundary_sequence())
+        .max()
+        .ok_or_else(|| "S3 holds no recovery point".to_owned())?;
+    let at_boundary: Vec<_> = points
+        .iter()
+        .filter(|point| point.manifest.boundary_sequence() == newest_boundary)
+        .collect();
+    let incrementals: Vec<_> = at_boundary
+        .iter()
+        .copied()
+        .filter(|point| point.manifest.base_sequence().is_some())
+        .collect();
+    let advancing: Vec<_> = incrementals
+        .iter()
+        .copied()
+        .filter(|point| point.manifest.base_sequence().is_some_and(|base| base < newest_boundary))
+        .collect();
+    let candidates = if !advancing.is_empty() {
+        &advancing
+    } else if !incrementals.is_empty() {
+        &incrementals
+    } else {
+        &at_boundary
+    };
+    unique_chain_candidate(candidates, "the newest S3 recovery boundary is ambiguous")
+}
+
+/// Selects one provable predecessor at `base`. A self-bound incremental is
+/// an empty, redundant link and is skipped. A full/snapshot point at the
+/// exact boundary is self-contained and therefore preferred over an
+/// advancing incremental, matching the engine restore contract.
+fn select_predecessor<'points>(
+    points: &'points [RemoteRecoveryPoint],
+    current: &RemoteRecoveryPoint,
+    base: terrabase::StorageSequence,
+    visited: &BTreeSet<String>,
+    required_tenants: &BTreeSet<&terrabase::TenantId>,
+) -> Result<&'points RemoteRecoveryPoint, String> {
+    let matching: Vec<_> = points
+        .iter()
+        .filter(|point| {
+            point.manifest.boundary_sequence() == base
+                && point.manifest.database_id() == current.manifest.database_id()
+                && point.manifest.partition_id() == current.manifest.partition_id()
+                && !visited.contains(point.manifest.identity())
+        })
+        .collect();
+    let roots: Vec<_> = matching
+        .iter()
+        .copied()
+        .filter(|point| point.manifest.base_sequence().is_none())
+        .filter(|point| root_covers_chain_scope(point, required_tenants))
+        .collect();
+    if !roots.is_empty() {
+        return unique_chain_candidate(
+            &roots,
+            "the selected S3 recovery chain has ambiguous full roots",
+        );
+    }
+    let advancing: Vec<_> = matching
+        .into_iter()
+        .filter(|point| point.manifest.base_sequence().is_some_and(|parent| parent < base))
+        .collect();
+    if advancing.is_empty() {
+        return Err("the selected S3 recovery chain is incomplete".to_owned());
+    }
+    unique_chain_candidate(
+        &advancing,
+        "the selected S3 recovery chain has ambiguous incremental predecessors",
+    )
+}
+
+fn root_covers_chain_scope(
+    root: &RemoteRecoveryPoint,
+    required_tenants: &BTreeSet<&terrabase::TenantId>,
+) -> bool {
+    let root_tenants: BTreeSet<_> =
+        root.manifest.tenants().iter().map(|entry| entry.tenant()).collect();
+    required_tenants.iter().all(|tenant| root_tenants.contains(*tenant))
+}
+
+fn unique_chain_candidate<'candidate>(
+    candidates: &[&'candidate RemoteRecoveryPoint],
+    ambiguity: &str,
+) -> Result<&'candidate RemoteRecoveryPoint, String> {
+    match candidates {
+        [candidate] => Ok(*candidate),
+        [] => Err("the selected S3 recovery chain is incomplete".to_owned()),
+        _ => Err(ambiguity.to_owned()),
+    }
 }
 
 fn validate_repository_scope(points: &[RemoteRecoveryPoint]) -> Result<(), String> {

@@ -106,7 +106,7 @@ fn limits_card() -> String {
     let rows = [
         (
             "Schema declarations",
-            "Public family write API exists; Studio exposes inspection and keeps declaration available only through an explicit future schema editor.",
+            "Public family read and declaration APIs are available here through the bounded schema editor; migrations remain a separate typed drive.",
         ),
         (
             "Migrations",

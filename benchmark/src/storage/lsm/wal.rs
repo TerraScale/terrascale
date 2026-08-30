@@ -439,7 +439,9 @@ fn scan_encrypted_file(file: &File, wal_cipher: &WalCipher) -> io::Result<WalSca
     while offset < bytes.len() {
         let remaining = &bytes[offset..];
         if remaining.len() < 29 {
-            mid_file_damage = remaining.len() < 4 || remaining[..4] != *ENCRYPTED_MAGIC;
+            // A write interrupted inside the magic itself is still a torn
+            // trailing envelope; arbitrary bytes at the tail are damage.
+            mid_file_damage = !ENCRYPTED_MAGIC.starts_with(remaining);
             break;
         }
         if remaining[..4] != *ENCRYPTED_MAGIC {
@@ -549,7 +551,31 @@ fn load_or_create_ordinal(path: &Path, required: bool) -> io::Result<u128> {
                     ));
                 }
             }
-            let bytes = std::fs::read(path)?;
+            let mut options = OpenOptions::new();
+            options.read(true);
+            #[cfg(any(target_os = "android", target_os = "linux"))]
+            {
+                use std::os::unix::fs::OpenOptionsExt as _;
+                options.custom_flags(0x20000); // O_NOFOLLOW
+            }
+            let mut file = options.open(path)?;
+            let opened = file.metadata()?;
+            if !opened.is_file() || opened.len() != ORDINAL_BYTES as u64 {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "unsafe WAL ordinal state"));
+            }
+            #[cfg(unix)]
+            if !same_file(&metadata, &opened) {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "WAL ordinal changed"));
+            }
+            let mut bytes = vec![0_u8; ORDINAL_BYTES];
+            file.read_exact(&mut bytes)?;
+            let mut trailing = [0_u8; 1];
+            if file.read(&mut trailing)? != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "WAL ordinal trailing bytes",
+                ));
+            }
             if bytes[..8] != *ORDINAL_MAGIC || bytes[24..] != ordinal_checksum(&bytes[..24]) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -623,6 +649,12 @@ fn cleanup_temp(path: &Path, primary: io::Error) -> io::Result<()> {
             format!("{primary}; ordinal temp cleanup failed: {cleanup}"),
         )),
     }
+}
+
+#[cfg(unix)]
+fn same_file(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    left.dev() == right.dev() && left.ino() == right.ino()
 }
 
 /// Reports whether a complete, self-verifying frame begins after a damaged
@@ -1080,7 +1112,7 @@ mod tests {
         .unwrap();
         assert!(wal.scan().unwrap().mid_file_damage);
         persist_ordinal(&ordinal_path, 7).unwrap();
-        let mut wal = WalLog::open_unrepaired_with_encryption(
+        let wal = WalLog::open_unrepaired_with_encryption(
             &path,
             WalEncryptionConfig {
                 owner,
@@ -1089,10 +1121,9 @@ mod tests {
             },
         )
         .unwrap();
-        // Existing bytes still have ordinal zero; a gap is only valid for a
-        // newly created WAL, not when it would conceal a rollback.
-        assert!(wal.scan().unwrap().mid_file_damage);
-        let _ = &mut wal;
+        // A forward state gap is valid: it represents reservations consumed
+        // before a crash. The rollback was rejected by the preceding scan.
+        assert!(!wal.scan().unwrap().mid_file_damage);
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
