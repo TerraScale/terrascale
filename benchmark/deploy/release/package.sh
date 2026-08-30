@@ -45,7 +45,7 @@ case "$target" in
   *) usage ;;
 esac
 
-for tool in buildah cargo date file git gzip jq python3 readelf rustc sha256sum skopeo tar; do
+for tool in buildah cargo date file git gzip jq readelf rustc sha256sum skopeo tar; do
   command -v "$tool" >/dev/null || {
     echo "required release tool is missing: $tool" >&2
     exit 1
@@ -116,6 +116,20 @@ export CARGO_PROFILE_RELEASE_PANIC=abort
 export CARGO_PROFILE_RELEASE_STRIP=symbols
 export RUSTFLAGS="-C debuginfo=0 --remap-path-prefix=$repository_root=/usr/src/terrabase"
 export SOURCE_DATE_EPOCH=$source_epoch
+
+sbom_tool=${TERRABASE_SBOM_TOOL-}
+if [[ -z "$sbom_tool" ]]; then
+  cargo build \
+    --manifest-path "$script_dir/sbom/Cargo.toml" \
+    --locked \
+    --release \
+    --target-dir "$work/sbom-target"
+  sbom_tool=$work/sbom-target/release/terrabase-release-sbom
+fi
+[[ -f "$sbom_tool" && ! -L "$sbom_tool" && -x "$sbom_tool" ]] || {
+  echo "release SBOM generator is missing or unsafe: $sbom_tool" >&2
+  exit 1
+}
 
 metadata=$work/cargo-metadata.json
 cargo metadata \
@@ -259,7 +273,7 @@ oci_digest=$(sha256sum "$output/$oci_name" | awk '{print $1}')
 archive_digest=$(sha256sum "$output/$archive_name" | awk '{print $1}')
 lock_digest=$(sha256sum "$(dirname -- "$manifest")/Cargo.lock" | awk '{print $1}')
 
-python3 "$script_dir/generate_sbom.py" \
+"$sbom_tool" \
   --metadata "$metadata" \
   --root "$package" \
   --artifact "$output/$oci_name" \

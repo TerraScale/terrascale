@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 const MAX_METADATA_BYTES: u64 = 64 * 1024 * 1024;
@@ -47,14 +47,43 @@ fn run(arguments: impl Iterator<Item = String>) -> Result<(), String> {
         &artifact_name,
         &artifact_digest,
     )?;
-    let mut encoded = serde_json::to_vec_pretty(&document)
-        .map_err(|error| format!("cannot encode CycloneDX document: {error}"))?;
+    let mut encoded = encode_limited(&document)?;
     encoded = ascii_json(&encoded)?;
-    if encoded.len() > MAX_OUTPUT_BYTES {
+    if encoded.len() == MAX_OUTPUT_BYTES {
         return Err(format!("generated SBOM exceeds {MAX_OUTPUT_BYTES} bytes"));
     }
     encoded.push(b'\n');
     write_output(&options.output, &encoded)
+}
+
+struct LimitedWriter {
+    bytes: Vec<u8>,
+}
+
+impl Write for LimitedWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.bytes.len().saturating_add(bytes.len()) > MAX_OUTPUT_BYTES {
+            return Err(io::Error::other("generated SBOM exceeds output limit"));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn encode_limited(document: &Value) -> Result<Vec<u8>, String> {
+    let mut writer = LimitedWriter { bytes: Vec::with_capacity(MAX_OUTPUT_BYTES.min(64 * 1024)) };
+    serde_json::to_writer_pretty(&mut writer, document).map_err(|error| {
+        if error.to_string().contains("output limit") {
+            format!("generated SBOM exceeds {MAX_OUTPUT_BYTES} bytes")
+        } else {
+            format!("cannot encode CycloneDX document: {error}")
+        }
+    })?;
+    Ok(writer.bytes)
 }
 
 fn parse_options(mut arguments: impl Iterator<Item = String>) -> Result<Options, String> {
@@ -185,10 +214,8 @@ fn validate_json(value: &Value, depth: usize, location: &str) -> Result<(), Stri
     }
     match value {
         Value::String(text) => {
-            if text.len() > MAX_STRING_BYTES || text.chars().any(char::is_control) {
-                return Err(format!(
-                    "{location} contains an oversized or control-character string"
-                ));
+            if text.len() > MAX_STRING_BYTES {
+                return Err(format!("{location} contains an oversized string"));
             }
         }
         Value::Array(values) => {
@@ -244,6 +271,13 @@ fn build_document(
         {
             return Err(format!("package {name} source is not a string"));
         }
+        if let Some(source) = object.get("source").and_then(Value::as_str)
+            && (source.len() > MAX_STRING_BYTES || source.chars().any(char::is_control))
+        {
+            return Err(format!(
+                "package {name} source contains an oversized or control-character string"
+            ));
+        }
     }
     if root_indexes.len() != 1 {
         return Err(format!(
@@ -298,7 +332,7 @@ fn build_document(
     let root_reference = format!(
         "pkg:generic/{root_name}@{}?target={}",
         required_string(root, "version", "root package")?,
-        percent_encode(target, "/")
+        percent_encode(target, "/._-")
     );
     let mut dependencies = Vec::new();
     for package_id in included_ids {
@@ -349,11 +383,15 @@ fn required_string<'a>(
     key: &str,
     location: &str,
 ) -> Result<&'a str, String> {
-    object
+    let value = object
         .get(key)
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| format!("{location} {key} is not a non-empty string"))
+        .ok_or_else(|| format!("{location} {key} is not a non-empty string"))?;
+    if value.len() > MAX_STRING_BYTES || value.chars().any(char::is_control) {
+        return Err(format!("{location} {key} contains an oversized or control-character string"));
+    }
+    Ok(value)
 }
 
 fn resolution_nodes(
@@ -590,15 +628,24 @@ fn ascii_json(bytes: &[u8]) -> Result<Vec<u8>, String> {
     let mut output = Vec::with_capacity(bytes.len());
     for character in text.chars() {
         if character.is_ascii() {
+            if output.len() == MAX_OUTPUT_BYTES {
+                return Err(format!("generated SBOM exceeds {MAX_OUTPUT_BYTES} bytes"));
+            }
             output.push(character as u8);
         } else {
             let code = character as u32;
             if code <= 0xffff {
+                if output.len().saturating_add(6) > MAX_OUTPUT_BYTES {
+                    return Err(format!("generated SBOM exceeds {MAX_OUTPUT_BYTES} bytes"));
+                }
                 output.extend_from_slice(format!("\\u{code:04x}").as_bytes());
             } else {
                 let value = code - 0x1_0000;
                 let high = 0xd800 + (value >> 10);
                 let low = 0xdc00 + (value & 0x3ff);
+                if output.len().saturating_add(12) > MAX_OUTPUT_BYTES {
+                    return Err(format!("generated SBOM exceeds {MAX_OUTPUT_BYTES} bytes"));
+                }
                 output.extend_from_slice(format!("\\u{high:04x}\\u{low:04x}").as_bytes());
             }
         }
@@ -647,10 +694,8 @@ mod tests {
             &"a".repeat(64),
         )
         .expect("document");
-        let first =
-            ascii_json(&serde_json::to_vec_pretty(&document).expect("JSON")).expect("ASCII");
-        let second =
-            ascii_json(&serde_json::to_vec_pretty(&document).expect("JSON")).expect("ASCII");
+        let first = ascii_json(&encode_limited(&document).expect("JSON")).expect("ASCII");
+        let second = ascii_json(&encode_limited(&document).expect("JSON")).expect("ASCII");
         assert_eq!(first, second);
         let text = String::from_utf8(first).expect("UTF-8");
         assert!(text.contains("\"components\": ["));
@@ -676,14 +721,17 @@ mod tests {
         let package = duplicate["packages"][1].clone();
         duplicate["packages"].as_array_mut().expect("array").push(package);
         assert!(build_document(&duplicate, "root", "target", "artifact", &"a".repeat(64)).is_err());
-        let hostile = json!({"x":"bad\u{0000}value"});
-        assert!(validate_json(&hostile, 0, "metadata").is_err());
+        let mut hostile = metadata("MIT");
+        hostile["packages"][1]["name"] = json!("bad\u{0000}value");
+        assert!(build_document(&hostile, "root", "target", "artifact", &"a".repeat(64)).is_err());
     }
 
     #[test]
     fn oversized_input_and_output_limits_are_rejected() {
         let oversized = Value::String("x".repeat(MAX_STRING_BYTES + 1));
         assert!(validate_json(&oversized, 0, "metadata").is_err());
+        let output = vec![b'x'; MAX_OUTPUT_BYTES + 1];
+        assert!(output.len() > MAX_OUTPUT_BYTES);
         let mut huge = metadata("MIT");
         huge["packages"].as_array_mut().expect("array").extend((0..MAX_PACKAGES + 1).map(|index| json!({"id":format!("id{index}"),"name":format!("dep{index}"),"version":"1.0.0","license":"MIT"})));
         assert!(build_document(&huge, "root", "target", "artifact", &"a".repeat(64)).is_err());

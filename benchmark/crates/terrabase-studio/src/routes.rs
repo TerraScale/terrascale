@@ -120,6 +120,7 @@ pub fn router(state: Arc<StudioState>) -> Router {
         .route("/maintenance/compact", post(maintenance_compact))
         .route("/maintenance/maintain-indexes", post(maintenance_maintain_indexes))
         .route("/families/validation", post(family_validation))
+        .route("/families/schema/declare", post(family_schema_declare))
         .route("/streams/documents", post(stream_documents))
         .route("/metrics/prometheus", get(prometheus_metrics))
         .route("/events/metrics", get(metrics_stream))
@@ -2023,6 +2024,85 @@ struct FamilyValidationForm {
     document: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct FamilySchemaDeclareForm {
+    tenant: String,
+    collection: String,
+    version: String,
+    schema: String,
+    confirm_target: String,
+    confirm_phrase: String,
+}
+
+/// Declares one typed schema-validation family policy through a synced
+/// Engine transaction. JSON is only the host representation; the engine sees
+/// the closed `SchemaDefinition` vocabulary.
+async fn family_schema_declare(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<FamilySchemaDeclareForm>,
+) -> Response {
+    let outcome = on_blocking(state, move |state| {
+        let target = format!("{}/{}", form.tenant, form.collection);
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            &target,
+            "declare schema",
+        )?;
+        let version = form
+            .version
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| "schema version is not an unsigned integer".to_owned())?;
+        let version = terrabase::families::SchemaVersion::try_new(version)
+            .map_err(|error| engine_ops::validation_error("schema version", error))?;
+        let parsed: serde_json::Value = serde_json::from_str(&form.schema)
+            .map_err(|error| format!("schema JSON does not parse: {error}"))?;
+        let definition = terrabase::families::SchemaDefinition::from_json_schema(
+            version,
+            &crate::json::from_json(parsed),
+        )
+        .map_err(|error| format!("schema declaration refused: {error:?}"))?;
+        let tenant = engine_ops::tenant(&form.tenant)?;
+        let collection = engine_ops::collection(&form.collection)?;
+        let session = engine_ops::session(state.engine.as_ref(), &tenant)?;
+        let operation = state.next_operation()?;
+        let deadline = terrabase::Deadline::after(Duration::from_secs(30))
+            .map_err(|error| engine_ops::validation_error("schema deadline", error))?;
+        let write = terrabase::families::ValidationWrite::try_new(
+            session.scope.clone(),
+            collection,
+            Some(definition),
+            operation.clone(),
+            deadline,
+            terrabase::Cancellation::new(),
+        )
+        .map_err(|error| engine_ops::validation_error("schema declaration", error))?;
+        let mut transaction = session.begin(operation)?;
+        state
+            .engine
+            .families()
+            .stage(&mut transaction, terrabase::FamilyWriteRequest::schema_validation_update(write))
+            .map_err(|error| format!("schema declaration failed: {error:?}"))?;
+        let receipt = transaction.commit(terrabase::LocalDurability::Synced);
+        match receipt {
+            terrabase::CommitOutcome::Committed(receipt) => Ok(format!(
+                "schema version declared at sequence {} with {:?} durability",
+                receipt.sequence().get(),
+                receipt.durability(),
+            )),
+            terrabase::CommitOutcome::Rejected(error) => {
+                Err(format!("schema declaration commit refused: {error:?}"))
+            }
+            terrabase::CommitOutcome::Unknown(unknown) => {
+                Err(format!("schema declaration commit is uncertain: {unknown:?}"))
+            }
+        }
+    })
+    .await;
+    merge(surfaces::FAMILY_ID, outcome)
+}
+
 /// Reads the public schema-validation family through a fresh engine snapshot.
 /// This is deliberately read-only: schema declaration needs a complete
 /// versioned contract and belongs in a dedicated migration/editor workflow.
@@ -2044,7 +2124,7 @@ async fn family_validation(
         let session = engine_ops::session(state.engine.as_ref(), &tenant)?;
         let deadline = terrabase::Deadline::after(Duration::from_secs(10))
             .map_err(|error| engine_ops::validation_error("family deadline", error))?;
-        let read = terrabase::ValidationRead::try_new(
+        let read = terrabase::families::ValidationRead::try_new(
             collection,
             document,
             deadline,
@@ -2087,7 +2167,7 @@ async fn family_validation(
         ))
     })
     .await;
-    merge(surfaces::FAMILY_ID, Ok(surfaces::family_fragment(outcome)))
+    merge(surfaces::FAMILY_ID, outcome)
 }
 
 #[derive(Deserialize)]
@@ -2161,7 +2241,7 @@ async fn stream_documents(
         ))
     })
     .await;
-    merge(surfaces::STREAM_ID, Ok(surfaces::stream_fragment(outcome)))
+    merge(surfaces::STREAM_ID, outcome)
 }
 
 /* ------------------------------------------------------------- maintenance */
@@ -2477,6 +2557,7 @@ mod tests {
             "/maintenance/compact",
             "/maintenance/maintain-indexes",
             "/families/validation",
+            "/families/schema/declare",
             "/streams/documents",
         ] {
             let response = app
@@ -2561,6 +2642,7 @@ mod tests {
             ("/deletion/complete", "request_id=del-1"),
             ("/maintenance/compact", "policy=reclaim-history"),
             ("/maintenance/maintain-indexes", ""),
+            ("/families/schema/declare", "tenant=demo&collection=users&version=1&schema=%7B%7D"),
         ];
         for (path, body) in cases {
             let response = app
@@ -2746,6 +2828,82 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
         }
+    }
+
+    #[tokio::test]
+    async fn schema_family_declaration_is_confirmed_and_tenant_bound() {
+        let app = router(studio("schema-family"));
+        let schema = "%7B%22type%22%3A%22object%22%2C%22properties%22%3A%7B%22name%22%3A%7B%22type%22%3A%22string%22%7D%7D%2C%22required%22%3A%5B%22name%22%5D%2C%22x-terrabase-schema-version%22%3A1%7D";
+        let declared = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/families/schema/declare")
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .body(Body::from(format!(
+                        "tenant=demo&collection=users&version=1&schema={schema}&confirm_target=demo%2Fusers&confirm_phrase=declare%20schema"
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(declared.status(), StatusCode::OK);
+        let declared_body = axum::body::to_bytes(declared.into_body(), 1 << 20).await.unwrap();
+        assert!(String::from_utf8_lossy(&declared_body).contains("schema version declared"));
+
+        let wrong = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/families/schema/declare")
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .body(Body::from(format!(
+                        "tenant=other&collection=users&version=1&schema={schema}&confirm_target=demo%2Fusers&confirm_phrase=declare%20schema"
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let wrong_body = axum::body::to_bytes(wrong.into_body(), 1 << 20).await.unwrap();
+        assert!(String::from_utf8_lossy(&wrong_body).contains("confirmation does not match"));
+
+        let inspected = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/families/validation")
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .body(Body::from("tenant=demo&collection=users"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let inspected_body = axum::body::to_bytes(inspected.into_body(), 1 << 20).await.unwrap();
+        assert!(String::from_utf8_lossy(&inspected_body).contains("enforced version"));
+    }
+
+    #[tokio::test]
+    async fn document_stream_route_returns_a_bounded_snapshot_batch() {
+        let state = studio("document-stream");
+        test_seed_sample(state.as_ref()).expect("sample documents are durable");
+        let response = router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/streams/documents")
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .body(Body::from("tenant=demo&collection=users&prefix=sample-&limit=2"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains("sample-000"));
+        assert!(body.contains("snapshot sequence"));
     }
 
     #[tokio::test]

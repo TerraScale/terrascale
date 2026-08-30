@@ -75,6 +75,41 @@ pub const MAX_INCLUDE_COUNTER_NAMES: usize = 32;
 /// takes.
 pub const INCLUDE_READ_WINDOW: Duration = Duration::from_mins(1);
 
+/// Returns the identifiers directly referenced by all include clauses in one
+/// document. Query execution uses this small helper to resolve only the
+/// targets reachable from the requested page.
+pub(crate) fn referenced_ids(document: &Document, clauses: &[IncludeClause]) -> BTreeSet<String> {
+    clauses
+        .iter()
+        .flat_map(|clause| match clause {
+            IncludeClause::Documents(value) => gather(value.path(), value.id_prefix(), document),
+            IncludeClause::Counters(value) => gather(value.path(), None, document),
+            IncludeClause::TimeSeries(value) => gather(value.path(), None, document),
+        })
+        .filter(|reference| !reference.is_empty())
+        .collect()
+}
+
+/// Returns document-include references active at one expansion depth. Depth
+/// zero is the row-to-include edge; depth one is the next chained edge.
+pub(crate) fn document_referenced_ids(
+    document: &Document,
+    clauses: &[IncludeClause],
+    depth: u8,
+) -> BTreeSet<String> {
+    clauses
+        .iter()
+        .filter_map(|clause| match clause {
+            IncludeClause::Documents(value) if depth < value.depth() => {
+                Some(gather(value.path(), value.id_prefix(), document))
+            }
+            _ => None,
+        })
+        .flatten()
+        .filter(|reference| !reference.is_empty())
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Clause values
 // ---------------------------------------------------------------------------

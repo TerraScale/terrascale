@@ -288,6 +288,21 @@ impl LsmStorage {
         Self::recover(dir, format.state, metrics, Some(encryption.wal), false)
     }
 
+    /// Opens an empty production location read-only until an authorized
+    /// provider lease is wired. Any existing plaintext artifact is refused;
+    /// callers cannot accidentally continue writing it.
+    pub(crate) fn open_production_unavailable(
+        dir: &Path,
+        metrics: Arc<MetricsRegistry>,
+    ) -> Result<Self, LsmOpenError> {
+        fs::create_dir_all(dir).map_err(|_| LsmOpenError::Unavailable)?;
+        let format = verify_or_create_format(dir)?;
+        if format.created {
+            super::root::sync_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
+        }
+        Self::recover(dir, format.state, metrics, None, true)
+    }
+
     /// Rebuilds engine state from the manifest anchor, the verifying
     /// segments, the retained-evidence store, and the WAL tail.
     #[allow(
@@ -371,6 +386,9 @@ impl LsmStorage {
                 LsmOpenError::Unavailable
             }
         })?;
+        if writes_unavailable && (!manifest.segments.is_empty() || wal.len() != 0) {
+            return Err(LsmOpenError::FormatMismatch);
+        }
         let wal_scan = wal.scan().map_err(|_| LsmOpenError::Unavailable)?;
         let store_id =
             active_format.map_or_else(|| StoreId::generate(dir), |active| active.store_id);
@@ -2374,7 +2392,7 @@ fn collection_documents_from_at(
             break;
         }
         if candidate_collection != collection.as_str() {
-            if candidate_collection > collection.as_str() {
+            if candidate_collection.as_str() > collection.as_str() {
                 break;
             }
             continue;

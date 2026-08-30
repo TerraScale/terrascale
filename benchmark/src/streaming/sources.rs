@@ -173,7 +173,9 @@ fn map_query_error(error: QueryError) -> StreamError {
         // depth, or a set that would pass the include document bound. The
         // stream reports them the way it reports any other source the plan
         // names and the seam refuses.
-        QueryError::IncludeCycle | QueryError::IncludeBoundExceeded => StreamError::InvalidSource,
+        QueryError::IncludeCycle
+        | QueryError::IncludeBoundExceeded
+        | QueryError::CandidateBoundExceeded => StreamError::InvalidSource,
         QueryError::StorageFailure => StreamError::EngineClosed,
     }
 }

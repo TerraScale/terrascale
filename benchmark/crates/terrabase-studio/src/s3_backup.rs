@@ -366,8 +366,11 @@ impl S3BackupRepository {
                     let bytes = tokio::fs::read(&local_path)
                         .await
                         .map_err(|error| format!("cannot read staged backup member: {error}"))?;
-                    if u64::try_from(bytes.len()).ok() != Some(member.length()) {
-                        return Err("a staged backup member changed before upload".to_owned());
+                    if !member.matches_bytes(&bytes) {
+                        return Err(
+                            "a staged backup member failed manifest verification before upload"
+                                .to_owned(),
+                        );
                     }
                     repository
                         .put_immutable(

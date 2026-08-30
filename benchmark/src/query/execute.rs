@@ -230,6 +230,7 @@ fn execute_with_index(
     // the segment's collection, and the snapshot-isolation guard that the
     // segment covers exactly this snapshot's sequence — but reading it first
     // lets a narrowed query fetch its candidates by key instead of scanning.
+    let retained_capacity = retained_capacity(query)?;
     let indexed_read = match (selected, catalog) {
         (Some(namespace), Some(catalog)) if view.available_generation(namespace).is_some() => {
             indexed_candidates(catalog, namespace, query, snapshot)?
@@ -240,9 +241,8 @@ fn execute_with_index(
     let indexed_ids = indexed_read.map(|read| read.ids.into_iter().collect::<BTreeSet<_>>());
 
     // Loads and includes resolve identifiers across every collection of the
-    // tenant — a reference is an id, not a collection-qualified pointer — so
-    // a query carrying either clause keeps the whole-tenant view below.
-    let retained_capacity = retained_capacity(query)?;
+    // tenant — a reference is an id, not a collection-qualified pointer —
+    // through their own bounded resolution pass below.
     let (ordered, matched_count, scanned, skipped) = if let (Some(collection), Some(ids)) =
         (query.source().collection(), indexed_ids.as_ref())
         && ids.len() <= KEYED_CANDIDATE_READS
@@ -497,20 +497,36 @@ fn index_value_key(value: &DocumentValue) -> Option<String> {
     }
 }
 
-/// Evaluates the predicate against either the complete source collection or
-/// the bounded candidate IDs supplied by an index. Candidates remain
+/// Computes the candidate window needed to serve one request. A page whose
+/// offset cannot fit the retained window is rejected before any data access.
+fn retained_capacity(query: &NormalizedQuery) -> Result<usize, QueryError> {
+    let offset =
+        usize::try_from(query.paging().offset()).map_err(|_| QueryError::CandidateBoundExceeded)?;
+    let needed = match query.paging().limit() {
+        Some(limit) => offset
+            .checked_add(usize::try_from(limit).unwrap_or(usize::MAX))
+            .ok_or(QueryError::CandidateBoundExceeded)?,
+        None => MAX_RETAINED_CANDIDATES,
+    };
+    if needed > MAX_RETAINED_CANDIDATES {
+        return Err(QueryError::CandidateBoundExceeded);
+    }
+    Ok(needed)
+}
+
+/// Evaluates the predicate against a bounded candidate batch. Candidates are
 /// re-checked by the canonical evaluator so an index can safely provide a
-/// superset (for example, when key delimiters collide) without changing
-/// query semantics.
-fn collect_matches<'documents>(
+/// superset without changing query semantics.
+fn collect_matches(
     query: &NormalizedQuery,
-    documents: &'documents [Document],
+    documents: &[Document],
     indexed_ids: Option<&BTreeSet<DocumentId>>,
-) -> Result<(Vec<&'documents Document>, u64, u64), QueryError> {
+    retained_capacity: usize,
+) -> Result<(Vec<Document>, u64, u64, u64), QueryError> {
     let Some(source_collection) = query.source().collection() else {
         return Err(QueryError::InvalidSpec);
     };
-    let mut matched: Vec<&'documents Document> = Vec::new();
+    let mut matched = Vec::new();
     let mut scanned: u64 = 0;
     let mut skipped: u64 = 0;
     for (position, document) in documents.iter().enumerate() {
@@ -524,12 +540,227 @@ fn collect_matches<'documents>(
         }
         scanned = scanned.saturating_add(1);
         if model::matches(query.predicate(), document) {
-            matched.push(document);
+            retain_candidate(query, &mut matched, document, retained_capacity)?;
         } else {
             skipped = skipped.saturating_add(1);
         }
     }
-    Ok((matched, scanned, skipped))
+    let matched_count = u64::try_from(
+        documents
+            .iter()
+            .filter(|document| {
+                document.collection() == source_collection
+                    && indexed_ids.is_none_or(|ids| ids.contains(document.id()))
+                    && model::matches(query.predicate(), document)
+            })
+            .count(),
+    )
+    .unwrap_or(u64::MAX);
+    if query.paging().limit().is_none() && matched_count as usize > retained_capacity {
+        return Err(QueryError::CandidateBoundExceeded);
+    }
+    Ok((matched, matched_count, scanned, skipped))
+}
+
+/// Scans one source collection in fixed-size immutable snapshot pages.
+fn scan_collection(
+    engine: &Engine,
+    scope: &TenantScope,
+    snapshot: &ReadSnapshot,
+    query: &NormalizedQuery,
+    collection: &crate::types::CollectionName,
+    indexed_ids: Option<&BTreeSet<DocumentId>>,
+    retained_capacity: usize,
+) -> Result<(Vec<Document>, u64, u64, u64), QueryError> {
+    let mut after = None;
+    let mut matched = Vec::new();
+    let mut matched_count = 0_u64;
+    let mut scanned = 0_u64;
+    let mut skipped = 0_u64;
+    loop {
+        check_bounds(query.deadline(), query.cancellation_signal())?;
+        let page = engine
+            .snapshot_documents_in_collection_from(
+                scope,
+                snapshot,
+                collection,
+                after,
+                QUERY_SCAN_PAGE,
+            )
+            .map_err(|error| map_engine_error(&error))?;
+        if page.is_empty() {
+            break;
+        }
+        for (position, document) in page.iter().enumerate() {
+            if position % CHECKPOINT_INTERVAL == 0 {
+                check_bounds(query.deadline(), query.cancellation_signal())?;
+            }
+            if indexed_ids.is_some_and(|ids| !ids.contains(document.id())) {
+                continue;
+            }
+            scanned = scanned.saturating_add(1);
+            if model::matches(query.predicate(), document) {
+                matched_count = matched_count.saturating_add(1);
+                retain_candidate(query, &mut matched, document, retained_capacity)?;
+            } else {
+                skipped = skipped.saturating_add(1);
+            }
+        }
+        if page.len() < QUERY_SCAN_PAGE as usize {
+            break;
+        }
+        after = page.last().map(|document| document.id().clone());
+    }
+    if query.paging().limit().is_none() && matched_count > retained_capacity as u64 {
+        return Err(QueryError::CandidateBoundExceeded);
+    }
+    Ok((matched, matched_count, scanned, skipped))
+}
+
+/// Retains only the best candidates for the requested order. Stable sorting
+/// preserves canonical source order for equal ordering keys.
+fn retain_candidate(
+    query: &NormalizedQuery,
+    retained: &mut Vec<Document>,
+    document: &Document,
+    capacity: usize,
+) -> Result<(), QueryError> {
+    retained.push(document.clone());
+    retained.sort_by(|left, right| model::compare_documents(query.ordering(), left, right));
+    if retained.len() > capacity {
+        retained.pop();
+    }
+    let bytes = retained.iter().map(document_bytes).sum::<usize>();
+    if bytes > MAX_RETAINED_CANDIDATE_BYTES {
+        return Err(QueryError::CandidateBoundExceeded);
+    }
+    Ok(())
+}
+
+fn document_bytes(document: &Document) -> usize {
+    document
+        .id()
+        .as_str()
+        .len()
+        .saturating_add(document.collection().as_str().len())
+        .saturating_add(document_value_bytes(document.value()))
+}
+
+fn document_value_bytes(value: &DocumentValue) -> usize {
+    match value {
+        DocumentValue::Null | DocumentValue::Boolean(_) | DocumentValue::Integer(_) => 8,
+        DocumentValue::Number(_) => 8,
+        DocumentValue::String(value) => value.len().saturating_add(8),
+        DocumentValue::Array(values) => {
+            values.iter().map(document_value_bytes).sum::<usize>().saturating_add(8)
+        }
+        DocumentValue::Object(values) => values
+            .iter()
+            .map(|(key, value)| key.len().saturating_add(document_value_bytes(value)))
+            .sum::<usize>()
+            .saturating_add(8),
+    }
+}
+
+fn page_documents<'a>(query: &NormalizedQuery, ordered: &'a [Document]) -> Vec<&'a Document> {
+    let offset = usize::try_from(query.paging().offset()).unwrap_or(usize::MAX);
+    let start = offset.min(ordered.len());
+    let end = query
+        .paging()
+        .limit()
+        .map_or(ordered.len(), |limit| start.saturating_add(limit as usize).min(ordered.len()));
+    ordered[start..end].iter().collect()
+}
+
+/// Resolves only IDs reachable from the result page. Tenant pages are read in
+/// canonical full-key order, so the first occurrence wins when collections
+/// reuse an identifier; no complete tenant vector is retained.
+fn resolve_references(
+    engine: &Engine,
+    snapshot: &ReadSnapshot,
+    query: &NormalizedQuery,
+    rows: &[&Document],
+) -> Result<Vec<Document>, QueryError> {
+    if query.loads().is_empty() && query.includes().is_empty() {
+        return Ok(Vec::new());
+    }
+    let max_references = super::includes::MAX_INCLUDE_DOCUMENTS + super::spec::MAX_LOADS;
+    let mut pending = BTreeSet::new();
+    for document in rows {
+        for load in query.loads() {
+            if let Some(DocumentValue::String(reference)) = model::field_of(document, load.field())
+                && !reference.is_empty()
+            {
+                pending.insert(reference.clone());
+            }
+        }
+        pending.extend(super::includes::referenced_ids(document, query.includes()));
+    }
+    if pending.len() > max_references {
+        return Err(QueryError::CandidateBoundExceeded);
+    }
+
+    let mut resolved = BTreeMap::<String, Document>::new();
+    for depth in 0..super::includes::MAX_INCLUDE_DEPTH {
+        if pending.is_empty() {
+            break;
+        }
+        let mut after = None;
+        let mut discovered = Vec::new();
+        loop {
+            check_bounds(query.deadline(), query.cancellation_signal())?;
+            let page = engine
+                .snapshot_records_from(
+                    snapshot.tenant().clone(),
+                    snapshot.sequence(),
+                    after,
+                    QUERY_SCAN_PAGE,
+                )
+                .map_err(|error| map_engine_error(&error))?;
+            if page.is_empty() {
+                break;
+            }
+            for (position, record) in page.iter().enumerate() {
+                if position % CHECKPOINT_INTERVAL == 0 {
+                    check_bounds(query.deadline(), query.cancellation_signal())?;
+                }
+                let document = record.document();
+                if pending.contains(document.id().as_str())
+                    && !resolved.contains_key(document.id().as_str())
+                {
+                    resolved.insert(document.id().as_str().to_owned(), document.clone());
+                    discovered.push(document.clone());
+                    if resolved.len() > max_references {
+                        return Err(QueryError::CandidateBoundExceeded);
+                    }
+                }
+            }
+            if pending.iter().all(|id| resolved.contains_key(id)) {
+                break;
+            }
+            if page.len() < QUERY_SCAN_PAGE as usize {
+                break;
+            }
+            after = page.last().map(|record| {
+                (record.document().collection().clone(), record.document().id().clone())
+            });
+        }
+        pending.retain(|id| !resolved.contains_key(id));
+        if depth + 1 >= super::includes::MAX_INCLUDE_DEPTH {
+            break;
+        }
+        for document in &discovered {
+            pending.extend(super::includes::document_referenced_ids(
+                document,
+                query.includes(),
+                depth + 1,
+            ));
+        }
+        if pending.len() > max_references {
+            return Err(QueryError::CandidateBoundExceeded);
+        }
+    }
+    Ok(resolved.into_values().collect())
 }
 
 /// Sorts nothing and reads no data: this is the bounded materialization step

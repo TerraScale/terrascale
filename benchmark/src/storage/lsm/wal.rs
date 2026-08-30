@@ -70,10 +70,10 @@ pub(super) struct WalAppend {
 
 /// Encryption inputs for a WAL.  The database key is moved into the cipher
 /// and never retained by the storage owner after construction.
-pub(super) struct WalEncryptionConfig {
-    pub(super) owner: DatabaseOwner,
-    pub(super) key: DatabaseKey,
-    pub(super) key_version: DatabaseKeyVersion,
+pub(crate) struct WalEncryptionConfig {
+    pub(crate) owner: DatabaseOwner,
+    pub(crate) key: DatabaseKey,
+    pub(crate) key_version: DatabaseKeyVersion,
 }
 
 struct WalCipher {
@@ -465,8 +465,7 @@ fn scan_encrypted_file(file: &File, wal_cipher: &WalCipher) -> io::Result<WalSca
             }
         };
         if plaintext.len() < 16
-            || u32::from_le_bytes(plaintext[..4].try_into().expect("frame magic"))
-                != FRAME_MAGIC
+            || u32::from_le_bytes(plaintext[..4].try_into().expect("frame magic")) != FRAME_MAGIC
         {
             mid_file_damage = true;
             break;
@@ -486,7 +485,8 @@ fn scan_encrypted_file(file: &File, wal_cipher: &WalCipher) -> io::Result<WalSca
         }
         let payload = &plaintext[16..];
         let actual = (codec::fnv1a(payload) & 0xFFFF_FFFF) | (u64::from(FRAME_MAGIC) << 32);
-        let Some(mut decoded) = (actual == checksum).then(|| decode_frame(payload)).flatten() else {
+        let Some(mut decoded) = (actual == checksum).then(|| decode_frame(payload)).flatten()
+        else {
             mid_file_damage = true;
             break;
         };
@@ -524,19 +524,28 @@ fn ordinal_checksum(body: &[u8]) -> [u8; 32] {
 fn load_or_create_ordinal(path: &Path, required: bool) -> io::Result<u128> {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) => {
-            if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() != ORDINAL_BYTES as u64 {
+            if metadata.file_type().is_symlink()
+                || !metadata.is_file()
+                || metadata.len() != ORDINAL_BYTES as u64
+            {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "unsafe WAL ordinal state"));
             }
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt as _;
                 if metadata.permissions().mode() & 0o077 != 0 {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "unsafe WAL ordinal permissions"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "unsafe WAL ordinal permissions",
+                    ));
                 }
             }
             let bytes = std::fs::read(path)?;
             if bytes[..8] != *ORDINAL_MAGIC || bytes[24..] != ordinal_checksum(&bytes[..24]) {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "corrupt WAL ordinal state"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "corrupt WAL ordinal state",
+                ));
             }
             Ok(u128::from_be_bytes(bytes[8..24].try_into().expect("ordinal bytes")))
         }
@@ -556,7 +565,11 @@ fn persist_ordinal(path: &Path, ordinal: u128) -> io::Result<()> {
     body.extend_from_slice(ORDINAL_MAGIC);
     body.extend_from_slice(&ordinal.to_be_bytes());
     body.extend_from_slice(&ordinal_checksum(&body));
-    let temp = path.with_file_name(format!("{}.tmp-{}", path.file_name().and_then(|n| n.to_str()).unwrap_or("wal.ordinal"), std::process::id()));
+    let temp = path.with_file_name(format!(
+        "{}.tmp-{}",
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("wal.ordinal"),
+        std::process::id()
+    ));
     let mut options = OpenOptions::new();
     options.create(true).truncate(true).write(true);
     #[cfg(unix)]

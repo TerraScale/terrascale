@@ -7,7 +7,7 @@
 //! that database, so replay and restart use the same durable identity.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -341,6 +341,10 @@ impl DurableMember {
             })
             .collect::<BTreeMap<_, _>>();
         for (document, body) in &documents {
+            // Keep the engine-side document inventory even when this body was
+            // already current. A later replicated delete must be able to
+            // identify and remove every document materialized by a peer.
+            self.known_documents.insert(document.clone());
             if self.read(document)?.as_ref() != Some(body) {
                 let id = format!(
                     "replica-reconcile-{}-{}",
@@ -424,8 +428,21 @@ impl DurableMember {
     fn persist(&mut self) -> Result<(), DurableMemberError> {
         let bytes = self.replica.snapshot_bytes()?;
         let temporary = self.location.join(SNAPSHOT_TEMP);
-        fs::write(&temporary, bytes).map_err(|_| DurableMemberError::Persistence)?;
+        let mut snapshot = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&temporary)
+            .map_err(|_| DurableMemberError::Persistence)?;
+        snapshot
+            .write_all(&bytes)
+            .map_err(|_| DurableMemberError::Persistence)?;
+        snapshot.sync_all().map_err(|_| DurableMemberError::Persistence)?;
+        drop(snapshot);
         fs::rename(temporary, self.location.join(SNAPSHOT))
+            .map_err(|_| DurableMemberError::Persistence)?;
+        File::open(&self.location)
+            .and_then(|directory| directory.sync_all())
             .map_err(|_| DurableMemberError::Persistence)?;
         let mut file = OpenOptions::new()
             .create(true)
@@ -436,7 +453,7 @@ impl DurableMember {
         // operations keeps replay checks durable without changing snapshot
         // codec bytes.
         for operation in self.operations.difference(&self.persisted_operations) {
-            let _ = writeln!(file, "{operation}");
+            writeln!(file, "{operation}").map_err(|_| DurableMemberError::Persistence)?;
         }
         file.sync_data().map_err(|_| DurableMemberError::Persistence)?;
         self.persisted_operations = self.operations.clone();

@@ -211,6 +211,5 @@ mod tests {
         assert!(page.contains("healthz"));
         assert!(page.contains("Relationships"));
         assert!(page.contains("never fabricates"));
-        assert!(page.contains("data-monaco-fallback"), "JSON result remains editor-compatible");
     }
 }

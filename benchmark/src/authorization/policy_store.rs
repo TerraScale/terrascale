@@ -11,6 +11,7 @@ use std::{
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 #[cfg(unix)]
@@ -23,7 +24,8 @@ use super::{
     FieldProjection, Operation, Policy, PolicyRule, RelationshipPredicate, ResourceScope,
 };
 use crate::identity::{
-    AuthorizationPolicyUlid, DatabaseUlid, PrincipalGrantUlid, ProjectUlid, TenantUlid,
+    AuthorizationPolicyUlid, DatabaseUlid, PrincipalGrantUlid, PrincipalUlid, ProjectUlid,
+    TenantUlid,
 };
 
 const JOURNAL_MAGIC: &[u8; 8] = b"TBAPJNL1";
@@ -69,6 +71,13 @@ pub struct AuthorizationPolicyStore {
     file: File,
     authentication_key: [u8; AUTHENTICATION_BYTES],
     snapshot: PolicyStoreSnapshot,
+    previous_tag: [u8; AUTHENTICATION_BYTES],
+    lock_path: PathBuf,
+    _writer_lease: Arc<File>,
+    expiries: BTreeMap<ResourceScope, u64>,
+    generations: BTreeMap<ResourceScope, u64>,
+    revoked_principals: BTreeMap<(ResourceScope, PrincipalUlid), u64>,
+    revoked_grants: BTreeMap<(ResourceScope, PrincipalGrantUlid), u64>,
 }
 
 impl std::fmt::Debug for AuthorizationPolicyStore {
@@ -84,6 +93,9 @@ impl std::fmt::Debug for AuthorizationPolicyStore {
 impl Drop for AuthorizationPolicyStore {
     fn drop(&mut self) {
         self.authentication_key.zeroize();
+        if Arc::strong_count(&self._writer_lease) == 1 {
+            let _ = std::fs::remove_file(&self.lock_path);
+        }
     }
 }
 
@@ -104,6 +116,10 @@ impl AuthorizationPolicyStore {
     ) -> Result<Self, AuthorizationError> {
         let path = path.as_ref().to_path_buf();
         reject_symlink(&path)?;
+        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent)
+                .map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
+        }
         let (mut file, created) = open_journal(&path)?;
         validate_open_file(&file)?;
 
@@ -114,10 +130,19 @@ impl AuthorizationPolicyStore {
             sync_parent(&path)?;
         }
 
-        let snapshot = replay(&mut file, &authentication_key)?;
-        file.seek(SeekFrom::End(0))
-            .map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
-        Ok(Self { path, file, authentication_key, snapshot })
+        let (previous_tag, snapshot) = replay(&mut file, &authentication_key)?;
+        let lock_path = PathBuf::from(format!("{}.lock", path.display()));
+        let writer_lease = acquire_writer_lease(&lock_path)?;
+        file.seek(SeekFrom::End(0)).map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
+        Ok(Self {
+            path,
+            file,
+            authentication_key,
+            snapshot,
+            previous_tag,
+            lock_path,
+            _writer_lease: Arc::new(writer_lease),
+        })
     }
 
     /// Appends a newer policy for the exact database scope and syncs it before
@@ -148,9 +173,9 @@ impl AuthorizationPolicyStore {
         }
 
         let payload = encode_record(&scope, &policy)?;
-        let payload_len = u32::try_from(payload.len())
-            .map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
-        let tag = authenticate(&self.authentication_key, &payload);
+        let payload_len =
+            u32::try_from(payload.len()).map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
+        let tag = authenticate(&self.authentication_key, &self.previous_tag, &payload);
 
         self.file
             .write_all(&payload_len.to_le_bytes())
@@ -159,6 +184,7 @@ impl AuthorizationPolicyStore {
             .and_then(|()| self.file.sync_data())
             .map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
         self.snapshot.policies.insert(scope, policy);
+        self.previous_tag.copy_from_slice(tag.as_bytes());
         Ok(())
     }
 
@@ -243,26 +269,44 @@ fn validate_open_file(file: &File) -> Result<(), AuthorizationError> {
 }
 
 fn sync_parent(path: &Path) -> Result<(), AuthorizationError> {
-    let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let parent =
+        path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or(Path::new("."));
     File::open(parent)
         .and_then(|directory| directory.sync_all())
         .map_err(|_| AuthorizationError::PolicyStoreUnavailable)
 }
 
+fn acquire_writer_lease(path: &Path) -> Result<File, AuthorizationError> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600).custom_flags(0o00_400_000);
+    let file = options.open(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            AuthorizationError::PolicyStoreUnavailable
+        } else {
+            AuthorizationError::PolicyStoreUnavailable
+        }
+    })?;
+    validate_open_file(&file)?;
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
+    }
+    Ok(file)
+}
+
 fn replay(
     file: &mut File,
     authentication_key: &[u8; AUTHENTICATION_BYTES],
-) -> Result<PolicyStoreSnapshot, AuthorizationError> {
-    let length = file
-        .metadata()
-        .map_err(|_| AuthorizationError::PolicyStoreUnavailable)?
-        .len();
+) -> Result<([u8; AUTHENTICATION_BYTES], PolicyStoreSnapshot), AuthorizationError> {
+    let length = file.metadata().map_err(|_| AuthorizationError::PolicyStoreUnavailable)?.len();
     if length > MAX_JOURNAL_BYTES {
         return Err(AuthorizationError::PolicyJournalCorrupt);
     }
     let length = usize::try_from(length).map_err(|_| AuthorizationError::PolicyJournalCorrupt)?;
-    file.seek(SeekFrom::Start(0))
-        .map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
+    file.seek(SeekFrom::Start(0)).map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
     let mut bytes = Vec::with_capacity(length);
     file.take(MAX_JOURNAL_BYTES + 1)
         .read_to_end(&mut bytes)
@@ -272,9 +316,15 @@ fn replay(
     }
 
     let mut offset = JOURNAL_MAGIC.len();
+    let mut previous_tag = [0_u8; AUTHENTICATION_BYTES];
     let mut policies = BTreeMap::new();
     while offset < bytes.len() {
+        let record_start = offset;
         let length_end = offset.checked_add(4).ok_or(AuthorizationError::PolicyJournalCorrupt)?;
+        if length_end > bytes.len() {
+            truncate_tail(file, record_start as u64)?;
+            break;
+        }
         let record_len = bytes
             .get(offset..length_end)
             .and_then(|value| value.try_into().ok())
@@ -284,26 +334,34 @@ fn replay(
         if record_len == 0 || record_len > MAX_RECORD_BYTES {
             return Err(AuthorizationError::PolicyJournalCorrupt);
         }
-        let payload_end = length_end
-            .checked_add(record_len)
-            .ok_or(AuthorizationError::PolicyJournalCorrupt)?;
+        let payload_end =
+            length_end.checked_add(record_len).ok_or(AuthorizationError::PolicyJournalCorrupt)?;
         let tag_end = payload_end
             .checked_add(AUTHENTICATION_BYTES)
             .ok_or(AuthorizationError::PolicyJournalCorrupt)?;
-        let payload = bytes
-            .get(length_end..payload_end)
-            .ok_or(AuthorizationError::PolicyJournalCorrupt)?;
-        let tag = bytes
-            .get(payload_end..tag_end)
-            .ok_or(AuthorizationError::PolicyJournalCorrupt)?;
-        if authenticate(authentication_key, payload).as_bytes() != tag {
+        let Some(payload) = bytes.get(length_end..payload_end) else {
+            truncate_tail(file, record_start as u64)?;
+            break;
+        };
+        let Some(tag) = bytes.get(payload_end..tag_end) else {
+            truncate_tail(file, record_start as u64)?;
+            break;
+        };
+        if authenticate(authentication_key, &previous_tag, payload).as_bytes() != tag {
             return Err(AuthorizationError::PolicyJournalCorrupt);
         }
         let (scope, policy) = decode_record(payload)?;
         apply_replayed(&mut policies, scope, policy)?;
+        previous_tag.copy_from_slice(tag);
         offset = tag_end;
     }
-    Ok(PolicyStoreSnapshot { policies })
+    Ok((previous_tag, PolicyStoreSnapshot { policies }))
+}
+
+fn truncate_tail(file: &mut File, length: u64) -> Result<(), AuthorizationError> {
+    file.set_len(length)
+        .and_then(|()| file.sync_all())
+        .map_err(|_| AuthorizationError::PolicyStoreUnavailable)
 }
 
 fn apply_replayed(
@@ -327,9 +385,14 @@ fn apply_replayed(
     Ok(())
 }
 
-fn authenticate(key: &[u8; AUTHENTICATION_BYTES], payload: &[u8]) -> blake3::Hash {
+fn authenticate(
+    key: &[u8; AUTHENTICATION_BYTES],
+    previous_tag: &[u8; AUTHENTICATION_BYTES],
+    payload: &[u8],
+) -> blake3::Hash {
     let mut hasher = blake3::Hasher::new_keyed(key);
     hasher.update(RECORD_DOMAIN);
+    hasher.update(previous_tag);
     hasher.update(payload);
     hasher.finalize()
 }
@@ -542,14 +605,10 @@ impl<'a> Decoder<'a> {
     }
 
     fn take(&mut self, length: usize) -> Result<&'a [u8], AuthorizationError> {
-        let end = self
-            .offset
-            .checked_add(length)
-            .ok_or(AuthorizationError::PolicyJournalCorrupt)?;
-        let value = self
-            .bytes
-            .get(self.offset..end)
-            .ok_or(AuthorizationError::PolicyJournalCorrupt)?;
+        let end =
+            self.offset.checked_add(length).ok_or(AuthorizationError::PolicyJournalCorrupt)?;
+        let value =
+            self.bytes.get(self.offset..end).ok_or(AuthorizationError::PolicyJournalCorrupt)?;
         self.offset = end;
         Ok(value)
     }
@@ -559,9 +618,7 @@ impl<'a> Decoder<'a> {
     }
 
     fn array<const N: usize>(&mut self) -> Result<[u8; N], AuthorizationError> {
-        self.take(N)?
-            .try_into()
-            .map_err(|_| AuthorizationError::PolicyJournalCorrupt)
+        self.take(N)?.try_into().map_err(|_| AuthorizationError::PolicyJournalCorrupt)
     }
 
     fn u16(&mut self) -> Result<u16, AuthorizationError> {
@@ -602,10 +659,8 @@ mod tests {
 
     fn test_path(name: &str) -> PathBuf {
         let counter = PATH_COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "terrabase-policy-store-{name}-{}-{counter}.journal",
-            std::process::id()
-        ))
+        std::env::temp_dir()
+            .join(format!("terrabase-policy-store-{name}-{}-{counter}.journal", std::process::id()))
     }
 
     fn scope() -> ResourceScope {
@@ -618,10 +673,10 @@ mod tests {
     }
 
     fn policy(generation: u64) -> Policy {
-        let predicate = ClaimPredicate::try_new("owner", "tenant", ClaimComparison::Equals)
-            .expect("predicate");
-        let relationship = RelationshipPredicate::try_new("member", "users", 2, 8)
-            .expect("relationship");
+        let predicate =
+            ClaimPredicate::try_new("owner", "tenant", ClaimComparison::Equals).expect("predicate");
+        let relationship =
+            RelationshipPredicate::try_new("member", "users", 2, 8).expect("relationship");
         let projection = FieldProjection::try_allow(["owner", "name"])
             .expect("allow")
             .try_deny(["owner"])
@@ -703,10 +758,8 @@ mod tests {
             .expect("open for truncate")
             .set_len(length - 1)
             .expect("truncate");
-        assert!(matches!(
-            AuthorizationPolicyStore::open(&path, [10; 32]),
-            Err(AuthorizationError::PolicyJournalCorrupt)
-        ));
+        let recovered = AuthorizationPolicyStore::open(&path, [10; 32]).expect("torn tail recovery");
+        assert!(recovered.snapshot().is_empty());
         std::fs::remove_file(path).expect("remove journal");
 
         let tampered = test_path("tamper");

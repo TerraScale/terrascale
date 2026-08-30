@@ -56,10 +56,20 @@ fn family_card(state: &StudioState) -> String {
     let collection =
         state.collections_of(&tenant).first().cloned().unwrap_or_else(|| "users".to_owned());
     let body = format!(
-        "<p class=\"mb-4 text-sm text-muted-foreground\">Read the schema-validation family for a collection and optionally validate one stored document. The result is rendered as bounded JSON and typed violation rows.</p>\n<form class=\"grid gap-4\" data-on:submit=\"@post('/families/validation', {{contentType: 'form', retry: 'never'}})\">\n<div class=\"grid gap-4 sm:grid-cols-3\">{tenant}{collection}{document}</div>\n<button type=\"submit\" class=\"inline-flex w-fit items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\">Inspect validation family</button>\n</form>\n<div id=\"{FAMILY_ID}\" class=\"mt-4\">{empty}</div>",
+        "<p class=\"mb-4 text-sm text-muted-foreground\">Read the schema-validation family for a collection and optionally validate one stored document. The result is rendered as bounded JSON and typed violation rows.</p>\n<form class=\"grid gap-4\" data-on:submit=\"@post('/families/validation', {{contentType: 'form', retry: 'never'}})\">\n<div class=\"grid gap-4 sm:grid-cols-3\">{tenant}{collection}{document}</div>\n<button type=\"submit\" class=\"inline-flex w-fit items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\">Inspect validation family</button>\n</form>\n<div class=\"mt-5 border-t pt-5\"><p class=\"mb-3 text-sm text-muted-foreground\">Declare a versioned JSON Schema subset. This writes one typed family record and is guarded by an exact confirmation.</p>\n<form class=\"grid gap-4\" data-on:submit=\"if (!confirm('Declare this schema version? Existing writes may be rejected by the new policy.')) return; @post('/families/schema/declare', {{contentType: 'form', retry: 'never'}})\">\n<div class=\"grid gap-4 sm:grid-cols-3\">{declare_tenant}{declare_collection}{version}</div>{schema}{confirmation}\n<button type=\"submit\" class=\"inline-flex w-fit items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\">Declare schema</button>\n</form></div>\n<div id=\"{FAMILY_ID}\" class=\"mt-4\">{empty}</div>",
         tenant = html::text_input("tenant", "Tenant", &tenant, "demo"),
         collection = html::text_input("collection", "Collection", &collection, "users"),
         document = html::text_input("document", "Document (optional)", "", "sample-000"),
+        declare_tenant = html::text_input("tenant", "Tenant", &tenant, "demo"),
+        declare_collection = html::text_input("collection", "Collection", &collection, "users"),
+        version = html::number_input("version", "Schema version", "1"),
+        schema = html::json_editor(
+            "schema",
+            "JSON Schema subset",
+            r#"{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"x-terrabase-schema-version":1}"#,
+        ),
+        confirmation =
+            html::confirmation_fields(&format!("{tenant}/{collection}"), "declare schema",),
         primary = ButtonStyle::Primary.classes(),
         FAMILY_ID = FAMILY_ID,
         empty = html::alert(
@@ -116,20 +126,4 @@ fn limits_card() -> String {
         markup.push_str(&html::alert(Tone::Neutral, name, note));
     }
     html::card("Capability limits", &markup)
-}
-
-/// Renders a schema-validation family response.
-pub fn family_fragment(result: Result<String, String>) -> String {
-    match result {
-        Ok(markup) => markup,
-        Err(error) => html::alert(Tone::Bad, "Family read refused", &error),
-    }
-}
-
-/// Renders a stream response.
-pub fn stream_fragment(result: Result<String, String>) -> String {
-    match result {
-        Ok(markup) => markup,
-        Err(error) => html::alert(Tone::Bad, "Stream read refused", &error),
-    }
 }

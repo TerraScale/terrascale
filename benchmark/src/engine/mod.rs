@@ -49,6 +49,7 @@ pub use patch::{
 };
 
 use crate::{
+    encryption::{DatabaseKeyVersion, LocalFileKeyProvider},
     families::FamilyStore,
     observability::{CommitResult as MetricCommitResult, MetricsRegistry, TaskOutcome},
     operations::{EngineRequest, EngineResponse},
@@ -906,19 +907,42 @@ impl Engine {
         let metrics = Arc::new(MetricsRegistry::new());
         let storage: Box<dyn storage::StoragePort> = match backend {
             StorageBackend::Lsm => {
-                let engine =
-                    storage::lsm::LsmStorage::open_with_metrics(&location, Arc::clone(&metrics))
-                        .map_err(|error| match error {
-                            storage::lsm::LsmOpenError::FormatMismatch => {
-                                EngineOpenError::FormatMismatch
-                            }
-                            storage::lsm::LsmOpenError::Unavailable => {
-                                EngineOpenError::StorageUnavailable
-                            }
-                        })?;
+                let result = if config.owner.is_some() {
+                    // The OCI Vault adapter is intentionally not configured
+                    // in this crate. An empty production location may be
+                    // catalogued read-only, but no plaintext artifact is
+                    // accepted and every write is refused by the LSM seam.
+                    storage::lsm::LsmStorage::open_production_unavailable(
+                        &location,
+                        Arc::clone(&metrics),
+                    )
+                } else {
+                    let key = LocalFileKeyProvider::at_engine_location(&location)
+                        .load_or_create()
+                        .map_err(|_| EngineOpenError::StorageUnavailable)?;
+                    let key_version = DatabaseKeyVersion::from_wire_bytes([0_u8; 16]);
+                    storage::lsm::LsmStorage::open_with_metrics_and_encryption(
+                        &location,
+                        Arc::clone(&metrics),
+                        storage::lsm::LsmEncryptionConfig {
+                            wal: storage::lsm::wal::WalEncryptionConfig {
+                                owner: owner.clone(),
+                                key,
+                                key_version,
+                            },
+                        },
+                    )
+                };
+                let engine = result.map_err(|error| match error {
+                    storage::lsm::LsmOpenError::FormatMismatch => EngineOpenError::FormatMismatch,
+                    storage::lsm::LsmOpenError::Unavailable => EngineOpenError::StorageUnavailable,
+                })?;
                 Box::new(engine)
             }
             StorageBackend::RootFiles => {
+                if config.owner.is_some() {
+                    return Err(EngineOpenError::StorageUnavailable);
+                }
                 let engine =
                     storage::FileStorage::open(&location).map_err(|error| match error {
                         storage::StorageOpenError::FormatMismatch => {

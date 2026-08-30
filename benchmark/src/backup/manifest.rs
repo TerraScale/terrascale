@@ -80,6 +80,22 @@ impl BackupMember {
     pub fn digest(&self) -> &str {
         &self.digest
     }
+
+    /// Returns whether `bytes` match the exact length and SHA-256 digest
+    /// bound into this member fact.
+    ///
+    /// Object-store transports use this before publishing a manifest commit
+    /// marker, so corruption in their local transfer staging cannot seal an
+    /// unusable remote recovery point.
+    #[must_use]
+    pub fn matches_bytes(&self, bytes: &[u8]) -> bool {
+        if u64::try_from(bytes.len()).ok() != Some(self.length) {
+            return false;
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        to_hex(&hasher.finish()) == self.digest
+    }
 }
 
 /// One tenant's archived record counts inside a manifest.

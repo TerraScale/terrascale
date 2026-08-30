@@ -19,6 +19,14 @@ cleanup() {
 trap cleanup EXIT
 comparison=$work/comparison
 
+cargo build \
+  --manifest-path "$script_dir/sbom/Cargo.toml" \
+  --locked \
+  --release \
+  --target-dir "$work/sbom-target"
+export TERRABASE_SBOM_TOOL=$work/sbom-target/release/terrabase-release-sbom
+[[ -f "$TERRABASE_SBOM_TOOL" && ! -L "$TERRABASE_SBOM_TOOL" && -x "$TERRABASE_SBOM_TOOL" ]]
+
 "$script_dir/package.sh" "$component" "$target" "$output"
 "$script_dir/package.sh" "$component" "$target" "$comparison"
 diff --no-dereference --recursive --brief "$output" "$comparison"

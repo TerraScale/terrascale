@@ -1,6 +1,6 @@
 //! Fail-closed daemon configuration.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::Read;
@@ -9,15 +9,163 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Deserialize;
+use terrabase::encryption::{DatabaseKeyVersion, KeyProviderIdentity};
+use terrabase::identity::{ClusterUlid, DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid};
+use terrabase::member::EnvironmentName;
 use terrabase::observability::Region;
+use terrabase::regions::RegionCode;
 
 const MAX_CONFIG_BYTES: u64 = 64 * 1024;
 const MAX_CONFIG_BYTES_USIZE: usize = 64 * 1024;
 const MAX_GATEWAY_PRINCIPALS: usize = 32;
+const MAX_DATABASES: usize = 1_024;
+const MAX_PEERS: usize = 64;
+const MAX_CAPABILITIES: usize = 32;
+const MAX_PATH_BYTES: usize = 4_096;
+const MAX_RELEASE_BYTES: usize = 128;
+const MAX_QUOTA_BYTES: u64 = 1 << 50;
+const MAX_QUOTA_DOCUMENTS: u64 = 1_000_000_000;
+const MAX_QUOTA_INFLIGHT: usize = 1_000_000;
+
+/// The composition mode selected by the configuration boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ServerMode {
+    /// A fully bound production Member configuration.
+    Production,
+    /// The explicitly named one-database compatibility path for local work.
+    LocalDevelopment,
+}
+
+/// Typed environment and Member identity for production composition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProductionEnvironment {
+    /// Bounded environment name, never a filesystem path.
+    pub name: EnvironmentName,
+    /// Cluster identity used by exact peer workload identities.
+    pub cluster: ClusterUlid,
+    /// The one Member seat owned by this process.
+    pub member: MemberUlid,
+}
+
+/// Per-database bounded admission quotas.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DatabaseQuotas {
+    /// Maximum durable bytes admitted for the database.
+    pub max_storage_bytes: u64,
+    /// Maximum document count admitted for the database.
+    pub max_documents: u64,
+    /// Maximum concurrent operations admitted for the database.
+    pub max_inflight: usize,
+}
+
+/// One independently routed, encrypted production database.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProductionDatabase {
+    /// Canonical tenant identity.
+    pub tenant: TenantUlid,
+    /// Canonical Project identity.
+    pub project: ProjectUlid,
+    /// Canonical database identity.
+    pub database: DatabaseUlid,
+    /// Canonical home Region.
+    pub region: RegionCode,
+    /// Distinct absolute durable location.
+    pub location: PathBuf,
+    /// Durable authorization-policy journal path.
+    pub policy_journal: PathBuf,
+    /// Durable backup root path.
+    pub backup_root: PathBuf,
+    /// Accepted production key provider.
+    pub encryption_provider: KeyProviderIdentity,
+    /// Canonical database-key version identity.
+    pub encryption_key: DatabaseKeyVersion,
+    /// Bounded resource quotas.
+    pub quotas: DatabaseQuotas,
+    /// Whether this catalog entry is enabled for admission.
+    pub enabled: bool,
+}
+
+/// An exact authenticated peer endpoint in one placement generation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProductionPeer {
+    /// Canonical remote Member identity.
+    pub member: MemberUlid,
+    /// Remote QUIC endpoint.
+    pub endpoint: SocketAddr,
+    /// Exact SPIFFE URI SAN admitted for the peer.
+    pub spiffe_identity: String,
+}
+
+/// Separate production listener and transport bindings.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProductionTransport {
+    /// Mandatory TBEP mTLS listener.
+    pub tbep_listen: SocketAddr,
+    /// Mandatory Member QUIC listener.
+    pub quic_listen: SocketAddr,
+    /// Private metrics and lifecycle listener.
+    pub metrics_listen: SocketAddr,
+    /// Whether wildcard TBEP binding was explicitly approved.
+    pub allow_wildcard_tbep: bool,
+    /// Whether wildcard QUIC binding was explicitly approved.
+    pub allow_wildcard_quic: bool,
+    /// Whether wildcard metrics binding was explicitly approved.
+    pub allow_wildcard_metrics: bool,
+    /// TLS server certificate chain path.
+    pub server_certificate: PathBuf,
+    /// TLS private key path.
+    pub server_private_key: PathBuf,
+    /// TLS client/member CA bundle path.
+    pub client_ca: PathBuf,
+    /// Exact TBEP gateway principals admitted by the certificate policy.
+    pub gateway_principals: BTreeSet<String>,
+    /// Exact remote peer endpoint and identity set.
+    pub peers: Vec<ProductionPeer>,
+}
+
+/// Release and capability binding required before production handoff.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReleaseBinding {
+    /// Operator-selected release identifier.
+    pub release: String,
+    /// Closed capability names supplied by release qualification.
+    pub capabilities: BTreeSet<String>,
+}
+
+/// Fully typed production configuration handed to the eventual Member
+/// orchestrator.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProductionConfig {
+    /// Typed environment and local Member identity.
+    pub environment: ProductionEnvironment,
+    /// One-to-many isolated database catalog.
+    pub databases: Vec<ProductionDatabase>,
+    /// RF=2 placement generation and replica-set epoch.
+    pub placement: ProductionPlacement,
+    /// Separate TBEP, QUIC, and metrics bindings.
+    pub transport: ProductionTransport,
+    /// Release/capability qualification binding.
+    pub release: ReleaseBinding,
+}
+
+/// One RF=2 placement generation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProductionPlacement {
+    /// Monotonic placement generation.
+    pub generation: u64,
+    /// Monotonic replica-set epoch.
+    pub epoch: u64,
+    /// Canonical Region and exactly two Member seats.
+    pub regions: BTreeMap<RegionCode, [MemberUlid; 2]>,
+}
 
 /// Fully validated production server configuration.
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
+    /// Selected composition mode.
+    pub mode: ServerMode,
+    /// Fully typed production configuration, absent only in local mode.
+    pub production: Option<ProductionConfig>,
     /// Durable engine directory.
     pub engine_location: PathBuf,
     /// Tenant pinned to the standalone engine location.
@@ -68,6 +216,8 @@ pub struct UdsConfig {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileConfig {
+    #[serde(default)]
+    mode: Option<String>,
     engine: FileEngine,
     tbep: FileTbep,
     observability: FileObservability,
@@ -115,6 +265,104 @@ struct FileObservability {
     listen: String,
     #[serde(default)]
     allow_wildcard: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileProductionConfig {
+    mode: String,
+    environment: FileProductionEnvironment,
+    databases: Vec<FileProductionDatabase>,
+    placement: FileProductionPlacement,
+    transport: FileProductionTransport,
+    release: FileReleaseBinding,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileProductionEnvironment {
+    name: String,
+    cluster: String,
+    member: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileProductionDatabase {
+    tenant: String,
+    project: String,
+    database: String,
+    region: String,
+    location: PathBuf,
+    policy_journal: PathBuf,
+    backup_root: PathBuf,
+    encryption_provider: String,
+    encryption_key: String,
+    quotas: FileDatabaseQuotas,
+    enabled: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileDatabaseQuotas {
+    max_storage_bytes: u64,
+    max_documents: u64,
+    max_inflight: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileProductionPlacement {
+    generation: u64,
+    epoch: u64,
+    regions: Vec<FilePlacementRegion>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FilePlacementRegion {
+    region: String,
+    members: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileProductionTransport {
+    tbep_listen: String,
+    quic_listen: String,
+    metrics_listen: String,
+    #[serde(default)]
+    allow_wildcard_tbep: bool,
+    #[serde(default)]
+    allow_wildcard_quic: bool,
+    #[serde(default)]
+    allow_wildcard_metrics: bool,
+    server_certificate: PathBuf,
+    server_private_key: PathBuf,
+    client_ca: PathBuf,
+    gateway_principals: Vec<String>,
+    peers: Vec<FileProductionPeer>,
+    uds: Option<FileUds>,
+    max_message_bytes: usize,
+    max_inflight: usize,
+    request_timeout_millis: u64,
+    tls_handshake_timeout_millis: u64,
+    shutdown_grace_millis: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileProductionPeer {
+    member: String,
+    endpoint: String,
+    spiffe_identity: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileReleaseBinding {
+    release: String,
+    capabilities: Vec<String>,
 }
 
 impl ServerConfig {
@@ -176,7 +424,24 @@ impl ServerConfig {
     /// Returns an error when the TOML or any production serving bound is
     /// invalid.
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
+        let document: toml::Value =
+            toml::from_str(text).map_err(ConfigError::ParseConfiguration)?;
+        if let Some(mode) = document.get("mode") {
+            let mode = mode.as_str().ok_or(ConfigError::InvalidMode)?;
+            return match mode {
+                "production" => Self::parse_production(text),
+                "local-development" => Self::parse_local(text),
+                _ => Err(ConfigError::InvalidMode),
+            };
+        }
+        Self::parse_local(text)
+    }
+
+    fn parse_local(text: &str) -> Result<Self, ConfigError> {
         let file: FileConfig = toml::from_str(text).map_err(ConfigError::ParseConfiguration)?;
+        if file.mode.as_deref().is_some_and(|mode| mode != "local-development") {
+            return Err(ConfigError::InvalidMode);
+        }
         let tbep_listen = socket(&file.tbep.listen, "tbep.listen")?;
         let observability_listen = socket(&file.observability.listen, "observability.listen")?;
         if tbep_listen.port() == 0
@@ -249,6 +514,8 @@ impl ServerConfig {
             })
             .transpose()?;
         Ok(Self {
+            mode: ServerMode::LocalDevelopment,
+            production: None,
             engine_location: file.engine.location,
             tenant: file.engine.tenant,
             project: file.engine.project,
@@ -269,11 +536,351 @@ impl ServerConfig {
             shutdown_grace,
         })
     }
+
+    fn parse_production(text: &str) -> Result<Self, ConfigError> {
+        let file: FileProductionConfig =
+            toml::from_str(text).map_err(ConfigError::ParseConfiguration)?;
+        if file.mode != "production" {
+            return Err(ConfigError::InvalidMode);
+        }
+        let environment = ProductionEnvironment {
+            name: EnvironmentName::try_new(&file.environment.name)
+                .map_err(|_| ConfigError::InvalidProductionBoundary)?,
+            cluster: parse_ulid(&file.environment.cluster, ConfigError::InvalidProductionBoundary)?,
+            member: parse_ulid(&file.environment.member, ConfigError::InvalidProductionBoundary)?,
+        };
+        if file.databases.is_empty() || file.databases.len() > MAX_DATABASES {
+            return Err(ConfigError::InvalidProductionBoundary);
+        }
+        let mut databases = Vec::with_capacity(file.databases.len());
+        let mut identities = BTreeSet::new();
+        let mut projects = BTreeMap::new();
+        let mut paths = Vec::with_capacity(file.databases.len() * 3);
+        for entry in file.databases {
+            let tenant = parse_ulid(&entry.tenant, ConfigError::InvalidProductionBoundary)?;
+            let project = parse_ulid(&entry.project, ConfigError::InvalidProductionBoundary)?;
+            let database = parse_ulid(&entry.database, ConfigError::InvalidProductionBoundary)?;
+            let region = parse_region(&entry.region)?;
+            if !identities.insert((tenant, project, database))
+                || projects.insert(project, tenant).is_some_and(|owner| owner != tenant)
+            {
+                return Err(ConfigError::InvalidProductionBoundary);
+            }
+            let location = production_path(&entry.location)?;
+            let policy_journal = production_path(&entry.policy_journal)?;
+            let backup_root = production_path(&entry.backup_root)?;
+            paths.extend([location.clone(), policy_journal.clone(), backup_root.clone()]);
+            let provider = match entry.encryption_provider.as_str() {
+                "oci-vault" => KeyProviderIdentity::OciVault,
+                "local-file" => return Err(ConfigError::LocalProviderInProduction),
+                _ => return Err(ConfigError::InvalidProductionBoundary),
+            };
+            let encryption_key = DatabaseKeyVersion::from_text(&entry.encryption_key)
+                .map_err(|_| ConfigError::InvalidProductionBoundary)?;
+            let quotas = DatabaseQuotas {
+                max_storage_bytes: entry.quotas.max_storage_bytes,
+                max_documents: entry.quotas.max_documents,
+                max_inflight: entry.quotas.max_inflight,
+            };
+            if quotas.max_storage_bytes == 0
+                || quotas.max_storage_bytes > MAX_QUOTA_BYTES
+                || quotas.max_documents == 0
+                || quotas.max_documents > MAX_QUOTA_DOCUMENTS
+                || quotas.max_inflight == 0
+                || quotas.max_inflight > MAX_QUOTA_INFLIGHT
+                || entry.enabled.is_none()
+            {
+                return Err(ConfigError::InvalidProductionBoundary);
+            }
+            databases.push(ProductionDatabase {
+                tenant,
+                project,
+                database,
+                region,
+                location,
+                policy_journal,
+                backup_root,
+                encryption_provider: provider,
+                encryption_key,
+                quotas,
+                enabled: entry.enabled.unwrap_or(false),
+            });
+        }
+        if !databases.iter().any(|database| database.enabled) {
+            return Err(ConfigError::InvalidProductionBoundary);
+        }
+
+        let placement = parse_placement(&file.placement, environment.member)?;
+        let transport = parse_transport(&file.transport, &environment, &placement)?;
+        paths.extend([
+            transport.server_certificate.clone(),
+            transport.server_private_key.clone(),
+            transport.client_ca.clone(),
+        ]);
+        reject_nested_paths(&paths)?;
+        let release = parse_release(&file.release)?;
+        let production = ProductionConfig { environment, databases, placement, transport, release };
+        let first = production
+            .databases
+            .iter()
+            .find(|database| database.enabled)
+            .ok_or(ConfigError::InvalidProductionBoundary)?;
+        let tbep_listen = production.transport.tbep_listen;
+        let metrics_listen = production.transport.metrics_listen;
+        let uds = file
+            .transport
+            .uds
+            .map(|uds| {
+                absolute(&uds.path)?;
+                if uds.mode & !0o770 != 0 || uds.mode & 0o600 != 0o600 {
+                    return Err(ConfigError::InvalidUdsMode);
+                }
+                Ok(UdsConfig { path: uds.path, mode: uds.mode })
+            })
+            .transpose()?;
+        Ok(Self {
+            mode: ServerMode::Production,
+            production: Some(production.clone()),
+            // These fields are a temporary, explicitly documented projection
+            // for the current daemon entry point. Production serving must use
+            // `ProductionConfig` and the complete Member orchestrator.
+            engine_location: first.location.clone(),
+            tenant: first.tenant.to_text(),
+            project: first.project.to_text(),
+            database: first.database.to_text(),
+            instance_id: 1,
+            region: region_label(first.region),
+            tbep_listen,
+            server_certificate: production.transport.server_certificate.clone(),
+            server_private_key: production.transport.server_private_key.clone(),
+            client_ca: production.transport.client_ca.clone(),
+            gateway_principals: production.transport.gateway_principals.clone(),
+            uds,
+            observability_listen: metrics_listen,
+            max_message_bytes: file.transport.max_message_bytes,
+            max_inflight: file.transport.max_inflight,
+            request_timeout: bounded_duration(file.transport.request_timeout_millis, 100, 300_000)?,
+            tls_handshake_timeout: bounded_duration(
+                file.transport.tls_handshake_timeout_millis,
+                100,
+                30_000,
+            )?,
+            shutdown_grace: bounded_duration(file.transport.shutdown_grace_millis, 100, 300_000)?,
+        })
+    }
 }
 
 fn absolute(path: &Path) -> Result<(), ConfigError> {
     if !path.is_absolute() {
         return Err(ConfigError::RelativeProductionPath);
+    }
+    Ok(())
+}
+
+fn parse_ulid<T>(value: &str, error: ConfigError) -> Result<T, ConfigError>
+where
+    T: std::str::FromStr,
+{
+    value.parse().map_err(|_| error)
+}
+
+fn parse_region(value: &str) -> Result<RegionCode, ConfigError> {
+    terrabase::regions::RegionCatalog::production()
+        .parse(value)
+        .map_err(|_| ConfigError::InvalidRegion)
+}
+
+fn region_label(region: RegionCode) -> Region {
+    match region.as_str() {
+        "GRU" => Region::Gru,
+        "SFO" => Region::Sfo,
+        "FRA" => Region::Fra,
+        _ => Region::Unknown,
+    }
+}
+
+fn parse_placement(
+    file: &FileProductionPlacement,
+    local_member: MemberUlid,
+) -> Result<ProductionPlacement, ConfigError> {
+    if file.generation == 0 || file.epoch == 0 || file.regions.is_empty() || file.regions.len() > 3
+    {
+        return Err(ConfigError::InvalidProductionBoundary);
+    }
+    let mut regions = BTreeMap::new();
+    let mut members = BTreeSet::new();
+    let mut local_seats = 0usize;
+    for entry in &file.regions {
+        let region = parse_region(&entry.region)?;
+        if entry.members.len() != 2 || regions.contains_key(&region) {
+            return Err(ConfigError::InvalidPlacement);
+        }
+        let first = parse_ulid::<MemberUlid>(&entry.members[0], ConfigError::InvalidPlacement)?;
+        let second = parse_ulid::<MemberUlid>(&entry.members[1], ConfigError::InvalidPlacement)?;
+        if first == second || !members.insert(first) || !members.insert(second) {
+            return Err(ConfigError::InvalidPlacement);
+        }
+        local_seats += usize::from(first == local_member) + usize::from(second == local_member);
+        regions.insert(region, [first, second]);
+    }
+    if local_seats != 1 {
+        return Err(ConfigError::InvalidPlacement);
+    }
+    Ok(ProductionPlacement { generation: file.generation, epoch: file.epoch, regions })
+}
+
+fn parse_transport(
+    file: &FileProductionTransport,
+    environment: &ProductionEnvironment,
+    placement: &ProductionPlacement,
+) -> Result<ProductionTransport, ConfigError> {
+    let tbep_listen = production_socket(&file.tbep_listen, file.allow_wildcard_tbep)?;
+    let quic_listen = production_socket(&file.quic_listen, file.allow_wildcard_quic)?;
+    let metrics_listen = production_socket(&file.metrics_listen, file.allow_wildcard_metrics)?;
+    if BTreeSet::from([tbep_listen, quic_listen, metrics_listen]).len() != 3 {
+        return Err(ConfigError::InvalidListenAddress);
+    }
+    if !(1024..=terrabase_tbep::registry::MAX_FRAME_BYTES).contains(&file.max_message_bytes)
+        || !(1..=4096).contains(&file.max_inflight)
+    {
+        return Err(ConfigError::InvalidBound);
+    }
+    let server_certificate = production_path(&file.server_certificate)?;
+    let server_private_key = production_path(&file.server_private_key)?;
+    let client_ca = production_path(&file.client_ca)?;
+    validate_gateway_principals(&file.gateway_principals)?;
+    if file.peers.is_empty() || file.peers.len() > MAX_PEERS {
+        return Err(ConfigError::InvalidTransportBinding);
+    }
+    let expected = placement
+        .regions
+        .values()
+        .flat_map(|members| members.iter().copied())
+        .filter(|member| *member != environment.member)
+        .collect::<BTreeSet<_>>();
+    let mut seen = BTreeSet::new();
+    let mut peers = Vec::with_capacity(file.peers.len());
+    for peer in &file.peers {
+        let member = parse_ulid::<MemberUlid>(&peer.member, ConfigError::InvalidTransportBinding)?;
+        let endpoint = peer
+            .endpoint
+            .parse::<SocketAddr>()
+            .map_err(|_| ConfigError::InvalidTransportBinding)?;
+        if endpoint.port() == 0 || endpoint.ip().is_unspecified() || !seen.insert(member) {
+            return Err(ConfigError::InvalidTransportBinding);
+        }
+        let expected_spiffe = format!(
+            "spiffe://terrascale.tech/{}/terrabase-member/{}/{}",
+            environment.name, environment.cluster, member
+        );
+        if peer.spiffe_identity != expected_spiffe || peer.spiffe_identity.len() > MAX_PATH_BYTES {
+            return Err(ConfigError::InvalidTransportBinding);
+        }
+        peers.push(ProductionPeer {
+            member,
+            endpoint,
+            spiffe_identity: peer.spiffe_identity.clone(),
+        });
+    }
+    if seen != expected {
+        return Err(ConfigError::InvalidTransportBinding);
+    }
+    Ok(ProductionTransport {
+        tbep_listen,
+        quic_listen,
+        metrics_listen,
+        allow_wildcard_tbep: file.allow_wildcard_tbep,
+        allow_wildcard_quic: file.allow_wildcard_quic,
+        allow_wildcard_metrics: file.allow_wildcard_metrics,
+        server_certificate,
+        server_private_key,
+        client_ca,
+        gateway_principals: file.gateway_principals.iter().cloned().collect(),
+        peers,
+    })
+}
+
+fn production_socket(value: &str, allow_wildcard: bool) -> Result<SocketAddr, ConfigError> {
+    let address = value.parse().map_err(|_| ConfigError::InvalidListenAddress)?;
+    if address.port() == 0 || (address.ip().is_unspecified() && !allow_wildcard) {
+        return Err(ConfigError::InvalidListenAddress);
+    }
+    Ok(address)
+}
+
+fn validate_gateway_principals(values: &[String]) -> Result<(), ConfigError> {
+    if values.is_empty() || values.len() > MAX_GATEWAY_PRINCIPALS {
+        return Err(ConfigError::InvalidGatewayPrincipal);
+    }
+    let mut unique = BTreeSet::new();
+    for value in values {
+        if value.is_empty()
+            || value.len() > terrabase_tbep::grpc::MAX_PRINCIPAL_BYTES
+            || value != value.trim()
+            || value.chars().any(char::is_control)
+            || !terrabase_tbep::grpc::valid_gateway_spiffe_uri(value)
+            || !unique.insert(value)
+        {
+            return Err(ConfigError::InvalidGatewayPrincipal);
+        }
+    }
+    Ok(())
+}
+
+fn parse_release(file: &FileReleaseBinding) -> Result<ReleaseBinding, ConfigError> {
+    if file.release.is_empty()
+        || file.release.len() > MAX_RELEASE_BYTES
+        || !file.release.is_ascii()
+        || file.capabilities.is_empty()
+        || file.capabilities.len() > MAX_CAPABILITIES
+    {
+        return Err(ConfigError::InvalidReleaseBinding);
+    }
+    let allowed = ["production", "tbep", "quic", "metrics", "oci-vault"];
+    let capabilities = file.capabilities.iter().cloned().collect::<BTreeSet<_>>();
+    if capabilities.len() != file.capabilities.len()
+        || file.capabilities.iter().any(|capability| !allowed.contains(&capability.as_str()))
+        || allowed.iter().any(|required| !capabilities.contains(*required))
+    {
+        return Err(ConfigError::InvalidReleaseBinding);
+    }
+    Ok(ReleaseBinding { release: file.release.clone(), capabilities })
+}
+
+fn production_path(path: &Path) -> Result<PathBuf, ConfigError> {
+    if !path.is_absolute() || path.as_os_str().len() > MAX_PATH_BYTES {
+        return Err(ConfigError::RelativeProductionPath);
+    }
+    let mut current = PathBuf::from(std::path::MAIN_SEPARATOR.to_string());
+    for component in path.components() {
+        match component {
+            std::path::Component::RootDir => continue,
+            std::path::Component::Normal(part) => current.push(part),
+            _ => return Err(ConfigError::InvalidProductionPath),
+        }
+        if let Ok(metadata) = std::fs::symlink_metadata(&current) {
+            if metadata.file_type().is_symlink() {
+                return Err(ConfigError::UnsafeProductionPath);
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                if metadata.permissions().mode() & 0o022 != 0 {
+                    return Err(ConfigError::UnsafeProductionPath);
+                }
+            }
+        }
+    }
+    Ok(path.to_path_buf())
+}
+
+fn reject_nested_paths(paths: &[PathBuf]) -> Result<(), ConfigError> {
+    for (index, left) in paths.iter().enumerate() {
+        for right in paths.iter().skip(index + 1) {
+            if left == right || left.starts_with(right) || right.starts_with(left) {
+                return Err(ConfigError::DuplicateProductionPath);
+            }
+        }
     }
     Ok(())
 }
@@ -394,6 +1001,24 @@ pub enum ConfigError {
     InvalidGatewayPrincipal,
     /// The UDS mode was broader than 0770 or omitted owner read/write.
     InvalidUdsMode,
+    /// The mode selector was absent or not one of the named modes.
+    InvalidMode,
+    /// The production configuration failed a typed boundary invariant.
+    InvalidProductionBoundary,
+    /// A local key provider was selected for production.
+    LocalProviderInProduction,
+    /// The RF=2 placement generation or epoch was invalid.
+    InvalidPlacement,
+    /// A peer endpoint or exact workload identity was invalid.
+    InvalidTransportBinding,
+    /// Release or capability qualification was incomplete or unknown.
+    InvalidReleaseBinding,
+    /// A production path was malformed.
+    InvalidProductionPath,
+    /// A production path or one of its existing ancestors was unsafe.
+    UnsafeProductionPath,
+    /// Production paths were reused or nested.
+    DuplicateProductionPath,
 }
 
 impl std::fmt::Display for ConfigError {
@@ -414,6 +1039,15 @@ impl std::fmt::Display for ConfigError {
             Self::InvalidBound => "a production server bound is outside its accepted range",
             Self::InvalidGatewayPrincipal => "gateway_principals is invalid",
             Self::InvalidUdsMode => "the local UDS mode is unsafe",
+            Self::InvalidMode => "the server mode is invalid",
+            Self::InvalidProductionBoundary => "the production configuration is invalid",
+            Self::LocalProviderInProduction => "local key providers are unavailable in production",
+            Self::InvalidPlacement => "the production placement is invalid",
+            Self::InvalidTransportBinding => "the production transport binding is invalid",
+            Self::InvalidReleaseBinding => "the release capability binding is invalid",
+            Self::InvalidProductionPath => "a production path is invalid",
+            Self::UnsafeProductionPath => "a production path is unsafe",
+            Self::DuplicateProductionPath => "production paths must be distinct and non-nested",
         })
     }
 }

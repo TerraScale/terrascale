@@ -118,13 +118,21 @@ jobs:
       - name: Release packaging definitions
         run: |
           jq --exit-status . .terrascale/deploy.json >/dev/null
-          bash -n deploy/release/candidate.sh deploy/release/package.sh deploy/release/reproduce.sh deploy/release/require-fips-toolchain.sh deploy/release/require-production-capability.sh deploy/release/sign.sh deploy/release/test-boundary.sh deploy/release/test-oci.sh deploy/release/test-workflow-runs.sh deploy/release/verify-oci.sh deploy/release/verify-source-binding.sh deploy/release/verify-workflow-runs.sh deploy/release/verify.sh scripts/validate-release-contracts.sh scripts/validate-studio-assets.sh
+          bash -n deploy/release/candidate.sh deploy/release/package.sh deploy/release/reproduce.sh deploy/release/require-fips-toolchain.sh deploy/release/require-production-capability.sh deploy/release/sign.sh deploy/release/test-boundary.sh deploy/release/test-oci.sh deploy/release/test-sbom.sh deploy/release/test-workflow-runs.sh deploy/release/verify-oci.sh deploy/release/verify-source-binding.sh deploy/release/verify-workflow-runs.sh deploy/release/verify.sh scripts/validate-release-contracts.sh scripts/validate-studio-assets.sh
           scripts/validate-release-contracts.sh
           deploy/release/test-boundary.sh
           grep -q '@sha256:' deploy/release/Containerfile.server
           grep -q '@sha256:' deploy/release/Containerfile.studio
           ! grep -q 'target-cpu=native' .terrascale/deploy.json deploy/release/Containerfile.*
           ! grep -q 'tbep-production-harness' .terrascale/deploy.json deploy/release/Containerfile.*
+      - name: Release SBOM generator
+        run: |
+          cargo fmt --manifest-path deploy/release/sbom/Cargo.toml -- --check
+          cargo test --manifest-path deploy/release/sbom/Cargo.toml --locked
+          cargo clippy --manifest-path deploy/release/sbom/Cargo.toml --all-targets --locked -- -D warnings
+          cargo doc --manifest-path deploy/release/sbom/Cargo.toml --no-deps --locked
+          cargo build --manifest-path deploy/release/sbom/Cargo.toml --locked --release
+          TERRABASE_SBOM_TOOL=deploy/release/sbom/target/release/terrabase-release-sbom deploy/release/test-sbom.sh
       - name: Install pinned yq
         env:
           GOBIN: ${{ github.workspace }}/.ci-bin
