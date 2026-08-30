@@ -19,7 +19,7 @@ use terrabase_tbep::registry::ShutdownReason;
 use terrabase_tbep::registry::SupervisionShutdownRequest;
 use tokio::sync::oneshot;
 
-use crate::config::ServerConfig;
+use crate::config::{ServerConfig, ServerMode};
 
 const MAX_PEM_BYTES: u64 = 1024 * 1024;
 const MAX_PEM_BYTES_USIZE: usize = 1024 * 1024;
@@ -32,6 +32,9 @@ const MAX_PEM_BYTES_USIZE: usize = 1024 * 1024;
 /// Returns an error when TLS material, the engine, a listener, shutdown, or
 /// graceful draining fails.
 pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if config.mode == ServerMode::Production {
+        return Err(Box::new(DaemonError::ProductionCompositionUnavailable));
+    }
     let grpc_config = TbepGrpcConfig::try_new(
         config.max_message_bytes,
         config.max_inflight,
@@ -342,6 +345,7 @@ enum DaemonError {
     PrivateKeyPermissions,
     UnsafeUdsPath,
     ShutdownTimeout,
+    ProductionCompositionUnavailable,
 }
 
 impl std::fmt::Display for DaemonError {
@@ -356,6 +360,8 @@ impl std::fmt::Display for DaemonError {
             }
             Self::UnsafeUdsPath => formatter.write_str("the local UDS path is unsafe"),
             Self::ShutdownTimeout => formatter.write_str("graceful shutdown exceeded its deadline"),
+            Self::ProductionCompositionUnavailable => formatter
+                .write_str("production configuration requires the complete Member orchestrator"),
         }
     }
 }
@@ -417,6 +423,36 @@ mod tests {
         };
         let error = run(config).await.expect_err("missing TLS material must fail closed");
         assert!(error.to_string().contains("TLS material file is unsafe or invalid"));
+    }
+
+    #[tokio::test]
+    async fn production_mode_refuses_before_secret_or_listener_side_effects() {
+        let engine_location = temporary_path("production-refused-engine");
+        let config = ServerConfig {
+            mode: ServerMode::Production,
+            production: None,
+            engine_location: engine_location.clone(),
+            tenant: "tenant-a".into(),
+            project: "project-a".into(),
+            database: "database-a".into(),
+            instance_id: 1,
+            region: Region::Gru,
+            tbep_listen: SocketAddr::from(([127, 0, 0, 1], 0)),
+            server_certificate: "/missing/server.crt".into(),
+            server_private_key: "/missing/server.key".into(),
+            client_ca: "/missing/client-ca.crt".into(),
+            gateway_principals: BTreeSet::new(),
+            uds: None,
+            observability_listen: SocketAddr::from(([127, 0, 0, 1], 0)),
+            max_message_bytes: terrabase_tbep::registry::MAX_FRAME_BYTES,
+            max_inflight: 1,
+            request_timeout: std::time::Duration::from_secs(1),
+            tls_handshake_timeout: std::time::Duration::from_secs(1),
+            shutdown_grace: std::time::Duration::from_secs(1),
+        };
+        let error = run(config).await.expect_err("production handoff must refuse");
+        assert!(error.to_string().contains("complete Member orchestrator"));
+        assert!(!engine_location.exists());
     }
 
     #[test]

@@ -123,7 +123,10 @@ pub struct ProductionTransport {
     pub peers: Vec<ProductionPeer>,
 }
 
-/// Release and capability binding required before production handoff.
+/// Release and requested capability binding supplied to production handoff.
+///
+/// These values are configuration claims only; parsing them never proves
+/// release qualification, FIPS operation, or external provider capability.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReleaseBinding {
     /// Operator-selected release identifier.
@@ -756,7 +759,7 @@ fn parse_transport(
     let server_certificate = production_path(&file.server_certificate)?;
     let server_private_key = production_path(&file.server_private_key)?;
     let client_ca = production_path(&file.client_ca)?;
-    validate_gateway_principals(&file.gateway_principals)?;
+    validate_gateway_principals(&file.gateway_principals, environment.name.as_str())?;
     if file.peers.is_empty() || file.peers.len() > MAX_PEERS {
         return Err(ConfigError::InvalidTransportBinding);
     }
@@ -767,6 +770,7 @@ fn parse_transport(
         .filter(|member| *member != environment.member)
         .collect::<BTreeSet<_>>();
     let mut seen = BTreeSet::new();
+    let mut endpoints = BTreeSet::new();
     let mut peers = Vec::with_capacity(file.peers.len());
     for peer in &file.peers {
         let member = parse_ulid::<MemberUlid>(&peer.member, ConfigError::InvalidTransportBinding)?;
@@ -774,7 +778,12 @@ fn parse_transport(
             .endpoint
             .parse::<SocketAddr>()
             .map_err(|_| ConfigError::InvalidTransportBinding)?;
-        if endpoint.port() == 0 || endpoint.ip().is_unspecified() || !seen.insert(member) {
+        if endpoint.port() == 0
+            || endpoint.ip().is_unspecified()
+            || BTreeSet::from([tbep_listen, quic_listen, metrics_listen]).contains(&endpoint)
+            || !seen.insert(member)
+            || !endpoints.insert(endpoint)
+        {
             return Err(ConfigError::InvalidTransportBinding);
         }
         let expected_spiffe = format!(
@@ -823,17 +832,19 @@ fn production_socket(value: &str, allow_wildcard: bool) -> Result<SocketAddr, Co
     Ok(address)
 }
 
-fn validate_gateway_principals(values: &[String]) -> Result<(), ConfigError> {
+fn validate_gateway_principals(values: &[String], environment: &str) -> Result<(), ConfigError> {
     if values.is_empty() || values.len() > MAX_GATEWAY_PRINCIPALS {
         return Err(ConfigError::InvalidGatewayPrincipal);
     }
     let mut unique = BTreeSet::new();
+    let expected_prefix = format!("spiffe://terrascale.tech/{environment}/database-gateway/");
     for value in values {
         if value.is_empty()
             || value.len() > terrabase_tbep::grpc::MAX_PRINCIPAL_BYTES
             || value != value.trim()
             || value.chars().any(char::is_control)
             || !terrabase_tbep::grpc::valid_gateway_spiffe_uri(value)
+            || !value.starts_with(&expected_prefix)
             || !unique.insert(value)
         {
             return Err(ConfigError::InvalidGatewayPrincipal);
@@ -1215,6 +1226,30 @@ capabilities = ["production", "tbep", "quic", "metrics", "oci-vault"]
         let wildcard = production_valid()
             .replace("tbep_listen = \"127.0.0.1:8421\"", "tbep_listen = \"0.0.0.0:8421\"");
         assert!(matches!(ServerConfig::parse(&wildcard), Err(ConfigError::InvalidListenAddress)));
+    }
+
+    #[test]
+    fn production_binds_gateway_environment_and_peer_endpoints_exactly() {
+        let wrong_environment = production_valid().replace(
+            "spiffe://terrascale.tech/prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "spiffe://terrascale.tech/staging/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        );
+        assert!(matches!(
+            ServerConfig::parse(&wrong_environment),
+            Err(ConfigError::InvalidGatewayPrincipal)
+        ));
+        let duplicate_endpoint = production_valid()
+            .replace("endpoint = \"127.0.0.1:7423\"", "endpoint = \"127.0.0.1:7422\"");
+        assert!(matches!(
+            ServerConfig::parse(&duplicate_endpoint),
+            Err(ConfigError::InvalidTransportBinding)
+        ));
+        let local_endpoint = production_valid()
+            .replace("endpoint = \"127.0.0.1:7422\"", "endpoint = \"127.0.0.1:8421\"");
+        assert!(matches!(
+            ServerConfig::parse(&local_endpoint),
+            Err(ConfigError::InvalidTransportBinding)
+        ));
     }
 
     #[test]
