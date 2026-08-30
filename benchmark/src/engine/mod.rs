@@ -675,20 +675,35 @@ impl Engine {
     /// Drains the group-commit mailbox until empty: one storage batch per
     /// drained group, one answer per waiter.
     ///
+    /// A drained group smaller than the expected wave width gets one
+    /// short harvest window before it commits: concurrent committers
+    /// arrive microseconds apart, and a leader that commits the first
+    /// arrival alone re-pays the whole sync cost per writer. The window
+    /// is bounded (a fraction of one sync's cost) and never applies once
+    /// the group is wide.
+    ///
     /// Called only by the current leader (see [`Transaction::commit`]);
     /// the `LeaderGuard` the caller holds clears the flag when this
     /// returns or panics.
     fn drive_commit_batches(&self) {
+        const GROUP_HARVEST_WIDTH: usize = 8;
+        const GROUP_HARVEST_WINDOW: std::time::Duration = std::time::Duration::from_micros(250);
         loop {
-            let batch = {
+            let mut batch = {
                 let Ok(mut mailbox) = self.commit_mailbox.lock() else {
                     return;
                 };
-                if mailbox.queue.is_empty() {
-                    return;
-                }
                 std::mem::take(&mut mailbox.queue)
             };
+            if batch.is_empty() {
+                return;
+            }
+            if batch.len() < GROUP_HARVEST_WIDTH {
+                std::thread::sleep(GROUP_HARVEST_WINDOW);
+                if let Ok(mut mailbox) = self.commit_mailbox.lock() {
+                    batch.append(&mut mailbox.queue);
+                }
+            }
             let intents: Vec<storage::CommitIntent> =
                 batch.iter().map(|(intent, _)| intent.clone()).collect();
             let results = match self.lock_storage() {
