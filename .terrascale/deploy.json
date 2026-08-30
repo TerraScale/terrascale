@@ -6,13 +6,13 @@
     { "name": "build", "resourceWeight": "medium", "commands": [{ "description": "Build SDK and sample", "command": "dotnet", "arguments": ["build", "TerraScale.DotNet.slnx", "--configuration", "Release", "--no-restore"] }] }
   ],
   "releaseProfiles": [
-    { "name": "base-sdk-release-e2e", "resourceWeight": "heavy", "commands": [{ "description": "Base SDK external HTTP E2E", "command": "dotnet", "arguments": ["test", "tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj", "--configuration", "Release"] }] },
-    { "name": "ef-core-release-e2e", "resourceWeight": "heavy", "commands": [{ "description": "EF Core external HTTP E2E", "command": "dotnet", "arguments": ["test", "tests/TerraScale.EntityFrameworkCore.Tests/TerraScale.EntityFrameworkCore.Tests.csproj", "--configuration", "Release"] }] },
-    { "name": "exact-sdk-package", "resourceWeight": "medium", "commands": [{ "description": "Verify exact SDK package in clean .NET 10 consumer", "command": "bash", "arguments": ["scripts/verify-package-candidate.sh", "--package", "artifacts/candidate/TerraScale.DotNet.0.1.0.nupkg"] }] }
+    { "name": "base-sdk-release-e2e", "resourceWeight": "heavy", "required": true, "candidateTarget": "base-sdk-release-e2e-tests", "entrypoint": "TerraScale.DotNet.Tests", "arguments": [], "minimumExpectedTests": 225 },
+    { "name": "ef-core-release-e2e", "resourceWeight": "heavy", "required": true, "candidateTarget": "ef-core-release-e2e-tests", "entrypoint": "TerraScale.EntityFrameworkCore.Tests", "arguments": [], "minimumExpectedTests": 10 }
   ],
   "buildTargets": [
-    { "name": "sdk-nuget", "resourceWeight": "medium", "commands": [{ "description": "Pack base SDK", "command": "dotnet", "arguments": ["pack", "src/TerraScale.DotNet/TerraScale.DotNet.csproj", "--configuration", "Release", "--output", "artifacts/candidate"] }] },
-    { "name": "ef-nuget", "resourceWeight": "medium", "commands": [{ "description": "Pack EF provider", "command": "dotnet", "arguments": ["pack", "src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj", "--configuration", "Release", "--output", "artifacts/candidate"] }] }
+    { "name": "base-sdk-release-e2e-tests", "resourceWeight": "heavy", "outputPath": "artifacts/candidate-tests/base-sdk-release-e2e", "commands": [{ "description": "Publish the candidate-bound base SDK TUnit apphost", "command": "dotnet", "arguments": ["publish", "tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj", "--configuration", "Release", "--output", "artifacts/candidate-tests/base-sdk-release-e2e"] }] },
+    { "name": "ef-core-release-e2e-tests", "resourceWeight": "heavy", "outputPath": "artifacts/candidate-tests/ef-core-release-e2e", "commands": [{ "description": "Publish the candidate-bound EF Core TUnit apphost", "command": "dotnet", "arguments": ["publish", "tests/TerraScale.EntityFrameworkCore.Tests/TerraScale.EntityFrameworkCore.Tests.csproj", "--configuration", "Release", "--output", "artifacts/candidate-tests/ef-core-release-e2e"] }] },
+    { "name": "dotnet-package-set-v2", "resourceWeight": "medium", "outputPath": "artifacts/candidate/dotnet-package-set-v2", "commands": [{ "description": "Build and verify the atomic SDK and EF Core package set", "command": "python3", "arguments": ["scripts/verify-package-set-candidate.py", "--emit-candidate"] }] }
   ],
   "candidate": { "genericPackageName": "ci-candidates-dotnet", "retentionDays": 7 },
   "promotion": { "strategy": "package", "endpoints": [] }

@@ -23,7 +23,7 @@ public sealed class TerraScaleDocumentsClient
         CancellationToken cancellationToken = default) =>
         client.SendAsync<TerraScaleDocument, TerraScaleDocument>(
             HttpMethod.Post,
-            $"/api/v1/repositories/{Escape(repository)}/documents",
+            TerraScaleApiRoutes.DocumentsCreate(repository),
             new TerraScaleDocumentMutation<TDocument>(document),
             preferredRegion: null,
             configureRequest: null,
@@ -49,7 +49,7 @@ public sealed class TerraScaleDocumentsClient
         CancellationToken cancellationToken = default) =>
         client.SendAsync<TerraScaleDocument, TerraScaleDocument>(
             HttpMethod.Get,
-            $"/api/v1/repositories/{Escape(repository)}/documents/{EscapeDocumentId(documentId)}",
+            TerraScaleApiRoutes.DocumentGet(repository, documentId),
             body: null,
             preferredRegion: null,
             request => client.ApplyDocumentReadHeaders(request, repository, documentId, options),
@@ -77,7 +77,7 @@ public sealed class TerraScaleDocumentsClient
         CancellationToken cancellationToken = default) =>
         client.SendAsync<TerraScaleDocument, TerraScaleDocument>(
             HttpMethod.Put,
-            $"/api/v1/repositories/{Escape(repository)}/documents/{EscapeDocumentId(documentId)}",
+            TerraScaleApiRoutes.DocumentPut(repository, documentId),
             new TerraScaleDocumentMutation<TDocument>(document),
             preferredRegion: null,
             request => client.ApplyDocumentMutationHeaders(request, options),
@@ -105,7 +105,7 @@ public sealed class TerraScaleDocumentsClient
         CancellationToken cancellationToken = default) =>
         client.SendAsync<TerraScaleDocument, TerraScaleDocument>(
             HttpMethod.Patch,
-            $"/api/v1/repositories/{Escape(repository)}/documents/{EscapeDocumentId(documentId)}",
+            TerraScaleApiRoutes.DocumentPatch(repository, documentId),
             new TerraScaleDocumentMutation<TPatch>(patch),
             preferredRegion: null,
             request => client.ApplyDocumentMutationHeaders(request, options),
@@ -123,7 +123,7 @@ public sealed class TerraScaleDocumentsClient
         ArgumentNullException.ThrowIfNull(operations);
         return client.SendAsync<TerraScaleDocumentBatch, TerraScaleDocumentBatch>(
             HttpMethod.Post,
-            $"/api/v1/repositories/{Escape(repository)}/documents/batch",
+            TerraScaleApiRoutes.DocumentsBatch(repository),
             new TerraScaleDocumentBatchMutation(operations),
             preferredRegion: null,
             configureRequest: null,
@@ -143,7 +143,7 @@ public sealed class TerraScaleDocumentsClient
         TerraScalePagination.Validate(skip, take);
         return client.SendAsync<TerraScaleDocumentPage, TerraScaleDocumentPage>(
             HttpMethod.Get,
-            $"/api/v1/repositories/{Escape(repository)}/documents?skip={skip}&take={take}",
+            TerraScaleApiRoutes.DocumentsList(repository, skip, take),
             body: null,
             preferredRegion: null,
             configureRequest: null,
@@ -170,29 +170,13 @@ public sealed class TerraScaleDocumentsClient
         CancellationToken cancellationToken = default) =>
         client.SendAsync<TerraScaleDeletedDocument, TerraScaleDeletedDocument>(
             HttpMethod.Delete,
-            $"/api/v1/repositories/{Escape(repository)}/documents/{EscapeDocumentId(documentId)}",
+            TerraScaleApiRoutes.DocumentDelete(repository, documentId),
             body: null,
             preferredRegion: null,
             request => client.ApplyDocumentMutationHeaders(request, options),
             (response, message) => client.ObserveDocumentDelete(response, message, repository),
             cancellationToken);
 
-    private static string Escape(string value)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(value);
-        return Uri.EscapeDataString(value.Trim());
-    }
-
-    private static string EscapeDocumentId(string value)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(value);
-        return string.Join(
-            '/',
-            value
-                .Trim()
-                .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(Uri.EscapeDataString));
-    }
 }
 
 internal sealed record TerraScaleDocumentMutation<TDocument>(TDocument Data);

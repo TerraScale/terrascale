@@ -24,13 +24,14 @@ public sealed class TerraScaleSavedQueriesClientTests
         var created = await client.SavedQueries.CreateAsync(
             "project-a",
             new TerraScaleSaveQueryRequest("Recent orders", "from Orders", "repository-a"));
+        var loaded = await client.SavedQueries.GetAsync("project-a", "saved-query-a");
         var updated = await client.SavedQueries.UpdateAsync(
             "project-a",
             "saved-query-a",
             new TerraScaleSaveQueryRequest("Recent paid orders", "from Orders where Paid = true"));
         var deleted = await client.SavedQueries.DeleteAsync("project-a", "saved-query-a");
 
-        await Assert.That(handler.Requests).Count().IsEqualTo(4);
+        await Assert.That(handler.Requests).Count().IsEqualTo(5);
         await Assert.That(handler.Requests[0]).IsEqualTo(new RecordedRequest(
             HttpMethod.Get,
             "https://api.example.invalid/api/v1/projects/project-a/saved-queries?skip=0&take=100",
@@ -42,17 +43,23 @@ public sealed class TerraScaleSavedQueriesClientTests
             "{\"name\":\"Recent orders\",\"query\":\"from Orders\",\"repositoryId\":\"repository-a\"}",
             "factory-key"));
         await Assert.That(handler.Requests[2]).IsEqualTo(new RecordedRequest(
+            HttpMethod.Get,
+            "https://api.example.invalid/api/v1/projects/project-a/saved-queries/saved-query-a",
+            null,
+            null));
+        await Assert.That(handler.Requests[3]).IsEqualTo(new RecordedRequest(
             HttpMethod.Put,
             "https://api.example.invalid/api/v1/projects/project-a/saved-queries/saved-query-a",
             "{\"name\":\"Recent paid orders\",\"query\":\"from Orders where Paid = true\",\"repositoryId\":null}",
             "factory-key"));
-        await Assert.That(handler.Requests[3]).IsEqualTo(new RecordedRequest(
+        await Assert.That(handler.Requests[4]).IsEqualTo(new RecordedRequest(
             HttpMethod.Delete,
             "https://api.example.invalid/api/v1/projects/project-a/saved-queries/saved-query-a",
             null,
             "factory-key"));
         await Assert.That(queries[0].RepositoryId).IsNull();
         await Assert.That(created.CreatedAt).IsEqualTo(DateTimeOffset.Parse("2026-08-05T12:00:00+00:00"));
+        await Assert.That(loaded.SavedQueryId).IsEqualTo("saved-query-a");
         await Assert.That(updated.Name).IsEqualTo("Recent paid orders");
         await Assert.That(deleted.Deleted).IsTrue();
     }
@@ -120,10 +127,13 @@ public sealed class TerraScaleSavedQueriesClientTests
             "project-a",
             " ",
             new TerraScaleSaveQueryRequest("Orders", "from Orders")));
+        var getException = await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.SavedQueries.GetAsync("project-a", " "));
 
         await Assert.That(listException).IsNotNull();
         await Assert.That(createException).IsNotNull();
         await Assert.That(updateException).IsNotNull();
+        await Assert.That(getException).IsNotNull();
     }
 
     private sealed class RecordingHandler : HttpMessageHandler
@@ -144,7 +154,9 @@ public sealed class TerraScaleSavedQueriesClientTests
 
             var body = request.Method == HttpMethod.Delete
                 ? "{\"savedQueryId\":\"saved-query-a\",\"projectId\":\"project-a\",\"deleted\":true}"
-                : request.Method == HttpMethod.Get
+                : request.Method == HttpMethod.Get && requestUri.AbsolutePath.EndsWith("/saved-query-a", StringComparison.Ordinal)
+                    ? "{\"savedQueryId\":\"saved-query-a\",\"projectId\":\"project-a\",\"name\":\"Orders\",\"query\":\"from Orders\",\"repositoryId\":null,\"createdAt\":\"2026-08-05T12:00:00+00:00\",\"updatedAt\":\"2026-08-05T13:00:00+00:00\",\"revision\":\"opaque-revision\"}"
+                    : request.Method == HttpMethod.Get
                     ? "[{\"savedQueryId\":\"saved-query-a\",\"projectId\":\"project-a\",\"name\":\"Orders\",\"query\":\"from Orders\",\"repositoryId\":null,\"createdAt\":\"2026-08-05T12:00:00+00:00\",\"updatedAt\":\"2026-08-05T13:00:00+00:00\"}]"
                     : "{\"savedQueryId\":\"saved-query-a\",\"projectId\":\"project-a\",\"name\":\"Recent paid orders\",\"query\":\"from Orders where Paid = true\",\"repositoryId\":null,\"createdAt\":\"2026-08-05T12:00:00+00:00\",\"updatedAt\":\"2026-08-05T13:00:00+00:00\"}";
             return new HttpResponseMessage(request.Method == HttpMethod.Post ? HttpStatusCode.Created : HttpStatusCode.OK)

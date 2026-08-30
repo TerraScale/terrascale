@@ -26,7 +26,7 @@ public sealed class TerraScaleTqlClient
         TerraScalePagination.ValidateOptional(skip, take);
         return client.SendAsync<TerraScaleDocumentPage, TerraScaleDocumentPage>(
             HttpMethod.Post,
-            $"/api/v1/repositories/{Escape(repository)}/tql",
+            TerraScaleApiRoutes.QueryExecute(repository),
             new TerraScaleTqlQuery(query, skip, take),
             preferredRegion: null,
             configureRequest: null,
@@ -51,11 +51,6 @@ public sealed class TerraScaleTqlClient
             cancellationToken);
     }
 
-    private static string Escape(string value)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(value);
-        return Uri.EscapeDataString(value.Trim());
-    }
 }
 
 internal sealed record TerraScaleTqlQuery(

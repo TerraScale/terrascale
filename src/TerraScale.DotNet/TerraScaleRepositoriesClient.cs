@@ -19,7 +19,7 @@ public sealed class TerraScaleRepositoriesClient
         CancellationToken cancellationToken = default) =>
         client.SendAsync<IReadOnlyList<TerraScaleRepository>>(
             HttpMethod.Get,
-            "/api/v1/repositories",
+            TerraScaleApiRoutes.RepositoriesList(),
             body: null,
             cancellationToken);
 
@@ -33,7 +33,7 @@ public sealed class TerraScaleRepositoriesClient
         ArgumentException.ThrowIfNullOrWhiteSpace(repositoryId);
         return client.SendAsync<TerraScaleRepository>(
             HttpMethod.Get,
-            $"/api/v1/repositories/{Escape(repositoryId)}",
+            TerraScaleApiRoutes.RepositoryGet(repositoryId),
             body: null,
             cancellationToken);
     }
@@ -61,7 +61,7 @@ public sealed class TerraScaleRepositoriesClient
 
         return client.SendAsync<TerraScaleRepository>(
             HttpMethod.Post,
-            "/api/v1/repositories",
+            TerraScaleApiRoutes.RepositoriesCreate(),
             new TerraScaleCreateRepositoryRequest(
                 name.Trim(),
                 selectedDatabaseId,
@@ -83,13 +83,10 @@ public sealed class TerraScaleRepositoriesClient
         ArgumentException.ThrowIfNullOrWhiteSpace(repositoryId);
         return client.SendAsync<TerraScaleDeletedRepository>(
             HttpMethod.Delete,
-            $"/api/v1/repositories/{Escape(repositoryId)}?deleteDocuments={deleteDocuments.ToString().ToLowerInvariant()}",
+            TerraScaleApiRoutes.RepositoryDelete(repositoryId, deleteDocuments),
             body: null,
             cancellationToken);
     }
-
-    private static string Escape(string value) =>
-        Uri.EscapeDataString(value.Trim());
 
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();

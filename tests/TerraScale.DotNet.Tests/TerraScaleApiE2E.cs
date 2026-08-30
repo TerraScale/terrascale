@@ -367,114 +367,165 @@ internal static class TerraScaleApiE2E
     }
 }
 
+internal static class TerraScaleLiveTestGate
+{
+    public const string RequireConfiguredVariable = "TERRASCALE_E2E_REQUIRE_CONFIGURED";
+
+    public static Task<bool> ShouldSkipAsync(bool configured, string reason)
+    {
+        var requireConfigured = ParseRequireConfigured(
+            Environment.GetEnvironmentVariable(RequireConfiguredVariable));
+        return Task.FromResult(ShouldSkip(configured, requireConfigured, reason));
+    }
+
+    internal static bool ShouldSkip(bool configured, bool requireConfigured, string reason)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        if (configured)
+        {
+            return false;
+        }
+
+        if (requireConfigured)
+        {
+            throw new InvalidOperationException(
+                $"{RequireConfiguredVariable}=true requires this live test configuration. {reason}");
+        }
+
+        return true;
+    }
+
+    internal static bool ParseRequireConfigured(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (bool.TryParse(value.Trim(), out var parsed))
+        {
+            return parsed;
+        }
+
+        throw new InvalidOperationException(
+            $"{RequireConfiguredVariable} must be true or false when it is set.");
+    }
+}
+
 internal sealed class RequiresTerraScaleApiAttribute()
     : SkipAttribute(TerraScaleApiE2E.SkipReason)
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(!TerraScaleApiE2E.IsConfigured);
+        TerraScaleLiveTestGate.ShouldSkipAsync(TerraScaleApiE2E.IsConfigured, TerraScaleApiE2E.SkipReason);
 }
 
 internal sealed class RequiresTerraScaleBearerTokenAttribute()
     : SkipAttribute(TerraScaleApiE2E.BearerSkipReason)
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(!TerraScaleApiE2E.IsBearerConfigured);
+        TerraScaleLiveTestGate.ShouldSkipAsync(TerraScaleApiE2E.IsBearerConfigured, TerraScaleApiE2E.BearerSkipReason);
 }
 
 internal sealed class RequiresTerraScaleBaseAddressAttribute()
     : SkipAttribute(TerraScaleApiE2E.BaseAddressSkipReason)
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(!TerraScaleApiE2E.IsBaseAddressConfigured);
+        TerraScaleLiveTestGate.ShouldSkipAsync(TerraScaleApiE2E.IsBaseAddressConfigured, TerraScaleApiE2E.BaseAddressSkipReason);
 }
 
 internal sealed class RequiresTerraScaleRegionalRoutingAttribute()
     : SkipAttribute(TerraScaleApiE2E.RegionalRoutingSkipReason)
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(!TerraScaleApiE2E.IsRegionalRoutingConfigured);
+        TerraScaleLiveTestGate.ShouldSkipAsync(TerraScaleApiE2E.IsRegionalRoutingConfigured, TerraScaleApiE2E.RegionalRoutingSkipReason);
 }
 
 internal sealed class RequiresTerraScaleRegionalFailureAttribute()
     : SkipAttribute(TerraScaleApiE2E.RegionalFailureSkipReason)
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(!TerraScaleApiE2E.IsRegionalFailureConfigured);
+        TerraScaleLiveTestGate.ShouldSkipAsync(TerraScaleApiE2E.IsRegionalFailureConfigured, TerraScaleApiE2E.RegionalFailureSkipReason);
 }
 
 internal sealed class RequiresTerraScaleBillingAccessLifecycleAttribute()
     : SkipAttribute(TerraScaleApiE2E.BillingAccessLifecycleSkipReason)
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(!TerraScaleApiE2E.IsBillingAccessLifecycleConfigured);
+        TerraScaleLiveTestGate.ShouldSkipAsync(TerraScaleApiE2E.IsBillingAccessLifecycleConfigured, TerraScaleApiE2E.BillingAccessLifecycleSkipReason);
 }
 
 internal sealed class RequiresTerraScaleBillingCheckoutAttribute()
     : SkipAttribute(TerraScaleApiE2E.BillingCheckoutSkipReason)
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(!TerraScaleApiE2E.IsBillingCheckoutConfigured);
+        TerraScaleLiveTestGate.ShouldSkipAsync(TerraScaleApiE2E.IsBillingCheckoutConfigured, TerraScaleApiE2E.BillingCheckoutSkipReason);
 }
 
 internal sealed class RequiresTerraScaleAdministrationAuthorizationAttribute()
     : SkipAttribute(TerraScaleApiE2E.AdministrationAuthorizationSkipReason)
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(!TerraScaleApiE2E.IsAdministrationAuthorizationConfigured);
+        TerraScaleLiveTestGate.ShouldSkipAsync(TerraScaleApiE2E.IsAdministrationAuthorizationConfigured, TerraScaleApiE2E.AdministrationAuthorizationSkipReason);
 }
 
 internal sealed class RequiresTerraScaleAdministrationWebhookReplayAttribute()
     : SkipAttribute(TerraScaleApiE2E.AdministrationWebhookReplaySkipReason)
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(!TerraScaleApiE2E.IsAdministrationWebhookReplayConfigured);
+        TerraScaleLiveTestGate.ShouldSkipAsync(TerraScaleApiE2E.IsAdministrationWebhookReplayConfigured, TerraScaleApiE2E.AdministrationWebhookReplaySkipReason);
 }
 
 internal sealed class RequiresTerraScaleAdministrationMutationAttribute()
     : SkipAttribute(TerraScaleApiE2E.AdministrationMutationSkipReason)
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(!TerraScaleApiE2E.IsAdministrationMutationConfigured);
+        TerraScaleLiveTestGate.ShouldSkipAsync(TerraScaleApiE2E.IsAdministrationMutationConfigured, TerraScaleApiE2E.AdministrationMutationSkipReason);
 }
 
 internal sealed class RequiresTerraScaleAdministrationDeleteUserAttribute()
     : SkipAttribute(TerraScaleApiE2E.AdministrationDeleteUserSkipReason)
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(!TerraScaleApiE2E.IsAdministrationDeleteUserConfigured);
+        TerraScaleLiveTestGate.ShouldSkipAsync(TerraScaleApiE2E.IsAdministrationDeleteUserConfigured, TerraScaleApiE2E.AdministrationDeleteUserSkipReason);
 }
 
 internal sealed class RequiresTerraScaleAdministrationPolarPlanAttribute()
     : SkipAttribute(TerraScaleApiE2E.AdministrationPolarPlanSkipReason)
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(!TerraScaleApiE2E.IsAdministrationPolarPlanConfigured);
+        TerraScaleLiveTestGate.ShouldSkipAsync(TerraScaleApiE2E.IsAdministrationPolarPlanConfigured, TerraScaleApiE2E.AdministrationPolarPlanSkipReason);
 }
 
 internal sealed class RequiresTerraScaleAdministrationNonOwnerMutationAuthorizationAttribute()
     : SkipAttribute(TerraScaleApiE2E.AdministrationNonOwnerMutationAuthorizationSkipReason)
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(!TerraScaleApiE2E.IsAdministrationNonOwnerMutationAuthorizationConfigured);
+        TerraScaleLiveTestGate.ShouldSkipAsync(
+            TerraScaleApiE2E.IsAdministrationNonOwnerMutationAuthorizationConfigured,
+            TerraScaleApiE2E.AdministrationNonOwnerMutationAuthorizationSkipReason);
 }
 
 internal sealed class RequiresTerraScaleAdministrationPricingPlanUpdateAttribute()
     : SkipAttribute(TerraScaleApiE2E.AdministrationPricingPlanUpdateSkipReason)
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(!TerraScaleApiE2E.IsAdministrationPricingPlanUpdateConfigured);
+        TerraScaleLiveTestGate.ShouldSkipAsync(
+            TerraScaleApiE2E.IsAdministrationPricingPlanUpdateConfigured,
+            TerraScaleApiE2E.AdministrationPricingPlanUpdateSkipReason);
 }
 
 internal sealed class RequiresTerraScaleAdministrationSupportNoteAttribute()
     : SkipAttribute(TerraScaleApiE2E.AdministrationSupportNoteSkipReason)
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(!TerraScaleApiE2E.IsAdministrationSupportNoteConfigured);
+        TerraScaleLiveTestGate.ShouldSkipAsync(
+            TerraScaleApiE2E.IsAdministrationSupportNoteConfigured,
+            TerraScaleApiE2E.AdministrationSupportNoteSkipReason);
 }
 
 internal sealed class RequiresTerraScaleClientJourneyAttribute()
     : SkipAttribute(TerraScaleApiE2E.ClientJourneySkipReason)
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(!TerraScaleApiE2E.IsClientJourneyConfigured);
+        TerraScaleLiveTestGate.ShouldSkipAsync(TerraScaleApiE2E.IsClientJourneyConfigured, TerraScaleApiE2E.ClientJourneySkipReason);
 }

@@ -8,7 +8,19 @@ on:
   workflow_dispatch:
     inputs:
       handoff_manifest:
-        description: Path to the immutable JSON package handoff staged by the protected release handoff
+        description: Path to the immutable v2 SDK and EF Core package-set handoff staged by the protected release handoff
+        required: true
+        type: string
+      route_manifest:
+        description: Path to the exact TypeScript route manifest staged under RUNNER_TEMP
+        required: true
+        type: string
+      contract_descriptor:
+        description: Path to the exact TypeScript OpenAPI contract descriptor staged under RUNNER_TEMP
+        required: true
+        type: string
+      owner_openapi:
+        description: Path to the exact owner OpenAPI staged under RUNNER_TEMP
         required: true
         type: string
 
@@ -28,8 +40,12 @@ jobs:
       contents: read
     env:
       HANDOFF_MANIFEST_INPUT: ${{ inputs.handoff_manifest }}
+      ROUTE_MANIFEST_INPUT: ${{ inputs.route_manifest }}
+      CONTRACT_DESCRIPTOR_INPUT: ${{ inputs.contract_descriptor }}
+      OWNER_OPENAPI_INPUT: ${{ inputs.owner_openapi }}
       FORGEJO_EVENT_NAME: ${{ forgejo.event_name }}
       FORGEJO_REF: ${{ forgejo.ref }}
+      TERRASCALE_E2E_REQUIRE_CONFIGURED: 'true'
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -48,26 +64,38 @@ jobs:
           esac
           test -f "$HANDOFF_MANIFEST_INPUT"
           test ! -L "$HANDOFF_MANIFEST_INPUT"
-          HANDOFF_MANIFEST_PATH="$RUNNER_TEMP/terrascale-dotnet-package-handoff.json"
-          if test "$HANDOFF_MANIFEST_INPUT" != "$HANDOFF_MANIFEST_PATH"; then
-            cp -- "$HANDOFF_MANIFEST_INPUT" "$HANDOFF_MANIFEST_PATH"
-          fi
+          HANDOFF_MANIFEST_PATH="$HANDOFF_MANIFEST_INPUT"
+          test "$(basename -- "$HANDOFF_MANIFEST_PATH")" = terrascale-dotnet-package-set-handoff.json
           test ! -L "$HANDOFF_MANIFEST_PATH"
           test "$(git rev-parse HEAD)" = "$(git rev-parse refs/remotes/origin/develop)"
           test "$(git rev-parse HEAD^{tree})" = "$(git rev-parse refs/remotes/origin/develop^{tree})"
-          TERRASCALE_PACKAGE_RECEIPT_PATH="$RUNNER_TEMP/terrascale-dotnet-package-verification.json" \
-            ./scripts/verify-package-candidate.sh --handoff "$HANDOFF_MANIFEST_PATH"
-          test -s "$RUNNER_TEMP/terrascale-dotnet-package-verification.json"
+          for contract_input in "$ROUTE_MANIFEST_INPUT" "$CONTRACT_DESCRIPTOR_INPUT" "$OWNER_OPENAPI_INPUT"; do
+            test -n "$contract_input"
+            case "$contract_input" in
+              "$RUNNER_TEMP"/*) ;;
+              *) echo 'contract inputs must be staged under RUNNER_TEMP' >&2; exit 1 ;;
+            esac
+            test -f "$contract_input"
+            test ! -L "$contract_input"
+          done
+          ./scripts/verify-public-contract-coverage.sh \
+            --strict \
+            --route-manifest "$ROUTE_MANIFEST_INPUT" \
+            --contract-descriptor "$CONTRACT_DESCRIPTOR_INPUT" \
+            --openapi "$OWNER_OPENAPI_INPUT"
+          TERRASCALE_PACKAGE_RECEIPT_PATH="$RUNNER_TEMP/terrascale-dotnet-package-set-verification.json" \
+            ./scripts/verify-package-set-candidate.py --handoff "$HANDOFF_MANIFEST_PATH"
+          test -s "$RUNNER_TEMP/terrascale-dotnet-package-set-verification.json"
       - name: Re-run focused candidate regression fixtures
         run: |
           TERRASCALE_PACKAGE_RECEIPT_PATH= \
-            tests/TerraScale.DotNet.Tests/verify-package-candidate-tests.sh \
-            --handoff "$RUNNER_TEMP/terrascale-dotnet-package-handoff.json"
+            tests/TerraScale.DotNet.Tests/verify-package-set-candidate-tests.sh \
+            --handoff "$RUNNER_TEMP/terrascale-dotnet-package-set-handoff.json"
       - name: Upload verification receipt
         uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e
         with:
-          name: terrascale-dotnet-package-verification
-          path: ${{ runner.temp }}/terrascale-dotnet-package-verification.json
+          name: terrascale-dotnet-package-set-verification
+          path: ${{ runner.temp }}/terrascale-dotnet-package-set-verification.json
 
   pr-validation:
     name: pr/validation (build, test, contracts)
@@ -81,6 +109,8 @@ jobs:
           github-server-url: "https://git.terrascale.tech"
           fetch-depth: 1
           persist-credentials: false
+      - name: Verify public contract coverage
+        run: ./scripts/verify-public-contract-coverage.sh
       - name: Build
         run: dotnet build TerraScale.DotNet.slnx --configuration Release
       - name: Test contracts

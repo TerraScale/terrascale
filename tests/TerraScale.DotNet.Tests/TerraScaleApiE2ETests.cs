@@ -530,6 +530,19 @@ public sealed class TerraScaleApiE2ETests
         await Assert.That(fra.Latitude).IsEqualTo(50.1109);
         await Assert.That(fra.Longitude).IsEqualTo(8.6821);
         await Assert.That(fra.Available).IsTrue();
+
+        foreach (var code in expectedRegions)
+        {
+            TerraScaleRegion summary = regions.Single(region => region.Code == code);
+            TerraScaleRegionDetails details = await client.Regions.GetAsync(code);
+
+            await Assert.That(details.Code).IsEqualTo(summary.Code);
+            await Assert.That(details.Name).IsEqualTo(summary.Name);
+            await Assert.That(details.Country).IsEqualTo(summary.Country);
+            await Assert.That(details.Latitude).IsEqualTo(summary.Latitude);
+            await Assert.That(details.Longitude).IsEqualTo(summary.Longitude);
+            await Assert.That(details.Available).IsEqualTo(summary.Available);
+        }
     }
 
     [Test]
@@ -750,62 +763,6 @@ public sealed class TerraScaleApiE2ETests
                 await DeleteSavedQueryIfPresentAsync(client, currentProject.ProjectId, created.SavedQueryId);
             }
         }
-    }
-
-    [Test]
-    [RequiresTerraScaleApi]
-    public async Task SavedQueriesV2_GetListAndConditionalUpdate_RoundTripAgainstRealApi()
-    {
-        var client = TerraScaleApiE2E.CreateClient();
-        var currentProject = await GetCurrentProjectAsync(client);
-        var suffix = Guid.NewGuid().ToString("N")[..12];
-        TerraScaleSavedQuery? created = null;
-
-        try
-        {
-            created = await client.SavedQueries.CreateAsync(
-                currentProject.ProjectId,
-                new TerraScaleSaveQueryRequest($"sdk-e2e-saved-query-v2-{suffix}", "from Orders"));
-
-            var loaded = await client.SavedQueriesV2.GetAsync(currentProject.ProjectId, created.SavedQueryId);
-            var listed = await client.SavedQueriesV2.ListAsync(currentProject.ProjectId, take: 500);
-            await Assert.That(loaded.Revision).IsNotEmpty();
-            await Assert.That(listed.Any(savedQuery => savedQuery.SavedQueryId == created.SavedQueryId && savedQuery.Revision == loaded.Revision)).IsTrue();
-
-            var updated = await client.SavedQueriesV2.UpdateAsync(
-                currentProject.ProjectId,
-                created.SavedQueryId,
-                new TerraScaleUpdateSavedQueryV2Request($"sdk-e2e-saved-query-v2-updated-{suffix}", "from Orders where Paid = true", loaded.Revision));
-            await Assert.That(updated.Revision).IsNotEqualTo(loaded.Revision);
-
-            var stale = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.SavedQueriesV2.UpdateAsync(
-                currentProject.ProjectId,
-                created.SavedQueryId,
-                new TerraScaleUpdateSavedQueryV2Request("Stale revision", "from Orders", loaded.Revision)))
-                ?? throw new InvalidOperationException("Expected a stale saved-query revision to be rejected.");
-            await Assert.That(stale.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-            await Assert.That(stale.ErrorCode).IsEqualTo("TERRASCALE-1401");
-        }
-        finally
-        {
-            if (created is not null)
-            {
-                await DeleteSavedQueryIfPresentAsync(client, currentProject.ProjectId, created.SavedQueryId);
-            }
-        }
-    }
-
-    [Test]
-    [RequiresTerraScaleApi]
-    public async Task SavedQueriesV3_ListSnapshotPageAgainstRealApi()
-    {
-        var client = TerraScaleApiE2E.CreateClient();
-        var currentProject = await GetCurrentProjectAsync(client);
-
-        var page = await client.SavedQueriesV3.ListAsync(currentProject.ProjectId, take: 1);
-
-        await Assert.That(page.Items.Count).IsLessThanOrEqualTo(1);
-        await Assert.That(page.Items.All(savedQuery => savedQuery.ProjectId == currentProject.ProjectId)).IsTrue();
     }
 
     [Test]
@@ -1332,6 +1289,8 @@ public sealed class TerraScaleApiE2ETests
         : SkipAttribute(ProjectTeamMembershipSkipReason)
     {
         public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-            Task.FromResult(!IsProjectTeamMembershipConfigured);
+            TerraScaleLiveTestGate.ShouldSkipAsync(
+                IsProjectTeamMembershipConfigured,
+                ProjectTeamMembershipSkipReason);
     }
 }

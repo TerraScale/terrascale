@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TerraScale.DotNet;
@@ -7,47 +6,15 @@ using TerraScale.DotNet;
 namespace TerraScale.DotNet.Tests;
 
 /// <summary>
-/// The vendored <c>terrascale.sync.v2</c> golden-vector conformance run
-/// (SE-10): the corpus committed by SE-04 (with SE-07's regenerated
-/// slow-consumer file) and the SE-05 corpus-manifest gate, executed
-/// against the SDK's native managed codec. For every recorded frame the
-/// structured description must seal and encode to the recorded bytes and
-/// the bytes must decode back; for every <c>decode_rejects</c> entry the
-/// typed rejection must match; for every budget step the class, budget,
-/// and payload accounting are recounted from the committed wire bytes.
+/// Migration evidence for the TerraBase-owned corpus-manifest @2 and both
+/// <c>terrascale.sync.v2</c> corpus directories, executed against the SDK's
+/// managed codec. This byte and semantic evidence does not qualify a public
+/// transport. Every recorded frame must seal to the owner bytes and decode
+/// back, every <c>decode_rejects</c> entry must return its typed error, and
+/// every budget row is recounted from the committed wire bytes.
 /// </summary>
 public sealed class TerraScaleSyncV2GoldenVectorTests
 {
-    private static readonly string[] Categories =
-    [
-        "checkpoint-resume",
-        "fresh-session",
-        "malformed-frame-rejection",
-        "reconnect-replay",
-        "region-route-change",
-        "repeated-change-delta",
-        "resync-required",
-        "slow-consumer",
-        "trigger-notification",
-    ];
-
-    private static string CorpusDirectory()
-    {
-        var candidate = AppContext.BaseDirectory;
-        for (var depth = 0; depth < 6; depth++)
-        {
-            var vectors = Path.Combine(candidate, "vectors", "terrascale.sync.v2");
-            if (Directory.Exists(vectors))
-            {
-                return vectors;
-            }
-
-            candidate = Path.GetDirectoryName(candidate)!;
-        }
-
-        throw new InvalidOperationException("the vendored terrascale.sync.v2 corpus directory was not found");
-    }
-
     /// <summary>The corpus header identities are exact before any step runs.</summary>
     [Test]
     public async Task TheCorpusHeaderIdentitiesAreExact()
@@ -64,40 +31,15 @@ public sealed class TerraScaleSyncV2GoldenVectorTests
         }
     }
 
-    /// <summary>The SE-05 manifest gates the run: every file digest and size matches, and the category set is exact.</summary>
+    /// <summary>The owner @2 manifest gates all 11 pairs across both corpus directories.</summary>
     [Test]
     public async Task TheCorpusManifestVerifiesEveryVector()
     {
-        var directory = CorpusDirectory();
-        var manifestPath = Path.Combine(directory, "manifest.json");
-        await Assert.That(File.Exists(manifestPath)).IsTrue();
-        using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(manifestPath));
-        var root = manifest.RootElement;
-        await Assert.That(root.GetProperty("schema").GetString())
-            .IsEqualTo("terrascale.sync.v2/corpus-manifest@1");
-        await Assert.That(root.GetProperty("protocol").GetString()).IsEqualTo("terrascale.sync.v2");
-        await Assert.That(root.GetProperty("protocol_version").GetInt32()).IsEqualTo(2);
-
-        var entries = root.GetProperty("vectors").EnumerateArray().ToList();
-        await Assert.That(entries.Count).IsEqualTo(Categories.Length);
-        var filesOnDisk = Directory.GetFiles(directory, "*.json")
-            .Where(path => Path.GetFileName(path) != "manifest.json")
-            .OrderBy(path => Path.GetFileName(path), StringComparer.Ordinal)
-            .ToArray();
-        await Assert.That(filesOnDisk.Length).IsEqualTo(Categories.Length);
-
-        var manifestFiles = entries.Select(entry => entry.GetProperty("file").GetString()).OrderBy(f => f, StringComparer.Ordinal).ToArray();
-        await Assert.That(manifestFiles.SequenceEqual(filesOnDisk.Select(Path.GetFileName), StringComparer.Ordinal)).IsTrue();
-
-        foreach (var entry in entries)
-        {
-            var file = entry.GetProperty("file").GetString()!;
-            var bytes = await File.ReadAllBytesAsync(Path.Combine(directory, file));
-            await Assert.That(bytes.LongLength).IsEqualTo(entry.GetProperty("bytes").GetInt64());
-            var digest = Convert.ToHexStringLower(SHA256.HashData(bytes));
-            await Assert.That(digest).IsEqualTo(entry.GetProperty("sha256").GetString());
-            await Assert.That(Categories.Contains(entry.GetProperty("category").GetString())).IsTrue();
-        }
+        var corpus = TerraScaleSyncV2CorpusFixture.LoadVerified();
+        await Assert.That(corpus.ManifestSha256).IsEqualTo(TerraScaleSyncV2CorpusFixture.OwnerManifestSha256);
+        await Assert.That(corpus.Vectors.Count).IsEqualTo(11);
+        await Assert.That(corpus.Vectors.Select(vector => (vector.Corpus, vector.FileName)).Distinct().Count()).IsEqualTo(11);
+        await Assert.That(corpus.Vectors.Select(vector => vector.Category).Distinct(StringComparer.Ordinal).Count()).IsEqualTo(11);
     }
 
     /// <summary>Every recorded frame encodes byte-exact from its description and decodes back with its envelope identity intact.</summary>
@@ -432,11 +374,8 @@ public sealed class TerraScaleSyncV2GoldenVectorTests
 
     private static IEnumerable<(string Category, string Path)> CorpusFiles()
     {
-        var directory = CorpusDirectory();
-        return Directory.GetFiles(directory, "*.json")
-            .Where(path => Path.GetFileName(path) != "manifest.json")
-            .Select(path => (Path.GetFileNameWithoutExtension(path), path))
-            .OrderBy(entry => entry.Item1, StringComparer.Ordinal);
+        return TerraScaleSyncV2CorpusFixture.LoadVerified().Vectors
+            .Select(vector => (vector.Category, vector.FullPath));
     }
 
     /// <summary>

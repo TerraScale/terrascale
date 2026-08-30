@@ -39,7 +39,14 @@ git clone --no-local --quiet "${repository_root}" "${dirty_checkout}"
 git -C "${dirty_checkout}" config user.email test@example.invalid
 git -C "${dirty_checkout}" config user.name "Package verifier test"
 cp "${verifier}" "${dirty_checkout}/scripts/verify-package-candidate.sh"
+verifier_fixture_marker="# package verifier regression fixture baseline"
+printf '\n%s\n' "${verifier_fixture_marker}" >> "${dirty_checkout}/scripts/verify-package-candidate.sh"
 git -C "${dirty_checkout}" add scripts/verify-package-candidate.sh
+if git -C "${dirty_checkout}" diff --cached --quiet -- scripts/verify-package-candidate.sh ||
+   [[ "$(git -C "${dirty_checkout}" show :scripts/verify-package-candidate.sh | tail -n 1)" != "${verifier_fixture_marker}" ]]; then
+  echo "the dirty-source fixture did not stage its expected verifier baseline mutation" >&2
+  exit 1
+fi
 git -C "${dirty_checkout}" commit --quiet -m "test verifier baseline"
 printf '\n# dirty source fixture\n' >> "${dirty_checkout}/README.md"
 expect_failure bash "${dirty_checkout}/scripts/verify-package-candidate.sh"

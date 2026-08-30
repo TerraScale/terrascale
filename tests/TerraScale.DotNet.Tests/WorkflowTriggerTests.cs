@@ -22,6 +22,38 @@ public sealed class WorkflowTriggerTests
 
         await Assert.That(workflow).Contains("  pull_request:\n    branches: [develop, main]");
         await Assert.That(workflow).Contains("  workflow_dispatch:\n");
+        await Assert.That(ScalarTexts(jobs["pr-validation"]).Any(text => text ==
+            "./scripts/verify-public-contract-coverage.sh")).IsTrue();
+        var protectedValidation = jobs["package-byte-validation"];
+        var protectedEnvironment = GetMapping(protectedValidation, "env")
+            ?? throw new InvalidDataException("Protected package validation must define its fail-closed environment.");
+        await Assert.That(GetScalar(protectedEnvironment, TerraScaleLiveTestGate.RequireConfiguredVariable))
+            .IsEqualTo("true");
+        var protectedText = string.Join('\n', ScalarTexts(protectedValidation));
+        foreach (var requiredContractArgument in new[]
+                 {
+                     "./scripts/verify-public-contract-coverage.sh",
+                     "--strict",
+                     "--route-manifest",
+                     "--contract-descriptor",
+                     "--openapi"
+                 })
+        {
+            await Assert.That(protectedText).Contains(requiredContractArgument);
+        }
+        foreach (var requiredPackageSetGate in new[]
+                 {
+                     "./scripts/verify-package-set-candidate.py --handoff",
+                     "terrascale-dotnet-package-set-handoff.json",
+                     "terrascale-dotnet-package-set-verification.json",
+                     "verify-package-set-candidate-tests.sh"
+                 })
+        {
+            await Assert.That(protectedText).Contains(requiredPackageSetGate);
+        }
+        await Assert.That(protectedText.Contains(
+            "./scripts/verify-package-candidate.sh --handoff",
+            StringComparison.Ordinal)).IsFalse();
         await Assert.That(unexpectedJobs.Length).IsEqualTo(0);
         await Assert.That(FindWorkflowPolicyViolations(parsedWorkflow).Length).IsEqualTo(0);
     }

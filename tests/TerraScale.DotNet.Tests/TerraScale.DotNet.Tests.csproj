@@ -15,6 +15,17 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="vectors\terrascale.sync.v2\*.json" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="vectors\terrascale.sync.v2\*.json"
+          Exclude="vectors\terrascale.sync.v2\manifest.json"
+          CopyToOutputDirectory="PreserveNewest"
+          Visible="false" />
+    <None Include="vectors\terrascale.sync.v2-adr0024\*.json"
+          Exclude="vectors\terrascale.sync.v2-adr0024\manifest.json"
+          CopyToOutputDirectory="PreserveNewest"
+          Visible="false" />
+    <None Include="vectors\terrascale.sync.v2-adr0024\manifest.json"
+          CopyToOutputDirectory="PreserveNewest"
+          TargetPath="vectors\manifest.json"
+          Visible="false" />
   </ItemGroup>
 </Project>

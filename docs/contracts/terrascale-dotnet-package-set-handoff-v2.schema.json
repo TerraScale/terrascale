@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://git.terrascale.tech/TerraScale/TerraScale.DotNet/raw/branch/develop/docs/contracts/terrascale-dotnet-package-set-handoff-v2.schema.json",
+  "title": "TerraScale .NET package-set handoff v2",
+  "description": "The immutable handoff for one SDK and EF Core package set built from the same protected source tree.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "packages", "source"],
+  "properties": {
+    "format": {
+      "const": "TerraScale.DotNet.PackageSetHandoff/v2"
+    },
+    "packages": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "$ref": "#/$defs/package"
+      },
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": {
+                "const": "TerraScale.DotNet"
+              }
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": {
+                "const": "TerraScale.EntityFrameworkCore"
+              }
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        }
+      ]
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    }
+  },
+  "$defs": {
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path", "sha256", "version"],
+      "properties": {
+        "id": {
+          "enum": ["TerraScale.DotNet", "TerraScale.EntityFrameworkCore"]
+        },
+        "path": {
+          "description": "Exact sibling filename of the staged, immutable nupkg.",
+          "type": "string",
+          "enum": [
+            "TerraScale.DotNet.0.1.0.nupkg",
+            "TerraScale.EntityFrameworkCore.0.1.0.nupkg"
+          ]
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "version": {
+          "const": "0.1.0"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "TerraScale.DotNet"
+              }
+            },
+            "required": ["id"]
+          },
+          "then": {
+            "properties": {
+              "path": {
+                "const": "TerraScale.DotNet.0.1.0.nupkg"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "const": "TerraScale.EntityFrameworkCore"
+              }
+            },
+            "required": ["id"]
+          },
+          "then": {
+            "properties": {
+              "path": {
+                "const": "TerraScale.EntityFrameworkCore.0.1.0.nupkg"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "revision", "tree"],
+      "properties": {
+        "ref": {
+          "const": "refs/heads/develop"
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    }
+  }
+}

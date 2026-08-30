@@ -101,7 +101,7 @@ tests in `tests/TerraScale.DotNet.Tests`.
 | `Repositories`, `Documents`, `TypedRepository<TEntity>` | Repository lifecycle plus untyped and typed document CRUD, patch, batch, list, and query |
 | `Tql`, `Schemas`, `Changes` | TQL queries, schema configuration/validation, and repository/TQL change streams |
 | `Projects`, `Access`, `Regions`, `Environments` | Project, team-member, region-catalog, and database-environment operations |
-| `SavedQueries`, `SavedQueriesV2`, `SavedQueriesV3` | Versioned saved-query operations and snapshot pagination |
+| `SavedQueries` | Owner-published saved-query list, create, get, update, and delete operations |
 | `Queues` | Project queue/topic lifecycle, publish, receive, acknowledgement, lock, purge, and dead-letter operations |
 | `ProjectUsage`, `Billing` | Project/organization usage, invoices, pricing, access, checkout, and portal operations |
 | `ApiKeys`, `M2MApplications` | Project API-key and machine-to-machine application lifecycle |
@@ -218,30 +218,52 @@ explicit skip, not a substitute mock or fake service. The expected variables
 and opt-in lifecycle flags are listed in
 `tests/TerraScale.DotNet.Tests/TerraScaleApiE2E.cs`.
 
-The v2 corpus is copied into test output from
-`tests/TerraScale.DotNet.Tests/vectors/terrascale.sync.v2/`. Its manifest pins
-nine vector files, their sizes, and SHA-256 digests before any conformance step
-runs.
+The migration-only v2 corpus is copied into test output from the two corpus
+directories under `tests/TerraScale.DotNet.Tests/vectors/`. The TerraBase-owned
+`corpus-manifest@2` pins 11 unique corpus/file pairs: nine base vectors plus
+the ADR-0024 `authorization-reset` and `slow-consumer-overload` vectors. The
+integrity gate verifies the owner manifest digest, each file's size and
+SHA-256 digest, and the exact category set before any conformance step runs.
+These vectors remain migration evidence, not qualification of the replacement
+public result-view transport.
 
 ## Release qualification
 
 The package workflow has two separate paths:
 
 - pull requests run an untrusted, secretless build and test validation;
-- the protected delivery workflow consumes an immutable package handoff,
-  verifies its SHA-256 digest and source revision/tree, inspects the archive,
-  installs it into a clean consumer, and emits a verification receipt.
+- the protected delivery workflow consumes one immutable v2 package-set
+  handoff for `TerraScale.DotNet` and `TerraScale.EntityFrameworkCore`, verifies
+  both SHA-256 digests against one source revision/tree, inspects both
+  archives, installs the EF package and its exact SDK dependency into a clean
+  consumer, and emits one candidate-bound verification receipt.
 
-`scripts/verify-package-candidate.sh` rejects dirty no-argument packs,
-symlinked or malformed packages, unexpected archive content, metadata that
-does not match the source revision, and handoffs that do not match
-`origin/develop`. This proves package provenance and archive safety. It does
-not prove live API compatibility, tenant isolation, reactive cross-client
-conformance, publication, or the production gates in [GOAL.md](GOAL.md).
+`scripts/verify-package-set-candidate.py` rejects dirty no-argument packs,
+missing or substituted package-set members, symlinked or malformed packages,
+unexpected archive content, unpublished API versions, dependency drift,
+metadata that does not match the source revision, and handoffs that do not
+match `origin/develop`. Its clean
+consumer proves that NuGet restored the exact two supplied archives, builds
+with warnings as errors, audits the complete dependency closure from low
+severity upward, and records the handoff digest plus the accepted MIT license
+disposition. The older
+single-SDK verifier remains available for focused compatibility regression,
+but it is not the protected package-set release gate.
 
-The regression wrapper
-`tests/TerraScale.DotNet.Tests/verify-package-candidate-tests.sh` currently
-stops before its fixtures because it tries to commit an unchanged copy of the
-already tracked verifier. Treat that wrapper as a release-harness gap until
-the fixture creates a real baseline change; the direct verifier and manual
-immutable-package check remain usable.
+The protected Deploy build target `dotnet-package-set-v2` invokes the same
+verifier with `--emit-candidate` and produces exactly three transferable files:
+the v2 handoff manifest and the two sibling nupkgs. Candidate-bound release
+profiles likewise publish TUnit apphosts first; Deploy executes those exact
+bytes, requires at least 225 base-SDK and 10 EF Core tests, and rejects any
+skipped release test.
+
+This proves package-set provenance, archive safety, dependency closure, and
+clean installation. It does not prove live API compatibility, tenant
+isolation, reactive cross-client conformance, publication, or the production
+gates in [GOAL.md](GOAL.md).
+
+The package-set regression wrapper is
+`tests/TerraScale.DotNet.Tests/verify-package-set-candidate-tests.sh`. It covers
+digest and package substitution, symlinks, dependency spoofing, secrets,
+unpublished API versions, duplicate archive entries, receipt completeness, and
+dirty-source refusal.

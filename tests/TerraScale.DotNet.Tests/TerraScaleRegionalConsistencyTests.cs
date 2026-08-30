@@ -8,21 +8,58 @@ public sealed class TerraScaleRegionalConsistencyTests
     [Test]
     public async Task InvalidPreferredRegionsFailBeforeAnyRequest()
     {
-        using var httpClient = new HttpClient();
+        string[] rejectedCodes =
+        [
+            string.Empty,
+            " ",
+            "gru",
+            "sfo",
+            "fra",
+            " GRU",
+            "GRU ",
+            "SJC",
+            "GR",
+            "GRUU",
+            "ĞRU"
+        ];
 
-        var exception = Assert.Throws<ArgumentException>(() => new TerraScaleClient(
+        foreach (var rejectedCode in rejectedCodes)
+        {
+            using var httpClient = new HttpClient();
+            var exception = Assert.Throws<ArgumentException>(() => new TerraScaleClient(
+                httpClient,
+                new TerraScaleClientOptions
+                {
+                    BaseAddress = new Uri("https://api.example.invalid/"),
+                    BearerToken = "caller-token",
+                    PreferredRegion = rejectedCode
+                }));
+
+            await Assert.That(exception).IsNotNull();
+            var argumentException = exception
+                ?? throw new InvalidOperationException("The invalid preferred region did not throw an argument exception.");
+            await Assert.That(argumentException.ParamName).IsEqualTo("PreferredRegion");
+        }
+    }
+
+    [Test]
+    public async Task FailoverClientPreservesCanonicalPreferredRegionHeader()
+    {
+        using var handler = new PreferredRegionHandler();
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleClient(
             httpClient,
             new TerraScaleClientOptions
             {
                 BaseAddress = new Uri("https://api.example.invalid/"),
                 BearerToken = "caller-token",
-                PreferredRegion = "-invalid"
-            }));
+                PreferredRegion = TerraScaleRegions.Gru
+            });
 
-        await Assert.That(exception).IsNotNull();
-        var argumentException = exception
-            ?? throw new InvalidOperationException("The invalid preferred region did not throw an argument exception.");
-        await Assert.That(argumentException.ParamName).IsEqualTo("PreferredRegion");
+        _ = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            client.Documents.GetAsync("repository-a", "missing-document"));
+
+        await Assert.That(handler.PreferredRegion).IsEqualTo(TerraScaleRegions.Gru);
     }
 
     [Test]
@@ -389,6 +426,27 @@ public sealed class TerraScaleRegionalConsistencyTests
         }
         catch (TerraScaleApiException exception) when (exception.StatusCode == HttpStatusCode.NotFound)
         {
+        }
+    }
+
+    private sealed class PreferredRegionHandler : HttpMessageHandler
+    {
+        public string? PreferredRegion { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            PreferredRegion = request.Headers.TryGetValues(
+                "X-TerraScale-Preferred-Region",
+                out var values)
+                ? values.Single()
+                : null;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)
+            {
+                Content = new StringContent(
+                    "{\"error\":{\"code\":\"not_found\",\"message\":\"Missing\",\"category\":\"not_found\"}}")
+            });
         }
     }
 }

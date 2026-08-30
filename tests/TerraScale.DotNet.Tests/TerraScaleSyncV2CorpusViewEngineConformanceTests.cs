@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using TerraScale.DotNet;
@@ -6,19 +5,10 @@ using TerraScale.DotNet;
 namespace TerraScale.DotNet.Tests;
 
 /// <summary>
-/// The corpus-driven ADR-0024 client view-engine conformance rows: the
-/// vendored SE-04 golden-vector corpus (integrity-gated by the SE-05
-/// manifest before any vector runs) executed through the SDK's native
-/// <see cref="TerraScaleSyncV2ViewEngine"/>. Where
-/// <see cref="TerraScaleSyncV2GoldenVectorTests"/> proves the managed
-/// codec against the recorded wire bytes, these rows prove the semantic
-/// state machine against the same committed data: checkpoint round-trip
-/// (a corpus checkpoint description, the managed checkpoint codec, and
-/// the engine's adopted opaque checkpoint are one identity), journal
-/// replay as patch application (every corpus <c>apply</c> step folds
-/// into the authorized result exactly as the corpus's own journal fold
-/// states), the resync-required reset lifecycle, and authorization
-/// generation changes over corpus-adopted checkpoints.
+/// Migration and semantic evidence for the two-directory TerraBase corpus
+/// manifest @2, executed through <see cref="TerraScaleSyncV2ViewEngine"/>.
+/// The rows bind owner-recorded checkpoints, errors, and journals to the
+/// client state machine. They do not qualify a public transport.
 /// </summary>
 public sealed class TerraScaleSyncV2CorpusViewEngineConformanceTests
 {
@@ -27,6 +17,7 @@ public sealed class TerraScaleSyncV2CorpusViewEngineConformanceTests
     /// <summary>The engine corpus's required categories, each covered exactly once (the SE-05 set).</summary>
     private static readonly string[] RequiredCategories =
     [
+        "authorization-reset",
         "checkpoint-resume",
         "fresh-session",
         "malformed-frame-rejection",
@@ -35,6 +26,7 @@ public sealed class TerraScaleSyncV2CorpusViewEngineConformanceTests
         "repeated-change-delta",
         "resync-required",
         "slow-consumer",
+        "slow-consumer-overload",
         "trigger-notification",
     ];
 
@@ -44,45 +36,8 @@ public sealed class TerraScaleSyncV2CorpusViewEngineConformanceTests
     /// <summary>The generation every helper drives by default; authorization rows move to generation two explicitly.</summary>
     private const ulong BaseGeneration = 1;
 
-    private static string CorpusDirectory()
-    {
-        var candidate = AppContext.BaseDirectory;
-        for (var depth = 0; depth < 6; depth++)
-        {
-            var vectors = Path.Combine(candidate, "vectors", "terrascale.sync.v2");
-            if (Directory.Exists(vectors))
-            {
-                return vectors;
-            }
-
-            candidate = Path.GetDirectoryName(candidate)!;
-        }
-
-        throw new InvalidOperationException("the vendored terrascale.sync.v2 corpus directory was not found");
-    }
-
-    private sealed record CorpusVector(string Category, string FileName, string FullPath)
-    {
-        public JsonElement Open()
-        {
-            using var document = JsonDocument.Parse(File.ReadAllText(FullPath));
-            return document.RootElement.Clone();
-        }
-    }
-
-    private static async Task<List<CorpusVector>> LoadVectorsAsync()
-    {
-        var directory = CorpusDirectory();
-        var vectors = new List<CorpusVector>();
-        foreach (var path in Directory.GetFiles(directory, "*.json").Where(path => Path.GetFileName(path) != "manifest.json"))
-        {
-            using var document = JsonDocument.Parse(await File.ReadAllTextAsync(path));
-            var root = document.RootElement.Clone();
-            vectors.Add(new CorpusVector(root.GetProperty("category").GetString()!, Path.GetFileName(path), path));
-        }
-
-        return vectors.OrderBy(vector => vector.FileName, StringComparer.Ordinal).ToList();
-    }
+    private static Task<List<TerraScaleSyncV2CorpusVector>> LoadVectorsAsync() =>
+        Task.FromResult(TerraScaleSyncV2CorpusFixture.LoadVerified().Vectors.ToList());
 
     private static List<JsonElement> ServeSteps(JsonElement root) =>
         root.GetProperty("steps")
@@ -98,44 +53,56 @@ public sealed class TerraScaleSyncV2CorpusViewEngineConformanceTests
             .Select(step => step.GetProperty(key).GetProperty("frame"))
             .ToList();
 
-    // --- The SE-05 manifest gate ------------------------------------------------
+    private static (int Index, JsonElement Entry) RecordedFrameStep(
+        IReadOnlyList<JsonElement> steps,
+        string container,
+        string kind,
+        string? errorCode = null,
+        int after = -1)
+    {
+        for (var index = after + 1; index < steps.Count; index++)
+        {
+            if (!steps[index].TryGetProperty(container, out var entry))
+            {
+                continue;
+            }
 
-    /// <summary>The vendored manifest gates this suite: every digest, size, and category matches before any vector reaches the engine.</summary>
+            var description = entry.GetProperty("frame");
+            if (description.GetProperty("kind").GetString() != kind
+                || errorCode is not null && description.GetProperty("code").GetString() != errorCode)
+            {
+                continue;
+            }
+
+            return (index, entry);
+        }
+
+        throw new InvalidOperationException($"the corpus does not contain {container}/{kind}/{errorCode ?? "any"} after step {after}");
+    }
+
+    private static TerraScaleSyncV2Frame DecodeRecordedFrame(JsonElement entry)
+    {
+        var frame = TerraScaleSyncV2Frame.Decode(
+            TerraScaleSyncV2GoldenVectorTests.HexToBytes(entry.GetProperty("wire").GetString()!));
+        if (!frame.Verify())
+        {
+            throw new InvalidOperationException("the recorded frame digest does not verify");
+        }
+
+        return frame;
+    }
+
+    // --- Corpus-manifest @2 gate ------------------------------------------------
+
+    /// <summary>The owner @2 manifest gates all 11 pairs before they reach the engine.</summary>
     [Test]
     public async Task TheCorpusManifestGatesTheViewEngineConformanceRun()
     {
-        var directory = CorpusDirectory();
-        var manifestPath = Path.Combine(directory, "manifest.json");
-        await Assert.That(File.Exists(manifestPath)).IsTrue();
-        using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(manifestPath));
-        var root = manifest.RootElement;
-        await Assert.That(root.GetProperty("schema").GetString()).IsEqualTo("terrascale.sync.v2/corpus-manifest@1");
-        await Assert.That(root.GetProperty("protocol").GetString()).IsEqualTo("terrascale.sync.v2");
-        await Assert.That(root.GetProperty("protocol_version").GetInt32()).IsEqualTo(2);
-
-        var entries = root.GetProperty("vectors").EnumerateArray().ToList();
-        var categories = entries.Select(entry => entry.GetProperty("category").GetString()).Order(StringComparer.Ordinal).ToArray();
+        var corpus = TerraScaleSyncV2CorpusFixture.LoadVerified();
+        var categories = corpus.Vectors.Select(vector => vector.Category).Order(StringComparer.Ordinal).ToArray();
         await Assert.That(categories.SequenceEqual(RequiredCategories.Order(StringComparer.Ordinal), StringComparer.Ordinal)).IsTrue();
         await Assert.That(categories.Length).IsEqualTo(RequiredCategories.Length);
-
-        var filesOnDisk = Directory.GetFiles(directory, "*.json")
-            .Where(path => Path.GetFileName(path) != "manifest.json")
-            .Select(Path.GetFileName)
-            .Order(StringComparer.Ordinal)
-            .ToArray();
-        await Assert.That(
-            entries.Select(entry => entry.GetProperty("file").GetString()).Order(StringComparer.Ordinal)
-                .SequenceEqual(filesOnDisk, StringComparer.Ordinal))
-            .IsTrue();
-
-        foreach (var entry in entries)
-        {
-            var file = entry.GetProperty("file").GetString()!;
-            var bytes = await File.ReadAllBytesAsync(Path.Combine(directory, file));
-            await Assert.That(bytes.LongLength).IsEqualTo(entry.GetProperty("bytes").GetInt64());
-            await Assert.That(Convert.ToHexStringLower(SHA256.HashData(bytes)))
-                .IsEqualTo(entry.GetProperty("sha256").GetString());
-        }
+        await Assert.That(corpus.Vectors.Select(vector => (vector.Corpus, vector.FileName)).Distinct().Count()).IsEqualTo(11);
     }
 
     // --- Checkpoint round-trip --------------------------------------------------
@@ -157,8 +124,8 @@ public sealed class TerraScaleSyncV2CorpusViewEngineConformanceTests
 
         // The structural walk found checkpoints in every category that
         // carries one; a corpus without checkpoints would pass vacuously.
-        await Assert.That(found.Count).IsEqualTo(50);
-        foreach (var category in (string[])["checkpoint-resume", "fresh-session", "reconnect-replay", "region-route-change", "repeated-change-delta", "resync-required", "slow-consumer", "trigger-notification"])
+        await Assert.That(found.Count).IsEqualTo(64);
+        foreach (var category in (string[])["authorization-reset", "checkpoint-resume", "fresh-session", "reconnect-replay", "region-route-change", "repeated-change-delta", "resync-required", "slow-consumer", "slow-consumer-overload", "trigger-notification"])
         {
             await Assert.That(found.Count(entry => entry.Category == category)).IsGreaterThanOrEqualTo(1);
         }
@@ -536,6 +503,186 @@ public sealed class TerraScaleSyncV2CorpusViewEngineConformanceTests
         await Assert.That(duplicate.Outcome).IsEqualTo(TerraScaleViewDeliveryOutcome.DuplicateDeltaIgnored);
         await Assert.That(engine.ResetsApplied).IsEqualTo(1ul);
         await Assert.That(engine.DeltasApplied).IsEqualTo(0ul);
+    }
+
+    // --- ADR-0024 extension corpus ---------------------------------------------
+
+    /// <summary>
+    /// The owner authorization-reset vector closes the revoked generation
+    /// with <c>scope_refused</c>, records the rejected stale resume, and
+    /// bootstraps a new engine from the fresh snapshot before acknowledging
+    /// checkpoint (1,4).
+    /// </summary>
+    [Test]
+    public async Task TheAuthorizationResetVectorRefusesStaleResumeThenAcknowledgesTheFreshSnapshot()
+    {
+        var vector = (await LoadVectorsAsync()).Single(entry => entry.Category == "authorization-reset");
+        await Assert.That(vector.Corpus).IsEqualTo("terrascale.sync.v2-adr0024");
+        var root = vector.Open();
+        var steps = root.GetProperty("steps").EnumerateArray().ToList();
+        var commits = JournalOf(root);
+
+        var refusalStep = RecordedFrameStep(steps, "server_frame", "error", "scope_refused");
+        var refusalFrame = DecodeRecordedFrame(refusalStep.Entry);
+        var refusal = refusalFrame.Body as TerraScaleSyncV2ErrorBody
+            ?? throw new InvalidOperationException("the authorization-reset refusal is not an error body");
+        await Assert.That(refusal.Code).IsEqualTo(TerraScaleSyncV2ErrorCode.ScopeRefused);
+        await Assert.That(refusal.Detail).IsEqualTo("authorization-generation-change");
+
+        var setupStep = RecordedFrameStep(steps, "client_frame", "session_setup", after: refusalStep.Index);
+        var setupFrame = DecodeRecordedFrame(setupStep.Entry);
+        var setup = setupFrame.Body as TerraScaleSyncV2SessionSetupBody
+            ?? throw new InvalidOperationException("the authorization-reset reconnect is not a session setup");
+        var staleCheckpoint = setup.Resume
+            ?? throw new InvalidOperationException("the authorization-reset reconnect does not carry its stale checkpoint");
+        await Assert.That(staleCheckpoint).IsEqualTo(CheckpointAt(3));
+
+        var acceptedStep = RecordedFrameStep(steps, "server_frame", "session_accepted", after: setupStep.Index);
+        var acceptedFrame = DecodeRecordedFrame(acceptedStep.Entry);
+        var accepted = acceptedFrame.Body as TerraScaleSyncV2SessionAcceptedBody
+            ?? throw new InvalidOperationException("the authorization-reset bootstrap is not a session acceptance");
+
+        var snapshotStep = steps.Select((step, index) => (Step: step, Index: index))
+            .Single(candidate => candidate.Index > acceptedStep.Index && candidate.Step.TryGetProperty("serve_snapshot", out _));
+        var snapshotEntry = snapshotStep.Step.GetProperty("serve_snapshot");
+        var snapshotFrame = TerraScaleSyncV2Frame.Decode(
+            TerraScaleSyncV2GoldenVectorTests.HexToBytes(snapshotEntry.GetProperty("expect_wire").GetString()!));
+        await Assert.That(snapshotFrame.Verify()).IsTrue();
+        var snapshot = snapshotFrame.Body as TerraScaleSyncV2SnapshotAnswerBody
+            ?? throw new InvalidOperationException("the authorization-reset bootstrap does not carry a snapshot answer");
+
+        var ackStep = RecordedFrameStep(steps, "client_frame", "checkpoint_ack", after: snapshotStep.Index);
+        var ackFrame = DecodeRecordedFrame(ackStep.Entry);
+        var recordedAck = ackFrame.Body as TerraScaleSyncV2CheckpointAckBody
+            ?? throw new InvalidOperationException("the authorization-reset bootstrap does not carry a checkpoint acknowledgement");
+
+        await Assert.That(refusalStep.Index < setupStep.Index).IsTrue();
+        await Assert.That(setupStep.Index < acceptedStep.Index).IsTrue();
+        await Assert.That(acceptedStep.Index < snapshotStep.Index).IsTrue();
+        await Assert.That(snapshotStep.Index < ackStep.Index).IsTrue();
+        await Assert.That(accepted.Server).IsEqualTo(snapshot.Checkpoint);
+        await Assert.That(snapshot.Checkpoint).IsEqualTo(recordedAck.Checkpoint);
+        await Assert.That(snapshot.Checkpoint).IsEqualTo(CheckpointAt(4));
+        await Assert.That(steps.Skip(setupStep.Index).Any(step => step.TryGetProperty("serve_delta", out _))).IsFalse();
+
+        var revokedEngine = new TerraScaleSyncV2ViewEngine();
+        revokedEngine.Authenticate();
+        revokedEngine.Subscribe();
+        _ = PublishSnapshot(
+            revokedEngine,
+            BaseGeneration,
+            staleCheckpoint.StorageSequence,
+            RowsOf(FoldTo(commits, staleCheckpoint.StorageSequence)),
+            TokenOf(staleCheckpoint));
+        var closed = revokedEngine.NotifyAuthorizationChange(2, TerraScaleViewAuthorizationEffect.SessionRevoked);
+        await Assert.That(closed.Outcome).IsEqualTo(TerraScaleViewDeliveryOutcome.SessionRevoked);
+        await Assert.That(revokedEngine.Checkpoint).IsNull();
+        var refusedResume = Assert.Throws<TerraScaleViewProtocolException>(() => revokedEngine.BeginResume());
+        await Assert.That(refusedResume.Error).IsEqualTo(TerraScaleViewProtocolError.WrongState);
+
+        var freshEngine = new TerraScaleSyncV2ViewEngine();
+        freshEngine.Authenticate();
+        freshEngine.Subscribe();
+        var published = PublishSnapshot(
+            freshEngine,
+            BaseGeneration,
+            snapshot.Checkpoint.StorageSequence,
+            RowsOf(FoldTo(commits, snapshot.Checkpoint.StorageSequence)),
+            TokenOf(snapshot.Checkpoint));
+        await Assert.That(published.Outcome).IsEqualTo(TerraScaleViewDeliveryOutcome.SnapshotPublished);
+        await Assert.That(published.Ack!.AppliedRevision).IsEqualTo(recordedAck.Checkpoint.StorageSequence);
+        await Assert.That(CheckpointOf(freshEngine.Checkpoint!.Token)).IsEqualTo(recordedAck.Checkpoint);
+        await Assert.That(freshEngine.AuthoritativeView!.Rows.Select(row => row.Identity.DocumentId)
+            .SequenceEqual(["d-01", "d-03"], StringComparer.Ordinal)).IsTrue();
+    }
+
+    /// <summary>
+    /// The owner slow-consumer-overload vector records the typed overload,
+    /// resumes from checkpoint (1,2), applies only commits 3 through 6, and
+    /// acknowledges checkpoint (1,6) without replaying the prefix.
+    /// </summary>
+    [Test]
+    public async Task TheSlowConsumerOverloadVectorResumesWithOnlyTheUnacknowledgedSuffix()
+    {
+        var vector = (await LoadVectorsAsync()).Single(entry => entry.Category == "slow-consumer-overload");
+        await Assert.That(vector.Corpus).IsEqualTo("terrascale.sync.v2-adr0024");
+        var root = vector.Open();
+        var steps = root.GetProperty("steps").EnumerateArray().ToList();
+        var commits = JournalOf(root);
+
+        var overloadStep = RecordedFrameStep(steps, "server_frame", "error", "overloaded");
+        var overloadFrame = DecodeRecordedFrame(overloadStep.Entry);
+        var overload = overloadFrame.Body as TerraScaleSyncV2ErrorBody
+            ?? throw new InvalidOperationException("the slow-consumer refusal is not an error body");
+        await Assert.That(overload.Code).IsEqualTo(TerraScaleSyncV2ErrorCode.Overloaded);
+        await Assert.That(overload.Detail).IsEqualTo("slow-consumer-unacknowledged");
+
+        var setupStep = RecordedFrameStep(steps, "client_frame", "session_setup", after: overloadStep.Index);
+        var setupFrame = DecodeRecordedFrame(setupStep.Entry);
+        var setup = setupFrame.Body as TerraScaleSyncV2SessionSetupBody
+            ?? throw new InvalidOperationException("the overload reconnect is not a session setup");
+        var resume = setup.Resume
+            ?? throw new InvalidOperationException("the overload reconnect does not carry a checkpoint");
+        await Assert.That(resume).IsEqualTo(CheckpointAt(2));
+
+        var suffixStep = steps.Select((step, index) => (Step: step, Index: index))
+            .Single(candidate => candidate.Index > setupStep.Index && candidate.Step.TryGetProperty("serve_delta", out _));
+        var suffixEntry = suffixStep.Step.GetProperty("serve_delta");
+        var suffixFrom = TerraScaleSyncV2GoldenVectorTests.Checkpoint(suffixEntry.GetProperty("from"));
+        var suffixFrame = TerraScaleSyncV2Frame.Decode(
+            TerraScaleSyncV2GoldenVectorTests.HexToBytes(suffixEntry.GetProperty("expect_wire").GetString()!));
+        await Assert.That(suffixFrame.Verify()).IsTrue();
+        var suffixBatch = suffixFrame.Body as TerraScaleSyncV2DeltaBatchBody
+            ?? throw new InvalidOperationException("the overload resume does not carry a delta batch");
+
+        var ackStep = RecordedFrameStep(steps, "client_frame", "checkpoint_ack", after: suffixStep.Index);
+        var ackFrame = DecodeRecordedFrame(ackStep.Entry);
+        var recordedAck = ackFrame.Body as TerraScaleSyncV2CheckpointAckBody
+            ?? throw new InvalidOperationException("the overload resume does not carry a checkpoint acknowledgement");
+
+        await Assert.That(suffixFrom).IsEqualTo(resume);
+        await Assert.That(suffixBatch.Next).IsEqualTo(CheckpointAt(6));
+        await Assert.That(suffixBatch.Commits).IsEqualTo(4ul);
+        await Assert.That(recordedAck.Checkpoint).IsEqualTo(suffixBatch.Next);
+
+        var prefix = commits.Where(commit => commit.Sequence <= resume.StorageSequence).ToList();
+        var suffix = commits.Where(commit => commit.Sequence > resume.StorageSequence
+                && commit.Sequence <= suffixBatch.Next.StorageSequence)
+            .ToList();
+        await Assert.That(prefix.Select(commit => commit.Sequence)).IsEquivalentTo((ulong[])[1, 2]);
+        await Assert.That(suffix.Select(commit => commit.Sequence)).IsEquivalentTo((ulong[])[3, 4, 5, 6]);
+        await Assert.That(suffix.Any(commit => commit.Document is "d-01" or "d-02")).IsFalse();
+
+        var engine = new TerraScaleSyncV2ViewEngine();
+        engine.Authenticate();
+        engine.Subscribe();
+        _ = PublishSnapshot(
+            engine,
+            BaseGeneration,
+            resume.StorageSequence,
+            RowsOf(FoldTo(commits, resume.StorageSequence)),
+            TokenOf(resume));
+        engine.BeginResume();
+
+        var operations = suffix.Select(commit => (TerraScaleViewResultOperation)new TerraScaleViewInsert(
+            IdentityOf(commit.Document),
+            PositionOf(commit.Document),
+            RowValue(PutOf(commit)))).ToList();
+        var applied = engine.ApplyResultDelta(DeltaFor(
+            resume.StorageSequence,
+            suffixBatch.Next.StorageSequence,
+            operations,
+            TokenOf(suffixBatch.Next),
+            "digest-slow-consumer-overload-resume"));
+
+        await Assert.That(applied.Outcome).IsEqualTo(TerraScaleViewDeliveryOutcome.DeltaApplied);
+        await Assert.That(applied.Ack!.AppliedRevision).IsEqualTo(recordedAck.Checkpoint.StorageSequence);
+        await Assert.That(CheckpointOf(engine.Checkpoint!.Token)).IsEqualTo(recordedAck.Checkpoint);
+        await Assert.That(engine.DeltasApplied).IsEqualTo(1ul);
+        var documentIds = engine.AuthoritativeView!.Rows.Select(row => row.Identity.DocumentId).ToArray();
+        await Assert.That(documentIds.SequenceEqual(["d-01", "d-02", "d-03", "d-04", "d-05", "d-06"], StringComparer.Ordinal)).IsTrue();
+        await Assert.That(documentIds.Count(document => document is "d-01" or "d-02")).IsEqualTo(2);
+        await Assert.That(documentIds.Distinct(StringComparer.Ordinal).Count()).IsEqualTo(6);
     }
 
     // --- Authorization-generation change ----------------------------------------

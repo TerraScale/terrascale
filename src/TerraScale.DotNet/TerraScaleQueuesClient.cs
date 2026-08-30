@@ -276,7 +276,7 @@ public sealed class TerraScaleQueuesClient
         string projectId,
         string queueId,
         TerraScaleProjectQueueReceipt receipt,
-        string route,
+        TerraScaleBoundRoute route,
         CancellationToken cancellationToken)
     {
         ValidateReceipt(projectId, queueId, receipt);

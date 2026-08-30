@@ -1,0 +1,553 @@
+{
+  "format": "TerraScale.DotNet.PublicRouteBindings/v1",
+  "canonicalSha256": "2397d3cd05bbd7d5ba5bc9fe2c17c086712553d2f5c90b0ae3fa740b089bf8c7",
+  "routeCount": 91,
+  "routes": [
+    {
+      "routeName": "onboarding.getState",
+      "method": "GET",
+      "pathTemplate": "/api/v1/onboarding",
+      "operationId": "GetOnboardingState"
+    },
+    {
+      "routeName": "onboarding.organization.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/onboarding/organization",
+      "operationId": "CreateOnboardingOrganization"
+    },
+    {
+      "routeName": "onboarding.project.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/onboarding/project",
+      "operationId": "CreateOnboardingProject"
+    },
+    {
+      "routeName": "organizations.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/organizations",
+      "operationId": "ListOrganizations"
+    },
+    {
+      "routeName": "organizations.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations",
+      "operationId": "CreateOrganization"
+    },
+    {
+      "routeName": "organizations.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/organizations/{organizationId}",
+      "operationId": "GetOrganization"
+    },
+    {
+      "routeName": "organizations.update",
+      "method": "PATCH",
+      "pathTemplate": "/api/v1/organizations/{organizationId}",
+      "operationId": "UpdateOrganization"
+    },
+    {
+      "routeName": "organizations.deletion.request",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}:request-deletion",
+      "operationId": "RequestOrganizationDeletion"
+    },
+    {
+      "routeName": "organizations.leave",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}:leave",
+      "operationId": "LeaveOrganization"
+    },
+    {
+      "routeName": "organizations.members.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/members",
+      "operationId": "ListOrganizationMembers"
+    },
+    {
+      "routeName": "organizations.members.updateRole",
+      "method": "PATCH",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/members/{userId}",
+      "operationId": "UpdateOrganizationMemberRole"
+    },
+    {
+      "routeName": "organizations.members.remove",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/members/{userId}:remove",
+      "operationId": "RemoveOrganizationMember"
+    },
+    {
+      "routeName": "organizations.invitations.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations",
+      "operationId": "ListOrganizationInvitations"
+    },
+    {
+      "routeName": "organizations.invitations.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations",
+      "operationId": "CreateOrganizationInvitation"
+    },
+    {
+      "routeName": "organizations.invitations.accept",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:accept",
+      "operationId": "AcceptOrganizationInvitation"
+    },
+    {
+      "routeName": "organizations.invitations.decline",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:decline",
+      "operationId": "DeclineOrganizationInvitation"
+    },
+    {
+      "routeName": "organizations.invitations.resend",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:resend",
+      "operationId": "ResendOrganizationInvitation"
+    },
+    {
+      "routeName": "organizations.invitations.cancel",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:cancel",
+      "operationId": "CancelOrganizationInvitation"
+    },
+    {
+      "routeName": "organizations.projects.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/projects",
+      "operationId": "ListOrganizationProjects"
+    },
+    {
+      "routeName": "organizations.projects.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/projects",
+      "operationId": "CreateProject"
+    },
+    {
+      "routeName": "organizations.projects.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}",
+      "operationId": "GetProject"
+    },
+    {
+      "routeName": "organizations.projects.regions.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/regions",
+      "operationId": "ListProjectRegionPlacements"
+    },
+    {
+      "routeName": "organizations.projects.update",
+      "method": "PATCH",
+      "pathTemplate": "/api/v1/projects/{projectId}",
+      "operationId": "UpdateProject"
+    },
+    {
+      "routeName": "organizations.projects.delete",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/projects/{projectId}",
+      "operationId": "DeleteProject"
+    },
+    {
+      "routeName": "regions.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/regions",
+      "operationId": "GetRegions"
+    },
+    {
+      "routeName": "regions.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/regions/{regionCode}",
+      "operationId": "GetRegion"
+    },
+    {
+      "routeName": "savedQueries.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/saved-queries",
+      "operationId": "ListProjectSavedQueries"
+    },
+    {
+      "routeName": "savedQueries.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/saved-queries",
+      "operationId": "CreateProjectSavedQuery"
+    },
+    {
+      "routeName": "savedQueries.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}",
+      "operationId": "GetProjectSavedQuery"
+    },
+    {
+      "routeName": "savedQueries.update",
+      "method": "PUT",
+      "pathTemplate": "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}",
+      "operationId": "UpdateProjectSavedQuery"
+    },
+    {
+      "routeName": "savedQueries.delete",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}",
+      "operationId": "DeleteProjectSavedQuery"
+    },
+    {
+      "routeName": "databases.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases",
+      "operationId": "ListProjectDatabases"
+    },
+    {
+      "routeName": "databases.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases",
+      "operationId": "CreateProjectDatabase"
+    },
+    {
+      "routeName": "databases.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}",
+      "operationId": "GetProjectDatabase"
+    },
+    {
+      "routeName": "databases.delete",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}",
+      "operationId": "DeleteProjectDatabase"
+    },
+    {
+      "routeName": "databaseBranches.getCapability",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/database-branches/capability",
+      "operationId": "GetDatabaseBranchCapability"
+    },
+    {
+      "routeName": "databaseBranches.requestClone",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/database-branches",
+      "operationId": "CreateDatabaseBranch"
+    },
+    {
+      "routeName": "queues.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues",
+      "operationId": "ListProjectQueues"
+    },
+    {
+      "routeName": "queues.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues",
+      "operationId": "CreateProjectQueue"
+    },
+    {
+      "routeName": "queues.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}",
+      "operationId": "GetProjectQueue"
+    },
+    {
+      "routeName": "queues.delete",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}",
+      "operationId": "DeleteProjectQueue"
+    },
+    {
+      "routeName": "queues.purge",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:purge",
+      "operationId": "PurgeProjectQueue"
+    },
+    {
+      "routeName": "queues.publish",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:publish",
+      "operationId": "PublishProjectQueueMessage"
+    },
+    {
+      "routeName": "queues.peek",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:peek",
+      "operationId": "PeekProjectQueue"
+    },
+    {
+      "routeName": "queues.receive",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:receive",
+      "operationId": "ReceiveProjectQueueMessages"
+    },
+    {
+      "routeName": "queues.complete",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:complete",
+      "operationId": "CompleteProjectQueueMessage"
+    },
+    {
+      "routeName": "queues.abandon",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:abandon",
+      "operationId": "AbandonProjectQueueMessage"
+    },
+    {
+      "routeName": "queues.deadLetter",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:dead-letter",
+      "operationId": "DeadLetterProjectQueueMessage"
+    },
+    {
+      "routeName": "queues.renewLock",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:renew-lock",
+      "operationId": "RenewProjectQueueMessageLock"
+    },
+    {
+      "routeName": "databases.environments.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/environments",
+      "operationId": "ListProjectDatabaseEnvironments"
+    },
+    {
+      "routeName": "databases.environments.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/environments",
+      "operationId": "CreateProjectDatabaseEnvironment"
+    },
+    {
+      "routeName": "databases.environments.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/environments/{environmentId}",
+      "operationId": "GetProjectDatabaseEnvironment"
+    },
+    {
+      "routeName": "databases.environments.delete",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/environments/{environmentId}",
+      "operationId": "DeleteProjectDatabaseEnvironment"
+    },
+    {
+      "routeName": "repositories.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/repositories",
+      "operationId": "ListRepositories"
+    },
+    {
+      "routeName": "repositories.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/repositories",
+      "operationId": "CreateRepository"
+    },
+    {
+      "routeName": "repositories.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}",
+      "operationId": "GetRepository"
+    },
+    {
+      "routeName": "repositories.delete",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}",
+      "operationId": "DeleteRepository"
+    },
+    {
+      "routeName": "backups.policy.configure",
+      "method": "PUT",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups/policy",
+      "operationId": "ConfigureDatabaseBackupPolicy"
+    },
+    {
+      "routeName": "backups.plan",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups:plan",
+      "operationId": "PlanDatabaseBackup"
+    },
+    {
+      "routeName": "backups.execute",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups:execute",
+      "operationId": "ExecuteDatabaseBackup"
+    },
+    {
+      "routeName": "backups.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups",
+      "operationId": "ListDatabaseBackups"
+    },
+    {
+      "routeName": "backups.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups/{backupId}",
+      "operationId": "GetDatabaseBackup"
+    },
+    {
+      "routeName": "backups.restorePoints.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/restore-points",
+      "operationId": "ListDatabaseRestorePoints"
+    },
+    {
+      "routeName": "backups.restores.start",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/restores",
+      "operationId": "StartDatabaseRestore"
+    },
+    {
+      "routeName": "backups.restores.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/restores/{restoreId}",
+      "operationId": "GetDatabaseRestore"
+    },
+    {
+      "routeName": "backups.restores.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/restores",
+      "operationId": "ListDatabaseRestores"
+    },
+    {
+      "routeName": "documents.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/documents",
+      "operationId": "ListDocuments"
+    },
+    {
+      "routeName": "documents.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/documents",
+      "operationId": "CreateDocument"
+    },
+    {
+      "routeName": "documents.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/documents/{documentId}",
+      "operationId": "GetDocument"
+    },
+    {
+      "routeName": "documents.put",
+      "method": "PUT",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/documents/{documentId}",
+      "operationId": "UpsertDocument"
+    },
+    {
+      "routeName": "documents.patch",
+      "method": "PATCH",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/documents/{documentId}",
+      "operationId": "PatchDocument"
+    },
+    {
+      "routeName": "documents.batch",
+      "method": "POST",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/documents/batch",
+      "operationId": "BatchDocuments"
+    },
+    {
+      "routeName": "documents.delete",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/documents/{documentId}",
+      "operationId": "DeleteDocument"
+    },
+    {
+      "routeName": "query.execute",
+      "method": "POST",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/tql",
+      "operationId": "QueryDocuments"
+    },
+    {
+      "routeName": "schema.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/schema",
+      "operationId": "GetRepositorySchema"
+    },
+    {
+      "routeName": "schema.validate",
+      "method": "POST",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/schema/validate",
+      "operationId": "ValidateRepositorySchema"
+    },
+    {
+      "routeName": "schema.configure",
+      "method": "PUT",
+      "pathTemplate": "/api/v1/repositories/{repositoryId}/schema",
+      "operationId": "ConfigureRepositorySchema"
+    },
+    {
+      "routeName": "access.teamMembers.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/access/team-members",
+      "operationId": "ListProjectTeamMembers"
+    },
+    {
+      "routeName": "access.teamMembers.add",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/access/team-members",
+      "operationId": "AddProjectTeamMember"
+    },
+    {
+      "routeName": "access.teamMembers.update",
+      "method": "PATCH",
+      "pathTemplate": "/api/v1/projects/{projectId}/access/team-members/{userId}",
+      "operationId": "UpdateProjectTeamMember"
+    },
+    {
+      "routeName": "access.teamMembers.remove",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/projects/{projectId}/access/team-members/{userId}",
+      "operationId": "RemoveProjectTeamMember"
+    },
+    {
+      "routeName": "usage.project.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/usage",
+      "operationId": "GetProjectUsage"
+    },
+    {
+      "routeName": "usage.organization.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/organizations/{organizationId}/usage",
+      "operationId": "GetOrganizationUsage"
+    },
+    {
+      "routeName": "usage.project.workload",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/usage/workload",
+      "operationId": "GetProjectUsageWorkload"
+    },
+    {
+      "routeName": "usage.project.latency",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/latency",
+      "operationId": "GetProjectLatency"
+    },
+    {
+      "routeName": "usage.project.history",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/usage/history",
+      "operationId": "GetProjectUsageHistory"
+    },
+    {
+      "routeName": "audit.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/audit",
+      "operationId": "ListProjectAuditEvents"
+    },
+    {
+      "routeName": "audit.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/audit/{auditEventId}",
+      "operationId": "GetProjectAuditEvent"
+    },
+    {
+      "routeName": "notifications.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/users/me/notifications",
+      "operationId": "ListUserNotifications"
+    },
+    {
+      "routeName": "notifications.markRead",
+      "method": "POST",
+      "pathTemplate": "/api/v1/users/me/notifications/{notificationId}:mark-read",
+      "operationId": "MarkUserNotificationRead"
+    },
+    {
+      "routeName": "notifications.markAllRead",
+      "method": "POST",
+      "pathTemplate": "/api/v1/users/me/notifications:mark-all-read",
+      "operationId": "MarkAllUserNotificationsRead"
+    }
+  ]
+}

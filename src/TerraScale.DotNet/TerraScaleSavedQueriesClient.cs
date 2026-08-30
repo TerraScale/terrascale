@@ -48,6 +48,23 @@ public sealed class TerraScaleSavedQueriesClient
     }
 
     /// <summary>
+    /// Gets a saved query by id.
+    /// </summary>
+    public Task<TerraScaleSavedQuery> GetAsync(
+        string projectId,
+        string savedQueryId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(savedQueryId);
+        return client.SendAsync<TerraScaleSavedQuery>(
+            HttpMethod.Get,
+            TerraScaleApiRoutes.ProjectSavedQueryGet(projectId, savedQueryId),
+            body: null,
+            cancellationToken);
+    }
+
+    /// <summary>
     /// Updates a saved query in a project.
     /// </summary>
     public Task<TerraScaleSavedQuery> UpdateAsync(

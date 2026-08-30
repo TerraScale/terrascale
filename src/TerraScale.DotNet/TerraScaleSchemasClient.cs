@@ -22,7 +22,7 @@ public sealed class TerraScaleSchemasClient
         ArgumentException.ThrowIfNullOrWhiteSpace(repositoryId);
         return client.SendAsync<TerraScaleRepositorySchema>(
             HttpMethod.Get,
-            $"/api/v1/repositories/{Escape(repositoryId)}/schema",
+            TerraScaleApiRoutes.SchemaGet(repositoryId),
             body: null,
             cancellationToken);
     }
@@ -39,7 +39,7 @@ public sealed class TerraScaleSchemasClient
         ArgumentException.ThrowIfNullOrWhiteSpace(repositoryId);
         return client.SendAsync<TerraScaleRepositorySchema>(
             HttpMethod.Put,
-            $"/api/v1/repositories/{Escape(repositoryId)}/schema",
+            TerraScaleApiRoutes.SchemaConfigure(repositoryId),
             new TerraScaleConfigureRepositorySchemaRequest(enabled, NormalizeOptional(schema)),
             cancellationToken);
     }
@@ -56,13 +56,10 @@ public sealed class TerraScaleSchemasClient
         ArgumentException.ThrowIfNullOrWhiteSpace(repositoryId);
         return client.SendAsync<TerraScaleSchemaValidationOperation>(
             HttpMethod.Post,
-            $"/api/v1/repositories/{Escape(repositoryId)}/schema/validate",
+            TerraScaleApiRoutes.SchemaValidate(repositoryId),
             new TerraScaleValidateRepositorySchemaRequest(maxErrorMessages, maxDocumentsToValidate),
             cancellationToken);
     }
-
-    private static string Escape(string value) =>
-        Uri.EscapeDataString(value.Trim());
 
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();

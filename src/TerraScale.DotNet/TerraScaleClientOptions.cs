@@ -96,16 +96,16 @@ public sealed record TerraScaleClientOptions
             throw new ArgumentOutOfRangeException(nameof(SessionConsistency), "Unknown session consistency mode.");
         }
 
-        var normalizedRegion = NormalizeRegion(PreferredRegion);
-        PreferredRegion = normalizedRegion;
+        var validatedRegion = ValidateRegion(PreferredRegion);
+        PreferredRegion = validatedRegion;
         if (RegionAffinity == TerraScaleRegionAffinity.Strict)
         {
-            if (normalizedRegion is null)
+            if (validatedRegion is null)
             {
                 throw new ArgumentException("Strict regional affinity requires PreferredRegion.", nameof(PreferredRegion));
             }
 
-            BaseAddress = ResolveStrictRegionalBaseAddress(BaseAddress, normalizedRegion);
+            BaseAddress = ResolveStrictRegionalBaseAddress(BaseAddress, validatedRegion);
         }
 
         var hasApiKey = !string.IsNullOrWhiteSpace(ApiKey);
@@ -157,26 +157,15 @@ public sealed record TerraScaleClientOptions
         }
     }
 
-    private static string? NormalizeRegion(string? region)
+    private static string? ValidateRegion(string? region)
     {
         if (region is null)
         {
             return null;
         }
 
-        var normalized = region.Trim().ToLowerInvariant();
-        if (normalized.Length is < 2 or > 32 ||
-            !IsAsciiLetterOrDigit(normalized[0]) ||
-            normalized.Any(character => !IsAsciiLetterOrDigit(character) && character != '-'))
-        {
-            throw new ArgumentException("PreferredRegion must be a valid TerraScale region code.", nameof(PreferredRegion));
-        }
-
-        return normalized;
+        return TerraScaleRegionCodes.Validate(region, nameof(PreferredRegion));
     }
-
-    private static bool IsAsciiLetterOrDigit(char character) =>
-        character is (>= 'a' and <= 'z') or (>= '0' and <= '9');
 
     private static Uri ResolveStrictRegionalBaseAddress(Uri baseAddress, string region)
     {

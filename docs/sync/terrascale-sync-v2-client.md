@@ -10,8 +10,9 @@ Status: implementation record for the SE-10 packet
 (TerraScale/TerraScale.DotNet#9), 2026-08-27, updated by repair loop 1
 (same day: typed decode bounds, live-loop resilience, and host-surface
 bounds from the packet review) and by the follow-ups record below
-(same day: the TerraBaseV2#89 warden MINORs and the TerraBaseV2#93
-SDK half). Authority: workspace
+(same day: the then-named historical TerraBaseV2#89 warden MINORs and
+TerraBaseV2#93 SDK half; both identifiers preserve their original issue-tracker
+identity). Authority: workspace
 charter PD-2026-08-26-12 (native-language SDK clients, no wasm/C-ABI
 embeddings, server-ack-only mutations), PD-2026-08-26-13 D3
 (trigger-driven delta pulls), PD-2026-08-26-11 D1 (the API host's local

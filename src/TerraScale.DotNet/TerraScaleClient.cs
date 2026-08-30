@@ -58,16 +58,17 @@ public sealed class TerraScaleClient
         Schemas = new TerraScaleSchemasClient(this);
         Changes = new TerraScaleChangesClient(this);
         Billing = new TerraScaleBillingClient(this);
+        Onboarding = new TerraScaleOnboardingClient(this);
+        Organizations = new TerraScaleOrganizationsClient(this);
         Projects = new TerraScaleProjectsClient(this);
         Regions = new TerraScaleRegionsClient(this);
         ProjectDatabases = new TerraScaleProjectDatabasesClient(this);
         DatabaseBranches = new TerraScaleDatabaseBranchesClient(this);
         SavedQueries = new TerraScaleSavedQueriesClient(this);
-        SavedQueriesV2 = new TerraScaleSavedQueriesV2Client(this);
-        SavedQueriesV3 = new TerraScaleSavedQueriesV3Client(this);
         Queues = new TerraScaleQueuesClient(this);
         Environments = new TerraScaleEnvironmentsClient(this);
         ProjectUsage = new TerraScaleProjectUsageClient(this);
+        Audit = new TerraScaleAuditClient(this);
         ApiKeys = new TerraScaleApiKeysClient(this);
         M2MApplications = new TerraScaleM2MApplicationsClient(this);
         Access = new TerraScaleProjectAccessClient(this);
@@ -118,6 +119,16 @@ public sealed class TerraScaleClient
     public TerraScaleBillingClient Billing { get; }
 
     /// <summary>
+    /// Resumable onboarding operations.
+    /// </summary>
+    public TerraScaleOnboardingClient Onboarding { get; }
+
+    /// <summary>
+    /// Organization, membership, and invitation operations.
+    /// </summary>
+    public TerraScaleOrganizationsClient Organizations { get; }
+
+    /// <summary>
     /// Project list and lookup operations.
     /// </summary>
     public TerraScaleProjectsClient Projects { get; }
@@ -143,16 +154,6 @@ public sealed class TerraScaleClient
     public TerraScaleSavedQueriesClient SavedQueries { get; }
 
     /// <summary>
-    /// Version 2 project saved-query operations with conditional revisions.
-    /// </summary>
-    public TerraScaleSavedQueriesV2Client SavedQueriesV2 { get; }
-
-    /// <summary>
-    /// Version 3 project saved-query snapshot pagination operations.
-    /// </summary>
-    public TerraScaleSavedQueriesV3Client SavedQueriesV3 { get; }
-
-    /// <summary>
     /// Project-scoped queue and topic operations.
     /// </summary>
     public TerraScaleQueuesClient Queues { get; }
@@ -166,6 +167,11 @@ public sealed class TerraScaleClient
     /// Project usage operations.
     /// </summary>
     public TerraScaleProjectUsageClient ProjectUsage { get; }
+
+    /// <summary>
+    /// Project audit-event operations.
+    /// </summary>
+    public TerraScaleAuditClient Audit { get; }
 
     /// <summary>
     /// Project auth API key management operations.
@@ -248,10 +254,25 @@ public sealed class TerraScaleClient
 
     internal Task<TResponse> SendAsync<TResponse>(
         HttpMethod method,
+        TerraScaleBoundRoute route,
+        object? body,
+        CancellationToken cancellationToken) =>
+        SendAsync<TResponse>(method, ValidatePublicRoute(method, route), body, cancellationToken);
+
+    internal Task<TResponse> SendAsync<TResponse>(
+        HttpMethod method,
         string requestUri,
         object? body,
         CancellationToken cancellationToken) =>
         SendAsync<TResponse>(method, requestUri, body, configureRequest: null, cancellationToken);
+
+    internal Task<TResponse> SendAsync<TResponse>(
+        HttpMethod method,
+        TerraScaleBoundRoute route,
+        object? body,
+        Action<HttpRequestMessage>? configureRequest,
+        CancellationToken cancellationToken) =>
+        SendAsync<TResponse>(method, ValidatePublicRoute(method, route), body, configureRequest, cancellationToken);
 
     internal Task<TResponse> SendAsync<TResponse>(
         HttpMethod method,
@@ -263,11 +284,34 @@ public sealed class TerraScaleClient
 
     internal Task<TResponse> SendAsync<TResponse>(
         HttpMethod method,
+        TerraScaleBoundRoute route,
+        object? body,
+        string? preferredRegion,
+        CancellationToken cancellationToken) =>
+        SendAsync<TResponse>(method, ValidatePublicRoute(method, route), body, preferredRegion, cancellationToken);
+
+    internal Task<TResponse> SendAsync<TResponse>(
+        HttpMethod method,
         string requestUri,
         object? body,
         string? preferredRegion,
         CancellationToken cancellationToken) =>
         SendAsync<TResponse>(method, requestUri, body, preferredRegion, configureRequest: null, cancellationToken);
+
+    internal Task<TResponse> SendAsync<TResponse>(
+        HttpMethod method,
+        TerraScaleBoundRoute route,
+        object? body,
+        string? preferredRegion,
+        Action<HttpRequestMessage>? configureRequest,
+        CancellationToken cancellationToken) =>
+        SendAsync<TResponse>(
+            method,
+            ValidatePublicRoute(method, route),
+            body,
+            preferredRegion,
+            configureRequest,
+            cancellationToken);
 
     internal Task<TResponse> SendAsync<TResponse>(
         HttpMethod method,
@@ -287,11 +331,41 @@ public sealed class TerraScaleClient
 
     internal Task<TResponse> SendJsonAsync<TResponse>(
         HttpMethod method,
+        TerraScaleBoundRoute route,
+        JsonTypeInfo<TResponse> responseTypeInfo,
+        CancellationToken cancellationToken,
+        string? idempotencyKey = null) =>
+        SendJsonAsync(
+            method,
+            ValidatePublicRoute(method, route),
+            responseTypeInfo,
+            cancellationToken,
+            idempotencyKey);
+
+    internal Task<TResponse> SendJsonAsync<TResponse>(
+        HttpMethod method,
         string requestUri,
         JsonTypeInfo<TResponse> responseTypeInfo,
         CancellationToken cancellationToken,
         string? idempotencyKey = null) =>
         SendTypedJsonAsync<object, TResponse>(method, requestUri, body: null, requestTypeInfo: null, responseTypeInfo, cancellationToken, idempotencyKey);
+
+    internal Task<TResponse> SendJsonAsync<TRequest, TResponse>(
+        HttpMethod method,
+        TerraScaleBoundRoute route,
+        TRequest body,
+        JsonTypeInfo<TRequest> requestTypeInfo,
+        JsonTypeInfo<TResponse> responseTypeInfo,
+        CancellationToken cancellationToken,
+        string? idempotencyKey = null) =>
+        SendJsonAsync(
+            method,
+            ValidatePublicRoute(method, route),
+            body,
+            requestTypeInfo,
+            responseTypeInfo,
+            cancellationToken,
+            idempotencyKey);
 
     internal Task<TResponse> SendJsonAsync<TRequest, TResponse>(
         HttpMethod method,
@@ -302,6 +376,21 @@ public sealed class TerraScaleClient
         CancellationToken cancellationToken,
         string? idempotencyKey = null) =>
         SendTypedJsonAsync(method, requestUri, body, requestTypeInfo, responseTypeInfo, cancellationToken, idempotencyKey);
+
+    internal Task<TResponse> SendNonRetryableJsonAsync<TRequest, TResponse>(
+        HttpMethod method,
+        TerraScaleBoundRoute route,
+        TRequest body,
+        JsonTypeInfo<TRequest> requestTypeInfo,
+        JsonTypeInfo<TResponse> responseTypeInfo,
+        CancellationToken cancellationToken) =>
+        SendNonRetryableJsonAsync(
+            method,
+            ValidatePublicRoute(method, route),
+            body,
+            requestTypeInfo,
+            responseTypeInfo,
+            cancellationToken);
 
     internal Task<TResponse> SendNonRetryableJsonAsync<TRequest, TResponse>(
         HttpMethod method,
@@ -360,6 +449,19 @@ public sealed class TerraScaleClient
 
     internal Task<TResponse> SendWithIdempotencyKeyAsync<TResponse>(
         HttpMethod method,
+        TerraScaleBoundRoute route,
+        object? body,
+        string idempotencyKey,
+        CancellationToken cancellationToken) =>
+        SendWithIdempotencyKeyAsync<TResponse>(
+            method,
+            ValidatePublicRoute(method, route),
+            body,
+            idempotencyKey,
+            cancellationToken);
+
+    internal Task<TResponse> SendWithIdempotencyKeyAsync<TResponse>(
+        HttpMethod method,
         string requestUri,
         object? body,
         string idempotencyKey,
@@ -373,6 +475,17 @@ public sealed class TerraScaleClient
             responseFactory: static (response, _) => response,
             cancellationToken,
             idempotencyKey);
+
+    internal Task<TResponse> SendNonRetryableMutationAsync<TResponse>(
+        HttpMethod method,
+        TerraScaleBoundRoute route,
+        object? body,
+        CancellationToken cancellationToken) =>
+        SendNonRetryableMutationAsync<TResponse>(
+            method,
+            ValidatePublicRoute(method, route),
+            body,
+            cancellationToken);
 
     internal Task<TResponse> SendNonRetryableMutationAsync<TResponse>(
         HttpMethod method,
@@ -392,6 +505,12 @@ public sealed class TerraScaleClient
 
     internal Task SendNonRetryableMutationAsync(
         HttpMethod method,
+        TerraScaleBoundRoute route,
+        CancellationToken cancellationToken) =>
+        SendNonRetryableMutationAsync(method, ValidatePublicRoute(method, route), cancellationToken);
+
+    internal Task SendNonRetryableMutationAsync(
+        HttpMethod method,
         string requestUri,
         CancellationToken cancellationToken) =>
         SendAsync(
@@ -400,6 +519,52 @@ public sealed class TerraScaleClient
             cancellationToken,
             idempotencyKeyOverride: string.Empty,
             allowUnkeyedPutRetry: false);
+
+    internal Task SendNonRetryableNoContentAsync(
+        HttpMethod method,
+        TerraScaleBoundRoute route,
+        CancellationToken cancellationToken) =>
+        SendNonRetryableNoContentAsync(method, ValidatePublicRoute(method, route), cancellationToken);
+
+    internal async Task SendNonRetryableNoContentAsync(
+        HttpMethod method,
+        TerraScaleBoundRoute route,
+        object body,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+        var requestUri = ValidatePublicRoute(method, route);
+        using var activity = StartActivity(method, requestUri);
+        using var response = await SendWithRetriesAsync(
+            method,
+            requestUri,
+            CreateJsonContentFactory(body),
+            RequestAuthenticationMode.Authenticated,
+            configureRequest: null,
+            activity,
+            cancellationToken,
+            idempotencyKeyOverride: string.Empty,
+            allowUnkeyedPutRetry: false).ConfigureAwait(false);
+
+        SetResponseTags(activity, response);
+        if (!response.IsSuccessStatusCode)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, response.ReasonPhrase);
+            throw await TerraScaleApiException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (response.StatusCode != HttpStatusCode.NoContent)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, response.ReasonPhrase);
+            throw new TerraScaleApiException(
+                response.StatusCode,
+                $"TerraScale returned HTTP {(int)response.StatusCode}, but HTTP {(int)HttpStatusCode.NoContent} was required.",
+                errorCode: null,
+                requestId: ReadRequestId(response),
+                responseBody: null,
+                retryAfter: response.Headers.RetryAfter?.Delta);
+        }
+    }
 
     internal Task SendNonRetryableNoContentAsync(
         HttpMethod method,
@@ -412,6 +577,23 @@ public sealed class TerraScaleClient
             idempotencyKeyOverride: string.Empty,
             allowUnkeyedPutRetry: false,
             expectedStatusCode: HttpStatusCode.NoContent);
+
+    internal Task<TResult> SendAsync<TResponse, TResult>(
+        HttpMethod method,
+        TerraScaleBoundRoute route,
+        object? body,
+        string? preferredRegion,
+        Action<HttpRequestMessage>? configureRequest,
+        Func<TResponse, HttpResponseMessage, TResult> responseFactory,
+        CancellationToken cancellationToken) =>
+        SendAsync(
+            method,
+            ValidatePublicRoute(method, route),
+            body,
+            preferredRegion,
+            configureRequest,
+            responseFactory,
+            cancellationToken);
 
     internal Task<TResult> SendAsync<TResponse, TResult>(
         HttpMethod method,
@@ -431,6 +613,17 @@ public sealed class TerraScaleClient
             cancellationToken,
             idempotencyKeyOverride: null,
             allowUnkeyedPutRetry: true);
+
+    private static string ValidatePublicRoute(HttpMethod method, TerraScaleBoundRoute route)
+    {
+        if (!string.Equals(method.Method, route.Method.Method, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Route {route.Definition.RouteName} requires {route.Method.Method}, not {method.Method}.");
+        }
+
+        return route.RequestUri;
+    }
 
     private async Task<TResult> SendAsync<TResponse, TResult>(
         HttpMethod method,
@@ -471,14 +664,21 @@ public sealed class TerraScaleClient
 
     private static void ApplyPreferredRegion(HttpRequestMessage request, string preferredRegion)
     {
-        if (!string.IsNullOrWhiteSpace(preferredRegion))
-        {
-            request.Headers.Remove("X-TerraScale-Preferred-Region");
-            request.Headers.TryAddWithoutValidation(
-                "X-TerraScale-Preferred-Region",
-                preferredRegion.Trim().ToLowerInvariant());
-        }
+        var regionCode = TerraScaleRegionCodes.Validate(preferredRegion, nameof(preferredRegion));
+        request.Headers.Remove("X-TerraScale-Preferred-Region");
+        request.Headers.TryAddWithoutValidation("X-TerraScale-Preferred-Region", regionCode);
     }
+
+    internal async Task<TResponse> SendAnonymousJsonAsync<TResponse>(
+        HttpMethod method,
+        TerraScaleBoundRoute route,
+        object? body,
+        CancellationToken cancellationToken) =>
+        await SendAnonymousJsonAsync<TResponse>(
+            method,
+            ValidatePublicRoute(method, route),
+            body,
+            cancellationToken).ConfigureAwait(false);
 
     internal async Task<TResponse> SendAnonymousJsonAsync<TResponse>(
         HttpMethod method,
@@ -498,6 +698,37 @@ public sealed class TerraScaleClient
 
         SetResponseTags(activity, response);
         return await ReadJsonResponseAsync<TResponse>(response, activity, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async Task<TResponse> SendAnonymousJsonAsync<TResponse>(
+        HttpMethod method,
+        TerraScaleBoundRoute route,
+        JsonTypeInfo<TResponse> responseTypeInfo,
+        CancellationToken cancellationToken) =>
+        await SendAnonymousJsonAsync(
+            method,
+            ValidatePublicRoute(method, route),
+            responseTypeInfo,
+            cancellationToken).ConfigureAwait(false);
+
+    internal async Task<TResponse> SendAnonymousJsonAsync<TResponse>(
+        HttpMethod method,
+        string requestUri,
+        JsonTypeInfo<TResponse> responseTypeInfo,
+        CancellationToken cancellationToken)
+    {
+        using var activity = StartActivity(method, requestUri);
+        using var response = await SendWithRetriesAsync(
+            method,
+            requestUri,
+            CreateJsonContentFactory(body: null),
+            RequestAuthenticationMode.Anonymous,
+            configureRequest: null,
+            activity,
+            cancellationToken).ConfigureAwait(false);
+
+        SetResponseTags(activity, response);
+        return await ReadJsonResponseAsync(response, responseTypeInfo, activity, cancellationToken).ConfigureAwait(false);
     }
 
     internal async Task<TResponse> SendAnonymousFormAsync<TResponse>(
@@ -762,6 +993,11 @@ public sealed class TerraScaleClient
             }
 
             configureRequest?.Invoke(request);
+            if (request.Headers.Accept.Count == 0)
+            {
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            }
+
             return request;
         }
         catch

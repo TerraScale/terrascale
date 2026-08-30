@@ -219,7 +219,16 @@ public sealed record TerraScaleAdminDatabase(string DatabaseId, string ProjectId
 /// <summary>Named platform usage quantity.</summary>
 public sealed record TerraScaleAdminUsageMetric(string Name, long Quantity, string Unit);
 /// <summary>Platform deployment region in an administration usage response.</summary>
-public sealed record TerraScaleAdminRegion(string Code, string DisplayName, string Country, double Latitude, double Longitude, string OciRegionCode, string ClusterNodeTag, bool Available);
+public sealed record TerraScaleAdminRegion(
+    string Code,
+    string DisplayName,
+    string Country,
+    double Latitude,
+    double Longitude,
+    bool Available) : IJsonOnDeserialized
+{
+    void IJsonOnDeserialized.OnDeserialized() => TerraScaleRegionCodes.ValidateResponse(Code);
+}
 /// <summary>Platform-wide counts, deployment regions, and usage metrics.</summary>
 public sealed record TerraScaleAdminPlatformUsage(long Organizations, long Projects, long Databases, IReadOnlyList<TerraScaleAdminRegion> Regions, IReadOnlyList<TerraScaleAdminUsageMetric> Usage);
 /// <summary>Platform-wide audit event.</summary>

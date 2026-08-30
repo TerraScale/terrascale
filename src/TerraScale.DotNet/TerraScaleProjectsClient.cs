@@ -41,7 +41,8 @@ public sealed class TerraScaleProjectsClient
         ArgumentException.ThrowIfNullOrWhiteSpace(organizationId);
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Name);
-        ArgumentException.ThrowIfNullOrWhiteSpace(request.BackupRegion);
+        ValidateRegions(request.Regions, nameof(request));
+        TerraScaleRegionCodes.Validate(request.BackupRegion, nameof(request));
         return client.SendAsync<TerraScaleProject>(
             HttpMethod.Post,
             TerraScaleApiRoutes.ProjectsCreate(organizationId),
@@ -96,6 +97,12 @@ public sealed class TerraScaleProjectsClient
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(request.Name);
         }
+        ValidateRegions(request.Regions, nameof(request));
+        if (request.BackupRegion is not null)
+        {
+            TerraScaleRegionCodes.Validate(request.BackupRegion, nameof(request));
+        }
+
         return client.SendAsync<TerraScaleProject>(
             HttpMethod.Patch,
             TerraScaleApiRoutes.ProjectUpdate(projectId),
@@ -148,6 +155,19 @@ public sealed class TerraScaleProjectsClient
             projectId,
             new TerraScaleUpdateProjectRequest(name.Trim(), null, null),
             cancellationToken);
+    }
+
+    private static void ValidateRegions(IReadOnlyList<string>? regions, string parameterName)
+    {
+        if (regions is null)
+        {
+            return;
+        }
+
+        foreach (var region in regions)
+        {
+            TerraScaleRegionCodes.Validate(region, parameterName);
+        }
     }
 }
 

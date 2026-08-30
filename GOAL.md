@@ -31,8 +31,9 @@ implementation. The v2 result engine and transport are intentionally separate
 and the checked-in corpus is migration evidence until the owner-published
 replacement contract is live.
 
-The package workflow verifies an exact archive, source revision, tree, digest,
-and clean consumer. Repository tests use fixtures and environment-gated live
+The protected package workflow verifies the exact SDK and EF Core archives as
+one package set, their shared source revision and tree, both digests, dependency
+closure, and a clean consumer. Repository tests use fixtures and environment-gated live
 tests. They do not prove live Database API compatibility, authorization,
 tenant isolation, cross-language reactive parity, or production publication.
 
@@ -121,8 +122,9 @@ window, package version policy, registry, and rollback authority.
   checkpoints, reset, duplicate/reorder, auth expiry, permission loss, Region
   movement, history expiry, cancellation, and slow consumers.
 - EF Core tests pass separately and use only public SDK operations.
-- The exact packed archive passes provenance, digest, clean-consumer, package
-  contents, dependency, license, and runtime checks.
+- The exact packed SDK and EF Core archive set passes provenance, both digests,
+  clean-consumer, package contents, dependency, license, vulnerability, and
+  runtime checks.
 - Live qualification proves authorization, tenant isolation, reconnect,
   Region movement, and failure behavior on the approved endpoints.
 

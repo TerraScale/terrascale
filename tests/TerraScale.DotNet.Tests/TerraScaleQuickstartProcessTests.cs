@@ -188,7 +188,9 @@ internal sealed class RequiresTerraScaleQuickstartApiAttribute()
     : SkipAttribute(QuickstartEnvironmentConfiguration.SkipReason)
 {
     public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(!QuickstartEnvironmentConfiguration.IsConfigured);
+        TerraScaleLiveTestGate.ShouldSkipAsync(
+            QuickstartEnvironmentConfiguration.IsConfigured,
+            QuickstartEnvironmentConfiguration.SkipReason);
 }
 
 internal static class QuickstartEnvironmentConfiguration
