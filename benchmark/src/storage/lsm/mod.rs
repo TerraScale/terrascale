@@ -1114,11 +1114,13 @@ impl LsmStorage {
         } else if self
             .wal_frontier
             .as_mut()
-            .is_some_and(|frontier| frontier.advance(append).is_err())
+            .is_some_and(|frontier| frontier.advance_lazy(append).is_err())
         {
             // The legacy shadow is disposable and must not change the old
             // writer contract. It only blocks activation until a reopen
-            // rebuilds it from the streams.
+            // rebuilds it from the streams — so the durable slot write is
+            // deferred to the next flush instead of costing every commit
+            // a second sync.
             self.frontier_poisoned = true;
         }
         Ok(())
@@ -2150,6 +2152,16 @@ impl StoragePort for LsmStorage {
 
     fn flush(&mut self) -> Result<(), ()> {
         if self.frontier_poisoned && self.activation.is_some() {
+            return Err(());
+        }
+        // The lazily advanced legacy shadow catches up here: one slot
+        // write and sync at the bounded flush point instead of one per
+        // commit. A crash before this point leaves a lagging durable
+        // slot, which recovery rebuilds and repairs by design.
+        if let Some(frontier) = self.wal_frontier.as_mut()
+            && frontier.persist_lazy().is_err()
+        {
+            self.frontier_poisoned = true;
             return Err(());
         }
         self.wal.sync().map_err(|_| ())

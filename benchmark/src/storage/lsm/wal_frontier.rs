@@ -227,6 +227,9 @@ struct SlotFrontier {
     slots: [Option<FrontierSlot>; 2],
     generation: u64,
     anchor: StreamAnchor,
+    /// Whether in-memory anchor state has advanced past the durable slots
+    /// (lazy legacy shadow mode). The next `persist` writes one slot.
+    dirty: bool,
 }
 
 impl SlotFrontier {
@@ -269,7 +272,7 @@ impl SlotFrontier {
             .write(true)
             .open(&live)
             .map_err(|_| FrontierError::Unavailable)?;
-        Ok(Self { file, store_id, kind, slots, generation, anchor })
+        Ok(Self { file, store_id, kind, slots, generation, anchor, dirty: false })
     }
 
     fn open_active(
@@ -327,6 +330,7 @@ impl SlotFrontier {
             slots,
             generation: selected.generation,
             anchor: selected.anchor,
+            dirty: false,
         })
     }
 
@@ -348,6 +352,29 @@ impl SlotFrontier {
             .anchor
             .advance(self.store_id, self.kind.chain_domain, start, frame)
             .ok_or(FrontierError::Integrity)?;
+        self.write_next(next)
+    }
+
+    /// Advances the in-memory chain without writing or syncing a slot:
+    /// the legacy shadow is disposable by contract, and recovery rebuilds
+    /// it from the verified stream, so a lagging durable slot costs
+    /// nothing but the one `persist` that catches it up.
+    fn advance_lazy(&mut self, start: u64, frame: &[u8]) -> Result<(), FrontierError> {
+        let next = self
+            .anchor
+            .advance(self.store_id, self.kind.chain_domain, start, frame)
+            .ok_or(FrontierError::Integrity)?;
+        self.anchor = next;
+        self.dirty = true;
+        Ok(())
+    }
+
+    /// Persists the in-memory anchor when a lazy advance left it unwritten.
+    fn persist(&mut self) -> Result<(), FrontierError> {
+        if !self.dirty {
+            return Ok(());
+        }
+        let next = self.anchor;
         self.write_next(next)
     }
 
@@ -401,6 +428,17 @@ impl WalFrontier {
 
     pub(super) fn advance(&mut self, append: &WalAppend) -> Result<(), FrontierError> {
         self.0.advance(append.start, &append.frame)
+    }
+
+    /// The disposable-shadow advance: memory only, persisted by
+    /// [`Self::persist_lazy`] at bounded points (flush, shutdown).
+    pub(super) fn advance_lazy(&mut self, append: &WalAppend) -> Result<(), FrontierError> {
+        self.0.advance_lazy(append.start, &append.frame)
+    }
+
+    /// Persists a lazily advanced shadow anchor in one slot write and sync.
+    pub(super) fn persist_lazy(&mut self) -> Result<(), FrontierError> {
+        self.0.persist()
     }
 
     pub(super) fn repair_or_advance(
