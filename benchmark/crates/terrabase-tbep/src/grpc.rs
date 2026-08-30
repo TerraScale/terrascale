@@ -185,21 +185,20 @@ impl TbepGrpcServer {
     /// returned.
     pub fn serve_uds(self: &Arc<Self>, path: &Path) -> std::io::Result<TbepGrpcHandle> {
         let _ = std::fs::remove_file(path);
-        let listener_path = path.to_path_buf();
         let server = Arc::clone(self);
         let (shutdown, signal) = tokio::sync::oneshot::channel::<()>();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .map_err(std::io::Error::other)?;
+        let _context = runtime.enter();
+        // The listener binds before the handle returns, so a client that
+        // connects immediately after serving starts cannot race the socket.
+        let listener = tokio::net::UnixListener::bind(path)?;
         let thread = std::thread::Builder::new()
             .name("tbep-grpc-uds".into())
             .spawn(move || {
-                let runtime = tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(2)
-                    .enable_all()
-                    .build()
-                    .expect("the TBEP serving runtime starts");
-                let _context = runtime.enter();
-                let Ok(listener) = tokio::net::UnixListener::bind(&listener_path) else {
-                    return;
-                };
                 let _ = runtime.block_on(async move {
                     let routes = serve_routes(Arc::clone(&server), None)
                         .expect("the unencrypted route table builds");
