@@ -709,6 +709,9 @@ impl LsmStorage {
     /// states a crash between serial commits would.
     #[allow(clippy::too_many_lines)]
     pub(crate) fn commit_batch(&mut self, intents: Vec<CommitIntent>) -> Vec<CommitResult> {
+        if std::env::var_os("TERRABASE_TRACE_BATCHES").is_some() {
+            eprintln!("terrabase commit batch size: {}", intents.len());
+        }
         let mut results: Vec<Option<CommitResult>> = intents.iter().map(|_| None).collect();
         let mut prepared: Vec<PreparedCommit> = Vec::with_capacity(intents.len());
         for (index, intent) in intents.iter().enumerate() {

@@ -983,11 +983,12 @@ mod tests {
         lane.seed(1_000);
         let per_thread = 100_u64;
         let started = Instant::now();
+        let lane_ref = &lane;
         std::thread::scope(|scope| {
             for worker in 0..16_u64 {
                 scope.spawn(move || {
                     for index in 0..per_thread {
-                        lane.commit_put_measured(worker * per_thread + index, crate::types::LocalDurability::Synced);
+                        lane_ref.commit_put_measured(worker * per_thread + index, crate::types::LocalDurability::Synced);
                     }
                 });
             }
