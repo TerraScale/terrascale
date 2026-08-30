@@ -187,6 +187,7 @@ pub(crate) fn execute_with_view(
 /// `GenerationView` remains the test seam; only the production catalog can
 /// provide segment contents, so forged generation views continue to exercise
 /// the original scan path.
+#[allow(clippy::too_many_lines)] // execution keeps the gate, scan, and result accounting together
 fn execute_with_index(
     engine: &Engine,
     view: &dyn GenerationView,
@@ -639,8 +640,10 @@ fn document_bytes(document: &Document) -> usize {
 
 fn document_value_bytes(value: &DocumentValue) -> usize {
     match value {
-        DocumentValue::Null | DocumentValue::Boolean(_) | DocumentValue::Integer(_) => 8,
-        DocumentValue::Number(_) => 8,
+        DocumentValue::Null
+        | DocumentValue::Boolean(_)
+        | DocumentValue::Integer(_)
+        | DocumentValue::Number(_) => 8,
         DocumentValue::String(value) => value.len().saturating_add(8),
         DocumentValue::Array(values) => {
             values.iter().map(document_value_bytes).sum::<usize>().saturating_add(8)
@@ -737,6 +740,9 @@ fn resolve_references(
             });
         }
         pending.retain(|id| !resolved.contains_key(id));
+        if discovered.is_empty() {
+            break;
+        }
         if depth + 1 >= super::includes::MAX_INCLUDE_DEPTH {
             break;
         }
