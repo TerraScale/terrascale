@@ -234,12 +234,12 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
-      "description": "Minimum health across selected targets. Healthy is 1, degraded is 0.5, and unhealthy or unknown is 0.",
+      "description": "Minimum health across selected targets. Healthy is 1, degraded is 0.5, unhealthy is 0, and unknown is -1.",
       "fieldConfig": {
         "defaults": {
           "decimals": 1,
           "max": 1,
-          "min": 0,
+          "min": -1,
           "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 0.5}, {"color": "green", "value": 1}]},
           "unit": "short"
         },
@@ -250,6 +250,174 @@
       "options": {"legend": {"calcs": ["lastNotNull", "min"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "asc"}},
       "targets": [{"expr": "min by (component) (terrabase_component_health{job=~\"$job\"})", "legendFormat": "{{component}}", "refId": "A"}],
       "title": "Component health",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Current admitted operations that have not completed.",
+      "fieldConfig": {"defaults": {"decimals": 0, "min": 0, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 36},
+      "id": 17,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "sum by (operation) (terrabase_in_flight_operations{job=~\"$job\",operation=~\"$operation\"})", "legendFormat": "{{operation}}", "refId": "A"}],
+      "title": "In-flight operations",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Queue depth divided by configured queue capacity.",
+      "fieldConfig": {"defaults": {"decimals": 1, "max": 100, "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 80}, {"color": "red", "value": 95}]}, "unit": "percent"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 36},
+      "id": 18,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "100 * terrabase_queue_depth{job=~\"$job\"} / clamp_min(terrabase_queue_capacity{job=~\"$job\"}, 1)", "legendFormat": "{{queue}}", "refId": "A"}],
+      "title": "Queue utilization",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Admission refusals by bounded reason. This is distinct from completed request outcomes.",
+      "fieldConfig": {"defaults": {"decimals": 2, "min": 0, "unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 36},
+      "id": 19,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "sum by (operation, reason) (rate(terrabase_admission_rejections_total{job=~\"$job\",operation=~\"$operation\"}[$__rate_interval]))", "legendFormat": "{{operation}} / {{reason}}", "refId": "A"}],
+      "title": "Admission rejections / second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Commit attempts split into committed, refused, failed, and indeterminate outcomes.",
+      "fieldConfig": {"defaults": {"decimals": 2, "min": 0, "unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 44},
+      "id": 20,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "sum by (outcome) (rate(terrabase_commits_total{job=~\"$job\"}[$__rate_interval]))", "legendFormat": "{{outcome}}", "refId": "A"}],
+      "title": "Commit outcomes / second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "End-to-end durability latency for successfully committed work.",
+      "fieldConfig": {"defaults": {"decimals": 3, "min": 0, "unit": "s"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 44},
+      "id": 21,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "histogram_quantile(0.99, sum by (le) (rate(terrabase_commit_duration_seconds_bucket{job=~\"$job\",outcome=\"committed\"}[$__rate_interval])))", "legendFormat": "p99", "refId": "A"}],
+      "title": "Committed durability p99",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "p99 WAL fsync latency for successful synchronization attempts.",
+      "fieldConfig": {"defaults": {"decimals": 3, "min": 0, "unit": "s"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 44},
+      "id": 22,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "histogram_quantile(0.99, sum by (le) (rate(terrabase_wal_fsync_duration_seconds_bucket{job=~\"$job\",outcome=\"success\"}[$__rate_interval])))", "legendFormat": "p99", "refId": "A"}],
+      "title": "WAL fsync p99",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Bytes waiting for replication or repair delivery by Region.",
+      "fieldConfig": {"defaults": {"decimals": 1, "min": 0, "unit": "bytes"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 52},
+      "id": 23,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "max by (region) (terrabase_replication_backlog_bytes{job=~\"$job\",region=~\"$region\"})", "legendFormat": "{{region}}", "refId": "A"}],
+      "title": "Replication backlog by Region",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Verified frontier health. Healthy is 1, degraded is 0.5, unhealthy is 0, and unknown is -1.",
+      "fieldConfig": {"defaults": {"decimals": 1, "max": 1, "min": -1, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 0.5}, {"color": "green", "value": 1}]}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 52},
+      "id": 24,
+      "options": {"legend": {"calcs": ["lastNotNull", "min"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "asc"}},
+      "targets": [{"expr": "min by (region) (terrabase_replication_frontier_health{job=~\"$job\",region=~\"$region\"})", "legendFormat": "{{region}}", "refId": "A"}],
+      "title": "Replication frontier health",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Storage operation errors split by tier and bounded operation.",
+      "fieldConfig": {"defaults": {"decimals": 3, "min": 0, "unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 52},
+      "id": 25,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "sum by (tier, operation) (rate(terrabase_storage_errors_total{job=~\"$job\"}[$__rate_interval]))", "legendFormat": "{{tier}} / {{operation}}", "refId": "A"}],
+      "title": "Storage errors / second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Bytes waiting for compaction by storage tier.",
+      "fieldConfig": {"defaults": {"decimals": 1, "min": 0, "unit": "bytes"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 60},
+      "id": 26,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "sum by (tier) (terrabase_compaction_backlog_bytes{job=~\"$job\"})", "legendFormat": "{{tier}}", "refId": "A"}],
+      "title": "Compaction backlog",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Bytes read and written per second by compaction work.",
+      "fieldConfig": {"defaults": {"decimals": 1, "min": 0, "unit": "Bps"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 60},
+      "id": 27,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"expr": "sum(rate(terrabase_compaction_input_bytes_total{job=~\"$job\"}[$__rate_interval]))", "legendFormat": "input", "refId": "A"},
+        {"expr": "sum(rate(terrabase_compaction_output_bytes_total{job=~\"$job\"}[$__rate_interval]))", "legendFormat": "output", "refId": "B"}
+      ],
+      "title": "Compaction I/O",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Completed compaction runs split by success or failure.",
+      "fieldConfig": {"defaults": {"decimals": 3, "min": 0, "unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 60},
+      "id": 28,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "sum by (outcome) (rate(terrabase_compaction_runs_total{job=~\"$job\"}[$__rate_interval]))", "legendFormat": "{{outcome}}", "refId": "A"}],
+      "title": "Compaction outcomes / second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Seconds since the last verified successful backup by mode.",
+      "fieldConfig": {"defaults": {"decimals": 0, "min": 0, "unit": "s"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 68},
+      "id": 29,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "max by (mode) (terrabase_backup_last_success_age_seconds{job=~\"$job\"})", "legendFormat": "{{mode}}", "refId": "A"}],
+      "title": "Backup age",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Backup completions split by mode and success or failure.",
+      "fieldConfig": {"defaults": {"decimals": 3, "min": 0, "unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 68},
+      "id": 30,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "sum by (mode, outcome) (rate(terrabase_backup_runs_total{job=~\"$job\"}[$__rate_interval]))", "legendFormat": "{{mode}} / {{outcome}}", "refId": "A"}],
+      "title": "Backup outcomes / second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Failures per second while publishing authoritative usage facts.",
+      "fieldConfig": {"defaults": {"decimals": 3, "min": 0, "unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 68},
+      "id": 31,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"expr": "sum(rate(terrabase_usage_export_failures_total{job=~\"$job\"}[$__rate_interval]))", "legendFormat": "failures / second", "refId": "A"}],
+      "title": "Usage export failures / second",
       "type": "timeseries"
     }
   ],

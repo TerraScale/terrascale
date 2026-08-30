@@ -52,7 +52,11 @@ use crate::types::{
     CollectionName, Document, DocumentId, ExpectedVersion, LocalDurability, OperationId,
     StorageSequence, TenantId,
 };
-use crate::usage::{DurableUsageFact, UsageAdmissionContext, UsageFactLedger};
+use crate::usage::{
+    DurableUsageFact, MeasurementWindow, MeterCatalog, MeterKind, MintingIdentity, MintingRule,
+    UsageAdmissionContext, UsageFact, UsageFactLedger, UsageScope,
+    MAX_ADMITTED_REQUEST_UNITS_PER_FACT, MAX_PUBLIC_EGRESS_BYTES_PER_FACT,
+};
 
 use super::frontier::{
     ActiveFormat, FRONTIER_FORMAT_MAJOR, LEGACY_FORMAT_MAJOR, LedgerFrontierActivationError,
@@ -61,7 +65,7 @@ use super::frontier::{
     STORAGE_FRONTIER_FEATURE, StoreId,
 };
 use super::{
-    PublishedCommit, PublishedWrite, StoragePort, codec,
+    PublishedCommit, PublishedWrite, StoragePort, UsageFactPosition, UsageStorageError, codec,
     faults::{FaultPlan, FaultPoint},
     intent::{
         CommitIntent, CommitRejection, CommitResult, StagedWrite, StorageReceipt, UnknownCause,
@@ -133,6 +137,13 @@ struct PreparedCommit {
     synced: bool,
 }
 
+/// The durable command that minted one authoritative usage fact.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UsageFactSource {
+    Mutation,
+    Standalone,
+}
+
 /// Why an LSM location could not be opened.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LsmOpenError {
@@ -202,6 +213,11 @@ pub(crate) struct LsmStorage {
     store_id: StoreId,
     frontier_poisoned: bool,
     usage_index: UsageFactLedger,
+    /// Persists the distinction between mutation-bound and standalone facts.
+    usage_sources: BTreeMap<(UsageScope, MintingIdentity), UsageFactSource>,
+    /// Old `usage/` entries used sequence numbers as time and value bytes as
+    /// byte-hours. The location remains readable, but billing commands fail.
+    legacy_usage_present: bool,
     /// A malformed or conflicting persisted fact makes recovery fail closed.
     usage_corrupt: bool,
     /// Flip records whose append succeeded but whose sync was deferred to
@@ -381,6 +397,8 @@ impl LsmStorage {
             store_id,
             frontier_poisoned: false,
             usage_index: UsageFactLedger::default(),
+            usage_sources: BTreeMap::new(),
+            legacy_usage_present: false,
             usage_corrupt: false,
             pending_flips: Vec::new(),
             faults: FaultPlan::empty(),
@@ -405,6 +423,7 @@ impl LsmStorage {
                 engine.apply_entry_to_memory(&entry);
             }
         }
+        engine.validate_mutation_usage_bindings();
         if engine.usage_corrupt {
             return Err(LsmOpenError::FormatMismatch);
         }
@@ -442,6 +461,7 @@ impl LsmStorage {
             let entries =
                 reader.borrow_mut().read_all().map_err(|_| LsmOpenError::FormatMismatch)?;
             for entry in entries {
+                self.sequence_watermark = self.sequence_watermark.max(entry.key.sequence());
                 let tag = entry.key.tag();
                 if tag == internal::Keyspace::Ledger.tag()
                     || tag == internal::Keyspace::History.tag()
@@ -557,42 +577,71 @@ impl LsmStorage {
             } else {
                 self.history_index.insert(sequence, commit);
             }
-        } else if tag == internal::Keyspace::Meta.tag()
-            && let Some(bound) = decode_meta_bound(&entry.value)
-            && meta_label(entry.key.user_key()) == META_HISTORY_FLOOR
-        {
-            // The same meta key has one version per reclaim pass. Internal
-            // key order is newest-first, but a segment scan can merge
-            // multiple segments in either order; never let an older floor
-            // reopen a history range already reclaimed by a newer one.
-            self.history_floor = Some(self.history_floor.map_or(bound, |prior| prior.max(bound)));
-        } else if tag == internal::Keyspace::Meta.tag()
-            && let Some(fact) = decode_usage_entry(entry)
-        {
-            let operation = fact.fact().identity().id().as_str();
-            let tenant = fact.fact().scope().tenant_id().as_str();
-            let bound = self.ledger_index.get(&(tenant.to_owned(), operation.to_owned()));
-            if !matches!(
-                bound,
-                Some(record) if record.committed
-                    && record.rejection.is_none()
-                    && record.sequence == fact.sequence()
-            ) || self.usage_index.insert(fact).is_err()
-            {
+        } else if tag == internal::Keyspace::Meta.tag() {
+            let label = meta_label(entry.key.user_key());
+            if label == META_HISTORY_FLOOR {
+                if let Some(bound) = decode_meta_bound(&entry.value) {
+                    // The same meta key has one version per reclaim pass.
+                    // Segment scans can reach versions in either order, so
+                    // an older floor may never reopen reclaimed history.
+                    self.history_floor =
+                        Some(self.history_floor.map_or(bound, |prior| prior.max(bound)));
+                } else {
+                    self.usage_corrupt = true;
+                }
+            } else if label.starts_with(LEGACY_USAGE_LABEL_PREFIX) {
+                // These entries were minted from sequence numbers and encoded
+                // value lengths. Keep the location readable, but never expose
+                // or mix them with authoritative billing data.
+                self.legacy_usage_present = true;
+            } else if label.starts_with(AUTHORITATIVE_USAGE_LABEL_PREFIX) {
+                if let Some((source, fact)) = decode_authoritative_usage_entry(entry) {
+                    let key = (fact.fact().scope().clone(), fact.fact().identity().clone());
+                    if self
+                        .usage_sources
+                        .get(&key)
+                        .is_some_and(|existing| *existing != source)
+                        || self.usage_index.insert(fact).is_err()
+                    {
+                        self.usage_corrupt = true;
+                    } else {
+                        self.usage_sources.insert(key, source);
+                    }
+                } else {
+                    self.usage_corrupt = true;
+                }
+            } else {
+                // Meta is a closed keyspace. Unknown markers fail recovery.
                 self.usage_corrupt = true;
             }
-        } else if tag == internal::Keyspace::Meta.tag()
-            && meta_label(entry.key.user_key()).starts_with("usage/")
-        {
-            self.usage_corrupt = true;
-        } else if tag == internal::Keyspace::Meta.tag() {
-            // Meta is a closed keyspace. Unknown or malformed markers must
-            // not be silently skipped during recovery.
-            self.usage_corrupt = true;
         } else if tag == internal::Keyspace::Documents.tag() {
             self.index_identifier_entry(entry);
         }
         self.memtable.insert(entry.clone());
+    }
+
+    /// Checks mutation-source facts only after every segment and WAL record
+    /// has rebuilt its index. Segment order is not operation order, so doing
+    /// this while scanning would reject a valid fact reached before its
+    /// operation-ledger record.
+    fn validate_mutation_usage_bindings(&mut self) {
+        let invalid = self.usage_sources.iter().any(|((scope, identity), source)| {
+            if *source != UsageFactSource::Mutation {
+                return false;
+            }
+            let Some(fact) = self.usage_index.get_by_identity(scope, identity) else {
+                return true;
+            };
+            let key = (scope.tenant_id().as_str().to_owned(), identity.id().as_str().to_owned());
+            !matches!(
+                self.ledger_index.get(&key),
+                Some(record) if record.committed
+                    && record.rejection.is_none()
+                    && record.sequence == fact.sequence()
+                    && record.requested == LocalDurability::Synced
+            )
+        });
+        self.usage_corrupt |= invalid;
     }
 
     /// Returns the newest entry for one user key at or below `sequence`.

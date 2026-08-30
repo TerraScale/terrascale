@@ -34,8 +34,8 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::mpsc::Receiver;
-use std::sync::mpsc::Sender;
-use std::sync::mpsc::channel;
+use std::sync::mpsc::SyncSender;
+use std::sync::mpsc::sync_channel;
 
 use terrabase_sync_core::JournalChange;
 use terrabase_sync_core::JournalCommit;
@@ -132,6 +132,16 @@ pub const IDEMPOTENCY_RETRY_HORIZON: usize = CHECKPOINT_WINDOW;
 
 /// The journal bound per scope (bounded memory: the retained window).
 const JOURNAL_BOUND: usize = CHECKPOINT_WINDOW;
+
+/// Bounds serving memory and the amount of work one mutation performs for
+/// backbone consumers. These are deliberately conservative host-wide caps;
+/// callers must refuse new resources once a cap is reached.
+const SUBSCRIPTION_QUEUE_BOUND: usize = 64;
+const MAX_SCOPES: usize = 4096;
+const MAX_SESSIONS: usize = 4096;
+const MAX_SUBSCRIPTIONS: usize = 1024;
+const MAX_SESSIONS_PER_TENANT: usize = 256;
+const MAX_SUBSCRIPTIONS_PER_TENANT: usize = 128;
 
 /// The maximum encoded native checkpoint accepted by this host. The core's
 /// decoder enforces the same entry bound; checking the byte bound first keeps
@@ -870,7 +880,7 @@ struct SessionState {
 struct SubscriptionState {
     collections: Option<Vec<String>>,
     next_sequence: u64,
-    feed: Sender<TbepNotification>,
+    feed: SyncSender<TbepNotification>,
     /// The tenant whose channel subscribed; every lifecycle frame of the
     /// subscription must arrive on that tenant's channel.
     tenant: String,
@@ -918,6 +928,54 @@ impl SyncDeliveryHost {
 
     fn lock(&self) -> MutexGuard<'_, HostState> {
         self.state.lock().expect("the host mutex is not poisoned")
+    }
+
+    fn ensure_admission(state: &HostState) -> Result<(), HostingError> {
+        match state.health {
+            HealthState::Draining => Err(HostingError::Refused("the host is draining".into())),
+            HealthState::Stopped => Err(HostingError::Refused("the host is stopped".into())),
+            HealthState::Starting | HealthState::Serving => Ok(()),
+        }
+    }
+
+    fn can_add_scope(state: &HostState, tenant: &str, collection: &str) -> Result<(), HostingError> {
+        if state.scopes.contains_key(&(tenant.to_owned(), collection.to_owned())) {
+            return Ok(());
+        }
+        if state.scopes.len() >= MAX_SCOPES {
+            return Err(HostingError::Refused("the host scope limit is exhausted".into()));
+        }
+        Ok(())
+    }
+
+    fn can_add_session(state: &HostState, tenant: &str) -> Result<(), HostingError> {
+        if state.sessions.len() >= MAX_SESSIONS {
+            return Err(HostingError::SessionRefused("the host session limit is exhausted".into()));
+        }
+        let count = state.sessions.values().filter(|session| session.tenant == tenant).count();
+        if count >= MAX_SESSIONS_PER_TENANT {
+            return Err(HostingError::SessionRefused("the tenant session limit is exhausted".into()));
+        }
+        Ok(())
+    }
+
+    fn can_add_subscription(state: &HostState, tenant: &str) -> Result<(), HostingError> {
+        if state.subscriptions.len() >= MAX_SUBSCRIPTIONS {
+            return Err(HostingError::SubscriptionRefused(
+                "the host subscription limit is exhausted".into(),
+            ));
+        }
+        let count = state
+            .subscriptions
+            .values()
+            .filter(|subscription| subscription.tenant == tenant)
+            .count();
+        if count >= MAX_SUBSCRIPTIONS_PER_TENANT {
+            return Err(HostingError::SubscriptionRefused(
+                "the tenant subscription limit is exhausted".into(),
+            ));
+        }
+        Ok(())
     }
 
     fn scope<'a>(

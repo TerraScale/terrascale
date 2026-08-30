@@ -9,7 +9,7 @@ use std::time::Duration;
 use terrabase::observability::{
     AdmissionReason, BackupMode, CommitResult, Component, HealthStatus, MetricsRegistry,
     Operation, Outcome, Queue, Region, ServiceState, StorageOperation, StorageTier, TaskOutcome,
-    redact_diagnostic,
+    PROMETHEUS_PATH, redact_diagnostic,
 };
 
 #[test]
@@ -368,6 +368,12 @@ fn alert_rules_preserve_required_optional_and_selected_region_semantics() {
             "alert {alert} must appear once"
         );
     }
+}
+
+#[test]
+fn prometheus_scrape_path_matches_the_rust_server_contract() {
+    let config = include_str!("../../deploy/observability/prometheus.yml");
+    assert!(config.contains(&format!("metrics_path: {PROMETHEUS_PATH}")));
 }
 
 #[test]

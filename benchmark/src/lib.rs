@@ -25,6 +25,7 @@ pub mod authorization;
 pub mod backup;
 pub mod deletion;
 pub mod engine;
+pub mod encryption;
 pub mod families;
 pub mod identity;
 pub mod index;

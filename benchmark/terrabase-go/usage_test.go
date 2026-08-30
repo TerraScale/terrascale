@@ -15,7 +15,7 @@ func validUsageAdmission(requestID string) UsageAdmissionContext {
 		Project:          "project-a",
 		Database:         "database-a",
 		Partition:        "partition-a",
-		OriginRegion:     "gru",
+		OriginRegion:     UsageRegionGRU,
 		RequestID:        requestID,
 		AcceptedAtMillis: 1_788_091_200_000,
 		MeterVersion:     1,
@@ -29,7 +29,7 @@ func validUsageRecord(factID string) UsageRecordInput {
 		Project:          "project-a",
 		Database:         "database-a",
 		Partition:        "partition-a",
-		OriginRegion:     "gru",
+		OriginRegion:     UsageRegionGRU,
 		FactID:           factID,
 		RecordedAtMillis: 1_788_091_200_000,
 		MeterVersion:     1,
@@ -101,7 +101,7 @@ func TestUsageAdmissionAttachesToEverySupportedMutation(t *testing.T) {
 	if admissionCount != 5 {
 		t.Fatalf("the fake observed %d admitted mutations, want 5", admissionCount)
 	}
-	if last := fake.lastAdmission(); last == nil || last.GetRequestId() != "usage-sync" || last.GetIntegerUnits() != "1" {
+	if last := fake.lastAdmission(); last == nil || last.GetRequestId() != "usage-sync" || last.GetIntegerUnits() != "1" || last.GetOriginRegion() != v1.UsageRegion_USAGE_REGION_GRU {
 		t.Fatalf("the last usage admission is wrong: %+v", last)
 	}
 
@@ -132,7 +132,7 @@ func TestUsageExportPagesStableSnapshot(t *testing.T) {
 		t.Fatalf("the first usage page is wrong: %+v", first)
 	}
 	fact := first.Facts[0]
-	if fact.Tenant != "tenant-a" || fact.FactID != "fact-1" || fact.IntegerDelta != "1" || fact.Sequence != 1 {
+	if fact.Tenant != "tenant-a" || fact.FactID != "fact-1" || fact.Region != UsageRegionGRU || fact.IntegerDelta != "1" || fact.Sequence != 1 {
 		t.Fatalf("the first usage fact is wrong: %+v", fact)
 	}
 	if len(fact.Canonical) <= usageChecksumBytes || !bytes.HasSuffix(fact.Canonical, fact.Checksum[:]) {
@@ -162,6 +162,7 @@ func TestUsageValidationAndTenantIsolation(t *testing.T) {
 	invalidRecords := []UsageRecordInput{
 		{},
 		func() UsageRecordInput { value := validUsageRecord("fact"); value.Meter = 99; return value }(),
+		func() UsageRecordInput { value := validUsageRecord("fact"); value.OriginRegion = 99; return value }(),
 		func() UsageRecordInput { value := validUsageRecord("fact"); value.Project = " project"; return value }(),
 		func() UsageRecordInput { value := validUsageRecord("fact"); value.RecordedAtMillis = 0; return value }(),
 		func() UsageRecordInput { value := validUsageRecord("fact"); value.MeterVersion = 0; return value }(),
@@ -170,6 +171,17 @@ func TestUsageValidationAndTenantIsolation(t *testing.T) {
 		func() UsageRecordInput {
 			value := validUsageRecord("fact")
 			value.IntegerUnits = "170141183460469231731687303715884105728"
+			return value
+		}(),
+		func() UsageRecordInput {
+			value := validUsageRecord("fact")
+			value.IntegerUnits = "1099511627777"
+			return value
+		}(),
+		func() UsageRecordInput {
+			value := validUsageRecord("fact")
+			value.Meter = UsageRecordAdmittedRequestUnits
+			value.IntegerUnits = "1000001"
 			return value
 		}(),
 	}
@@ -192,6 +204,74 @@ func TestUsageValidationAndTenantIsolation(t *testing.T) {
 	if _, err := client.UsageExport(ctx, UsageExportRequest{PageSize: 1}); !errors.Is(err, ErrEngineFailure) {
 		t.Fatalf("a cross-tenant usage fact must fail closed, got %v", err)
 	}
+}
+
+func TestUsageMeterCapsAcceptTheirExactMaximum(t *testing.T) {
+	client, _ := startFake(t)
+	mustBind(t, client)
+	ctx := context.Background()
+
+	for _, input := range []UsageRecordInput{
+		func() UsageRecordInput {
+			value := validUsageRecord("admitted-limit")
+			value.Meter = UsageRecordAdmittedRequestUnits
+			value.IntegerUnits = maxAdmittedRequestUnits
+			return value
+		}(),
+		func() UsageRecordInput {
+			value := validUsageRecord("egress-limit")
+			value.Meter = UsageRecordPublicEgressBytes
+			value.IntegerUnits = maxPublicEgressBytes
+			return value
+		}(),
+	} {
+		if _, err := client.UsageRecord(ctx, input); err != nil {
+			t.Fatalf("the %s meter rejected its exact limit: %v", input.Meter, err)
+		}
+	}
+
+	admission := validUsageAdmission("admission-limit")
+	admission.IntegerUnits = maxAdmittedRequestUnits
+	if _, err := admission.protoForKey(admission.RequestID); err != nil {
+		t.Fatalf("usage admission rejected its exact limit: %v", err)
+	}
+	admission.IntegerUnits = "1000001"
+	if _, err := admission.protoForKey(admission.RequestID); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("usage admission accepted units above its limit: %v", err)
+	}
+}
+
+func TestUsageExportRejectsReservedAndUnknownVocabulary(t *testing.T) {
+	tests := []struct {
+		name   string
+		region *v1.UsageRegion
+		meter  *v1.UsageMeter
+	}{
+		{name: "unspecified region", region: usageRegionPointer(v1.UsageRegion_USAGE_REGION_UNSPECIFIED)},
+		{name: "unknown region", region: usageRegionPointer(v1.UsageRegion(99))},
+		{name: "reserved meter", meter: usageMeterPointer(v1.UsageMeter(1))},
+		{name: "unknown meter", meter: usageMeterPointer(v1.UsageMeter(99))},
+		{name: "mismatched contract", meter: usageMeterPointer(v1.UsageMeter_USAGE_METER_PUBLIC_EGRESS_BYTES)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client, fake := startFake(t)
+			mustBind(t, client)
+			fake.usageRegionOverride = test.region
+			fake.usageMeterOverride = test.meter
+			if _, err := client.UsageExport(context.Background(), UsageExportRequest{PageSize: 1}); !errors.Is(err, ErrEngineFailure) {
+				t.Fatalf("a hostile usage vocabulary must fail closed, got %v", err)
+			}
+		})
+	}
+}
+
+func usageRegionPointer(value v1.UsageRegion) *v1.UsageRegion {
+	return &value
+}
+
+func usageMeterPointer(value v1.UsageMeter) *v1.UsageMeter {
+	return &value
 }
 
 func TestUsageErrorsMapToClosedSentinels(t *testing.T) {

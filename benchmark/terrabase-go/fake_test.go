@@ -41,6 +41,8 @@ type fakeTBEP struct {
 	admissions          []*v1.UsageAdmissionContext
 	usageFacts          map[string]*v1.UsageRecordResponse
 	usageTenantOverride string
+	usageRegionOverride *v1.UsageRegion
+	usageMeterOverride  *v1.UsageMeter
 	// bindTenant lets boundary tests model a compromised or buggy host
 	// returning a tenant other than the one requested by the caller.
 	bindTenant string
@@ -771,6 +773,14 @@ func (fake *fakeTBEP) Record(ctx context.Context, request *v1.UsageRecordRequest
 		return nil, engineStatus(codes.InvalidArgument, v1.ErrorCode_ERROR_CODE_IDEMPOTENCY_PAIRING,
 			"the usage fact identity differs from the idempotency key")
 	}
+	switch request.GetOriginRegion() {
+	case v1.UsageRegion_USAGE_REGION_GRU,
+		v1.UsageRegion_USAGE_REGION_SFO,
+		v1.UsageRegion_USAGE_REGION_FRA:
+	default:
+		return nil, engineStatus(codes.InvalidArgument, v1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
+			"the usage fact carries an invalid Region")
+	}
 	if failure := fake.plannedFailure(); failure != nil {
 		return nil, failure
 	}
@@ -811,10 +821,18 @@ func (fake *fakeTBEP) Export(ctx context.Context, request *v1.UsageExportRequest
 		continuation = nil
 	}
 	canonical := append([]byte("usage-envelope:"+factID+":"), checksum...)
+	region := v1.UsageRegion_USAGE_REGION_GRU
+	if fake.usageRegionOverride != nil {
+		region = *fake.usageRegionOverride
+	}
+	meter := v1.UsageMeter_USAGE_METER_ADMITTED_REQUEST_UNITS
+	if fake.usageMeterOverride != nil {
+		meter = *fake.usageMeterOverride
+	}
 	return &v1.UsageExportResponse{
 		Facts: []*v1.UsageFact{{
 			FactId:                 factID,
-			Meter:                  v1.UsageMeter_USAGE_METER_ADMITTED_REQUEST_UNITS,
+			Meter:                  meter,
 			MeterVersion:           1,
 			Unit:                   v1.UsageUnit_USAGE_UNIT_REQUEST_UNIT,
 			ChargeScope:            v1.UsageChargeScope_USAGE_CHARGE_SCOPE_ADMITTED_REQUEST,
@@ -823,7 +841,7 @@ func (fake *fakeTBEP) Export(ctx context.Context, request *v1.UsageExportRequest
 			Project:                "project-a",
 			Database:               "database-a",
 			Partition:              "partition-a",
-			Region:                 "gru",
+			Region:                 region,
 			MeasurementStartMillis: 1000,
 			MeasurementEndMillis:   1001,
 			IntegerDelta:           "1",

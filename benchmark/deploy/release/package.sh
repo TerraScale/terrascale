@@ -69,13 +69,15 @@ ambient_flags="${RUSTFLAGS-} ${CARGO_ENCODED_RUSTFLAGS-}"
   exit 1
 }
 
-if [[ ${TERRABASE_ALLOW_DIRTY_PACKAGE-0} != 1 ]]; then
-  git diff --quiet --ignore-submodules --
-  git diff --cached --quiet --ignore-submodules --
-  [[ -z "$(git ls-files --others --exclude-standard)" ]] || {
+source_dirty=false
+if ! git diff --quiet --ignore-submodules -- \
+  || ! git diff --cached --quiet --ignore-submodules -- \
+  || [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+  if [[ ${TERRABASE_ALLOW_DIRTY_PACKAGE-0} != 1 ]]; then
     echo "release packaging requires a clean worktree" >&2
     exit 1
-  }
+  fi
+  source_dirty=true
 fi
 
 [[ ! -e "$output" && ! -L "$output" ]] || {
@@ -160,6 +162,7 @@ tar \
 image_context=$work/image
 install -D -m 0755 "$built_binary" "$image_context/rootfs/usr/local/bin/$binary"
 install -d -m 0750 "$image_context/rootfs/var/lib/$state_directory"
+binary_digest=$(sha256sum "$built_binary" | awk '{print $1}')
 image_ref=localhost/$package:$version-$oci_arch
 oci_tag=$package-$version-$oci_arch
 buildah \
@@ -176,6 +179,7 @@ buildah \
   --build-arg "TERRABASE_VERSION=$version" \
   --build-arg "TERRABASE_REVISION=$source_revision" \
   --build-arg "TERRABASE_CREATED=$created" \
+  --build-arg "TERRABASE_BINARY_SHA256=$binary_digest" \
   --tag "$image_ref" \
   --file "$containerfile" \
   "$image_context"
@@ -190,7 +194,6 @@ buildah \
 
 oci_digest=$(sha256sum "$output/$oci_name" | awk '{print $1}')
 archive_digest=$(sha256sum "$output/$archive_name" | awk '{print $1}')
-binary_digest=$(sha256sum "$built_binary" | awk '{print $1}')
 lock_digest=$(sha256sum "$(dirname -- "$manifest")/Cargo.lock" | awk '{print $1}')
 
 python3 "$script_dir/generate_sbom.py" \
@@ -210,14 +213,20 @@ jq -n \
   --arg rust "$rust_version" \
   --arg lock_digest "$lock_digest" \
   --arg base 'gcr.io/distroless/cc-debian12@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f' \
+  --arg archive_name "$archive_name" \
+  --arg archive_digest "$archive_digest" \
+  --argjson source_dirty "$source_dirty" \
   '{
     "_type": "https://in-toto.io/Statement/v1",
-    "subject": [{"name": $name, "digest": {"sha256": $digest}}],
+    "subject": [
+      {"name": $archive_name, "digest": {"sha256": $archive_digest}},
+      {"name": $name, "digest": {"sha256": $digest}}
+    ],
     "predicateType": "https://slsa.dev/provenance/v1",
     "predicate": {
       "buildDefinition": {
         "buildType": "https://terrascale.tech/build/terrabase-native-oci/v1",
-        "externalParameters": {"target": $target, "profile": "release"},
+        "externalParameters": {"target": $target, "profile": "release", "sourceDirty": $source_dirty},
         "internalParameters": {"rustc": $rust, "cargoLockSha256": $lock_digest},
         "resolvedDependencies": [
           {"uri": $repository, "digest": {"gitCommit": $revision, "gitTree": $tree}},
@@ -244,19 +253,30 @@ jq -n \
   --arg oci_digest "$oci_digest" \
   --arg sbom "$sbom_name" \
   --arg provenance "$provenance_name" \
+  --argjson source_dirty "$source_dirty" \
   '{
     schemaVersion: 1,
     component: $component,
     package: $package,
     version: $version,
     target: $target,
-    source: {revision: $revision, tree: $tree, created: $created},
+    source: {revision: $revision, tree: $tree, created: $created, dirty: $source_dirty},
     binary: {name: $binary, sha256: $binary_digest},
     artifacts: {
       archive: {name: $archive, sha256: $archive_digest},
       ociArchive: {name: $oci, sha256: $oci_digest}
     },
-    evidence: {sbom: $sbom, provenance: $provenance, checksums: "SHA256SUMS"},
+    evidence: (
+      {sbom: $sbom, provenance: $provenance, checksums: "SHA256SUMS"} +
+      if $component == "server" then {
+        productionCapability: {
+          statement: "PRODUCTION-CAPABILITY.json",
+          signature: "PRODUCTION-CAPABILITY.sig",
+          clusterComposition: "cluster-composition.evidence.json",
+          encryptionAtRest: "encryption-at-rest.evidence.json"
+        }
+      } else {} end
+    ),
     signature: {file: "SHA256SUMS.sig", algorithm: "ecdsa-p256-sha256"}
   }' >"$output/$manifest_name"
 
@@ -276,5 +296,7 @@ observed_arch=$(skopeo inspect "oci-archive:$output/$oci_name:$oci_tag" | jq -er
   echo "OCI archive architecture mismatch: expected $oci_arch, observed $observed_arch" >&2
   exit 1
 }
+
+"$script_dir/verify.sh" --unsigned "$output"
 
 echo "packaged unsigned $package $version for $target at $output"

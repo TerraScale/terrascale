@@ -35,25 +35,31 @@ Every production candidate exports these bounded families:
 | Is the process alive and eligible for traffic? | `terrabase_liveness`, `terrabase_started`, `terrabase_ready` | Minimum readiness across the selected targets. |
 | How much traffic is completing? | `terrabase_requests_total{region,operation,outcome}` | Per-second rate over the selected interval, summed only where totals are meaningful. |
 | Is traffic slow? | `terrabase_request_duration_seconds{region,operation,outcome}` | p50, p95, and p99 from histogram bucket rates. |
+| Is admission saturated? | `terrabase_in_flight_operations{operation}`, `terrabase_admission_rejections_total{operation,reason}` | Current work plus rejection rate by bounded cause. |
+| Which queue is filling? | `terrabase_queue_depth{queue}`, `terrabase_queue_capacity{queue}` | Depth divided by configured capacity. |
+| Is the durability path healthy? | `terrabase_wal_fsync_total{outcome}`, `terrabase_wal_fsync_duration_seconds{outcome}`, `terrabase_commits_total{outcome}`, `terrabase_commit_duration_seconds{outcome}` | Failure rates and successful p99 latency. Indeterminate commits stay separate. |
 | How much storage is in use? | `terrabase_storage_bytes{tier}` | Bytes by tier and total bytes across the selected targets. |
 | How much storage headroom remains? | `terrabase_storage_capacity_bytes{tier}` | Usage divided by finite configured capacity. Missing capacity is unknown, not zero. |
-| Is replication keeping up? | `terrabase_replication_lag_seconds{region}` | Maximum observed lag by Region. |
+| Is storage failing? | `terrabase_storage_errors_total{tier,operation}` | Per-second error rate by tier and bounded operation. |
+| Is replication keeping up? | `terrabase_replication_lag_seconds{region}`, `terrabase_replication_backlog_bytes{region}`, `terrabase_replication_frontier_health{region}` | Maximum lag and backlog plus minimum verified frontier health by Region. |
 | Does the cluster have its admitted Members? | `terrabase_active_members{region}` | Active Member count by Region. |
-| Which bounded subsystem is failing? | `terrabase_component_health{component}` | Minimum health by component, where `1` is healthy, `0.5` is degraded, and `0` is unhealthy or unknown. |
+| Is compaction keeping up? | `terrabase_compaction_backlog_bytes{tier}`, `terrabase_compaction_runs_total{outcome}`, `terrabase_compaction_input_bytes_total`, `terrabase_compaction_output_bytes_total` | Backlog, result rate, and input/output bytes per second. |
+| Are recovery points fresh? | `terrabase_backup_last_success_age_seconds{mode}`, `terrabase_backup_runs_total{mode,outcome}` | Oldest verified success age and backup result rate. |
+| Is usage publication advancing? | `terrabase_usage_export_frontier`, `terrabase_usage_export_failures_total` | Durable frontier and publication failure rate. |
+| Which bounded subsystem is failing? | `terrabase_component_health{component}` | Minimum health by component, where `1` is healthy, `0.5` is degraded, `0` is unhealthy, and `-1` is unknown. |
 
 Storage capacity means usable capacity enforced for that tier, after any
 reserved headroom. A collector omits `terrabase_storage_capacity_bytes` when a
 tier has no finite trustworthy capacity. It never invents a maximum for object
 storage.
 
-The GA contract also requires bounded signals for admission and in-flight
-work, queue saturation, WAL durability and stalls, compaction debt, index
-lifecycle, repair, subscriptions, tier movement, backup freshness, restore and
-deletion progress, usage publication, key lifecycle, and graceful shutdown.
-Each family needs a stable name, unit, type, closed label vocabulary, dashboard
-panel, alert or recorded reason for having no alert, runbook action, and
-contract test before a dashboard may query it. A dashboard with a permanently
-missing query is not evidence that a signal exists.
+Later collectors will add the remaining bounded signals for index lifecycle,
+repair, subscriptions, tier movement, restore and deletion progress, key
+lifecycle, and graceful shutdown. Each family needs a stable name, unit, type,
+closed label vocabulary, dashboard panel, alert or recorded reason for having
+no alert, runbook action, and contract test before a dashboard may query it. A
+dashboard with a permanently missing query is not evidence that a signal
+exists.
 
 ## Labels and aggregation
 
@@ -85,11 +91,13 @@ without a local Grafana edit. Region and operation filters apply to traffic
 and latency panels. Prometheus is the only data source.
 
 Alerts cover a missing scrape, readiness loss, component failure, sustained
-engine error rates, latency budget breaches, replication lag, admitted Member
-loss, and storage headroom. Thresholds in the repository are starting policy.
-Production owners pin them to the selected topology, capacity profile, and ADR
-0033 SLO before GA. A missing capacity series creates a telemetry gap and must
-not be interpreted as unlimited storage.
+engine error rates, latency budget breaches, queue saturation, admission
+refusal, WAL and commit failures, replication health, admitted Member loss,
+storage headroom and errors, compaction debt, backup freshness, and usage
+publication. Thresholds in the repository are starting policy. Production
+owners pin them to the selected topology, capacity profile, and ADR 0033 SLO
+before GA. A missing capacity series creates a telemetry gap and must not be
+interpreted as unlimited storage.
 
 ## Required evidence
 

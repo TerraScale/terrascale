@@ -15,11 +15,30 @@ network policy. TerraBase supplies the bounded registry and exposition body.
 | `terrabase_ready` | gauge | none | `1` only while the service may accept traffic and every required health component is ready. |
 | `terrabase_requests_total` | counter | `region`, `operation`, `outcome` | Completed requests. Prometheus derives requests per second from this counter. |
 | `terrabase_request_duration_seconds` | histogram | `region`, `operation`, `outcome` | Request latency with fixed 5 ms through 10 s buckets. |
+| `terrabase_in_flight_operations` | gauge | `operation` | Current admitted work by operation family. |
+| `terrabase_admission_rejections_total` | counter | `operation`, `reason` | Capacity, concurrency, queue, deadline, lifecycle, and other bounded refusals. |
+| `terrabase_queue_depth` | gauge | `queue` | Current work waiting in each bounded internal queue. |
+| `terrabase_queue_capacity` | gauge | `queue` | Non-zero configured capacity paired with queue depth. |
+| `terrabase_wal_fsync_total` | counter | `outcome` | WAL synchronization attempts and failures. |
+| `terrabase_wal_fsync_duration_seconds` | histogram | `outcome` | WAL synchronization latency. |
+| `terrabase_commits_total` | counter | `outcome` | Committed, refused, failed, and unknown commit outcomes. |
+| `terrabase_commit_duration_seconds` | histogram | `outcome` | End-to-end durability latency for the same commit outcomes. |
 | `terrabase_replication_lag_seconds` | gauge | `region` | Current observed replication lag. |
+| `terrabase_replication_backlog_bytes` | gauge | `region` | Bytes queued for delivery to a selected Region. |
+| `terrabase_replication_frontier_health` | gauge | `region` | Verified frontier health using the component health numeric values. |
 | `terrabase_storage_bytes` | gauge | `tier` | Measured bytes in `tier1`, `tier2`, or `tier3`. |
 | `terrabase_storage_capacity_bytes` | gauge | `tier` | Finite usable capacity by tier. The series is absent when capacity is unknown or unbounded. |
+| `terrabase_storage_errors_total` | counter | `tier`, `operation` | Storage errors classified without paths or error text. |
 | `terrabase_active_members` | gauge | `region` | Active admitted Members by Region. |
-| `terrabase_component_health` | gauge | `component` | `1` healthy, `0.5` degraded, `0` unhealthy or unknown. |
+| `terrabase_component_health` | gauge | `component` | `1` healthy, `0.5` degraded, `0` unhealthy, `-1` unknown or unconfigured. |
+| `terrabase_compaction_backlog_bytes` | gauge | `tier` | Bytes awaiting compaction. |
+| `terrabase_compaction_runs_total` | counter | `outcome` | Successful and failed compaction runs. |
+| `terrabase_compaction_input_bytes_total` | counter | none | Bytes read by compaction. |
+| `terrabase_compaction_output_bytes_total` | counter | none | Bytes written by compaction. |
+| `terrabase_backup_last_success_age_seconds` | gauge | `mode` | Age of the last verified successful backup. |
+| `terrabase_backup_runs_total` | counter | `mode`, `outcome` | Successful and failed backup runs. |
+| `terrabase_usage_export_frontier` | gauge | none | Last exported authoritative usage sequence frontier. |
+| `terrabase_usage_export_failures_total` | counter | none | Failed authoritative usage export attempts. |
 
 The only named Region label values are `GRU`, `SFO`, and `FRA`; `unknown` is an
 aggregate for incomplete or invalid topology observations. Input is not
@@ -30,6 +49,12 @@ enums in the Rust API. The values are `read`, `write`, `query`, `subscribe`,
 `success`, `error`, `rejected`, `timeout` for outcomes; `tier1`, `tier2`,
 `tier3` for storage; and `storage`, `replication`, `membership`,
 `control_plane`, `backup`, `metrics` for components.
+
+`Storage`, `replication`, and `membership` are the post-admission readiness
+requirements. Control-plane loss remains visible but does not evacuate an
+admitted data-plane Member: reads, convergence, and replication continue while
+new control mutations fail closed. Optional `backup` and `metrics` slots stay at
+`-1` when unconfigured or unobserved, so they do not look like failures.
 
 The renderer emits `# HELP` and `# TYPE` once per family, sorts map-backed
 series deterministically, emits no scrape timestamp, and uses cumulative
@@ -65,11 +90,14 @@ bounded response size, short scrape timeout, and connection limits. It does
 not proxy customer request paths or accept arbitrary labels. TLS identity,
 network allow-listing, and authorization remain at the production boundary.
 
-Health and readiness adapters map `HealthRegistry::liveness()` to a liveness
-probe and `HealthReport::readiness_status_code()` to a readiness probe. A
-dependency outage returns readiness failure while the process remains live.
-Probe bodies may include component names and bounded status values, but must
-pass free-form diagnostic text through `redact_diagnostic` first.
+`terrabase-server` serves `PROMETHEUS_PATH`, `LIVENESS_PATH`, `STARTUP_PATH`,
+and `READINESS_PATH` from the same immutable `MetricsSnapshot`. The paths are
+`/internal/metrics`, `/live`, `/startup`, and `/ready`. Startup becomes true
+after durable engine open and every configured listener binds, and never flips
+back. Draining clears readiness before shutdown; terminal shutdown clears
+liveness. Probe bodies contain only bounded lifecycle, component, and status
+values. Free-form diagnostics must pass through `redact_diagnostic` before an
+operator sink receives them.
 
 ## Redaction
 

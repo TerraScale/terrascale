@@ -1,5 +1,4 @@
-# Starting alert policy for the bounded TerraBase metric contract.
-# Review and pin thresholds against the accepted SLO and capacity profile before GA.
+# TerraBase production alert policy for the bounded metric contract.
 groups:
   - name: terrabase-availability
     interval: 30s
@@ -24,15 +23,45 @@ groups:
           summary: TerraBase is live but not ready
           description: Required admission or dependency checks have not been healthy for five minutes.
 
-      - alert: TerraBaseComponentUnhealthy
-        expr: terrabase_component_health <= 0
+      - alert: TerraBaseLivenessLost
+        expr: terrabase_liveness == 0
+        for: 1m
+        labels:
+          service: terrabase
+          severity: critical
+        annotations:
+          summary: TerraBase reached a terminal lifecycle state
+          description: The process is reachable but its lifecycle is terminal; preserve evidence before restart.
+
+      - alert: TerraBaseStartupStuck
+        expr: terrabase_started == 0 and on(job, instance) terrabase_liveness == 1
+        for: 10m
+        labels:
+          service: terrabase
+          severity: critical
+        annotations:
+          summary: TerraBase startup has not completed
+          description: Durable engine open or private listener admission has not completed for ten minutes.
+
+      - alert: TerraBaseRequiredComponentUnavailable
+        expr: terrabase_component_health{component=~"storage|replication|membership"} <= 0
         for: 5m
         labels:
           service: terrabase
           severity: critical
         annotations:
-          summary: A TerraBase component is unhealthy or unknown
-          description: The {{ $labels.component }} component is unhealthy or has no trustworthy observation; inspect readiness and the operator runbook.
+          summary: A required TerraBase component is unavailable
+          description: The {{ $labels.component }} component is unhealthy or has no trustworthy observation.
+
+      - alert: TerraBaseOptionalComponentUnavailable
+        expr: terrabase_component_health{component=~"control_plane|backup|metrics"} == 0
+        for: 15m
+        labels:
+          service: terrabase
+          severity: warning
+        annotations:
+          summary: An observed optional TerraBase component is unhealthy
+          description: Unknown or unconfigured optional components report -1 and do not fire this alert.
 
       - alert: TerraBaseComponentDegraded
         expr: terrabase_component_health == 0.5
@@ -50,17 +79,17 @@ groups:
       - alert: TerraBaseRequestErrorsHigh
         expr: |
           (
-            sum by (region, operation) (
+            sum by (job, instance, region, operation) (
               rate(terrabase_requests_total{outcome=~"error|timeout"}[5m])
             )
             /
             clamp_min(
-              sum by (region, operation) (rate(terrabase_requests_total[5m])),
+              sum by (job, instance, region, operation) (rate(terrabase_requests_total[5m])),
               0.001
             )
           ) > 0.01
-          and on (region, operation)
-          sum by (region, operation) (rate(terrabase_requests_total[5m])) > 1
+          and on (job, instance, region, operation)
+          sum by (job, instance, region, operation) (rate(terrabase_requests_total[5m])) > 1
         for: 10m
         labels:
           service: terrabase
@@ -153,7 +182,7 @@ groups:
           description: A caller-visible commit requires durability resolution; follow the indeterminate commit runbook.
 
       - alert: TerraBaseReplicationLagHigh
-        expr: terrabase_replication_lag_seconds > 5
+        expr: terrabase_replication_lag_seconds{region!="unknown"} > 5
         for: 10m
         labels:
           service: terrabase
@@ -163,7 +192,7 @@ groups:
           description: Region {{ $labels.region }} has exceeded five seconds of observed lag for ten minutes.
 
       - alert: TerraBaseReplicationLagCritical
-        expr: terrabase_replication_lag_seconds > 30
+        expr: terrabase_replication_lag_seconds{region!="unknown"} > 30
         for: 5m
         labels:
           service: terrabase
@@ -173,7 +202,7 @@ groups:
           description: Region {{ $labels.region }} has exceeded thirty seconds of observed lag for five minutes.
 
       - alert: TerraBaseReplicationFrontierUnhealthy
-        expr: terrabase_replication_frontier_health <= 0
+        expr: terrabase_replication_frontier_health{region!="unknown"} <= 0
         for: 5m
         labels:
           service: terrabase
@@ -183,20 +212,20 @@ groups:
           description: Region {{ $labels.region }} lacks a healthy verified replication frontier.
 
       - alert: TerraBaseActiveMembersLow
-        expr: terrabase_active_members < 2
+        expr: terrabase_active_members{region!="unknown"} < 2
         for: 5m
         labels:
           service: terrabase
           severity: critical
         annotations:
           summary: TerraBase has fewer than two active Members
-          description: Region {{ $labels.region }} reports fewer than two active Members; confirm the selected topology before treating this as a quorum incident.
+          description: The collector emits this series only for selected Regions; Region {{ $labels.region }} is below RF=2.
 
   - name: terrabase-storage-and-background-work
     interval: 30s
     rules:
       - alert: TerraBaseStorageCapacityMissing
-        expr: absent(terrabase_storage_capacity_bytes{job="terrabase"})
+        expr: up{job="terrabase"} == 1 unless on(job, instance) terrabase_storage_capacity_bytes{tier="tier2"}
         for: 15m
         labels:
           service: terrabase
@@ -284,3 +313,13 @@ groups:
         annotations:
           summary: TerraBase usage export failed
           description: Authoritative usage publication failed in the last fifteen minutes; inspect the usage-export queue and frontier.
+
+      - alert: TerraBaseUsageExportFrontierMissing
+        expr: up{job="terrabase"} == 1 unless on(job, instance) terrabase_usage_export_frontier
+        for: 15m
+        labels:
+          service: terrabase
+          severity: warning
+        annotations:
+          summary: TerraBase usage-export frontier telemetry is missing
+          description: The exporter has not published its durable frontier; verify collector wiring.

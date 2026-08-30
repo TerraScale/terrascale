@@ -546,6 +546,31 @@ mod tests {
     }
 
     #[test]
+    fn s3_settings_persist_without_credentials() {
+        let directory = unique_scratch("backup-settings");
+        let config = config_for(&directory);
+        let state = StudioState::open(config.clone()).unwrap();
+        let settings = S3BackupSettings {
+            enabled: true,
+            bucket: "terrabase-backups".to_owned(),
+            prefix: "production/database-a".to_owned(),
+            kms_key_id: "alias/terrabase-backups".to_owned(),
+            ..S3BackupSettings::default()
+        };
+        state.set_backup_settings(settings.clone()).unwrap();
+        drop(state);
+
+        let sidecar = std::fs::read_to_string(config.sidecar_dir().join("state.json")).unwrap();
+        assert!(sidecar.contains("terrabase-backups"));
+        for secret_name in ["AWS_ACCESS_KEY_ID", "access_key", "secret_key", "session_token"] {
+            assert!(!sidecar.contains(secret_name));
+        }
+
+        let reopened = StudioState::open(config).unwrap();
+        assert_eq!(reopened.backup_settings(), settings);
+    }
+
+    #[test]
     fn operation_identities_are_fresh_each_call() {
         let state = open_scratch_state("operation-ids");
         let first = state.next_operation().unwrap();

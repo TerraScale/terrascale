@@ -792,6 +792,37 @@ mod tests {
 
     use super::*;
 
+    fn test_root(name: &str) -> PathBuf {
+        static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+        let index = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir()
+            .join(format!("terrabase-studio-s3-{name}-{}-{index}", std::process::id(),))
+    }
+
+    fn sample_state(root: &Path) -> Arc<crate::state::StudioState> {
+        let state = Arc::new(
+            crate::state::StudioState::open(crate::state::Config {
+                data_dir: root.join("source"),
+                addr: crate::state::DEFAULT_ADDR.to_owned(),
+            })
+            .unwrap(),
+        );
+        crate::routes::test_seed_sample(state.as_ref()).unwrap();
+        state
+    }
+
+    fn memory_repository(store: Arc<InMemory>) -> S3BackupRepository {
+        S3BackupRepository::new(store, "database-a", "memory://database-a".to_owned()).unwrap()
+    }
+
+    fn test_settings() -> S3BackupSettings {
+        S3BackupSettings {
+            bucket: "backups".to_owned(),
+            prefix: "database-a".to_owned(),
+            ..S3BackupSettings::default()
+        }
+    }
+
     #[test]
     fn settings_reject_secret_bearing_and_insecure_endpoints() {
         let mut settings = S3BackupSettings {
@@ -808,12 +839,7 @@ mod tests {
 
     #[tokio::test]
     async fn immutable_uploads_are_idempotent_and_refuse_replacement() {
-        let repository = S3BackupRepository::new(
-            Arc::new(InMemory::new()),
-            "database-a",
-            "memory://database-a".to_owned(),
-        )
-        .unwrap();
+        let repository = memory_repository(Arc::new(InMemory::new()));
         let location = repository.prefix.clone().join("object");
         assert!(repository.put_immutable(location.clone(), b"same".to_vec()).await.unwrap());
         assert!(!repository.put_immutable(location.clone(), b"same".to_vec()).await.unwrap());
@@ -821,32 +847,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn full_point_round_trips_through_an_object_store() {
-        static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
-        let index = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir()
-            .join(format!("terrabase-studio-s3-round-trip-{}-{index}", std::process::id(),));
-        let state = Arc::new(
-            crate::state::StudioState::open(crate::state::Config {
-                data_dir: root.join("source"),
-                addr: crate::state::DEFAULT_ADDR.to_owned(),
-            })
-            .unwrap(),
-        );
-        crate::routes::test_seed_sample(state.as_ref()).unwrap();
-        let repository = S3BackupRepository::new(
-            Arc::new(InMemory::new()),
-            "database-a",
-            "memory://database-a".to_owned(),
-        )
-        .unwrap();
-        let settings = S3BackupSettings {
-            bucket: "backups".to_owned(),
-            prefix: "database-a".to_owned(),
-            ..S3BackupSettings::default()
-        };
+    async fn full_then_incremental_points_restore_latest_or_an_older_selection() {
+        let root = test_root("round-trip");
+        let state = sample_state(&root);
+        let repository = memory_repository(Arc::new(InMemory::new()));
+        let settings = test_settings();
 
-        let uploaded = backup_to_s3(
+        let full = backup_to_s3(
             &repository,
             Arc::clone(&state.engine),
             &root.join("scratch"),
@@ -856,17 +863,111 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(uploaded.uploaded_objects >= 2);
-        let points = repository.list_recovery_points().await.unwrap();
-        assert_eq!(points.len(), 1);
-        assert_eq!(points[0].manifest(), uploaded.result.manifest());
+        assert!(full.uploaded_objects >= 2);
 
-        let restored =
-            restore_from_s3(&repository, &root.join("scratch"), root.join("restored"), None)
+        crate::routes::test_seed_sample(state.as_ref()).unwrap();
+        let incremental = backup_to_s3(
+            &repository,
+            Arc::clone(&state.engine),
+            &root.join("scratch"),
+            &settings,
+            BackupRunMode::Automatic,
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            incremental.result.manifest().kind(),
+            BackupKind::Incremental { base }
+                if base == full.result.manifest().boundary_sequence()
+        ));
+
+        let points = repository.list_recovery_points().await.unwrap();
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[0].manifest(), full.result.manifest());
+        assert_eq!(points[1].manifest(), incremental.result.manifest());
+
+        let older = restore_from_s3(
+            &repository,
+            &root.join("scratch"),
+            root.join("restored-full"),
+            Some(full.result.manifest().identity()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(older.selected_identity(), full.result.manifest().identity());
+
+        let latest =
+            restore_from_s3(&repository, &root.join("scratch"), root.join("restored-latest"), None)
                 .await
                 .unwrap();
-        assert_eq!(restored.selected_identity(), uploaded.result.manifest().identity());
-        assert!(restored.restored_documents() > 0);
+        assert_eq!(latest.selected_identity(), incremental.result.manifest().identity());
+        assert!(latest.restored_documents() > 0);
+    }
+
+    #[tokio::test]
+    async fn a_member_failure_never_commits_the_manifest() {
+        let root = test_root("manifest-last");
+        let state = sample_state(&root);
+        let destination = root.join("staged");
+        let result = terrabase::backup::run_backup(
+            state.engine.as_ref(),
+            terrabase::BackupPlan::full(),
+            &destination,
+        )
+        .unwrap();
+        let missing = destination
+            .join(format!("rp-{}", result.manifest().identity()))
+            .join(result.manifest().members()[0].name());
+        std::fs::remove_file(missing).unwrap();
+
+        let store = Arc::new(InMemory::new());
+        let repository = memory_repository(Arc::clone(&store));
+        assert!(repository.upload_point(&destination, &result).await.is_err());
+        let objects = store.list(Some(&repository.prefix)).try_collect::<Vec<_>>().await.unwrap();
+        assert!(objects.iter().all(|object| object.location.filename() != Some(MANIFEST_FILE)));
+        assert!(repository.list_recovery_points().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn corrupt_or_missing_members_refuse_verification_and_restore() {
+        let root = test_root("member-refusal");
+        let state = sample_state(&root);
+        let store = Arc::new(InMemory::new());
+        let repository = memory_repository(Arc::clone(&store));
+        let uploaded = backup_to_s3(
+            &repository,
+            Arc::clone(&state.engine),
+            &root.join("scratch"),
+            &test_settings(),
+            BackupRunMode::Full,
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+        let member = &uploaded.result.manifest().members()[0];
+        let location = repository.object_path(uploaded.result.manifest().identity(), member.name());
+        let original = store.get(&location).await.unwrap().bytes().await.unwrap();
+        assert!(!original.is_empty());
+
+        let mut corrupted = original.to_vec();
+        corrupted[0] ^= 0xff;
+        store.put(&location, corrupted.into()).await.unwrap();
+        let failure = verify_s3_chain(&repository, &root.join("scratch"), None).await.unwrap_err();
+        assert!(failure.contains("ChecksumMismatch"));
+
+        store.put(&location, original).await.unwrap();
+        verify_s3_chain(&repository, &root.join("scratch"), None).await.unwrap();
+        store.delete(&location).await.unwrap();
+        assert!(verify_s3_chain(&repository, &root.join("scratch"), None).await.is_err());
+
+        let target = root.join("missing-member-target");
+        assert!(
+            restore_from_s3(&repository, &root.join("scratch"), target.clone(), None)
+                .await
+                .is_err()
+        );
+        assert!(!target.exists());
     }
 
     #[test]

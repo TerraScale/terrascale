@@ -20,6 +20,18 @@ use std::time::Duration;
 /// The content type required by the Prometheus text exposition format.
 pub const PROMETHEUS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 
+/// The private production Prometheus endpoint path.
+pub const PROMETHEUS_PATH: &str = "/internal/metrics";
+
+/// The private liveness probe path.
+pub const LIVENESS_PATH: &str = "/live";
+
+/// The private startup probe path.
+pub const STARTUP_PATH: &str = "/startup";
+
+/// The private readiness probe path.
+pub const READINESS_PATH: &str = "/ready";
+
 /// The fixed upper bound on the number of metric label values.
 ///
 /// This is a documentation and review guard.  The actual bound is enforced by

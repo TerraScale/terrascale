@@ -145,8 +145,10 @@ pub struct EngineHost {
     instance: u64,
     reads: Mutex<u64>,
     frames_served: Mutex<u64>,
-    live_queries: Mutex<std::collections::HashMap<u64, terrabase::types::Cancellation>>,
-    completed_queries: Mutex<std::collections::VecDeque<u64>>,
+    live_queries:
+        Mutex<std::collections::HashMap<(String, u64), terrabase::types::Cancellation>>,
+    completed_queries: Mutex<std::collections::VecDeque<(String, u64)>>,
+    health: Mutex<HealthState>,
 }
 
 impl EngineHost {
@@ -171,6 +173,7 @@ impl EngineHost {
             frames_served: Mutex::new(0),
             live_queries: Mutex::new(std::collections::HashMap::new()),
             completed_queries: Mutex::new(std::collections::VecDeque::new()),
+            health: Mutex::new(HealthState::Serving),
         })
     }
 
@@ -193,28 +196,42 @@ impl EngineHost {
     }
 
     /// Registers one live query's cancellation signal under its id.
-    fn register_live_query(&self, query_id: u64, cancellation: &terrabase::types::Cancellation) {
+    fn register_live_query(
+        &self,
+        tenant: &str,
+        query_id: u64,
+        cancellation: &terrabase::types::Cancellation,
+    ) {
         let mut live = self.live_queries.lock().expect("the live set is not poisoned");
-        live.insert(query_id, cancellation.clone());
+        live.insert((tenant.to_owned(), query_id), cancellation.clone());
     }
 
     /// Retires one query: the id moves to the bounded completed set a
     /// cancel can still name.
-    fn retire_live_query(&self, query_id: u64) {
+    fn retire_live_query(&self, tenant: &str, query_id: u64) {
         let mut live = self.live_queries.lock().expect("the live set is not poisoned");
-        live.remove(&query_id);
+        live.remove(&(tenant.to_owned(), query_id));
         let mut completed =
             self.completed_queries.lock().expect("the completed set is not poisoned");
-        completed.push_back(query_id);
+        completed.push_back((tenant.to_owned(), query_id));
         while completed.len() > COMPLETED_QUERY_HORIZON {
             completed.pop_front();
         }
     }
 
     /// Reports whether a finished query is still inside the horizon.
-    fn query_completed(&self, query_id: u64) -> bool {
+    fn query_completed(&self, tenant: &str, query_id: u64) -> bool {
         let completed = self.completed_queries.lock().expect("the completed set is not poisoned");
-        completed.contains(&query_id)
+        completed.contains(&(tenant.to_owned(), query_id))
+    }
+
+    fn ensure_serving(&self) -> Result<(), HostingError> {
+        match *self.health.lock().expect("the health state is not poisoned") {
+            HealthState::Serving => Ok(()),
+            HealthState::Starting => Err(HostingError::Refused("the host is starting".into())),
+            HealthState::Draining => Err(HostingError::Refused("the host is draining".into())),
+            HealthState::Stopped => Err(HostingError::Refused("the host is stopped".into())),
+        }
     }
 
     fn tenant_of(tenant: &str) -> Result<TenantId, HostingError> {
@@ -348,6 +365,7 @@ impl TbepHost for EngineHost {
         request: &ChannelBindRequest,
     ) -> Result<ChannelBindResponse, HostingError> {
         self.count_frame();
+        self.ensure_serving()?;
         // The tenant identifier validates now: an invalid bind never
         // reaches an engine scope.
         Self::tenant_of(&request.tenant)?;
@@ -360,6 +378,7 @@ impl TbepHost for EngineHost {
         request: &DocumentReadRequest,
     ) -> Result<DocumentReadResponse, HostingError> {
         self.count_frame();
+        self.ensure_serving()?;
         let tenant = Self::tenant_of(tenant)?;
         CollectionName::try_new(request.collection.as_str())
             .map_err(|_| HostingError::Invalid("the collection identifier is not valid".into()))?;
@@ -385,6 +404,7 @@ impl TbepHost for EngineHost {
         idempotency_key: &str,
     ) -> Result<DocumentWriteResponse, HostingError> {
         self.count_frame();
+        self.ensure_serving()?;
         let tenant = Self::tenant_of(tenant)?;
         let DocumentPut { id, collection, body } = &request.document;
         let (document, collection) = Self::identifiers_of(id, collection)?;
@@ -427,6 +447,7 @@ impl TbepHost for EngineHost {
         idempotency_key: &str,
     ) -> Result<DocumentDeleteResponse, HostingError> {
         self.count_frame();
+        self.ensure_serving()?;
         let tenant = Self::tenant_of(tenant)?;
         let document = DocumentId::try_new(request.document.as_str())
             .map_err(|_| HostingError::Invalid("the document identifier is not valid".into()))?;
@@ -475,6 +496,7 @@ impl TbepHost for EngineHost {
         idempotency_key: &str,
     ) -> Result<crate::registry::DocumentBatchResponse, HostingError> {
         self.count_frame();
+        self.ensure_serving()?;
         let tenant = Self::tenant_of(tenant)?;
         if request.items.is_empty() {
             return Err(HostingError::Invalid("the batch carries no items".into()));
@@ -521,6 +543,7 @@ impl TbepHost for EngineHost {
         request: &crate::registry::QueryExecuteRequest,
     ) -> Result<crate::registry::QueryExecuteResponse, HostingError> {
         self.count_frame();
+        self.ensure_serving()?;
         let tenant = Self::tenant_of(tenant)?;
         // The wire's text is bounded TQL input, capped at
         // 16 KiB by the registry's own validation. The query runs with
@@ -530,7 +553,7 @@ impl TbepHost for EngineHost {
         let text = terrabase::operations::TqlQueryText::try_new(&request.text)
             .map_err(|_| HostingError::Invalid("the query text is not valid".into()))?;
         let cancellation = terrabase::types::Cancellation::new();
-        self.register_live_query(request.query_id, &cancellation);
+        self.register_live_query(&tenant, request.query_id, &cancellation);
         let deadline = terrabase::types::Deadline::after(std::time::Duration::from_secs(30))
             .map_err(|_| HostingError::EngineFailure("the deadline is invalid".into()))?;
         let input = terrabase::operations::QueryInput::tql_bounded(text, deadline, cancellation);
@@ -554,7 +577,7 @@ impl TbepHost for EngineHost {
             Ok((store.execute(&plan, &snapshot), position))
         })();
         // Every completion path retires the query from the live set.
-        self.retire_live_query(request.query_id);
+        self.retire_live_query(&tenant, request.query_id);
         let (executed, position) = executed?;
         let result = match executed {
             Ok(result) => result,
@@ -597,20 +620,21 @@ impl TbepHost for EngineHost {
 
     fn query_cancel(
         &self,
-        _tenant: &str,
+        tenant: &str,
         request: &crate::registry::QueryCancelRequest,
     ) -> Result<crate::registry::QueryCancelResponse, HostingError> {
         self.count_frame();
+        self.ensure_serving()?;
         // A live query cancels at its next bounded checkpoint; a
         // finished one reports completion; anything else is unknown.
         let mut live = self.live_queries.lock().expect("the live set is not poisoned");
-        if let Some(cancellation) = live.remove(&request.query_id) {
+        if let Some(cancellation) = live.remove(&(tenant.to_owned(), request.query_id)) {
             cancellation.cancel();
             return Ok(crate::registry::QueryCancelResponse {
                 outcome: crate::registry::CancelOutcome::Cancelled,
             });
         }
-        let outcome = if self.query_completed(request.query_id) {
+        let outcome = if self.query_completed(tenant, request.query_id) {
             crate::registry::CancelOutcome::AlreadyComplete
         } else {
             crate::registry::CancelOutcome::UnknownQuery
@@ -739,6 +763,7 @@ impl TbepHost for EngineHost {
         _idempotency_key: &str,
     ) -> Result<crate::registry::TierConfigureResponse, HostingError> {
         self.count_frame();
+        self.ensure_serving()?;
         let policy = terrabase::tiers::TierPolicy::try_new(
             &request.policy_id,
             request.version,
@@ -765,6 +790,7 @@ impl TbepHost for EngineHost {
         _tenant: &str,
     ) -> Result<crate::registry::TierInspectResponse, HostingError> {
         self.count_frame();
+        self.ensure_serving()?;
         let view = self.engine.tiers().inspect();
         Ok(crate::registry::TierInspectResponse {
             configured: view.configured(),
@@ -780,6 +806,7 @@ impl TbepHost for EngineHost {
         _tenant: &str,
     ) -> Result<crate::registry::TierExplainResponse, HostingError> {
         self.count_frame();
+        self.ensure_serving()?;
         let receipt = self.engine.tiers().dry_run().map_err(tier_error)?;
         Ok(crate::registry::TierExplainResponse { receipt: wire_receipt(&receipt) })
     }
@@ -789,6 +816,7 @@ impl TbepHost for EngineHost {
         _tenant: &str,
     ) -> Result<crate::registry::TierDryRunResponse, HostingError> {
         self.count_frame();
+        self.ensure_serving()?;
         let receipt = self.engine.tiers().dry_run().map_err(tier_error)?;
         Ok(crate::registry::TierDryRunResponse { receipt: wire_receipt(&receipt) })
     }
@@ -799,6 +827,7 @@ impl TbepHost for EngineHost {
         _idempotency_key: &str,
     ) -> Result<crate::registry::TierRunResponse, HostingError> {
         self.count_frame();
+        self.ensure_serving()?;
         let receipt = self.engine.tiers().run().map_err(tier_error)?;
         Ok(crate::registry::TierRunResponse { receipt: wire_receipt(&receipt) })
     }
@@ -809,6 +838,7 @@ impl TbepHost for EngineHost {
         _idempotency_key: &str,
     ) -> Result<crate::registry::TierPauseResponse, HostingError> {
         self.count_frame();
+        self.ensure_serving()?;
         Ok(crate::registry::TierPauseResponse { paused: self.engine.tiers().pause() })
     }
 
@@ -818,6 +848,7 @@ impl TbepHost for EngineHost {
         _idempotency_key: &str,
     ) -> Result<crate::registry::TierResumeResponse, HostingError> {
         self.count_frame();
+        self.ensure_serving()?;
         Ok(crate::registry::TierResumeResponse { paused: self.engine.tiers().resume() })
     }
 
@@ -826,6 +857,7 @@ impl TbepHost for EngineHost {
         _tenant: &str,
     ) -> Result<crate::registry::TopologyReadResponse, HostingError> {
         self.count_frame();
+        self.ensure_serving()?;
         // Honest standalone answer: this member serves every subsystem
         // it hosts over one local binding; no cluster topology exists
         // until the cluster-mode landing admits peers.
@@ -850,6 +882,7 @@ impl TbepHost for EngineHost {
         idempotency_key: &str,
     ) -> Result<crate::registry::SchemaDeclareResponse, HostingError> {
         self.count_frame();
+        self.ensure_serving()?;
         let tenant = Self::tenant_of(tenant)?;
         let collection = CollectionName::try_new(request.collection.as_str())
             .map_err(|_| HostingError::Invalid("the collection identifier is not valid".into()))?;
@@ -940,6 +973,7 @@ impl TbepHost for EngineHost {
         request: &crate::registry::SchemaValidateRequest,
     ) -> Result<crate::registry::SchemaValidateResponse, HostingError> {
         self.count_frame();
+        self.ensure_serving()?;
         let tenant = Self::tenant_of(tenant)?;
         let collection = CollectionName::try_new(request.collection.as_str())
             .map_err(|_| HostingError::Invalid("the collection identifier is not valid".into()))?;
@@ -990,6 +1024,7 @@ impl TbepHost for EngineHost {
         request: &crate::registry::SchemaStatusRequest,
     ) -> Result<crate::registry::SchemaStatusResponse, HostingError> {
         self.count_frame();
+        self.ensure_serving()?;
         let tenant = Self::tenant_of(tenant)?;
         let collection = CollectionName::try_new(request.collection.as_str())
             .map_err(|_| HostingError::Invalid("the collection identifier is not valid".into()))?;
@@ -1017,9 +1052,11 @@ impl TbepHost for EngineHost {
 
     fn health(&self) -> Result<SupervisionHealthResponse, HostingError> {
         let frames = *self.frames_served.lock().expect("the frame counter is not poisoned");
+        let state = *self.health.lock().expect("the health state is not poisoned");
+        let in_flight = self.live_queries.lock().expect("the live set is not poisoned").len();
         Ok(SupervisionHealthResponse {
-            state: HealthState::Serving,
-            sessions: 0,
+            state,
+            sessions: u32::try_from(in_flight).unwrap_or(u32::MAX),
             subscriptions: 0,
             frames_served: frames,
         })
@@ -1029,6 +1066,17 @@ impl TbepHost for EngineHost {
         &self,
         _request: &SupervisionShutdownRequest,
     ) -> Result<SupervisionShutdownResponse, HostingError> {
-        Ok(SupervisionShutdownResponse { state: HealthState::Draining, in_flight: 0 })
+        let mut state = self.health.lock().expect("the health state is not poisoned");
+        if *state == HealthState::Serving {
+            *state = HealthState::Draining;
+        }
+        let live = self.live_queries.lock().expect("the live set is not poisoned");
+        for cancellation in live.values() {
+            cancellation.cancel();
+        }
+        Ok(SupervisionShutdownResponse {
+            state: *state,
+            in_flight: u32::try_from(live.len()).unwrap_or(u32::MAX),
+        })
     }
 }

@@ -146,8 +146,8 @@ func WithClientCert(certPEM, keyPEM []byte) Option {
 	}
 }
 
-// WithInsecure dials a plaintext channel: local and development lanes
-// only, never a production binding.
+// WithInsecure dials a plaintext channel for development-only lanes. It is
+// rejected for non-loopback TCP targets; production TCP must use TLS.
 func WithInsecure() Option {
 	return func(config *dialConfig) error {
 		config.transport = insecure.NewCredentials()

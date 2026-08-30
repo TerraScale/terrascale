@@ -534,3 +534,45 @@ pub fn index_action(
     };
     outcome.map_err(|error| OpError(format!("index action refused: {error:?}")))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use crate::s3_backup::S3BackupSettings;
+    use crate::state::{Config, DEFAULT_ADDR};
+
+    use super::*;
+
+    #[test]
+    fn prometheus_exposes_bounded_s3_scheduler_outcomes() {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let index = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let state = StudioState::open(Config {
+            data_dir: std::env::temp_dir()
+                .join(format!("terrabase-studio-backup-metrics-{}-{index}", std::process::id(),)),
+            addr: DEFAULT_ADDR.to_owned(),
+        })
+        .unwrap();
+        state
+            .set_backup_settings(S3BackupSettings {
+                enabled: true,
+                bucket: "backups".to_owned(),
+                ..S3BackupSettings::default()
+            })
+            .unwrap();
+        state.record_backup_run(true);
+        state.record_backup_run(false);
+        state.record_backup_run(false);
+
+        let output = render_prometheus(&gather(&state));
+        assert!(output.contains("terrabase_backup_scheduler_enabled 1\n"));
+        assert!(output.contains("terrabase_backup_runs_total{outcome=\"success\"} 1\n"));
+        assert!(output.contains("terrabase_backup_runs_total{outcome=\"failure\"} 2\n"));
+        let last_success = output
+            .lines()
+            .find(|line| line.starts_with("terrabase_backup_last_success_timestamp_seconds "))
+            .unwrap();
+        assert_ne!(last_success, "terrabase_backup_last_success_timestamp_seconds 0");
+    }
+}

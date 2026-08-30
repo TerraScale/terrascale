@@ -1161,6 +1161,10 @@ fn tenants_with_interior_whitespace_round_trip_through_the_manifest() {
 
     let result = run_backup(&engine, BackupPlan::full(), &destination).expect("full backup runs");
     let manifest = result.manifest();
+    assert_eq!(
+        crate::backup::BackupManifest::decode(&manifest.encode()).expect("canonical round trip"),
+        *manifest,
+    );
     let names: Vec<&str> = manifest.tenants().iter().map(|t| t.tenant().as_str()).collect();
     assert_eq!(names.len(), 3);
     assert!(names.contains(&"team a"), "the whitespace tenant is bound: {names:?}");

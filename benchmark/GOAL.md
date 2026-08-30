@@ -105,6 +105,20 @@ The executable audit also found release-blocking composition gaps:
 - The checkout is changing under several concurrent implementation and test
   processes. No clean full-gate result is recorded for the resulting candidate.
 
+The latest local gate probe on 2026-08-30 reached these concrete results:
+
+| Gate | Result | Meaning |
+| --- | --- | --- |
+| `cargo check --workspace --locked` | Passed in an isolated target directory | The current Rust workspace type-checks, with two warnings that still fail a warning-denying release gate. |
+| Root, benchmark, and Studio formatting | Benchmark and Studio passed; root failed | Root formatting is blocked because `Cargo.toml` declares `tests/encryption/main.rs` but that file does not exist. The observability contract also has unformatted concurrent edits. |
+| `buf lint` | Failed | New TBEP enum values and service names violate the configured protobuf style rules. The schema and lint policy must agree before bindings are frozen. |
+| `node --check crates/terrabase-studio/static/studio.js` | Passed | The current Studio entry script parses. This does not qualify the browser behavior or vendored Monaco routes. |
+| `git diff --check` | Passed | The probed working diff had no whitespace errors. |
+| `go vet -mod=readonly ./...` and `go test -mod=readonly ./...` | Environment-blocked on the repeat run | The installed Go 1.27 tree is missing standard-library packages. An earlier run also caught a transient usage-schema/binding mismatch while concurrent generation was in progress. A healthy pinned Go toolchain must rerun both commands against a stable revision. |
+
+None of these results is candidate release evidence while the source revision
+continues to change.
+
 ## Gap register
 
 | ID | Priority | Gap | Completion evidence |
@@ -152,10 +166,16 @@ local test:
    and compaction actions even though it is loopback-only and owner-only?
 9. Will the private metrics listener use the same workload CA as TBEP mTLS, a
    separate monitoring CA, or OCI workload identity at a sidecar boundary?
-10. Does "ready to accept users" mean a code-complete release candidate handed
-    to `ts-orchestrator`, or GA after the mandatory thirty-day soak, SOC 2 Type
-    I report, incident drills, capacity reservations, and both native
-    architectures pass? ADR 0033 currently requires the latter for GA.
+10. How does production bind an authenticated client certificate to one entry
+    in `gateway_principals`: a SPIFFE URI SAN, a dedicated gateway CA, an exact
+    SAN allow-list, or a certificate fingerprint? mTLS proves that a trusted CA
+    issued the certificate; it does not define the application principal by
+    itself.
+
+The owner has already fixed the readiness boundary: this repository must hand
+`ts-orchestrator` a code-complete candidate that can accept platform users.
+`ts-orchestrator` owns external OCI, topology, native-architecture, soak, and
+promotion qualification. Those external gates still decide actual GA.
 
 ## Parallel workstreams
 
