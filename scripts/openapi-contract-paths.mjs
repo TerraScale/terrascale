@@ -10,7 +10,18 @@ export const repositoryRoot = path.resolve(
 const siblingDashboardOpenApiSpec = path.resolve(
   repositoryRoot,
   "..",
-  "TerraScale.Dashboard",
+  "ts-dashboard",
+  "docs",
+  "product",
+  "openapi",
+  "server.openapi.json",
+);
+
+const worktreeDashboardOpenApiSpec = path.resolve(
+  repositoryRoot,
+  "..",
+  "..",
+  "ts-dashboard",
   "docs",
   "product",
   "openapi",
@@ -30,4 +41,8 @@ export const canonicalDashboardOpenApiSpec =
   process.env.TERRASCALE_DASHBOARD_OPENAPI_SPEC ??
   (existsSync(checkedOutDashboardOpenApiSpec)
     ? checkedOutDashboardOpenApiSpec
-    : siblingDashboardOpenApiSpec);
+    : existsSync(siblingDashboardOpenApiSpec)
+      ? siblingDashboardOpenApiSpec
+      : existsSync(worktreeDashboardOpenApiSpec)
+        ? worktreeDashboardOpenApiSpec
+        : siblingDashboardOpenApiSpec);

@@ -80,7 +80,7 @@ jobs:
           persist-credentials: false
       - run: node --test test/product-name-check.test.mjs
       - run: node scripts/check-product-name.mjs --tracked-only
-      - run: git -c credential.helper= clone --depth 1 --branch develop https://git.terrascale.tech/TerraScale/TerraScale.Dashboard.git Dashboard
+      - run: git -c credential.helper= clone --depth 1 --branch develop https://git.terrascale.tech/TerraScale/ts-dashboard.git Dashboard
       - run: node scripts/check-public-contract-fixture.mjs Dashboard/docs/product/openapi/server.openapi.json
       - run: npm ci
       - run: npm run typecheck
@@ -296,7 +296,7 @@ jobs:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           github-server-url: "https://git.terrascale.tech"
-          repository: TerraScale/TerraScale.Dashboard
+          repository: TerraScale/ts-dashboard
           ref: develop
           path: Dashboard
       - run: node scripts/check-public-contract-fixture.mjs Dashboard/docs/product/openapi/server.openapi.json

@@ -399,7 +399,7 @@ function formatSpecSnapshotLines(snapshot) {
 
   if (snapshot.checkout !== undefined) {
     const checkoutName = path.basename(snapshot.checkout.root);
-    const label = checkoutName === "TerraScale.Dashboard" || checkoutName === "Dashboard"
+    const label = checkoutName === "ts-dashboard" || checkoutName === "Dashboard"
       ? "Dashboard checkout"
       : checkoutName === "Documentation"
         ? "Documentation checkout"

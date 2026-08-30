@@ -1,14 +1,53 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const run = promisify(execFile);
+
+test("default OpenAPI path resolves the current ts-dashboard checkout from a worktree", async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), "terrascale-sdk-openapi-worktree-"));
+  const sdkRoot = path.join(workspace, ".codex-worktrees", "sdk");
+  const scriptsRoot = path.join(sdkRoot, "scripts");
+  const specPath = path.join(
+    workspace,
+    "ts-dashboard",
+    "docs",
+    "product",
+    "openapi",
+    "server.openapi.json",
+  );
+
+  try {
+    await mkdir(scriptsRoot, { recursive: true });
+    await mkdir(path.dirname(specPath), { recursive: true });
+    await cp(
+      path.join(repositoryRoot, "scripts", "openapi-contract-paths.mjs"),
+      path.join(scriptsRoot, "openapi-contract-paths.mjs"),
+    );
+    await writeFile(specPath, "{}\n", "utf8");
+
+    const moduleUrl = pathToFileURL(path.join(scriptsRoot, "openapi-contract-paths.mjs")).href;
+    const result = await run(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `import { canonicalDashboardOpenApiSpec } from ${JSON.stringify(moduleUrl)}; console.log(canonicalDashboardOpenApiSpec);`,
+      ],
+      { cwd: sdkRoot },
+    );
+
+    assert.equal(result.stdout.trim(), specPath);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
 
 test("configured OpenAPI drift profile runs against the checked-out Dashboard snapshot", async () => {
   const workspace = await mkdtemp(path.join(tmpdir(), "terrascale-sdk-openapi-profile-"));
@@ -23,7 +62,8 @@ test("configured OpenAPI drift profile runs against the checked-out Dashboard sn
       .find((profile) => profile.name === "static")
       ?.commands.find((candidate) => candidate.description === "OpenAPI drift");
     assert.ok(command);
-    assert.match(workflow, /repository: TerraScale\/TerraScale\.Dashboard/u);
+    assert.match(workflow, /repository: TerraScale\/ts-dashboard/u);
+    assert.doesNotMatch(workflow, /TerraScale\.Dashboard/u);
     assert.match(workflow, /path: Dashboard/u);
 
     await mkdir(path.join(workspace, "scripts"), { recursive: true });
