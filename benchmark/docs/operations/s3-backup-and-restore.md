@@ -16,6 +16,10 @@ s3:PutObject
 s3:PutObjectTagging
 ```
 
+When the configured key policy does not grant access implicitly, SSE-KMS also
+requires `kms:Encrypt`, `kms:Decrypt`, `kms:GenerateDataKey`, and
+`kms:DescribeKey` on that key.
+
 Do not grant `s3:DeleteObject` to the normal backup workload. Configure these
 controls on the bucket:
 

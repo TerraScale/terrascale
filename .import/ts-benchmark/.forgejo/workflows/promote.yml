@@ -39,7 +39,7 @@ jobs:
       - name: Download the exact unsigned AMD64 packages
         uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with:
-          name: terrabase-unsigned-amd64-${{ forgejo.sha }}
+          name: terrabase-unsigned-amd64
           path: artifacts/unsigned
           github-token: ${{ secrets.TERRABASE_RELEASE_ARTIFACT_TOKEN }}
           repository: ${{ forgejo.repository }}
@@ -47,7 +47,7 @@ jobs:
       - name: Download independently signed production capability evidence
         uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with:
-          name: terrabase-production-capability-${{ forgejo.sha }}
+          name: terrabase-production-capability
           path: artifacts/capability
           github-token: ${{ secrets.TERRABASE_RELEASE_ARTIFACT_TOKEN }}
           repository: ${{ forgejo.repository }}
@@ -81,6 +81,7 @@ jobs:
           TERRABASE_PRODUCTION_CAPABILITY_SIGNATURE: artifacts/capability/PRODUCTION-CAPABILITY.sig
           TERRABASE_PRODUCTION_CAPABILITY_EVIDENCE_DIRECTORY: artifacts/capability
         run: |
+          deploy/release/verify-source-binding.sh artifacts/unsigned/terrabase-server-amd64 artifacts/unsigned/terrabase-studio-amd64
           deploy/release/sign.sh artifacts/unsigned/terrabase-server-amd64
           deploy/release/sign.sh artifacts/unsigned/terrabase-studio-amd64
       - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
@@ -106,7 +107,7 @@ jobs:
       - name: Download the exact unsigned ARM64 packages
         uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with:
-          name: terrabase-unsigned-arm64-${{ forgejo.sha }}
+          name: terrabase-unsigned-arm64
           path: artifacts/unsigned
           github-token: ${{ secrets.TERRABASE_RELEASE_ARTIFACT_TOKEN }}
           repository: ${{ forgejo.repository }}
@@ -114,7 +115,7 @@ jobs:
       - name: Download independently signed production capability evidence
         uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with:
-          name: terrabase-production-capability-${{ forgejo.sha }}
+          name: terrabase-production-capability
           path: artifacts/capability
           github-token: ${{ secrets.TERRABASE_RELEASE_ARTIFACT_TOKEN }}
           repository: ${{ forgejo.repository }}
@@ -148,6 +149,7 @@ jobs:
           TERRABASE_PRODUCTION_CAPABILITY_SIGNATURE: artifacts/capability/PRODUCTION-CAPABILITY.sig
           TERRABASE_PRODUCTION_CAPABILITY_EVIDENCE_DIRECTORY: artifacts/capability
         run: |
+          deploy/release/verify-source-binding.sh artifacts/unsigned/terrabase-server-arm64 artifacts/unsigned/terrabase-studio-arm64
           deploy/release/sign.sh artifacts/unsigned/terrabase-server-arm64
           deploy/release/sign.sh artifacts/unsigned/terrabase-studio-arm64
       - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5

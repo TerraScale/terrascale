@@ -8,7 +8,7 @@ use crate::metrics;
 use crate::state::StudioState;
 
 /// Renders the metrics page and opens one Datastar SSE stream for refreshes.
-pub fn render(state: &StudioState) -> String {
+pub fn render(state: &StudioState, nonce: &str) -> String {
     let snapshot = metrics::gather(state);
     let body = format!(
         "{heading}\n<div class=\"hidden\" data-init=\"@get('/events/metrics', {{openWhenHidden: true, retry: 'always'}})\" aria-hidden=\"true\"></div>\n{panel}\n{note}",
@@ -23,5 +23,5 @@ pub fn render(state: &StudioState) -> String {
             "This page reads the in-process engine. Its Prometheus preview is available at /metrics/prometheus on the same loopback listener. ts-orchestrator owns the separate private production scrape listener, workload identity, network policy, and discovery.",
         ),
     );
-    html::page("Metrics", "/metrics", "", &body)
+    html::page(nonce, "Metrics", "/metrics", "", &body)
 }

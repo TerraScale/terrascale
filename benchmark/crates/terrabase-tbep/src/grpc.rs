@@ -6,9 +6,9 @@
 //! 1. **Identity.** Every RPC except `Channel/Bind` requires the
 //!    `x-tb-principal` and `x-tb-tenant` metadata; a missing identity
 //!    fails closed with the `unbound_channel` error code. The transport
-//!    is expected to be mutually authenticated TLS in production — the
-//!    metadata names the application identity within that channel, it
-//!    does not authenticate it.
+//!    is mutually authenticated TLS in production; the request principal
+//!    must exactly match the single admitted SPIFFE URI SAN on the verified
+//!    peer certificate.
 //! 2. **Idempotency.** Mutation RPCs require the
 //!    `x-tb-idempotency-key` metadata (1..=128 bytes, no control
 //!    characters); the engine deduplicates retries within its retained
@@ -141,13 +141,7 @@ impl TbepGrpcConfig {
         shutdown_grace: Duration,
         gateway_principals: BTreeSet<String>,
     ) -> std::io::Result<Self> {
-        let valid_principals = gateway_principals.iter().all(|principal| {
-            principal.starts_with("spiffe://")
-                && !principal.is_empty()
-                && principal.len() <= MAX_PRINCIPAL_BYTES
-                && principal == principal.trim()
-                && !principal.chars().any(char::is_control)
-        });
+        let valid_principals = gateway_principals.iter().all(|principal| valid_spiffe_uri(principal));
         if !(1024..=registry::MAX_FRAME_BYTES).contains(&max_message_bytes)
             || !(1..=4096).contains(&max_inflight)
             || request_timeout.is_zero()
@@ -199,6 +193,16 @@ impl TbepGrpcConfig {
     pub const fn shutdown_grace(&self) -> Duration {
         self.shutdown_grace
     }
+}
+
+fn valid_spiffe_uri(value: &str) -> bool {
+    let authority = value.strip_prefix("spiffe://").unwrap_or_default();
+    !authority.is_empty()
+        && !authority.starts_with('/')
+        && value.len() <= MAX_PRINCIPAL_BYTES
+        && value == value.trim()
+        && !value.chars().any(char::is_control)
+        && !value.chars().any(char::is_whitespace)
 }
 
 impl Default for TbepGrpcConfig {
@@ -468,7 +472,7 @@ impl TbepGrpcServer {
                 pb::ErrorCode::OperationRefused,
                 "the authenticated client is not an admitted gateway principal",
             ));
-        };
+        }
         let certificates = request.peer_certs().ok_or_else(|| {
             tbep_status(
                 Code::Unauthenticated,

@@ -198,7 +198,7 @@ impl ServerConfig {
                 || principal.len() > terrabase_tbep::grpc::MAX_PRINCIPAL_BYTES
                 || principal != principal.trim()
                 || principal.chars().any(char::is_control)
-                || !principal.starts_with("spiffe://")
+                || !valid_spiffe_uri(&principal)
                 || !gateway_principals.insert(principal)
             {
                 return Err(ConfigError::InvalidGatewayPrincipal);
@@ -240,6 +240,16 @@ fn absolute(path: &Path) -> Result<(), ConfigError> {
         return Err(ConfigError::RelativeProductionPath);
     }
     Ok(())
+}
+
+fn valid_spiffe_uri(value: &str) -> bool {
+    let authority = value.strip_prefix("spiffe://").unwrap_or_default();
+    !authority.is_empty()
+        && !authority.starts_with('/')
+        && value.len() <= terrabase_tbep::grpc::MAX_PRINCIPAL_BYTES
+        && value == value.trim()
+        && !value.chars().any(char::is_control)
+        && !value.chars().any(char::is_whitespace)
 }
 
 fn socket(value: &str, _field: &'static str) -> Result<SocketAddr, ConfigError> {

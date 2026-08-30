@@ -1181,6 +1181,9 @@ impl UsagePageRequest {
         if page_size == 0 || page_size > MAX_USAGE_PAGE_SIZE {
             return Err(UsageError::InvalidPageSize);
         }
+        if window.is_some_and(|window| window.end_millis <= window.start_millis) {
+            return Err(UsageError::InvalidMeasurementWindow);
+        }
         Ok(Self { window, page_size, continuation })
     }
 

@@ -1589,33 +1589,57 @@ pub struct FieldTransformStep {
     pub coercion: Option<Coercion>,
 }
 
-/// The `channel_bind_request` frame body.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ChannelBindRequest {
-    /// The `principal` field.
+/// The immutable gateway and database scope carried by one bound channel.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct BoundScope {
+    /// The certificate-authenticated gateway principal.
     pub principal: String,
-    /// The `tenant` field.
+    /// The tenant identity.
     pub tenant: String,
+    /// The Project identity.
+    pub project: String,
+    /// The Database identity.
+    pub database: String,
 }
 
-impl ChannelBindRequest {
+impl BoundScope {
     /// Validates the declared bounds (fail closed).
     ///
     /// # Errors
     ///
     /// Returns the first bounds violation.
     pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-        crate::value::check_str_bound(&self.principal, 128, "principal")?;
-        crate::value::check_str_bound(&self.tenant, 64, "tenant")?;
+        usage_identifier(&self.principal, 128, "principal")?;
+        usage_identifier(&self.tenant, 64, "tenant")?;
+        usage_identifier(&self.project, 255, "project")?;
+        usage_identifier(&self.database, 255, "database")?;
         Ok(())
     }
 }
 
+/// The `channel_bind_request` frame body.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChannelBindRequest {
+    /// The complete scope this channel requests.
+    pub scope: BoundScope,
+}
+
+impl ChannelBindRequest {
+    /// Validates the complete requested scope (fail closed).
+    ///
+    /// # Errors
+    ///
+    /// Returns the first bounds violation.
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        self.scope.validate()
+    }
+}
+
 /// The `channel_bind_response` frame body.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChannelBindResponse {
-    /// The `tenant` field.
-    pub tenant: String,
+    /// The exact scope admitted for this channel.
+    pub scope: BoundScope,
     /// The `serving_instance` field.
     pub serving_instance: u64,
 }
@@ -1627,8 +1651,7 @@ impl ChannelBindResponse {
     ///
     /// Returns the first bounds violation.
     pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-        crate::value::check_str_bound(&self.tenant, 64, "tenant")?;
-        Ok(())
+        self.scope.validate()
     }
 }
 

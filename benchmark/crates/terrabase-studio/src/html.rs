@@ -58,7 +58,7 @@ pub const NAV: &[NavEntry] = &[
 ///
 /// `active` names the nav entry to highlight; `extra_head` lets a page add its
 /// own signals declaration before Datastar scans the tree.
-pub fn page(title: &str, active: &str, extra_head: &str, body: &str) -> String {
+pub fn page(nonce: &str, title: &str, active: &str, extra_head: &str, body: &str) -> String {
     let mut nav = String::new();
     for entry in NAV {
         let current = if entry.path == active { " font-medium bg-muted" } else { "" };
@@ -72,7 +72,7 @@ pub fn page(title: &str, active: &str, extra_head: &str, body: &str) -> String {
     }
     format!(
         "<!DOCTYPE html>\n\
-<html lang=\"en\">\n\
+<html lang=\"en\" data-nonce=\"{nonce}\">\n\
 <head>\n\
 <meta charset=\"utf-8\">\n\
 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
@@ -102,6 +102,7 @@ pub fn page(title: &str, active: &str, extra_head: &str, body: &str) -> String {
 </div>\n\
 </body>\n</html>\n",
         title = esc(title),
+        nonce = attribute(nonce),
         extra_head = extra_head,
         nav = nav,
         body = body,
@@ -305,6 +306,33 @@ pub fn option(value: &str, label: &str, chosen: bool) -> String {
         value = attribute(value),
         selected = selected,
         label = esc(label),
+    )
+}
+
+/// Renders the two explicit fields required by a destructive action.
+///
+/// Both values start empty. The operator must type the shown target and action
+/// phrase exactly; the server validates both before doing any work.
+pub fn confirmation_fields(target: &str, phrase: &str) -> String {
+    format!(
+        "<div class=\"grid gap-3 rounded-md border border-destructive/40 bg-destructive/5 p-3\">\
+<p class=\"text-xs text-muted-foreground\">Type <code>{target}</code> as the target and <code>{phrase}</code> as the action phrase.</p>\
+<div class=\"grid gap-3 sm:grid-cols-2\">{target_input}{phrase_input}</div>\
+</div>",
+        target = esc(target),
+        phrase = esc(phrase),
+        target_input = text_input(
+            "confirm_target",
+            "Confirmation target",
+            "",
+            target,
+        ),
+        phrase_input = text_input(
+            "confirm_phrase",
+            "Confirmation action phrase",
+            "",
+            phrase,
+        ),
     )
 }
 

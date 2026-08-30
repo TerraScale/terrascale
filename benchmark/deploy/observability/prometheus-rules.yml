@@ -109,7 +109,7 @@ groups:
           description: Queue {{ $labels.queue }} has remained above the saturation threshold for ten minutes.
 
       - alert: TerraBaseAdmissionRejectionsHigh
-        expr: sum by (operation, reason) (rate(terrabase_admission_rejections_total[5m])) > 1
+        expr: sum by (job, instance, operation, reason) (rate(terrabase_admission_rejections_total[5m])) > 1
         for: 10m
         labels:
           service: terrabase
@@ -122,12 +122,12 @@ groups:
         expr: |
           histogram_quantile(
             0.99,
-            sum by (le, region, operation) (
+            sum by (job, instance, le, region, operation) (
               rate(terrabase_request_duration_seconds_bucket{operation="read",outcome="success"}[5m])
             )
           ) > 0.010
-          and on (region, operation)
-          sum by (region, operation) (
+          and on (job, instance, region, operation)
+          sum by (job, instance, region, operation) (
             rate(terrabase_requests_total{operation="read",outcome="success"}[5m])
           ) > 1
         for: 10m
@@ -142,12 +142,12 @@ groups:
         expr: |
           histogram_quantile(
             0.99,
-            sum by (le, region, operation) (
+            sum by (job, instance, le, region, operation) (
               rate(terrabase_request_duration_seconds_bucket{operation="write",outcome="success"}[5m])
             )
           ) > 0.020
-          and on (region, operation)
-          sum by (region, operation) (
+          and on (job, instance, region, operation)
+          sum by (job, instance, region, operation) (
             rate(terrabase_requests_total{operation="write",outcome="success"}[5m])
           ) > 1
         for: 10m
@@ -255,7 +255,7 @@ groups:
           description: Storage {{ $labels.tier }} is above the critical threshold; use the qualified expansion or movement runbook and preserve WAL and segment evidence.
 
       - alert: TerraBaseStorageErrors
-        expr: sum by (tier, operation) (increase(terrabase_storage_errors_total[5m])) > 0
+        expr: sum by (job, instance, tier, operation) (increase(terrabase_storage_errors_total[5m])) > 0
         for: 1m
         labels:
           service: terrabase
@@ -295,7 +295,7 @@ groups:
           description: No verified continuous backup success has been observed within the operating threshold for the ADR 0033 daily recovery-point target.
 
       - alert: TerraBaseBackupErrors
-        expr: sum by (mode) (increase(terrabase_backup_runs_total{outcome="error"}[30m])) > 0
+        expr: sum by (job, instance, mode) (increase(terrabase_backup_runs_total{outcome="error"}[30m])) > 0
         for: 1m
         labels:
           service: terrabase

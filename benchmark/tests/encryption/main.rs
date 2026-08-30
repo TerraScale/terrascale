@@ -3,6 +3,28 @@ use terrabase::encryption::{
     LocalFileKeyProvider, MAX_PLAINTEXT_BYTES, ProviderMode,
 };
 
+#[test]
+fn aws_lc_aes_256_gcm_known_answer() {
+    let key = aws_lc_rs::aead::UnboundKey::new(&aws_lc_rs::aead::AES_256_GCM, &[0; 32]).unwrap();
+    let key = aws_lc_rs::aead::LessSafeKey::new(key);
+    let nonce = aws_lc_rs::aead::Nonce::assume_unique_for_key([0; 12]);
+    let mut ciphertext = [0; 16].to_vec();
+    key.seal_in_place_append_tag(
+        nonce,
+        aws_lc_rs::aead::Aad::empty(),
+        &mut ciphertext,
+    )
+    .unwrap();
+    assert_eq!(
+        ciphertext,
+        [
+            0xce, 0xa7, 0x40, 0x3d, 0x4d, 0x60, 0x6b, 0x6e, 0x07, 0x4e, 0xc5, 0xd3, 0xba,
+            0xf3, 0x9d, 0x18, 0xd0, 0xd1, 0xc8, 0xa7, 0x99, 0x99, 0x6b, 0xf0, 0x26, 0x5b,
+            0x98, 0xb5, 0xd4, 0x8a, 0xb9, 0x19,
+        ]
+    );
+}
+
 fn context(tenant: &str) -> EncryptionContext {
     EncryptionContext::new(
         "local",

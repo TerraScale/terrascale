@@ -16,13 +16,17 @@ use futures_util::{StreamExt, TryStreamExt, stream};
 use object_store::aws::AmazonS3Builder;
 use object_store::path::Path as ObjectPath;
 use object_store::{
-    Error as ObjectStoreError, ObjectStore, ObjectStoreExt, PutMode, PutOptions, TagSet,
+    Error as ObjectStoreError, ObjectStore, ObjectStoreExt, PutMode, PutOptions, PutPayload, TagSet,
 };
 use serde::{Deserialize, Serialize};
 use terrabase::backup::{BackupKind, BackupManifest, BackupResult, RecoveryReceipt};
 
 const MANIFEST_FILE: &str = "manifest.tbv2m";
 const MANIFEST_LIMIT_BYTES: u64 = 1024 * 1024;
+/// Bounds list memory and manifest fetch work for one repository prefix.
+const MAX_RECOVERY_POINTS: usize = 100_000;
+/// Bounds decoded manifest memory independently of recovery-point cadence.
+const MAX_MANIFEST_SET_BYTES: u64 = 256 * 1024 * 1024;
 const UPLOAD_CONCURRENCY: usize = 4;
 const DOWNLOAD_CONCURRENCY: usize = 8;
 
@@ -139,23 +143,36 @@ impl S3BackupSettings {
             return Err("the full interval must be at least one hour".to_owned());
         }
         if !self.endpoint.is_empty() {
-            let is_https = self.endpoint.starts_with("https://");
-            let permitted_http = self.allow_http && self.endpoint.starts_with("http://");
-            if !is_https && !permitted_http {
-                return Err(
-                    "the S3 endpoint must use HTTPS unless allow HTTP is explicitly enabled"
-                        .to_owned(),
-                );
-            }
-            let authority = self
+            let endpoint = self
                 .endpoint
-                .split_once("//")
-                .map_or(self.endpoint.as_str(), |(_, rest)| rest)
-                .split('/')
-                .next()
-                .unwrap_or_default();
-            if authority.contains('@') {
+                .parse::<axum::http::Uri>()
+                .map_err(|_| "the S3 endpoint is not a valid HTTP URI".to_owned())?;
+            let scheme = endpoint
+                .scheme_str()
+                .ok_or_else(|| "the S3 endpoint must include a scheme".to_owned())?;
+            let authority = endpoint
+                .authority()
+                .ok_or_else(|| "the S3 endpoint must include an authority".to_owned())?;
+            if authority.as_str().contains('@') {
                 return Err("the S3 endpoint must not contain credentials".to_owned());
+            }
+            if scheme.eq_ignore_ascii_case("http") {
+                if !self.allow_http {
+                    return Err(
+                        "the S3 endpoint must use HTTPS unless allow HTTP is explicitly enabled"
+                            .to_owned(),
+                    );
+                }
+                let host = authority.host();
+                let loopback = host.eq_ignore_ascii_case("localhost")
+                    || host.parse::<std::net::IpAddr>().is_ok_and(|address| address.is_loopback());
+                if !loopback {
+                    return Err(
+                        "an HTTP S3-compatible endpoint must use a loopback address".to_owned()
+                    );
+                }
+            } else if !scheme.eq_ignore_ascii_case("https") {
+                return Err("the S3 endpoint scheme must be HTTP or HTTPS".to_owned());
             }
         }
         Ok(())
@@ -261,9 +278,22 @@ impl S3BackupRepository {
             .try_filter(|object| {
                 futures_util::future::ready(object.location.filename() == Some(MANIFEST_FILE))
             })
+            .take(MAX_RECOVERY_POINTS + 1)
             .try_collect::<Vec<_>>()
             .await
             .map_err(|error| safe_store_error("list S3 recovery points", error))?;
+        if objects.len() > MAX_RECOVERY_POINTS {
+            return Err(format!(
+                "the S3 prefix exceeds the {MAX_RECOVERY_POINTS}-recovery-point limit"
+            ));
+        }
+        let manifest_bytes = objects
+            .iter()
+            .try_fold(0_u64, |total, object| total.checked_add(object.size))
+            .ok_or_else(|| "the S3 manifest listing size overflowed".to_owned())?;
+        if manifest_bytes > MAX_MANIFEST_SET_BYTES {
+            return Err("the S3 manifests exceed the 256 MiB repository limit".to_owned());
+        }
 
         let repository = self.clone();
         let fetched = stream::iter(objects)
@@ -372,10 +402,10 @@ impl S3BackupRepository {
         bytes: Vec<u8>,
         tags: TagSet,
     ) -> Result<bool, String> {
+        let payload = PutPayload::from(bytes);
         match self.store.head(&location).await {
-            Ok(_) => {
-                let existing = self.read_object(&location, u64::MAX).await?;
-                if existing == bytes {
+            Ok(metadata) => {
+                if self.existing_matches(&location, metadata.size, &payload).await? {
                     return Ok(false);
                 }
                 return Err(format!("refusing to overwrite the existing S3 object {location}"));
@@ -384,11 +414,15 @@ impl S3BackupRepository {
             Err(error) => return Err(safe_store_error("inspect S3 object", error)),
         }
         let options = PutOptions { mode: PutMode::Create, tags, ..PutOptions::default() };
-        match self.store.put_opts(&location, bytes.clone().into(), options).await {
+        match self.store.put_opts(&location, payload.clone(), options).await {
             Ok(_) => Ok(true),
             Err(ObjectStoreError::AlreadyExists { .. }) => {
-                let existing = self.read_object(&location, u64::MAX).await?;
-                if existing == bytes {
+                let metadata = self
+                    .store
+                    .head(&location)
+                    .await
+                    .map_err(|error| safe_store_error("inspect raced S3 object", error))?;
+                if self.existing_matches(&location, metadata.size, &payload).await? {
                     Ok(false)
                 } else {
                     Err(format!("refusing to overwrite the existing S3 object {location}"))
@@ -396,6 +430,24 @@ impl S3BackupRepository {
             }
             Err(error) => Err(safe_store_error("upload S3 object", error)),
         }
+    }
+
+    async fn existing_matches(
+        &self,
+        location: &ObjectPath,
+        stored_size: u64,
+        expected: &PutPayload,
+    ) -> Result<bool, String> {
+        let expected_size = u64::try_from(expected.content_length())
+            .map_err(|_| "the staged S3 object length does not fit u64".to_owned())?;
+        if stored_size != expected_size {
+            return Ok(false);
+        }
+        let existing = self.read_object(location, expected_size).await?;
+        if u64::try_from(existing.len()).ok() != Some(expected_size) {
+            return Err(format!("S3 object {location} changed length while it was read"));
+        }
+        Ok(payload_matches(expected, &existing))
     }
 
     async fn read_object(&self, location: &ObjectPath, limit: u64) -> Result<Vec<u8>, String> {
@@ -409,6 +461,9 @@ impl S3BackupRepository {
         }
         let bytes =
             object.bytes().await.map_err(|error| safe_store_error("stream S3 object", error))?;
+        if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limit {
+            return Err(format!("S3 object {location} exceeds its manifest bound"));
+        }
         Ok(bytes.to_vec())
     }
 
@@ -533,11 +588,20 @@ pub fn scheduled_run_due(
 pub async fn run_scheduler(state: Arc<crate::state::StudioState>) {
     let mut interval = tokio::time::interval(Duration::from_secs(30));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut shutdown = state.shutdown_receiver();
     let mut last_failure = None;
     let mut observed_settings = None;
     let mut next_repository_check = tokio::time::Instant::now();
     loop {
-        interval.tick().await;
+        tokio::select! {
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    break;
+                }
+                continue;
+            }
+            _ = interval.tick() => {}
+        }
         let settings = state.backup_settings();
         if !settings.enabled {
             last_failure = None;
@@ -596,7 +660,7 @@ pub async fn run_scheduler(state: Arc<crate::state::StudioState>) {
                     "backup/scheduled",
                     format!(
                         "recovery point {} committed to {} ({} object(s) uploaded)",
-                        &upload.result.manifest().identity()[..12],
+                        identity_prefix(upload.result.manifest().identity()),
                         upload.destination,
                         upload.uploaded_objects,
                     ),
@@ -835,6 +899,24 @@ fn recovery_point_tags(manifest: &BackupManifest) -> TagSet {
     tags
 }
 
+fn payload_matches(payload: &PutPayload, bytes: &[u8]) -> bool {
+    let mut offset = 0usize;
+    for chunk in payload {
+        let Some(end) = offset.checked_add(chunk.len()) else {
+            return false;
+        };
+        if bytes.get(offset..end) != Some(chunk.as_ref()) {
+            return false;
+        }
+        offset = end;
+    }
+    offset == bytes.len()
+}
+
+fn identity_prefix(identity: &str) -> &str {
+    identity.get(..12).unwrap_or(identity)
+}
+
 fn safe_store_error(operation: &str, error: impl std::fmt::Display) -> String {
     format!("cannot {operation}: {error}")
 }
@@ -937,6 +1019,10 @@ mod tests {
         };
         assert!(settings.validate().is_err());
         settings.allow_http = true;
+        assert!(settings.validate().is_err());
+        settings.endpoint = "http://127.0.0.1:9000".to_owned();
+        assert!(settings.validate().is_ok());
+        settings.endpoint = "http://localhost:9000".to_owned();
         assert!(settings.validate().is_ok());
         settings.endpoint = "https://access:secret@s3.example.test".to_owned();
         assert!(settings.validate().is_err());
@@ -1151,5 +1237,23 @@ mod tests {
             ..S3BackupSettings::default()
         };
         assert!(scheduled_run_due(&settings, &[], SystemTime::now()));
+    }
+
+    #[tokio::test]
+    async fn scheduler_stops_promptly_when_studio_shutdown_begins() {
+        let state = sample_state(&test_root("scheduler-shutdown"));
+        let scheduler = tokio::spawn(run_scheduler(Arc::clone(&state)));
+        tokio::task::yield_now().await;
+        state.begin_shutdown();
+        tokio::time::timeout(Duration::from_secs(1), scheduler)
+            .await
+            .expect("the scheduler observes shutdown")
+            .expect("the scheduler task does not panic");
+    }
+
+    #[test]
+    fn log_identity_prefix_is_safe_for_short_values() {
+        assert_eq!(identity_prefix("short"), "short");
+        assert_eq!(identity_prefix("1234567890123"), "123456789012");
     }
 }

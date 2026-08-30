@@ -5,7 +5,7 @@ use crate::metrics;
 use crate::state::StudioState;
 
 /// Renders the Overview page.
-pub fn render(state: &StudioState) -> String {
+pub fn render(state: &StudioState, nonce: &str) -> String {
     let snapshot = metrics::gather(state);
     let body = format!(
         "{heading}\n\
@@ -22,7 +22,7 @@ pub fn render(state: &StudioState) -> String {
         indexes = index_card(state),
         journal = journal_card(state),
     );
-    html::page("Overview", "/", "", &body)
+    html::page(nonce, "Overview", "/", "", &body)
 }
 
 fn index_card(state: &StudioState) -> String {

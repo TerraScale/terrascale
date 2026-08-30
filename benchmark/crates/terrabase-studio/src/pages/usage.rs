@@ -11,7 +11,7 @@ use crate::state::StudioState;
 pub const LEDGER_ID: &str = "usage-ledger";
 
 /// Renders the Usage page.
-pub fn render(state: &StudioState) -> String {
+pub fn render(state: &StudioState, nonce: &str) -> String {
     let body = format!(
         "{heading}\n\
 {honest}\n\
@@ -31,7 +31,7 @@ pub fn render(state: &StudioState) -> String {
         ledger = ledger_card(state),
         record = record_card(state),
     );
-    html::page("Usage", "/usage", "", &body)
+    html::page(nonce, "Usage", "/usage", "", &body)
 }
 
 fn meter_name(kind: MeterKind) -> &'static str {

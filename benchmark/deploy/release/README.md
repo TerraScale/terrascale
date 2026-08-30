@@ -34,8 +34,8 @@ is `main`. It downloads those exact artifacts and independent capability
 evidence by workflow-run ID, checks that every source binding equals the event
 SHA, and adds signatures without rebuilding.
 
-The capability artifact must be named
-`terrabase-production-capability-<main-sha>` and contain:
+The capability artifact is named `terrabase-production-capability` within its
+selected workflow run and contains:
 
 - `PRODUCTION-CAPABILITY.json` and its detached
   `PRODUCTION-CAPABILITY.sig`;

@@ -11,11 +11,12 @@
 //
 // Cross-cutting conventions:
 //
-// - Tenant identity rides gRPC metadata, not fields: every RPC (except
-//   `Channel/Bind`, which establishes it) requires `x-tb-principal` and
-//   `x-tb-tenant`; a missing identity fails closed. The transport is
-//   expected to be mutually authenticated TLS in production; the
-//   metadata names the application identity within that channel.
+// - The bound database scope rides gRPC metadata, not request fields: every
+//   RPC except `Channel/Bind` requires exactly one `x-tb-principal`,
+//   `x-tb-tenant`, `x-tb-project`, and `x-tb-database` value. A missing,
+//   duplicated, or invalid value fails closed. On production mTLS the
+//   principal must equal the authenticated client certificate's sole SPIFFE
+//   URI SAN.
 // - Mutations carry their retry identity in the `x-tb-idempotency-key`
 //   metadata key (1..=128 bytes, no control characters); the engine
 //   deduplicates retries within its retained horizon.
@@ -900,11 +901,16 @@ message ReplicationDenialsResponse {
 message ChannelBindRequest {
   string principal = 1; // 1..=128 bytes.
   string tenant = 2;    // 1..=64 bytes.
+  string project = 3;   // 1..=255 bytes.
+  string database = 4;  // 1..=255 bytes.
 }
 
 message ChannelBindResponse {
+  string principal = 1;
   string tenant = 2;
   uint64 serving_instance = 3;
+  string project = 4;
+  string database = 5;
 }
 
 message TopologyReadRequest {}

@@ -37,8 +37,11 @@ jobs:
           test "$(uname -m)" = x86_64
           test "$(rustc -vV | sed -n 's/^host: //p')" = x86_64-unknown-linux-gnu
           command -v buildah
+          command -v cmake
+          command -v go
           command -v jq
           command -v openssl
+          command -v perl
           command -v skopeo
       - name: Build byte-reproducible unsigned AMD64 packages
         run: |
@@ -46,7 +49,7 @@ jobs:
           deploy/release/reproduce.sh studio x86_64-unknown-linux-gnu artifacts/unsigned/terrabase-studio-amd64
       - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
-          name: terrabase-unsigned-amd64-${{ forgejo.sha }}
+          name: terrabase-unsigned-amd64
           path: |
             artifacts/unsigned/terrabase-server-amd64
             artifacts/unsigned/terrabase-studio-amd64
@@ -73,8 +76,11 @@ jobs:
           test "$(uname -m)" = aarch64
           test "$(rustc -vV | sed -n 's/^host: //p')" = aarch64-unknown-linux-gnu
           command -v buildah
+          command -v cmake
+          command -v go
           command -v jq
           command -v openssl
+          command -v perl
           command -v skopeo
       - name: Build byte-reproducible unsigned ARM64 packages
         run: |
@@ -82,7 +88,7 @@ jobs:
           deploy/release/reproduce.sh studio aarch64-unknown-linux-gnu artifacts/unsigned/terrabase-studio-arm64
       - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
-          name: terrabase-unsigned-arm64-${{ forgejo.sha }}
+          name: terrabase-unsigned-arm64
           path: |
             artifacts/unsigned/terrabase-server-arm64
             artifacts/unsigned/terrabase-studio-arm64

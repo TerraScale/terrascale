@@ -9,7 +9,7 @@ use crate::state::StudioState;
 pub const TIER_ID: &str = "tier-state";
 
 /// Renders the Tiers page.
-pub fn render(state: &StudioState) -> String {
+pub fn render(state: &StudioState, nonce: &str) -> String {
     let body = format!(
         "{heading}\n\
 {state_card}\n\
@@ -26,7 +26,7 @@ pub fn render(state: &StudioState) -> String {
         receipt = html::receipt_region_with("tier-receipt"),
         limits = limits_card(),
     );
-    html::page("Tiers", "/tiers", "", &body)
+    html::page(nonce, "Tiers", "/tiers", "", &body)
 }
 
 fn state_card(state: &StudioState) -> String {

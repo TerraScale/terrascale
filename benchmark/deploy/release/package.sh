@@ -118,13 +118,18 @@ cargo metadata \
 version=$(jq -er --arg package "$package" '[.packages[] | select(.name == $package) | .version] | if length == 1 then .[0] else error("package identity is not unique") end' "$metadata")
 
 target_directory=$work/cargo-target
-cargo build \
-  --manifest-path "$manifest" \
-  --locked \
-  --release \
-  --package "$package" \
-  --target "$target" \
+build_arguments=(
+  --manifest-path "$manifest"
+  --locked
+  --release
+  --package "$package"
+  --target "$target"
   --target-dir "$target_directory"
+)
+if [[ $component == server ]]; then
+  build_arguments+=(--no-default-features --features production-fips)
+fi
+cargo build "${build_arguments[@]}"
 built_binary=$target_directory/$target/release/$binary
 [[ -x "$built_binary" ]] || {
   echo "release binary was not produced: $built_binary" >&2
@@ -175,7 +180,6 @@ buildah \
   --no-cache \
   --pull=always \
   --platform "linux/$oci_arch" \
-  --timestamp "$source_epoch" \
   --build-arg "TERRABASE_VERSION=$version" \
   --build-arg "TERRABASE_REVISION=$source_revision" \
   --build-arg "TERRABASE_CREATED=$created" \

@@ -26,8 +26,8 @@ shows:
   health;
 - in-flight work, queue utilization, admission rejections, commit and WAL
   latency, and durability outcomes;
-- storage errors, compaction backlog and I/O, backup age and results, and usage
-  export failures.
+- storage errors, compaction backlog and I/O, backup age and results, and the
+  usage-export frontier and failures.
 
 Scope the Prometheus job to one TerraBase deployment. Request rates and local
 storage bytes can be summed across its Member targets. Readiness and component

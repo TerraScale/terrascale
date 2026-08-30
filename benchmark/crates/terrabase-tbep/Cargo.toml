@@ -18,6 +18,11 @@ license = "MIT"
 description = "TerraBase engine server behind the TBEP gRPC contract"
 publish = false
 
+[features]
+default = ["local-crypto"]
+local-crypto = ["terrabase/local-crypto", "terrabase-cluster/local-crypto"]
+production-fips = ["terrabase/production-fips", "terrabase-cluster/production-fips"]
+
 [lints.rust]
 unsafe_code = "deny"
 missing_docs = "deny"
@@ -57,8 +62,8 @@ tokio-stream = { version = "0.1", default-features = false, features = [
 terrabase-sync-core = { path = "../terrabase-sync-core" }
 # The engine this host serves (P4): the real durable engine behind the
 # document spine.
-terrabase-cluster = { path = "../terrabase-cluster" }
-terrabase = { path = "../.." }
+terrabase-cluster = { path = "../terrabase-cluster", default-features = false }
+terrabase = { path = "../..", default-features = false }
 
 [build-dependencies]
 # The protobuf front end: pure-Rust schema compilation feeding

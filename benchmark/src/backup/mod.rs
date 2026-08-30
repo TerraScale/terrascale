@@ -73,11 +73,20 @@
 //! selected tenant's live byte weight, and no bound in this module caps it.
 //! Incremental runs never materialize state — they page the journal and
 //! write each record as it is classified. A streaming or spilling state
-//! archive is a recorded open limit, not an implemented one: the only
-//! reachable source of values is the publication history, and last-write
-//! wins cannot be emitted in one pass without a spill format. The recovery
-//! lane (BK-02) must size and disclose this bound rather than inherit it
-//! silently.
+//! archive is a recorded open limit, not an implemented one. The available
+//! history seam is paged, but last-write wins still requires retaining every
+//! live key (and its document) before the canonical final state can be
+//! emitted. The existing snapshot-page seam is not a drop-in replacement: it
+//! cannot pin an arbitrary `StorageSequence`, returns no durability fact for
+//! the final write, and its identifier cursor is ambiguous when one
+//! identifier is reused across collections. The exact bounded seam required
+//! here is a durable `snapshot_records_from(tenant, boundary,
+//! after: Option<(collection, identifier)>, limit)` read that returns
+//! final-state documents together with the durability of their winning
+//! writes, in a stable full-key order. With that seam, backup can page
+//! directly into the staged member writer; without it, a spill/sort format or
+//! an incompatible loss of those facts is required. The recovery lane
+//! (BK-02) must size and disclose this bound rather than inherit it silently.
 //!
 //! # Limits (focused tests only)
 //!
@@ -1063,11 +1072,13 @@ fn effective_history_start(
 ///
 /// # Memory bound
 ///
-/// The replay materializes one tenant's complete live state in memory — a
-/// `(collection, document id) -> (document, durability)` map — before the
-/// first record of that tenant is written, so the run's peak memory is the
-/// largest selected tenant's live byte weight. No bound in this module caps
-/// it; see the module documentation's memory-bound section.
+/// The current history-only seam requires materializing one tenant's complete
+/// live state in memory — a `(collection, document id) -> (document,
+/// durability)` map — before the first record of that tenant is written, so
+/// the run's peak memory is the largest selected tenant's live byte weight.
+/// No bound in this module caps it. A bounded implementation is blocked until
+/// the exact final-state paging seam documented in the module memory-bound
+/// section is available; a member-byte bound is not a tenant-state bound.
 fn archive_state_at(
     engine: &Engine,
     state: &mut RunState,

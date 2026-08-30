@@ -15,6 +15,12 @@ All browser dependencies are served from the Studio binary. Updating one require
 - Local license SHA-256: `d3744837a0204e16cce7dfbcc77a1b72f302a74d10089a4dd552147582151cb0` (the local copy adds a final newline)
 - Retrieved: `2026-08-30`
 
+Studio's Monaco-only integration is maintained in this repository:
+
+- Local file: `studio-monaco.js`
+- SHA-256: `298fa053283ed077fff5fd545f12cf4678d2138b25eef6b7a0a9acde6c2b5d58`
+- Scope: Monaco mount, model synchronization, and disposal only. Datastar owns actions, signals, and SSE handling.
+
 ## Basecoat CSS
 
 - Package: `basecoat-css`

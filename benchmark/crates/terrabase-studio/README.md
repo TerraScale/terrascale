@@ -30,6 +30,12 @@ boundary is ever needed, that is a separate decision, not a flag here.
 The first run creates the location. Load sample documents from the Documents
 page if you want something to look at immediately.
 
+S3 backup settings can be saved on `/backups` or supplied through
+`TERRABASE_BACKUP_*` variables. Credentials use the standard AWS environment
+or workload identity chain and are never saved in Studio. See
+[`../../docs/operations/s3-backup-and-restore.md`](../../docs/operations/s3-backup-and-restore.md)
+for the complete bucket policy, lifecycle, KMS, and restore procedure.
+
 ## Pages
 
 | Page                 | Route        | What it does                                                                                                                                                                                                                |
@@ -43,7 +49,7 @@ page if you want something to look at immediately.
 | Tiers                | `/tiers`     | Configure the Storage Tier Mover's policy, pause/resume, dry run (the explain control), and run one pass. Every receipt, including the ordered reasons the policy weighed, is shown.                                        |
 | Usage                | `/usage`     | The closed meter catalog and the folded summary of recorded segments.                                                                                                                                                       |
 | Replication          | `/replication` | Region catalog, topology view, acknowledgement vocabulary, and the cluster crate's in-process durability model. Names what is *not* exposed without members.                                                               |
-| Backups & deletion   | `/backups`   | Recovery points, chain verification, restore, and the deletion domain's typed workflow states end to end.                                                                                                                   |
+| Backups & deletion   | `/backups`   | Configure and test S3, run full or incremental recovery points, verify a remote chain, restore a selected point into a new location, and drive deletion workflows.                                                          |
 
 `/healthz` and `/readyz` answer for a supervisor.
 
@@ -60,22 +66,22 @@ never as a blank panel.
 ## Datastar
 
 The UI is server-sent hypertext. Actions answer `text/event-stream` and patch
-the page; the browser runtime applies them. The studio implements the Datastar
-protocol directly rather than depending on a client SDK: the server side is
-[`src/datastar.rs`](src/datastar.rs) and the browser side is
-[`static/studio.js`](static/studio.js), with the official Datastar runtime
-vendored at [`static/datastar-1.0.3.js`](static/datastar-1.0.3.js).
+the page. The vendored official Datastar module applies those events and owns
+all action, signal, and DOM-patching behavior. [`src/datastar.rs`](src/datastar.rs)
+emits the documented server-side wire format. The only custom browser code is
+[`static/studio-monaco.js`](static/studio-monaco.js), which mounts and disposes
+Monaco editors while leaving the textarea as the submitted fallback.
 
 The wire uses the current event names, `datastar-patch-elements` (with
 `data: selector`, `data: mode`, `data: elements`) and `datastar-patch-signals`;
-removal is `data: mode remove`. The pre-1.0 names
-`datastar-merge-fragments`/`datastar-remove-fragments` are still accepted by
-the runtime, so fixtures recorded against either spelling keep working.
+removal is `data: mode remove`.
 
-Pages carry `data-signals`, `data-on-*`, `data-text`, and `data-show`
-attributes. The Overview and Metrics pages each open exactly one long-lived
-connection (`/events/metrics`) and the server pushes a refreshed panel on its
-own cadence; nothing polls with separate requests.
+Pages use official attributes such as `data-signals`, `data-on:submit`,
+`data-on:click`, `data-init`, and `data-text`. Each full page gets a fresh CSP
+nonce from the operating system. Datastar uses that nonce to compile attribute
+expressions without `unsafe-eval`. The Overview and Metrics pages each open one
+long-lived `/events/metrics` connection, and the server pushes a refreshed
+panel on its own cadence.
 
 ## Styling
 
@@ -107,10 +113,10 @@ These are stated on the pages themselves, not hidden.
 - **No cluster host.** `ClusterHost`, `ClusterMember`, `BackupSet`, and
   `BackupLastRouter` need real member locations on disk; the studio drives one
   engine location only.
-- **No backup scheduler.** The schedule, destination, retention, and encryption
-  modules are crate-private by design; the studio drives `run_backup`,
-  `verify_latest_chain`, `load_recovery_point`, and the two restore entry
-  points, which are the public surface.
+- **The backup scheduler lives with Studio.** It runs only while this process
+  is alive. Production must compose the same S3 adapter inside the process
+  that owns the live `Engine`; a second process must not open the active data
+  directory. S3 lifecycle rules, versioning, and object lock own retention.
 - **No tier scheduler.** There is no background mover loop and no cancel
   control; `run` executes one bounded pass on the caller's thread. `dry_run`
   is the explain control. A tierless backend answers `UnsupportedBackend`, and
@@ -148,14 +154,14 @@ cargo fmt --check --manifest-path crates/terrabase-studio/Cargo.toml
 
 The suite covers the SSE wire format, pagination and point reads against real
 scratch engine locations, the query-form parser, the JSON bridge, the HTML
-helpers' escaping and table shape, the sidecar registry's round trip, and the
-rendered markers of every page.
+helpers' escaping and table shape, the sidecar registry's round trip, rendered
+markers, and in-memory S3 full, incremental, verification, and restore paths.
 
 ## Dependencies
 
 `terrabase` and `terrabase-cluster` by path; `axum` for typed routing, form
 extraction, and an SSE body; `tokio` plus `tokio-stream` for the runtime and
 the metrics channel; `serde`/`serde_json` for the studio's sidecar file and the
-document editor's JSON. No template engine — the HTML helpers are `format!` and
-an escape function. The engine workspace itself is untouched and stays
-zero-dependency.
+document editor's JSON; `object_store` for S3 signing, transport, and workload
+credentials; and `futures-util` for bounded concurrent transfers. No template
+engine is used; the HTML helpers are `format!` and an escape function.

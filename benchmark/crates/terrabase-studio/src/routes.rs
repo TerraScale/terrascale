@@ -123,18 +123,16 @@ pub fn router(state: Arc<StudioState>) -> Router {
 /// non-loopback binds and this middleware rejects cross-origin writes.
 async fn security_headers(request: Request<Body>, next: Next) -> Response {
     if request.method() == axum::http::Method::POST && !same_origin(&request) {
-        let mut response = Response::new(axum::body::Body::from("cross-origin action refused\n"));
-        *response.status_mut() = StatusCode::FORBIDDEN;
-        response
-            .headers_mut()
-            .insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"));
-        return response;
+        return hardened(status_text(StatusCode::FORBIDDEN, "cross-origin action refused\n"));
     }
     let request = match reject_duplicate_confirmations(request).await {
         Ok(request) => request,
-        Err(response) => return response,
+        Err(response) => return hardened(response),
     };
-    let mut response = next.run(request).await;
+    hardened(next.run(request).await)
+}
+
+fn hardened(mut response: Response) -> Response {
     let headers = response.headers_mut();
     headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     headers.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
@@ -175,8 +173,40 @@ async fn reject_duplicate_confirmations(request: Request<Body>) -> Result<Reques
 
 fn form_field_count(body: &[u8], field: &str) -> usize {
     body.split(|byte| *byte == b'&')
-        .filter(|pair| pair.split(|byte| *byte == b'=').next() == Some(field.as_bytes()))
+        .filter(|pair| {
+            pair.split(|byte| *byte == b'=').next().is_some_and(|name| {
+                decode_form_component(name).is_some_and(|name| name == field)
+            })
+        })
         .count()
+}
+
+fn decode_form_component(value: &[u8]) -> Option<String> {
+    let mut decoded = Vec::with_capacity(value.len());
+    let mut index = 0;
+    while index < value.len() {
+        match value[index] {
+            b'+' => decoded.push(b' '),
+            b'%' if index + 2 < value.len() => {
+                let high = hex_digit(value[index + 1])?;
+                let low = hex_digit(value[index + 2])?;
+                decoded.push(high * 16 + low);
+                index += 2;
+            }
+            byte => decoded.push(byte),
+        }
+        index += 1;
+    }
+    String::from_utf8(decoded).ok()
+}
+
+fn hex_digit(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
 }
 
 /// Requires a bounded, already-normalized operator confirmation. Trimming is
@@ -637,6 +667,8 @@ struct IndexActionForm {
     tenant: String,
     name: String,
     action: String,
+    confirm_target: String,
+    confirm_phrase: String,
 }
 
 #[derive(Deserialize)]
@@ -681,6 +713,12 @@ async fn indexes_action(
 ) -> Response {
     let refresh_state = Arc::clone(&state);
     let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            &format!("{}/{}", form.tenant, form.name),
+            &format!("index {}", form.action),
+        )?;
         let result = indexes::run_action(state, &form.tenant, &form.name, &form.action);
         let rendered = result.as_ref().map_or_else(Clone::clone, Clone::clone);
         state.record("indexes/action", rendered, result.is_ok());
@@ -863,6 +901,13 @@ struct RegionForm {
     code: String,
 }
 
+#[derive(Deserialize)]
+struct RegionRetireForm {
+    code: String,
+    confirm_target: String,
+    confirm_phrase: String,
+}
+
 async fn regions_admit(
     State(state): State<Arc<StudioState>>,
     Form(form): Form<RegionForm>,
@@ -882,12 +927,19 @@ async fn regions_admit(
 
 async fn regions_retire(
     State(state): State<Arc<StudioState>>,
-    Form(form): Form<RegionForm>,
+    Form(form): Form<RegionRetireForm>,
 ) -> Response {
     let outcome = on_blocking(state, move |state| {
         let mut catalog = state.regions.lock().unwrap_or_else(|poison| poison.into_inner());
-        let code = terrabase::RegionCode::from_text(form.code.trim().to_uppercase().as_str())
+        let canonical = form.code.trim().to_uppercase();
+        let code = terrabase::RegionCode::from_text(&canonical)
             .map_err(|error| format!("`{}` is not a region code: {error:?}", form.code))?;
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            code.as_str(),
+            "retire region",
+        )?;
         catalog
             .retire(code)
             .map_err(|error| format!("retirement refused: {error:?}"))
@@ -902,6 +954,8 @@ struct TopologyAddForm {
     region: String,
     first: String,
     second: String,
+    confirm_target: String,
+    confirm_phrase: String,
 }
 
 async fn topology_add_region(
@@ -910,6 +964,12 @@ async fn topology_add_region(
 ) -> Response {
     let refresh_state = Arc::clone(&state);
     let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            &form.region,
+            "add region",
+        )?;
         let mut spec = state.topology();
         let region = replication::region_from_parts(&form.region, &form.first, &form.second)?;
         if spec.regions.iter().any(|existing| existing.name == region.name) {
@@ -940,6 +1000,8 @@ async fn topology_add_region(
 #[derive(Deserialize)]
 struct TopologyRemoveForm {
     index: usize,
+    confirm_target: String,
+    confirm_phrase: String,
 }
 
 async fn topology_remove_region(
@@ -949,6 +1011,16 @@ async fn topology_remove_region(
     let refresh_state = Arc::clone(&state);
     let outcome = on_blocking(state, move |state| {
         let spec = state.topology();
+        let region = spec
+            .regions
+            .get(form.index)
+            .ok_or_else(|| format!("region {} does not exist", form.index))?;
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            &region.name,
+            "remove region",
+        )?;
         let next = replication::without_region(&spec, form.index)?;
         state.set_topology(next);
         Ok("region removed and the specification persisted".to_owned())
@@ -1042,6 +1114,8 @@ struct TierConfigureForm {
     residence: String,
     promotion: String,
     pinned: Option<String>,
+    confirm_target: String,
+    confirm_phrase: String,
 }
 
 async fn tiers_configure(
@@ -1049,6 +1123,12 @@ async fn tiers_configure(
     Form(form): Form<TierConfigureForm>,
 ) -> Response {
     let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            &form.policy_id,
+            "configure tier policy",
+        )?;
         let policy = tiers::policy_from_parts(
             &form.policy_id,
             &form.version,
@@ -1075,8 +1155,23 @@ async fn tiers_configure(
     receipt("tier-receipt", outcome)
 }
 
-async fn tiers_pause(State(state): State<Arc<StudioState>>) -> Response {
-    let outcome = on_blocking(state, |state| {
+#[derive(Deserialize)]
+struct ConfirmedActionForm {
+    confirm_target: String,
+    confirm_phrase: String,
+}
+
+async fn tiers_pause(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<ConfirmedActionForm>,
+) -> Response {
+    let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            "tier mover",
+            "pause tier mover",
+        )?;
         let paused = state.engine.tiers().pause();
         state.record("tiers/pause", format!("paused = {paused}"), true);
         Ok(format!(
@@ -1087,8 +1182,17 @@ async fn tiers_pause(State(state): State<Arc<StudioState>>) -> Response {
     receipt("tier-receipt", outcome)
 }
 
-async fn tiers_resume(State(state): State<Arc<StudioState>>) -> Response {
-    let outcome = on_blocking(state, |state| {
+async fn tiers_resume(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<ConfirmedActionForm>,
+) -> Response {
+    let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            "tier mover",
+            "resume tier mover",
+        )?;
         let paused = state.engine.tiers().resume();
         state.record("tiers/resume", format!("paused = {paused}"), true);
         Ok(format!("resume returned {paused}: real passes are accepted again"))
@@ -1113,8 +1217,17 @@ async fn tiers_dry_run(State(state): State<Arc<StudioState>>) -> Response {
     receipt("tier-receipt", outcome)
 }
 
-async fn tiers_run(State(state): State<Arc<StudioState>>) -> Response {
-    let outcome = on_blocking(state, |state| {
+async fn tiers_run(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<ConfirmedActionForm>,
+) -> Response {
+    let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            "tier mover",
+            "run tier mover",
+        )?;
         state
             .engine
             .tiers()
@@ -1348,6 +1461,8 @@ async fn backup_verify(State(state): State<Arc<StudioState>>) -> Response {
 struct BackupRestoreForm {
     target: String,
     identity: Option<String>,
+    confirm_target: String,
+    confirm_phrase: String,
 }
 
 async fn backup_restore(
@@ -1358,6 +1473,12 @@ async fn backup_restore(
         let _job = state.backup_job.lock().await;
         let repository = configured_backup_repository(state.as_ref())?;
         let target = backups::restore_target(&form.target)?;
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            &target.display().to_string(),
+            "restore recovery point",
+        )?;
         let identity = form
             .identity
             .as_deref()
@@ -1460,6 +1581,13 @@ struct DeletionTargetForm {
     request_id: String,
 }
 
+#[derive(Deserialize)]
+struct DeletionCompleteForm {
+    request_id: String,
+    confirm_target: String,
+    confirm_phrase: String,
+}
+
 async fn deletion_admit(
     State(state): State<Arc<StudioState>>,
     Form(form): Form<DeletionTargetForm>,
@@ -1528,10 +1656,16 @@ async fn deletion_verify(
 
 async fn deletion_complete(
     State(state): State<Arc<StudioState>>,
-    Form(form): Form<DeletionTargetForm>,
+    Form(form): Form<DeletionCompleteForm>,
 ) -> Response {
     let refresh_state = Arc::clone(&state);
     let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            form.request_id.trim(),
+            "complete deletion",
+        )?;
         with_workflow(state, &form.request_id, |workflow| {
             backups::complete_workflow(workflow, now_millis())
         })
@@ -1568,15 +1702,28 @@ async fn deletion_response(state: Arc<StudioState>, outcome: Result<String, Stri
 #[derive(Deserialize)]
 struct CompactForm {
     policy: Option<String>,
+    confirm_target: String,
+    confirm_phrase: String,
 }
 
 async fn maintenance_compact(
     State(state): State<Arc<StudioState>>,
-    Query(form): Query<CompactForm>,
+    Form(form): Form<CompactForm>,
 ) -> Response {
     let policy = form.policy.unwrap_or_else(|| "reclaim".to_owned());
     let refresh_state = Arc::clone(&state);
     let outcome = on_blocking(state, move |state| {
+        let phrase = if policy == "reclaim-history" {
+            "compact reclaim history"
+        } else {
+            "compact reclaim"
+        };
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            "local engine",
+            phrase,
+        )?;
         let request = terrabase::CompactionRequest::new(match policy.as_str() {
             "reclaim-history" => terrabase::CompactionPolicy::ReclaimHistory,
             _ => terrabase::CompactionPolicy::Reclaim,
@@ -1602,9 +1749,18 @@ async fn maintenance_compact(
     response_with_refresh(html::RECEIPT_TARGET, outcome, extra)
 }
 
-async fn maintenance_maintain_indexes(State(state): State<Arc<StudioState>>) -> Response {
+async fn maintenance_maintain_indexes(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<ConfirmedActionForm>,
+) -> Response {
     let refresh_state = Arc::clone(&state);
-    let outcome = on_blocking(state, |state| {
+    let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            "local engine",
+            "maintain indexes",
+        )?;
         state.engine.maintain_indexes();
         let text = "one auto-index lifecycle pass ran: idle, superseded, and retired automatic indexes were re-evaluated against the configured thresholds".to_owned();
         state.record("maintenance/maintain-indexes", text.clone(), true);

@@ -1214,6 +1214,11 @@ impl MetricsSnapshot {
     /// The current closed registry is statically bounded below the limit. This
     /// checked form keeps a future contract expansion from sending a partial or
     /// oversized response.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExpositionTooLarge`] when the rendered body exceeds
+    /// [`MAX_PROMETHEUS_BODY_BYTES`].
     pub fn try_render_prometheus(&self) -> Result<String, ExpositionTooLarge> {
         let output = self.render_prometheus_unchecked();
         if output.len() > MAX_PROMETHEUS_BODY_BYTES {
@@ -1447,6 +1452,11 @@ impl MetricsRegistry {
     /// Repeating the current state is idempotent. Backwards transitions and
     /// every transition after [`ServiceState::Stopped`] fail closed. Reaching
     /// [`ServiceState::Serving`] records the monotonic startup fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServiceTransitionError`] for a backwards transition or any
+    /// transition away from [`ServiceState::Stopped`].
     pub fn transition_service(
         &self,
         service_state: ServiceState,
@@ -1462,6 +1472,10 @@ impl MetricsRegistry {
 
     /// Takes one immutable snapshot for private operator adapters.
     #[must_use]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one locked pass copies every closed metric family into one atomic snapshot"
+    )]
     pub fn snapshot(&self) -> MetricsSnapshot {
         let state = lock(&self.state);
         let requests = state
@@ -1792,6 +1806,12 @@ fn write_durability_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
 }
 
 fn write_resource_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
+    write_replication_metrics(output, snapshot);
+    write_storage_metrics(output, snapshot);
+    write_membership_metrics(output, snapshot);
+}
+
+fn write_replication_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
     write_help_type(
         output,
         "terrabase_replication_lag_seconds",
@@ -1836,6 +1856,9 @@ fn write_resource_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
         )
         .expect("writing String cannot fail");
     }
+}
+
+fn write_storage_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
     write_help_type(
         output,
         "terrabase_storage_bytes",
@@ -1881,6 +1904,9 @@ fn write_resource_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
         )
         .expect("writing String cannot fail");
     }
+}
+
+fn write_membership_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
     write_help_type(
         output,
         "terrabase_active_members",

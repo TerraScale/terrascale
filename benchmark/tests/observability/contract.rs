@@ -344,6 +344,14 @@ fn alert_rules_preserve_required_optional_and_selected_region_semantics() {
     assert!(rules.contains(r#"terrabase_active_members{region!="unknown"} < 2"#));
     assert!(rules.contains("0.000000001"));
     assert!(!rules.contains("clamp_min(sum(rate(terrabase_requests_total[5m])), 1)"));
+    for target_grouping in [
+        "sum by (job, instance, le, region, operation)",
+        "sum by (job, instance, operation, reason)",
+        "sum by (job, instance, tier, operation)",
+        "sum by (job, instance, mode)",
+    ] {
+        assert!(rules.contains(target_grouping), "alert dropped target labels: {target_grouping}");
+    }
 
     for alert in [
         "TerraBaseQueueSaturationHigh",
@@ -360,6 +368,13 @@ fn alert_rules_preserve_required_optional_and_selected_region_semantics() {
             "alert {alert} must appear once"
         );
     }
+}
+
+#[test]
+fn dashboard_includes_the_authoritative_usage_frontier() {
+    let dashboard = include_str!("../../deploy/observability/grafana-dashboard.json");
+    assert!(dashboard.contains("terrabase_usage_export_frontier"));
+    assert!(dashboard.contains("terrabase_usage_export_failures_total"));
 }
 
 #[test]

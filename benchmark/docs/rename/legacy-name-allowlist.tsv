@@ -81,4 +81,3 @@ tests/query/vector_conformance_vectors.rs	1	f39e5de7832918c50e9f5c26ccc5074de818
 tests/query/vector_search.rs	1	d107e11326b35ee8fb66661160ffa2f1e1958616949d2ff9cd102a563b24d199	Exact historical issue or ticket identifier retained as source provenance.
 tests/recovery/backup_public_construction.rs	3	2956891100287d4fa155973589e7e2c0966b186d964c1746caca42331dbf8ed6	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 tests/recovery/restore_public.rs	1	b46f4395ca6b23678cb7af8cc1646139426d418992995004632a9611cfc3c07f	Persisted-format identity or its exact reader, writer, vector, or hostile test.
-tests/recovery/schedule_public_chain.rs	1	a4a6440512973ccf301adaa7e259e52191812a65c91c9925a19633cb96b9ef97	Persisted-format identity or its exact reader, writer, vector, or hostile test.

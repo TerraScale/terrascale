@@ -32,7 +32,7 @@ impl Selection {
 }
 
 /// Renders the Documents page.
-pub fn render(state: &StudioState, selection: &Selection) -> String {
+pub fn render(state: &StudioState, selection: &Selection, nonce: &str) -> String {
     let body = format!(
         "{heading}\n\
 {limit_note}\n\
@@ -53,7 +53,7 @@ pub fn render(state: &StudioState, selection: &Selection) -> String {
         editor_card = editor_card(state, selection),
         delete_card = delete_card(state, selection),
     );
-    html::page("Documents", "/documents", "", &body)
+    html::page(nonce, "Documents", "/documents", "", &body)
 }
 
 fn list_card(state: &StudioState, selection: &Selection) -> String {
@@ -199,7 +199,16 @@ fn read_card(state: &StudioState, selection: &Selection) -> String {
 </form>\n<div id=\"{VIEW_ID}\" class=\"mt-4\"></div>",
         tenant = html::select("tenant", "Tenant", &tenant_options),
         collection = html::select("collection", "Collection", &collection_options),
-        id = html::text_input("id", "Document id", "", "the document identifier"),
+        id = format!(
+            "{}{}",
+            html::text_input("id", "Document id", "", "the document identifier"),
+            html::text_input(
+                "confirm_target",
+                "Type tenant/collection/id",
+                "",
+                "demo/users/document-id",
+            ) + &html::text_input("confirm_phrase", "Type action phrase", "", "delete document"),
+        ),
         primary = ButtonStyle::Primary.classes(),
         secondary = ButtonStyle::Secondary.classes(),
         VIEW_ID = VIEW_ID,
@@ -253,11 +262,19 @@ fn delete_card(state: &StudioState, selection: &Selection) -> String {
     let body = format!(
         "<form class=\"grid gap-4\" data-on:submit=\"if (!confirm('Delete this document? The engine stages a collection-scoped tombstone and commits it at Synced durability.')) return; @post('/documents/delete', {{contentType: 'form', retry: 'never'}})\">\n\
 <div class=\"grid gap-4 sm:grid-cols-3\">{tenant}{collection}{id}</div>\n\
+{confirmation}\n\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {destructive} w-fit\">Delete document</button>\n\
 </form>\n{receipt}\n{sample}",
         tenant = html::select("tenant", "Tenant", &tenant_options),
         collection = html::select("collection", "Collection", &collection_options),
         id = html::text_input("id", "Document id", "", "the document identifier"),
+        confirmation = html::confirmation_fields(
+            &format!(
+                "{}/{}/<document id entered above>",
+                selection.tenant, selection.collection
+            ),
+            "delete document",
+        ),
         destructive = ButtonStyle::Destructive.classes(),
         receipt = html::receipt_region_with("delete-receipt"),
     );

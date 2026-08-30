@@ -7,6 +7,11 @@ license = "MIT"
 description = "Production TerraBase engine daemon"
 publish = false
 
+[features]
+default = ["local-crypto"]
+local-crypto = ["terrabase/local-crypto", "terrabase-tbep/local-crypto"]
+production-fips = ["terrabase/production-fips", "terrabase-tbep/production-fips"]
+
 [lints.rust]
 unsafe_code = "deny"
 missing_docs = "deny"
@@ -15,8 +20,8 @@ missing_docs = "deny"
 pedantic = "warn"
 
 [dependencies]
-terrabase = { path = "../.." }
-terrabase-tbep = { path = "../terrabase-tbep" }
+terrabase = { path = "../..", default-features = false }
+terrabase-tbep = { path = "../terrabase-tbep", default-features = false }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", default-features = false, features = [

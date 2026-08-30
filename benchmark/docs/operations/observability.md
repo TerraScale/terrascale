@@ -45,7 +45,7 @@ operator views:
 | Storage used | `terrabase_storage_bytes` by tier and summed across selected Members. |
 | Storage utilization | Storage bytes divided by `terrabase_storage_capacity_bytes`. |
 | Replication health | Maximum lag and backlog, minimum frontier health, and active Members by Region. |
-| Background work | Compaction backlog and I/O, backup age and outcomes, and usage-export failures. |
+| Background work | Compaction backlog and I/O, backup age and outcomes, and the usage-export frontier and failures. |
 
 Import `deploy/observability/grafana-dashboard.json` with the production
 Prometheus data source. Set the dashboard's Region and operation filters as

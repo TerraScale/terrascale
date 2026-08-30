@@ -466,7 +466,8 @@ fn valid_identity(value: &str) -> bool {
 }
 
 fn append_string(out: &mut Vec<u8>, value: &str) {
-    out.extend_from_slice(&(value.len() as u16).to_be_bytes());
+    let length = u16::try_from(value.len()).expect("identity length is validated");
+    out.extend_from_slice(&length.to_be_bytes());
     out.extend_from_slice(value.as_bytes());
 }
 
@@ -588,8 +589,7 @@ fn parse_envelope(envelope: &[u8]) -> Result<(u128, &[u8], Vec<u8>), EncryptionE
     ))
     .map_err(|_| EncryptionError::SizeLimit)?;
     if aad_len > MAX_AAD_BYTES
-        || ciphertext_len < AES_TAG_LEN
-        || ciphertext_len > MAX_PLAINTEXT_BYTES + AES_TAG_LEN
+        || !(AES_TAG_LEN..=MAX_PLAINTEXT_BYTES + AES_TAG_LEN).contains(&ciphertext_len)
         || HEADER_LEN.checked_add(aad_len).and_then(|n| n.checked_add(ciphertext_len))
             != Some(envelope.len())
     {

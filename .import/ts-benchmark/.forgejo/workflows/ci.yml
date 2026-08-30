@@ -2,7 +2,7 @@ name: terrabase checks
 
 on:
   push:
-    branches: [develop, main]
+    branches: [develop]
   pull_request:
     branches: [develop, main]
 
@@ -59,6 +59,8 @@ jobs:
         run: cargo check --workspace --locked
       - name: Build (release)
         run: cargo build --workspace --locked --release
+      - name: Build production server with AWS-LC FIPS
+        run: cargo build -p terrabase-server --locked --release --no-default-features --features production-fips
       # Dev profile first: debug_assert! contracts compile out under
       # --release, so a release-only run cannot gate them (SE-07 warden
       # repair: an off-by-one frame-header assertion was green in every
@@ -67,6 +69,8 @@ jobs:
         run: cargo test --workspace --locked
       - name: Test
         run: cargo test --workspace --locked --release
+      - name: Test AWS-LC FIPS selection
+        run: cargo test -p terrabase --locked --no-default-features --features production-fips --test encryption production_profile_links_an_operational_aws_lc_fips_module
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Documentation
@@ -100,7 +104,8 @@ jobs:
       - name: Release packaging definitions
         run: |
           jq --exit-status . .terrascale/deploy.json >/dev/null
-          bash -n deploy/release/candidate.sh deploy/release/package.sh deploy/release/reproduce.sh deploy/release/require-production-capability.sh deploy/release/sign.sh deploy/release/verify.sh
+          bash -n deploy/release/candidate.sh deploy/release/package.sh deploy/release/reproduce.sh deploy/release/require-production-capability.sh deploy/release/sign.sh deploy/release/verify-source-binding.sh deploy/release/verify.sh scripts/validate-release-contracts.sh
+          scripts/validate-release-contracts.sh
           python3 -m py_compile deploy/release/generate_sbom.py
           python3 deploy/release/generate_sbom.py --help >/dev/null
           grep -q '@sha256:' deploy/release/Containerfile.server

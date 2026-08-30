@@ -24,7 +24,7 @@ pub const DURABILITY_ID: &str = "durability-outcome";
 pub const TOPOLOGY_ID: &str = "topology-table";
 
 /// Renders the Replication page.
-pub fn render(state: &StudioState) -> String {
+pub fn render(state: &StudioState, nonce: &str) -> String {
     let body = format!(
         "{heading}\n\
 {scope_note}\n\
@@ -49,7 +49,7 @@ pub fn render(state: &StudioState) -> String {
         durability = durability_card(state),
         not_exposed = not_exposed_card(),
     );
-    html::page("Cluster", "/cluster", "", &body)
+    html::page(nonce, "Cluster", "/cluster", "", &body)
 }
 
 /// Shows declared members and the aggregate usage measurement this

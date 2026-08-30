@@ -24,7 +24,11 @@ pub const CHAIN_ID: &str = "backup-chain";
 pub const DELETION_ID: &str = "deletion-state";
 
 /// Renders the Backups and deletion page.
-pub fn render(state: &StudioState, points: Result<&[RemoteRecoveryPoint], &str>) -> String {
+pub fn render(
+    state: &StudioState,
+    points: Result<&[RemoteRecoveryPoint], &str>,
+    nonce: &str,
+) -> String {
     let body = format!(
         "{heading}\n\
 {configuration}\n\
@@ -43,7 +47,7 @@ pub fn render(state: &StudioState, points: Result<&[RemoteRecoveryPoint], &str>)
         deletion = deletion_card(state),
         limits = limits_card(),
     );
-    html::page("Backups & deletion", "/backups", "", &body)
+    html::page(nonce, "Backups & deletion", "/backups", "", &body)
 }
 
 fn configuration_card(state: &StudioState) -> String {
@@ -135,11 +139,16 @@ fn restore_card(state: &StudioState) -> String {
             "Source",
             &configured_destination(&state.backup_settings()),
         ),
-        target = html::text_input(
-            "target",
-            "Restore target",
-            &state.config.data_dir.join("studio").join("restored").display().to_string(),
-            "/path/to/new/location"
+        target = format!(
+            "{}{}{}",
+            html::text_input(
+                "target",
+                "Restore target",
+                &state.config.data_dir.join("studio").join("restored").display().to_string(),
+                "/path/to/new/location",
+            ),
+            html::text_input("confirm_target", "Type restore target exactly", "", "/path/to/new/location"),
+            html::text_input("confirm_phrase", "Type action phrase", "", "restore recovery point"),
         ),
         identity = html::text_input(
             "identity",

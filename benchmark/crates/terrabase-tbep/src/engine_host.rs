@@ -23,10 +23,10 @@ use terrabase::types::{
     LocalDurability, OperationId, TenantId,
 };
 use terrabase::usage::{
-    ChargeScope as EngineChargeScope, MeasurementWindow, MeterKind, MeterUnit as EngineMeterUnit,
-    MintingRule as EngineMintingRule, UsageAdmissionContext as EngineUsageAdmission,
-    UsageCommandError, UsageContinuation, UsageFactId, UsagePageRequest,
-    UsageRecordMeter as EngineUsageRecordMeter, UsageRecordRequest as EngineUsageRecordRequest,
+    MeasurementWindow, MeterKind, MintingRule as EngineMintingRule,
+    UsageAdmissionContext as EngineUsageAdmission, UsageCommandError, UsageContinuation,
+    UsageFactId, UsagePageRequest, UsageRecordMeter as EngineUsageRecordMeter,
+    UsageRecordRequest as EngineUsageRecordRequest,
 };
 
 use crate::host::{HostingError, TbepHost};
@@ -163,15 +163,6 @@ fn wire_usage_fact(
             ));
         }
     };
-    let expected = match meter {
-        crate::registry::UsageMeter::AdmittedRequestUnits => {
-            (EngineMeterUnit::RequestUnit, EngineChargeScope::AdmittedRequest)
-        }
-        crate::registry::UsageMeter::PublicEgressBytes => {
-            (EngineMeterUnit::Byte, EngineChargeScope::PublicEgress)
-        }
-    };
-    let _ = expected;
     let canonical = durable.encoded();
     let checksum = canonical
         .get(canonical.len().saturating_sub(32)..)
@@ -232,6 +223,20 @@ fn tier_error(error: terrabase::tiers::TierAdminError) -> HostingError {
             ))
         }
     }
+}
+
+/// The standalone engine cannot honestly satisfy any replicated write
+/// acknowledgement exposed by TBEP.  Keep this refusal centralized so a
+/// caller cannot accidentally turn a local sync into a quorum claim.
+fn standalone_ack_refusal(ack: crate::registry::Acknowledgement) -> Result<(), HostingError> {
+    let requested = match ack {
+        crate::registry::Acknowledgement::RegionalQuorum => "regional_quorum",
+        crate::registry::Acknowledgement::GlobalQuorum => "global_quorum",
+        crate::registry::Acknowledgement::BackupAck => "backup_ack",
+    };
+    Err(HostingError::Refused(format!(
+        "{requested} acknowledgement is unavailable on the standalone engine host; the protocol needs a local-synced acknowledgement or replication host"
+    )))
 }
 
 /// Maps one engine tier receipt onto the wire's.
@@ -327,9 +332,20 @@ impl EngineHost {
         tenant: &str,
         query_id: u64,
         cancellation: &terrabase::types::Cancellation,
-    ) {
+    ) -> Result<(), HostingError> {
+        // Admission and registration share the health-to-live lock order so
+        // shutdown cannot race a query between its admission check and
+        // insertion into the cancellation set.
+        let health = self.health.lock().expect("the health state is not poisoned");
+        if *health != HealthState::Serving {
+            return Err(HostingError::Refused("the host is draining".into()));
+        }
         let mut live = self.live_queries.lock().expect("the live set is not poisoned");
+        if live.contains_key(&(tenant.to_owned(), query_id)) {
+            return Err(HostingError::Refused("the query id is already active".into()));
+        }
         live.insert((tenant.to_owned(), query_id), cancellation.clone());
+        Ok(())
     }
 
     /// Retires one query: the id moves to the bounded completed set a
@@ -445,7 +461,15 @@ impl EngineHost {
         stage: impl FnOnce(&mut terrabase::engine::Transaction<'_>) -> Result<(), HostingError>,
         ack: crate::registry::Acknowledgement,
         idempotency_key: &str,
+        usage: Option<&crate::registry::UsageAdmissionContext>,
     ) -> Result<WriteOutcome, HostingError> {
+        // This host owns one local Engine only. Its local `Synced` commit
+        // cannot prove the protocol's RF=2 regional quorum, a quorum across
+        // two regions, or a backup acknowledgement. The registry has no
+        // local-synced acknowledgement variant, so reject before opening a
+        // transaction rather than returning a false durability claim.
+        standalone_ack_refusal(ack)?;
+
         // The envelope's idempotency key is the operation identity:
         // a retried frame replays the recorded receipt.
         let identity = if idempotency_key.is_empty() { operation } else { idempotency_key };
@@ -464,14 +488,20 @@ impl EngineHost {
             drop(transaction);
             return Err(error);
         }
+        if let Some(usage) = usage {
+            transaction
+                .attach_usage_admission(engine_usage_admission(usage)?)
+                .map_err(usage_error)?;
+        }
         match transaction.commit(LocalDurability::Synced) {
             CommitOutcome::Committed(receipt) => Ok(WriteOutcome::Committed(CommitReceipt {
                 sequence: receipt.sequence().get(),
                 // Replaced by the published version at the call site.
                 version: 0,
                 operation_id: receipt.operation_id().as_str().to_owned(),
-                // One standalone member IS its region's quorum: the
-                // local durable commit satisfies both levels.
+                // Unreachable on this standalone host because the
+                // acknowledgement guard above fails closed; a replicated
+                // host must construct its receipt from observed quorum state.
                 acknowledgement: Some(ack),
                 backup: None,
             })),
@@ -549,6 +579,7 @@ impl TbepHost for EngineHost {
             },
             request.ack.unwrap_or(crate::registry::Acknowledgement::RegionalQuorum),
             idempotency_key,
+            request.usage.as_ref(),
         )?;
         // The wire's receipt carries the document's published version —
         // the engine's own receipt carries the storage sequence.
@@ -599,6 +630,7 @@ impl TbepHost for EngineHost {
             },
             request.ack.unwrap_or(crate::registry::Acknowledgement::RegionalQuorum),
             idempotency_key,
+            request.usage.as_ref(),
         )?;
         // Same rule as the write path: the wire's receipt carries the
         // document's version, the engine's own receipt carries the
@@ -659,6 +691,7 @@ impl TbepHost for EngineHost {
             },
             request.ack.unwrap_or(crate::registry::Acknowledgement::RegionalQuorum),
             idempotency_key,
+            request.usage.as_ref(),
         )?;
         Ok(crate::registry::DocumentBatchResponse { outcome })
     }
@@ -679,9 +712,9 @@ impl TbepHost for EngineHost {
         let text = terrabase::operations::TqlQueryText::try_new(&request.text)
             .map_err(|_| HostingError::Invalid("the query text is not valid".into()))?;
         let cancellation = terrabase::types::Cancellation::new();
-        self.register_live_query(&tenant, request.query_id, &cancellation);
         let deadline = terrabase::types::Deadline::after(std::time::Duration::from_secs(30))
             .map_err(|_| HostingError::EngineFailure("the deadline is invalid".into()))?;
+        self.register_live_query(tenant.as_str(), request.query_id, &cancellation)?;
         let input = terrabase::operations::QueryInput::tql_bounded(text, deadline, cancellation);
         let scope = self.engine.scope_for(&tenant);
         let executed = (|| -> Result<
@@ -703,7 +736,7 @@ impl TbepHost for EngineHost {
             Ok((store.execute(&plan, &snapshot), position))
         })();
         // Every completion path retires the query from the live set.
-        self.retire_live_query(&tenant, request.query_id);
+        self.retire_live_query(tenant.as_str(), request.query_id);
         let (executed, position) = executed?;
         let result = match executed {
             Ok(result) => result,
@@ -1001,6 +1034,99 @@ impl TbepHost for EngineHost {
         })
     }
 
+    fn usage_record(
+        &self,
+        tenant: &str,
+        request: &crate::registry::UsageRecordRequest,
+        idempotency_key: &str,
+    ) -> Result<crate::registry::UsageRecordResponse, HostingError> {
+        self.count_frame();
+        self.ensure_serving()?;
+        request
+            .validate_for_key(idempotency_key)
+            .map_err(|_| HostingError::Invalid("the usage record is invalid".into()))?;
+        let tenant = Self::tenant_of(tenant)?;
+        let fact_id = UsageFactId::try_new(&request.fact_id)
+            .map_err(|_| HostingError::Invalid("the usage fact identity is invalid".into()))?;
+        let integer_units = request
+            .integer_units
+            .parse::<i128>()
+            .map_err(|_| HostingError::Invalid("the usage units are invalid".into()))?;
+        let meter = match request.meter {
+            crate::registry::UsageRecordMeter::AdmittedRequestUnits => {
+                EngineUsageRecordMeter::AdmittedRequestUnits
+            }
+            crate::registry::UsageRecordMeter::PublicEgressBytes => {
+                EngineUsageRecordMeter::PublicEgressBytes
+            }
+        };
+        let command = EngineUsageRecordRequest::try_new(
+            meter,
+            &request.project,
+            &request.database,
+            &request.partition,
+            engine_region(request.origin_region),
+            fact_id,
+            request.recorded_at_millis,
+            request.meter_version,
+            integer_units,
+        )
+        .map_err(|_| HostingError::Invalid("the usage record is invalid".into()))?;
+        let scope = self.engine.scope_for(&tenant);
+        let receipt = self.engine.record_usage(&scope, command).map_err(usage_error)?;
+        if receipt.fact_id().as_str() != request.fact_id {
+            return Err(HostingError::UsageCorrupt(
+                "the durable usage receipt carries another fact identity".into(),
+            ));
+        }
+        Ok(crate::registry::UsageRecordResponse {
+            sequence: receipt.sequence().get(),
+            replica_epoch: receipt.replica_epoch(),
+            already_recorded: receipt.already_recorded(),
+        })
+    }
+
+    fn usage_export(
+        &self,
+        tenant: &str,
+        request: &crate::registry::UsageExportRequest,
+    ) -> Result<crate::registry::UsageExportResponse, HostingError> {
+        self.count_frame();
+        self.ensure_serving()?;
+        request
+            .validate()
+            .map_err(|_| HostingError::Invalid("the usage export request is invalid".into()))?;
+        let tenant = Self::tenant_of(tenant)?;
+        let window = match (request.window_start_millis, request.window_end_millis) {
+            (None, None) => None,
+            (Some(start), Some(end)) => Some(
+                MeasurementWindow::interval(start, end)
+                    .map_err(|_| HostingError::Invalid("the usage window is invalid".into()))?,
+            ),
+            _ => return Err(HostingError::Invalid("the usage window is invalid".into())),
+        };
+        let continuation =
+            if request.continuation.is_empty() {
+                None
+            } else {
+                Some(UsageContinuation::try_new(request.continuation.clone()).map_err(|_| {
+                    HostingError::Invalid("the usage continuation is invalid".into())
+                })?)
+            };
+        let command = UsagePageRequest::try_new(window, request.page_size, continuation)
+            .map_err(|_| HostingError::Invalid("the usage page request is invalid".into()))?;
+        let scope = self.engine.scope_for(&tenant);
+        let page = self.engine.usage_page(&scope, command).map_err(usage_error)?;
+        let facts = page.facts().iter().map(wire_usage_fact).collect::<Result<Vec<_>, _>>()?;
+        Ok(crate::registry::UsageExportResponse {
+            facts,
+            continuation: page
+                .continuation()
+                .map_or_else(Vec::new, |value| value.as_bytes().to_vec()),
+            snapshot_sequence: page.snapshot_sequence().get(),
+        })
+    }
+
     fn schema_declare(
         &self,
         tenant: &str,
@@ -1204,5 +1330,27 @@ impl TbepHost for EngineHost {
             state: *state,
             in_flight: u32::try_from(live.len()).unwrap_or(u32::MAX),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::standalone_ack_refusal;
+    use crate::host::HostingError;
+    use crate::registry::Acknowledgement;
+
+    #[test]
+    fn standalone_write_acknowledgements_fail_closed() {
+        for ack in [
+            Acknowledgement::RegionalQuorum,
+            Acknowledgement::GlobalQuorum,
+            Acknowledgement::BackupAck,
+        ] {
+            let error = standalone_ack_refusal(ack).expect_err("standalone ack must refuse");
+            assert!(
+                matches!(error, HostingError::Refused(detail) if detail.contains("unavailable on the standalone engine host")),
+                "{error:?}"
+            );
+        }
     }
 }

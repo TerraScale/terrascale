@@ -31,7 +31,7 @@ pub const CONDITION_KINDS: &[(&str, &str)] = &[
 pub const CONDITION_ROWS: usize = 4;
 
 /// Renders the Query page.
-pub fn render(state: &StudioState, selection: &Option<(String, String)>) -> String {
+pub fn render(state: &StudioState, selection: &Option<(String, String)>, nonce: &str) -> String {
     let (tenant, collection) = selection.clone().unwrap_or_else(|| default_pair(state));
     let body = format!(
         "{heading}\n\
@@ -54,7 +54,7 @@ pub fn render(state: &StudioState, selection: &Option<(String, String)>) -> Stri
         ),
         RESULT_ID = RESULT_ID,
     );
-    html::page("Query", "/query", "", &body)
+    html::page(nonce, "Query", "/query", "", &body)
 }
 
 fn tql_card(tenant: &str) -> String {

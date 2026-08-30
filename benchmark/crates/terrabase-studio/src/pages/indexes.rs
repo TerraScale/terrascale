@@ -20,7 +20,7 @@ pub const CATALOG_ID: &str = "index-catalog";
 pub const RECEIPT_ID: &str = "index-receipt";
 
 /// Renders the full index administration page.
-pub fn render(state: &StudioState) -> String {
+pub fn render(state: &StudioState, nonce: &str) -> String {
     let body = format!(
         "{heading}\n{scope}\n<div id=\"{SURFACE_ID}\">{surface}</div>",
         heading = html::heading(
@@ -34,7 +34,7 @@ pub fn render(state: &StudioState) -> String {
         ),
         surface = surface_fragment(state),
     );
-    html::page("Indexes", "/indexes", "", &body)
+    html::page(nonce, "Indexes", "/indexes", "", &body)
 }
 
 /// Renders the replaceable page body after an action.
@@ -188,16 +188,30 @@ fn known_tenants(state: &StudioState) -> BTreeSet<String> {
 }
 
 fn action_form(tenant: &str, name: &str) -> String {
+    let confirmation_target = format!("{tenant}/{name}");
     format!(
         "<form class=\"flex min-w-64 items-end gap-2\" data-on:submit=\"if (!confirm('Run this index action? Reset and delete operations discard the current index generation.')) return; @post('/indexes/action', {{contentType: 'form', retry: 'never'}})\">\
 <input type=\"hidden\" name=\"tenant\" value=\"{tenant}\">\
 <input type=\"hidden\" name=\"name\" value=\"{name}\">\
 {action}\
+{confirm_target}{confirm_phrase}\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\">Run</button>\
 </form>",
         tenant = html::attribute(tenant),
         name = html::attribute(name),
         action = html::select("action", "Action", &action_options()),
+        confirm_target = html::text_input(
+            "confirm_target",
+            "Type target exactly",
+            "",
+            &confirmation_target,
+        ),
+        confirm_phrase = html::text_input(
+            "confirm_phrase",
+            "Type action phrase",
+            "",
+            "index <selected action>",
+        ),
         secondary = ButtonStyle::Secondary.classes(),
     )
 }
@@ -391,8 +405,8 @@ mod tests {
         let state = studio("page");
         create_index(&state, "demo", "Users/ByName", "users", "name", "full", "normal", "unlock")
             .unwrap();
-        let page = render(&state);
-        assert!(page.contains("$$submit('/indexes/create')"));
+        let page = render(&state, "00112233445566778899aabbccddeeff");
+        assert!(page.contains("@post('/indexes/create'"));
         assert!(page.contains("inspect staleness"));
         assert!(page.contains("reset side by side"));
         assert!(page.contains("delete index"));

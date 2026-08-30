@@ -288,6 +288,10 @@ fn usage_page_shapes_enforce_their_public_bounds() {
         UsagePageRequest::try_new(None, MAX_USAGE_PAGE_SIZE + 1, None),
         Err(UsageError::InvalidPageSize)
     );
+    assert_eq!(
+        UsagePageRequest::try_new(Some(MeasurementWindow::instant(10)), 1, None),
+        Err(UsageError::InvalidMeasurementWindow)
+    );
     assert_eq!(UsageContinuation::try_new(Vec::new()), Err(UsageError::InvalidContinuation));
     assert_eq!(
         UsageContinuation::try_new(vec![0; MAX_USAGE_CONTINUATION_BYTES + 1]),

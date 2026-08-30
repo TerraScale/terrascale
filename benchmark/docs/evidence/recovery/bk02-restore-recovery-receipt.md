@@ -1,5 +1,11 @@
 # BK-02 Recovery Receipt: backup construction, schedule chains, restore (native V2 regeneration)
 
+> Historical receipt: ADR 0037 later removed the private local schedule lane
+> and its `schedule_public_chain.rs` target. Current destination, scheduler,
+> manifest-last, corruption, selected-point, and restore coverage lives in
+> `crates/terrabase-studio/src/s3_backup.rs`. The results below describe the
+> 2026-08-29 run and are retained as historical evidence.
+
 This is the tracked receipt of the native V2 recovery-lane runs for the
 backup-construction, schedule-chain, and restore lanes, regenerated on
 2026-08-29. The prior receipt family under `docs/evidence/recovery/`

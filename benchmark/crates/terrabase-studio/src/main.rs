@@ -56,7 +56,7 @@ async fn run(config: Config) -> Result<(), String> {
     let _socket = loopback_address(&address)?;
     let state = Arc::new(StudioState::open(config)?);
     let app = routes::router(Arc::clone(&state));
-    tokio::spawn(s3_backup::run_scheduler(Arc::clone(&state)));
+    let scheduler = tokio::spawn(s3_backup::run_scheduler(Arc::clone(&state)));
     let shutdown_state = Arc::clone(&state);
 
     let listener = tokio::net::TcpListener::bind(&address)
@@ -64,11 +64,17 @@ async fn run(config: Config) -> Result<(), String> {
         .map_err(|error| format!("cannot bind {address}: {error}"))?;
     println!("  serving         : http://{address}/");
 
-    serve_with_shutdown(listener, app, async move {
+    let serving = serve_with_shutdown(listener, app, async move {
         shutdown_signal().await;
         shutdown_state.begin_shutdown();
     })
-    .await
+    .await;
+    state.begin_shutdown();
+    let scheduler_result = scheduler
+        .await
+        .map_err(|error| format!("the S3 backup scheduler stopped unexpectedly: {error}"));
+    serving?;
+    scheduler_result
 }
 
 /// Serves one Studio listener until its shutdown future resolves. Keeping the

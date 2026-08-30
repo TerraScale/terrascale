@@ -20,6 +20,8 @@ mod tests {
     use super::*;
     use crate::state::{Config, StudioState};
 
+    const TEST_NONCE: &str = "00112233445566778899aabbccddeeff";
+
     fn studio(name: &str) -> StudioState {
         let directory = std::env::temp_dir().join(format!(
             "terrabase-studio-pages-{name}-{}-{}",
@@ -41,16 +43,18 @@ mod tests {
 
     #[test]
     fn overview_page_carries_the_live_stream_marker_and_metrics_panel() {
-        let page = overview::render(&studio("overview"));
+        let page = overview::render(&studio("overview"), TEST_NONCE);
         assert!(page.contains("<!DOCTYPE html>"));
         assert!(page.contains("TerraBase Studio"));
-        assert!(page.contains("data-metrics-stream=\"/events/metrics\""));
+        assert!(page.contains("data-init=\"@get('/events/metrics'"));
         assert!(page.contains("id=\"metrics-panel\""));
         assert!(page.contains("published sequence"));
         assert!(page.contains("Index catalog"));
         assert!(page.contains("Storage tier mover"));
         assert!(page.contains("/static/basecoat.css"), "the vendored stylesheet is linked");
-        assert!(page.contains("/static/studio.js"), "the hand-written runtime is linked");
+        assert!(page.contains("/static/datastar-1.0.3.js"), "official Datastar is linked");
+        assert!(page.contains("/static/studio-monaco.js"), "the Monaco-only glue is linked");
+        assert!(page.contains(&format!("data-nonce=\"{TEST_NONCE}\"")));
         assert!(page.contains("loopback"), "the lane limit is stated in the shell");
     }
 
@@ -63,15 +67,16 @@ mod tests {
                 collection: "users".to_owned(),
                 page: 0,
             },
+            TEST_NONCE,
         );
         assert!(page.contains("id=\"document-rows\""));
         assert!(page.contains("id=\"document-view\""));
         assert!(page.contains("id=\"editor-receipt\""));
         assert!(page.contains("id=\"delete-receipt\""));
-        assert!(page.contains("$$submit('/documents/put')"));
-        assert!(page.contains("$$submit('/documents/delete')"));
+        assert!(page.contains("@post('/documents/put'"));
+        assert!(page.contains("@post('/documents/delete'"));
         assert!(page.contains("data-monaco-json"));
-        assert!(page.contains("data-monaco-value type=\"hidden\""));
+        assert!(!page.contains("data-monaco-value"));
         assert!(page.contains("data-monaco-fallback"));
         assert!(page.contains("confirm("), "the delete asks for confirmation");
         assert!(page.contains("no tenant or collection enumeration"), "the honest limit is stated");
@@ -97,9 +102,9 @@ mod tests {
 
     #[test]
     fn query_page_carries_the_builder_and_every_condition_kind() {
-        let page = query::render(&studio("query"), &None);
+        let page = query::render(&studio("query"), &None, TEST_NONCE);
         assert!(page.contains("id=\"query-result\""));
-        assert!(page.contains("$$submit('/query/run')"));
+        assert!(page.contains("@post('/query/run'"));
         for (_, label) in query::CONDITION_KINDS {
             assert!(page.contains(&format!(">{label}</option>")), "missing {label}");
         }
@@ -108,7 +113,7 @@ mod tests {
 
     #[test]
     fn replication_page_names_what_needs_a_cluster() {
-        let page = replication::render(&studio("replication"));
+        let page = replication::render(&studio("replication"), TEST_NONCE);
         assert!(page.contains("Region catalog"));
         assert!(page.contains("Topology view"));
         assert!(page.contains("Not exposed in-process"));
@@ -119,19 +124,19 @@ mod tests {
 
     #[test]
     fn tiers_page_carries_every_control_and_the_dry_run_note() {
-        let page = tiers::render(&studio("tiers"));
-        assert!(page.contains("$$submit('/tiers/configure')"));
-        assert!(page.contains("$$post('/tiers/pause')"));
-        assert!(page.contains("$$post('/tiers/resume')"));
-        assert!(page.contains("$$post('/tiers/dry-run')"));
-        assert!(page.contains("$$post('/tiers/run')"));
+        let page = tiers::render(&studio("tiers"), TEST_NONCE);
+        assert!(page.contains("@post('/tiers/configure'"));
+        assert!(page.contains("@post('/tiers/pause'"));
+        assert!(page.contains("@post('/tiers/resume'"));
+        assert!(page.contains("@post('/tiers/dry-run'"));
+        assert!(page.contains("@post('/tiers/run'"));
         assert!(page.contains("No continuous scheduler"), "the honest limit is stated");
         assert!(page.contains("is the explain control"));
     }
 
     #[test]
     fn usage_page_states_that_no_durable_ledger_exists() {
-        let page = usage::render(&studio("usage"));
+        let page = usage::render(&studio("usage"), TEST_NONCE);
         assert!(page.contains("Meter catalog"));
         assert!(page.contains("stored byte hours"));
         assert!(page.contains("id=\"usage-ledger\""));
@@ -144,13 +149,13 @@ mod tests {
     #[test]
     fn backups_page_carries_backup_restore_and_the_deletion_workflow() {
         let studio = studio("backups");
-        let page = backups::render(&studio, Ok(&[]));
-        assert!(page.contains("$$submit('/backup/configure')"));
-        assert!(page.contains("$$submit('/backup/run')"));
-        assert!(page.contains("$$submit('/backup/restore')"));
+        let page = backups::render(&studio, Ok(&[]), TEST_NONCE);
+        assert!(page.contains("@post('/backup/configure'"));
+        assert!(page.contains("@post('/backup/run'"));
+        assert!(page.contains("@post('/backup/restore'"));
         assert!(page.contains("id=\"backup-chain\""));
         assert!(page.contains("id=\"deletion-state\""));
-        assert!(page.contains("$$submit('/deletion/request')"));
+        assert!(page.contains("@post('/deletion/request'"));
         assert!(page.contains("Requested"), "the workflow states are explained");
         assert!(page.contains("Scheduler lifetime"), "the honest limit is stated");
     }
