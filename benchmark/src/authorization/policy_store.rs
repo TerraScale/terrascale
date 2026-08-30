@@ -48,13 +48,17 @@ pub struct PolicyStoreSnapshot {
 /// Runtimes should construct this from their trusted key-provider adapter and
 /// pass it to [`AuthorizationPolicyStore::open_with_key`]. It is deliberately
 /// neither `Clone` nor `Copy`.
-pub struct PolicyStoreKey([u8; AUTHENTICATION_BYTES]);
+pub struct PolicyStoreKey(Vec<u8>);
 
 impl PolicyStoreKey {
     /// Wraps key material supplied by a trusted key provider.
     #[must_use]
-    pub const fn from_bytes(bytes: [u8; AUTHENTICATION_BYTES]) -> Self {
-        Self(bytes)
+    pub fn from_bytes(bytes: [u8; AUTHENTICATION_BYTES]) -> Self {
+        Self(bytes.into())
+    }
+
+    fn into_bytes(mut self) -> Vec<u8> {
+        std::mem::take(&mut self.0)
     }
 }
 
@@ -175,7 +179,10 @@ impl AuthorizationPolicyStore {
         path: impl AsRef<Path>,
         authentication_key: PolicyStoreKey,
     ) -> Result<Self, AuthorizationError> {
-        let authentication_key = authentication_key.0;
+        let authentication_key: [u8; AUTHENTICATION_BYTES] = authentication_key
+            .into_bytes()
+            .try_into()
+            .map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
         let path = path.as_ref().to_path_buf();
         reject_symlink(&path)?;
         if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
@@ -1367,6 +1374,22 @@ mod tests {
             AuthorizationPolicyStore::open(&path, [15; 32]),
             Err(AuthorizationError::PolicyJournalCorrupt)
         ));
+        std::fs::remove_file(path).expect("remove journal");
+    }
+
+    #[test]
+    fn concurrent_openers_are_serialized_and_expiry_is_enforced() {
+        let path = test_path("lock");
+        let mut first = AuthorizationPolicyStore::open(&path, [16; 32]).expect("open");
+        assert!(matches!(
+            AuthorizationPolicyStore::open(&path, [16; 32]),
+            Err(AuthorizationError::PolicyStoreUnavailable)
+        ));
+        first.publish_with_expiry(scope(), policy(1), 5).expect("publish");
+        assert!(first.expiries.get(&scope()).is_some_and(|expiry| *expiry == 5));
+        drop(first);
+        let reopened = AuthorizationPolicyStore::open(&path, [16; 32]).expect("reopen");
+        assert_eq!(reopened.expiries.get(&scope()), Some(&5));
         std::fs::remove_file(path).expect("remove journal");
     }
 }
