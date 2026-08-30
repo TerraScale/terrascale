@@ -375,5 +375,15 @@ function sha256(value: string): string {
 }
 
 function closeEvent(code: number, reason: string): CloseEvent {
-  return new CloseEvent("close", { code, reason, wasClean: code === 1000 });
+  if (typeof globalThis.CloseEvent === "function") {
+    return new globalThis.CloseEvent("close", { code, reason, wasClean: code === 1000 });
+  }
+
+  const event = new Event("close");
+  Object.defineProperties(event, {
+    code: { configurable: false, enumerable: true, value: code },
+    reason: { configurable: false, enumerable: true, value: reason },
+    wasClean: { configurable: false, enumerable: true, value: code === 1000 },
+  });
+  return event as CloseEvent;
 }

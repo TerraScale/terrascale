@@ -1,5 +1,6 @@
 import type { ProjectId } from "./ids.js";
 import { isRegisteredLocalRuntimeFetch } from "./local-runtime-capability.js";
+import { parseRegionCode, type TerraScaleRegionCode } from "./regions.js";
 
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -19,7 +20,7 @@ export type TerraScaleRuntimeConfig = {
   readonly fetch?: FetchLike;
   readonly requestMetricRecorder?: TerraScaleRequestMetricRecorder;
   readonly idempotencyKeyFactory?: (() => string) | undefined;
-  readonly preferredRegion?: string | undefined;
+  readonly preferredRegion?: TerraScaleRegionCode | undefined;
   readonly regionAffinity?: "failover" | "strict" | undefined;
   readonly sessionConsistency?: "automatic" | "none" | undefined;
   readonly maxRetryAttempts?: number | undefined;
@@ -30,7 +31,7 @@ export type TerraScaleRuntimeConfig = {
 export type ResolvedTerraScaleRuntimeConfig = {
   readonly apiBaseUrl: string;
   readonly projectId?: ProjectId;
-  readonly preferredRegion?: string | undefined;
+  readonly preferredRegion?: TerraScaleRegionCode | undefined;
   readonly regionAffinity: "failover" | "strict";
   readonly sessionConsistency: "automatic" | "none";
   readonly maxRetryAttempts: number;
@@ -54,7 +55,9 @@ export function resolveRuntimeConfig(
     throw new TypeError("TerraScaleClient requires a fetch implementation.");
   }
 
-  const preferredRegion = normalizeRegion(config.preferredRegion);
+  const preferredRegion = config.preferredRegion === undefined
+    ? undefined
+    : parseRegionCode(config.preferredRegion, "preferredRegion");
   const regionAffinity = config.regionAffinity ?? "failover";
   if (regionAffinity !== "failover" && regionAffinity !== "strict") {
     throw new TypeError('regionAffinity must be either "failover" or "strict".');
@@ -135,24 +138,12 @@ function normalizeBaseUrl(baseUrl: string): string {
   return normalized;
 }
 
-function normalizeRegion(region: string | undefined): string | undefined {
-  if (region === undefined) {
-    return undefined;
-  }
-
-  const normalized = region.trim().toLowerCase();
-  if (!/^[a-z0-9][a-z0-9-]{1,31}$/.test(normalized)) {
-    throw new TypeError("preferredRegion must be a valid TerraScale region code.");
-  }
-
-  return normalized;
-}
-
-function strictRegionalBaseUrl(baseUrl: string, region: string): string {
+function strictRegionalBaseUrl(baseUrl: string, region: TerraScaleRegionCode): string {
   const url = new URL(`${baseUrl}/`);
+  const regionalHostname = `${region.toLowerCase()}.api.terrascale.tech`;
   if (url.hostname === "api.terrascale.tech") {
-    url.hostname = `${region}.api.terrascale.tech`;
-  } else if (url.hostname !== `${region}.api.terrascale.tech`) {
+    url.hostname = regionalHostname;
+  } else if (url.hostname !== regionalHostname) {
     throw new TypeError(
       "Strict regional affinity requires the global TerraScale API URL or the selected regional URL.",
     );

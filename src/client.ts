@@ -2,8 +2,12 @@ import type { ResolvedTerraScaleRuntimeConfig, TerraScaleRuntimeConfig } from ".
 import { TerraScaleHttp } from "./http.js";
 import { type Ulid, ulidPathSegment } from "./ids.js";
 import type * as Models from "./models.js";
-import { normalizeRegionCodes } from "./regions.js";
-import type { TerraScaleResult } from "./result.js";
+import {
+  normalizeRegionCodes,
+  parseRegionCode,
+  type TerraScaleRegionCode,
+} from "./regions.js";
+import type { TerraScaleResult, TerraScaleSuccess } from "./result.js";
 
 const apiRoot = "/api/v1";
 
@@ -24,6 +28,7 @@ export class TerraScaleClient {
   readonly savedQueries: SavedQueriesClient;
   readonly databases: DatabasesClient;
   readonly databaseBranches: DatabaseBranchesClient;
+  readonly queues: QueuesClient;
   readonly repositories: RepositoriesClient;
   readonly backups: BackupsClient;
   readonly documents: DocumentsClient;
@@ -42,6 +47,7 @@ export class TerraScaleClient {
     this.savedQueries = new SavedQueriesClient(this.#http);
     this.databases = new DatabasesClient(this.#http);
     this.databaseBranches = new DatabaseBranchesClient(this.#http);
+    this.queues = new QueuesClient(this.#http);
     this.repositories = new RepositoriesClient(this.#http);
     this.backups = new BackupsClient(this.#http);
     this.documents = new DocumentsClient(this.#http);
@@ -95,7 +101,7 @@ export class OnboardingClient {
       body: {
         ...request,
         regions: normalizeRegionCodes(request.regions),
-        backupRegion: normalizeRegionCodes([request.backupRegion])[0],
+        backupRegion: parseRegionCode(request.backupRegion, "backupRegion"),
       },
     });
   }
@@ -108,20 +114,25 @@ export class RegionsClient {
     this.#http = http;
   }
 
-  list(): Promise<TerraScaleResult<Models.RegionsResponse>> {
-    return this.#http.request({
+  async list(): Promise<TerraScaleResult<Models.RegionsResponse>> {
+    const result = await this.#http.request<unknown>({
       method: "GET",
       path: `${apiRoot}/regions`,
       routeName: "regions.list",
     });
+    return decodeRegionResult(result, decodeRegionsResponse);
   }
 
-  get(regionCode: string): Promise<TerraScaleResult<Models.RegionDetails>> {
-    return this.#http.request({
+  async get(
+    regionCode: TerraScaleRegionCode,
+  ): Promise<TerraScaleResult<Models.RegionDetails>> {
+    const exactRegionCode = parseRegionCode(regionCode, "regionCode");
+    const result = await this.#http.request<unknown>({
       method: "GET",
-      path: `${apiRoot}/regions/${encodeURIComponent(regionCode.trim().toLowerCase())}`,
+      path: `${apiRoot}/regions/${encodeURIComponent(exactRegionCode)}`,
       routeName: "regions.get",
     });
+    return decodeRegionResult(result, (value) => decodeRegionSummary(value, "region"));
   }
 }
 
@@ -252,7 +263,7 @@ export class OrganizationsClient {
       routeName: "organizations.projects.create",
       body: {
         ...request,
-        backupRegion: normalizeRegionCodes([request.backupRegion])[0],
+        backupRegion: parseRegionCode(request.backupRegion, "backupRegion"),
         regions: normalizeRegionCodes(request.regions),
       },
     });
@@ -289,7 +300,7 @@ export class OrganizationsClient {
         backupRegion:
           request.backupRegion === undefined
             ? undefined
-            : normalizeRegionCodes([request.backupRegion])[0],
+            : parseRegionCode(request.backupRegion, "backupRegion"),
         regions: request.regions === undefined ? undefined : normalizeRegionCodes(request.regions),
       },
     });
@@ -579,6 +590,157 @@ export class DatabaseBranchesClient {
       routeName: "databaseBranches.requestClone",
       body: request,
       idempotencyKey: false,
+    });
+  }
+}
+
+export class QueuesClient {
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
+
+  list(projectId?: Ulid): Promise<TerraScaleResult<readonly Models.ProjectQueue[]>> {
+    return this.#http.request({
+      method: "GET",
+      path: `${projectRoot(this.#http, projectId)}/queues`,
+      routeName: "queues.list",
+    });
+  }
+
+  create(
+    request: Models.CreateProjectQueueRequest,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.ProjectQueue>> {
+    return this.#http.request({
+      method: "POST",
+      path: `${projectRoot(this.#http, projectId)}/queues`,
+      routeName: "queues.create",
+      body: request,
+    });
+  }
+
+  get(queueId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<Models.ProjectQueue>> {
+    return this.#http.request({
+      method: "GET",
+      path: queueRoot(this.#http, queueId, projectId),
+      routeName: "queues.get",
+    });
+  }
+
+  delete(queueId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<boolean>> {
+    return this.#http.request({
+      method: "DELETE",
+      path: queueRoot(this.#http, queueId, projectId),
+      routeName: "queues.delete",
+    });
+  }
+
+  purge(
+    queueId: Ulid,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.QueuePurgeResult>> {
+    return this.#http.request({
+      method: "POST",
+      path: `${queueRoot(this.#http, queueId, projectId)}:purge`,
+      routeName: "queues.purge",
+    });
+  }
+
+  publish(
+    queueId: Ulid,
+    request: Models.PublishProjectQueueMessageRequest,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.ProjectQueuePublishResult>> {
+    return this.#http.request({
+      method: "POST",
+      path: `${queueRoot(this.#http, queueId, projectId)}:publish`,
+      routeName: "queues.publish",
+      body: request,
+    });
+  }
+
+  peek(
+    queueId: Ulid,
+    maxMessages = 10,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<readonly Models.ProjectQueuePeekMessage[]>> {
+    return this.#http.request({
+      method: "GET",
+      path: `${queueRoot(this.#http, queueId, projectId)}:peek`,
+      routeName: "queues.peek",
+      query: { maxMessages },
+    });
+  }
+
+  receive(
+    queueId: Ulid,
+    request: Models.ReceiveProjectQueueMessagesRequest,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<readonly Models.ProjectQueueReceivedMessage[]>> {
+    return this.#http.request({
+      method: "POST",
+      path: `${queueRoot(this.#http, queueId, projectId)}:receive`,
+      routeName: "queues.receive",
+      body: request,
+    });
+  }
+
+  complete(
+    queueId: Ulid,
+    receipt: Models.ProjectQueueReceipt,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.ProjectQueueReceiptActionResult>> {
+    return this.#http.request({
+      method: "POST",
+      path: `${queueRoot(this.#http, queueId, projectId)}:complete`,
+      routeName: "queues.complete",
+      body: { receipt: receipt.receipt },
+      headers: preferredRegionHeaders(receipt.region),
+    });
+  }
+
+  abandon(
+    queueId: Ulid,
+    receipt: Models.ProjectQueueReceipt,
+    delaySeconds?: number,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.ProjectQueueReceiptActionResult>> {
+    return this.#http.request({
+      method: "POST",
+      path: `${queueRoot(this.#http, queueId, projectId)}:abandon`,
+      routeName: "queues.abandon",
+      body: { receipt: receipt.receipt, delaySeconds },
+      headers: preferredRegionHeaders(receipt.region),
+    });
+  }
+
+  deadLetter(
+    queueId: Ulid,
+    receipt: Models.ProjectQueueReceipt,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.ProjectQueueReceiptActionResult>> {
+    return this.#http.request({
+      method: "POST",
+      path: `${queueRoot(this.#http, queueId, projectId)}:dead-letter`,
+      routeName: "queues.deadLetter",
+      body: { receipt: receipt.receipt },
+      headers: preferredRegionHeaders(receipt.region),
+    });
+  }
+
+  renewLock(
+    queueId: Ulid,
+    receipt: Models.ProjectQueueReceipt,
+    projectId?: Ulid,
+  ): Promise<TerraScaleResult<Models.ProjectQueueRenewLockResult>> {
+    return this.#http.request({
+      method: "POST",
+      path: `${queueRoot(this.#http, queueId, projectId)}:renew-lock`,
+      routeName: "queues.renewLock",
+      body: { receipt: receipt.receipt },
+      headers: preferredRegionHeaders(receipt.region),
     });
   }
 }
@@ -1266,6 +1428,111 @@ function projectRoot(http: TerraScaleHttp, projectId: Ulid | undefined): string 
 
 function databaseRoot(http: TerraScaleHttp, scope: Models.DatabaseScoped): string {
   return `${projectRoot(http, scope.projectId)}/databases/${ulidPathSegment(scope.databaseId)}`;
+}
+
+function queueRoot(http: TerraScaleHttp, queueId: Ulid, projectId?: Ulid): string {
+  return `${projectRoot(http, projectId)}/queues/${ulidPathSegment(queueId)}`;
+}
+
+function preferredRegionHeaders(region: TerraScaleRegionCode): HeadersInit {
+  return { "x-terrascale-preferred-region": parseRegionCode(region, "receipt.region") };
+}
+
+function decodeRegionResult<TValue>(
+  result: TerraScaleResult<unknown>,
+  decode: (value: unknown) => TValue,
+): TerraScaleResult<TValue> {
+  if (!result.ok) {
+    return result;
+  }
+
+  try {
+    return { ...result, value: decode(result.value) };
+  } catch (error) {
+    return invalidRegionResponse(result, error);
+  }
+}
+
+function invalidRegionResponse<TValue>(
+  result: TerraScaleSuccess<unknown>,
+  error: unknown,
+): TerraScaleResult<TValue> {
+  const requestId = result.headers.get("x-request-id") ?? undefined;
+  return {
+    ok: false,
+    routeName: result.routeName,
+    status: result.status,
+    headers: result.headers,
+    error: {
+      kind: "invalid-response",
+      code: "invalid_response",
+      message: error instanceof Error ? error.message : "The Region response is invalid.",
+      status: result.status,
+      ...(requestId === undefined ? {} : { requestId }),
+    },
+    body: result.value,
+    ...(result.routing === undefined ? {} : { routing: result.routing }),
+  };
+}
+
+function decodeRegionsResponse(value: unknown): Models.RegionsResponse {
+  const response = requireRecord(value, "response");
+  if (!Array.isArray(response.regions)) {
+    throw new TypeError("response.regions must be an array.");
+  }
+  if (response.regions.length > 20) {
+    throw new TypeError("response.regions must contain at most 20 regions.");
+  }
+
+  const regions = response.regions.map((region, index) =>
+    decodeRegionSummary(region, `response.regions[${index}]`));
+  const uniqueCodes = new Set(regions.map((region) => region.code));
+  if (uniqueCodes.size !== regions.length) {
+    throw new TypeError("response.regions must not contain duplicate RegionCode values.");
+  }
+
+  return { regions };
+}
+
+function decodeRegionSummary(value: unknown, path: string): Models.RegionSummary {
+  const region = requireRecord(value, path);
+  for (const field of ["ociRegionCode", "clusterNodeTag"] as const) {
+    if (Object.hasOwn(region, field)) {
+      throw new TypeError(`${path} contains forbidden provider field ${field}.`);
+    }
+  }
+
+  const code = parseRegionCode(region.code, `${path}.code`);
+  const name = requireString(region.name, `${path}.name`);
+  const country = requireString(region.country, `${path}.country`);
+  const latitude = requireFiniteNumber(region.latitude, `${path}.latitude`);
+  const longitude = requireFiniteNumber(region.longitude, `${path}.longitude`);
+  if (typeof region.available !== "boolean") {
+    throw new TypeError(`${path}.available must be a boolean.`);
+  }
+
+  return { code, name, country, latitude, longitude, available: region.available };
+}
+
+function requireRecord(value: unknown, path: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError(`${path} must be an object.`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireString(value: unknown, path: string): string {
+  if (typeof value !== "string") {
+    throw new TypeError(`${path} must be a string.`);
+  }
+  return value;
+}
+
+function requireFiniteNumber(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new TypeError(`${path} must be a finite number.`);
+  }
+  return value;
 }
 
 function documentReadHeaders(options: Models.DocumentReadOptions | undefined): HeadersInit | undefined {

@@ -1,6 +1,6 @@
 {
-  "descriptorVersion": 1,
-  "routeCount": 79,
+  "descriptorVersion": 2,
+  "routeCount": 91,
   "routes": [
     {
       "base": "api",
@@ -1125,6 +1125,89 @@
       "routeName": "databases.environments.delete",
       "sdkRequestType": "void",
       "sdkResponseType": "DeletedProjectDatabaseEnvironmentResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "method": "DELETE",
+      "operation": "delete",
+      "operationId": "DeleteProjectQueue",
+      "parameters": [
+        {
+          "in": "path",
+          "name": "projectId",
+          "parameter": {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "queueId",
+          "parameter": {
+            "in": "path",
+            "name": "queueId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        }
+      ],
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}",
+      "request": {
+        "kind": "void"
+      },
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "status": "200"
+        }
+      ],
+      "routeName": "queues.delete",
+      "sdkRequestType": "void",
+      "sdkResponseType": "boolean",
       "sourceContract": {
         "body": {
           "kind": "void"
@@ -10841,6 +10924,1043 @@
     },
     {
       "base": "api",
+      "client": "queues",
+      "method": "GET",
+      "operation": "list",
+      "operationId": "ListProjectQueues",
+      "parameters": [
+        {
+          "in": "path",
+          "name": "projectId",
+          "parameter": {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        }
+      ],
+      "pathTemplate": "/api/v1/projects/{projectId}/queues",
+      "request": {
+        "kind": "void"
+      },
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectQueueResponse",
+                    "siblings": {
+                      "resolved": {
+                        "properties": {
+                          "consumerCount": {
+                            "format": "int32",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          },
+                          "createdAt": {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "fifo": {
+                            "type": "boolean"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "messages": {
+                            "format": "int64",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "partitionCount": {
+                            "format": "int32",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          },
+                          "projectId": {
+                            "$ref": "#/components/schemas/Ulid",
+                            "siblings": {
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              }
+                            },
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "queueId": {
+                            "$ref": "#/components/schemas/Ulid",
+                            "siblings": {
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              }
+                            },
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "replicas": {
+                            "format": "int32",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          },
+                          "retentionSeconds": {
+                            "format": "int64",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "null",
+                              "integer",
+                              "string"
+                            ]
+                          },
+                          "storageBytes": {
+                            "format": "int64",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "queueId",
+                          "projectId",
+                          "name",
+                          "kind",
+                          "messages",
+                          "storageBytes",
+                          "consumerCount",
+                          "replicas",
+                          "fifo",
+                          "partitionCount",
+                          "retentionSeconds",
+                          "createdAt"
+                        ],
+                        "type": "object"
+                      },
+                      "siblings": {
+                        "resolved": {
+                          "properties": {
+                            "consumerCount": {
+                              "format": "int32",
+                              "pattern": "^-?(?:0|[1-9]\\d*)$",
+                              "type": [
+                                "integer",
+                                "string"
+                              ]
+                            },
+                            "createdAt": {
+                              "format": "date-time",
+                              "type": "string"
+                            },
+                            "fifo": {
+                              "type": "boolean"
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "messages": {
+                              "format": "int64",
+                              "pattern": "^-?(?:0|[1-9]\\d*)$",
+                              "type": [
+                                "integer",
+                                "string"
+                              ]
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "partitionCount": {
+                              "format": "int32",
+                              "pattern": "^-?(?:0|[1-9]\\d*)$",
+                              "type": [
+                                "integer",
+                                "string"
+                              ]
+                            },
+                            "projectId": {
+                              "$ref": "#/components/schemas/Ulid",
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                },
+                                "siblings": {
+                                  "resolved": {
+                                    "format": "ulid",
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              }
+                            },
+                            "queueId": {
+                              "$ref": "#/components/schemas/Ulid",
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                },
+                                "siblings": {
+                                  "resolved": {
+                                    "format": "ulid",
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              }
+                            },
+                            "replicas": {
+                              "format": "int32",
+                              "pattern": "^-?(?:0|[1-9]\\d*)$",
+                              "type": [
+                                "integer",
+                                "string"
+                              ]
+                            },
+                            "retentionSeconds": {
+                              "format": "int64",
+                              "pattern": "^-?(?:0|[1-9]\\d*)$",
+                              "type": [
+                                "null",
+                                "integer",
+                                "string"
+                              ]
+                            },
+                            "storageBytes": {
+                              "format": "int64",
+                              "pattern": "^-?(?:0|[1-9]\\d*)$",
+                              "type": [
+                                "integer",
+                                "string"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "queueId",
+                            "projectId",
+                            "name",
+                            "kind",
+                            "messages",
+                            "storageBytes",
+                            "consumerCount",
+                            "replicas",
+                            "fifo",
+                            "partitionCount",
+                            "retentionSeconds",
+                            "createdAt"
+                          ],
+                          "type": "object"
+                        }
+                      }
+                    },
+                    "resolved": {
+                      "properties": {
+                        "consumerCount": {
+                          "format": "int32",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "createdAt": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "fifo": {
+                          "type": "boolean"
+                        },
+                        "kind": {
+                          "type": "string"
+                        },
+                        "messages": {
+                          "format": "int64",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "partitionCount": {
+                          "format": "int32",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "projectId": {
+                          "$ref": "#/components/schemas/Ulid",
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        },
+                        "queueId": {
+                          "$ref": "#/components/schemas/Ulid",
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        },
+                        "replicas": {
+                          "format": "int32",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "retentionSeconds": {
+                          "format": "int64",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "storageBytes": {
+                          "format": "int64",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "queueId",
+                        "projectId",
+                        "name",
+                        "kind",
+                        "messages",
+                        "storageBytes",
+                        "consumerCount",
+                        "replicas",
+                        "fifo",
+                        "partitionCount",
+                        "retentionSeconds",
+                        "createdAt"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "status": "200"
+        }
+      ],
+      "routeName": "queues.list",
+      "sdkRequestType": "void",
+      "sdkResponseType": "readonly ProjectQueue[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "method": "GET",
+      "operation": "get",
+      "operationId": "GetProjectQueue",
+      "parameters": [
+        {
+          "in": "path",
+          "name": "projectId",
+          "parameter": {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "queueId",
+          "parameter": {
+            "in": "path",
+            "name": "queueId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        }
+      ],
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}",
+      "request": {
+        "kind": "void"
+      },
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectQueueResponse",
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "consumerCount": {
+                          "format": "int32",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "createdAt": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "fifo": {
+                          "type": "boolean"
+                        },
+                        "kind": {
+                          "type": "string"
+                        },
+                        "messages": {
+                          "format": "int64",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "partitionCount": {
+                          "format": "int32",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "projectId": {
+                          "$ref": "#/components/schemas/Ulid",
+                          "siblings": {
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        },
+                        "queueId": {
+                          "$ref": "#/components/schemas/Ulid",
+                          "siblings": {
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        },
+                        "replicas": {
+                          "format": "int32",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "retentionSeconds": {
+                          "format": "int64",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "storageBytes": {
+                          "format": "int64",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "queueId",
+                        "projectId",
+                        "name",
+                        "kind",
+                        "messages",
+                        "storageBytes",
+                        "consumerCount",
+                        "replicas",
+                        "fifo",
+                        "partitionCount",
+                        "retentionSeconds",
+                        "createdAt"
+                      ],
+                      "type": "object"
+                    },
+                    "siblings": {
+                      "resolved": {
+                        "properties": {
+                          "consumerCount": {
+                            "format": "int32",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          },
+                          "createdAt": {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "fifo": {
+                            "type": "boolean"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "messages": {
+                            "format": "int64",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "partitionCount": {
+                            "format": "int32",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          },
+                          "projectId": {
+                            "$ref": "#/components/schemas/Ulid",
+                            "siblings": {
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              },
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "queueId": {
+                            "$ref": "#/components/schemas/Ulid",
+                            "siblings": {
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              },
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "replicas": {
+                            "format": "int32",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          },
+                          "retentionSeconds": {
+                            "format": "int64",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "null",
+                              "integer",
+                              "string"
+                            ]
+                          },
+                          "storageBytes": {
+                            "format": "int64",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "queueId",
+                          "projectId",
+                          "name",
+                          "kind",
+                          "messages",
+                          "storageBytes",
+                          "consumerCount",
+                          "replicas",
+                          "fifo",
+                          "partitionCount",
+                          "retentionSeconds",
+                          "createdAt"
+                        ],
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "resolved": {
+                    "properties": {
+                      "consumerCount": {
+                        "format": "int32",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "createdAt": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "fifo": {
+                        "type": "boolean"
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "messages": {
+                        "format": "int64",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "partitionCount": {
+                        "format": "int32",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "projectId": {
+                        "$ref": "#/components/schemas/Ulid",
+                        "resolved": {
+                          "format": "ulid",
+                          "type": "string"
+                        }
+                      },
+                      "queueId": {
+                        "$ref": "#/components/schemas/Ulid",
+                        "resolved": {
+                          "format": "ulid",
+                          "type": "string"
+                        }
+                      },
+                      "replicas": {
+                        "format": "int32",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "retentionSeconds": {
+                        "format": "int64",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "null",
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "storageBytes": {
+                        "format": "int64",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "integer",
+                          "string"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "queueId",
+                      "projectId",
+                      "name",
+                      "kind",
+                      "messages",
+                      "storageBytes",
+                      "consumerCount",
+                      "replicas",
+                      "fifo",
+                      "partitionCount",
+                      "retentionSeconds",
+                      "createdAt"
+                    ],
+                    "type": "object"
+                  }
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "status": "200"
+        }
+      ],
+      "routeName": "queues.get",
+      "sdkRequestType": "void",
+      "sdkResponseType": "ProjectQueue",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "method": "GET",
+      "operation": "peek",
+      "operationId": "PeekProjectQueue",
+      "parameters": [
+        {
+          "in": "path",
+          "name": "projectId",
+          "parameter": {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "queueId",
+          "parameter": {
+            "in": "path",
+            "name": "queueId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        }
+      ],
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:peek",
+      "request": {
+        "kind": "void"
+      },
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectQueuePeekMessageResponse",
+                    "siblings": {
+                      "resolved": {
+                        "properties": {
+                          "contentType": {
+                            "type": "string"
+                          },
+                          "createdAt": {
+                            "format": "date-time",
+                            "type": [
+                              "null",
+                              "string"
+                            ]
+                          },
+                          "data": {
+                            "$ref": "#/components/schemas/JsonElement",
+                            "siblings": {
+                              "resolved": {}
+                            },
+                            "resolved": {}
+                          },
+                          "headers": {
+                            "additionalProperties": {
+                              "type": "string"
+                            },
+                            "type": "object"
+                          },
+                          "messageId": {
+                            "type": "string"
+                          },
+                          "sequence": {
+                            "format": "uint64",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "messageId",
+                          "data",
+                          "contentType",
+                          "headers",
+                          "sequence",
+                          "createdAt"
+                        ],
+                        "type": "object"
+                      },
+                      "siblings": {
+                        "resolved": {
+                          "properties": {
+                            "contentType": {
+                              "type": "string"
+                            },
+                            "createdAt": {
+                              "format": "date-time",
+                              "type": [
+                                "null",
+                                "string"
+                              ]
+                            },
+                            "data": {
+                              "$ref": "#/components/schemas/JsonElement",
+                              "siblings": {
+                                "resolved": {},
+                                "siblings": {
+                                  "resolved": {}
+                                }
+                              },
+                              "resolved": {}
+                            },
+                            "headers": {
+                              "additionalProperties": {
+                                "type": "string"
+                              },
+                              "type": "object"
+                            },
+                            "messageId": {
+                              "type": "string"
+                            },
+                            "sequence": {
+                              "format": "uint64",
+                              "pattern": "^-?(?:0|[1-9]\\d*)$",
+                              "type": [
+                                "integer",
+                                "string"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "messageId",
+                            "data",
+                            "contentType",
+                            "headers",
+                            "sequence",
+                            "createdAt"
+                          ],
+                          "type": "object"
+                        }
+                      }
+                    },
+                    "resolved": {
+                      "properties": {
+                        "contentType": {
+                          "type": "string"
+                        },
+                        "createdAt": {
+                          "format": "date-time",
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "data": {
+                          "$ref": "#/components/schemas/JsonElement",
+                          "resolved": {}
+                        },
+                        "headers": {
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "type": "object"
+                        },
+                        "messageId": {
+                          "type": "string"
+                        },
+                        "sequence": {
+                          "format": "uint64",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "messageId",
+                        "data",
+                        "contentType",
+                        "headers",
+                        "sequence",
+                        "createdAt"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "status": "200"
+        }
+      ],
+      "routeName": "queues.peek",
+      "sdkRequestType": "void",
+      "sdkResponseType": "readonly ProjectQueuePeekMessage[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": [
+          {
+            "name": "maxMessages",
+            "value": "10"
+          }
+        ]
+      }
+    },
+    {
+      "base": "api",
       "client": "organizations",
       "method": "GET",
       "operation": "listProjectRegionPlacements",
@@ -11088,6 +12208,24 @@
         },
         {
           "in": "query",
+          "name": "cursor",
+          "parameter": {
+            "description": "Continuation offset returned as nextCursor by the previous page.",
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "pattern": "^(?:0|[1-9]\\d*)$",
+              "type": "string"
+            }
+          },
+          "required": false,
+          "schema": {
+            "pattern": "^(?:0|[1-9]\\d*)$",
+            "type": "string"
+          }
+        },
+        {
+          "in": "query",
           "name": "skip",
           "parameter": {
             "in": "query",
@@ -11141,236 +12279,539 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/ProjectSavedQueryResponse",
-                    "siblings": {
-                      "resolved": {
-                        "properties": {
-                          "createdAt": {
-                            "format": "date-time",
-                            "type": "string"
-                          },
-                          "name": {
-                            "type": "string"
-                          },
-                          "projectId": {
-                            "$ref": "#/components/schemas/Ulid",
+                  "$ref": "#/components/schemas/ProjectSavedQueryPageResponse",
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "$ref": "#/components/schemas/ProjectSavedQueryResponse",
                             "siblings": {
                               "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            },
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          },
-                          "query": {
-                            "type": "string"
-                          },
-                          "repositoryId": {
-                            "oneOf": [
-                              {
-                                "type": "null"
-                              },
-                              {
-                                "$ref": "#/components/schemas/Ulid",
-                                "siblings": {
-                                  "resolved": {
-                                    "format": "ulid",
+                                "properties": {
+                                  "createdAt": {
+                                    "format": "date-time",
                                     "type": "string"
-                                  }
-                                },
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              }
-                            ]
-                          },
-                          "savedQueryId": {
-                            "$ref": "#/components/schemas/Ulid",
-                            "siblings": {
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            },
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          },
-                          "updatedAt": {
-                            "format": "date-time",
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "savedQueryId",
-                          "projectId",
-                          "name",
-                          "query",
-                          "repositoryId",
-                          "createdAt",
-                          "updatedAt"
-                        ],
-                        "type": "object"
-                      },
-                      "siblings": {
-                        "resolved": {
-                          "properties": {
-                            "createdAt": {
-                              "format": "date-time",
-                              "type": "string"
-                            },
-                            "name": {
-                              "type": "string"
-                            },
-                            "projectId": {
-                              "$ref": "#/components/schemas/Ulid",
-                              "siblings": {
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                },
-                                "siblings": {
-                                  "resolved": {
-                                    "format": "ulid",
+                                  },
+                                  "name": {
                                     "type": "string"
-                                  }
-                                }
-                              },
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            },
-                            "query": {
-                              "type": "string"
-                            },
-                            "repositoryId": {
-                              "oneOf": [
-                                {
-                                  "type": "null"
-                                },
-                                {
-                                  "$ref": "#/components/schemas/Ulid",
-                                  "siblings": {
-                                    "resolved": {
-                                      "format": "ulid",
-                                      "type": "string"
-                                    },
+                                  },
+                                  "projectId": {
+                                    "$ref": "#/components/schemas/Ulid",
                                     "siblings": {
                                       "resolved": {
                                         "format": "ulid",
                                         "type": "string"
                                       }
+                                    },
+                                    "resolved": {
+                                      "format": "ulid",
+                                      "type": "string"
                                     }
                                   },
+                                  "query": {
+                                    "type": "string"
+                                  },
+                                  "repositoryId": {
+                                    "oneOf": [
+                                      {
+                                        "type": "null"
+                                      },
+                                      {
+                                        "$ref": "#/components/schemas/Ulid",
+                                        "siblings": {
+                                          "resolved": {
+                                            "format": "ulid",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "resolved": {
+                                          "format": "ulid",
+                                          "type": "string"
+                                        }
+                                      }
+                                    ]
+                                  },
+                                  "revision": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "savedQueryId": {
+                                    "$ref": "#/components/schemas/Ulid",
+                                    "siblings": {
+                                      "resolved": {
+                                        "format": "ulid",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "resolved": {
+                                      "format": "ulid",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "updatedAt": {
+                                    "format": "date-time",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "savedQueryId",
+                                  "projectId",
+                                  "name",
+                                  "query",
+                                  "repositoryId",
+                                  "createdAt",
+                                  "updatedAt",
+                                  "revision"
+                                ],
+                                "type": "object"
+                              }
+                            },
+                            "resolved": {
+                              "properties": {
+                                "createdAt": {
+                                  "format": "date-time",
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "projectId": {
+                                  "$ref": "#/components/schemas/Ulid",
                                   "resolved": {
                                     "format": "ulid",
                                     "type": "string"
                                   }
-                                }
-                              ]
-                            },
-                            "savedQueryId": {
-                              "$ref": "#/components/schemas/Ulid",
-                              "siblings": {
-                                "resolved": {
-                                  "format": "ulid",
+                                },
+                                "query": {
                                   "type": "string"
                                 },
-                                "siblings": {
+                                "repositoryId": {
+                                  "oneOf": [
+                                    {
+                                      "type": "null"
+                                    },
+                                    {
+                                      "$ref": "#/components/schemas/Ulid",
+                                      "resolved": {
+                                        "format": "ulid",
+                                        "type": "string"
+                                      }
+                                    }
+                                  ]
+                                },
+                                "revision": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "savedQueryId": {
+                                  "$ref": "#/components/schemas/Ulid",
                                   "resolved": {
                                     "format": "ulid",
                                     "type": "string"
+                                  }
+                                },
+                                "updatedAt": {
+                                  "format": "date-time",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "savedQueryId",
+                                "projectId",
+                                "name",
+                                "query",
+                                "repositoryId",
+                                "createdAt",
+                                "updatedAt",
+                                "revision"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "type": "array"
+                        },
+                        "nextCursor": {
+                          "pattern": "^(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "totalCount": {
+                          "format": "int32",
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "items",
+                        "totalCount",
+                        "nextCursor"
+                      ],
+                      "type": "object"
+                    },
+                    "siblings": {
+                      "resolved": {
+                        "properties": {
+                          "items": {
+                            "items": {
+                              "$ref": "#/components/schemas/ProjectSavedQueryResponse",
+                              "siblings": {
+                                "resolved": {
+                                  "properties": {
+                                    "createdAt": {
+                                      "format": "date-time",
+                                      "type": "string"
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "projectId": {
+                                      "$ref": "#/components/schemas/Ulid",
+                                      "siblings": {
+                                        "resolved": {
+                                          "format": "ulid",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "resolved": {
+                                        "format": "ulid",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "query": {
+                                      "type": "string"
+                                    },
+                                    "repositoryId": {
+                                      "oneOf": [
+                                        {
+                                          "type": "null"
+                                        },
+                                        {
+                                          "$ref": "#/components/schemas/Ulid",
+                                          "siblings": {
+                                            "resolved": {
+                                              "format": "ulid",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "resolved": {
+                                            "format": "ulid",
+                                            "type": "string"
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    "revision": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "savedQueryId": {
+                                      "$ref": "#/components/schemas/Ulid",
+                                      "siblings": {
+                                        "resolved": {
+                                          "format": "ulid",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "resolved": {
+                                        "format": "ulid",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "updatedAt": {
+                                      "format": "date-time",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "savedQueryId",
+                                    "projectId",
+                                    "name",
+                                    "query",
+                                    "repositoryId",
+                                    "createdAt",
+                                    "updatedAt",
+                                    "revision"
+                                  ],
+                                  "type": "object"
+                                },
+                                "siblings": {
+                                  "resolved": {
+                                    "properties": {
+                                      "createdAt": {
+                                        "format": "date-time",
+                                        "type": "string"
+                                      },
+                                      "name": {
+                                        "type": "string"
+                                      },
+                                      "projectId": {
+                                        "$ref": "#/components/schemas/Ulid",
+                                        "siblings": {
+                                          "resolved": {
+                                            "format": "ulid",
+                                            "type": "string"
+                                          },
+                                          "siblings": {
+                                            "resolved": {
+                                              "format": "ulid",
+                                              "type": "string"
+                                            }
+                                          }
+                                        },
+                                        "resolved": {
+                                          "format": "ulid",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "query": {
+                                        "type": "string"
+                                      },
+                                      "repositoryId": {
+                                        "oneOf": [
+                                          {
+                                            "type": "null"
+                                          },
+                                          {
+                                            "$ref": "#/components/schemas/Ulid",
+                                            "siblings": {
+                                              "resolved": {
+                                                "format": "ulid",
+                                                "type": "string"
+                                              },
+                                              "siblings": {
+                                                "resolved": {
+                                                  "format": "ulid",
+                                                  "type": "string"
+                                                }
+                                              }
+                                            },
+                                            "resolved": {
+                                              "format": "ulid",
+                                              "type": "string"
+                                            }
+                                          }
+                                        ]
+                                      },
+                                      "revision": {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "savedQueryId": {
+                                        "$ref": "#/components/schemas/Ulid",
+                                        "siblings": {
+                                          "resolved": {
+                                            "format": "ulid",
+                                            "type": "string"
+                                          },
+                                          "siblings": {
+                                            "resolved": {
+                                              "format": "ulid",
+                                              "type": "string"
+                                            }
+                                          }
+                                        },
+                                        "resolved": {
+                                          "format": "ulid",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "updatedAt": {
+                                        "format": "date-time",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "savedQueryId",
+                                      "projectId",
+                                      "name",
+                                      "query",
+                                      "repositoryId",
+                                      "createdAt",
+                                      "updatedAt",
+                                      "revision"
+                                    ],
+                                    "type": "object"
                                   }
                                 }
                               },
                               "resolved": {
-                                "format": "ulid",
-                                "type": "string"
+                                "properties": {
+                                  "createdAt": {
+                                    "format": "date-time",
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "projectId": {
+                                    "$ref": "#/components/schemas/Ulid",
+                                    "resolved": {
+                                      "format": "ulid",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "query": {
+                                    "type": "string"
+                                  },
+                                  "repositoryId": {
+                                    "oneOf": [
+                                      {
+                                        "type": "null"
+                                      },
+                                      {
+                                        "$ref": "#/components/schemas/Ulid",
+                                        "resolved": {
+                                          "format": "ulid",
+                                          "type": "string"
+                                        }
+                                      }
+                                    ]
+                                  },
+                                  "revision": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "savedQueryId": {
+                                    "$ref": "#/components/schemas/Ulid",
+                                    "resolved": {
+                                      "format": "ulid",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "updatedAt": {
+                                    "format": "date-time",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "savedQueryId",
+                                  "projectId",
+                                  "name",
+                                  "query",
+                                  "repositoryId",
+                                  "createdAt",
+                                  "updatedAt",
+                                  "revision"
+                                ],
+                                "type": "object"
                               }
                             },
-                            "updatedAt": {
-                              "format": "date-time",
-                              "type": "string"
-                            }
+                            "type": "array"
                           },
-                          "required": [
-                            "savedQueryId",
-                            "projectId",
-                            "name",
-                            "query",
-                            "repositoryId",
-                            "createdAt",
-                            "updatedAt"
-                          ],
-                          "type": "object"
-                        }
+                          "nextCursor": {
+                            "pattern": "^(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "null",
+                              "string"
+                            ]
+                          },
+                          "totalCount": {
+                            "format": "int32",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "items",
+                          "totalCount",
+                          "nextCursor"
+                        ],
+                        "type": "object"
                       }
-                    },
-                    "resolved": {
-                      "properties": {
-                        "createdAt": {
-                          "format": "date-time",
-                          "type": "string"
-                        },
-                        "name": {
-                          "type": "string"
-                        },
-                        "projectId": {
-                          "$ref": "#/components/schemas/Ulid",
-                          "resolved": {
-                            "format": "ulid",
-                            "type": "string"
-                          }
-                        },
-                        "query": {
-                          "type": "string"
-                        },
-                        "repositoryId": {
-                          "oneOf": [
-                            {
-                              "type": "null"
-                            },
-                            {
-                              "$ref": "#/components/schemas/Ulid",
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            }
-                          ]
-                        },
-                        "savedQueryId": {
-                          "$ref": "#/components/schemas/Ulid",
-                          "resolved": {
-                            "format": "ulid",
-                            "type": "string"
-                          }
-                        },
-                        "updatedAt": {
-                          "format": "date-time",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "savedQueryId",
-                        "projectId",
-                        "name",
-                        "query",
-                        "repositoryId",
-                        "createdAt",
-                        "updatedAt"
-                      ],
-                      "type": "object"
                     }
                   },
-                  "type": "array"
+                  "resolved": {
+                    "properties": {
+                      "items": {
+                        "items": {
+                          "$ref": "#/components/schemas/ProjectSavedQueryResponse",
+                          "resolved": {
+                            "properties": {
+                              "createdAt": {
+                                "format": "date-time",
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "projectId": {
+                                "$ref": "#/components/schemas/Ulid",
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              },
+                              "query": {
+                                "type": "string"
+                              },
+                              "repositoryId": {
+                                "oneOf": [
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "$ref": "#/components/schemas/Ulid",
+                                    "resolved": {
+                                      "format": "ulid",
+                                      "type": "string"
+                                    }
+                                  }
+                                ]
+                              },
+                              "revision": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "savedQueryId": {
+                                "$ref": "#/components/schemas/Ulid",
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              },
+                              "updatedAt": {
+                                "format": "date-time",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "savedQueryId",
+                              "projectId",
+                              "name",
+                              "query",
+                              "repositoryId",
+                              "createdAt",
+                              "updatedAt",
+                              "revision"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "type": "array"
+                      },
+                      "nextCursor": {
+                        "pattern": "^(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "totalCount": {
+                        "format": "int32",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "items",
+                      "totalCount",
+                      "nextCursor"
+                    ],
+                    "type": "object"
+                  }
                 }
               }
             },
@@ -11509,6 +12950,10 @@
                             }
                           ]
                         },
+                        "revision": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
                         "savedQueryId": {
                           "$ref": "#/components/schemas/Ulid",
                           "siblings": {
@@ -11534,7 +12979,8 @@
                         "query",
                         "repositoryId",
                         "createdAt",
-                        "updatedAt"
+                        "updatedAt",
+                        "revision"
                       ],
                       "type": "object"
                     },
@@ -11596,6 +13042,10 @@
                               }
                             ]
                           },
+                          "revision": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
                           "savedQueryId": {
                             "$ref": "#/components/schemas/Ulid",
                             "siblings": {
@@ -11627,7 +13077,8 @@
                           "query",
                           "repositoryId",
                           "createdAt",
-                          "updatedAt"
+                          "updatedAt",
+                          "revision"
                         ],
                         "type": "object"
                       }
@@ -11666,6 +13117,10 @@
                           }
                         ]
                       },
+                      "revision": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
                       "savedQueryId": {
                         "$ref": "#/components/schemas/Ulid",
                         "resolved": {
@@ -11685,7 +13140,8 @@
                       "query",
                       "repositoryId",
                       "createdAt",
-                      "updatedAt"
+                      "updatedAt",
+                      "revision"
                     ],
                     "type": "object"
                   }
@@ -14209,6 +15665,14 @@
                                     "type": "boolean"
                                   },
                                   "code": {
+                                    "enum": [
+                                      "GRU",
+                                      "SFO",
+                                      "FRA"
+                                    ],
+                                    "maxLength": 3,
+                                    "minLength": 3,
+                                    "pattern": "^(?:GRU|SFO|FRA)$",
                                     "type": "string"
                                   },
                                   "country": {
@@ -14251,6 +15715,14 @@
                                   "type": "boolean"
                                 },
                                 "code": {
+                                  "enum": [
+                                    "GRU",
+                                    "SFO",
+                                    "FRA"
+                                  ],
+                                  "maxLength": 3,
+                                  "minLength": 3,
+                                  "pattern": "^(?:GRU|SFO|FRA)$",
                                   "type": "string"
                                 },
                                 "country": {
@@ -14308,6 +15780,14 @@
                                       "type": "boolean"
                                     },
                                     "code": {
+                                      "enum": [
+                                        "GRU",
+                                        "SFO",
+                                        "FRA"
+                                      ],
+                                      "maxLength": 3,
+                                      "minLength": 3,
+                                      "pattern": "^(?:GRU|SFO|FRA)$",
                                       "type": "string"
                                     },
                                     "country": {
@@ -14350,6 +15830,14 @@
                                         "type": "boolean"
                                       },
                                       "code": {
+                                        "enum": [
+                                          "GRU",
+                                          "SFO",
+                                          "FRA"
+                                        ],
+                                        "maxLength": 3,
+                                        "minLength": 3,
+                                        "pattern": "^(?:GRU|SFO|FRA)$",
                                         "type": "string"
                                       },
                                       "country": {
@@ -14393,6 +15881,14 @@
                                     "type": "boolean"
                                   },
                                   "code": {
+                                    "enum": [
+                                      "GRU",
+                                      "SFO",
+                                      "FRA"
+                                    ],
+                                    "maxLength": 3,
+                                    "minLength": 3,
+                                    "pattern": "^(?:GRU|SFO|FRA)$",
                                     "type": "string"
                                   },
                                   "country": {
@@ -14450,6 +15946,14 @@
                                 "type": "boolean"
                               },
                               "code": {
+                                "enum": [
+                                  "GRU",
+                                  "SFO",
+                                  "FRA"
+                                ],
+                                "maxLength": 3,
+                                "minLength": 3,
+                                "pattern": "^(?:GRU|SFO|FRA)$",
                                 "type": "string"
                               },
                               "country": {
@@ -14533,11 +16037,27 @@
             "name": "regionCode",
             "required": true,
             "schema": {
+              "enum": [
+                "GRU",
+                "SFO",
+                "FRA"
+              ],
+              "maxLength": 3,
+              "minLength": 3,
+              "pattern": "^(?:GRU|SFO|FRA)$",
               "type": "string"
             }
           },
           "required": true,
           "schema": {
+            "enum": [
+              "GRU",
+              "SFO",
+              "FRA"
+            ],
+            "maxLength": 3,
+            "minLength": 3,
+            "pattern": "^(?:GRU|SFO|FRA)$",
             "type": "string"
           }
         }
@@ -14559,10 +16079,15 @@
                         "available": {
                           "type": "boolean"
                         },
-                        "clusterNodeTag": {
-                          "type": "string"
-                        },
                         "code": {
+                          "enum": [
+                            "GRU",
+                            "SFO",
+                            "FRA"
+                          ],
+                          "maxLength": 3,
+                          "minLength": 3,
+                          "pattern": "^(?:GRU|SFO|FRA)$",
                           "type": "string"
                         },
                         "country": {
@@ -14586,9 +16111,6 @@
                         },
                         "name": {
                           "type": "string"
-                        },
-                        "ociRegionCode": {
-                          "type": "string"
                         }
                       },
                       "required": [
@@ -14597,8 +16119,6 @@
                         "country",
                         "latitude",
                         "longitude",
-                        "ociRegionCode",
-                        "clusterNodeTag",
                         "available"
                       ],
                       "type": "object"
@@ -14609,10 +16129,15 @@
                           "available": {
                             "type": "boolean"
                           },
-                          "clusterNodeTag": {
-                            "type": "string"
-                          },
                           "code": {
+                            "enum": [
+                              "GRU",
+                              "SFO",
+                              "FRA"
+                            ],
+                            "maxLength": 3,
+                            "minLength": 3,
+                            "pattern": "^(?:GRU|SFO|FRA)$",
                             "type": "string"
                           },
                           "country": {
@@ -14636,9 +16161,6 @@
                           },
                           "name": {
                             "type": "string"
-                          },
-                          "ociRegionCode": {
-                            "type": "string"
                           }
                         },
                         "required": [
@@ -14647,8 +16169,6 @@
                           "country",
                           "latitude",
                           "longitude",
-                          "ociRegionCode",
-                          "clusterNodeTag",
                           "available"
                         ],
                         "type": "object"
@@ -14660,10 +16180,15 @@
                       "available": {
                         "type": "boolean"
                       },
-                      "clusterNodeTag": {
-                        "type": "string"
-                      },
                       "code": {
+                        "enum": [
+                          "GRU",
+                          "SFO",
+                          "FRA"
+                        ],
+                        "maxLength": 3,
+                        "minLength": 3,
+                        "pattern": "^(?:GRU|SFO|FRA)$",
                         "type": "string"
                       },
                       "country": {
@@ -14687,9 +16212,6 @@
                       },
                       "name": {
                         "type": "string"
-                      },
-                      "ociRegionCode": {
-                        "type": "string"
                       }
                     },
                     "required": [
@@ -14698,8 +16220,6 @@
                       "country",
                       "latitude",
                       "longitude",
-                      "ociRegionCode",
-                      "clusterNodeTag",
                       "available"
                     ],
                     "type": "object"
@@ -18241,7 +19761,7 @@
         "body": {
           "kind": "json",
           "shape": {
-            "backupRegion": "gru",
+            "backupRegion": "GRU",
             "name": "Core"
           }
         },
@@ -20283,10 +21803,10 @@
         "body": {
           "kind": "json",
           "shape": {
-            "backupRegion": "gru",
+            "backupRegion": "GRU",
             "name": "Primary",
             "regions": [
-              "gru"
+              "GRU"
             ]
           }
         },
@@ -24937,10 +26457,10 @@
         "body": {
           "kind": "json",
           "shape": {
-            "backupRegion": "gru",
+            "backupRegion": "GRU",
             "name": "Primary",
             "regions": [
-              "gru"
+              "GRU"
             ]
           }
         },
@@ -28028,6 +29548,3045 @@
     },
     {
       "base": "api",
+      "client": "queues",
+      "method": "POST",
+      "operation": "create",
+      "operationId": "CreateProjectQueue",
+      "parameters": [
+        {
+          "in": "path",
+          "name": "projectId",
+          "parameter": {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        }
+      ],
+      "pathTemplate": "/api/v1/projects/{projectId}/queues",
+      "request": {
+        "content": [
+          {
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/CreateProjectQueueRequest",
+              "siblings": {
+                "resolved": {
+                  "properties": {
+                    "description": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "duplicateDetectionSeconds": {
+                      "format": "int64",
+                      "pattern": "^-?(?:0|[1-9]\\d*)$",
+                      "type": [
+                        "null",
+                        "integer",
+                        "string"
+                      ]
+                    },
+                    "fifo": {
+                      "type": "boolean"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "maxMessageSizeBytes": {
+                      "format": "int32",
+                      "pattern": "^-?(?:0|[1-9]\\d*)$",
+                      "type": [
+                        "null",
+                        "integer",
+                        "string"
+                      ]
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "partitionCount": {
+                      "format": "int32",
+                      "pattern": "^-?(?:0|[1-9]\\d*)$",
+                      "type": [
+                        "null",
+                        "integer",
+                        "string"
+                      ]
+                    },
+                    "retentionSeconds": {
+                      "format": "int64",
+                      "pattern": "^-?(?:0|[1-9]\\d*)$",
+                      "type": [
+                        "null",
+                        "integer",
+                        "string"
+                      ]
+                    }
+                  },
+                  "type": "object"
+                },
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "description": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "duplicateDetectionSeconds": {
+                        "format": "int64",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "null",
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "fifo": {
+                        "type": "boolean"
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "maxMessageSizeBytes": {
+                        "format": "int32",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "null",
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "partitionCount": {
+                        "format": "int32",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "null",
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "retentionSeconds": {
+                        "format": "int64",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "null",
+                          "integer",
+                          "string"
+                        ]
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              },
+              "resolved": {
+                "properties": {
+                  "description": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "duplicateDetectionSeconds": {
+                    "format": "int64",
+                    "pattern": "^-?(?:0|[1-9]\\d*)$",
+                    "type": [
+                      "null",
+                      "integer",
+                      "string"
+                    ]
+                  },
+                  "fifo": {
+                    "type": "boolean"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "maxMessageSizeBytes": {
+                    "format": "int32",
+                    "pattern": "^-?(?:0|[1-9]\\d*)$",
+                    "type": [
+                      "null",
+                      "integer",
+                      "string"
+                    ]
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "partitionCount": {
+                    "format": "int32",
+                    "pattern": "^-?(?:0|[1-9]\\d*)$",
+                    "type": [
+                      "null",
+                      "integer",
+                      "string"
+                    ]
+                  },
+                  "retentionSeconds": {
+                    "format": "int64",
+                    "pattern": "^-?(?:0|[1-9]\\d*)$",
+                    "type": [
+                      "null",
+                      "integer",
+                      "string"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectQueueRequest",
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "description": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "duplicateDetectionSeconds": {
+                        "format": "int64",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "null",
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "fifo": {
+                        "type": "boolean"
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "maxMessageSizeBytes": {
+                        "format": "int32",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "null",
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "partitionCount": {
+                        "format": "int32",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "null",
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "retentionSeconds": {
+                        "format": "int64",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "null",
+                          "integer",
+                          "string"
+                        ]
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "description": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "duplicateDetectionSeconds": {
+                          "format": "int64",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "fifo": {
+                          "type": "boolean"
+                        },
+                        "kind": {
+                          "type": "string"
+                        },
+                        "maxMessageSizeBytes": {
+                          "format": "int32",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "partitionCount": {
+                          "format": "int32",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "retentionSeconds": {
+                          "format": "int64",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ]
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "resolved": {
+                  "properties": {
+                    "description": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "duplicateDetectionSeconds": {
+                      "format": "int64",
+                      "pattern": "^-?(?:0|[1-9]\\d*)$",
+                      "type": [
+                        "null",
+                        "integer",
+                        "string"
+                      ]
+                    },
+                    "fifo": {
+                      "type": "boolean"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "maxMessageSizeBytes": {
+                      "format": "int32",
+                      "pattern": "^-?(?:0|[1-9]\\d*)$",
+                      "type": [
+                        "null",
+                        "integer",
+                        "string"
+                      ]
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "partitionCount": {
+                      "format": "int32",
+                      "pattern": "^-?(?:0|[1-9]\\d*)$",
+                      "type": [
+                        "null",
+                        "integer",
+                        "string"
+                      ]
+                    },
+                    "retentionSeconds": {
+                      "format": "int64",
+                      "pattern": "^-?(?:0|[1-9]\\d*)$",
+                      "type": [
+                        "null",
+                        "integer",
+                        "string"
+                      ]
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "required": true
+      },
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectQueueResponse",
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "consumerCount": {
+                          "format": "int32",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "createdAt": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "fifo": {
+                          "type": "boolean"
+                        },
+                        "kind": {
+                          "type": "string"
+                        },
+                        "messages": {
+                          "format": "int64",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "partitionCount": {
+                          "format": "int32",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "projectId": {
+                          "$ref": "#/components/schemas/Ulid",
+                          "siblings": {
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        },
+                        "queueId": {
+                          "$ref": "#/components/schemas/Ulid",
+                          "siblings": {
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        },
+                        "replicas": {
+                          "format": "int32",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "retentionSeconds": {
+                          "format": "int64",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "storageBytes": {
+                          "format": "int64",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "queueId",
+                        "projectId",
+                        "name",
+                        "kind",
+                        "messages",
+                        "storageBytes",
+                        "consumerCount",
+                        "replicas",
+                        "fifo",
+                        "partitionCount",
+                        "retentionSeconds",
+                        "createdAt"
+                      ],
+                      "type": "object"
+                    },
+                    "siblings": {
+                      "resolved": {
+                        "properties": {
+                          "consumerCount": {
+                            "format": "int32",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          },
+                          "createdAt": {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "fifo": {
+                            "type": "boolean"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "messages": {
+                            "format": "int64",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "partitionCount": {
+                            "format": "int32",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          },
+                          "projectId": {
+                            "$ref": "#/components/schemas/Ulid",
+                            "siblings": {
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              },
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "queueId": {
+                            "$ref": "#/components/schemas/Ulid",
+                            "siblings": {
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              },
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "replicas": {
+                            "format": "int32",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          },
+                          "retentionSeconds": {
+                            "format": "int64",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "null",
+                              "integer",
+                              "string"
+                            ]
+                          },
+                          "storageBytes": {
+                            "format": "int64",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "queueId",
+                          "projectId",
+                          "name",
+                          "kind",
+                          "messages",
+                          "storageBytes",
+                          "consumerCount",
+                          "replicas",
+                          "fifo",
+                          "partitionCount",
+                          "retentionSeconds",
+                          "createdAt"
+                        ],
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "resolved": {
+                    "properties": {
+                      "consumerCount": {
+                        "format": "int32",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "createdAt": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "fifo": {
+                        "type": "boolean"
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "messages": {
+                        "format": "int64",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "partitionCount": {
+                        "format": "int32",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "projectId": {
+                        "$ref": "#/components/schemas/Ulid",
+                        "resolved": {
+                          "format": "ulid",
+                          "type": "string"
+                        }
+                      },
+                      "queueId": {
+                        "$ref": "#/components/schemas/Ulid",
+                        "resolved": {
+                          "format": "ulid",
+                          "type": "string"
+                        }
+                      },
+                      "replicas": {
+                        "format": "int32",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "retentionSeconds": {
+                        "format": "int64",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "null",
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "storageBytes": {
+                        "format": "int64",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "integer",
+                          "string"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "queueId",
+                      "projectId",
+                      "name",
+                      "kind",
+                      "messages",
+                      "storageBytes",
+                      "consumerCount",
+                      "replicas",
+                      "fifo",
+                      "partitionCount",
+                      "retentionSeconds",
+                      "createdAt"
+                    ],
+                    "type": "object"
+                  }
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "status": "201"
+        }
+      ],
+      "routeName": "queues.create",
+      "sdkRequestType": "CreateProjectQueueRequest",
+      "sdkResponseType": "ProjectQueue",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "kind": "queue",
+            "name": "jobs"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "method": "POST",
+      "operation": "abandon",
+      "operationId": "AbandonProjectQueueMessage",
+      "parameters": [
+        {
+          "in": "path",
+          "name": "projectId",
+          "parameter": {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "queueId",
+          "parameter": {
+            "in": "path",
+            "name": "queueId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        }
+      ],
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:abandon",
+      "request": {
+        "content": [
+          {
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/AbandonProjectQueueMessageRequest",
+              "siblings": {
+                "resolved": {
+                  "properties": {
+                    "delaySeconds": {
+                      "format": "double",
+                      "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+                      "type": [
+                        "null",
+                        "number",
+                        "string"
+                      ]
+                    },
+                    "receipt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "delaySeconds": {
+                        "format": "double",
+                        "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+                        "type": [
+                          "null",
+                          "number",
+                          "string"
+                        ]
+                      },
+                      "receipt": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              },
+              "resolved": {
+                "properties": {
+                  "delaySeconds": {
+                    "format": "double",
+                    "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+                    "type": [
+                      "null",
+                      "number",
+                      "string"
+                    ]
+                  },
+                  "receipt": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AbandonProjectQueueMessageRequest",
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "delaySeconds": {
+                        "format": "double",
+                        "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+                        "type": [
+                          "null",
+                          "number",
+                          "string"
+                        ]
+                      },
+                      "receipt": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "delaySeconds": {
+                          "format": "double",
+                          "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+                          "type": [
+                            "null",
+                            "number",
+                            "string"
+                          ]
+                        },
+                        "receipt": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "resolved": {
+                  "properties": {
+                    "delaySeconds": {
+                      "format": "double",
+                      "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+                      "type": [
+                        "null",
+                        "number",
+                        "string"
+                      ]
+                    },
+                    "receipt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "required": true
+      },
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectQueueReceiptActionResponse",
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "accepted": {
+                          "type": "boolean"
+                        },
+                        "deliveryGuarantee": {
+                          "type": "string"
+                        },
+                        "messageId": {
+                          "type": "string"
+                        },
+                        "operation": {
+                          "type": "string"
+                        },
+                        "region": {
+                          "type": "string"
+                        },
+                        "safeToRetry": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "messageId",
+                        "operation",
+                        "accepted",
+                        "safeToRetry",
+                        "region",
+                        "deliveryGuarantee"
+                      ],
+                      "type": "object"
+                    },
+                    "siblings": {
+                      "resolved": {
+                        "properties": {
+                          "accepted": {
+                            "type": "boolean"
+                          },
+                          "deliveryGuarantee": {
+                            "type": "string"
+                          },
+                          "messageId": {
+                            "type": "string"
+                          },
+                          "operation": {
+                            "type": "string"
+                          },
+                          "region": {
+                            "type": "string"
+                          },
+                          "safeToRetry": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "messageId",
+                          "operation",
+                          "accepted",
+                          "safeToRetry",
+                          "region",
+                          "deliveryGuarantee"
+                        ],
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "resolved": {
+                    "properties": {
+                      "accepted": {
+                        "type": "boolean"
+                      },
+                      "deliveryGuarantee": {
+                        "type": "string"
+                      },
+                      "messageId": {
+                        "type": "string"
+                      },
+                      "operation": {
+                        "type": "string"
+                      },
+                      "region": {
+                        "type": "string"
+                      },
+                      "safeToRetry": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "messageId",
+                      "operation",
+                      "accepted",
+                      "safeToRetry",
+                      "region",
+                      "deliveryGuarantee"
+                    ],
+                    "type": "object"
+                  }
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "status": "202"
+        }
+      ],
+      "routeName": "queues.abandon",
+      "sdkRequestType": "json",
+      "sdkResponseType": "ProjectQueueReceiptActionResult",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "delaySeconds": 1,
+            "receipt": "opaque"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-preferred-region",
+            "value": "SFO"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "method": "POST",
+      "operation": "complete",
+      "operationId": "CompleteProjectQueueMessage",
+      "parameters": [
+        {
+          "in": "path",
+          "name": "projectId",
+          "parameter": {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "queueId",
+          "parameter": {
+            "in": "path",
+            "name": "queueId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        }
+      ],
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:complete",
+      "request": {
+        "content": [
+          {
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/ProjectQueueReceiptRequest",
+              "siblings": {
+                "resolved": {
+                  "properties": {
+                    "receipt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "receipt": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              },
+              "resolved": {
+                "properties": {
+                  "receipt": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectQueueReceiptRequest",
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "receipt": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "receipt": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "resolved": {
+                  "properties": {
+                    "receipt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "required": true
+      },
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectQueueReceiptActionResponse",
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "accepted": {
+                          "type": "boolean"
+                        },
+                        "deliveryGuarantee": {
+                          "type": "string"
+                        },
+                        "messageId": {
+                          "type": "string"
+                        },
+                        "operation": {
+                          "type": "string"
+                        },
+                        "region": {
+                          "type": "string"
+                        },
+                        "safeToRetry": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "messageId",
+                        "operation",
+                        "accepted",
+                        "safeToRetry",
+                        "region",
+                        "deliveryGuarantee"
+                      ],
+                      "type": "object"
+                    },
+                    "siblings": {
+                      "resolved": {
+                        "properties": {
+                          "accepted": {
+                            "type": "boolean"
+                          },
+                          "deliveryGuarantee": {
+                            "type": "string"
+                          },
+                          "messageId": {
+                            "type": "string"
+                          },
+                          "operation": {
+                            "type": "string"
+                          },
+                          "region": {
+                            "type": "string"
+                          },
+                          "safeToRetry": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "messageId",
+                          "operation",
+                          "accepted",
+                          "safeToRetry",
+                          "region",
+                          "deliveryGuarantee"
+                        ],
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "resolved": {
+                    "properties": {
+                      "accepted": {
+                        "type": "boolean"
+                      },
+                      "deliveryGuarantee": {
+                        "type": "string"
+                      },
+                      "messageId": {
+                        "type": "string"
+                      },
+                      "operation": {
+                        "type": "string"
+                      },
+                      "region": {
+                        "type": "string"
+                      },
+                      "safeToRetry": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "messageId",
+                      "operation",
+                      "accepted",
+                      "safeToRetry",
+                      "region",
+                      "deliveryGuarantee"
+                    ],
+                    "type": "object"
+                  }
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "status": "202"
+        }
+      ],
+      "routeName": "queues.complete",
+      "sdkRequestType": "json",
+      "sdkResponseType": "ProjectQueueReceiptActionResult",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "receipt": "opaque"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-preferred-region",
+            "value": "SFO"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "method": "POST",
+      "operation": "deadLetter",
+      "operationId": "DeadLetterProjectQueueMessage",
+      "parameters": [
+        {
+          "in": "path",
+          "name": "projectId",
+          "parameter": {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "queueId",
+          "parameter": {
+            "in": "path",
+            "name": "queueId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        }
+      ],
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:dead-letter",
+      "request": {
+        "content": [
+          {
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/ProjectQueueReceiptRequest",
+              "siblings": {
+                "resolved": {
+                  "properties": {
+                    "receipt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "receipt": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              },
+              "resolved": {
+                "properties": {
+                  "receipt": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectQueueReceiptRequest",
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "receipt": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "receipt": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "resolved": {
+                  "properties": {
+                    "receipt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "required": true
+      },
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectQueueReceiptActionResponse",
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "accepted": {
+                          "type": "boolean"
+                        },
+                        "deliveryGuarantee": {
+                          "type": "string"
+                        },
+                        "messageId": {
+                          "type": "string"
+                        },
+                        "operation": {
+                          "type": "string"
+                        },
+                        "region": {
+                          "type": "string"
+                        },
+                        "safeToRetry": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "messageId",
+                        "operation",
+                        "accepted",
+                        "safeToRetry",
+                        "region",
+                        "deliveryGuarantee"
+                      ],
+                      "type": "object"
+                    },
+                    "siblings": {
+                      "resolved": {
+                        "properties": {
+                          "accepted": {
+                            "type": "boolean"
+                          },
+                          "deliveryGuarantee": {
+                            "type": "string"
+                          },
+                          "messageId": {
+                            "type": "string"
+                          },
+                          "operation": {
+                            "type": "string"
+                          },
+                          "region": {
+                            "type": "string"
+                          },
+                          "safeToRetry": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "messageId",
+                          "operation",
+                          "accepted",
+                          "safeToRetry",
+                          "region",
+                          "deliveryGuarantee"
+                        ],
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "resolved": {
+                    "properties": {
+                      "accepted": {
+                        "type": "boolean"
+                      },
+                      "deliveryGuarantee": {
+                        "type": "string"
+                      },
+                      "messageId": {
+                        "type": "string"
+                      },
+                      "operation": {
+                        "type": "string"
+                      },
+                      "region": {
+                        "type": "string"
+                      },
+                      "safeToRetry": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "messageId",
+                      "operation",
+                      "accepted",
+                      "safeToRetry",
+                      "region",
+                      "deliveryGuarantee"
+                    ],
+                    "type": "object"
+                  }
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "status": "202"
+        }
+      ],
+      "routeName": "queues.deadLetter",
+      "sdkRequestType": "json",
+      "sdkResponseType": "ProjectQueueReceiptActionResult",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "receipt": "opaque"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-preferred-region",
+            "value": "SFO"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "method": "POST",
+      "operation": "publish",
+      "operationId": "PublishProjectQueueMessage",
+      "parameters": [
+        {
+          "in": "path",
+          "name": "projectId",
+          "parameter": {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "queueId",
+          "parameter": {
+            "in": "path",
+            "name": "queueId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        }
+      ],
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:publish",
+      "request": {
+        "content": [
+          {
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/PublishProjectQueueMessageRequest",
+              "siblings": {
+                "resolved": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/JsonElement",
+                      "siblings": {
+                        "resolved": {}
+                      },
+                      "resolved": {}
+                    },
+                    "delaySeconds": {
+                      "format": "int64",
+                      "pattern": "^-?(?:0|[1-9]\\d*)$",
+                      "type": [
+                        "null",
+                        "integer",
+                        "string"
+                      ]
+                    },
+                    "idempotencyKey": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "partitionKey": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "timeToLiveSeconds": {
+                      "format": "int64",
+                      "pattern": "^-?(?:0|[1-9]\\d*)$",
+                      "type": [
+                        "null",
+                        "integer",
+                        "string"
+                      ]
+                    }
+                  },
+                  "type": "object"
+                },
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "data": {
+                        "$ref": "#/components/schemas/JsonElement",
+                        "siblings": {
+                          "resolved": {},
+                          "siblings": {
+                            "resolved": {}
+                          }
+                        },
+                        "resolved": {}
+                      },
+                      "delaySeconds": {
+                        "format": "int64",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "null",
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "idempotencyKey": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "partitionKey": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "timeToLiveSeconds": {
+                        "format": "int64",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "null",
+                          "integer",
+                          "string"
+                        ]
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              },
+              "resolved": {
+                "properties": {
+                  "data": {
+                    "$ref": "#/components/schemas/JsonElement",
+                    "resolved": {}
+                  },
+                  "delaySeconds": {
+                    "format": "int64",
+                    "pattern": "^-?(?:0|[1-9]\\d*)$",
+                    "type": [
+                      "null",
+                      "integer",
+                      "string"
+                    ]
+                  },
+                  "idempotencyKey": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "partitionKey": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "timeToLiveSeconds": {
+                    "format": "int64",
+                    "pattern": "^-?(?:0|[1-9]\\d*)$",
+                    "type": [
+                      "null",
+                      "integer",
+                      "string"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishProjectQueueMessageRequest",
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "data": {
+                        "$ref": "#/components/schemas/JsonElement",
+                        "siblings": {
+                          "resolved": {}
+                        },
+                        "resolved": {}
+                      },
+                      "delaySeconds": {
+                        "format": "int64",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "null",
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "idempotencyKey": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "partitionKey": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "timeToLiveSeconds": {
+                        "format": "int64",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "null",
+                          "integer",
+                          "string"
+                        ]
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/JsonElement",
+                          "siblings": {
+                            "resolved": {},
+                            "siblings": {
+                              "resolved": {}
+                            }
+                          },
+                          "resolved": {}
+                        },
+                        "delaySeconds": {
+                          "format": "int64",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "idempotencyKey": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "partitionKey": {
+                          "type": [
+                            "null",
+                            "string"
+                          ]
+                        },
+                        "timeToLiveSeconds": {
+                          "format": "int64",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "null",
+                            "integer",
+                            "string"
+                          ]
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "resolved": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/JsonElement",
+                      "resolved": {}
+                    },
+                    "delaySeconds": {
+                      "format": "int64",
+                      "pattern": "^-?(?:0|[1-9]\\d*)$",
+                      "type": [
+                        "null",
+                        "integer",
+                        "string"
+                      ]
+                    },
+                    "idempotencyKey": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "partitionKey": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "timeToLiveSeconds": {
+                      "format": "int64",
+                      "pattern": "^-?(?:0|[1-9]\\d*)$",
+                      "type": [
+                        "null",
+                        "integer",
+                        "string"
+                      ]
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "required": true
+      },
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectQueuePublishResponse",
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "duplicate": {
+                          "type": "boolean"
+                        },
+                        "messageId": {
+                          "type": "string"
+                        },
+                        "publishedAt": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "sequence": {
+                          "format": "uint64",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "messageId",
+                        "sequence",
+                        "publishedAt",
+                        "duplicate"
+                      ],
+                      "type": "object"
+                    },
+                    "siblings": {
+                      "resolved": {
+                        "properties": {
+                          "duplicate": {
+                            "type": "boolean"
+                          },
+                          "messageId": {
+                            "type": "string"
+                          },
+                          "publishedAt": {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "sequence": {
+                            "format": "uint64",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "messageId",
+                          "sequence",
+                          "publishedAt",
+                          "duplicate"
+                        ],
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "resolved": {
+                    "properties": {
+                      "duplicate": {
+                        "type": "boolean"
+                      },
+                      "messageId": {
+                        "type": "string"
+                      },
+                      "publishedAt": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "sequence": {
+                        "format": "uint64",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "integer",
+                          "string"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "messageId",
+                      "sequence",
+                      "publishedAt",
+                      "duplicate"
+                    ],
+                    "type": "object"
+                  }
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "status": "200"
+        }
+      ],
+      "routeName": "queues.publish",
+      "sdkRequestType": "PublishProjectQueueMessageRequest",
+      "sdkResponseType": "ProjectQueuePublishResult",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "data": {
+              "task": "index"
+            }
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "method": "POST",
+      "operation": "purge",
+      "operationId": "PurgeProjectQueue",
+      "parameters": [
+        {
+          "in": "path",
+          "name": "projectId",
+          "parameter": {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "queueId",
+          "parameter": {
+            "in": "path",
+            "name": "queueId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        }
+      ],
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:purge",
+      "request": {
+        "kind": "void"
+      },
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueuePurgeResult",
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "purgedMessages": {
+                          "format": "int64",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "queueName": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "queueName",
+                        "purgedMessages"
+                      ],
+                      "type": "object"
+                    },
+                    "siblings": {
+                      "resolved": {
+                        "properties": {
+                          "purgedMessages": {
+                            "format": "int64",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          },
+                          "queueName": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "queueName",
+                          "purgedMessages"
+                        ],
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "resolved": {
+                    "properties": {
+                      "purgedMessages": {
+                        "format": "int64",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "queueName": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "queueName",
+                      "purgedMessages"
+                    ],
+                    "type": "object"
+                  }
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "status": "200"
+        }
+      ],
+      "routeName": "queues.purge",
+      "sdkRequestType": "void",
+      "sdkResponseType": "QueuePurgeResult",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "method": "POST",
+      "operation": "receive",
+      "operationId": "ReceiveProjectQueueMessages",
+      "parameters": [
+        {
+          "in": "path",
+          "name": "projectId",
+          "parameter": {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "queueId",
+          "parameter": {
+            "in": "path",
+            "name": "queueId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        }
+      ],
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:receive",
+      "request": {
+        "content": [
+          {
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/ReceiveProjectQueueMessagesRequest",
+              "siblings": {
+                "resolved": {
+                  "properties": {
+                    "consumerName": {
+                      "type": "string"
+                    },
+                    "lockSeconds": {
+                      "format": "double",
+                      "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+                      "type": [
+                        "null",
+                        "number",
+                        "string"
+                      ]
+                    },
+                    "maxMessages": {
+                      "format": "int32",
+                      "pattern": "^-?(?:0|[1-9]\\d*)$",
+                      "type": [
+                        "integer",
+                        "string"
+                      ]
+                    },
+                    "waitSeconds": {
+                      "format": "double",
+                      "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+                      "type": [
+                        "null",
+                        "number",
+                        "string"
+                      ]
+                    }
+                  },
+                  "type": "object"
+                },
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "consumerName": {
+                        "type": "string"
+                      },
+                      "lockSeconds": {
+                        "format": "double",
+                        "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+                        "type": [
+                          "null",
+                          "number",
+                          "string"
+                        ]
+                      },
+                      "maxMessages": {
+                        "format": "int32",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "waitSeconds": {
+                        "format": "double",
+                        "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+                        "type": [
+                          "null",
+                          "number",
+                          "string"
+                        ]
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              },
+              "resolved": {
+                "properties": {
+                  "consumerName": {
+                    "type": "string"
+                  },
+                  "lockSeconds": {
+                    "format": "double",
+                    "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+                    "type": [
+                      "null",
+                      "number",
+                      "string"
+                    ]
+                  },
+                  "maxMessages": {
+                    "format": "int32",
+                    "pattern": "^-?(?:0|[1-9]\\d*)$",
+                    "type": [
+                      "integer",
+                      "string"
+                    ]
+                  },
+                  "waitSeconds": {
+                    "format": "double",
+                    "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+                    "type": [
+                      "null",
+                      "number",
+                      "string"
+                    ]
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReceiveProjectQueueMessagesRequest",
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "consumerName": {
+                        "type": "string"
+                      },
+                      "lockSeconds": {
+                        "format": "double",
+                        "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+                        "type": [
+                          "null",
+                          "number",
+                          "string"
+                        ]
+                      },
+                      "maxMessages": {
+                        "format": "int32",
+                        "pattern": "^-?(?:0|[1-9]\\d*)$",
+                        "type": [
+                          "integer",
+                          "string"
+                        ]
+                      },
+                      "waitSeconds": {
+                        "format": "double",
+                        "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+                        "type": [
+                          "null",
+                          "number",
+                          "string"
+                        ]
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "consumerName": {
+                          "type": "string"
+                        },
+                        "lockSeconds": {
+                          "format": "double",
+                          "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+                          "type": [
+                            "null",
+                            "number",
+                            "string"
+                          ]
+                        },
+                        "maxMessages": {
+                          "format": "int32",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "waitSeconds": {
+                          "format": "double",
+                          "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+                          "type": [
+                            "null",
+                            "number",
+                            "string"
+                          ]
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "resolved": {
+                  "properties": {
+                    "consumerName": {
+                      "type": "string"
+                    },
+                    "lockSeconds": {
+                      "format": "double",
+                      "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+                      "type": [
+                        "null",
+                        "number",
+                        "string"
+                      ]
+                    },
+                    "maxMessages": {
+                      "format": "int32",
+                      "pattern": "^-?(?:0|[1-9]\\d*)$",
+                      "type": [
+                        "integer",
+                        "string"
+                      ]
+                    },
+                    "waitSeconds": {
+                      "format": "double",
+                      "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+                      "type": [
+                        "null",
+                        "number",
+                        "string"
+                      ]
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "required": true
+      },
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectQueueReceivedMessageResponse",
+                    "siblings": {
+                      "resolved": {
+                        "properties": {
+                          "consumerSequence": {
+                            "format": "uint64",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          },
+                          "contentType": {
+                            "type": "string"
+                          },
+                          "data": {
+                            "$ref": "#/components/schemas/JsonElement",
+                            "siblings": {
+                              "resolved": {}
+                            },
+                            "resolved": {}
+                          },
+                          "deliveryAttempt": {
+                            "format": "uint64",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          },
+                          "deliveryGuarantee": {
+                            "type": "string"
+                          },
+                          "headers": {
+                            "additionalProperties": {
+                              "type": "string"
+                            },
+                            "type": "object"
+                          },
+                          "lockedUntil": {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "messageId": {
+                            "type": "string"
+                          },
+                          "receipt": {
+                            "type": "string"
+                          },
+                          "receivedAt": {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "region": {
+                            "type": "string"
+                          },
+                          "streamSequence": {
+                            "format": "uint64",
+                            "pattern": "^-?(?:0|[1-9]\\d*)$",
+                            "type": [
+                              "integer",
+                              "string"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "receipt",
+                          "messageId",
+                          "data",
+                          "contentType",
+                          "headers",
+                          "streamSequence",
+                          "consumerSequence",
+                          "deliveryAttempt",
+                          "receivedAt",
+                          "lockedUntil",
+                          "region",
+                          "deliveryGuarantee"
+                        ],
+                        "type": "object"
+                      },
+                      "siblings": {
+                        "resolved": {
+                          "properties": {
+                            "consumerSequence": {
+                              "format": "uint64",
+                              "pattern": "^-?(?:0|[1-9]\\d*)$",
+                              "type": [
+                                "integer",
+                                "string"
+                              ]
+                            },
+                            "contentType": {
+                              "type": "string"
+                            },
+                            "data": {
+                              "$ref": "#/components/schemas/JsonElement",
+                              "siblings": {
+                                "resolved": {},
+                                "siblings": {
+                                  "resolved": {}
+                                }
+                              },
+                              "resolved": {}
+                            },
+                            "deliveryAttempt": {
+                              "format": "uint64",
+                              "pattern": "^-?(?:0|[1-9]\\d*)$",
+                              "type": [
+                                "integer",
+                                "string"
+                              ]
+                            },
+                            "deliveryGuarantee": {
+                              "type": "string"
+                            },
+                            "headers": {
+                              "additionalProperties": {
+                                "type": "string"
+                              },
+                              "type": "object"
+                            },
+                            "lockedUntil": {
+                              "format": "date-time",
+                              "type": "string"
+                            },
+                            "messageId": {
+                              "type": "string"
+                            },
+                            "receipt": {
+                              "type": "string"
+                            },
+                            "receivedAt": {
+                              "format": "date-time",
+                              "type": "string"
+                            },
+                            "region": {
+                              "type": "string"
+                            },
+                            "streamSequence": {
+                              "format": "uint64",
+                              "pattern": "^-?(?:0|[1-9]\\d*)$",
+                              "type": [
+                                "integer",
+                                "string"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "receipt",
+                            "messageId",
+                            "data",
+                            "contentType",
+                            "headers",
+                            "streamSequence",
+                            "consumerSequence",
+                            "deliveryAttempt",
+                            "receivedAt",
+                            "lockedUntil",
+                            "region",
+                            "deliveryGuarantee"
+                          ],
+                          "type": "object"
+                        }
+                      }
+                    },
+                    "resolved": {
+                      "properties": {
+                        "consumerSequence": {
+                          "format": "uint64",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "contentType": {
+                          "type": "string"
+                        },
+                        "data": {
+                          "$ref": "#/components/schemas/JsonElement",
+                          "resolved": {}
+                        },
+                        "deliveryAttempt": {
+                          "format": "uint64",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        },
+                        "deliveryGuarantee": {
+                          "type": "string"
+                        },
+                        "headers": {
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "type": "object"
+                        },
+                        "lockedUntil": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "messageId": {
+                          "type": "string"
+                        },
+                        "receipt": {
+                          "type": "string"
+                        },
+                        "receivedAt": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "region": {
+                          "type": "string"
+                        },
+                        "streamSequence": {
+                          "format": "uint64",
+                          "pattern": "^-?(?:0|[1-9]\\d*)$",
+                          "type": [
+                            "integer",
+                            "string"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "receipt",
+                        "messageId",
+                        "data",
+                        "contentType",
+                        "headers",
+                        "streamSequence",
+                        "consumerSequence",
+                        "deliveryAttempt",
+                        "receivedAt",
+                        "lockedUntil",
+                        "region",
+                        "deliveryGuarantee"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "status": "200"
+        }
+      ],
+      "routeName": "queues.receive",
+      "sdkRequestType": "ReceiveProjectQueueMessagesRequest",
+      "sdkResponseType": "readonly ProjectQueueReceivedMessage[]",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "consumerName": "worker",
+            "maxMessages": 1
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "method": "POST",
+      "operation": "renewLock",
+      "operationId": "RenewProjectQueueMessageLock",
+      "parameters": [
+        {
+          "in": "path",
+          "name": "projectId",
+          "parameter": {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "queueId",
+          "parameter": {
+            "in": "path",
+            "name": "queueId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        }
+      ],
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:renew-lock",
+      "request": {
+        "content": [
+          {
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/ProjectQueueReceiptRequest",
+              "siblings": {
+                "resolved": {
+                  "properties": {
+                    "receipt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "receipt": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              },
+              "resolved": {
+                "properties": {
+                  "receipt": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectQueueReceiptRequest",
+                "siblings": {
+                  "resolved": {
+                    "properties": {
+                      "receipt": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "receipt": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  }
+                },
+                "resolved": {
+                  "properties": {
+                    "receipt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "required": true
+      },
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectQueueRenewLockResponse",
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "deliveryGuarantee": {
+                          "type": "string"
+                        },
+                        "lockedUntil": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "messageId": {
+                          "type": "string"
+                        },
+                        "receipt": {
+                          "type": "string"
+                        },
+                        "region": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "receipt",
+                        "messageId",
+                        "lockedUntil",
+                        "region",
+                        "deliveryGuarantee"
+                      ],
+                      "type": "object"
+                    },
+                    "siblings": {
+                      "resolved": {
+                        "properties": {
+                          "deliveryGuarantee": {
+                            "type": "string"
+                          },
+                          "lockedUntil": {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "messageId": {
+                            "type": "string"
+                          },
+                          "receipt": {
+                            "type": "string"
+                          },
+                          "region": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "receipt",
+                          "messageId",
+                          "lockedUntil",
+                          "region",
+                          "deliveryGuarantee"
+                        ],
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "resolved": {
+                    "properties": {
+                      "deliveryGuarantee": {
+                        "type": "string"
+                      },
+                      "lockedUntil": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "messageId": {
+                        "type": "string"
+                      },
+                      "receipt": {
+                        "type": "string"
+                      },
+                      "region": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "receipt",
+                      "messageId",
+                      "lockedUntil",
+                      "region",
+                      "deliveryGuarantee"
+                    ],
+                    "type": "object"
+                  }
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "status": "202"
+        }
+      ],
+      "routeName": "queues.renewLock",
+      "sdkRequestType": "json",
+      "sdkResponseType": "ProjectQueueRenewLockResult",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "receipt": "opaque"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-preferred-region",
+            "value": "SFO"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
       "client": "savedQueries",
       "method": "POST",
       "operation": "create",
@@ -28387,6 +32946,10 @@
                             }
                           ]
                         },
+                        "revision": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
                         "savedQueryId": {
                           "$ref": "#/components/schemas/Ulid",
                           "siblings": {
@@ -28412,7 +32975,8 @@
                         "query",
                         "repositoryId",
                         "createdAt",
-                        "updatedAt"
+                        "updatedAt",
+                        "revision"
                       ],
                       "type": "object"
                     },
@@ -28474,6 +33038,10 @@
                               }
                             ]
                           },
+                          "revision": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
                           "savedQueryId": {
                             "$ref": "#/components/schemas/Ulid",
                             "siblings": {
@@ -28505,7 +33073,8 @@
                           "query",
                           "repositoryId",
                           "createdAt",
-                          "updatedAt"
+                          "updatedAt",
+                          "revision"
                         ],
                         "type": "object"
                       }
@@ -28544,6 +33113,10 @@
                           }
                         ]
                       },
+                      "revision": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
                       "savedQueryId": {
                         "$ref": "#/components/schemas/Ulid",
                         "resolved": {
@@ -28563,7 +33136,8 @@
                       "query",
                       "repositoryId",
                       "createdAt",
-                      "updatedAt"
+                      "updatedAt",
+                      "revision"
                     ],
                     "type": "object"
                   }
@@ -33943,7 +38517,7 @@
           {
             "mediaType": "application/json",
             "schema": {
-              "$ref": "#/components/schemas/ProjectSavedQueryRequest",
+              "$ref": "#/components/schemas/UpdateProjectSavedQueryRequest",
               "siblings": {
                 "resolved": {
                   "properties": {
@@ -33976,11 +38550,16 @@
                           }
                         }
                       ]
+                    },
+                    "revision": {
+                      "minLength": 1,
+                      "type": "string"
                     }
                   },
                   "required": [
                     "name",
-                    "query"
+                    "query",
+                    "revision"
                   ],
                   "type": "object"
                 },
@@ -34022,11 +38601,16 @@
                             }
                           }
                         ]
+                      },
+                      "revision": {
+                        "minLength": 1,
+                        "type": "string"
                       }
                     },
                     "required": [
                       "name",
-                      "query"
+                      "query",
+                      "revision"
                     ],
                     "type": "object"
                   }
@@ -34057,11 +38641,16 @@
                         }
                       }
                     ]
+                  },
+                  "revision": {
+                    "minLength": 1,
+                    "type": "string"
                   }
                 },
                 "required": [
                   "name",
-                  "query"
+                  "query",
+                  "revision"
                 ],
                 "type": "object"
               }
@@ -34072,7 +38661,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ProjectSavedQueryRequest",
+                "$ref": "#/components/schemas/UpdateProjectSavedQueryRequest",
                 "siblings": {
                   "resolved": {
                     "properties": {
@@ -34105,11 +38694,16 @@
                             }
                           }
                         ]
+                      },
+                      "revision": {
+                        "minLength": 1,
+                        "type": "string"
                       }
                     },
                     "required": [
                       "name",
-                      "query"
+                      "query",
+                      "revision"
                     ],
                     "type": "object"
                   },
@@ -34151,11 +38745,16 @@
                               }
                             }
                           ]
+                        },
+                        "revision": {
+                          "minLength": 1,
+                          "type": "string"
                         }
                       },
                       "required": [
                         "name",
-                        "query"
+                        "query",
+                        "revision"
                       ],
                       "type": "object"
                     }
@@ -34186,11 +38785,16 @@
                           }
                         }
                       ]
+                    },
+                    "revision": {
+                      "minLength": 1,
+                      "type": "string"
                     }
                   },
                   "required": [
                     "name",
-                    "query"
+                    "query",
+                    "revision"
                   ],
                   "type": "object"
                 }
@@ -34254,6 +38858,10 @@
                             }
                           ]
                         },
+                        "revision": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
                         "savedQueryId": {
                           "$ref": "#/components/schemas/Ulid",
                           "siblings": {
@@ -34279,7 +38887,8 @@
                         "query",
                         "repositoryId",
                         "createdAt",
-                        "updatedAt"
+                        "updatedAt",
+                        "revision"
                       ],
                       "type": "object"
                     },
@@ -34341,6 +38950,10 @@
                               }
                             ]
                           },
+                          "revision": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
                           "savedQueryId": {
                             "$ref": "#/components/schemas/Ulid",
                             "siblings": {
@@ -34372,7 +38985,8 @@
                           "query",
                           "repositoryId",
                           "createdAt",
-                          "updatedAt"
+                          "updatedAt",
+                          "revision"
                         ],
                         "type": "object"
                       }
@@ -34411,6 +39025,10 @@
                           }
                         ]
                       },
+                      "revision": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
                       "savedQueryId": {
                         "$ref": "#/components/schemas/Ulid",
                         "resolved": {
@@ -34430,7 +39048,8 @@
                       "query",
                       "repositoryId",
                       "createdAt",
-                      "updatedAt"
+                      "updatedAt",
+                      "revision"
                     ],
                     "type": "object"
                   }
@@ -35244,5 +39863,9 @@
         "query": []
       }
     }
-  ]
+  ],
+  "sources": {
+    "openApiSha256": "f9b2207696282e832eeae08e2e7168924442fdb65098e9521e97ff910fa91131",
+    "routeManifestSha256": "39172c4fea48467977d5872d2e6b1cfd654e0ba687ac4ce86e45cc89567c63c5"
+  }
 }

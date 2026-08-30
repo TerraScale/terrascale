@@ -188,6 +188,66 @@ export const localManifestRoutes = [
   },
   {
     "method": "GET",
+    "pathTemplate": "/api/v1/projects/{projectId}/queues",
+    "routeName": "queues.list"
+  },
+  {
+    "method": "POST",
+    "pathTemplate": "/api/v1/projects/{projectId}/queues",
+    "routeName": "queues.create"
+  },
+  {
+    "method": "GET",
+    "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}",
+    "routeName": "queues.get"
+  },
+  {
+    "method": "DELETE",
+    "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}",
+    "routeName": "queues.delete"
+  },
+  {
+    "method": "POST",
+    "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:purge",
+    "routeName": "queues.purge"
+  },
+  {
+    "method": "POST",
+    "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:publish",
+    "routeName": "queues.publish"
+  },
+  {
+    "method": "GET",
+    "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:peek",
+    "routeName": "queues.peek"
+  },
+  {
+    "method": "POST",
+    "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:receive",
+    "routeName": "queues.receive"
+  },
+  {
+    "method": "POST",
+    "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:complete",
+    "routeName": "queues.complete"
+  },
+  {
+    "method": "POST",
+    "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:abandon",
+    "routeName": "queues.abandon"
+  },
+  {
+    "method": "POST",
+    "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:dead-letter",
+    "routeName": "queues.deadLetter"
+  },
+  {
+    "method": "POST",
+    "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:renew-lock",
+    "routeName": "queues.renewLock"
+  },
+  {
+    "method": "GET",
     "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/environments",
     "routeName": "databases.environments.list"
   },

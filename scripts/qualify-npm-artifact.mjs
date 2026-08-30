@@ -1,15 +1,23 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { loadNpmContractEvidence } from "./npm-contract-evidence.mjs";
+import { inspectNpmCli } from "./npm-cli-evidence.mjs";
+import { npmReleasePolicy, qualificationFilename } from "./npm-release-policy.mjs";
+import { inspectReleaseSource } from "./npm-release-source.mjs";
 
 const execute = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const options = parseArguments(process.argv.slice(2));
 const output = path.resolve(root, options.output);
+if (options.release && output !== path.join(root, npmReleasePolicy.outputRoot)) {
+  throw new Error(`Release qualification output must be ${npmReleasePolicy.outputRoot}.`);
+}
+await requireAbsent(output);
 const workspace = await mkdtemp(path.join(tmpdir(), "terrascale-npm-qualification-"));
 const packageDirectory = path.join(workspace, "package");
 const consumer = path.join(workspace, "consumer");
@@ -27,15 +35,22 @@ await assert.rejects(import("@terrascale/sdk/local").then(({ createTerraScaleSql
 `;
 
 try {
-  const revision = (await run("git", ["rev-parse", "HEAD"], root)).stdout.trim();
-  const tree = (await run("git", ["write-tree"], root)).stdout.trim();
-  const status = (await run("git", ["status", "--porcelain", "--untracked-files=all"], root)).stdout;
-  if (status !== "" && !options.allowDirty) {
-    throw new Error("Artifact qualification requires a clean Git worktree; commit the candidate or pass --allow-dirty for diagnostic evidence.");
+  const source = await inspectReleaseSource(root, { allowDirty: options.allowDirty });
+  const npmCli = await inspectNpmCli({
+    archiveIntegrity: options.release ? npmReleasePolicy.npm.archiveIntegrity : null,
+  });
+  if (options.release) {
+    if (npmCli.evidence.version !== npmReleasePolicy.npm.version) {
+      throw new Error(`Release qualification requires npm ${npmReleasePolicy.npm.version}.`);
+    }
+    const releaseNode24 = await realpath(options.nodes[1]);
+    if (await realpath(process.execPath) !== releaseNode24) {
+      throw new Error("Release qualification and npm packing must execute with the declared Node 24 binary.");
+    }
   }
 
   await mkdir(output, { recursive: true });
-  const packed = JSON.parse((await run("npm", ["pack", "--json", "--pack-destination", output], root)).stdout);
+  const packed = JSON.parse((await runNpm(npmCli, ["pack", "--ignore-scripts", "--json", "--pack-destination", output], root)).stdout);
   if (!Array.isArray(packed) || packed.length !== 1 || typeof packed[0]?.filename !== "string") {
     throw new Error("npm pack did not describe exactly one artifact.");
   }
@@ -49,6 +64,10 @@ try {
   const files = await listFiles(packageDirectory);
   qualifyContents(files);
   await scanForSecrets(packageDirectory, files);
+  const contract = await loadNpmContractEvidence(
+    root,
+    path.join(packageDirectory, "sdk-route-manifest.json"),
+  );
   const graphs = {
     root: await browserGraph(packageDirectory, "dist/index.js"),
     admin: await browserGraph(packageDirectory, "dist/admin.js"),
@@ -56,27 +75,45 @@ try {
 
   await mkdir(consumer);
   await writeFile(path.join(consumer, "package.json"), JSON.stringify({ private: true, type: "module" }));
-  await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], consumer);
+  await runNpm(npmCli, ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], consumer);
   const journey = path.join(consumer, "qualify.mjs");
   await writeFile(journey, consumerJourney);
 
   const runtimes = [];
   for (const executable of options.nodes) {
-    const version = (await run(executable, ["--version"], consumer)).stdout.trim();
+    if (!path.isAbsolute(executable)) throw new Error(`Node executable must be an absolute path: ${executable}`);
+    const resolvedExecutable = await realpath(executable);
+    const executableMetadata = await lstat(resolvedExecutable);
+    if (!executableMetadata.isFile() || executableMetadata.isSymbolicLink()) {
+      throw new Error(`Node executable must resolve to a regular file: ${executable}`);
+    }
+    const version = (await run(resolvedExecutable, ["--version"], consumer)).stdout.trim();
     const major = Number.parseInt(version.replace(/^v/u, "").split(".")[0] ?? "", 10);
     if (major !== 22 && major !== 24) throw new Error(`${executable} resolved unsupported ${version}; expected Node 22 or 24.`);
-    await run(executable, [journey], consumer, qualificationEnvironment());
-    runtimes.push({ executable, version, status: "passed" });
+    if (options.release && npmReleasePolicy.nodeVersions[major] !== version) {
+      throw new Error(`${executable} resolved ${version}; release qualification requires ${npmReleasePolicy.nodeVersions[major]}.`);
+    }
+    await run(resolvedExecutable, [journey], consumer, qualificationEnvironment());
+    runtimes.push({
+      major,
+      executable: resolvedExecutable,
+      executableSha256: sha256(await readFile(resolvedExecutable)),
+      version,
+      status: "passed",
+    });
   }
-  if (new Set(runtimes.map(({ version }) => version.split(".")[0])).size !== runtimes.length) {
+  if (new Set(runtimes.map(({ major }) => major)).size !== runtimes.length) {
     throw new Error("Each --node executable must qualify a distinct supported major runtime.");
   }
+  if (options.release && runtimes.map(({ major }) => major).sort().join(",") !== "22,24") {
+    throw new Error("Release qualification requires exactly one Node 22 and one Node 24 executable.");
+  }
 
-  const dependencyTree = JSON.parse((await run("npm", ["ls", "--omit=dev", "--all", "--json"], consumer)).stdout);
+  const dependencyTree = JSON.parse((await runNpm(npmCli, ["ls", "--omit=dev", "--all", "--json"], consumer)).stdout);
   const installedSdk = dependencyTree.dependencies?.[manifest.name];
   if (installedSdk?.version !== manifest.version) throw new Error("Clean consumer did not install the exact candidate version.");
   const productionDependencies = installedSdk.dependencies ?? {};
-  const auditRun = await runAllowFailure("npm", ["audit", "--omit=dev", "--json"], consumer);
+  const auditRun = await runNpmAllowFailure(npmCli, ["audit", "--omit=dev", "--json"], consumer);
   const audit = parseJsonOutput(auditRun.stdout, "npm audit");
   const vulnerabilities = audit?.metadata?.vulnerabilities;
   if (auditRun.exitCode !== 0 || vulnerabilities === undefined || Object.values(vulnerabilities).some((count) => count !== 0)) {
@@ -88,12 +125,21 @@ try {
     throw new Error("Packed license metadata and LICENSE must both identify Apache-2.0.");
   }
 
+  const limitations = [];
+  if (!options.release) limitations.push("Diagnostic qualification was not produced in fail-closed release mode.");
+  if (!source.clean) limitations.push("The qualified Git worktree contained uncommitted source changes.");
+  if (runtimes.length < 2) limitations.push("Node 22 and Node 24 are both required for release admission.");
   const receipt = {
-    schemaVersion: 1,
+    schemaVersion: npmReleasePolicy.qualificationSchemaVersion,
+    mediaType: npmReleasePolicy.qualificationMediaType,
     status: "passed",
     startedAt,
     completedAt: new Date().toISOString(),
-    source: { revision, tree, clean: status === "", dirtyStatusSha256: status === "" ? null : sha256(Buffer.from(status)) },
+    source,
+    release: {
+      eligible: options.release && source.clean && limitations.length === 0,
+      nodeVersions: npmReleasePolicy.nodeVersions,
+    },
     artifact: {
       name: manifest.name,
       version: manifest.version,
@@ -111,33 +157,55 @@ try {
       betterAuthExport: "node-only",
       packedSecretScan: "passed",
     },
+    contract,
     runtimes,
     dependencies: { count: Object.keys(productionDependencies).length, packages: productionDependencies },
     license: { declared: manifest.license, fileSha256: sha256(Buffer.from(licenseText)) },
     security: { audit: audit.metadata, registry: auditRun.registry ?? "https://registry.npmjs.org/" },
     command: `npm run qualify:artifact -- ${process.argv.slice(2).join(" ")}`.trim(),
-    environment: { platform: process.platform, architecture: process.arch, npm: (await run("npm", ["--version"], root)).stdout.trim() },
-    limitations: runtimes.length < 2 ? ["Only the explicitly supplied Node runtime executed; Node 22 and Node 24 are both required for release admission."] : [],
-    redaction: "No environment values or package contents are embedded; dirty paths are represented only by a digest.",
+    environment: { platform: process.platform, architecture: process.arch, npm: npmCli.evidence },
+    limitations,
+    redaction: "No environment values or package contents are embedded; dirty paths and workflow tooling are represented only by bounded classification evidence.",
   };
-  const receiptPath = path.join(output, `${manifest.name.replace(/^@/u, "").replaceAll("/", "-")}-${manifest.version}.qualification.json`);
-  await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+  const receiptPath = path.join(output, qualificationFilename(manifest.version));
+  await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { flag: "wx", mode: 0o600 });
   process.stdout.write(`${JSON.stringify({ tarball, receipt: receiptPath, sha256: receipt.artifact.sha256, runtimes, limitations: receipt.limitations }, null, 2)}\n`);
 } finally {
   await rm(workspace, { recursive: true, force: true });
 }
 
 function parseArguments(args) {
-  const result = { output: "artifacts/npm-qualification", nodes: [], allowDirty: false };
+  const result = { output: "artifacts/npm-qualification", nodes: [], allowDirty: false, release: false };
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--output") result.output = requiredValue(args, ++index, argument);
     else if (argument === "--node") result.nodes.push(requiredValue(args, ++index, argument));
     else if (argument === "--allow-dirty") result.allowDirty = true;
+    else if (argument === "--release") result.release = true;
     else throw new Error(`Unknown argument: ${argument}`);
   }
-  if (result.nodes.length === 0) result.nodes.push(process.execPath);
+  if (result.release) {
+    if (result.allowDirty) throw new Error("--allow-dirty cannot be combined with --release.");
+    if (result.nodes.length !== 0) throw new Error("--release obtains its exact Node executables from TERRASCALE_NODE_22 and TERRASCALE_NODE_24.");
+    result.nodes.push(
+      requiredEnvironmentPath("TERRASCALE_NODE_22"),
+      requiredEnvironmentPath("TERRASCALE_NODE_24"),
+    );
+    if (process.env.TERRASCALE_NPM_ARCHIVE_INTEGRITY !== npmReleasePolicy.npm.archiveIntegrity) {
+      throw new Error("TERRASCALE_NPM_ARCHIVE_INTEGRITY must match the reviewed npm release archive.");
+    }
+  } else if (result.nodes.length === 0) {
+    result.nodes.push(process.execPath);
+  }
   return result;
+}
+
+function requiredEnvironmentPath(name) {
+  const value = process.env[name];
+  if (value === undefined || value.trim() === "" || !path.isAbsolute(value)) {
+    throw new Error(`${name} must name an absolute Node executable for release qualification.`);
+  }
+  return value;
 }
 
 function requiredValue(args, index, option) {
@@ -165,7 +233,7 @@ function qualifyManifest(manifest) {
 function qualifyContents(files) {
   const forbidden = [/(^|\/)node_modules\//u, /(^|\/)src\//u, /(^|\/)test(?:s)?\//u, /\.env(?:\.|$)/u, /\.map$/u, /\.test\./u, /capture/iu];
   for (const file of files) for (const pattern of forbidden) if (pattern.test(file)) throw new Error(`Forbidden packed path: ${file}`);
-  for (const required of ["LICENSE", "README.md", "package.json", "dist/index.js", "dist/index.d.ts", "dist/admin.js", "dist/admin.d.ts", "dist/better-auth.js", "dist/local/index.js"]) {
+  for (const required of ["LICENSE", "README.md", "package.json", "sdk-route-manifest.json", "dist/index.js", "dist/index.d.ts", "dist/admin.js", "dist/admin.d.ts", "dist/better-auth.js", "dist/local/index.js"]) {
     if (!files.includes(required)) throw new Error(`Required packed path is missing: ${required}`);
   }
 }
@@ -232,6 +300,14 @@ async function runAllowFailure(command, args, cwd) {
   }
 }
 
+async function runNpm(npmCli, args, cwd) {
+  return run(process.execPath, [npmCli.entrypoint, ...args], cwd);
+}
+
+async function runNpmAllowFailure(npmCli, args, cwd) {
+  return runAllowFailure(process.execPath, [npmCli.entrypoint, ...args], cwd);
+}
+
 function parseJsonOutput(output, command) {
   try { return JSON.parse(output); } catch { throw new Error(`${command} did not return JSON.`); }
 }
@@ -242,3 +318,13 @@ function qualificationEnvironment() {
 }
 
 function sha256(bytes) { return createHash("sha256").update(bytes).digest("hex"); }
+
+async function requireAbsent(target) {
+  try {
+    await lstat(target);
+  } catch (error) {
+    if (error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT") return;
+    throw error;
+  }
+  throw new Error(`Qualification output already exists: ${target}`);
+}

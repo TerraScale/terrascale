@@ -31,10 +31,10 @@ package entrypoint.
 ## Consequences and limits
 
 Manifest drift, hostile decode, corpus round-trip, and native-view tests pass in
-this checkout. The live session still uses HTTP/JSON and SSE, and no C# binding
-or bidirectional cross-language run exists here. The release workflow also
-needs a dedicated MessagePack lane. Those are production gaps, not implied
-claims by the generated files.
+this checkout, and the release workflow runs them in its protected Node 22 and
+24 lanes. The live session still uses HTTP/JSON and SSE, and no C# binding or
+bidirectional cross-language run exists here. Those are production gaps, not
+implied claims by the generated files.
 
 The bounded runtime remains the accepted TypeScript implementation. A future
 dependency change would require a new reviewed record and must preserve the

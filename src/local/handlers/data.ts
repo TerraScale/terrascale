@@ -170,7 +170,7 @@ async function createDatabase(context: LocalRequestContext, projectId: string): 
   const name = typeof body.name === "string" && body.name.trim() ? body.name.trim() : "Database";
   const id = createUlid();
   const value: Entity = {
-    databaseId: id, projectId, id, name, regions: ["gru"], backupRegion: "gru",
+    databaseId: id, projectId, id, name, regions: ["GRU"], backupRegion: "GRU",
     createdAt: context.now, version: 1,
   };
   await putEntity(context.store, `${keyPrefix}database/${projectId}/${id}`, value, `${keyPrefix}database-index/${projectId}`);

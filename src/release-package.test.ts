@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { chmod, cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,8 +11,8 @@ import { localSqliteTestChildEnvironment } from "./local/test-environment.test.j
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const run = promisify(execFile);
-const forbiddenRoutePattern = /(?:\/api\/v\d+\/(?:auth|account|billing|pricing|queues|onboarding\/payment)(?:[\/"'`: ]|$)|\/api\/v\d+\/projects\/\{[^}]+\}\/(?:auth|security|queues)(?:[\/"'`: ]|$)|\b(?:auth|apiKeys|m2m|queues|billing|pricing|payment|security)\.[a-z])/iu;
-const forbiddenSymbolPattern = /\b(?:AuthClient|ProjectAuth\w*|authBaseUrl|ApiKey\w*|M2M\w*|QueuesClient|OnboardingPayment\w*|CreateOnboardingPayment\w*|ValidateOnboardingPayment\w*|RegisterOnboardingPayment\w*|PaymentMethod|Billing\w*|Pricing\w*|Security(?:Client|Settings\w*))\b/u;
+const forbiddenRoutePattern = /(?:\/api\/v\d+\/(?:auth|account|billing|pricing|queues|onboarding\/payment)(?:[\/"'`: ]|$)|\/api\/v\d+\/projects\/\{[^}]+\}\/(?:auth|security)(?:[\/"'`: ]|$)|\b(?:auth|apiKeys|m2m|billing|pricing|payment|security)\.[a-z])/iu;
+const forbiddenSymbolPattern = /\b(?:AuthClient|ProjectAuth\w*|authBaseUrl|ApiKey\w*|M2M\w*|GlobalQueue\w*|OnboardingPayment\w*|CreateOnboardingPayment\w*|ValidateOnboardingPayment\w*|RegisterOnboardingPayment\w*|PaymentMethod|Billing\w*|Pricing\w*|Security(?:Client|Settings\w*))\b/u;
 
 type PackedRouteManifest = {
   readonly routes?: readonly {
@@ -42,8 +41,16 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   }
   assert.deepEqual(
     deployment.buildTargets[0]?.commands.map((command) => command.description),
-    ["Clean install", "Build SDK", "Forbidden SDK surface", "Unit and contract regression", "Pack npm candidate"],
+    ["Clean install", "Build SDK", "Forbidden SDK surface", "Unit and contract regression", "Qualify npm release candidate"],
   );
+  assert.equal(deployment.buildTargets[0]?.outputPath, "artifacts/candidate");
+  assert.deepEqual(deployment.buildTargets[0]?.commands.at(-1), {
+    description: "Qualify npm release candidate",
+    command: "node",
+    arguments: ["scripts/qualify-npm-artifact.mjs", "--release", "--output", "artifacts/candidate"],
+  });
+  assert.doesNotMatch(deploymentJson, /"command": "npm", "arguments": \["pack"/u);
+  assert.equal(deployment.releaseProfiles.every((profile) => profile.required), true);
   assert.deepEqual(
     deployment.releaseProfiles.find((profile) => profile.name === "release-e2e")?.commands.map((command) => command.description),
     ["Clean install", "Build SDK", "Require live integration configuration", "Authenticated live API integration"],
@@ -58,16 +65,16 @@ test("release paths clean-install, build, test, and pack the SDK independently",
     "checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
     "download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a",
     "upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5",
+    "setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
   ]) {
     assert.match(workflow, new RegExp(`uses: https://data\\.forgejo\\.org/actions/${action}`, "u"));
   }
-  for (const job of ["bootstrap", "plan", "release-tests", "release-e2e", "release-artifacts", "release-contract-fixture", "release-version-availability", "candidate", "promote"]) {
+  for (const job of ["bootstrap", "plan", "release-tests", "release-e2e", "release-artifacts", "release-browser-candidate", "release-contract-fixture", "release-version-availability", "candidate", "promote"]) {
     assert.match(jobDefinition(workflow, job), /forgejo\.event_name == 'push' && forgejo\.ref == 'refs\/heads\/main'/u);
   }
-  // 0addfcf ("ci: pull the toolbox image from the TerraScale container
-  // registry") switched the bootstrap credential source to the org registry
-  // package token; the env-var name it feeds stayed DEPLOY_CLI_READ_TOKEN.
   assert.match(jobDefinition(workflow, "bootstrap"), /secrets\.REGISTRY_TOKEN/u);
+  assert.match(jobDefinition(workflow, "bootstrap"), /--version 1\.0\.80/u);
+  assert.doesNotMatch(jobDefinition(workflow, "bootstrap"), /newest stable/u);
   assert.doesNotMatch(jobDefinition(workflow, "bootstrap"), /^    env:/mu);
   for (const job of ["pr-static", "pr-build"]) {
     assert.match(jobDefinition(workflow, job), /forgejo\.event_name == 'pull_request'/u);
@@ -96,9 +103,11 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.match(jobDefinition(workflow, "pr-build"), /npm run build/u);
   assert.match(jobDefinition(workflow, "runtime-matrix"), /node: \["22", "24"\]/u);
   assert.match(jobDefinition(workflow, "runtime-matrix"), /runs-on: terrascale-untrusted/u);
+  assert.match(jobDefinition(workflow, "runtime-matrix"), /node scripts\/provision-reviewed-npm\.mjs/u);
   assert.match(jobDefinition(workflow, "runtime-matrix"), /npm run test:unit/u);
+  assert.match(jobDefinition(workflow, "runtime-matrix"), /npm run test:msgpack/u);
   assert.match(jobDefinition(workflow, "browser-matrix"), /runs-on: terrascale-untrusted/u);
-  assert.match(jobDefinition(workflow, "browser-matrix"), /playwright:v1\.62\.1-noble/u);
+  assert.match(jobDefinition(workflow, "browser-matrix"), /playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e/u);
   assert.match(jobDefinition(workflow, "browser-matrix"), /npm run test:browser/u);
   for (const job of ["pr-static", "release-contract-fixture"]) {
     assert.match(
@@ -115,8 +124,43 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.match(jobDefinition(workflow, "release-version-availability"), /--check-availability --package @terrascale\/sdk/u);
   assert.match(jobDefinition(workflow, "release-e2e"), /secrets\.TERRASCALE_E2E_ACCESS_TOKEN/u);
   assert.doesNotMatch(jobDefinition(workflow, "release-e2e"), /^    env:/mu);
-  assert.match(jobDefinition(workflow, "release-e2e"), /--profile release-e2e/u);
-  assert.match(jobDefinition(workflow, "release-tests"), /--profile regression/u);
+  assert.match(jobDefinition(workflow, "release-e2e"), /needs: \[release-artifacts\]/u);
+  assert.match(jobDefinition(workflow, "release-e2e"), /require-release-e2e-config\.mjs/u);
+  assert.match(jobDefinition(workflow, "release-e2e"), /run-packed-release-e2e\.mjs --tarball/u);
+  assert.match(jobDefinition(workflow, "release-e2e"), /npm run test:integration/u);
+  assert.match(jobDefinition(workflow, "release-e2e"), /--build-receipt artifacts\/handoff\/evidence\/npm\.build-receipt\.json/u);
+  assert.ok(jobDefinition(workflow, "release-e2e").indexOf("--verify-only") < jobDefinition(workflow, "release-e2e").indexOf("TERRASCALE_E2E_ACCESS_TOKEN"));
+  assert.match(jobDefinition(workflow, "release-tests"), /npm run test:unit/u);
+  assert.match(jobDefinition(workflow, "release-tests"), /npm run test:msgpack/u);
+  assert.doesNotMatch(jobDefinition(workflow, "release-tests"), /terrascale-deploy ci release-test/u);
+  assert.doesNotMatch(jobDefinition(workflow, "release-e2e"), /terrascale-deploy ci release-test/u);
+  const releaseArtifacts = jobDefinition(workflow, "release-artifacts");
+  assert.match(releaseArtifacts, /node-version: "22\.23\.2"/u);
+  assert.match(releaseArtifacts, /node-version: "24\.20\.0"/u);
+  assert.equal((releaseArtifacts.match(/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020/gu) ?? []).length, 2);
+  assert.match(releaseArtifacts, /--expected-tree "\$\{EXPECTED_TREE\}"/u);
+  assert.match(releaseArtifacts, /--receipt "artifacts\/evidence\/\$\{BUILD_TARGET\}\.build-receipt\.json"/u);
+  assert.match(releaseArtifacts, /path: artifacts/u);
+  assert.match(releaseArtifacts, /node scripts\/provision-reviewed-npm\.mjs/u);
+  assert.ok(releaseArtifacts.indexOf("node-version: \"24.20.0\"") < releaseArtifacts.indexOf("node scripts/provision-reviewed-npm.mjs"));
+  assert.ok(releaseArtifacts.indexOf("node scripts/provision-reviewed-npm.mjs") < releaseArtifacts.indexOf("ci build-candidate"));
+  const releaseBrowser = jobDefinition(workflow, "release-browser-candidate");
+  assert.match(releaseBrowser, /needs: \[release-artifacts\]/u);
+  assert.match(releaseBrowser, /playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e/u);
+  assert.match(releaseBrowser, /--build-receipt artifacts\/handoff\/evidence\/npm\.build-receipt\.json/u);
+  assert.match(releaseBrowser, /TERRASCALE_BROWSER_CANDIDATE_TARBALL/u);
+  assert.match(releaseBrowser, /terrascale-sdk-\$\(node -p 'require\("\.\/package\.json"\)\.version'\)\.tgz/u);
+  assert.doesNotMatch(releaseBrowser, /terrascale-sdk-\d+\.\d+\.\d+[^\s"']*\.tgz/u);
+  assert.doesNotMatch(releaseBrowser, /npm run build|npm pack/u);
+  for (const job of ["release-e2e", "release-browser-candidate", "release-version-availability", "candidate", "promote"]) {
+    const definition = jobDefinition(workflow, job);
+    assert.match(definition, /node-version: "24\.20\.0"/u);
+    assert.match(definition, /node scripts\/provision-reviewed-npm\.mjs/u);
+    assert.ok(
+      definition.indexOf("node scripts/provision-reviewed-npm.mjs") < definition.indexOf("node scripts/promote-npm-candidate.mjs"),
+      `${job} must provision reviewed npm before invoking the promotion verifier`,
+    );
+  }
   for (const name of [
     "TERRASCALE_API_BASE_URL",
     "TERRASCALE_E2E_PROJECT_ID",
@@ -132,21 +176,24 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.match(jobDefinition(workflow, "candidate"), /release-e2e/u);
   assert.match(jobDefinition(workflow, "candidate"), /release-version-availability/u);
   assert.match(jobDefinition(workflow, "candidate"), /runtime-matrix/u);
-  assert.match(jobDefinition(workflow, "candidate"), /browser-matrix/u);
+  assert.match(jobDefinition(workflow, "candidate"), /release-browser-candidate/u);
   assert.doesNotMatch(jobDefinition(workflow, "candidate"), /NPM_TOKEN/u);
-  assert.match(jobDefinition(workflow, "candidate"), /candidate-store upload/u);
+  assert.match(jobDefinition(workflow, "candidate"), /name: candidate-npm/u);
+  assert.match(jobDefinition(workflow, "candidate"), /--build-receipt artifacts\/handoff\/evidence\/npm\.build-receipt\.json/u);
+  assert.match(jobDefinition(workflow, "candidate"), /--verify-only/u);
+  assert.match(jobDefinition(workflow, "candidate"), /name: admitted-npm-candidate/u);
+  assert.doesNotMatch(workflow, /ci (?:candidate-manifest|candidate-store|promote)\b/u);
   assert.doesNotMatch(jobDefinition(workflow, "candidate"), /^    env:/mu);
   assert.match(jobDefinition(workflow, "promote"), /promote-npm-candidate\.mjs/u);
   assert.match(jobDefinition(workflow, "promote"), /NPM_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/u);
   assert.doesNotMatch(jobDefinition(workflow, "promote"), /^    env:/mu);
   assert.match(jobDefinition(workflow, "promote"), /needs: \[candidate\]/u);
-  assert.match(jobDefinition(workflow, "promote"), /candidate-store download/u);
+  assert.match(jobDefinition(workflow, "promote"), /name: admitted-npm-candidate/u);
+  assert.ok(jobDefinition(workflow, "promote").indexOf("--verify-only") < jobDefinition(workflow, "promote").indexOf("NPM_TOKEN:"));
   // 0addfcf: the bootstrap env var DEPLOY_CLI_READ_TOKEN is now fed by the
   // org registry token instead of a dedicated secret.
   assertCredentialStepIsFinal(workflow, "bootstrap", "REGISTRY_TOKEN");
   assertCredentialStepIsFinal(workflow, "release-e2e", "TERRASCALE_E2E_ACCESS_TOKEN");
-  assertCredentialStepIsFinal(workflow, "candidate", "CANDIDATE_STORE_TOKEN");
-  assertCredentialStepIsFinal(workflow, "promote", "CANDIDATE_STORE_TOKEN");
   assertCredentialStepIsFinal(workflow, "promote", "NPM_TOKEN");
 });
 
@@ -224,8 +271,8 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
       assert.doesNotMatch(source, forbiddenSymbolPattern, `${name} contains a removed SDK symbol`);
       assert.doesNotMatch(source, forbiddenRoutePattern, `${name} contains a removed SDK route`);
     }
-    assert.doesNotMatch(packedSources.find(([name]) => name === "dist/client.d.ts")?.[1] ?? "", /readonly (?:auth|apiKeys|m2m|queues|billing|pricing|security)\??:/u);
-    assert.doesNotMatch(packedSources.find(([name]) => name === "dist/client.js")?.[1] ?? "", /this\.(?:auth|apiKeys|m2m|queues|billing|pricing|security)\s*=/u);
+    assert.doesNotMatch(packedSources.find(([name]) => name === "dist/client.d.ts")?.[1] ?? "", /readonly (?:auth|apiKeys|m2m|billing|pricing|security)\??:/u);
+    assert.doesNotMatch(packedSources.find(([name]) => name === "dist/client.js")?.[1] ?? "", /this\.(?:auth|apiKeys|m2m|billing|pricing|security)\s*=/u);
     for (const method of [
       "updateAccountInformation",
       "createPaymentSession",
@@ -242,35 +289,6 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
         new RegExp(`\\b${method}\\b`, "u"),
       );
     }
-    const packageJson = JSON.parse(await readFile(path.join(checkout, "package.json"), "utf8")) as {
-      readonly name: string;
-      readonly version: string;
-    };
-    const manifestPath = path.join(workspace, "release-candidate.json");
-    await writeFile(manifestPath, JSON.stringify({
-      reservedVersion: packageJson.version,
-      artifacts: [{ name: path.basename(tarball), sha256: `sha256:${await sha256(tarball)}` }],
-    }));
-    await run(
-      "node",
-      [
-        path.join(checkout, "scripts", "promote-npm-candidate.mjs"),
-        "--manifest", manifestPath,
-        "--artifacts", packages,
-        "--registry", "https://registry.npmjs.org/",
-        "--verify-only",
-      ],
-      { cwd: checkout },
-    );
-    await assert.rejects(
-      verifyCandidate(checkout, manifestPath, packages, { ...JSON.parse(await readFile(manifestPath, "utf8")), artifacts: [{ name: `../${path.basename(tarball)}`, sha256: `sha256:${await sha256(tarball)}` }] }),
-    );
-    const symlinkedTarball = path.join(packages, "linked-candidate.tgz");
-    await symlink(tarball, symlinkedTarball);
-    await assert.rejects(
-      verifyCandidate(checkout, manifestPath, packages, { ...JSON.parse(await readFile(manifestPath, "utf8")), artifacts: [{ name: path.basename(symlinkedTarball), sha256: `sha256:${await sha256(tarball)}` }] }),
-    );
-    await verifyLifecycleSafePublish(checkout, workspace, packages, packageJson);
     await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], { cwd: consumer });
     const journey = path.join(consumer, "packed-journey.mjs");
     await writeFile(journey, packedConsumerJourney);
@@ -280,7 +298,7 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
       [
         "--input-type=module",
         "--eval",
-        "import { createTerraScaleClient } from '@terrascale/sdk'; import { createTerraScaleAdminClient } from '@terrascale/sdk/admin'; const client = createTerraScaleClient({ apiBaseUrl: 'https://api.example.test' }); for (const name of ['auth', 'apiKeys', 'm2m', 'queues', 'billing', 'pricing', 'security']) { if (name in client) throw new Error(`Removed root client property remains: ${name}`); } for (const name of ['updateAccountInformation', 'createPaymentSession', 'validatePaymentMethod', 'registerOnboardingPaymentMethod', 'updateMfaDecision']) { if (name in client.onboarding) throw new Error(`Removed onboarding method remains: ${name}`); } createTerraScaleAdminClient({ apiBaseUrl: 'https://api.example.test' });",
+        "import { createTerraScaleClient } from '@terrascale/sdk'; import { createTerraScaleAdminClient } from '@terrascale/sdk/admin'; const client = createTerraScaleClient({ apiBaseUrl: 'https://api.example.test' }); if (typeof client.queues.list !== 'function') throw new Error('Typed project queues are missing'); for (const name of ['auth', 'apiKeys', 'm2m', 'billing', 'pricing', 'security']) { if (name in client) throw new Error(`Removed root client property remains: ${name}`); } for (const name of ['updateAccountInformation', 'createPaymentSession', 'validatePaymentMethod', 'registerOnboardingPaymentMethod', 'updateMfaDecision']) { if (name in client.onboarding) throw new Error(`Removed onboarding method remains: ${name}`); } createTerraScaleAdminClient({ apiBaseUrl: 'https://api.example.test' });",
       ],
       { cwd: consumer },
     );
@@ -401,150 +419,6 @@ try {
 }
 `;
 
-async function verifyCandidate(
-  checkout: string,
-  manifestPath: string,
-  packages: string,
-  manifest: unknown,
-): Promise<void> {
-  await writeFile(manifestPath, JSON.stringify(manifest));
-  await run(
-    "node",
-    [path.join(checkout, "scripts", "promote-npm-candidate.mjs"), "--manifest", manifestPath, "--artifacts", packages, "--registry", "https://registry.npmjs.org/", "--verify-only"],
-    { cwd: checkout },
-  );
-}
-
-async function verifyLifecycleSafePublish(
-  checkout: string,
-  workspace: string,
-  packages: string,
-  packageJson: { readonly name: string; readonly version: string },
-): Promise<void> {
-  const lifecycleRoot = path.join(workspace, "lifecycle");
-  const lifecyclePackage = path.join(lifecycleRoot, "package");
-  const lifecycleMarker = path.join(workspace, "lifecycle-ran");
-  const lifecycleTarball = path.join(packages, "lifecycle-candidate.tgz");
-  const manifestPath = path.join(workspace, "lifecycle-candidate.json");
-  const fakeBin = path.join(workspace, "fake-bin");
-  const fakeNpm = path.join(fakeBin, "npm");
-  const publishRecord = path.join(workspace, "publish-record.json");
-  const availabilityRecord = path.join(workspace, "availability-record.json");
-  const projectConfig = path.join(checkout, ".npmrc");
-  const userConfig = path.join(workspace, "user.npmrc");
-  const globalConfig = path.join(workspace, "global-npmrc");
-
-  await mkdir(lifecyclePackage, { recursive: true });
-  await mkdir(fakeBin);
-  await Promise.all([
-    writeFile(projectConfig, "//registry.npmjs.org/:_authToken=project-token\\n"),
-    writeFile(userConfig, "//registry.npmjs.org/:_authToken=user-token\\n"),
-    writeFile(globalConfig, "//registry.npmjs.org/:_authToken=global-token\\n"),
-  ]);
-  await writeFile(path.join(lifecyclePackage, "package.json"), JSON.stringify({
-    name: packageJson.name,
-    version: packageJson.version,
-    scripts: { prepublishOnly: `node -e \"require('node:fs').writeFileSync('${lifecycleMarker}', 'ran')\"` },
-  }));
-  await run("tar", ["-czf", lifecycleTarball, "-C", lifecycleRoot, "package"]);
-  await writeFile(manifestPath, JSON.stringify({
-    reservedVersion: packageJson.version,
-    artifacts: [{ name: path.basename(lifecycleTarball), sha256: `sha256:${await sha256(lifecycleTarball)}` }],
-  }));
-  await writeFile(fakeNpm, `#!/usr/bin/env node
-const { existsSync, readFileSync, writeFileSync } = require('node:fs');
-const [command, ...arguments_] = process.argv.slice(2);
-if (command === 'view') {
-  writeFileSync(${JSON.stringify(availabilityRecord)}, JSON.stringify({
-    arguments_, cwd: process.cwd(), token: process.env.NPM_TOKEN,
-    userConfig: process.env.NPM_CONFIG_USERCONFIG,
-    userConfigHasAuth: /_authToken=/.test(readFileSync(process.env.NPM_CONFIG_USERCONFIG, 'utf8')),
-    globalConfig: process.env.NPM_CONFIG_GLOBALCONFIG,
-    globalConfigHasAuth: /_authToken=/.test(readFileSync(process.env.NPM_CONFIG_GLOBALCONFIG, 'utf8')),
-  }));
-  if (existsSync(${JSON.stringify(path.join(workspace, "npm-view-exists"))})) { process.stdout.write('"already-exists"\\n'); process.exit(0); }
-  process.stderr.write('npm error code E404\\n'); process.exit(1);
-}
-if (command !== 'publish') process.exit(2);
-writeFileSync(${JSON.stringify(publishRecord)}, JSON.stringify({
-  arguments_, cwd: process.cwd(), token: process.env.NPM_TOKEN,
-  ignoreScripts: process.env.NPM_CONFIG_IGNORE_SCRIPTS,
-  configHasAuth: /_authToken=/.test(readFileSync(process.env.NPM_CONFIG_USERCONFIG, 'utf8')),
-  globalConfig: process.env.NPM_CONFIG_GLOBALCONFIG,
-  globalConfigHasAuth: /_authToken=/.test(readFileSync(process.env.NPM_CONFIG_GLOBALCONFIG, 'utf8')),
-}));
-`);
-  await chmod(fakeNpm, 0o755);
-  await run(
-    "node",
-    [path.join(checkout, "scripts", "promote-npm-candidate.mjs"), "--manifest", manifestPath, "--artifacts", packages, "--registry", "https://registry.npmjs.org/"],
-    {
-      cwd: checkout,
-      env: {
-        ...process.env,
-        PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`,
-        NPM_TOKEN: "test-token",
-        NPM_CONFIG_USERCONFIG: userConfig,
-        NPM_CONFIG_GLOBALCONFIG: globalConfig,
-      },
-    },
-  );
-  const availability = JSON.parse(await readFile(availabilityRecord, "utf8")) as {
-    readonly arguments_: readonly string[];
-    readonly cwd: string;
-    readonly token?: string;
-    readonly userConfig: string;
-    readonly userConfigHasAuth: boolean;
-    readonly globalConfig: string;
-    readonly globalConfigHasAuth: boolean;
-  };
-  assert.equal(availability.token, undefined);
-  assert.notEqual(availability.cwd, checkout);
-  assert.notEqual(availability.userConfig, userConfig);
-  assert.equal(availability.userConfigHasAuth, false);
-  assert.notEqual(availability.globalConfig, globalConfig);
-  assert.equal(availability.globalConfigHasAuth, false);
-  assert.equal(availability.arguments_.includes("--ignore-scripts"), true);
-  const record = JSON.parse(await readFile(publishRecord, "utf8")) as {
-    readonly arguments_: readonly string[];
-    readonly cwd: string;
-    readonly token?: string;
-    readonly ignoreScripts?: string;
-    readonly configHasAuth: boolean;
-    readonly globalConfig: string;
-    readonly globalConfigHasAuth: boolean;
-  };
-  assert.equal(record.token, undefined);
-  assert.notEqual(record.cwd, checkout);
-  assert.equal(record.ignoreScripts, "true");
-  assert.equal(record.configHasAuth, true);
-  assert.notEqual(record.globalConfig, globalConfig);
-  assert.equal(record.globalConfigHasAuth, false);
-  assert.equal(record.arguments_.includes("--ignore-scripts"), true);
-  await assert.rejects(readFile(lifecycleMarker));
-
-  await rm(publishRecord);
-  await writeFile(path.join(workspace, "npm-view-exists"), "");
-  await assert.rejects(
-    run(
-      "node",
-      [path.join(checkout, "scripts", "promote-npm-candidate.mjs"), "--manifest", manifestPath, "--artifacts", packages, "--registry", "https://registry.npmjs.org/"],
-      {
-        cwd: checkout,
-        env: {
-          ...process.env,
-          PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`,
-          NPM_TOKEN: "test-token",
-          NPM_CONFIG_USERCONFIG: userConfig,
-          NPM_CONFIG_GLOBALCONFIG: globalConfig,
-        },
-      },
-    ),
-    /already exists/u,
-  );
-  await assert.rejects(readFile(publishRecord));
-}
-
 function jobDefinition(workflow: string, job: string): string {
   const start = workflow.indexOf(`  ${job}:\n`);
   assert.notEqual(start, -1, `Workflow job ${job} is missing.`);
@@ -587,15 +461,13 @@ async function readPackedEntry(tarball: string, entry: string): Promise<string> 
   return result.stdout;
 }
 
-async function sha256(filePath: string): Promise<string> {
-  return createHash("sha256").update(await readFile(filePath)).digest("hex");
-}
-
 type DeployCommand = {
   readonly description: string;
+  readonly command: string;
+  readonly arguments: readonly string[];
 };
 
 type DeployConfiguration = {
-  readonly releaseProfiles: readonly { readonly name: string; readonly commands: readonly DeployCommand[] }[];
-  readonly buildTargets: readonly { readonly commands: readonly DeployCommand[] }[];
+  readonly releaseProfiles: readonly { readonly name: string; readonly required: boolean; readonly commands: readonly DeployCommand[] }[];
+  readonly buildTargets: readonly { readonly outputPath?: string; readonly commands: readonly DeployCommand[] }[];
 };

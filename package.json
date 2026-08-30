@@ -56,8 +56,9 @@
     "generate:openapi-contract-descriptor": "npm run build && node scripts/generate-openapi-contract-descriptor.mjs",
     "local": "node dist/local/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test dist/*.test.js dist/integration/*.test.js",
+    "test": "npm run test:unit && npm run test:msgpack && npm run test:integration",
     "test:integration": "node --test dist/integration/*.test.js",
+    "test:msgpack": "node scripts/generate-msgpack-protocol.mjs --check && node --test test/msgpack-manifest-drift.test.mjs test/msgpack-hostile-decode.test.mjs test/msgpack-corpus-roundtrip.test.mjs test/sync-v2-native-corpus-view.test.mjs",
     "test:unit": "node --test dist/*.test.js",
     "test:browser": "playwright test"
   },

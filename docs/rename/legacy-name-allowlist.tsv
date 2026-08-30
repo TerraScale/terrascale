@@ -1,0 +1,2 @@
+# path<TAB>expected-match-count<TAB>match-fingerprint-sha256<TAB>reason
+AGENTS.md	1	cb4e5e628b1c90a1588d7155f1e806b0e9e94acd35c8b85d29e2d90f0cf328b4	Human-owned repository instructions retain the retired spelling until their owner updates them.

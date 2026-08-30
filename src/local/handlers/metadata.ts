@@ -42,15 +42,13 @@ export const handleLocalMetadata: LocalHandler = async (context) => {
       latitude: region.latitude,
       longitude: region.longitude,
       available: region.available,
-      ociRegionCode: region.ociRegionCode,
-      clusterNodeTag: region.clusterNodeTag ?? region.code.toUpperCase(),
     } satisfies Models.RegionDetails);
   }
 
   const projectId = projectIdFromContext(context) ?? projectIdFromRoute(context);
   if (projectId !== undefined) {
     match = matchLocalRoute(context, "GET", "/api/v1/projects/{projectId}/saved-queries");
-    if (match !== undefined && match.projectId! === projectId) return jsonResponse(await savedQueries(store, projectId, context.url.searchParams));
+    if (match !== undefined && match.projectId! === projectId) return savedQueries(store, projectId, context.url.searchParams);
     match = matchLocalRoute(context, "POST", "/api/v1/projects/{projectId}/saved-queries");
     if (match !== undefined && match.projectId! === projectId) return createSavedQuery(store, context, projectId);
     match = matchLocalRoute(context, "GET", "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}");
@@ -132,16 +130,19 @@ async function getSavedQuery(store: TerraScaleSqliteStore, projectId: string, id
   return jsonResponse(item);
 }
 
-async function savedQueries(store: TerraScaleSqliteStore, projectId: string, params: URLSearchParams): Promise<Models.ProjectSavedQueryPageResponse> {
+async function savedQueries(store: TerraScaleSqliteStore, projectId: string, params: URLSearchParams): Promise<Response> {
   const items = await records<Models.ProjectSavedQueryResponse>(store, "saved-queries", `${projectId}:`);
   const requestedTake = Number(params.get("take") ?? "100");
   const take = Number.isFinite(requestedTake) ? Math.max(1, Math.min(1000, Math.trunc(requestedTake))) : 100;
   const requestedSkip = Number(params.get("skip") ?? "0");
   const skip = Number.isFinite(requestedSkip) ? Math.max(0, Math.trunc(requestedSkip)) : 0;
   const offset = params.has("cursor") ? decodeCursor(params.get("cursor")) : skip;
+  if (offset === undefined) {
+    return problemResponse(400, "invalid_request", "cursor must be a canonical non-negative integer.");
+  }
   const selected = items.slice(offset, offset + take);
   const nextCursor = offset + take < items.length ? encodeCursor(offset + take) : null;
-  return { items: selected, nextCursor };
+  return jsonResponse({ items: selected, totalCount: items.length, nextCursor } satisfies Models.ProjectSavedQueryPageResponse);
 }
 
 async function addTeamMember(store: TerraScaleSqliteStore, context: LocalRequestContext, projectId: string): Promise<Response> {
@@ -230,7 +231,7 @@ function projectIdFromRoute(context: LocalRequestContext): string | undefined {
 }
 function queryKey(projectId: string, id: string): string { return `${projectId}:${id}`; }
 function text(value: unknown): string | undefined { return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined; }
-function countryFor(code: string): string { return code === "gru" ? "BR" : code === "sfo" ? "US" : "DE"; }
+function countryFor(code: string): string { return code === "GRU" ? "BR" : code === "SFO" ? "US" : "DE"; }
 function notFound(resource: string): Response { return problemResponse(404, "not_found", `${resource} was not found.`); }
 
 async function currentLocalUserId(store: TerraScaleSqliteStore): Promise<string> {
@@ -259,7 +260,11 @@ async function pageItems<T>(store: TerraScaleSqliteStore, namespace: string, pre
   const items = await records<T>(store, namespace, prefix);
   return { items, totalCount: items.length, nextCursor: null };
 }
-function decodeCursor(cursor: string | null): number { if (cursor === null) return 0; const n = Number.parseInt(cursor, 10); return Number.isFinite(n) && n >= 0 ? n : 0; }
+function decodeCursor(cursor: string | null): number | undefined {
+  if (cursor === null || !/^(?:0|[1-9]\d*)$/u.test(cursor)) return undefined;
+  const offset = Number(cursor);
+  return Number.isSafeInteger(offset) ? offset : undefined;
+}
 function encodeCursor(offset: number): string { return String(offset); }
 async function put(store: TerraScaleSqliteStore, namespace: string, key: string, value: unknown): Promise<void> { const [scope, id] = storageKey(namespace, key); store.put(namespace, scope, id, value); }
 async function remove(store: TerraScaleSqliteStore, namespace: string, key: string): Promise<void> { const [scope, id] = storageKey(namespace, key); store.delete(namespace, scope, id); }

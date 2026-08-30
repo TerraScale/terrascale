@@ -1,11 +1,19 @@
 {
-  "contractVersion": 1,
+  "contractVersion": 2,
   "savedQueriesV1": {
     "list": {
       "method": "get",
       "operationId": "ListProjectSavedQueries",
       "path": "/api/v1/projects/{projectId}/saved-queries",
       "parameters": [
+        {
+          "name": "cursor",
+          "required": false,
+          "types": [
+            "string"
+          ],
+          "pattern": "^(?:0|[1-9]\\d*)$"
+        },
         {
           "name": "skip",
           "required": false,
@@ -26,7 +34,22 @@
           "default": 100
         }
       ],
-      "responseItemsRef": "#/components/schemas/ProjectSavedQueryResponse",
+      "responseRef": "#/components/schemas/ProjectSavedQueryPageResponse",
+      "response": {
+        "required": [
+          "items",
+          "totalCount",
+          "nextCursor"
+        ],
+        "itemsRef": "#/components/schemas/ProjectSavedQueryResponse",
+        "totalCountTypes": [
+          "integer"
+        ],
+        "nextCursorTypes": [
+          "null",
+          "string"
+        ]
+      },
       "errorStatuses": [
         400,
         401,
@@ -50,6 +73,77 @@
         409,
         429,
         500
+      ]
+    },
+    "create": {
+      "method": "post",
+      "operationId": "CreateProjectSavedQuery",
+      "path": "/api/v1/projects/{projectId}/saved-queries",
+      "requestRef": "#/components/schemas/ProjectSavedQueryRequest",
+      "responseRef": "#/components/schemas/ProjectSavedQueryResponse",
+      "errorStatuses": [
+        400,
+        401,
+        403,
+        404,
+        409,
+        429,
+        500
+      ]
+    },
+    "update": {
+      "method": "put",
+      "operationId": "UpdateProjectSavedQuery",
+      "path": "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}",
+      "requestRef": "#/components/schemas/UpdateProjectSavedQueryRequest",
+      "responseRef": "#/components/schemas/ProjectSavedQueryResponse",
+      "errorStatuses": [
+        400,
+        401,
+        403,
+        404,
+        409,
+        429,
+        500
+      ]
+    },
+    "delete": {
+      "method": "delete",
+      "operationId": "DeleteProjectSavedQuery",
+      "path": "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}",
+      "responseRef": "#/components/schemas/DeletedProjectSavedQueryResponse",
+      "errorStatuses": [
+        400,
+        401,
+        403,
+        404,
+        409,
+        429,
+        500
+      ]
+    },
+    "models": {
+      "createRequired": [
+        "name",
+        "query"
+      ],
+      "updateRequired": [
+        "name",
+        "query",
+        "revision"
+      ],
+      "responseRequired": [
+        "savedQueryId",
+        "projectId",
+        "name",
+        "query",
+        "repositoryId",
+        "createdAt",
+        "updatedAt",
+        "revision"
+      ],
+      "revisionTypes": [
+        "string"
       ]
     }
   },

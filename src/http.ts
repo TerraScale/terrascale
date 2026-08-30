@@ -23,6 +23,7 @@ export type TerraScaleRouteName =
   | `onboarding.${string}`
   | `organizations.${string}`
   | `query.${string}`
+  | `queues.${string}`
   | `regions.${string}`
   | `repositories.${string}`
   | `savedQueries.${string}`
@@ -313,6 +314,7 @@ const internalHeaderNames = new Set([
   "if-match",
   "x-terrascale-allow-stale",
   "x-terrascale-delete-confirmation",
+  "x-terrascale-preferred-region",
 ]);
 
 function validateInternalHeaders(headers: HeadersInit | undefined): void {

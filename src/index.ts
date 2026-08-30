@@ -21,6 +21,7 @@ export type {
   OnboardingClient,
   OrganizationsClient,
   QueryClient,
+  QueuesClient,
   RegionsClient,
   RepositoriesClient,
   SchemaClient,

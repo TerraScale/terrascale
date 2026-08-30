@@ -1,3 +1,5 @@
+import { canonicalRegionCode, type TerraScaleRegionCode } from "./regions.js";
+
 export type TerraScaleErrorKind =
   | "authentication"
   | "authorization"
@@ -12,10 +14,10 @@ export type TerraScaleErrorKind =
   | "validation";
 
 export type TerraScaleRoutingObservation = {
-  readonly edgeRegion?: string | undefined;
-  readonly servingRegion?: string | undefined;
+  readonly edgeRegion?: TerraScaleRegionCode | undefined;
+  readonly servingRegion?: TerraScaleRegionCode | undefined;
   readonly routeMode?: TerraScaleRouteMode | undefined;
-  readonly failoverFromRegion?: string | undefined;
+  readonly failoverFromRegion?: TerraScaleRegionCode | undefined;
   readonly degraded: boolean;
 };
 
@@ -127,11 +129,8 @@ function routingFrom(headers: Headers): TerraScaleRoutingObservation | undefined
   };
 }
 
-function normalizeRegion(value: string | null): string | undefined {
-  const normalized = value?.trim().toLowerCase();
-  return normalized !== undefined && /^[a-z0-9][a-z0-9-]{1,31}$/u.test(normalized)
-    ? normalized
-    : undefined;
+function normalizeRegion(value: string | null): TerraScaleRegionCode | undefined {
+  return value === null ? undefined : canonicalRegionCode(value);
 }
 
 function normalizeRouteMode(value: string | null): TerraScaleRouteMode | undefined {

@@ -1,7 +1,8 @@
 import type { LocalRequestContext } from "../context.js";
-import { jsonResponse, matchLocalRoute, objectBody } from "../context.js";
+import { jsonResponse, matchLocalRoute, objectBody, problemResponse } from "../context.js";
 import type * as Models from "../../models.js";
 import type { OrganizationId, ProjectId, UserId } from "../../ids.js";
+import { normalizeRegionCodes, parseRegionCode } from "../../regions.js";
 
 type OnboardingRecord = Pick<
   Models.OnboardingState,
@@ -52,15 +53,27 @@ export function handleLocalOnboarding(
     const state = readState(context);
     const body = objectBody(context);
     const projectId = state.projectId ?? (nextUlid(context) as ProjectId);
-    const regions = Array.isArray(body.regions)
-      ? body.regions.filter((value): value is string => typeof value === "string")
-      : state.projectPrimaryRegions;
+    if (!Array.isArray(body.regions) || !body.regions.every((value) => typeof value === "string")) {
+      return problemResponse(400, "invalid_request", "regions must be an array of exact RegionCode values.");
+    }
+    let regions: Models.OnboardingState["projectPrimaryRegions"];
+    let backupRegion: Models.OnboardingState["projectBackupRegion"];
+    try {
+      regions = normalizeRegionCodes(body.regions);
+      backupRegion = parseRegionCode(body.backupRegion, "backupRegion");
+    } catch (error) {
+      return problemResponse(
+        400,
+        "invalid_request",
+        error instanceof Error ? error.message : "The Region selection is invalid.",
+      );
+    }
     const updated = saveState(context, {
       ...state,
       projectId,
       projectOwnerAssigned: true,
-      projectPrimaryRegions: regions as OnboardingRecord["projectPrimaryRegions"],
-      projectBackupRegion: stringValue(body.backupRegion, state.projectBackupRegion),
+      projectPrimaryRegions: regions,
+      projectBackupRegion: backupRegion,
       updatedAt: context.now,
     });
     return jsonResponse(recalculate(updated));
@@ -185,8 +198,4 @@ function recalculate(state: OnboardingRecord): OnboardingRecord {
 
 function nextUlid(context: LocalRequestContext): string {
   return context.store.nextUlid();
-}
-
-function stringValue(value: unknown, fallback: string): string {
-  return typeof value === "string" && value.length > 0 ? value : fallback;
 }

@@ -238,8 +238,8 @@ export class TerraScaleSqliteRuntime {
     const project = requireValue(
       await client.organizations.createProject(organization.organizationId, {
         name: "Local project",
-        regions: ["local"],
-        backupRegion: "local",
+        regions: ["GRU"],
+        backupRegion: "GRU",
       }),
     );
     const scoped = this.createClient({

@@ -28,9 +28,12 @@ public operation stays missing until its owning service publishes the contract.
 
 Typed route capture and OpenAPI descriptor/drift checks are part of release
 admission. A successful TypeScript build alone does not prove parity. The
-current package implements 79 captured routes, and the current Dashboard
-snapshot must resolve the saved-query GET discrepancy recorded as TS-001 in
-`GOAL.md`.
+current package implements 91 captured routes, and the current Dashboard
+snapshot covers all 91. The saved-query CRUD operations use the owner-published
+v1 paths, page envelope, continuation offset, and revision-protected update
+contract. Project queue operations use the Dashboard-owned project-scoped
+OpenAPI contract and retain typed receipts plus explicit regional affinity for
+acknowledgement operations. The legacy global queue API remains excluded.
 
 ## Evidence and follow-up
 

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -32,6 +33,32 @@ test("descriptor pins operation identity, parameter contract, and complete JSON 
     ]) assert.notDeepEqual(await descriptorFor(specPath, { operationId: "CreateWidget", parameterName: "widgetId", required: true, type: "string", nullable: true, fields: { label: { type: "string", nullable: true } }, ...mutation }), descriptor);
     await writeFile(specPath, JSON.stringify(spec({ operationId: "CreateWidget", parameterName: "widgetId", required: true, type: "string", nullable: true, fields: { label: { type: "string", nullable: true } } })));
     assert.deepEqual(await (await generator).generateOpenApiContractDescriptor({ manifestPath, specPath }), descriptor);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("descriptor binds the exact OpenAPI and route-manifest bytes", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "terrascale-openapi-descriptor-digest-"));
+  try {
+    const manifestPath = path.join(directory, "manifest.json");
+    const specPath = path.join(directory, "openapi.json");
+    const manifest = { routes: [{ base: "api", client: "widgets", method: "POST", operation: "create", pathTemplate: "/api/v1/widgets/{widgetId}", routeName: "widgets.create", requestType: "CreateWidget", responseType: "Widget", sourceContract: { body: { kind: "json", shape: { label: "Ada" } }, headers: [{ name: "content-type", value: "application/json" }], query: [] } }] };
+    const openApi = spec({ operationId: "CreateWidget", parameterName: "widgetId", required: true, type: "string", nullable: false, fields: { label: { type: "string" } } });
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    await writeFile(specPath, JSON.stringify(openApi));
+
+    const first = await (await generator).generateOpenApiContractDescriptor({ manifestPath, specPath }) as ContractDescriptor;
+    assert.equal(first.descriptorVersion, 2);
+    assert.equal(first.sources.openApiSha256, await fileSha256(specPath));
+    assert.equal(first.sources.routeManifestSha256, await fileSha256(manifestPath));
+
+    await writeFile(specPath, `${JSON.stringify(openApi, null, 2)}\n`);
+    const reformattedSpec = await (await generator).generateOpenApiContractDescriptor({ manifestPath, specPath }) as ContractDescriptor;
+    assert.notEqual(reformattedSpec.sources.openApiSha256, first.sources.openApiSha256);
+    assert.equal(reformattedSpec.sources.routeManifestSha256, first.sources.routeManifestSha256);
+
+    await writeFile(manifestPath, `${JSON.stringify(manifest)}\n`);
+    const reformattedManifest = await (await generator).generateOpenApiContractDescriptor({ manifestPath, specPath }) as ContractDescriptor;
+    assert.notEqual(reformattedManifest.sources.routeManifestSha256, first.sources.routeManifestSha256);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -87,6 +114,18 @@ async function descriptorFor(specPath: string, input: Input): Promise<unknown> {
   return (await generator).generateOpenApiContractDescriptor({ manifestPath, specPath });
 }
 type Input = { operationId: string; parameterName: string; required: boolean; type: string; nullable: boolean; fields: Record<string, { type: string; nullable?: boolean }> };
+type ContractDescriptor = {
+  readonly descriptorVersion: number;
+  readonly sources: {
+    readonly openApiSha256: string;
+    readonly routeManifestSha256: string;
+  };
+};
+
+async function fileSha256(filePath: string): Promise<string> {
+  return createHash("sha256").update(await readFile(filePath)).digest("hex");
+}
+
 function spec(input: Input) {
   return { openapi: "3.1.0", paths: { "/api/v1/widgets/{widgetId}": { post: {
     operationId: input.operationId,

@@ -10,10 +10,12 @@ const documentId = toUlid("01BX5ZZKBKACTAV9WEVGEMMVRZ");
 
 describe("regional document consistency", () => {
   test("rejects invalid or incomplete strict regional configuration", () => {
-    assert.throws(
-      () => resolveRuntimeConfig({ preferredRegion: "bad region", fetch: globalThis.fetch }),
-      /valid TerraScale region code/u,
-    );
+    for (const preferredRegion of ["gru", "SJC", " GRU", "GRU ", "GR", "GRUU", "京", "JFK"]) {
+      assert.throws(
+        () => resolveRuntimeConfig({ preferredRegion: preferredRegion as never, fetch: globalThis.fetch }),
+        /preferredRegion must be exactly one of GRU, SFO, or FRA/u,
+      );
+    }
     assert.throws(
       () => resolveRuntimeConfig({ regionAffinity: "strict", fetch: globalThis.fetch }),
       /requires a preferredRegion/u,
@@ -36,7 +38,7 @@ describe("regional document consistency", () => {
       fetch: globalThis.fetch,
     });
     assert.equal(failover.apiBaseUrl, "https://api.terrascale.tech");
-    assert.equal(failover.preferredRegion, "fra");
+    assert.equal(failover.preferredRegion, "FRA");
 
     const strict = resolveRuntimeConfig({
       preferredRegion: "SFO",
@@ -44,7 +46,7 @@ describe("regional document consistency", () => {
       fetch: globalThis.fetch,
     });
     assert.equal(strict.apiBaseUrl, "https://sfo.api.terrascale.tech");
-    assert.equal(strict.preferredRegion, "sfo");
+    assert.equal(strict.preferredRegion, "SFO");
   });
 
   test("keeps session and retry policy in the resolved runtime boundary", () => {
@@ -88,7 +90,7 @@ describe("regional document consistency", () => {
     await strict.documents.get({ repositoryId }, documentId);
 
     assert.equal(new URL(requests[0]!.url).hostname, "api.terrascale.tech");
-    assert.equal(requests[0]!.headers.get("x-terrascale-preferred-region"), "fra");
+    assert.equal(requests[0]!.headers.get("x-terrascale-preferred-region"), "FRA");
     assert.equal(new URL(requests[1]!.url).hostname, "sfo.api.terrascale.tech");
     assert.equal(requests[1]!.headers.has("x-terrascale-preferred-region"), false);
   });
@@ -183,10 +185,10 @@ describe("regional document consistency", () => {
       assert.equal(result.error.target, "document");
       assert.equal(result.error.requestId, "request-123");
       assert.deepEqual(result.routing, {
-        edgeRegion: "fra",
-        servingRegion: "sfo",
+        edgeRegion: "FRA",
+        servingRegion: "SFO",
         routeMode: "preferred-failover",
-        failoverFromRegion: "fra",
+        failoverFromRegion: "FRA",
         degraded: true,
       });
       assert.equal("operatorNode" in result.routing!, false);
@@ -274,7 +276,7 @@ describe("regional document consistency", () => {
     }
   });
 
-  test("exposes only normalized public serving metadata on successful reads", async () => {
+  test("exposes only exact public serving metadata on successful reads", async () => {
     const client = createTerraScaleClient({
       apiBaseUrl: "https://api.terrascale.test",
       fetch: async () =>
@@ -296,12 +298,38 @@ describe("regional document consistency", () => {
     assert.equal(result.ok, true);
     if (result.ok) {
       assert.deepEqual(result.routing, {
-        edgeRegion: "gru",
-        servingRegion: "gru",
+        edgeRegion: "GRU",
+        servingRegion: "GRU",
         routeMode: "regional-strict",
         degraded: false,
       });
       assert.equal("operatorHost" in result.routing!, false);
+    }
+  });
+
+  test("does not normalize invalid routing RegionCode headers", async () => {
+    const client = createTerraScaleClient({
+      fetch: async () => Response.json(
+        { repositoryId, repository: "users", id: documentId, data: { name: "Ada" } },
+        {
+          headers: {
+            "x-terrascale-edge-region": "gru",
+            "x-terrascale-serving-region": "S FO",
+            "x-terrascale-failover-from-region": "SJC",
+            "x-terrascale-route-mode": "preferred-failover",
+          },
+        },
+      ),
+    });
+
+    const result = await client.documents.get({ repositoryId }, documentId);
+
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.deepEqual(result.routing, {
+        routeMode: "preferred-failover",
+        degraded: true,
+      });
     }
   });
 });

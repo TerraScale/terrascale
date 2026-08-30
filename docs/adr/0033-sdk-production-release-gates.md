@@ -25,7 +25,8 @@ jobs.
 
 ## Current blockers
 
-The current Dashboard snapshot leaves one SDK route uncovered, Safari is
-host-blocked in this environment, no live API evidence was available, and the
-standalone MessagePack suites are not yet part of the release profile. See
-`GOAL.md` TS-001, TS-006, TS-007, and TS-009.
+The current Dashboard snapshot covers all 91 SDK routes with zero typed-contract
+debt. The standalone MessagePack suites run through `npm test` and both protected
+Node runtime lanes, so they are candidate-admission prerequisites. Safari remains
+host-blocked in this environment, and no live API evidence was available. These
+remaining gates stay open in `GOAL.md`.

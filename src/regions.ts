@@ -1,41 +1,35 @@
-export type TerraScaleRegionCode = string;
+export const terraScaleRegionCodes = ["GRU", "SFO", "FRA"] as const;
+
+export type TerraScaleRegionCode = (typeof terraScaleRegionCodes)[number];
 
 export type TerraScaleRegion = {
   readonly code: TerraScaleRegionCode;
   readonly displayName: string;
   readonly latitude: number;
   readonly longitude: number;
-  readonly ociRegionCode: string;
-  readonly clusterNodeTag?: string;
   readonly available: boolean;
 };
 
 export const terraScaleRegions = [
   {
-    code: "gru",
+    code: "GRU",
     displayName: "Sao Paulo",
     latitude: -23.5475,
     longitude: -46.6361,
-    ociRegionCode: "sa-saopaulo-1",
-    clusterNodeTag: "A",
     available: true,
   },
   {
-    code: "sfo",
+    code: "SFO",
     displayName: "San Francisco",
     latitude: 37.7749,
     longitude: -122.4194,
-    ociRegionCode: "us-sanjose-1",
-    clusterNodeTag: "B",
     available: true,
   },
   {
-    code: "fra",
+    code: "FRA",
     displayName: "Frankfurt",
     latitude: 50.1109,
     longitude: 8.6821,
-    ociRegionCode: "eu-frankfurt-1",
-    clusterNodeTag: "C",
     available: true,
   },
 ] as const satisfies readonly TerraScaleRegion[];
@@ -45,14 +39,7 @@ const regionsByCode = new Map<TerraScaleRegionCode, TerraScaleRegion>(
 );
 
 export function canonicalRegionCode(code: string | undefined): TerraScaleRegionCode | undefined {
-  if (code === undefined) {
-    return undefined;
-  }
-
-  const normalized = code.trim().toLowerCase();
-  return /^[a-z0-9][a-z0-9-]{1,31}$/.test(normalized)
-    ? normalized
-    : undefined;
+  return code !== undefined && isRegionCode(code) ? code : undefined;
 }
 
 export function findRegion(code: string | undefined): TerraScaleRegion | undefined {
@@ -60,23 +47,30 @@ export function findRegion(code: string | undefined): TerraScaleRegion | undefin
   return canonical === undefined ? undefined : regionsByCode.get(canonical);
 }
 
-export function isRegionCode(code: string): code is TerraScaleRegionCode {
-  return regionsByCode.has(code);
+export function isRegionCode(code: unknown): code is TerraScaleRegionCode {
+  return typeof code === "string" && regionsByCode.has(code as TerraScaleRegionCode);
+}
+
+export function parseRegionCode(code: unknown, fieldName = "regionCode"): TerraScaleRegionCode {
+  if (!isRegionCode(code)) {
+    throw new TypeError(`${fieldName} must be exactly one of GRU, SFO, or FRA.`);
+  }
+
+  return code;
 }
 
 export function normalizeRegionCodes(
   codes: readonly string[] | undefined,
 ): readonly TerraScaleRegionCode[] {
-  const selected = new Set<TerraScaleRegionCode>();
-
-  for (const code of codes ?? []) {
-    const candidate = code.trim().toLowerCase();
-    if (candidate.length === 0) {
-      continue;
-    }
-
-    selected.add(candidate);
+  if (codes === undefined || codes.length === 0 || codes.length > 20) {
+    throw new TypeError("regions must contain between 1 and 20 exact TerraScale region codes.");
   }
 
-  return selected.size === 0 ? ["gru"] : [...selected];
+  const selected = new Set<TerraScaleRegionCode>();
+
+  for (const code of codes) {
+    selected.add(parseRegionCode(code, "regions[]"));
+  }
+
+  return [...selected];
 }

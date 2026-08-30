@@ -13,6 +13,7 @@ import { handleLocalMetadata } from "./handlers/metadata.js";
 import { handleLocalOnboarding } from "./handlers/onboarding.js";
 import { handleLocalOrganizations } from "./handlers/organizations.js";
 import { handleLocalPlatform } from "./handlers/platform.js";
+import { handleLocalQueues } from "./handlers/queues.js";
 import { handleLocalSyncV2 } from "./handlers/sync-v2.js";
 import { localManifestRoutes } from "./route-manifest.generated.js";
 import type { TerraScaleSqliteStore } from "./store.js";
@@ -46,6 +47,7 @@ const localHandlers: readonly LocalHandler[] = [
   handleLocalOnboarding,
   handleLocalOrganizations,
   handleLocalMetadata,
+  handleLocalQueues,
   handleLocalData,
   handleLocalBackups,
   handleLocalPlatform,

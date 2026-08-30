@@ -24,7 +24,7 @@ test("the browser entrypoint keeps regional and conditional document behavior", 
       },
     ];
     const client = sdk.createTerraScaleClient({
-      preferredRegion: "fra",
+      preferredRegion: "FRA",
       sessionConsistency: "automatic",
       fetch: async (input: RequestInfo | URL) => {
         const request = input instanceof Request ? input : new Request(input);
@@ -44,6 +44,6 @@ test("the browser entrypoint keeps regional and conditional document behavior", 
   expect(observation).toHaveLength(2);
   expect(observation[0]?.url).toBe("https://api.terrascale.tech/api/v1/repositories/01ARZ3NDEKTSV4RRFFQ69G5FAV/documents/01BX5ZZKBKACTAV9WEVGEMMVRZ");
   expect(observation[0]?.headers["if-match"]).toBe("change-1");
-  expect(observation[0]?.headers["x-terrascale-preferred-region"]).toBe("fra");
+  expect(observation[0]?.headers["x-terrascale-preferred-region"]).toBe("FRA");
   expect(observation[1]?.headers["x-terrascale-session-consistency-token"]).toBe("session-2");
 });

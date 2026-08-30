@@ -23,8 +23,8 @@ const forbidden = [
     pattern: /\b(?:M2M\w*|m2m)\b/u,
   },
   {
-    name: "project queue route",
-    pattern: /\/api\/v\d+\/projects\/\{[^}]+\}\/queues(?:[\/"'`:]|$)|\b(?:QueuesClient|Queue(?:Id|Name|Message|Receipt|Request|Response|Result|Options)\w*|queues\.)/u,
+    name: "legacy global queue route",
+    pattern: /\/api\/v\d+\/queues(?:[\/"'`:]|$)|\bGlobalQueue\w*/u,
   },
   {
     name: "billing/pricing route",

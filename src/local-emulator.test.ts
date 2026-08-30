@@ -8,7 +8,6 @@ import { exercisePublicClientRoutes } from "./client-route-capture.js";
 import type { FetchLike } from "./config.js";
 import { createTerraScaleClient } from "./factory.js";
 import { toUlid } from "./ids.js";
-import type { TerraScaleRegionCode } from "./regions.js";
 import {
   createTerraScaleSqliteRuntime,
   type LocalServerAddress,
@@ -49,7 +48,9 @@ async function withTempRuntime<T>(
   }
 }
 
-async function started(runtime: ReturnType<typeof createTerraScaleSqliteRuntime>): Promise<LocalServerAddress> {
+async function started(
+  runtime: ReturnType<typeof createTerraScaleSqliteRuntime>,
+): Promise<LocalServerAddress> {
   return runtime.start({ host: "127.0.0.1", port: 0 });
 }
 
@@ -84,16 +85,34 @@ test("all captured public client routes execute through the real loopback server
 test("configured root and AdminClient instances share the SQLite runtime", async () => {
   await withTempRuntime(async (runtime) => {
     const admin = runtime.createAdminClient({ accessToken: "local-test-token" });
-    const client = runtime.createClient({ accessToken: "local-test-token", projectId: knownUserId });
-    const organization = expectOk(await client.organizations.create({ name: "Admin organization" }));
-    const project = expectOk(await client.organizations.createProject(organization.organizationId, { name: "Admin project", regions: ["local" as TerraScaleRegionCode], backupRegion: "local" as TerraScaleRegionCode }));
+    const client = runtime.createClient({
+      accessToken: "local-test-token",
+      projectId: knownUserId,
+    });
+    const organization = expectOk(
+      await client.organizations.create({ name: "Admin organization" }),
+    );
+    const project = expectOk(
+      await client.organizations.createProject(organization.organizationId, {
+        name: "Admin project",
+        regions: ["GRU"],
+        backupRegion: "GRU",
+      }),
+    );
     expectOk(await client.databases.create({ name: "Admin database" }));
     const checks: readonly Promise<unknown>[] = [
       admin.overview(),
-      admin.createSupportNote({ note: "local admin test", organizationId: organization.organizationId, projectId: project.projectId }),
-      admin.listOrganizations(), admin.listProjects(), admin.listDatabases(), admin.getUsage(),
+      admin.createSupportNote({
+        note: "local admin test",
+        organizationId: organization.organizationId,
+        projectId: project.projectId,
+      }),
+      admin.listOrganizations(),
+      admin.listProjects(),
+      admin.listDatabases(),
+      admin.getUsage(),
     ];
-    for (const check of checks) expectOk(await check as TerraScaleResult<unknown>);
+    for (const check of checks) expectOk((await check) as TerraScaleResult<unknown>);
     expectOk(await admin.listAudit());
     expectOk(await admin.listNotifications());
   });
@@ -102,47 +121,126 @@ test("configured root and AdminClient instances share the SQLite runtime", async
 test("typed data survives SQLite close/reopen and enforces document concurrency, schema, and TQL", async () => {
   await withTempRuntime(async (first, databasePath) => {
     const firstAddress = await started(first);
-    const rootClient = createTerraScaleClient({ apiBaseUrl: firstAddress.apiBaseUrl, accessToken: "local-test-token" });
+    const rootClient = createTerraScaleClient({
+      apiBaseUrl: firstAddress.apiBaseUrl,
+      accessToken: "local-test-token",
+    });
     let seed: TerraScaleLocalSeed;
     try {
-      const organization = expectOk(await rootClient.organizations.create({ name: "HTTP seeded organization" }));
-      const project = expectOk(await rootClient.organizations.createProject(organization.organizationId, { name: "HTTP seeded project", regions: ["local" as TerraScaleRegionCode], backupRegion: "local" as TerraScaleRegionCode }));
-      const scopedRoot = createTerraScaleClient({ apiBaseUrl: firstAddress.apiBaseUrl, projectId: project.projectId, accessToken: "local-test-token" });
-      const database = expectOk(await scopedRoot.databases.create({ name: "HTTP seeded database" }));
-      const repository = expectOk(await scopedRoot.repositories.create({ name: "HTTP seeded repository", databaseId: database.databaseId, collection: "documents" }));
-      const seededDocument = expectOk(await scopedRoot.documents.create({ repositoryId: repository.repositoryId }, { title: "SQLite development runtime", status: "ready" }));
-      seed = { organizationId: organization.organizationId, projectId: project.projectId, databaseId: database.databaseId, repositoryId: repository.repositoryId, documentId: seededDocument.id };
-      const client = createTerraScaleClient({ apiBaseUrl: firstAddress.apiBaseUrl, projectId: seed.projectId, accessToken: "local-test-token" });
+      const organization = expectOk(
+        await rootClient.organizations.create({ name: "HTTP seeded organization" }),
+      );
+      const project = expectOk(
+        await rootClient.organizations.createProject(organization.organizationId, {
+          name: "HTTP seeded project",
+          regions: ["GRU"],
+          backupRegion: "GRU",
+        }),
+      );
+      const scopedRoot = createTerraScaleClient({
+        apiBaseUrl: firstAddress.apiBaseUrl,
+        projectId: project.projectId,
+        accessToken: "local-test-token",
+      });
+      const database = expectOk(
+        await scopedRoot.databases.create({ name: "HTTP seeded database" }),
+      );
+      const repository = expectOk(
+        await scopedRoot.repositories.create({
+          name: "HTTP seeded repository",
+          databaseId: database.databaseId,
+          collection: "documents",
+        }),
+      );
+      const seededDocument = expectOk(
+        await scopedRoot.documents.create(
+          { repositoryId: repository.repositoryId },
+          { title: "SQLite development runtime", status: "ready" },
+        ),
+      );
+      seed = {
+        organizationId: organization.organizationId,
+        projectId: project.projectId,
+        databaseId: database.databaseId,
+        repositoryId: repository.repositoryId,
+        documentId: seededDocument.id,
+      };
+      const client = createTerraScaleClient({
+        apiBaseUrl: firstAddress.apiBaseUrl,
+        projectId: seed.projectId,
+        accessToken: "local-test-token",
+      });
       const scope = { repositoryId: seed.repositoryId };
-      const created = expectOk(await client.documents.create(scope, { title: "persisted", count: 1 }));
+      const created = expectOk(
+        await client.documents.create(scope, { title: "persisted", count: 1 }),
+      );
       const read = expectOk(await client.documents.get(scope, created.id));
       assert.deepEqual(read.data, { title: "persisted", count: 1 });
       assert.equal(typeof created.changeToken, "string");
-      const patched = expectOk(await client.documents.patch(scope, created.id, { title: "patched", count: 2 }, { expectedChangeToken: created.changeToken! }));
-      const conflict = await client.documents.patch(scope, created.id, { title: "conflict" }, { expectedChangeToken: created.changeToken! });
+      const patched = expectOk(
+        await client.documents.patch(
+          scope,
+          created.id,
+          { title: "patched", count: 2 },
+          { expectedChangeToken: created.changeToken! },
+        ),
+      );
+      const conflict = await client.documents.patch(
+        scope,
+        created.id,
+        { title: "conflict" },
+        { expectedChangeToken: created.changeToken! },
+      );
       assert.equal(conflict.ok, false);
       if (!conflict.ok) assert.equal(conflict.error.code, "change_token_mismatch");
-      const schema = expectOk(await client.schema.configure(scope, { enabled: true, schema: '{"type":"object"}' }));
+      const schema = expectOk(
+        await client.schema.configure(scope, { enabled: true, schema: '{"type":"object"}' }),
+      );
       assert.equal(schema.enabled, true);
       expectOk(await client.schema.get(scope));
       expectOk(await client.schema.validate(scope));
-      const query = expectOk(await client.query.execute(scope, { query: "from documents where title = 'patched'" }));
-      assert.equal(query.items.some((item) => item.id === created.id), true);
+      const query = expectOk(
+        await client.query.execute(scope, { query: "from documents where title = 'patched'" }),
+      );
+      assert.equal(
+        query.items.some((item) => item.id === created.id),
+        true,
+      );
       assert.equal(typeof patched.changeToken, "string");
-      expectOk(await client.documents.delete(scope, created.id, { expectedChangeToken: patched.changeToken! }));
+      expectOk(
+        await client.documents.delete(scope, created.id, {
+          expectedChangeToken: patched.changeToken!,
+        }),
+      );
     } finally {
       await first.stop();
     }
     const reopened = createTerraScaleSqliteRuntime({ sqlite: { enabled: true, databasePath } });
     const reopenedAddress = await started(reopened);
     try {
-      const client = createTerraScaleClient({ apiBaseUrl: reopenedAddress.apiBaseUrl, projectId: seed!.projectId, accessToken: "local-test-token" });
-      assert.equal(expectOk(await client.organizations.get(seed!.organizationId)).organizationId, seed!.organizationId);
-      assert.equal(expectOk(await client.databases.get(seed!.databaseId)).databaseId, seed!.databaseId);
-      assert.equal(expectOk(await client.repositories.get({ repositoryId: seed!.repositoryId })).repositoryId, seed!.repositoryId);
+      const client = createTerraScaleClient({
+        apiBaseUrl: reopenedAddress.apiBaseUrl,
+        projectId: seed!.projectId,
+        accessToken: "local-test-token",
+      });
+      assert.equal(
+        expectOk(await client.organizations.get(seed!.organizationId)).organizationId,
+        seed!.organizationId,
+      );
+      assert.equal(
+        expectOk(await client.databases.get(seed!.databaseId)).databaseId,
+        seed!.databaseId,
+      );
+      assert.equal(
+        expectOk(await client.repositories.get({ repositoryId: seed!.repositoryId })).repositoryId,
+        seed!.repositoryId,
+      );
       const listed = expectOk(await client.documents.list({ repositoryId: seed!.repositoryId }));
       assert.equal(listed.total, 1);
-      assert.equal(listed.items.some((item) => item.id === seed!.documentId), true);
+      assert.equal(
+        listed.items.some((item) => item.id === seed!.documentId),
+        true,
+      );
     } finally {
       await reopened.close();
     }
@@ -154,14 +252,106 @@ test("backup plan/execute/replay uses typed clients over the real server", async
     const address = await started(runtime);
     try {
       const seed = await runtime.seed();
-      const client = createTerraScaleClient({ apiBaseUrl: address.apiBaseUrl, projectId: seed.projectId, accessToken: "local-test-token" });
-      expectOk(await client.backups.configurePolicy(seed.databaseId, { fullBackupCron: "0 0 * * *" }));
+      const client = createTerraScaleClient({
+        apiBaseUrl: address.apiBaseUrl,
+        projectId: seed.projectId,
+        accessToken: "local-test-token",
+      });
+      expectOk(
+        await client.backups.configurePolicy(seed.databaseId, { fullBackupCron: "0 0 * * *" }),
+      );
       const operationSessionId = "backup-session";
-      const plan = expectOk(await client.backups.planBackup(seed.databaseId, { operationSessionId }));
-      const executed = expectOk(await client.backups.executeBackup(seed.databaseId, { operationSessionId, confirmationToken: plan.confirmationToken }, "backup-once"));
-      const executedReplay = expectOk(await client.backups.executeBackup(seed.databaseId, { operationSessionId, confirmationToken: plan.confirmationToken }, "backup-once"));
+      const plan = expectOk(
+        await client.backups.planBackup(seed.databaseId, { operationSessionId }),
+      );
+      const executed = expectOk(
+        await client.backups.executeBackup(
+          seed.databaseId,
+          { operationSessionId, confirmationToken: plan.confirmationToken },
+          "backup-once",
+        ),
+      );
+      const executedReplay = expectOk(
+        await client.backups.executeBackup(
+          seed.databaseId,
+          { operationSessionId, confirmationToken: plan.confirmationToken },
+          "backup-once",
+        ),
+      );
       assert.equal(executedReplay.backupId, executed.backupId);
       assert.equal(expectOk(await client.backups.listBackups(seed.databaseId)).length, 1);
+    } finally {
+      await runtime.stop();
+    }
+  });
+});
+
+test("project queues preserve idempotency, delivery, and receipt semantics over the real server", async () => {
+  await withTempRuntime(async (runtime) => {
+    const address = await started(runtime);
+    try {
+      const seed = await runtime.seed();
+      const client = createTerraScaleClient({
+        apiBaseUrl: address.apiBaseUrl,
+        projectId: seed.projectId,
+        accessToken: "local-test-token",
+      });
+      const queue = expectOk(await client.queues.create({ name: "jobs", kind: "queue" }));
+      assert.equal(queue.retentionSeconds, null);
+      assert.equal(Object.hasOwn(queue, "retentionSeconds"), true);
+      const published = expectOk(
+        await client.queues.publish(queue.queueId, {
+          data: { task: "index" },
+          idempotencyKey: "publish-once",
+        }),
+      );
+      const replay = expectOk(
+        await client.queues.publish(queue.queueId, {
+          data: { task: "index" },
+          idempotencyKey: "publish-once",
+        }),
+      );
+      assert.equal(replay.messageId, published.messageId);
+      assert.equal(replay.duplicate, true);
+
+      const peeked = expectOk(await client.queues.peek(queue.queueId, 1));
+      assert.equal(peeked.length, 1);
+      assert.equal(Object.hasOwn(peeked[0]!, "createdAt"), true);
+      assert.ok(Date.parse(peeked[0]!.createdAt ?? "") > 0);
+
+      const received = expectOk(
+        await client.queues.receive(queue.queueId, {
+          consumerName: "worker",
+          maxMessages: 1,
+        }),
+      );
+      assert.equal(received.length, 1);
+      assert.equal(received[0]?.messageId, published.messageId);
+      assert.equal(received[0]?.deliveryGuarantee, "at-least-once");
+      const completeResult = await client.queues.complete(queue.queueId, received[0]!);
+      assert.equal(completeResult.status, 202);
+      const completed = expectOk(completeResult);
+      assert.equal(completed.accepted, true);
+
+      for (const action of ["abandon", "dead-letter", "renew-lock"] as const) {
+        expectOk(await client.queues.publish(queue.queueId, { data: { action } }));
+      }
+      const actionMessages = expectOk(
+        await client.queues.receive(queue.queueId, {
+          consumerName: "action-worker",
+          maxMessages: 3,
+        }),
+      );
+      assert.equal(actionMessages.length, 3);
+      const abandonResult = await client.queues.abandon(queue.queueId, actionMessages[0]!, 5);
+      const deadLetterResult = await client.queues.deadLetter(queue.queueId, actionMessages[1]!);
+      const renewLockResult = await client.queues.renewLock(queue.queueId, actionMessages[2]!);
+      for (const result of [abandonResult, deadLetterResult, renewLockResult]) {
+        assert.equal(result.ok, true);
+        assert.equal(result.status, 202);
+      }
+      assert.equal(expectOk(await client.queues.list()).length, 1);
+      assert.equal(expectOk(await client.queues.delete(queue.queueId)), true);
     } finally {
       await runtime.stop();
     }
@@ -174,24 +364,39 @@ test("required bearer gate, health, unknown routes, reset/seed, binding, and rem
     assert.notEqual(seeded, undefined);
     assert.equal((await seedRuntime.createClient().organizations.list()).ok, true);
   });
-  await withTempRuntime(async (runtime) => {
-    const address = await started(runtime);
-    const health = await fetch(`${address.origin}/health`);
-    assert.equal(health.status, 200);
-    assert.deepEqual(await health.json(), { status: "ready", storage: "sqlite" });
-    const unauthorized = await fetch(`${address.origin}/api/v1/organizations`);
-    assert.equal(unauthorized.status, 401);
-    const authorized = await fetch(`${address.origin}/api/v1/organizations`, { headers: { authorization: `Bearer ${localBearerToken}` } });
-    assert.equal(authorized.status, 200);
-    const authorizedWithTrailingSlash = await fetch(`${address.origin}/api/v1/organizations/`, { headers: { authorization: `Bearer ${localBearerToken}` } });
-    assert.equal(authorizedWithTrailingSlash.status, 200);
-    assert.deepEqual(await authorizedWithTrailingSlash.json(), []);
-    const unknown = await fetch(`${address.origin}/api/v1/not-a-route`, { headers: { authorization: `Bearer ${localBearerToken}` } });
-    assert.equal(unknown.status, 404);
-  }, { authentication: "required", bearerToken: localBearerToken });
-  await withTempRuntime(async (permissive) => {
-    await assert.rejects(() => permissive.start({ host: "192.0.2.1", port: 0 }), /non-loopback host/);
-  }, { allowRemote: false });
+  await withTempRuntime(
+    async (runtime) => {
+      const address = await started(runtime);
+      const health = await fetch(`${address.origin}/health`);
+      assert.equal(health.status, 200);
+      assert.deepEqual(await health.json(), { status: "ready", storage: "sqlite" });
+      const unauthorized = await fetch(`${address.origin}/api/v1/organizations`);
+      assert.equal(unauthorized.status, 401);
+      const authorized = await fetch(`${address.origin}/api/v1/organizations`, {
+        headers: { authorization: `Bearer ${localBearerToken}` },
+      });
+      assert.equal(authorized.status, 200);
+      const authorizedWithTrailingSlash = await fetch(`${address.origin}/api/v1/organizations/`, {
+        headers: { authorization: `Bearer ${localBearerToken}` },
+      });
+      assert.equal(authorizedWithTrailingSlash.status, 200);
+      assert.deepEqual(await authorizedWithTrailingSlash.json(), []);
+      const unknown = await fetch(`${address.origin}/api/v1/not-a-route`, {
+        headers: { authorization: `Bearer ${localBearerToken}` },
+      });
+      assert.equal(unknown.status, 404);
+    },
+    { authentication: "required", bearerToken: localBearerToken },
+  );
+  await withTempRuntime(
+    async (permissive) => {
+      await assert.rejects(
+        () => permissive.start({ host: "192.0.2.1", port: 0 }),
+        /non-loopback host/,
+      );
+    },
+    { allowRemote: false },
+  );
 });
 
 test("the registered local Sync v1 and v2 clients use the same runtime store", async () => {
@@ -207,15 +412,26 @@ test("the registered local Sync v1 and v2 clients use the same runtime store", a
     assert.equal(v1.getConnectionSnapshot().Status, "connected");
     await v1.disconnect();
 
-    const v2 = runtime.createSyncV2Session({ Collection: "tasks", Principal: "user-a", Tenant: "tenant-a" });
+    const v2 = runtime.createSyncV2Session({
+      Collection: "tasks",
+      Principal: "user-a",
+      Tenant: "tenant-a",
+    });
     await v2.connect();
-    const applied = await v2.executeMutation({ Document: "task-1", Put: { state: "open" } }, "mutation-once");
-    const replay = await v2.executeMutation({ Document: "task-1", Put: { state: "open" } }, "mutation-once");
+    const applied = await v2.executeMutation(
+      { Document: "task-1", Put: { state: "open" } },
+      "mutation-once",
+    );
+    const replay = await v2.executeMutation(
+      { Document: "task-1", Put: { state: "open" } },
+      "mutation-once",
+    );
     assert.equal(applied.Outcome, "applied");
     assert.deepEqual(replay, applied);
     await assert.rejects(
       v2.executeMutation({ Document: "task-1", Put: { state: "closed" } }, "mutation-once"),
-      (error: unknown) => error instanceof Error && error.message.includes("idempotency_key_reused"),
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("idempotency_key_reused"),
     );
     await v2.disconnect();
   });
@@ -230,56 +446,105 @@ test("Sync v2 journals and idempotency replays stay isolated by principal and te
       tenant: string,
       body: unknown,
       idempotencyKey?: string,
-    ): Promise<Response> => fetch(`${address.origin}${path}`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-tb-principal": principal,
-        "x-tb-tenant": tenant,
-        ...(idempotencyKey === undefined ? {} : { "idempotency-key": idempotencyKey }),
-      },
-      body: JSON.stringify(body),
-    });
-    const open = async (principal: string, tenant: string): Promise<{ readonly checkpoint: string; readonly sessionId: number }> => {
+    ): Promise<Response> =>
+      fetch(`${address.origin}${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-tb-principal": principal,
+          "x-tb-tenant": tenant,
+          ...(idempotencyKey === undefined ? {} : { "idempotency-key": idempotencyKey }),
+        },
+        body: JSON.stringify(body),
+      });
+    const open = async (
+      principal: string,
+      tenant: string,
+    ): Promise<{ readonly checkpoint: string; readonly sessionId: number }> => {
       const response = await post("/v1/sync/sessions", principal, tenant, { collection: "shared" });
       assert.equal(response.status, 200);
-      return await response.json() as { readonly checkpoint: string; readonly sessionId: number };
+      return (await response.json()) as { readonly checkpoint: string; readonly sessionId: number };
     };
     const sessionA = await open("principal-a", "tenant-a");
     const sessionB = await open("principal-b", "tenant-b");
     const mutationA = { document: "document-a", change: { put: [{ name: "owner", value: "a" }] } };
     const mutationB = { document: "document-b", change: { put: [{ name: "owner", value: "b" }] } };
-    const appliedA = await post(`/v1/sync/sessions/${sessionA.sessionId}/mutations`, "principal-a", "tenant-a", mutationA, "same-key");
-    const replayA = await post(`/v1/sync/sessions/${sessionA.sessionId}/mutations`, "principal-a", "tenant-a", mutationA, "same-key");
-    const appliedB = await post(`/v1/sync/sessions/${sessionB.sessionId}/mutations`, "principal-b", "tenant-b", mutationB, "same-key");
+    const appliedA = await post(
+      `/v1/sync/sessions/${sessionA.sessionId}/mutations`,
+      "principal-a",
+      "tenant-a",
+      mutationA,
+      "same-key",
+    );
+    const replayA = await post(
+      `/v1/sync/sessions/${sessionA.sessionId}/mutations`,
+      "principal-a",
+      "tenant-a",
+      mutationA,
+      "same-key",
+    );
+    const appliedB = await post(
+      `/v1/sync/sessions/${sessionB.sessionId}/mutations`,
+      "principal-b",
+      "tenant-b",
+      mutationB,
+      "same-key",
+    );
     assert.equal(appliedA.status, 200);
     assert.deepEqual(await replayA.json(), await appliedA.clone().json());
     assert.equal(appliedB.status, 200);
 
-    const deltaA = await post(`/v1/sync/sessions/${sessionA.sessionId}/delta`, "principal-a", "tenant-a", { from: sessionA.checkpoint });
-    const deltaB = await post(`/v1/sync/sessions/${sessionB.sessionId}/delta`, "principal-b", "tenant-b", { from: sessionB.checkpoint });
-    const bodyA = await deltaA.json() as { readonly commits: number; readonly payload: string };
-    const bodyB = await deltaB.json() as { readonly commits: number; readonly payload: string };
+    const deltaA = await post(
+      `/v1/sync/sessions/${sessionA.sessionId}/delta`,
+      "principal-a",
+      "tenant-a",
+      { from: sessionA.checkpoint },
+    );
+    const deltaB = await post(
+      `/v1/sync/sessions/${sessionB.sessionId}/delta`,
+      "principal-b",
+      "tenant-b",
+      { from: sessionB.checkpoint },
+    );
+    const bodyA = (await deltaA.json()) as { readonly commits: number; readonly payload: string };
+    const bodyB = (await deltaB.json()) as { readonly commits: number; readonly payload: string };
     assert.equal(bodyA.commits, 1);
     assert.equal(bodyB.commits, 1);
-    assert.equal(Buffer.from(bodyA.payload, "base64").toString("utf8").includes("document-a"), true);
-    assert.equal(Buffer.from(bodyA.payload, "base64").toString("utf8").includes("document-b"), false);
-    assert.equal(Buffer.from(bodyB.payload, "base64").toString("utf8").includes("document-b"), true);
-    assert.equal(Buffer.from(bodyB.payload, "base64").toString("utf8").includes("document-a"), false);
+    assert.equal(
+      Buffer.from(bodyA.payload, "base64").toString("utf8").includes("document-a"),
+      true,
+    );
+    assert.equal(
+      Buffer.from(bodyA.payload, "base64").toString("utf8").includes("document-b"),
+      false,
+    );
+    assert.equal(
+      Buffer.from(bodyB.payload, "base64").toString("utf8").includes("document-b"),
+      true,
+    );
+    assert.equal(
+      Buffer.from(bodyB.payload, "base64").toString("utf8").includes("document-a"),
+      false,
+    );
   });
 });
 
 test("reset and close disconnect every registered Sync session", async () => {
   await withTempRuntime(async (runtime) => {
-    const createV1 = () => runtime.createSyncV1Session({
-      DatabaseId: knownUserId,
-      EnvironmentId: knownUserId,
-      Tenant: "tenant-lifecycle",
-      AuthorizationScope: "local",
-      BearerTokenProvider: async () => "local-token",
-    });
+    const createV1 = () =>
+      runtime.createSyncV1Session({
+        DatabaseId: knownUserId,
+        EnvironmentId: knownUserId,
+        Tenant: "tenant-lifecycle",
+        AuthorizationScope: "local",
+        BearerTokenProvider: async () => "local-token",
+      });
     const resetV1 = createV1();
-    const resetV2 = runtime.createSyncV2Session({ Collection: "tasks", Principal: "user-reset", Tenant: "tenant-lifecycle" });
+    const resetV2 = runtime.createSyncV2Session({
+      Collection: "tasks",
+      Principal: "user-reset",
+      Tenant: "tenant-lifecycle",
+    });
     await resetV1.connect();
     await resetV2.connect();
     await runtime.reset();
@@ -287,7 +552,11 @@ test("reset and close disconnect every registered Sync session", async () => {
     assert.equal(resetV2.getStatus(), "closed");
 
     const closeV1 = createV1();
-    const closeV2 = runtime.createSyncV2Session({ Collection: "tasks", Principal: "user-close", Tenant: "tenant-lifecycle" });
+    const closeV2 = runtime.createSyncV2Session({
+      Collection: "tasks",
+      Principal: "user-close",
+      Tenant: "tenant-lifecycle",
+    });
     await closeV1.connect();
     await closeV2.connect();
     await runtime.close();
@@ -301,21 +570,42 @@ test("project deletion cascades every project-scoped core resource", async () =>
   await withTempRuntime(async (runtime, databasePath) => {
     const root = runtime.createClient();
     const organization = expectOk(await root.organizations.create({ name: "Cascade org" }));
-    const project = expectOk(await root.organizations.createProject(organization.organizationId, {
-      name: "Cascade project", regions: ["local" as TerraScaleRegionCode], backupRegion: "local" as TerraScaleRegionCode,
-    }));
+    const project = expectOk(
+      await root.organizations.createProject(organization.organizationId, {
+        name: "Cascade project",
+        regions: ["GRU"],
+        backupRegion: "GRU",
+      }),
+    );
     const scoped = runtime.createClient({ projectId: project.projectId });
     const database = expectOk(await scoped.databases.create({ name: "Cascade database" }));
-    const repository = expectOk(await scoped.repositories.create({ name: "Cascade repository", databaseId: database.databaseId }));
-    expectOk(await scoped.documents.create({ repositoryId: repository.repositoryId }, { retained: false }));
-    expectOk(await scoped.backups.planBackup(database.databaseId, { operationSessionId: "cascade-plan" }));
-    const deleted = expectOk(await root.organizations.deleteProject(project.projectId, { confirm: true, projectName: project.name }));
+    const repository = expectOk(
+      await scoped.repositories.create({
+        name: "Cascade repository",
+        databaseId: database.databaseId,
+      }),
+    );
+    expectOk(
+      await scoped.documents.create({ repositoryId: repository.repositoryId }, { retained: false }),
+    );
+    const queue = expectOk(await scoped.queues.create({ name: "cascade-queue", kind: "queue" }));
+    expectOk(
+      await scoped.backups.planBackup(database.databaseId, { operationSessionId: "cascade-plan" }),
+    );
+    const deleted = expectOk(
+      await root.organizations.deleteProject(project.projectId, {
+        confirm: true,
+        projectName: project.name,
+      }),
+    );
     assert.equal(deleted.databasesDeleted, 1);
+    assert.equal(deleted.queuesDeleted, 1);
     assert.equal(deleted.physicalStorageDeleted, true);
     for (const result of [
       await root.organizations.getProject(project.projectId),
       await scoped.databases.get(database.databaseId),
       await scoped.repositories.get({ repositoryId: repository.repositoryId }),
+      await scoped.queues.get(queue.queueId),
     ]) {
       assert.equal(result.ok, false);
       if (!result.ok) assert.equal(result.error.status, 404);
@@ -348,26 +638,44 @@ test("runtime clients enforce project isolation and idempotency fingerprints", a
   await withTempRuntime(async (runtime) => {
     const root = runtime.createClient();
     const organization = expectOk(await root.organizations.create({ name: "Isolation org" }));
-    const projectA = expectOk(await root.organizations.createProject(organization.organizationId, {
-      name: "Project A", regions: ["local" as TerraScaleRegionCode], backupRegion: "local" as TerraScaleRegionCode,
-    }));
-    const projectB = expectOk(await root.organizations.createProject(organization.organizationId, {
-      name: "Project B", regions: ["local" as TerraScaleRegionCode], backupRegion: "local" as TerraScaleRegionCode,
-    }));
+    const projectA = expectOk(
+      await root.organizations.createProject(organization.organizationId, {
+        name: "Project A",
+        regions: ["GRU"],
+        backupRegion: "GRU",
+      }),
+    );
+    const projectB = expectOk(
+      await root.organizations.createProject(organization.organizationId, {
+        name: "Project B",
+        regions: ["GRU"],
+        backupRegion: "GRU",
+      }),
+    );
     const clientA = runtime.createClient({ projectId: projectA.projectId });
     const clientB = runtime.createClient({ projectId: projectB.projectId });
     const databaseB = expectOk(await clientB.databases.create({ name: "B database" }));
-    const repositoryB = expectOk(await clientB.repositories.create({ name: "B repository", databaseId: databaseB.databaseId }));
-    expectOk(await clientB.documents.create({ repositoryId: repositoryB.repositoryId }, { project: "B" }));
+    const repositoryB = expectOk(
+      await clientB.repositories.create({ name: "B repository", databaseId: databaseB.databaseId }),
+    );
+    expectOk(
+      await clientB.documents.create({ repositoryId: repositoryB.repositoryId }, { project: "B" }),
+    );
     const crossProject = await clientA.documents.list({ repositoryId: repositoryB.repositoryId });
     assert.equal(crossProject.ok, false);
     if (!crossProject.ok) assert.equal(crossProject.error.status, 404);
 
-    const idempotentA = runtime.createClient({ projectId: projectA.projectId, idempotencyKeyFactory: () => "database-once" });
+    const idempotentA = runtime.createClient({
+      projectId: projectA.projectId,
+      idempotencyKeyFactory: () => "database-once",
+    });
     const first = expectOk(await idempotentA.databases.create({ name: "shared request" }));
     const replay = expectOk(await idempotentA.databases.create({ name: "shared request" }));
     assert.equal(replay.databaseId, first.databaseId);
-    const idempotentB = runtime.createClient({ projectId: projectB.projectId, idempotencyKeyFactory: () => "database-once" });
+    const idempotentB = runtime.createClient({
+      projectId: projectB.projectId,
+      idempotencyKeyFactory: () => "database-once",
+    });
     const isolated = expectOk(await idempotentB.databases.create({ name: "shared request" }));
     assert.notEqual(isolated.databaseId, first.databaseId);
     const reused = await idempotentA.databases.create({ name: "different" });

@@ -7,9 +7,14 @@ import type {
   CreateDatabaseBranchRequest,
   DatabaseBranchCapabilityResponse,
   DeleteProjectDatabaseOptions,
+  CreateProjectQueueRequest,
   ProjectSavedQueryPageRequest,
   ProjectSavedQueryPageResponse,
   ProjectSavedQueryResponse,
+  ProjectQueue,
+  ProjectQueuePeekMessage,
+  ProjectQueueReceipt,
+  QueuePurgeResult,
   TeamMember,
   Timestamp,
   UpdateProjectSavedQueryRequest,
@@ -20,6 +25,7 @@ import type {
   DatabasesClient,
   DocumentsClient,
   QueryClient,
+  QueuesClient,
   SavedQueriesClient,
 } from "./client.js";
 import type { TerraScaleClient } from "./factory.js";
@@ -27,15 +33,14 @@ import type { Ulid } from "./ids.js";
 import type { TerraScaleResult } from "./result.js";
 
 type Equal<Left, Right> =
-  (<Value>() => Value extends Left ? 1 : 2) extends (<Value>() => Value extends Right ? 1 : 2)
-    ? (<Value>() => Value extends Right ? 1 : 2) extends (<Value>() => Value extends Left ? 1 : 2)
+  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
+    ? (<Value>() => Value extends Right ? 1 : 2) extends <Value>() => Value extends Left ? 1 : 2
       ? true
       : false
     : false;
 type Assert<Condition extends true> = Condition;
-type MissingKey<Container, Key extends PropertyKey> = Extract<keyof Container, Key> extends never
-  ? true
-  : false;
+type MissingKey<Container, Key extends PropertyKey> =
+  Extract<keyof Container, Key> extends never ? true : false;
 type PublicSdk = typeof import("./index.js");
 
 type ExpectedSavedQueryResponse = {
@@ -51,6 +56,7 @@ type ExpectedSavedQueryResponse = {
 
 type ExpectedSavedQueryPage = {
   readonly items: readonly ProjectSavedQueryResponse[];
+  readonly totalCount: number;
   readonly nextCursor: string | null;
 };
 
@@ -75,14 +81,35 @@ type ExpectedCreateDatabaseBranchRequest = {
   readonly sourceDatabaseId?: Ulid;
 };
 
+type ExpectedProjectQueueRetention = {
+  readonly retentionSeconds: number | null;
+};
+
+type ExpectedProjectQueuePeekCreatedAt = {
+  readonly createdAt: Timestamp | null;
+};
+
 const staticSdkParity: readonly [
-  Assert<Equal<ProjectSavedQueryPageRequest, { readonly cursor?: string; readonly skip?: number; readonly take?: number }>>,
+  Assert<
+    Equal<
+      ProjectSavedQueryPageRequest,
+      { readonly cursor?: string; readonly skip?: number; readonly take?: number }
+    >
+  >,
   Assert<Equal<ProjectSavedQueryPageResponse, ExpectedSavedQueryPage>>,
   Assert<Equal<ProjectSavedQueryResponse, ExpectedSavedQueryResponse>>,
   Assert<Equal<Pick<UpdateProjectSavedQueryRequest, "revision">, { readonly revision: string }>>,
   Assert<Equal<DatabaseBranchCapabilityResponse, ExpectedDatabaseBranchCapability>>,
   Assert<Equal<CreateDatabaseBranchRequest, ExpectedCreateDatabaseBranchRequest>>,
-  Assert<Equal<DatabaseBranchesClient["requestClone"], (request: ExpectedCreateDatabaseBranchRequest, projectId?: Ulid) => Promise<TerraScaleResult<never>>>>,
+  Assert<
+    Equal<
+      DatabaseBranchesClient["requestClone"],
+      (
+        request: ExpectedCreateDatabaseBranchRequest,
+        projectId?: Ulid,
+      ) => Promise<TerraScaleResult<never>>
+    >
+  >,
   Assert<Equal<TeamMember, ExpectedProjectTeamMember>>,
   Assert<MissingKey<TerraScaleClient, "request">>,
   Assert<MissingKey<PublicSdk, "TerraScaleHttp">>,
@@ -92,14 +119,49 @@ const staticSdkParity: readonly [
   Assert<MissingKey<BackupsClient, "triggerBackup">>,
   Assert<Equal<Parameters<DatabasesClient["delete"]>["length"], 2>>,
   Assert<Equal<Parameters<DatabasesClient["delete"]>[1], DeleteProjectDatabaseOptions>>,
-] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
+  Assert<Equal<Parameters<QueuesClient["create"]>[0], CreateProjectQueueRequest>>,
+  Assert<
+    Equal<Awaited<ReturnType<QueuesClient["list"]>>, TerraScaleResult<readonly ProjectQueue[]>>
+  >,
+  Assert<Equal<Pick<ProjectQueue, "retentionSeconds">, ExpectedProjectQueueRetention>>,
+  Assert<Equal<Pick<ProjectQueuePeekMessage, "createdAt">, ExpectedProjectQueuePeekCreatedAt>>,
+  Assert<Equal<Parameters<QueuesClient["complete"]>[1], ProjectQueueReceipt>>,
+  Assert<Equal<Awaited<ReturnType<QueuesClient["purge"]>>, TerraScaleResult<QueuePurgeResult>>>,
+] = [
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+];
 void staticSdkParity;
 
 describe("public schema parity", () => {
   test("keeps saved-query revision and page routes in the generated descriptor", async () => {
     const descriptor = await readDescriptor();
-    const list = descriptor.routes.find(({ operationId }) => operationId === "ListProjectSavedQueries");
-    const update = descriptor.routes.find(({ operationId }) => operationId === "UpdateProjectSavedQuery");
+    const list = descriptor.routes.find(
+      ({ operationId }) => operationId === "ListProjectSavedQueries",
+    );
+    const update = descriptor.routes.find(
+      ({ operationId }) => operationId === "UpdateProjectSavedQuery",
+    );
 
     assert.equal(list?.method, "GET");
     assert.equal(list?.pathTemplate, "/api/v1/projects/{projectId}/saved-queries");
@@ -109,22 +171,62 @@ describe("public schema parity", () => {
 
   test("keeps physical database branching routes pinned", async () => {
     const descriptor = await readDescriptor();
-    const capability = descriptor.routes.find(({ operationId }) => operationId === "GetDatabaseBranchCapability");
-    const clone = descriptor.routes.find(({ operationId }) => operationId === "CreateDatabaseBranch");
+    const capability = descriptor.routes.find(
+      ({ operationId }) => operationId === "GetDatabaseBranchCapability",
+    );
+    const clone = descriptor.routes.find(
+      ({ operationId }) => operationId === "CreateDatabaseBranch",
+    );
 
     assert.equal(capability?.method, "GET");
-    assert.equal(capability?.pathTemplate, "/api/v1/projects/{projectId}/database-branches/capability");
+    assert.equal(
+      capability?.pathTemplate,
+      "/api/v1/projects/{projectId}/database-branches/capability",
+    );
     assert.equal(clone?.method, "POST");
     assert.equal(clone?.pathTemplate, "/api/v1/projects/{projectId}/database-branches");
+  });
+
+  test("keeps all typed project queue routes in the generated descriptor", async () => {
+    const descriptor = await readDescriptor();
+    const routes = descriptor.routes.filter(({ client }) => client === "queues");
+
+    assert.equal(routes.length, 12);
+    assert.deepEqual(routes.map(({ routeName }) => routeName).sort(), [
+      "queues.abandon",
+      "queues.complete",
+      "queues.create",
+      "queues.deadLetter",
+      "queues.delete",
+      "queues.get",
+      "queues.list",
+      "queues.peek",
+      "queues.publish",
+      "queues.purge",
+      "queues.receive",
+      "queues.renewLock",
+    ]);
   });
 });
 
 async function readDescriptor(): Promise<{
-  readonly routes: readonly { readonly operationId: string; readonly method: string; readonly pathTemplate: string }[];
+  readonly routes: readonly {
+    readonly client: string;
+    readonly operationId: string;
+    readonly method: string;
+    readonly pathTemplate: string;
+    readonly routeName: string;
+  }[];
 }> {
   return JSON.parse(
     await readFile(new URL("../sdk-openapi-contract-descriptor.json", import.meta.url), "utf8"),
   ) as {
-    readonly routes: readonly { readonly operationId: string; readonly method: string; readonly pathTemplate: string }[];
+    readonly routes: readonly {
+      readonly client: string;
+      readonly operationId: string;
+      readonly method: string;
+      readonly pathTemplate: string;
+      readonly routeName: string;
+    }[];
   };
 }

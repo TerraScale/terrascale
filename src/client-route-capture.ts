@@ -17,6 +17,7 @@ const sampleIds = {
   notificationId: toUlid("01DRZ3NDEKTSV4RRFFQ69G5FAV"),
   organizationId: toUlid("01ERZ3NDEKTSV4RRFFQ69G5FAV"),
   projectId: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+  queueId: toUlid("01PRZ3NDEKTSV4RRFFQ69G5FAV"),
   repositoryId: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAY"),
   restoreId: toUlid("01MRZ3NDEKTSV4RRFFQ69G5FAV"),
   savedQueryId: toUlid("01SRZ3NDEKTSV4RRFFQ69G5FAV"),
@@ -26,7 +27,7 @@ const sampleIds = {
 const pathTemplateSegments = new Map<string, string>(
   Object.entries(sampleIds).map(([name, value]) => [value, `{${name}}`]),
 );
-pathTemplateSegments.set("sfo", "{regionCode}");
+pathTemplateSegments.set("SFO", "{regionCode}");
 
 export type CapturedSdkRoute = {
   readonly base: TerraScaleBase;
@@ -268,8 +269,8 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) =>
       client.onboarding.createProject({
         name: "Primary",
-        regions: ["gru"],
-        backupRegion: "gru",
+        regions: ["GRU"],
+        backupRegion: "GRU",
       }),
   },
   {
@@ -341,8 +342,8 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) =>
       client.organizations.createProject(sampleIds.organizationId, {
         name: "Primary",
-        regions: ["gru"],
-        backupRegion: "gru",
+        regions: ["GRU"],
+        backupRegion: "GRU",
       }),
   },
   {
@@ -363,7 +364,7 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (client) =>
       client.organizations.updateProject(sampleIds.projectId, {
         name: "Core",
-        backupRegion: "gru",
+        backupRegion: "GRU",
       }),
   },
   {
@@ -424,7 +425,7 @@ const captureOperations: readonly CaptureOperation[] = [
   {
     client: "regions",
     operation: "get",
-    invoke: (client) => client.regions.get("sfo"),
+    invoke: (client) => client.regions.get("SFO"),
   },
   {
     client: "savedQueries",
@@ -501,6 +502,83 @@ const captureOperations: readonly CaptureOperation[] = [
     operation: "requestClone",
     defaultProject: true,
     invoke: (client) => client.databaseBranches.requestClone({ sourceDatabaseId: sampleIds.databaseId }),
+  },
+  {
+    client: "queues",
+    operation: "list",
+    defaultProject: true,
+    invoke: (client) => client.queues.list(),
+  },
+  {
+    client: "queues",
+    operation: "create",
+    defaultProject: true,
+    invoke: (client) => client.queues.create({ name: "jobs", kind: "queue" }),
+  },
+  {
+    client: "queues",
+    operation: "get",
+    defaultProject: true,
+    invoke: (client) => client.queues.get(sampleIds.queueId),
+  },
+  {
+    client: "queues",
+    operation: "delete",
+    defaultProject: true,
+    invoke: (client) => client.queues.delete(sampleIds.queueId),
+  },
+  {
+    client: "queues",
+    operation: "purge",
+    defaultProject: true,
+    invoke: (client) => client.queues.purge(sampleIds.queueId),
+  },
+  {
+    client: "queues",
+    operation: "publish",
+    defaultProject: true,
+    invoke: (client) => client.queues.publish(sampleIds.queueId, { data: { task: "index" } }),
+  },
+  {
+    client: "queues",
+    operation: "peek",
+    defaultProject: true,
+    invoke: (client) => client.queues.peek(sampleIds.queueId),
+  },
+  {
+    client: "queues",
+    operation: "receive",
+    defaultProject: true,
+    invoke: (client) =>
+      client.queues.receive(sampleIds.queueId, { consumerName: "worker", maxMessages: 1 }),
+  },
+  {
+    client: "queues",
+    operation: "complete",
+    defaultProject: true,
+    invoke: (client) =>
+      client.queues.complete(sampleIds.queueId, { receipt: "opaque", region: "SFO" }),
+  },
+  {
+    client: "queues",
+    operation: "abandon",
+    defaultProject: true,
+    invoke: (client) =>
+      client.queues.abandon(sampleIds.queueId, { receipt: "opaque", region: "SFO" }, 1),
+  },
+  {
+    client: "queues",
+    operation: "deadLetter",
+    defaultProject: true,
+    invoke: (client) =>
+      client.queues.deadLetter(sampleIds.queueId, { receipt: "opaque", region: "SFO" }),
+  },
+  {
+    client: "queues",
+    operation: "renewLock",
+    defaultProject: true,
+    invoke: (client) =>
+      client.queues.renewLock(sampleIds.queueId, { receipt: "opaque", region: "SFO" }),
   },
   {
     client: "databases",

@@ -1,8 +1,14 @@
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export async function generateOpenApiContractDescriptor({ manifestPath, specPath }) {
-  const [manifest, spec] = await Promise.all([readJson(manifestPath), readJson(specPath)]);
+  const [manifestBytes, specBytes] = await Promise.all([
+    readFile(path.resolve(process.cwd(), manifestPath)),
+    readFile(path.resolve(process.cwd(), specPath)),
+  ]);
+  const manifest = JSON.parse(manifestBytes.toString("utf8"));
+  const spec = JSON.parse(specBytes.toString("utf8"));
   if (!Array.isArray(manifest.routes) || !spec.paths || typeof spec.paths !== "object") {
     throw new Error("Route manifest and OpenAPI spec must contain routes and paths.");
   }
@@ -38,7 +44,15 @@ export async function generateOpenApiContractDescriptor({ manifestPath, specPath
     }, spec);
   }).sort((left, right) => `${left.method} ${left.pathTemplate} ${left.routeName}`.localeCompare(`${right.method} ${right.pathTemplate} ${right.routeName}`));
 
-  return canonicalize({ descriptorVersion: 1, routeCount: routes.length, routes }, spec);
+  return canonicalize({
+    descriptorVersion: 2,
+    routeCount: routes.length,
+    routes,
+    sources: {
+      openApiSha256: sha256(specBytes),
+      routeManifestSha256: sha256(manifestBytes),
+    },
+  }, spec);
 }
 
 function assertSdkContract(route, request, responses) {
@@ -129,6 +143,6 @@ function resolveSchema(value, spec) {
   return resolved;
 }
 
-async function readJson(filePath) {
-  return JSON.parse(await readFile(path.resolve(process.cwd(), filePath), "utf8"));
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
 }

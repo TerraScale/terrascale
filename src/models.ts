@@ -9,6 +9,7 @@ import type {
   NotificationId,
   OrganizationId,
   ProjectId,
+  QueueId,
   RepositoryId,
   RestoreId,
   Ulid,
@@ -35,10 +36,7 @@ export type RegionSummary = {
   readonly available: boolean;
 };
 
-export type RegionDetails = RegionSummary & {
-  readonly ociRegionCode: string;
-  readonly clusterNodeTag: string;
-};
+export type RegionDetails = RegionSummary;
 
 export type RegionsResponse = {
   readonly regions: readonly RegionSummary[];
@@ -75,9 +73,7 @@ export type Organization = {
   readonly createdAt: Timestamp;
 };
 
-export type OrganizationStatus =
-  | "Active"
-  | "DeletionPending";
+export type OrganizationStatus = "Active" | "DeletionPending";
 
 export type OrganizationMemberRole = "Member" | "OrganizationOwner";
 
@@ -151,19 +147,11 @@ export type CreateProjectRequest = {
   readonly slug?: string;
 };
 
-export type OnboardingStep =
-  | "organization"
-  | "project"
-  | "invitation"
-  | "complete";
+export type OnboardingStep = "organization" | "project" | "invitation" | "complete";
 
 export type OnboardingJourneyType = "developer" | "invitation";
 
-export type OnboardingStatus =
-  | "not-started"
-  | "in-progress"
-  | "ready-for-project"
-  | "completed";
+export type OnboardingStatus = "not-started" | "in-progress" | "ready-for-project" | "completed";
 
 export type OnboardingStepState = {
   readonly key: Exclude<OnboardingStep, "complete">;
@@ -217,6 +205,7 @@ export type DeletedProject = {
   readonly name: string;
   readonly deleted: boolean;
   readonly databasesDeleted: number;
+  readonly queuesDeleted: number;
   readonly physicalStorageDeleted: boolean;
 };
 
@@ -247,7 +236,13 @@ export type CreateInvitationRequest = {
 };
 
 export type EnvironmentKind = "Custom" | "Dev" | "Preview" | "Prod";
-export type EnvironmentStatus = "Active" | "Deleting" | "Deleted" | "Expired" | "Merged" | "Merging";
+export type EnvironmentStatus =
+  | "Active"
+  | "Deleting"
+  | "Deleted"
+  | "Expired"
+  | "Merged"
+  | "Merging";
 export type EnvironmentDeletionStatus = "Completed" | "Requested" | "RetryScheduled";
 
 export type ProjectDatabase = {
@@ -316,6 +311,7 @@ export type UpdateProjectSavedQueryRequest = ProjectSavedQueryRequest & {
 };
 
 export type ProjectSavedQueryPageRequest = {
+  /** Continuation offset returned by the previous page. */
   readonly cursor?: string;
   readonly skip?: number;
   readonly take?: number;
@@ -323,6 +319,7 @@ export type ProjectSavedQueryPageRequest = {
 
 export type ProjectSavedQueryPageResponse = {
   readonly items: readonly ProjectSavedQueryResponse[];
+  readonly totalCount: number;
   readonly nextCursor: string | null;
 };
 
@@ -340,6 +337,103 @@ export type DeletedProjectDatabaseResponse = {
   readonly environmentsDeleted: number;
   readonly physicalDatabasesDeleted: number;
   readonly repositoriesDeleted: number;
+};
+
+export type ProjectQueue = {
+  readonly queueId: QueueId;
+  readonly projectId: ProjectId;
+  readonly name: string;
+  readonly kind: "Queue" | "Topic";
+  readonly messages: number;
+  readonly storageBytes: number;
+  readonly consumerCount: number;
+  readonly replicas: number;
+  readonly fifo: boolean;
+  readonly partitionCount: number;
+  readonly retentionSeconds: number | null;
+  readonly createdAt: Timestamp;
+};
+
+export type CreateProjectQueueRequest = {
+  readonly name: string;
+  readonly kind: "queue" | "topic";
+  readonly description?: string;
+  readonly retentionSeconds?: number;
+  readonly maxMessageSizeBytes?: number;
+  readonly fifo?: boolean;
+  readonly partitionCount?: number;
+  readonly duplicateDetectionSeconds?: number;
+};
+
+export type PublishProjectQueueMessageRequest = {
+  readonly data: JsonValue;
+  readonly idempotencyKey?: string;
+  readonly partitionKey?: string;
+  readonly delaySeconds?: number;
+  readonly timeToLiveSeconds?: number;
+};
+
+export type ProjectQueuePublishResult = {
+  readonly messageId: string;
+  readonly sequence: number;
+  readonly publishedAt: Timestamp;
+  readonly duplicate: boolean;
+};
+
+export type ProjectQueuePeekMessage = {
+  readonly messageId: string;
+  readonly data: JsonValue;
+  readonly contentType: string;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly sequence: number;
+  readonly createdAt: Timestamp | null;
+};
+
+export type ProjectQueueDeliveryGuarantee = "at-least-once";
+
+export type ReceiveProjectQueueMessagesRequest = {
+  readonly consumerName: string;
+  readonly maxMessages?: number;
+  readonly waitSeconds?: number;
+  readonly lockSeconds?: number;
+};
+
+export type ProjectQueueReceipt = {
+  readonly receipt: string;
+  readonly region: TerraScaleRegionCode;
+};
+
+export type ProjectQueueReceivedMessage = ProjectQueueReceipt & {
+  readonly messageId: string;
+  readonly data: JsonValue;
+  readonly contentType: string;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly streamSequence: number;
+  readonly consumerSequence: number;
+  readonly deliveryAttempt: number;
+  readonly receivedAt: Timestamp;
+  readonly lockedUntil: Timestamp;
+  readonly deliveryGuarantee: ProjectQueueDeliveryGuarantee;
+};
+
+export type ProjectQueueReceiptActionResult = {
+  readonly messageId: string;
+  readonly operation: "abandon" | "complete" | "dead-letter";
+  readonly accepted: boolean;
+  readonly safeToRetry: boolean;
+  readonly region: TerraScaleRegionCode;
+  readonly deliveryGuarantee: ProjectQueueDeliveryGuarantee;
+};
+
+export type ProjectQueueRenewLockResult = ProjectQueueReceipt & {
+  readonly messageId: string;
+  readonly lockedUntil: Timestamp;
+  readonly deliveryGuarantee: ProjectQueueDeliveryGuarantee;
+};
+
+export type QueuePurgeResult = {
+  readonly queueName: string;
+  readonly purgedMessages: number;
 };
 
 export type CreateDatabaseEnvironmentRequest = {

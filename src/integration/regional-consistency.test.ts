@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, test } from "node:test";
 
-import { createTerraScaleClient, resolveRuntimeConfig } from "../index.js";
+import {
+  createTerraScaleClient,
+  isRegionCode,
+  resolveRuntimeConfig,
+  type TerraScaleRegionCode,
+} from "../index.js";
 import { tryUlid } from "../ids.js";
 import {
   fixtureCredentialFingerprint,
@@ -20,10 +25,10 @@ const databaseId = tryUlid(process.env.TERRASCALE_E2E_DATABASE_ID ?? "");
 const repositoryId = tryUlid(process.env.TERRASCALE_E2E_REPOSITORY_ID ?? "");
 const documentId = tryUlid(process.env.TERRASCALE_E2E_DOCUMENT_ID ?? "");
 const leasePath = process.env.TERRASCALE_E2E_DOCUMENT_WRITE_LEASE;
-const routingRegion = process.env.TERRASCALE_E2E_ROUTING_REGION;
-const strictRegion = process.env.TERRASCALE_E2E_STRICT_REGION;
+const routingRegion = exactRegionFromEnvironment("TERRASCALE_E2E_ROUTING_REGION");
+const strictRegion = exactRegionFromEnvironment("TERRASCALE_E2E_STRICT_REGION");
 const strictApiBaseUrl = process.env.TERRASCALE_E2E_STRICT_API_BASE_URL;
-const unavailableRegion = process.env.TERRASCALE_E2E_UNAVAILABLE_REGION;
+const unavailableRegion = exactRegionFromEnvironment("TERRASCALE_E2E_UNAVAILABLE_REGION");
 const unavailableApiBaseUrl = process.env.TERRASCALE_E2E_UNAVAILABLE_API_BASE_URL;
 
 const fixtureSkipReason = missingFixtureConfiguration();
@@ -162,7 +167,7 @@ describe("real regional document consistency", { skip: fixtureSkipReason }, () =
           assert.ok(result.routing?.edgeRegion);
           assert.ok(result.routing?.servingRegion);
           assert.equal(result.routing?.routeMode, "preferred");
-          assert.equal(result.routing?.servingRegion, routingRegion!.trim().toLowerCase());
+          assert.equal(result.routing?.servingRegion, routingRegion);
           assert.equal(result.routing?.degraded, false);
         }
       },
@@ -176,7 +181,7 @@ describe("real regional document consistency", { skip: fixtureSkipReason }, () =
       regionAffinity: "strict",
       fetch: globalThis.fetch,
     });
-    assert.equal(new URL(resolved.apiBaseUrl).hostname, `${strictRegion}.api.terrascale.tech`);
+    assert.equal(new URL(resolved.apiBaseUrl).hostname, `${strictRegion!.toLowerCase()}.api.terrascale.tech`);
 
     const client = createTerraScaleClient({
       apiBaseUrl: strictApiBaseUrl!,
@@ -195,7 +200,7 @@ describe("real regional document consistency", { skip: fixtureSkipReason }, () =
         if (result.ok) {
           assert.ok(result.routing, "The strict endpoint must return routing observations.");
           assert.equal(result.routing?.routeMode, "regional-strict");
-          assert.equal(result.routing?.servingRegion, strictRegion!.trim().toLowerCase());
+          assert.equal(result.routing?.servingRegion, strictRegion);
           assert.equal(result.routing?.degraded, false);
         }
       },
@@ -210,7 +215,7 @@ describe("real regional document consistency", { skip: fixtureSkipReason }, () =
       regionAffinity: "strict",
       fetch: globalThis.fetch,
     });
-    assert.equal(new URL(resolved.apiBaseUrl).hostname, `${unavailableRegion}.api.terrascale.tech`);
+    assert.equal(new URL(resolved.apiBaseUrl).hostname, `${unavailableRegion!.toLowerCase()}.api.terrascale.tech`);
 
     const client = createTerraScaleClient({
       apiBaseUrl: unavailableApiBaseUrl!,
@@ -262,6 +267,11 @@ function missingFixtureConfiguration(): string | false {
   return missing.length === 0
     ? false
     : `Set dedicated real-API fixture configuration: ${missing.map(([name]) => name).join(", ")}.`;
+}
+
+function exactRegionFromEnvironment(name: string): TerraScaleRegionCode | undefined {
+  const value = process.env[name];
+  return isRegionCode(value) ? value : undefined;
 }
 
 function fixtureScope(

@@ -4,7 +4,7 @@
     "client": "src/client.ts",
     "capture": "src/client-route-capture.ts"
   },
-  "routeCount": 79,
+  "routeCount": 91,
   "routes": [
     {
       "base": "api",
@@ -71,9 +71,9 @@
           "shape": {
             "name": "Primary",
             "regions": [
-              "gru"
+              "GRU"
             ],
-            "backupRegion": "gru"
+            "backupRegion": "GRU"
           }
         },
         "headers": [
@@ -382,9 +382,9 @@
           "shape": {
             "name": "Primary",
             "regions": [
-              "gru"
+              "GRU"
             ],
-            "backupRegion": "gru"
+            "backupRegion": "GRU"
           }
         },
         "headers": [
@@ -464,7 +464,7 @@
           "kind": "json",
           "shape": {
             "name": "Core",
-            "backupRegion": "gru"
+            "backupRegion": "GRU"
           }
         },
         "headers": [
@@ -1021,6 +1021,388 @@
           {
             "name": "content-type",
             "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "list",
+      "routeName": "queues.list",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues",
+      "responseType": "readonly ProjectQueue[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "create",
+      "routeName": "queues.create",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues",
+      "requestType": "CreateProjectQueueRequest",
+      "responseType": "ProjectQueue",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "name": "jobs",
+            "kind": "queue"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "get",
+      "routeName": "queues.get",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}",
+      "responseType": "ProjectQueue",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "delete",
+      "routeName": "queues.delete",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}",
+      "responseType": "boolean",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "purge",
+      "routeName": "queues.purge",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:purge",
+      "responseType": "QueuePurgeResult",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "publish",
+      "routeName": "queues.publish",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:publish",
+      "requestType": "PublishProjectQueueMessageRequest",
+      "responseType": "ProjectQueuePublishResult",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "data": {
+              "task": "index"
+            }
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "peek",
+      "routeName": "queues.peek",
+      "method": "GET",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:peek",
+      "responseType": "readonly ProjectQueuePeekMessage[]",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": [
+          {
+            "name": "maxMessages",
+            "value": "10"
+          }
+        ]
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "receive",
+      "routeName": "queues.receive",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:receive",
+      "requestType": "ReceiveProjectQueueMessagesRequest",
+      "responseType": "readonly ProjectQueueReceivedMessage[]",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "consumerName": "worker",
+            "maxMessages": 1
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "complete",
+      "routeName": "queues.complete",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:complete",
+      "requestType": "json",
+      "responseType": "ProjectQueueReceiptActionResult",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "receipt": "opaque"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-preferred-region",
+            "value": "SFO"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "abandon",
+      "routeName": "queues.abandon",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:abandon",
+      "requestType": "json",
+      "responseType": "ProjectQueueReceiptActionResult",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "receipt": "opaque",
+            "delaySeconds": 1
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-preferred-region",
+            "value": "SFO"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "deadLetter",
+      "routeName": "queues.deadLetter",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:dead-letter",
+      "requestType": "json",
+      "responseType": "ProjectQueueReceiptActionResult",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "receipt": "opaque"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-preferred-region",
+            "value": "SFO"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "queues",
+      "operation": "renewLock",
+      "routeName": "queues.renewLock",
+      "method": "POST",
+      "pathTemplate": "/api/v1/projects/{projectId}/queues/{queueId}:renew-lock",
+      "requestType": "json",
+      "responseType": "ProjectQueueRenewLockResult",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "receipt": "opaque"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-preferred-region",
+            "value": "SFO"
           },
           {
             "name": "x-terrascale-project-id",

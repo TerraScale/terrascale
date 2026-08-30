@@ -16,6 +16,7 @@ export type UserId = Ulid;
 export type InvitationId = Ulid;
 export type BackupId = Ulid;
 export type BackupPolicyId = Ulid;
+export type QueueId = Ulid;
 export type NotificationId = Ulid;
 export type AuditEventId = Ulid;
 export type RestoreId = Ulid;

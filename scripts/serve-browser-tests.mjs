@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createReadStream, statSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -16,7 +16,9 @@ const contentTypes = new Map([
 ]);
 
 const packageWorkspace = await mkdtemp(path.join(tmpdir(), "terrascale-sdk-browser-package-"));
-const packageTarball = await packSdk(packageWorkspace);
+const packageTarball = process.env.TERRASCALE_BROWSER_CANDIDATE_TARBALL === undefined
+  ? await packSdk(packageWorkspace)
+  : await verifiedCandidateTarball(process.env.TERRASCALE_BROWSER_CANDIDATE_TARBALL);
 await run("tar", ["-xzf", packageTarball, "-C", packageWorkspace]);
 const packageRoot = path.join(packageWorkspace, "package");
 
@@ -58,6 +60,15 @@ async function packSdk(destination) {
   const tarball = path.join(destination, filename);
   await readFile(tarball);
   return tarball;
+}
+
+async function verifiedCandidateTarball(candidate) {
+  const resolved = path.resolve(root, candidate);
+  const [real, metadata] = await Promise.all([realpath(resolved), lstat(resolved)]);
+  if (real !== resolved || !metadata.isFile() || metadata.isSymbolicLink() || !resolved.endsWith(".tgz")) {
+    throw new Error("Browser qualification candidate must be a regular non-symlink npm tarball.");
+  }
+  return resolved;
 }
 
 function statIsFile(filePath) {

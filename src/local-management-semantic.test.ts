@@ -51,8 +51,8 @@ test("organizations, regions, and saved-query versions have real CRUD, isolation
   await withRuntime(async (runtime) => {
     const root = client(runtime);
     const regions = value(await root.regions.list());
-    assert.deepEqual(regions.regions.map((region) => region.code), ["gru", "sfo", "fra"]);
-    assert.equal(value(await root.regions.get(" GRU ")).code, "gru");
+    assert.deepEqual(regions.regions.map((region) => region.code), ["GRU", "SFO", "FRA"]);
+    assert.equal(value(await root.regions.get("GRU")).code, "GRU");
 
     const organization = value(await root.organizations.create({ name: "Semantic organization" }));
     const otherOrganization = value(await root.organizations.create({ name: "Isolated organization" }));
@@ -61,16 +61,16 @@ test("organizations, regions, and saved-query versions have real CRUD, isolation
     assert.equal(value(await root.organizations.update(organization.organizationId, { name: "Renamed organization" })).name, "Renamed organization");
 
     const project = value(await root.organizations.createProject(organization.organizationId, {
-      name: "Semantic project", slug: "semantic", regions: ["GRU", "sfo"], backupRegion: "gru",
+      name: "Semantic project", slug: "semantic", regions: ["GRU", "SFO"], backupRegion: "GRU",
     }));
     const otherProject = value(await root.organizations.createProject(otherOrganization.organizationId, {
-      name: "Other project", regions: ["fra"], backupRegion: "fra",
+      name: "Other project", regions: ["FRA"], backupRegion: "FRA",
     }));
     assert.deepEqual(value(await root.organizations.listProjects(organization.organizationId)).map((item) => item.projectId), [project.projectId]);
     assert.equal(value(await root.organizations.getProject(project.projectId)).name, "Semantic project");
-    assert.deepEqual(value(await root.organizations.listProjectRegionPlacements(project.projectId)).map((item) => item.region), ["gru", "sfo"]);
-    assert.equal(value(await root.organizations.updateProject(project.projectId, { name: "Updated project", regions: ["fra"], backupRegion: "fra" })).placementGeneration, 2);
-    assert.deepEqual(value(await root.organizations.listProjectRegionPlacements(project.projectId)).map((item) => item.region), ["fra"]);
+    assert.deepEqual(value(await root.organizations.listProjectRegionPlacements(project.projectId)).map((item) => item.region), ["GRU", "SFO"]);
+    assert.equal(value(await root.organizations.updateProject(project.projectId, { name: "Updated project", regions: ["FRA"], backupRegion: "FRA" })).placementGeneration, 2);
+    assert.deepEqual(value(await root.organizations.listProjectRegionPlacements(project.projectId)).map((item) => item.region), ["FRA"]);
 
     assert.equal(value(await root.organizations.listMembers(organization.organizationId)).length, 1);
     assert.equal(value(await root.organizations.updateMemberRole(organization.organizationId, userId, { role: "Member" })).role, "Member");
@@ -105,7 +105,9 @@ test("organizations, regions, and saved-query versions have real CRUD, isolation
     failure(await scoped.savedQueries.update(saved.savedQueryId, { name: "Stale", query: "from docs", revision: fetched.revision }), "conflict");
     const page = value(await scoped.savedQueries.list(undefined, { take: 10 }));
     assert.equal(page.items[0]?.revision, "3");
+    assert.equal(page.totalCount, 1);
     assert.equal(page.nextCursor, null);
+    failure(await scoped.savedQueries.list(undefined, { cursor: "10junk" }), "invalid_request");
     assert.equal(value(await scoped.savedQueries.delete(saved.savedQueryId)).deleted, true);
     assert.equal(value(await scoped.savedQueries.list()).items.length, 0);
     assert.equal(value(await client(runtime, otherProject.projectId).savedQueries.list()).items.length, 0);
@@ -123,7 +125,7 @@ test("access and usage persist through SQLite reopen", async () => {
     const root = client(first);
     const scoped = client(first, seed.projectId);
     const otherProject = value(await root.organizations.createProject(seed.organizationId, {
-      name: "Second project", regions: ["fra"], backupRegion: "fra",
+      name: "Second project", regions: ["FRA"], backupRegion: "FRA",
     }));
     const access = scoped.access;
     assert.equal(value(await access.listTeamMembers()).totalCount, 0);

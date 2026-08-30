@@ -79,12 +79,12 @@ test("AdminClient has semantic SQLite coverage across its complete public surfac
 
       const project = expectOk(await root.organizations.createProject(organizationId, {
         name: "Semantic Admin Project",
-        regions: ["local"],
-        backupRegion: "local",
+        regions: ["GRU"],
+        backupRegion: "GRU",
       }));
       projectId = project.projectId;
       assert.equal(project.organizationId, organizationId);
-      assert.deepEqual(project.regions, ["local"]);
+      assert.deepEqual(project.regions, ["GRU"]);
 
       const scopedRoot = runtime.createClient({ projectId });
       const database = expectOk(await scopedRoot.databases.create({ name: "Semantic Admin Database" }));

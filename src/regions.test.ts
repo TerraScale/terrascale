@@ -6,39 +6,80 @@ import {
   findRegion,
   isRegionCode,
   normalizeRegionCodes,
+  parseRegionCode,
+  terraScaleRegionCodes,
   terraScaleRegions,
 } from "./regions.js";
 
-describe("region catalog", () => {
-  test("exposes the public three-region contract", () => {
+describe("RegionCode contract", () => {
+  test("exposes only the three registered uppercase codes", () => {
+    assert.deepEqual(terraScaleRegionCodes, ["GRU", "SFO", "FRA"]);
     assert.deepEqual(
       terraScaleRegions.map((region) => region.code),
-      ["gru", "sfo", "fra"],
+      ["GRU", "SFO", "FRA"],
     );
+    for (const region of terraScaleRegions) {
+      assert.equal(Object.hasOwn(region, "ociRegionCode"), false);
+      assert.equal(Object.hasOwn(region, "clusterNodeTag"), false);
+    }
   });
 
-  test("normalizes canonical request region codes only", () => {
+  test("accepts each registered code without changing it", () => {
+    for (const code of terraScaleRegionCodes) {
+      assert.equal(canonicalRegionCode(code), code);
+      assert.equal(parseRegionCode(code), code);
+      assert.equal(isRegionCode(code), true);
+      assert.equal(findRegion(code)?.code, code);
+    }
+  });
+
+  test("rejects lowercase, aliases, whitespace, wrong lengths, non-ASCII, and unregistered codes", () => {
+    const invalidCodes = [
+      "gru",
+      "sfo",
+      "fra",
+      "Gru",
+      "GRu",
+      "SJC",
+      " GRU",
+      "GRU ",
+      "GRU\n",
+      "",
+      "G",
+      "GR",
+      "GRUU",
+      "京",
+      "GÉ",
+      "JFK",
+      "ABC",
+      "ZZZ",
+    ];
+
+    for (const code of invalidCodes) {
+      assert.equal(canonicalRegionCode(code), undefined, code);
+      assert.equal(isRegionCode(code), false, code);
+      assert.equal(findRegion(code), undefined, code);
+      assert.throws(() => parseRegionCode(code), /exactly one of GRU, SFO, or FRA/u, code);
+    }
+    assert.equal(canonicalRegionCode(undefined), undefined);
+  });
+
+  test("deduplicates an exact selection in first-seen order", () => {
     assert.deepEqual(
-      normalizeRegionCodes(["GRU", "fra", " sfo ", "gru", "sfo"]),
-      ["gru", "fra", "sfo"],
+      normalizeRegionCodes(["GRU", "FRA", "SFO", "GRU", "SFO"]),
+      ["GRU", "FRA", "SFO"],
     );
   });
 
-  test("rejects retired region aliases", () => {
-    assert.equal(canonicalRegionCode("ashburn"), "ashburn");
-    assert.equal(findRegion("ashburn"), undefined);
-    assert.equal(findRegion("ord"), undefined);
-  });
-
-  test("treats only exact public codes as TerraScaleRegionCode values", () => {
-    assert.equal(isRegionCode("sfo"), true);
-    assert.equal(isRegionCode("SFO"), false);
-    assert.equal(isRegionCode("ashburn"), false);
-  });
-
-  test("keeps future and malformed codes for API validation", () => {
-    assert.deepEqual(normalizeRegionCodes(["iad"]), ["iad"]);
-    assert.deepEqual(normalizeRegionCodes(["", "not a region"]), ["not a region"]);
-    assert.deepEqual(normalizeRegionCodes(["", "  "]), ["gru"]);
+  test("rejects empty, oversized, or invalid selections instead of defaulting or normalizing", () => {
+    assert.throws(() => normalizeRegionCodes(undefined), /between 1 and 20/u);
+    assert.throws(() => normalizeRegionCodes([]), /between 1 and 20/u);
+    assert.throws(
+      () => normalizeRegionCodes(Array.from({ length: 21 }, () => "GRU")),
+      /between 1 and 20/u,
+    );
+    for (const selection of [["gru"], [" GRU "], ["SJC"], ["京"], ["GRU", "JFK"]]) {
+      assert.throws(() => normalizeRegionCodes(selection), /exactly one of GRU, SFO, or FRA/u);
+    }
   });
 });
