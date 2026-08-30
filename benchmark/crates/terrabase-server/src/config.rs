@@ -554,6 +554,7 @@ impl ServerConfig {
         }
         let mut databases = Vec::with_capacity(file.databases.len());
         let mut identities = BTreeSet::new();
+        let mut database_ids = BTreeSet::new();
         let mut projects = BTreeMap::new();
         let mut paths = Vec::with_capacity(file.databases.len() * 3);
         for entry in file.databases {
@@ -562,6 +563,7 @@ impl ServerConfig {
             let database = parse_ulid(&entry.database, ConfigError::InvalidProductionBoundary)?;
             let region = parse_region(&entry.region)?;
             if !identities.insert((tenant, project, database))
+                || !database_ids.insert(database)
                 || projects.insert(project, tenant).is_some_and(|owner| owner != tenant)
             {
                 return Err(ConfigError::InvalidProductionBoundary);
@@ -611,13 +613,15 @@ impl ServerConfig {
         }
 
         let placement = parse_placement(&file.placement, environment.member)?;
+        if production_regions_missing(&databases, &placement) {
+            return Err(ConfigError::InvalidProductionBoundary);
+        }
         let transport = parse_transport(&file.transport, &environment, &placement)?;
         paths.extend([
             transport.server_certificate.clone(),
             transport.server_private_key.clone(),
             transport.client_ca.clone(),
         ]);
-        reject_nested_paths(&paths)?;
         let release = parse_release(&file.release)?;
         let production = ProductionConfig { environment, databases, placement, transport, release };
         let first = production
@@ -631,13 +635,17 @@ impl ServerConfig {
             .transport
             .uds
             .map(|uds| {
-                absolute(&uds.path)?;
+                let path = production_path(&uds.path)?;
                 if uds.mode & !0o770 != 0 || uds.mode & 0o600 != 0o600 {
                     return Err(ConfigError::InvalidUdsMode);
                 }
-                Ok(UdsConfig { path: uds.path, mode: uds.mode })
+                Ok(UdsConfig { path, mode: uds.mode })
             })
             .transpose()?;
+        if let Some(uds) = &uds {
+            paths.push(uds.path.clone());
+        }
+        reject_nested_paths(&paths)?;
         Ok(Self {
             mode: ServerMode::Production,
             production: Some(production.clone()),
@@ -798,6 +806,13 @@ fn parse_transport(
         gateway_principals: file.gateway_principals.iter().cloned().collect(),
         peers,
     })
+}
+
+fn production_regions_missing(
+    databases: &[ProductionDatabase],
+    placement: &ProductionPlacement,
+) -> bool {
+    databases.iter().any(|database| !placement.regions.contains_key(&database.region))
 }
 
 fn production_socket(value: &str, allow_wildcard: bool) -> Result<SocketAddr, ConfigError> {
@@ -1110,6 +1125,96 @@ listen = "127.0.0.1:9464"
 allow_wildcard = false
 "#
         .to_owned()
+    }
+
+    fn production_valid() -> String {
+        r#"
+mode = "production"
+
+[environment]
+name = "prod"
+cluster = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+member = "01ARZ3NDEKTSV4RRFFQ69G5FAW"
+
+[[databases]]
+tenant = "01ARZ3NDEKTSV4RRFFQ69G5FAX"
+project = "01ARZ3NDEKTSV4RRFFQ69G5FAY"
+database = "01ARZ3NDEKTSV4RRFFQ69G5FAZ"
+region = "GRU"
+location = "/var/lib/terrabase/db-a"
+policy_journal = "/var/lib/terrabase/policy-a"
+backup_root = "/var/lib/terrabase/backup-a"
+encryption_provider = "oci-vault"
+encryption_key = "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+quotas = { max_storage_bytes = 1073741824, max_documents = 100000, max_inflight = 64 }
+enabled = true
+
+[placement]
+generation = 4
+epoch = 9
+regions = [
+  { region = "GRU", members = ["01ARZ3NDEKTSV4RRFFQ69G5FAW", "01ARZ3NDEKTSV4RRFFQ69G5FB1"] },
+  { region = "SFO", members = ["01ARZ3NDEKTSV4RRFFQ69G5FB2", "01ARZ3NDEKTSV4RRFFQ69G5FB3"] },
+]
+
+[transport]
+tbep_listen = "127.0.0.1:8421"
+quic_listen = "127.0.0.1:7421"
+metrics_listen = "127.0.0.1:9464"
+server_certificate = "/run/secrets/terrabase.crt"
+server_private_key = "/run/secrets/terrabase.key"
+client_ca = "/run/secrets/member-ca.crt"
+gateway_principals = ["spiffe://terrascale.tech/prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV"]
+peers = [
+  { member = "01ARZ3NDEKTSV4RRFFQ69G5FB1", endpoint = "127.0.0.1:7422", spiffe_identity = "spiffe://terrascale.tech/prod/terrabase-member/01ARZ3NDEKTSV4RRFFQ69G5FAV/01ARZ3NDEKTSV4RRFFQ69G5FB1" },
+  { member = "01ARZ3NDEKTSV4RRFFQ69G5FB2", endpoint = "127.0.0.1:7423", spiffe_identity = "spiffe://terrascale.tech/prod/terrabase-member/01ARZ3NDEKTSV4RRFFQ69G5FAV/01ARZ3NDEKTSV4RRFFQ69G5FB2" },
+  { member = "01ARZ3NDEKTSV4RRFFQ69G5FB3", endpoint = "127.0.0.1:7424", spiffe_identity = "spiffe://terrascale.tech/prod/terrabase-member/01ARZ3NDEKTSV4RRFFQ69G5FAV/01ARZ3NDEKTSV4RRFFQ69G5FB3" },
+]
+max_message_bytes = 16777216
+max_inflight = 128
+request_timeout_millis = 30000
+tls_handshake_timeout_millis = 5000
+shutdown_grace_millis = 30000
+
+[release]
+release = "terrabase-server-2026.08"
+capabilities = ["production", "tbep", "quic", "metrics", "oci-vault"]
+"#
+        .to_owned()
+    }
+
+    #[test]
+    fn production_configuration_builds_typed_catalog_and_bindings() {
+        let config = ServerConfig::parse(&production_valid()).expect("production config");
+        assert_eq!(config.mode, ServerMode::Production);
+        let production = config.production.expect("typed production config");
+        assert_eq!(production.databases.len(), 1);
+        assert_eq!(production.placement.generation, 4);
+        assert_eq!(production.placement.epoch, 9);
+        assert_eq!(production.transport.peers.len(), 3);
+        assert_eq!(production.release.capabilities.len(), 5);
+        assert_eq!(production.databases[0].encryption_provider, KeyProviderIdentity::OciVault);
+    }
+
+    #[test]
+    fn production_rejects_local_keys_duplicate_paths_and_wildcards() {
+        let local_key = production_valid()
+            .replace("encryption_provider = \"oci-vault\"", "encryption_provider = \"local-file\"");
+        assert!(matches!(
+            ServerConfig::parse(&local_key),
+            Err(ConfigError::LocalProviderInProduction)
+        ));
+        let duplicate = production_valid().replace(
+            "backup_root = \"/var/lib/terrabase/backup-a\"",
+            "backup_root = \"/var/lib/terrabase/db-a\"",
+        );
+        assert!(matches!(
+            ServerConfig::parse(&duplicate),
+            Err(ConfigError::DuplicateProductionPath)
+        ));
+        let wildcard = production_valid()
+            .replace("tbep_listen = \"127.0.0.1:8421\"", "tbep_listen = \"0.0.0.0:8421\"");
+        assert!(matches!(ServerConfig::parse(&wildcard), Err(ConfigError::InvalidListenAddress)));
     }
 
     #[test]

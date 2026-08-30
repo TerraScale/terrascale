@@ -391,6 +391,8 @@ mod tests {
     #[tokio::test]
     async fn configured_gateway_identity_reaches_secret_validation() {
         let config = ServerConfig {
+            mode: crate::config::ServerMode::LocalDevelopment,
+            production: None,
             engine_location: "/var/lib/terrabase".into(),
             tenant: "tenant-a".into(),
             project: "project-a".into(),
