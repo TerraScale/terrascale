@@ -328,7 +328,7 @@ impl SegmentReader {
         if self.cached.is_none() {
             self.cache_if_small();
         }
-        if let Some(cached) = self.cached_between(from, end) {
+        if let Some(cached) = self.cached_between(from, Some(end)) {
             return Ok(cached);
         }
         let start = from.map_or(20_u64, |from| self.seek_offset(from));
@@ -356,18 +356,6 @@ impl Drop for SegmentReader {
         if let Some(cached) = self.cached.take() {
             CACHED_ENTRIES.fetch_sub(cached.len(), std::sync::atomic::Ordering::Relaxed);
         }
-    }
-}
-
-    /// The offset of the first sparse anchor whose key is `>= bound`, or
-    /// the end of the record region when no anchor reaches `bound`.
-    fn stop_offset(&self, bound: &[u8]) -> u64 {
-        for (key, offset) in &self.sparse {
-            if key.as_slice() >= bound {
-                return *offset;
-            }
-        }
-        self.records_end
     }
 }
 
