@@ -13,6 +13,7 @@ permissions on one database-specific prefix:
 s3:ListBucket
 s3:GetObject
 s3:PutObject
+s3:PutObjectTagging
 ```
 
 Do not grant `s3:DeleteObject` to the normal backup workload. Configure these
@@ -23,8 +24,12 @@ controls on the bucket:
 - default encryption, preferably KMS for production;
 - object lock when the compliance policy requires it;
 - lifecycle cleanup for abandoned multipart uploads;
-- lifecycle expiration that never removes the full root of a retained
-  incremental chain.
+- lifecycle expiration filtered by the `terrabase-kind` object tag. Keep
+  `incremental` objects for the required restore window. Keep `full` objects
+  for that window plus at least the configured full-point interval, rounded
+  up to the provider's lifecycle granularity. For example, a 35-day restore
+  window with a 24-hour full interval uses at least 35 days for incrementals
+  and 36 days for full objects.
 
 Use a different prefix for every database. Mixing databases in one prefix
 fails closed because each manifest binds its database and partition.
@@ -82,6 +87,10 @@ store. Production endpoints must use HTTPS.
 and the full interval has not expired. "Create full point" forces a new
 self-contained point. Members upload concurrently. The manifest uploads last,
 so listing never presents an incomplete recovery point as committed.
+Studio tags every object in a full or snapshot point with
+`terrabase-kind=full` and every incremental object with
+`terrabase-kind=incremental`. The extra full-point retention keeps the root
+available for every incremental inside the promised restore window.
 
 Use "Verify the chain" after setup changes and during recovery drills. It
 downloads the selected chain, checks every bound length and SHA-256 digest,
@@ -121,4 +130,3 @@ only after topology, key, and frontier checks pass.
 Never restore into the active engine directory. Never run a second process
 that opens the active directory for backup. The S3 adapter must receive the
 live in-process `Engine` owned by the host.
-

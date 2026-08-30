@@ -28,6 +28,10 @@ use crate::state::StudioState;
 /// input and prevents a browser action from consuming unbounded memory while
 /// Axum deserializes it.
 const MAX_ACTION_BODY_BYTES: usize = 256 * 1024;
+const MAX_CONFIRMATION_TARGET_BYTES: usize = 1_024;
+const MAX_CONFIRMATION_PHRASE_BYTES: usize = 128;
+const CONFIRM_TARGET_FIELD: &str = "confirm_target";
+const CONFIRM_PHRASE_FIELD: &str = "confirm_phrase";
 
 /// The vendored Basecoat stylesheet, embedded so the binary is self-contained.
 const BASECOAT_CSS: &str = include_str!("../static/basecoat.css");
@@ -126,6 +130,10 @@ async fn security_headers(request: Request<Body>, next: Next) -> Response {
             .insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"));
         return response;
     }
+    let request = match reject_duplicate_confirmations(request).await {
+        Ok(request) => request,
+        Err(response) => return response,
+    };
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
     headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
@@ -135,6 +143,72 @@ async fn security_headers(request: Request<Body>, next: Next) -> Response {
         header::CONTENT_SECURITY_POLICY,
         HeaderValue::from_static(CONTENT_SECURITY_POLICY_VALUE),
     );
+    response
+}
+
+/// Rejects repeated confirmation fields before Axum's form decoder can apply
+/// last-value-wins semantics. The request body is restored unchanged for the
+/// normal extractor when no duplicate is present.
+async fn reject_duplicate_confirmations(request: Request<Body>) -> Result<Request<Body>, Response> {
+    if request.method() != axum::http::Method::POST
+        || !request
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.split(';').next().is_some_and(|kind| kind.trim() == "application/x-www-form-urlencoded"))
+    {
+        return Ok(request);
+    }
+    let (parts, body) = request.into_parts();
+    let body = match axum::body::to_bytes(body, MAX_ACTION_BODY_BYTES + 1).await {
+        Ok(body) if body.len() <= MAX_ACTION_BODY_BYTES => body,
+        Ok(_) => return Err(status_text(StatusCode::PAYLOAD_TOO_LARGE, "request body exceeds the Studio action limit\n")),
+        Err(_) => return Err(status_text(StatusCode::BAD_REQUEST, "request body could not be read\n")),
+    };
+    for field in [CONFIRM_TARGET_FIELD, CONFIRM_PHRASE_FIELD] {
+        if form_field_count(&body, field) > 1 {
+            return Err(status_text(StatusCode::BAD_REQUEST, "duplicate confirmation fields refused\n"));
+        }
+    }
+    Ok(Request::from_parts(parts, Body::from(body)))
+}
+
+fn form_field_count(body: &[u8], field: &str) -> usize {
+    body.split(|byte| *byte == b'&')
+        .filter(|pair| pair.split(|byte| *byte == b'=').next() == Some(field.as_bytes()))
+        .count()
+}
+
+/// Requires a bounded, already-normalized operator confirmation. Trimming is
+/// the sole normalization: any leading/trailing Unicode whitespace, control
+/// character, or oversized value is rejected rather than silently rewritten.
+/// Submitted values are never included in this error, journal, or metric.
+fn require_confirmation(
+    target: &str,
+    phrase: &str,
+    expected_target: &str,
+    expected_phrase: &str,
+) -> Result<(), String> {
+    if target.is_empty()
+        || target.len() > MAX_CONFIRMATION_TARGET_BYTES
+        || phrase.is_empty()
+        || phrase.len() > MAX_CONFIRMATION_PHRASE_BYTES
+        || target != target.trim()
+        || phrase != phrase.trim()
+        || target.chars().any(char::is_control)
+        || phrase.chars().any(char::is_control)
+    {
+        return Err("confirmation is missing, oversized, contains a control character, or is not normalized".to_owned());
+    }
+    if target != expected_target || phrase != expected_phrase {
+        return Err("confirmation does not match the requested target and action".to_owned());
+    }
+    Ok(())
+}
+
+fn status_text(status: StatusCode, body: &'static str) -> Response {
+    let mut response = text(body, "text/plain; charset=utf-8");
+    *response.status_mut() = status;
     response
 }
 
@@ -490,6 +564,8 @@ struct DeleteForm {
     tenant: String,
     collection: String,
     id: String,
+    confirm_target: String,
+    confirm_phrase: String,
 }
 
 async fn documents_delete(
@@ -499,6 +575,13 @@ async fn documents_delete(
     let refresh_state = Arc::clone(&state);
     let refresh_form = form.clone();
     let outcome = on_blocking(state, move |state| {
+        let confirmation_target = format!("{}/{}/{}", form.tenant, form.collection, form.id);
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            &confirmation_target,
+            "delete document",
+        )?;
         let tenant = engine_ops::tenant(&form.tenant)?;
         let collection = engine_ops::collection(&form.collection)?;
         let id = engine_ops::document_id(&form.id)?;

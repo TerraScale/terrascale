@@ -3,16 +3,15 @@
 This directory contains the versioned Prometheus scrape template, alert rules,
 and Grafana dashboard for TerraBase production metrics.
 
-`ts-orchestrator` supplies private authenticated targets, workload identity,
-network policy, and rollout configuration for the exact candidate. The
-checked-in target list stays empty because repository configuration cannot
-name a production Member. Do not expose `/internal/metrics` through the public
-Go gateway.
+`ts-orchestrator` supplies private targets, network policy, and rollout
+configuration for the exact candidate. The checked-in target list stays empty
+because repository configuration cannot name a production Member. Do not
+expose `/internal/metrics` through the public Go gateway.
 
-The scrape template requires TLS 1.3 and client authentication. The
-orchestrator mounts the private CA, Prometheus client certificate, and client
-key at the paths declared in `prometheus.yml`. Never replace those files with
-`insecure_skip_verify` or a public target during incident response.
+The scrape template uses plaintext HTTP with no application authentication,
+as required by ADR 0036. The orchestrator's private-network policy is the
+trust boundary. Never add a public target or route this listener through public
+ingress during incident response.
 
 Import `grafana-dashboard.json` into the operator Grafana instance and select
 its Prometheus data source. The dashboard has Region and operation filters and

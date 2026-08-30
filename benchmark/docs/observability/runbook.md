@@ -7,8 +7,8 @@ dashboard, and scrape path are deployed correctly.
 
 ## First response
 
-1. Confirm that Prometheus is scraping the private authenticated TerraBase
-   target and that the response content type is correct. Check the
+1. Confirm that Prometheus is scraping the private-network TerraBase target
+   over plaintext HTTP and that the response content type is correct. Check the
    `TerraBaseScrapeMissing` alert before trusting an empty dashboard.
 2. Check `terrabase_liveness`, `terrabase_started`, and `terrabase_ready`
    separately. A live process with `terrabase_ready 0` has withdrawn from
@@ -88,9 +88,8 @@ dashboard, and scrape path are deployed correctly.
 
 ## Safe actions
 
-- If the scrape fails, verify private routing, workload identity, and the
-  adapter's bounded timeout. Never make the endpoint public as a recovery
-  action.
+- If the scrape fails, verify private routing, network policy, and the adapter's
+  bounded timeout. Never make the endpoint public as a recovery action.
 - If readiness is false because storage is unhealthy, preserve the process
   and its WAL evidence. Follow the storage recovery procedure and record the
   exact candidate, topology, and time before a restart.

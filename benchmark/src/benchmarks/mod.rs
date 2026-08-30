@@ -81,6 +81,7 @@ mod lane_run;
 mod optimizer;
 mod record;
 mod reference;
+mod served_boundary;
 mod vocabulary;
 
 #[cfg(test)]

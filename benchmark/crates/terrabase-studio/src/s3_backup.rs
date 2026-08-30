@@ -15,7 +15,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use futures_util::{StreamExt, TryStreamExt, stream};
 use object_store::aws::AmazonS3Builder;
 use object_store::path::Path as ObjectPath;
-use object_store::{Error as ObjectStoreError, ObjectStore, ObjectStoreExt, PutMode, PutOptions};
+use object_store::{
+    Error as ObjectStoreError, ObjectStore, ObjectStoreExt, PutMode, PutOptions, TagSet,
+};
 use serde::{Deserialize, Serialize};
 use terrabase::backup::{BackupKind, BackupManifest, BackupResult, RecoveryReceipt};
 
@@ -315,12 +317,14 @@ impl S3BackupRepository {
         let identity = manifest.identity().to_owned();
         let local_point = destination.join(format!("rp-{identity}"));
         let repository = self.clone();
+        let tags = recovery_point_tags(&manifest);
         let members = manifest.members().to_vec();
         let uploads = stream::iter(members)
             .map(move |member| {
                 let repository = repository.clone();
                 let local_path = local_point.join(member.name());
                 let identity = identity.clone();
+                let tags = tags.clone();
                 async move {
                     let bytes = tokio::fs::read(&local_path)
                         .await
@@ -329,7 +333,11 @@ impl S3BackupRepository {
                         return Err("a staged backup member changed before upload".to_owned());
                     }
                     repository
-                        .put_immutable(repository.object_path(&identity, member.name()), bytes)
+                        .put_immutable(
+                            repository.object_path(&identity, member.name()),
+                            bytes,
+                            tags,
+                        )
                         .await
                 }
             })
@@ -346,7 +354,11 @@ impl S3BackupRepository {
         // The manifest is the commit marker. It must be the final object made
         // visible for a recovery point.
         if self
-            .put_immutable(self.object_path(manifest.identity(), MANIFEST_FILE), manifest.encode())
+            .put_immutable(
+                self.object_path(manifest.identity(), MANIFEST_FILE),
+                manifest.encode(),
+                recovery_point_tags(&manifest),
+            )
             .await?
         {
             uploaded += 1;
@@ -354,7 +366,12 @@ impl S3BackupRepository {
         Ok(uploaded)
     }
 
-    async fn put_immutable(&self, location: ObjectPath, bytes: Vec<u8>) -> Result<bool, String> {
+    async fn put_immutable(
+        &self,
+        location: ObjectPath,
+        bytes: Vec<u8>,
+        tags: TagSet,
+    ) -> Result<bool, String> {
         match self.store.head(&location).await {
             Ok(_) => {
                 let existing = self.read_object(&location, u64::MAX).await?;
@@ -366,7 +383,7 @@ impl S3BackupRepository {
             Err(ObjectStoreError::NotFound { .. }) => {}
             Err(error) => return Err(safe_store_error("inspect S3 object", error)),
         }
-        let options = PutOptions { mode: PutMode::Create, ..PutOptions::default() };
+        let options = PutOptions { mode: PutMode::Create, tags, ..PutOptions::default() };
         match self.store.put_opts(&location, bytes.clone().into(), options).await {
             Ok(_) => Ok(true),
             Err(ObjectStoreError::AlreadyExists { .. }) => {
@@ -808,6 +825,16 @@ fn manifest_order(left: &BackupManifest, right: &BackupManifest) -> std::cmp::Or
         ))
 }
 
+fn recovery_point_tags(manifest: &BackupManifest) -> TagSet {
+    let mut tags = TagSet::default();
+    let kind = match manifest.kind() {
+        BackupKind::Incremental { .. } => "incremental",
+        BackupKind::Full | BackupKind::Snapshot => "full",
+    };
+    tags.push("terrabase-kind", kind);
+    tags
+}
+
 fn safe_store_error(operation: &str, error: impl std::fmt::Display) -> String {
     format!("cannot {operation}: {error}")
 }
@@ -919,9 +946,24 @@ mod tests {
     async fn immutable_uploads_are_idempotent_and_refuse_replacement() {
         let repository = memory_repository(Arc::new(InMemory::new()));
         let location = repository.prefix.clone().join("object");
-        assert!(repository.put_immutable(location.clone(), b"same".to_vec()).await.unwrap());
-        assert!(!repository.put_immutable(location.clone(), b"same".to_vec()).await.unwrap());
-        assert!(repository.put_immutable(location, b"different".to_vec()).await.is_err());
+        assert!(
+            repository
+                .put_immutable(location.clone(), b"same".to_vec(), TagSet::default())
+                .await
+                .unwrap()
+        );
+        assert!(
+            !repository
+                .put_immutable(location.clone(), b"same".to_vec(), TagSet::default())
+                .await
+                .unwrap()
+        );
+        assert!(
+            repository
+                .put_immutable(location, b"different".to_vec(), TagSet::default())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -942,6 +984,7 @@ mod tests {
         .await
         .unwrap();
         assert!(full.uploaded_objects >= 2);
+        assert_eq!(recovery_point_tags(full.result.manifest()).encoded(), "terrabase-kind=full");
 
         crate::routes::test_seed_sample(state.as_ref()).unwrap();
         let incremental = backup_to_s3(
@@ -959,6 +1002,10 @@ mod tests {
             BackupKind::Incremental { base }
                 if base == full.result.manifest().boundary_sequence()
         ));
+        assert_eq!(
+            recovery_point_tags(incremental.result.manifest()).encoded(),
+            "terrabase-kind=incremental",
+        );
 
         let points = repository.list_recovery_points().await.unwrap();
         assert_eq!(points.len(), 2);

@@ -9,7 +9,7 @@ pub fn render(state: &StudioState) -> String {
     let snapshot = metrics::gather(state);
     let body = format!(
         "{heading}\n\
-<div data-metrics-stream=\"/events/metrics\" data-show=\"false\" aria-hidden=\"true\"></div>\n\
+<div class=\"hidden\" data-init=\"@get('/events/metrics', {{openWhenHidden: true, retry: 'always'}})\" aria-hidden=\"true\"></div>\n\
 {panel}\n\
 {indexes}\n\
 <div class=\"grid gap-6 lg:grid-cols-2\">{maintenance}{journal}</div>\n",
@@ -48,7 +48,7 @@ fn index_card(state: &StudioState) -> String {
     .concat();
     let body = format!(
         "<p class=\"mb-4 text-sm text-muted-foreground\">The lifecycle seam serves explicit indexes only: an `Auto/` namespace is refused with `NotExplicitIndex`, which is the typed answer you will see if you name one. Automatic indexes are managed by the optimizer and the `Maintain auto-index lifecycle` action below.</p>\n\
-<form class=\"grid gap-4\" data-on-submit=\"$$submit('/indexes/action')\">\n\
+<form class=\"grid gap-4\" data-on:submit=\"if (!confirm('Run this index lifecycle action? Reset and rebuild actions can replace index generations.')) return; @post('/indexes/action', {{contentType: 'form', retry: 'never'}})\">\n\
 <div class=\"grid gap-4 sm:grid-cols-3\">{tenant}{name}{action}</div>\n\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary} w-fit\">Run index action</button>\n\
 </form>\n{receipt}",
@@ -65,9 +65,9 @@ fn maintenance_card() -> String {
     let body = format!(
         "<p class=\"mb-4 text-sm text-muted-foreground\">Storage maintenance passes through the engine's public compaction and index-lifecycle seams. Each action answers with its typed receipt below.</p>\n\
 <div class=\"flex flex-wrap gap-2\">\n\
-<button class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\" data-on-click=\"$$post('/maintenance/compact?policy=reclaim')\">Compact (reclaim WAL and roots)</button>\n\
-<button class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\" data-on-click=\"$$post('/maintenance/compact?policy=reclaim-history')\">Compact and reclaim history</button>\n\
-<button class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {secondary}\" data-on-click=\"$$post('/maintenance/maintain-indexes')\">Maintain auto-index lifecycle</button>\n\
+<button type=\"button\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\" data-on:click=\"if (!confirm('Compaction can delete superseded WAL and root files. Continue?')) return; @post('/maintenance/compact?policy=reclaim', {{payload: {{}}, retry: 'never'}})\">Compact (reclaim WAL and roots)</button>\n\
+<button type=\"button\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\" data-on:click=\"if (!confirm('This permanently removes superseded document history. Continue?')) return; @post('/maintenance/compact?policy=reclaim-history', {{payload: {{}}, retry: 'never'}})\">Compact and reclaim history</button>\n\
+<button type=\"button\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {secondary}\" data-on:click=\"if (!confirm('This may create or retire optimizer-owned indexes. Continue?')) return; @post('/maintenance/maintain-indexes', {{payload: {{}}, retry: 'never'}})\">Maintain auto-index lifecycle</button>\n\
 </div>\n\
 {receipt}\n\
 <p class=\"mt-4 text-xs text-muted-foreground\">Both compaction policies derive their bounds from the store's own durable facts; the public compaction request carries no caller-minted sequence.</p>",

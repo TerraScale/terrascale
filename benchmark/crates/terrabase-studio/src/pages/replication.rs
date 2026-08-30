@@ -108,8 +108,18 @@ fn regions_card(state: &StudioState) -> String {
     let body = format!(
         "{definitions}\n\
 <div class=\"mt-4 flex flex-wrap gap-2\">\n\
-<button class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\" data-on-click=\"$$post('/replication/regions/admit', {{ active: {active}, reserved: {reserved}, code: 'AMS' }})\">Admit AMS</button>\n\
-<button class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\" data-on-click=\"$$post('/replication/regions/retire', {{ active: {active}, reserved: {reserved}, code: 'FRA' }})\">Retire FRA</button>\n\
+<form data-on:submit=\"@post('/replication/regions/admit', {{contentType: 'form', retry: 'never'}})\">\
+<input type=\"hidden\" name=\"active\" value=\"{active}\">\
+<input type=\"hidden\" name=\"reserved\" value=\"{reserved}\">\
+<input type=\"hidden\" name=\"code\" value=\"AMS\">\
+<button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\">Admit AMS</button>\
+</form>\n\
+<form data-on:submit=\"if (!confirm('Retire FRA from this Studio-local region catalog?')) return; @post('/replication/regions/retire', {{contentType: 'form', retry: 'never'}})\">\
+<input type=\"hidden\" name=\"active\" value=\"{active}\">\
+<input type=\"hidden\" name=\"reserved\" value=\"{reserved}\">\
+<input type=\"hidden\" name=\"code\" value=\"FRA\">\
+<button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\">Retire FRA</button>\
+</form>\n\
 </div>\n{receipt}\n\
 <p class=\"mt-4 text-xs text-muted-foreground\">The catalog is a value domain the platform side owns; the studio edits its own in-memory copy to show the typed admission rules, the three-letter code grammar, and the {ceiling}-region ceiling. It is not a durable engine setting.</p>",
         definitions = html::definition(&[
@@ -120,8 +130,8 @@ fn regions_card(state: &StudioState) -> String {
         ]),
         primary = ButtonStyle::Primary.classes(),
         secondary = ButtonStyle::Secondary.classes(),
-        active = html::js_string(&codes),
-        reserved = html::js_string(&reserved),
+        active = html::attribute(&codes),
+        reserved = html::attribute(&reserved),
         receipt = html::receipt_region_with("region-receipt"),
         ceiling = terrabase::REGION_CEILING,
     );
@@ -152,16 +162,15 @@ fn topology_card(state: &StudioState) -> String {
     let mut rows = String::new();
     for (index, region) in spec.regions.iter().enumerate() {
         let remove = format!(
-            "$$post('/replication/topology/remove-region', {{ index: {index} }})",
-            index = index,
+            "<form data-on:submit=\"if (!confirm('Remove this region from the Studio topology?')) return; @post('/replication/topology/remove-region', {{contentType: 'form', retry: 'never'}})\">\
+<input type=\"hidden\" name=\"index\" value=\"{index}\">\
+<button type=\"submit\" class=\"text-sm text-muted-foreground hover:text-foreground underline\">remove</button>\
+</form>"
         );
         rows.push_str("<tr class=\"border-b transition-colors hover:bg-muted/50\">");
         rows.push_str(&html::cell(&region.name));
         rows.push_str(&html::cell(&region.members.join(", ")));
-        rows.push_str(&html::cell_raw(&format!(
-            "<button class=\"text-sm text-muted-foreground hover:text-foreground underline\" data-on-click=\"{}\">remove</button>",
-            html::attribute(&remove)
-        )));
+        rows.push_str(&html::cell_raw(&remove));
         rows.push_str("</tr>");
     }
     let table = html::table(&["region", "members", ""], &[rows], "No region in the topology.");
@@ -180,7 +189,7 @@ fn topology_card(state: &StudioState) -> String {
     };
     let body = format!(
         "<div id=\"{TOPOLOGY_ID}\">{table}</div>\n{verdict}\n\
-<form class=\"mt-4 grid gap-4 sm:grid-cols-3 items-end\" data-on-submit=\"$$submit('/replication/topology/add-region')\">\n\
+<form class=\"mt-4 grid gap-4 sm:grid-cols-3 items-end\" data-on:submit=\"@post('/replication/topology/add-region', {{contentType: 'form', retry: 'never'}})\">\n\
 {region}{first}{second}\n\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\">Add region</button>\n\
 </form>",
@@ -241,9 +250,15 @@ fn durability_card(state: &StudioState) -> String {
                 "{table}\n\
 <p class=\"mt-4 text-sm text-muted-foreground\">The cluster crate's durability model is deterministic and in-process: it holds one membership epoch and answers whether a submitted operation reached the level you asked for. This is a model of the rule, not a live cluster.</p>\n\
 <div class=\"mt-4 flex flex-wrap gap-2\">\n\
-<button class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\" data-on-click=\"$$post('/replication/durability/submit', {{ level: 'regional' }})\">Submit at regional durability</button>\n\
-<button class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\" data-on-click=\"$$post('/replication/durability/submit', {{ level: 'global' }})\">Submit at global durability</button>\n\
-<button class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\" data-on-click=\"$$post('/replication/durability/toggle-member', {{}})\">Toggle one voter inactive</button>\n\
+<form data-on:submit=\"@post('/replication/durability/submit', {{contentType: 'form', retry: 'never'}})\">\
+<input type=\"hidden\" name=\"level\" value=\"regional\">\
+<button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\">Submit at regional durability</button>\
+</form>\n\
+<form data-on:submit=\"@post('/replication/durability/submit', {{contentType: 'form', retry: 'never'}})\">\
+<input type=\"hidden\" name=\"level\" value=\"global\">\
+<button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\">Submit at global durability</button>\
+</form>\n\
+<button type=\"button\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\" data-on:click=\"@post('/replication/durability/toggle-member', {{payload: {{}}, retry: 'never'}})\">Toggle one voter inactive</button>\n\
 </div>\n<div id=\"{DURABILITY_ID}\" class=\"mt-4\"></div>",
                 table = table,
                 primary = ButtonStyle::Primary.classes(),

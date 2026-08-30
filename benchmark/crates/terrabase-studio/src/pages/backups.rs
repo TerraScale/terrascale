@@ -51,7 +51,7 @@ fn configuration_card(state: &StudioState) -> String {
     let checked = |selected: bool| if selected { " checked" } else { "" };
     let body = format!(
         "<p class=\"mb-4 text-sm text-muted-foreground\">Use a bucket prefix dedicated to this database. Studio uploads archive members first and the signed manifest last. Credentials come from workload identity, an ECS or EC2 role, or standard <code>AWS_*</code> environment variables. Studio never writes access keys to disk.</p>\n\
-<form class=\"grid gap-4\" data-on-submit=\"$$submit('/backup/configure')\">\n\
+<form class=\"grid gap-4\" data-on:submit=\"@post('/backup/configure', {{contentType: 'form', retry: 'never'}})\">\n\
 <div class=\"grid gap-4 md:grid-cols-3\">{bucket}{region}{prefix}</div>\n\
 <div class=\"grid gap-4 md:grid-cols-2\">{endpoint}{kms}</div>\n\
 <div class=\"grid gap-4 md:grid-cols-2\">{incremental}{full}</div>\n\
@@ -105,7 +105,7 @@ fn backup_card(state: &StudioState) -> String {
     let tenants = state.tenants().join(", ");
     let body = format!(
         "<p class=\"mb-4 text-sm text-muted-foreground\">Back up now creates incrementals until the configured full interval expires. A full point is self-contained. Local files exist only in disposable transfer scratch space and are removed after S3 commits the manifest. Leave the tenant list blank to include every tenant.</p>\n\
-<form class=\"grid gap-4\" data-on-submit=\"$$submit('/backup/run')\">\n{destination}{tenants}\
+<form class=\"grid gap-4\" data-on:submit=\"if (!confirm('Upload a recovery point to the configured S3 prefix now?')) return; @post('/backup/run', {{contentType: 'form', retry: 'never'}})\">\n{destination}{tenants}\
 <div class=\"flex flex-wrap gap-2\">\n\
 <button type=\"submit\" name=\"mode\" value=\"automatic\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary} w-fit\">Back up now</button>\n\
 <button type=\"submit\" name=\"mode\" value=\"full\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary} w-fit\">Create full point</button>\n\
@@ -127,7 +127,7 @@ fn backup_card(state: &StudioState) -> String {
 fn restore_card(state: &StudioState) -> String {
     let body = format!(
         "<p class=\"mb-4 text-sm text-muted-foreground\">Restore downloads only the selected point and its ancestors from S3, verifies every member, and writes a brand-new engine location. The target must not exist or must be empty.</p>\n\
-<form class=\"grid gap-4\" data-on-submit=\"if (!confirm('Restore writes a new engine location. Continue?')) return; $$submit('/backup/restore')\">\n{destination}{target}{identity}\
+<form class=\"grid gap-4\" data-on:submit=\"if (!confirm('Restore writes a new engine location. Continue?')) return; @post('/backup/restore', {{contentType: 'form', retry: 'never'}})\">\n{destination}{target}{identity}\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary} w-fit\">Restore latest (or by identity)</button>\n\
 </form>\n{receipt}\n{note}",
         destination = html::alert(
@@ -161,7 +161,7 @@ fn restore_card(state: &StudioState) -> String {
 fn chain_card(points: Result<&[RemoteRecoveryPoint], &str>) -> String {
     let body = format!(
         "<div class=\"mb-4 flex flex-wrap gap-2\">\n\
-<button class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\" data-on-click=\"$$post('/backup/verify')\">Verify the chain</button>\n\
+<button type=\"button\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\" data-on:click=\"@post('/backup/verify', {{payload: {{}}, retry: 'never'}})\">Verify the chain</button>\n\
 </div>\n<div id=\"{CHAIN_ID}\">{chain}</div>",
         secondary = ButtonStyle::Secondary.classes(),
         CHAIN_ID = CHAIN_ID,
@@ -282,7 +282,7 @@ pub fn restore_target(text: &str) -> Result<PathBuf, String> {
 
 fn deletion_card(state: &StudioState) -> String {
     let body = format!(
-        "<form class=\"grid gap-4 sm:grid-cols-4 items-end\" data-on-submit=\"$$submit('/deletion/request')\">\n\
+        "<form class=\"grid gap-4 sm:grid-cols-4 items-end\" data-on:submit=\"@post('/deletion/request', {{contentType: 'form', retry: 'never'}})\">\n\
 {request_id}{tenant}{subject}{regions}\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\">Open a deletion request</button>\n\
 </form>\n\
@@ -333,8 +333,11 @@ fn render_workflow(workflow: &DeletionWorkflow) -> String {
         ));
         rows.push_str(&html::cell(target.name().as_str()));
         rows.push_str(&html::cell_raw(&format!(
-            "<button class=\"text-sm text-muted-foreground hover:text-foreground underline\" data-on-click=\"{}\">record receipt</button>",
-            html::attribute(&format!("$$post('/deletion/receipt', {{ request_id: {} }})", html::js_string(id)))
+            "<form data-on:submit=\"@post('/deletion/receipt', {{contentType: 'form', retry: 'never'}})\">\
+<input type=\"hidden\" name=\"request_id\" value=\"{id}\">\
+<button type=\"submit\" class=\"text-sm text-muted-foreground hover:text-foreground underline\">record receipt</button>\
+</form>",
+            id = html::attribute(id),
         )));
         rows.push_str("</tr>");
     }
@@ -379,13 +382,24 @@ fn render_workflow(workflow: &DeletionWorkflow) -> String {
 }
 
 fn action_button(id: &str, label: &str, path: &str, style: ButtonStyle) -> String {
+    let confirmation = match path {
+        "/deletion/complete" => {
+            "if (!confirm('Mark this deletion workflow complete? This is its terminal state.')) return; "
+        }
+        "/deletion/end-hold" => {
+            "if (!confirm('End the legal hold on this deletion workflow?')) return; "
+        }
+        _ => "",
+    };
     format!(
-        "<button class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {classes}\" data-on-click=\"{action}\">{label}</button>",
+        "<form data-on:submit=\"{confirmation}@post('{path}', {{contentType: 'form', retry: 'never'}})\">\
+<input type=\"hidden\" name=\"request_id\" value=\"{id}\">\
+<button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {classes}\">{label}</button>\
+</form>",
+        confirmation = confirmation,
+        path = path,
+        id = html::attribute(id),
         classes = style.classes(),
-        action = html::attribute(&format!(
-            "$$post('{path}', {{ request_id: {} }})",
-            html::js_string(id)
-        )),
         label = html::esc(label),
     )
 }

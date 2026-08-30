@@ -363,9 +363,13 @@ fn alert_rules_preserve_required_optional_and_selected_region_semantics() {
 }
 
 #[test]
-fn prometheus_scrape_path_matches_the_rust_server_contract() {
+fn prometheus_scrape_config_matches_rust_server_and_plaintext_boundary() {
     let config = include_str!("../../deploy/observability/prometheus.yml");
     assert!(config.contains(&format!("metrics_path: {PROMETHEUS_PATH}")));
+    assert!(config.contains("scheme: http"));
+    for forbidden in ["scheme: https", "tls_config:", "insecure_skip_verify"] {
+        assert!(!config.contains(forbidden), "private plaintext scrape configured {forbidden}");
+    }
 }
 
 #[test]

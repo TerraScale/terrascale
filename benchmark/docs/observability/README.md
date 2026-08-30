@@ -3,8 +3,8 @@
 This directory documents the in-process observability contract implemented in
 `src/observability/mod.rs`. The module renders Prometheus 0.0.4 text and keeps
 health, startup, and readiness as separate facts. `terrabase-server` owns the
-private listener and routes. `ts-orchestrator` owns workload authentication,
-target discovery, and network policy.
+private listener and routes. `ts-orchestrator` owns target discovery,
+private-network policy, retention, and alert delivery.
 
 ## Metric families
 
@@ -96,11 +96,12 @@ deployments produces a valid number with the wrong meaning.
 
 ## Boundary requirements
 
-The production adapter exposes the rendered body only on the private,
-authenticated operator path managed by `ts-orchestrator`. It enforces a
-bounded response size, short scrape timeout, and connection limits. It does
-not proxy customer request paths or accept arbitrary labels. TLS identity,
-network allow-listing, and authorization remain at the production boundary.
+The production adapter exposes the rendered body only on the private operator
+path managed by `ts-orchestrator`. It enforces a bounded response size, short
+scrape timeout, and connection limits. It does not proxy customer request
+paths or accept arbitrary labels. The listener uses plaintext HTTP without
+application authentication; `ts-orchestrator` private-network policy is the
+trust boundary.
 
 `terrabase-server` serves `PROMETHEUS_PATH`, `LIVENESS_PATH`, `STARTUP_PATH`,
 and `READINESS_PATH` from the same immutable `MetricsSnapshot`. The paths are
@@ -128,5 +129,5 @@ exposition, histogram accounting, label and response-size bounds, storage
 capacity semantics, lifecycle and readiness separation, control-plane loss,
 optional unconfigured components, monotonic usage frontiers, alert structure,
 path agreement, and secret redaction. These tests are implementation evidence.
-The exact candidate still needs a private authenticated scrape and probe
-receipt from the production topology.
+The exact candidate still needs a private-network scrape and probe receipt
+that proves public ingress cannot reach the listener.

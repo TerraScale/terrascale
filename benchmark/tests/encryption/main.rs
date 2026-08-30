@@ -23,16 +23,23 @@ fn cipher(key: [u8; 32]) -> ArtifactCipher {
 }
 
 #[test]
-fn selected_provider_is_fips_and_provider_identities_are_explicit() {
-    assert_eq!(ProviderMode::LocalFile.identity(), "aws-lc-fips:local-file");
+fn local_provider_is_explicit_and_production_fails_closed() {
+    assert_eq!(ProviderMode::LocalFile.identity(), "aws-lc:local-file");
     assert_eq!(ProviderMode::ProductionFips.identity(), "aws-lc-fips:oci-vault");
-    aws_lc_rs::try_fips_mode().expect("the selected AWS-LC provider is in FIPS mode");
-    ArtifactCipher::new(
-        ProviderMode::ProductionFips,
-        DatabaseKey::from_bytes([7; 32]),
-        context("01JTENANT"),
-    )
-    .expect("production mode accepts the linked FIPS provider");
+    assert!(matches!(
+        ArtifactCipher::new(
+            ProviderMode::ProductionFips,
+            DatabaseKey::from_bytes([7; 32]),
+            context("01JTENANT"),
+        ),
+        Err(EncryptionError::ProductionProviderUnavailable)
+    ));
+}
+
+#[cfg(feature = "production-fips")]
+#[test]
+fn production_profile_links_an_operational_aws_lc_fips_module() {
+    aws_lc_rs::try_fips_mode().expect("the production AWS-LC provider is in FIPS mode");
 }
 
 #[test]
@@ -51,10 +58,10 @@ fn wrong_key_aad_tag_and_truncation_are_rejected() {
     let mut writer = cipher([4; 32]);
     let envelope = writer.seal(b"authenticated bytes").unwrap();
 
-    let mut wrong_key = cipher([5; 32]);
+    let wrong_key = cipher([5; 32]);
     assert_eq!(wrong_key.open(&envelope), Err(EncryptionError::AuthenticationFailed));
 
-    let mut wrong_aad = ArtifactCipher::new(
+    let wrong_aad = ArtifactCipher::new(
         ProviderMode::LocalFile,
         DatabaseKey::from_bytes([4; 32]),
         context("01JOTHER TENANT"),
@@ -64,7 +71,7 @@ fn wrong_key_aad_tag_and_truncation_are_rejected() {
 
     let mut bad_tag = envelope.clone();
     *bad_tag.last_mut().unwrap() ^= 1;
-    let mut reader = cipher([4; 32]);
+    let reader = cipher([4; 32]);
     assert_eq!(reader.open(&bad_tag), Err(EncryptionError::AuthenticationFailed));
 
     let mut truncated = envelope;
@@ -85,9 +92,13 @@ fn replay_and_ordinal_exhaustion_are_refused() {
     assert_eq!(writer.next_ordinal(), 1u128 << 96);
     assert_eq!(writer.seal(b"overflow"), Err(EncryptionError::OrdinalExhausted));
 
-    let mut reader = cipher([9; 32]);
+    let reader = cipher([9; 32]);
     assert_eq!(reader.open(&envelope).unwrap(), b"last ordinal");
-    assert_eq!(reader.open(&envelope), Err(EncryptionError::Replay));
+    assert_eq!(reader.open(&envelope).unwrap(), b"last ordinal");
+
+    let mut guard = terrabase::encryption::ReplayGuard::new();
+    assert_eq!(reader.open_with_replay_guard(&envelope, &mut guard).unwrap(), b"last ordinal");
+    assert_eq!(reader.open_with_replay_guard(&envelope, &mut guard), Err(EncryptionError::Replay));
 }
 
 #[test]

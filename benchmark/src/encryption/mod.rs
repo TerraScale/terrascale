@@ -1,9 +1,12 @@
 //! Bounded encryption-at-rest primitives and key-provider seams.
 //!
-//! AWS-LC FIPS supplies AES-256-GCM, HKDF-SHA-256, SHA-256, and randomness.
-//! The local-file provider persists development keys. OCI Vault wrapping and
-//! storage-format integration remain separate production responsibilities.
+//! AWS-LC supplies AES-256-GCM, HKDF-SHA-256, SHA-256, and randomness. Release
+//! builds select its FIPS module through the `production-fips` feature. Local
+//! development uses the `local-crypto` feature and the local-file provider.
+//! OCI Vault wrapping and storage-format integration remain separate
+//! production responsibilities.
 
+use std::collections::BTreeSet;
 use std::fmt;
 
 use aws_lc_rs::{aead, digest, hkdf, rand};
@@ -24,6 +27,7 @@ const ENVELOPE_VERSION: u8 = 1;
 const AAD_MAGIC: [u8; 4] = *b"TBA1";
 const AAD_VERSION: u8 = 1;
 const MAX_ORDINAL: u128 = (1u128 << 96) - 1;
+const MAX_TRACKED_ORDINALS: usize = 65_536;
 
 /// The compression marker authenticated in each artifact's AAD.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -51,7 +55,7 @@ impl ProviderMode {
     #[must_use]
     pub const fn identity(self) -> &'static str {
         match self {
-            Self::LocalFile => "aws-lc-fips:local-file",
+            Self::LocalFile => "aws-lc:local-file",
             Self::ProductionFips => "aws-lc-fips:oci-vault",
         }
     }
@@ -88,6 +92,8 @@ pub enum EncryptionError {
     Replay,
     /// Authenticated plaintext did not match its SHA-256 digest in the AAD.
     DigestMismatch,
+    /// The caller's bounded replay guard cannot track another ordinal.
+    ReplayGuardFull,
 }
 
 impl fmt::Display for EncryptionError {
@@ -104,6 +110,7 @@ impl fmt::Display for EncryptionError {
             Self::AuthenticationFailed => "encryption authentication failed",
             Self::Replay => "encryption envelope replay refused",
             Self::DigestMismatch => "plaintext digest mismatch",
+            Self::ReplayGuardFull => "encryption replay guard is full",
         };
         f.write_str(message)
     }
@@ -251,7 +258,6 @@ pub struct ArtifactCipher {
     context: EncryptionContext,
     mode: ProviderMode,
     next_ordinal: u128,
-    last_opened_ordinal: Option<u128>,
 }
 
 impl fmt::Debug for ArtifactCipher {
@@ -281,7 +287,10 @@ impl ArtifactCipher {
         next_ordinal: u128,
     ) -> Result<Self, EncryptionError> {
         context.validate()?;
-        if mode.is_production() && aws_lc_rs::try_fips_mode().is_err() {
+        // A linked FIPS-capable library is not enough to authorize production:
+        // the production key must come from the future OCI Vault seam. Keep
+        // raw local key construction fail-closed until that capability exists.
+        if mode.is_production() {
             return Err(EncryptionError::ProductionProviderUnavailable);
         }
         if next_ordinal > MAX_ORDINAL {
@@ -296,13 +305,7 @@ impl ArtifactCipher {
             .expand(&info_parts, &aead::AES_256_GCM)
             .map_err(|_| EncryptionError::CryptographicFailure)?;
         let unbound = aead::UnboundKey::from(okm);
-        Ok(Self {
-            key: aead::LessSafeKey::new(unbound),
-            context,
-            mode,
-            next_ordinal,
-            last_opened_ordinal: None,
-        })
+        Ok(Self { key: aead::LessSafeKey::new(unbound), context, mode, next_ordinal })
     }
 
     /// Returns the selected provider mode.
@@ -353,13 +356,39 @@ impl ArtifactCipher {
         Ok(envelope)
     }
 
-    /// Authenticates and decrypts one envelope, refusing ordinal replays.
-    pub fn open(&mut self, envelope: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+    /// Authenticates and decrypts one envelope.
+    ///
+    /// Random-access reads of immutable artifacts are valid. Use
+    /// [`Self::open_with_replay_guard`] at a journal or session boundary when
+    /// that owner requires replay refusal.
+    pub fn open(&self, envelope: &[u8]) -> Result<Vec<u8>, EncryptionError> {
         let (ordinal, aad, mut ciphertext) = parse_envelope(envelope)?;
-        if self.last_opened_ordinal.is_some_and(|last| ordinal <= last) {
-            return Err(EncryptionError::Replay);
-        }
-        let parsed = parse_aad(&aad)?;
+        self.open_parsed(ordinal, aad, &mut ciphertext)
+    }
+
+    /// Authenticates and decrypts an envelope while applying an owner policy.
+    ///
+    /// The guard is updated only after authentication and digest verification,
+    /// so malformed or forged envelopes do not consume replay state.
+    pub fn open_with_replay_guard(
+        &self,
+        envelope: &[u8],
+        guard: &mut ReplayGuard,
+    ) -> Result<Vec<u8>, EncryptionError> {
+        let (ordinal, aad, mut ciphertext) = parse_envelope(envelope)?;
+        guard.check(ordinal)?;
+        let plaintext = self.open_parsed(ordinal, aad, &mut ciphertext)?;
+        guard.record(ordinal)?;
+        Ok(plaintext)
+    }
+
+    fn open_parsed(
+        &self,
+        ordinal: u128,
+        aad: &[u8],
+        ciphertext: &mut [u8],
+    ) -> Result<Vec<u8>, EncryptionError> {
+        let parsed = parse_aad(aad)?;
         if parsed.ordinal != ordinal
             || parsed.environment != self.context.environment.as_bytes()
             || parsed.tenant != self.context.tenant.as_bytes()
@@ -380,14 +409,52 @@ impl ArtifactCipher {
         let nonce = nonce_for(ordinal);
         let plaintext = self
             .key
-            .open_in_place(nonce, aead::Aad::from(aad), &mut ciphertext)
+            .open_in_place(nonce, aead::Aad::from(aad), ciphertext)
             .map_err(|_| EncryptionError::AuthenticationFailed)?;
         let digest = sha256(plaintext);
         if digest != parsed.digest {
             return Err(EncryptionError::DigestMismatch);
         }
-        self.last_opened_ordinal = Some(ordinal);
         Ok(plaintext.to_vec())
+    }
+}
+
+/// Owner-controlled replay state for journals and ordered sessions.
+///
+/// Decryption itself is random-access. This guard is an explicit boundary
+/// policy for callers that must reject each ordinal more than once.
+#[derive(Debug, Default)]
+pub struct ReplayGuard {
+    seen: BTreeSet<u128>,
+}
+
+impl ReplayGuard {
+    /// Creates an empty replay guard.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns whether an ordinal has already been accepted.
+    #[must_use]
+    pub fn contains(&self, ordinal: u128) -> bool {
+        self.seen.contains(&ordinal)
+    }
+
+    fn check(&self, ordinal: u128) -> Result<(), EncryptionError> {
+        if self.contains(ordinal) {
+            Err(EncryptionError::Replay)
+        } else if self.seen.len() >= MAX_TRACKED_ORDINALS {
+            Err(EncryptionError::ReplayGuardFull)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn record(&mut self, ordinal: u128) -> Result<(), EncryptionError> {
+        self.check(ordinal)?;
+        self.seen.insert(ordinal);
+        Ok(())
     }
 }
 

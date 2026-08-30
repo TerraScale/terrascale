@@ -65,10 +65,14 @@ async fn bounded_request(
         || header_bytes > MAX_HEADER_BYTES
         || request.uri().to_string().len() > MAX_URI_BYTES
     {
-        return (StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE, "operator request exceeds its bound\n")
+        return (
+            StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
+            "operator request exceeds its bound\n",
+        )
             .into_response();
     }
-    let Ok(Ok(permit)) = tokio::time::timeout(OPERATOR_TIMEOUT, state.permits.acquire()).await else {
+    let Ok(Ok(permit)) = tokio::time::timeout(OPERATOR_TIMEOUT, state.permits.acquire()).await
+    else {
         return (StatusCode::SERVICE_UNAVAILABLE, "operator request capacity exhausted\n")
             .into_response();
     };

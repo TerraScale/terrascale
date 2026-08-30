@@ -11,7 +11,7 @@ use crate::state::StudioState;
 pub fn render(state: &StudioState) -> String {
     let snapshot = metrics::gather(state);
     let body = format!(
-        "{heading}\n<div data-metrics-stream=\"/events/metrics\" data-show=\"false\" aria-hidden=\"true\"></div>\n{panel}\n{note}",
+        "{heading}\n<div class=\"hidden\" data-init=\"@get('/events/metrics', {{openWhenHidden: true, retry: 'always'}})\" aria-hidden=\"true\"></div>\n{panel}\n{note}",
         heading = html::heading(
             "Metrics",
             "Live engine, storage, collection, index, and tier facts from this Studio process.",

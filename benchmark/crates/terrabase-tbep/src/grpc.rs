@@ -248,6 +248,8 @@ pub struct TbepGrpcHandle {
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     completion: Option<std::sync::mpsc::Receiver<std::io::Result<()>>>,
     shutdown_grace: Duration,
+    inflight: Arc<AtomicUsize>,
+    draining: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl TbepGrpcHandle {
@@ -302,11 +304,12 @@ impl TbepGrpcHandle {
             self.cleanup_socket();
             return Ok(());
         };
+        let deadline = Instant::now() + self.shutdown_grace;
         match completion.recv_timeout(self.shutdown_grace) {
             Ok(result) => {
                 self.completion = None;
                 self.cleanup_socket();
-                result
+                result.and_then(|()| self.wait_for_inflight(deadline))
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
@@ -318,6 +321,25 @@ impl TbepGrpcHandle {
                 Err(std::io::Error::other("the TBEP serving task stopped without a result"))
             }
         }
+    }
+
+    fn wait_for_inflight(&self, deadline: Instant) -> std::io::Result<()> {
+        while self.inflight.load(Ordering::Acquire) != 0 {
+            let now = Instant::now();
+            if now >= deadline {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "the TBEP engine work exceeded its graceful shutdown deadline",
+                ));
+            }
+            std::thread::sleep((deadline - now).min(Duration::from_millis(5)));
+        }
+        Ok(())
+    }
+
+    /// Stops new RPC admission before listener shutdown begins.
+    pub fn begin_drain(&self) {
+        self.draining.store(true, Ordering::Release);
     }
 
     /// Signals shutdown and discards the listener result. Production callers
@@ -363,6 +385,7 @@ pub struct TbepGrpcServer {
     region: MetricRegion,
     frames_served: AtomicU64,
     inflight: Arc<AtomicUsize>,
+    draining: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl TbepGrpcServer {
@@ -404,6 +427,7 @@ impl TbepGrpcServer {
             region,
             frames_served: AtomicU64::new(0),
             inflight: Arc::new(AtomicUsize::new(0)),
+            draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -422,6 +446,11 @@ impl TbepGrpcServer {
 
     fn counted(&self) {
         self.frames_served.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Stops new host work from being admitted while existing work drains.
+    pub fn begin_drain(&self) {
+        self.draining.store(true, Ordering::Release);
     }
 
     fn identity<T>(&self, request: &Request<T>) -> Result<Identity, Status> {
@@ -597,13 +626,14 @@ impl TbepGrpcServer {
             .name("tbep-grpc-uds".into())
             .spawn(move || {
                 let result = runtime.block_on(async move {
-                    let routes = serve_routes(Arc::clone(&server), None)
-                        .expect("the unencrypted route table builds");
+                    let routes =
+                        serve_routes(Arc::clone(&server), None).map_err(std::io::Error::other)?;
                     routes
                         .serve_with_incoming_shutdown(incoming, async {
                             let _ = signal.await;
                         })
                         .await
+                        .map_err(std::io::Error::other)
                 });
                 let _ = done.send(result.map_err(std::io::Error::other));
             })
@@ -615,6 +645,8 @@ impl TbepGrpcServer {
             shutdown: Some(shutdown),
             completion: Some(completion),
             shutdown_grace: self.config.shutdown_grace(),
+            inflight: Arc::clone(&self.inflight),
+            draining: Arc::clone(&self.draining),
         })
     }
 
@@ -647,7 +679,7 @@ impl TbepGrpcServer {
                 "a TLS listener requires the network mTLS binding kind",
             ));
         }
-        if self.config.gateway_certificates.is_empty() {
+        if self.config.gateway_principals.is_empty() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "a production TLS listener requires an authenticated gateway mapping",
@@ -666,7 +698,7 @@ impl TbepGrpcServer {
         let server = Arc::clone(self);
         let startup_timeout = self.config.tls_handshake_timeout();
         let (shutdown, signal) = tokio::sync::oneshot::channel::<()>();
-        let (addr_tx, addr_rx) = std::sync::mpsc::channel();
+        let (addr_tx, addr_rx) = std::sync::mpsc::channel::<std::io::Result<SocketAddr>>();
         let (done, completion) = std::sync::mpsc::channel::<std::io::Result<()>>();
         std::thread::Builder::new()
             .name("tbep-grpc-tls".into())
@@ -678,20 +710,32 @@ impl TbepGrpcServer {
                     .expect("the TBEP serving runtime starts");
                 let _context = runtime.enter();
                 let result = runtime.block_on(async move {
-                    let listener =
-                        tokio::net::TcpListener::bind(address).await.map_err(|error| {
-                            let _ = addr_tx.send(None);
-                            error
-                        })?;
-                    let local = listener.local_addr().map_err(|error| {
-                        let _ = addr_tx.send(None);
-                        error
-                    })?;
-                    let routes = serve_routes(Arc::clone(&server), Some(tls)).map_err(|error| {
-                        let _ = addr_tx.send(None);
-                        std::io::Error::other(error)
-                    })?;
-                    let _ = addr_tx.send(Some(local));
+                    let listener = match tokio::net::TcpListener::bind(address).await {
+                        Ok(listener) => listener,
+                        Err(error) => {
+                            let _ = addr_tx
+                                .send(Err(std::io::Error::new(error.kind(), error.to_string())));
+                            return Err(error);
+                        }
+                    };
+                    let local = match listener.local_addr() {
+                        Ok(local) => local,
+                        Err(error) => {
+                            let _ = addr_tx
+                                .send(Err(std::io::Error::new(error.kind(), error.to_string())));
+                            return Err(error);
+                        }
+                    };
+                    let routes = match serve_routes(Arc::clone(&server), Some(tls)) {
+                        Ok(routes) => routes,
+                        Err(error) => {
+                            let error = std::io::Error::other(error);
+                            let _ = addr_tx
+                                .send(Err(std::io::Error::new(error.kind(), error.to_string())));
+                            return Err(error);
+                        }
+                    };
+                    let _ = addr_tx.send(Ok(local));
                     routes
                         .serve_with_incoming_shutdown(
                             tokio_stream::wrappers::TcpListenerStream::new(listener),
@@ -705,12 +749,29 @@ impl TbepGrpcServer {
                 let _ = done.send(result);
             })
             .map_err(std::io::Error::other)?;
-        let local_addr = addr_rx.recv_timeout(startup_timeout).ok().flatten();
-        if local_addr.is_none() {
+        let local_addr = match addr_rx.recv_timeout(startup_timeout) {
+            Ok(Ok(local_addr)) => local_addr,
+            Ok(Err(error)) => {
+                let _ = completion.recv_timeout(std::time::Duration::from_secs(5));
+                return Err(error);
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                let _ = completion.recv_timeout(std::time::Duration::from_secs(5));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "the TLS listener did not report startup before its deadline",
+                ));
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                let _ = completion.recv_timeout(std::time::Duration::from_secs(5));
+                return Err(std::io::Error::other("the TLS listener stopped during startup"));
+            }
+        };
+        if local_addr.port() == 0 {
             let _ = completion.recv_timeout(std::time::Duration::from_secs(5));
             return Err(std::io::Error::new(
                 std::io::ErrorKind::AddrNotAvailable,
-                "the TLS listener could not bind or configure its routes",
+                "the TLS listener reported an invalid bound address",
             ));
         }
         Ok(TbepGrpcHandle {
@@ -720,6 +781,8 @@ impl TbepGrpcServer {
             shutdown: Some(shutdown),
             completion: Some(completion),
             shutdown_grace: self.config.shutdown_grace(),
+            inflight: Arc::clone(&self.inflight),
+            draining: Arc::clone(&self.draining),
         })
     }
 }
@@ -960,6 +1023,19 @@ where
     F: FnOnce() -> Result<T, HostingError> + Send + 'static,
 {
     let started = Instant::now();
+    if self_ref.draining.load(Ordering::Acquire) {
+        self_ref.metrics.record_request(
+            self_ref.region,
+            operation,
+            MetricOutcome::Rejected,
+            started.elapsed(),
+        );
+        return Err(tbep_status(
+            Code::FailedPrecondition,
+            pb::ErrorCode::ShuttingDown,
+            "the engine is draining and is not admitting new work",
+        ));
+    }
     if self_ref.inflight.fetch_add(1, Ordering::AcqRel) >= self_ref.config.max_inflight() {
         self_ref.inflight.fetch_sub(1, Ordering::AcqRel);
         self_ref.metrics.record_request(

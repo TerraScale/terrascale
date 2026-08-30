@@ -41,8 +41,14 @@ target=$(jq -er '.target' "$manifest")
 binary=$(jq -er '.binary.name' "$manifest")
 binary_digest=$(jq -er '.binary.sha256' "$manifest")
 case "$component" in
-  server) expected_package=terrabase-server ;;
-  studio) expected_package=terrabase-studio ;;
+  server)
+    expected_package=terrabase-server
+    expected_title='TerraBase Server'
+    ;;
+  studio)
+    expected_package=terrabase-studio
+    expected_title='TerraBase Studio'
+    ;;
   *)
     echo "unsupported release component: $component" >&2
     exit 1
@@ -115,6 +121,21 @@ oci_digest=$(jq -er '.artifacts.ociArchive.sha256' "$manifest")
 [[ $(sha256sum "$output/$oci_name" | awk '{print $1}') == "$oci_digest" ]]
 [[ $(jq -er '.metadata.component.hashes[] | select(.alg == "SHA-256") | .content' "$output/$sbom_name") == "$oci_digest" ]]
 jq -e \
+  --arg package "$package" \
+  --arg version "$version" \
+  --arg target "$target" \
+  --arg oci "$oci_name" \
+  '
+    .bomFormat == "CycloneDX" and
+    .specVersion == "1.6" and
+    .version == 1 and
+    .metadata.component.name == $package and
+    .metadata.component.version == $version and
+    .metadata.component.type == "application" and
+    ([.metadata.component.properties[] | select(.name == "terrabase:rust-target" and .value == $target)] | length) == 1 and
+    ([.metadata.component.properties[] | select(.name == "terrabase:artifact" and .value == $oci)] | length) == 1
+  ' "$output/$sbom_name" >/dev/null
+jq -e \
   --arg archive "$archive_name" \
   --arg archive_digest "$archive_digest" \
   --arg oci "$oci_name" \
@@ -167,6 +188,7 @@ image=$(skopeo inspect "oci-archive:$output/$oci_name:$oci_tag")
 [[ $(jq -er '.Os' <<<"$image") == linux ]]
 [[ $(jq -er '.Config.Entrypoint | if length == 1 then .[0] else error("entrypoint must contain one command") end' <<<"$image") == "/usr/local/bin/$binary" ]]
 [[ $(jq -er '.Labels["tech.terrascale.terrabase.binary.sha256"]' <<<"$image") == "$binary_digest" ]]
+[[ $(jq -er '.Labels["org.opencontainers.image.title"]' <<<"$image") == "$expected_title" ]]
 [[ $(jq -er '.Labels["org.opencontainers.image.version"]' <<<"$image") == "$version" ]]
 [[ $(jq -er '.Labels["org.opencontainers.image.revision"]' <<<"$image") == "$(jq -er '.source.revision' "$manifest")" ]]
 

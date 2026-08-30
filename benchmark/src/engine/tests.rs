@@ -24,7 +24,10 @@ use crate::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
     OperationId, RetryDisposition, StorageSequence, TenantId, TenantScope,
 };
-use crate::usage::{UsageAdmissionContext, UsageFactId};
+use crate::usage::{
+    MeasurementWindow, UsageAdmissionContext, UsageCommandError, UsageContinuation, UsageFactId,
+    UsagePageRequest, UsageRecordMeter, UsageRecordRequest,
+};
 
 fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -89,6 +92,21 @@ fn document(id: &str, collection: &str, text: &str) -> Document {
         CollectionName::try_new(collection).expect("valid identifier"),
         DocumentValue::String(text.to_owned()),
     )
+}
+
+fn usage_record_request(fact_id: &str, recorded_at_millis: u64) -> UsageRecordRequest {
+    UsageRecordRequest::try_new(
+        UsageRecordMeter::PublicEgressBytes,
+        "project-a",
+        "database-a",
+        "partition-a",
+        crate::RegionCode::GRU,
+        UsageFactId::try_new(fact_id).expect("usage fact id"),
+        recorded_at_millis,
+        1,
+        128,
+    )
+    .expect("usage request")
 }
 
 fn tenant_scope(engine: &Engine, tenant_name: &str) -> TenantScope {
@@ -1447,6 +1465,90 @@ fn usage_admission_requires_synced_commit_durability() {
     assert_eq!(
         transaction.commit(LocalDurability::Written),
         CommitOutcome::Rejected(CommitError::UsageRequiresSynced)
+    );
+}
+
+#[test]
+fn usage_pages_bind_snapshot_filter_page_size_and_tenant() {
+    let (_dir, engine) = open_engine("usage-pages");
+    let scope_a = tenant_scope(&engine, "tenant-a");
+    let scope_b = tenant_scope(&engine, "tenant-b");
+    for (id, at) in [("fact-1", 1_000), ("fact-2", 2_000), ("fact-3", 3_000)] {
+        engine.record_usage(&scope_a, usage_record_request(id, at)).expect("usage records");
+    }
+
+    let first = engine
+        .usage_page(&scope_a, UsagePageRequest::try_new(None, 1, None).unwrap())
+        .expect("first page");
+    assert_eq!(first.facts().len(), 1);
+    assert_eq!(first.facts()[0].fact().identity().id().as_str(), "fact-1");
+    let continuation = first.continuation().expect("more facts").clone();
+    let fixed_snapshot = first.snapshot_sequence();
+
+    engine
+        .record_usage(&scope_a, usage_record_request("fact-after-snapshot", 4_000))
+        .expect("later usage records");
+    let mut ids = vec!["fact-1".to_owned()];
+    let mut next = Some(continuation.clone());
+    while let Some(cursor) = next {
+        let page = engine
+            .usage_page(&scope_a, UsagePageRequest::try_new(None, 1, Some(cursor)).unwrap())
+            .expect("continuation page");
+        assert_eq!(page.snapshot_sequence(), fixed_snapshot);
+        ids.extend(page.facts().iter().map(|fact| fact.fact().identity().id().as_str().to_owned()));
+        next = page.continuation().cloned();
+    }
+    assert_eq!(ids, ["fact-1", "fact-2", "fact-3"]);
+
+    assert_eq!(
+        engine.usage_page(
+            &scope_b,
+            UsagePageRequest::try_new(None, 1, Some(continuation.clone())).unwrap(),
+        ),
+        Err(UsageCommandError::InvalidRequest)
+    );
+    assert_eq!(
+        engine.usage_page(
+            &scope_a,
+            UsagePageRequest::try_new(
+                Some(MeasurementWindow::interval(1, 5_000).unwrap()),
+                1,
+                Some(continuation.clone()),
+            )
+            .unwrap(),
+        ),
+        Err(UsageCommandError::InvalidRequest)
+    );
+    assert_eq!(
+        engine.usage_page(
+            &scope_a,
+            UsagePageRequest::try_new(None, 2, Some(continuation.clone())).unwrap(),
+        ),
+        Err(UsageCommandError::InvalidRequest)
+    );
+    let mut damaged = continuation.as_bytes().to_vec();
+    damaged[0] ^= 0xff;
+    assert_eq!(
+        engine.usage_page(
+            &scope_a,
+            UsagePageRequest::try_new(None, 1, Some(UsageContinuation::try_new(damaged).unwrap()),)
+                .unwrap(),
+        ),
+        Err(UsageCommandError::InvalidRequest)
+    );
+}
+
+#[test]
+fn root_file_backend_refuses_durable_usage_commands() {
+    let (_dir, engine) = open_root_engine("usage-unsupported");
+    let scope = tenant_scope(&engine, "tenant-a");
+    assert_eq!(
+        engine.record_usage(&scope, usage_record_request("fact-1", 1_000)),
+        Err(UsageCommandError::UnsupportedBackend)
+    );
+    assert_eq!(
+        engine.usage_page(&scope, UsagePageRequest::try_new(None, 10, None).unwrap()),
+        Err(UsageCommandError::UnsupportedBackend)
     );
 }
 

@@ -247,7 +247,7 @@ fn delete_card(state: &StudioState, selection: &Selection) -> String {
     let tenant_options = options_for(state, &selection.tenant);
     let collection_options = collection_options(state, &selection.tenant, &selection.collection);
     let sample = format!(
-        "<div class=\"mt-4 border-t pt-4\"><form data-on:submit=\"@post('/documents/sample', {{contentType: 'form', retry: 'never'}})\"><button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {classes}\">Load sample documents</button></form>\n<div id=\"sample-receipt\" class=\"mt-3\"></div></div>",
+        "<div class=\"mt-4 border-t pt-4\"><form data-on:submit=\"if (!confirm('Load six fixed sample document IDs? Existing documents with those IDs may be replaced.')) return; @post('/documents/sample', {{contentType: 'form', retry: 'never'}})\"><button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {classes}\">Load sample documents</button></form>\n<div id=\"sample-receipt\" class=\"mt-3\"></div></div>",
         classes = ButtonStyle::Secondary.classes(),
     );
     let body = format!(

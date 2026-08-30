@@ -10,8 +10,8 @@ use terrabase::observability::MetricsRegistry;
 use terrabase::observability::ServiceState;
 use terrabase_tbep::TbepHost;
 use terrabase_tbep::engine_host::EngineHost;
-use terrabase_tbep::grpc::TbepGrpcHandle;
 use terrabase_tbep::grpc::TbepGrpcConfig;
+use terrabase_tbep::grpc::TbepGrpcHandle;
 use terrabase_tbep::grpc::TbepGrpcServer;
 use terrabase_tbep::proto::terrabase::v1 as pb;
 use terrabase_tbep::registry::ShutdownReason;
@@ -89,6 +89,12 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
     wait_for_shutdown().await?;
     metrics.transition_service(ServiceState::Draining)?;
     let _ = host.begin_shutdown(&SupervisionShutdownRequest { reason: ShutdownReason::Supervisor });
+    network.begin_drain();
+    if let Some(handle) = &uds_handle {
+        // Keep the local administrative lane from admitting new work while
+        // the shared host finishes already-admitted calls.
+        handle.begin_drain();
+    }
     let _ = http_stop.send(());
     let grpc_shutdown = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
         network_handle.shutdown_and_wait()?;
@@ -219,7 +225,7 @@ fn _handle_type_is_send(_: &TbepGrpcHandle) {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
+    use std::collections::BTreeSet;
     use std::net::SocketAddr;
     use terrabase::observability::Region;
 
@@ -233,7 +239,7 @@ mod tests {
             server_certificate: "/missing/server.crt".into(),
             server_private_key: "/missing/server.key".into(),
             client_ca: "/missing/client-ca.crt".into(),
-            gateway_principals: BTreeMap::from([("gateway".to_owned(), [7_u8; 32])]),
+            gateway_principals: BTreeSet::from(["spiffe://terrabase.example/gateway".to_owned()]),
             uds: None,
             observability_listen: SocketAddr::from(([127, 0, 0, 1], 9464)),
             max_message_bytes: terrabase_tbep::registry::MAX_FRAME_BYTES,

@@ -17,9 +17,16 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use terrabase::engine::{CommitOutcome, Engine, EngineConfig};
+use terrabase::regions::RegionCode;
 use terrabase::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion as EngineVersion,
     LocalDurability, OperationId, TenantId,
+};
+use terrabase::usage::{
+    ChargeScope as EngineChargeScope, MeasurementWindow, MeterKind, MeterUnit as EngineMeterUnit,
+    MintingRule as EngineMintingRule, UsageAdmissionContext as EngineUsageAdmission,
+    UsageCommandError, UsageContinuation, UsageFactId, UsagePageRequest,
+    UsageRecordMeter as EngineUsageRecordMeter, UsageRecordRequest as EngineUsageRecordRequest,
 };
 
 use crate::host::{HostingError, TbepHost};
@@ -73,6 +80,126 @@ fn to_engine_expected(expected: &ExpectedVersion) -> EngineVersion {
         ExpectedVersion::Any => EngineVersion::Any,
         ExpectedVersion::Exact(version) => EngineVersion::Exact(*version),
     }
+}
+
+const fn engine_region(region: crate::registry::UsageRegion) -> RegionCode {
+    match region {
+        crate::registry::UsageRegion::Gru => RegionCode::GRU,
+        crate::registry::UsageRegion::Sfo => RegionCode::SFO,
+        crate::registry::UsageRegion::Fra => RegionCode::FRA,
+    }
+}
+
+fn wire_region(region: &RegionCode) -> Result<crate::registry::UsageRegion, HostingError> {
+    match *region {
+        RegionCode::GRU => Ok(crate::registry::UsageRegion::Gru),
+        RegionCode::SFO => Ok(crate::registry::UsageRegion::Sfo),
+        RegionCode::FRA => Ok(crate::registry::UsageRegion::Fra),
+        _ => Err(HostingError::UsageCorrupt(
+            "a durable usage fact carries an unsupported Region".into(),
+        )),
+    }
+}
+
+fn usage_error(error: UsageCommandError) -> HostingError {
+    match error {
+        UsageCommandError::InvalidRequest
+        | UsageCommandError::ScopeMismatch
+        | UsageCommandError::IdentityMismatch => HostingError::Invalid(error.to_string()),
+        UsageCommandError::IdentityConflict | UsageCommandError::RequiresSynced => {
+            HostingError::Refused(error.to_string())
+        }
+        UsageCommandError::UnsupportedBackend
+        | UsageCommandError::UsageUnavailable
+        | UsageCommandError::StorageUnavailable => {
+            HostingError::UsageUnavailable(error.to_string())
+        }
+        UsageCommandError::CorruptStorage => HostingError::UsageCorrupt(error.to_string()),
+    }
+}
+
+fn engine_usage_admission(
+    value: &crate::registry::UsageAdmissionContext,
+) -> Result<EngineUsageAdmission, HostingError> {
+    let request_id = UsageFactId::try_new(&value.request_id)
+        .map_err(|_| HostingError::Invalid("the usage request identity is invalid".into()))?;
+    let integer_units = value
+        .integer_units
+        .parse::<i128>()
+        .map_err(|_| HostingError::Invalid("the usage units are invalid".into()))?;
+    EngineUsageAdmission::try_new(
+        &value.project,
+        &value.database,
+        &value.partition,
+        engine_region(value.origin_region),
+        request_id,
+        value.accepted_at_millis,
+        value.meter_version,
+        integer_units,
+    )
+    .map_err(|_| HostingError::Invalid("the usage admission is invalid".into()))
+}
+
+fn wire_usage_fact(
+    durable: &terrabase::usage::DurableUsageFact,
+) -> Result<crate::registry::UsageFact, HostingError> {
+    let fact = durable.fact();
+    let (meter, unit, charge_scope, minting_rule) = match (fact.meter(), fact.identity().rule()) {
+        (MeterKind::AdmittedRequestUnits, EngineMintingRule::StableAdmittedRequest) => (
+            crate::registry::UsageMeter::AdmittedRequestUnits,
+            crate::registry::UsageUnit::RequestUnit,
+            crate::registry::UsageChargeScope::AdmittedRequest,
+            crate::registry::UsageMintingRule::StableAdmittedRequest,
+        ),
+        (MeterKind::PublicEgressBytes, EngineMintingRule::PublicResponseBytes) => (
+            crate::registry::UsageMeter::PublicEgressBytes,
+            crate::registry::UsageUnit::Byte,
+            crate::registry::UsageChargeScope::PublicEgress,
+            crate::registry::UsageMintingRule::PublicResponse,
+        ),
+        _ => {
+            return Err(HostingError::UsageCorrupt(
+                "a durable usage fact carries an unsupported meter contract".into(),
+            ));
+        }
+    };
+    let expected = match meter {
+        crate::registry::UsageMeter::AdmittedRequestUnits => {
+            (EngineMeterUnit::RequestUnit, EngineChargeScope::AdmittedRequest)
+        }
+        crate::registry::UsageMeter::PublicEgressBytes => {
+            (EngineMeterUnit::Byte, EngineChargeScope::PublicEgress)
+        }
+    };
+    let _ = expected;
+    let canonical = durable.encoded();
+    let checksum = canonical
+        .get(canonical.len().saturating_sub(32)..)
+        .ok_or_else(|| HostingError::UsageCorrupt("a durable usage checksum is absent".into()))?
+        .to_vec();
+    let scope = fact.scope();
+    let window = fact.window();
+    Ok(crate::registry::UsageFact {
+        fact_id: fact.identity().id().as_str().to_owned(),
+        meter,
+        meter_version: fact.meter_version(),
+        unit,
+        charge_scope,
+        minting_rule,
+        tenant: scope.tenant_id().as_str().to_owned(),
+        project: scope.project_id().as_str().to_owned(),
+        database: scope.database_id().as_str().to_owned(),
+        partition: scope.partition_id().as_str().to_owned(),
+        region: wire_region(scope.region_id())?,
+        measurement_start_millis: window.start_millis(),
+        measurement_end_millis: window.end_millis(),
+        integer_delta: fact.delta().to_string(),
+        sequence: durable.sequence(),
+        replica_epoch: durable.replica_epoch(),
+        format_version: u32::from(terrabase::usage::USAGE_FORMAT_VERSION),
+        canonical,
+        checksum,
+    })
 }
 
 /// How many recently finished query identities the host remembers for

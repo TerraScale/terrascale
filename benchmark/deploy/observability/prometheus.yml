@@ -1,4 +1,4 @@
-# ts-orchestrator renders private authenticated targets for the exact candidate.
+# ts-orchestrator renders private-network targets for the exact candidate.
 # Do not add a public load-balancer or public gateway target here.
 global:
   scrape_interval: 15s
@@ -9,19 +9,13 @@ rule_files:
 
 scrape_configs:
   - job_name: terrabase
-    scheme: https
+    scheme: http
     metrics_path: /internal/metrics
     scrape_timeout: 10s
     enable_http2: true
     sample_limit: 10000
     target_limit: 1000
-    tls_config:
-      ca_file: /etc/prometheus/terrabase/ca.pem
-      cert_file: /etc/prometheus/terrabase/client.pem
-      key_file: /etc/prometheus/terrabase/client-key.pem
-      min_version: TLS13
-      insecure_skip_verify: false
-    # ts-orchestrator supplies private authenticated targets. An empty target
-    # list is intentional. It also mounts the candidate-bound mTLS files above.
+    # ts-orchestrator supplies targets reachable only through its private
+    # network policy. An empty target list is intentional.
     static_configs:
       - targets: []

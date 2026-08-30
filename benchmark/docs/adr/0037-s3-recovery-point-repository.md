@@ -42,7 +42,9 @@ The transport follows these rules:
 - Bucket encryption policy is the default. An optional KMS key adds SSE-KMS
   headers. Access credentials come from workload identity, task or instance
   roles, or standard AWS environment providers. Studio never persists them.
-- S3 lifecycle policy owns retention. Bucket versioning and object lock are
+- S3 lifecycle policy owns retention. Objects carry a bounded
+  `terrabase-kind` tag so full roots can outlive incrementals by at least one
+  configured full-point interval. Bucket versioning and object lock are
   deployment controls. TerraBase does not issue broad prefix deletion from a
   backup run.
 
@@ -62,9 +64,10 @@ The archive remains a TerraBase format. It is not a raw filesystem copy and
 cannot be restored by Litestream. This preserves tenant selection, delete
 records, durability disclosures, scope binding, and clean replay verification.
 
-Deleting one object can break an incremental chain. Lifecycle rules must
-expire a full point and all incrementals that depend on it as one retention
-unit. The operator runbook gives the safe policy.
+Deleting one object can break an incremental chain. Lifecycle rules retain
+full objects for the promised restore window plus at least one full-point
+interval, while incremental objects use the restore window itself. The
+operator runbook gives the concrete policy and provider-rounding requirement.
 
 Studio is loopback-only and its scheduler stops with Studio. Its successful
 local S3 test is implementation evidence, not production backup or restore
@@ -80,4 +83,3 @@ qualification.
 - Production qualification restores a candidate-bound database into a new
   cluster and records RPO, RTO, object count, bytes, provider, Region, KMS key
   identity, lifecycle policy, and checksum verdict without credentials.
-

@@ -18,18 +18,20 @@
 //! # Execution and fail-closed rules
 //!
 //! A restore consumes a destination exactly as the backup core sealed it.
-//! Every bound member of every chain link is re-digested before anything is
-//! materialized; a tampered or truncated member is
+//! Chain selection validates sealed manifests and link metadata before
+//! materialization. Replay then opens each member once, streams its record
+//! frames through a bounded read window — a member is never held in memory —
+//! hashes the same bytes as they are decoded, and compares that digest with
+//! the manifest before publication. A tampered or truncated member is
 //! [`BackupError::ChecksumMismatch`] and a missing member or link is
-//! [`BackupError::ChainIncomplete`]. Replay then streams each member's
-//! record frames through a bounded read window — a member is never held in
-//! memory — and re-publishes the records through the storage publication
-//! seam (the same seam the `Engine` transaction path lowers to) as batches
-//! of bounded write count at `Synced` durability. Per-link decoded counts
-//! must reproduce the manifest's bound counts exactly: documents, family
-//! records, deletes, and (for incremental links) durability disclosures.
-//! Any divergence — including a digest-consistent but forged member whose
-//! frames decode to something else — is [`BackupError::ChecksumMismatch`].
+//! [`BackupError::ChainIncomplete`]. Replay re-publishes records through the
+//! storage publication seam (the same seam the `Engine` transaction path
+//! lowers to) as batches of bounded write count at `Synced` durability.
+//! Per-link decoded counts must reproduce the manifest's bound counts
+//! exactly: documents, family records, deletes, and (for incremental links)
+//! durability disclosures. Any divergence — including a digest-consistent
+//! but forged member whose frames decode to something else — is
+//! [`BackupError::ChecksumMismatch`].
 //! There is no partial-success outcome anywhere in this module.
 //!
 //! The target is a fresh engine location, and publication is atomic at
@@ -152,7 +154,8 @@ enum Selection {
 }
 
 /// Resolves the ordered chain (root first) a selection restores, after
-/// strictly validating and re-digesting every link and member it names.
+/// strictly validating the sealed manifests and link metadata it names.
+/// Member bytes are opened and authenticated during replay.
 ///
 /// # Errors
 ///
@@ -232,10 +235,34 @@ fn open_member(path: &Path, expected_len: u64) -> Result<File, BackupError> {
     if !file_metadata.file_type().is_file() {
         return Err(BackupError::ChainIncomplete);
     }
+    // Confirm that the pathname still names the inode we opened. On Unix
+    // this closes the stat/open race even when a member is replaced between
+    // the initial symlink check and `File::open`; the replay continues to use
+    // the already-open handle in every case.
+    let current_path_metadata =
+        std::fs::symlink_metadata(path).map_err(|_| BackupError::ChainIncomplete)?;
+    if !current_path_metadata.file_type().is_file()
+        || !same_file_identity(&path_metadata, &file_metadata)
+        || !same_file_identity(&current_path_metadata, &file_metadata)
+    {
+        return Err(BackupError::ChainIncomplete);
+    }
     if file_metadata.len() != expected_len {
         return Err(BackupError::ChecksumMismatch);
     }
     Ok(file)
+}
+
+#[cfg(unix)]
+fn same_file_identity(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+#[cfg(not(unix))]
+fn same_file_identity(_left: &std::fs::Metadata, _right: &std::fs::Metadata) -> bool {
+    true
 }
 
 // ---------------------------------------------------------------------------
@@ -669,8 +696,8 @@ impl RestorePlan {
     ///
     /// Selection is the same deterministic head choice
     /// [`crate::backup::verify_latest_chain`] makes, and the full chain —
-    /// every link, every bound member — is verified before anything is
-    /// materialized. See the restore module's documentation for the
+    /// every link's bound member — is authenticated during replay before the
+    /// target is published. See the restore module's documentation for the
     /// execution, fail-closed, and memory-bound contracts.
     ///
     /// # Errors

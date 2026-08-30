@@ -27,13 +27,23 @@ missing_docs = "deny"
 pedantic = "warn"
 
 [dependencies]
-# The engine socket lane (PD-2026-08-26-13 D2: engine sockets for networked
-# member links, no broker between members). quinn is the QUIC implementation;
-# rustls with the `ring` provider keeps the crypto closure on one backend.
-quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+# The qualification lane keeps its pinned ring provider. The production
+# boundary selects AWS-LC FIPS explicitly and never relies on rustls' process
+# default. Both use the same quinn transport implementation.
+quinn = { version = "0.11", default-features = false, features = [
+  "runtime-tokio",
+  "rustls-aws-lc-rs-fips",
+  "rustls-ring",
+] }
+rustls = { version = "0.23", default-features = false, features = [
+  "fips",
+  "ring",
+  "std",
+] }
+aws-lc-rs = { version = "1.18.0", default-features = false, features = ["fips"] }
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "time", "sync", "macros", "io-util"] }
+x509-parser = "0.18"
 # Content digest of every envelope payload (message-contract discipline).
 # `ring` is already in the QUIC closure; reusing its SHA-256 keeps the crate's
 # dependency tree at exactly the engine-socket set, with no second digest crate

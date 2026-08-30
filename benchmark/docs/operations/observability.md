@@ -23,8 +23,9 @@ production RPS, latency, topology, or capacity headroom.
 
 ## Production metrics
 
-`ts-orchestrator` configures the private production listener and authenticated
-Prometheus target. Its path is `/internal/metrics` in the checked-in deployment
+`ts-orchestrator` configures the private production listener, scrape target,
+and network policy. The listener uses plaintext HTTP without application
+authentication. Its path is `/internal/metrics` in the checked-in deployment
 template. Do not route it through the public Go gateway.
 
 The production registry reports request counters and latency histograms,

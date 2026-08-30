@@ -1,6 +1,6 @@
 //! Fail-closed daemon configuration.
 
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -29,9 +29,8 @@ pub struct ServerConfig {
     pub server_private_key: PathBuf,
     /// Client trust bundle file. Client certificates are mandatory.
     pub client_ca: PathBuf,
-    /// Gateway principals mapped to the SHA-256 fingerprint of their leaf
-    /// client certificate.
-    pub gateway_principals: BTreeMap<String, [u8; 32]>,
+    /// Exact SPIFFE URI SANs admitted from verified client certificates.
+    pub gateway_principals: BTreeSet<String>,
     /// Optional local UDS configuration.
     pub uds: Option<UdsConfig>,
     /// Private Prometheus and probe listen address.
@@ -80,7 +79,7 @@ struct FileTbep {
     server_certificate: PathBuf,
     server_private_key: PathBuf,
     client_ca: PathBuf,
-    gateway_principals: BTreeMap<String, String>,
+    gateway_principals: Vec<String>,
     uds: Option<FileUds>,
     max_message_bytes: usize,
     max_inflight: usize,
@@ -193,17 +192,17 @@ impl ServerConfig {
         {
             return Err(ConfigError::InvalidGatewayPrincipal);
         }
-        let mut gateway_principals = BTreeMap::new();
-        for (principal, fingerprint) in file.tbep.gateway_principals {
+        let mut gateway_principals = BTreeSet::new();
+        for principal in file.tbep.gateway_principals {
             if principal.is_empty()
                 || principal.len() > terrabase_tbep::grpc::MAX_PRINCIPAL_BYTES
                 || principal != principal.trim()
                 || principal.chars().any(char::is_control)
+                || !principal.starts_with("spiffe://")
+                || !gateway_principals.insert(principal)
             {
                 return Err(ConfigError::InvalidGatewayPrincipal);
             }
-            let fingerprint = certificate_fingerprint(&fingerprint)?;
-            gateway_principals.insert(principal, fingerprint);
         }
         let uds = file
             .tbep
@@ -252,29 +251,6 @@ fn bounded_duration(value: u64, minimum: u64, maximum: u64) -> Result<Duration, 
         return Err(ConfigError::InvalidBound);
     }
     Ok(Duration::from_millis(value))
-}
-
-fn certificate_fingerprint(value: &str) -> Result<[u8; 32], ConfigError> {
-    if value.len() != 64
-        || !value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        return Err(ConfigError::InvalidGatewayPrincipal);
-    }
-    let mut decoded = [0_u8; 32];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
-        let high = hex_nibble(pair[0]);
-        let low = hex_nibble(pair[1]);
-        decoded[index] = (high << 4) | low;
-    }
-    Ok(decoded)
-}
-
-const fn hex_nibble(value: u8) -> u8 {
-    match value {
-        b'0'..=b'9' => value - b'0',
-        b'a'..=b'f' => value - b'a' + 10,
-        _ => 0,
-    }
 }
 
 /// A fail-closed configuration error. Variants never contain secret material.
@@ -359,7 +335,7 @@ listen = "0.0.0.0:8421"
 server_certificate = "/run/secrets/terrabase.crt"
 server_private_key = "/run/secrets/terrabase.key"
 client_ca = "/run/secrets/gateway-ca.crt"
-gateway_principals = { ts-internals = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" }
+gateway_principals = ["spiffe://terrabase.example/gateway/ts-internals"]
 max_message_bytes = 16777216
 max_inflight = 128
 request_timeout_millis = 30000
@@ -377,7 +353,9 @@ listen = "127.0.0.1:9464"
         let config = ServerConfig::parse(&valid()).expect("valid config");
         assert_eq!(config.region, Region::Gru);
         assert_eq!(config.max_inflight, 128);
-        assert!(config.gateway_principals.contains_key("ts-internals"));
+        assert!(
+            config.gateway_principals.contains("spiffe://terrabase.example/gateway/ts-internals")
+        );
     }
 
     #[test]
@@ -421,12 +399,10 @@ listen = "127.0.0.1:9464"
     }
 
     #[test]
-    fn gateway_certificate_fingerprints_are_canonical() {
-        for fingerprint in ["ab", &"A".repeat(64), &"g".repeat(64)] {
-            let text = valid().replace(
-                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                fingerprint,
-            );
+    fn gateway_principals_require_exact_spiffe_uris() {
+        for principal in ["gateway", "https://example/gateway", "spiffe://\u{0001}"] {
+            let text =
+                valid().replace("spiffe://terrabase.example/gateway/ts-internals", principal);
             assert!(matches!(
                 ServerConfig::parse(&text),
                 Err(ConfigError::InvalidGatewayPrincipal)

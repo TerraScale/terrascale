@@ -5,6 +5,7 @@ use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
 use aws_lc_rs::rand;
+use zeroize::Zeroize;
 
 use super::{DatabaseKey, EncryptionError};
 
@@ -62,7 +63,7 @@ impl LocalFileKeyProvider {
         let mut file = match private_create(&self.path) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                bytes.fill(0);
+                bytes.zeroize();
                 return match load_existing(&self.path) {
                     Ok(key) => Ok(key),
                     Err(LoadError::Unsafe) => Err(EncryptionError::UnsafeLocalKeyFile),
@@ -72,13 +73,13 @@ impl LocalFileKeyProvider {
                 };
             }
             Err(_) => {
-                bytes.fill(0);
+                bytes.zeroize();
                 return Err(EncryptionError::LocalKeyUnavailable);
             }
         };
         let result = file.write_all(&bytes).and_then(|()| file.sync_all());
         if result.is_err() {
-            bytes.fill(0);
+            bytes.zeroize();
             return Err(EncryptionError::LocalKeyUnavailable);
         }
         let key = DatabaseKey::from_bytes(bytes);
@@ -116,7 +117,7 @@ fn load_existing(path: &Path) -> Result<DatabaseKey, LoadError> {
     file.read_exact(&mut bytes).map_err(|_| LoadError::Io)?;
     let mut trailing = [0u8; 1];
     if file.read(&mut trailing).map_err(|_| LoadError::Io)? != 0 {
-        bytes.fill(0);
+        bytes.zeroize();
         return Err(LoadError::Unsafe);
     }
     Ok(DatabaseKey::from_bytes(bytes))
