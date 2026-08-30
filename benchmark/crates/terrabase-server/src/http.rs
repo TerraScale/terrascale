@@ -35,7 +35,7 @@ struct OperatorState {
 
 /// Builds the private operator router. It has no tenant-derived routes,
 /// labels, query values, or diagnostics.
-#[must_use]
+#[must_use = "the returned router must be installed on a server"]
 pub fn router(metrics: Arc<MetricsRegistry>) -> Router {
     let state = OperatorState {
         metrics,
@@ -114,6 +114,8 @@ fn probe(accepted: bool, name: &'static str) -> impl IntoResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::to_bytes;
+    use axum::response::IntoResponse as _;
     use terrabase::observability::Component;
     use terrabase::observability::HealthStatus;
     use terrabase::observability::ServiceState;
@@ -146,5 +148,33 @@ mod tests {
         assert!(!stopped.is_live());
         assert!(stopped.is_started());
         assert!(!stopped.is_ready());
+    }
+
+    #[tokio::test]
+    async fn operator_responses_expose_bounded_status_and_body_contracts() {
+        let metrics = Arc::new(MetricsRegistry::new());
+        let state = OperatorState { metrics, permits: Arc::new(tokio::sync::Semaphore::new(1)) };
+
+        let metrics_response = prometheus(State(state.clone())).await.into_response();
+        assert_eq!(metrics_response.status(), StatusCode::OK);
+        assert_eq!(
+            metrics_response.headers().get(CONTENT_TYPE).and_then(|value| value.to_str().ok()),
+            Some(PROMETHEUS_CONTENT_TYPE)
+        );
+        let metrics_body = to_bytes(metrics_response.into_body(), MAX_HEADER_BYTES)
+            .await
+            .expect("metrics body is bounded");
+        assert!(metrics_body.windows(b"terrabase_".len()).any(|window| window == b"terrabase_"));
+
+        let live_response = liveness(State(state.clone())).await.into_response();
+        assert_eq!(live_response.status(), StatusCode::OK);
+        assert_eq!(to_bytes(live_response.into_body(), 64).await.expect("liveness body"), "live\n");
+
+        let readiness_response = readiness(State(state)).await.into_response();
+        assert_eq!(readiness_response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            to_bytes(readiness_response.into_body(), 64).await.expect("readiness body"),
+            "ready\n"
+        );
     }
 }

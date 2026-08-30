@@ -67,6 +67,7 @@ use terrabase_crdt::{Candidate, DecodeError, DecodeLimits, LwwRegister, Register
 
 pub mod anti_entropy;
 pub mod compose;
+pub mod durable;
 pub mod progress;
 
 pub use progress::{
@@ -83,6 +84,7 @@ pub use compose::{
     accept_epoch, coordinate_composed_transaction, coordinate_composed_write, migrate_collection,
     quorum_read_with_repair,
 };
+pub use durable::{DurableMember, DurableMemberError, DurableMemberProgress};
 
 /// The exchange codec's first major version.
 const EXCHANGE_CODEC_VERSION: u8 = 1;
@@ -600,6 +602,12 @@ impl ReplicaDoc {
     #[must_use]
     pub fn materialized(&self) -> ReplicaScope {
         materialize_docs(&self.docs)
+    }
+
+    /// Returns the number of retained operations in this replica.
+    #[must_use]
+    pub fn operation_count(&self) -> u64 {
+        self.ops.len() as u64
     }
 
     /// Returns the materialized state as of just after one operation,

@@ -497,4 +497,31 @@ mod tests {
         std::fs::remove_file(&target).expect("temporary PEM removes");
         std::fs::remove_file(&private).expect("temporary PEM removes");
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn uds_parent_and_socket_mode_are_restricted() {
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+        use std::os::unix::net::UnixListener;
+
+        let directory = temporary_path("uds-parent");
+        std::fs::create_dir(&directory).expect("temporary UDS directory creates");
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o750))
+            .expect("temporary UDS directory permissions");
+        let socket = directory.join("operator.sock");
+        assert!(validate_uds_parent(&socket).is_ok());
+
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o770))
+            .expect("temporary UDS directory permissions");
+        assert!(matches!(validate_uds_parent(&socket), Err(DaemonError::UnsafeUdsPath)));
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o750))
+            .expect("temporary UDS directory permissions");
+
+        let listener = UnixListener::bind(&socket).expect("temporary UDS binds");
+        set_socket_mode(&socket, 0o660).expect("temporary UDS mode applies");
+        assert_eq!(std::fs::symlink_metadata(&socket).expect("UDS metadata").mode() & 0o777, 0o660);
+        drop(listener);
+        std::fs::remove_file(&socket).expect("temporary UDS removes");
+        std::fs::remove_dir(&directory).expect("temporary UDS directory removes");
+    }
 }

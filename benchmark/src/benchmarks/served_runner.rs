@@ -7,6 +7,12 @@
 //! their retained output.
 
 #![allow(dead_code, reason = "the served benchmark runner is a test-only qualification harness")]
+#![allow(
+    clippy::duration_suboptimal_units,
+    clippy::format_push_string,
+    clippy::too_many_lines,
+    reason = "process setup and certificate arguments mirror the external qualification contract"
+)]
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};

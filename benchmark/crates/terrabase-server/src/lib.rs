@@ -1,4 +1,4 @@
-//! Production composition boundary for the TerraBase engine daemon.
+//! Production composition boundary for the `TerraBase` engine daemon.
 //!
 //! This crate opens one durable engine location, serves the existing TBEP
 //! implementation over mandatory mutual TLS, optionally exposes a local UDS,

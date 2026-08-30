@@ -2,7 +2,7 @@
 
 Status: accepted direction recorded; code completion and qualification are incomplete.
 
-Last audited: 2026-08-30 against `develop` revision `7f2b6f7` and the current
+Last audited: 2026-08-30 against `develop` revision `c02d32c` and the current
 dirty working candidate. Uncommitted code, running commands, and local receipts
 are not release evidence. This file covers TerraBase only.
 
@@ -89,6 +89,15 @@ origin, and requires typed confirmations on its destructive replacement and
 deletion paths. These are implementation facts until the final gates pass on
 one stable revision.
 
+The engine now also has a production-only typed database owner tuple and a
+durable owner record for every location. The root `Member` catalog can open
+multiple scoped databases, binds each location to environment, tenant,
+Project, database, and Region ULIDs, refuses unscoped production entries, and
+enforces global and per-database admission. Signed principal-context encoding,
+ECDSA P-256 signing and verification, key-set rotation, expiry, binding, and
+replay tests have landed. These pieces are not yet connected to the TBEP
+production request path.
+
 The executable audit also found release-blocking composition gaps:
 
 - `EngineHost` serves durable documents, queries, schemas, tiers, and usage,
@@ -98,6 +107,10 @@ The executable audit also found release-blocking composition gaps:
 - `ClusterTbepHost` serves clustered document operations and topology while
   refusing most other engine planes. The production mTLS harness currently
   hosts `EngineHost`, not a complete clustered Member.
+- The root multi-database `Member` and `terrabase-cluster` production runtime
+  validate catalog, placement, transport, and readiness facts, but the durable
+  replication and complete-host adapter is deliberately absent. Readiness
+  remains false without it.
 - ADR 0030 now selects AWS-LC FIPS. The working candidate has mutually
   exclusive local and production feature profiles, an owner-only persistent
   local-file provider, a provider-neutral OCI Vault lifecycle seam, and a
@@ -118,9 +131,14 @@ The executable audit also found release-blocking composition gaps:
   certificate tests on the stable candidate.
 - TBEP currently binds the gateway principal and tenant, Project, and database
   as strings repeated in RPC metadata. It does not yet carry the canonical
-  16-byte identities or signed end-user `PrincipalContext` required by ADRs
-  0027 and 0039. The string-only binding is not a production authorization
-  boundary.
+  16-byte identities or bind the signed end-user `PrincipalContext` now
+  implemented in the engine. The string-only path contradicts ADR 0039's
+  server-held immutable logical-client binding and is not a production
+  authorization boundary.
+- Automatic document revision snapshots, composed lifecycle scheduling,
+  durable reactive publication through the TBEP host, migration RPC serving,
+  and the remaining spatial parity work are still explicit source-level gaps.
+  First GA requires them; typed refusals and design comments do not count.
 - The checkout is changing under several concurrent implementation and test
   processes. No clean full-gate result is recorded for the resulting candidate.
 
@@ -128,12 +146,13 @@ The latest local gate probe on 2026-08-30 reached these concrete results:
 
 | Gate | Result | Meaning |
 | --- | --- | --- |
-| `cargo check --workspace --locked` | The last isolated probe passed; the current integration probe fails | Concurrent snapshot-boundary and index ownership edits currently leave non-exhaustive error mappings and `IndexSegment`/`Arc<IndexSegment>` mismatches. Rerun after those edits converge. |
-| Root, benchmark, and Studio formatting | Benchmark and Studio passed; root failed | At probe time `Cargo.toml` declared a missing `tests/encryption/main.rs`, and the observability contract had unformatted concurrent edits. Later concurrent work added the encryption test. The full formatting gate must rerun on a stable revision. |
-| `buf lint` | Failed | The current schema has enum-prefix, service-suffix, and streaming-response naming violations while the protobuf rename is in progress. The schema, Rust serving code, and generated Go bindings must converge before freeze. |
+| `cargo +1.97.1 test -p terrabase --lib --locked` | Passed on `cb23153` | 1,269 passed, 0 failed, and 3 declared characterization lanes were ignored. This is root-engine evidence, not a full workspace or production-boundary pass. |
+| `cargo +1.97.1 check --workspace --all-targets --locked --keep-going` | Passed before the latest authorization-policy edit; current dirty integration is transiently incomplete | The coherent snapshot compiled. A later in-progress edit declared `authorization::policy_store` before its file landed. Freeze and rerun on the final revision. |
+| Root formatting and `git diff --check` | Passed on the latest probe | Formatting and whitespace are clean for the probed tree. They must rerun after the active edits finish. |
+| `buf lint` | Passed | The protobuf naming migration now satisfies Buf lint. Generated Go drift, live interchange, and rollback still belong to the complete candidate gate. |
+| `scripts/validate-release-contracts.sh` | Passed | The repository rejects retired protocols and language artifacts, Go outside `terrabase-go`, and release-contract drift. |
 | `node --check crates/terrabase-studio/static/datastar-1.0.3.js` and `node --check crates/terrabase-studio/static/studio-monaco.js` | Passed | Both browser assets parse. Rust route tests still need to pass with the final Studio tree. |
-| `git diff --check` | Passed | The probed working diff had no whitespace errors. |
-| `go vet -mod=readonly ./...` and `go test -mod=readonly ./...` | Environment-blocked on the repeat run | The installed Go 1.27 tree is missing standard-library packages. An earlier run also caught a transient usage-schema/binding mismatch while concurrent generation was in progress. A healthy pinned Go toolchain must rerun both commands against a stable revision. |
+| `go test -mod=readonly ./...`, `go vet -mod=readonly ./...`, and `go test -race -mod=readonly ./...` | Passed with Go 1.27.0 | The sole network client and benchmark adapter compile and pass their tests and race run. Regenerated-binding drift and live Member interchange still need the final stable revision. |
 
 None of these results is candidate release evidence while the source revision
 continues to change.
@@ -151,6 +170,9 @@ continues to change.
 | PRG-P0-09 | P0 | Implement production observability. | Prometheus exposition contract, stable bounded labels, redaction tests, health/readiness separation, Grafana dashboard and alerts, failure tests, and an operator runbook. |
 | PRG-P0-10 | P0 | Close the private Studio release boundary. | Vendored Datastar, Basecoat, and Monaco assets resolve without network access; JSON diagnostics work; every destructive or replacement action has exactly one target and phrase confirmation enforced by the server; CSP, same-origin, body-bound, and browser tests pass. |
 | PRG-P0-11 | P0 | Implement the multi-tenant authorization boundary in ADR 0039. | Canonical binary scope identities, signed short-lived principal contexts, durable policy generations, fail-closed engine enforcement, revocation, cross-tenant denial, fair admission, redaction, and live multi-user Go-gateway evidence pass through the complete Member host. |
+| PRG-P0-12 | P0 | Finish every GA operation plane. | Family reads and writes, durable backbone and sync sessions, automatic revisions, lifecycle maintenance, schema migrations, vector and spatial modes, replication observations, and reactive revocation all execute through the production Member without placeholder behavior or default refusal. |
+| PRG-P0-13 | P0 | Bind the production daemon to the typed database catalog and clustered runtime. | Configuration carries an environment and a complete typed database catalog; startup opens every scoped location, admits durable membership and transport, attaches the durable data plane, reports readiness only when all facts pass, and drains all locations and frontiers. |
+| PRG-P0-14 | P0 | Ship a real production benchmark boundary. | The runner launches the packaged signed Member, verifies revision, tree, binary, capability, and run-configuration digests, exercises an RF=2 boundary through `terrabase-go`, and never promotes the diagnostic single-member harness into a product claim. |
 | PRG-P1-03 | P1 | Qualify the GRU, SFO, and FRA engine topology. | RF=2 TerraBase placement, independent failure domains, Member and Region loss, and recovery receipts. |
 | PRG-P1-05 | P1 | Establish decision-grade performance and isolation evidence. | Approved benchmark policy and baseline, noisy-tenant budgets, workload-family coverage, architecture results, capacity, cost, and regression reports. |
 | PRG-P1-06 | P1 | Complete the external GA assurance gates. | `ts-orchestrator` supplies native x86_64 and ARM64 topology, private-network, OCI Vault, recovery, rollback, incident-drill, thirty-day soak, and promotion receipts; the scoped SOC 2 Type I report is complete and the Type II observation period is active. |

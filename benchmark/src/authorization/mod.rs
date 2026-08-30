@@ -15,12 +15,14 @@ use crate::identity::{
 };
 
 mod signed;
+mod policy_store;
 
 pub use signed::{
     AuthorizationCryptoMode, PrincipalContextEnvelope, PrincipalContextKey, PrincipalContextKeySet,
     PrincipalContextPayload, PrincipalContextReplayGuard, PrincipalContextSigner,
     PrincipalContextVerifier, SigningKeyProvenance,
 };
+pub use policy_store::{AuthorizationPolicyStore, PolicyStoreSnapshot};
 
 /// The canonical version of the engine authorization policy language.
 pub const AUTHORIZATION_FORMAT_VERSION: u16 = 1;
@@ -85,6 +87,18 @@ pub enum AuthorizationError {
     DevelopmentSigningKey,
     /// Signature creation failed.
     ContextSigningFailed,
+    /// The policy journal could not be created, read, appended, or synced.
+    PolicyStoreUnavailable,
+    /// The policy journal is unsafe, including a symlink or broad permissions.
+    PolicyStoreUnsafe,
+    /// A complete policy journal record failed authentication or decoding.
+    PolicyJournalCorrupt,
+    /// The policy publication would roll back a generation.
+    PolicyGenerationRollback,
+    /// A generation already exists with different policy contents.
+    PolicyGenerationEquivocation,
+    /// No policy is currently published for a scope.
+    PolicyMissing,
 }
 
 impl fmt::Display for AuthorizationError {
@@ -129,6 +143,14 @@ impl fmt::Display for AuthorizationError {
                 formatter.write_str("development signing key rejected in production")
             }
             Self::ContextSigningFailed => formatter.write_str("principal context signing failed"),
+            Self::PolicyStoreUnavailable => formatter.write_str("authorization policy store unavailable"),
+            Self::PolicyStoreUnsafe => formatter.write_str("unsafe authorization policy store"),
+            Self::PolicyJournalCorrupt => formatter.write_str("corrupt authorization policy journal"),
+            Self::PolicyGenerationRollback => formatter.write_str("authorization policy generation rollback"),
+            Self::PolicyGenerationEquivocation => {
+                formatter.write_str("authorization policy generation equivocation")
+            }
+            Self::PolicyMissing => formatter.write_str("authorization policy is missing"),
         }
     }
 }

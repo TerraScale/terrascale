@@ -72,11 +72,15 @@
 //! objective status is still fail-closed to `inconclusive`.
 
 #![allow(clippy::doc_markdown)] // dense with the proper nouns PostgreSQL and TerraBase
+#![cfg_attr(
+    feature = "bench-tools",
+    allow(dead_code, reason = "bench-tools exposes only the served-boundary entry point")
+)]
 
 mod driver;
 mod gates;
 mod lane;
-#[cfg(test)]
+#[cfg(any(test, feature = "bench-tools"))]
 mod lane_run;
 mod optimizer;
 mod record;

@@ -27,6 +27,20 @@
 //! (loopback or in-process boundary, single host, no cross-side sample
 //! interleaving) rather than hiding them.
 
+#![allow(
+    clippy::assigning_clones,
+    clippy::case_sensitive_file_extension_comparisons,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::format_push_string,
+    clippy::manual_let_else,
+    clippy::new_ret_no_self,
+    clippy::too_many_lines,
+    clippy::wildcard_imports,
+    reason = "the strict JSON reader preserves the audited wire format and hostile fixtures"
+)]
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Barrier};
 use std::time::Instant;

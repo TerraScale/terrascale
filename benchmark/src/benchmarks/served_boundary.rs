@@ -7,6 +7,10 @@
 //! `served_runner`.
 
 #![allow(dead_code, reason = "the served benchmark boundary is a test-only qualification harness")]
+#![allow(
+    clippy::unused_self,
+    reason = "the claim methods are intentionally attached to the typed claim"
+)]
 
 use std::path::{Path, PathBuf};
 
