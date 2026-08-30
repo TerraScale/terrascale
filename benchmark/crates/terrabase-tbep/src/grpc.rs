@@ -1086,11 +1086,19 @@ impl QueryLifecycle {
         }
 
         let lifecycle = Arc::clone(self);
-        let _ = std::thread::Builder::new().name("tbep-query-cancel".into()).spawn(move || {
-            let request = registry::QueryCancelRequest { query_id: lifecycle.key.1 };
-            let _ = lifecycle.host.query_cancel(&lifecycle.scope, &request);
-            lifecycle.cancel_finished();
-        });
+        if std::thread::Builder::new()
+            .name("tbep-query-cancel".into())
+            .spawn(move || {
+                let request = registry::QueryCancelRequest { query_id: lifecycle.key.1 };
+                let _ = lifecycle.host.query_cancel(&lifecycle.scope, &request);
+                lifecycle.cancel_finished();
+            })
+            .is_err()
+        {
+            // Keep the reservation until the execution task exits even if
+            // the process cannot create the best-effort cancellation worker.
+            self.cancel_finished();
+        }
     }
 
     fn cancel_finished(&self) {
@@ -1295,6 +1303,36 @@ fn response_size_error(detail: &str) -> Status {
     tbep_status(Code::ResourceExhausted, pb::ErrorCode::RequestTooLarge, detail)
 }
 
+#[cfg(test)]
+mod query_lifecycle_tests {
+    use super::*;
+
+    #[test]
+    fn query_reservations_use_the_full_scope_and_drop_cleanup() {
+        let server = TbepGrpcServer::new(
+            Arc::new(crate::host::SyncDeliveryHost::new(1)) as Arc<dyn TbepHost>,
+            pb::BindingKind::Local,
+        );
+        let scope = registry::BoundScope {
+            principal: "operator".into(),
+            tenant: "tenant-a".into(),
+            project: "project-a".into(),
+            database: "database-a".into(),
+        };
+        let lifecycle = server.register_query(&scope, 7).expect("the query reserves");
+        assert!(server.register_query(&scope, 7).is_err());
+
+        let other_database =
+            registry::BoundScope { database: "database-b".into(), ..scope.clone() };
+        let other = server
+            .register_query(&other_database, 7)
+            .expect("the same id is independent in another database");
+        drop(other);
+        drop(lifecycle);
+        assert!(server.register_query(&scope, 7).is_ok());
+    }
+}
+
 /// Runs one host call behind the overload gate on the blocking pool.
 async fn run_host<T, F>(
     self_ref: &TbepGrpcServer,
@@ -1434,10 +1472,11 @@ where
         ));
     }
     let permit = Permit(Arc::clone(&self_ref.inflight));
+    let task_lifecycle = Arc::clone(&lifecycle);
     let task = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        let _execution = QueryExecutionGuard(Arc::clone(&lifecycle));
-        if !lifecycle.started() {
+        let _execution = QueryExecutionGuard(Arc::clone(&task_lifecycle));
+        if !task_lifecycle.started() {
             return Err(HostingError::Refused("the query was cancelled".into()));
         }
         work()

@@ -43,10 +43,20 @@ pub(super) fn flush_frozen(storage: &mut LsmStorage) -> Vec<SegmentMeta> {
         }
         let id = candidate.allocate_segment_id();
         let path = super::segment_path(&dir, id);
-        let Ok(meta) = segment::write_segment(&path, id, 0, &entries) else {
+        let Ok(meta) = segment::write_segment_with_encryption(
+            &path,
+            id,
+            0,
+            &entries,
+            storage.segment_encryption.as_ref(),
+        ) else {
             return Vec::new();
         };
-        let Ok(reader) = segment::SegmentReader::open(&path, id, 0) else {
+        let Ok(reader) = (if let Some(encryption) = &storage.segment_encryption {
+            segment::SegmentReader::open_with_encryption(&path, id, 0, encryption)
+        } else {
+            segment::SegmentReader::open(&path, id, 0)
+        }) else {
             return Vec::new();
         };
         candidate.segments.push(meta.clone());
@@ -107,7 +117,14 @@ pub(super) fn merge_l0(storage: &mut LsmStorage) -> Option<(u64, u64)> {
     let manifest_before = storage.manifest.clone();
     let id = storage.manifest.allocate_segment_id();
     let path = super::segment_path(&dir, id);
-    segment::write_segment(&path, id, 1, &merged).ok()?;
+    segment::write_segment_with_encryption(
+        &path,
+        id,
+        1,
+        &merged,
+        storage.segment_encryption.as_ref(),
+    )
+    .ok()?;
     let meta = SegmentMeta {
         id,
         level: 1,
@@ -116,7 +133,11 @@ pub(super) fn merge_l0(storage: &mut LsmStorage) -> Option<(u64, u64)> {
         min_key: merged.first().map_or_else(Vec::new, |entry| entry.key.user_key().to_vec()),
         max_key: merged.last().map_or_else(Vec::new, |entry| entry.key.user_key().to_vec()),
     };
-    if let Ok(reader) = segment::SegmentReader::open(&path, id, 1) {
+    if let Ok(reader) = if let Some(encryption) = &storage.segment_encryption {
+        segment::SegmentReader::open_with_encryption(&path, id, 1, encryption)
+    } else {
+        segment::SegmentReader::open(&path, id, 1)
+    } {
         storage.readers.insert(id, std::cell::RefCell::new(reader));
     }
     let removed: Vec<u64> = candidates.iter().map(|meta| meta.id).collect();

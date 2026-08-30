@@ -55,12 +55,6 @@ impl LaneConfig {
         if self.concurrency == 0 {
             return Err(ConfigError::Zero("concurrency"));
         }
-        if !self.operations.is_multiple_of(self.concurrency) {
-            return Err(ConfigError::NotDivisible {
-                operations: self.operations,
-                concurrency: self.concurrency,
-            });
-        }
         if !self.noise_percent.is_finite() || !(0.0..=100.0).contains(&self.noise_percent) {
             return Err(ConfigError::Noise(self.noise_percent));
         }
@@ -73,8 +67,6 @@ impl LaneConfig {
 pub enum ConfigError {
     /// A required positive count was zero.
     Zero(&'static str),
-    /// The operation count would be truncated by slot fan-out.
-    NotDivisible { operations: usize, concurrency: usize },
     /// The statistical noise setting is not a finite percentage.
     Noise(f64),
 }
@@ -83,10 +75,6 @@ impl std::fmt::Display for ConfigError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Zero(field) => write!(formatter, "{field} must be greater than zero"),
-            Self::NotDivisible { operations, concurrency } => write!(
-                formatter,
-                "operation count {operations} is not divisible by concurrency {concurrency}"
-            ),
             Self::Noise(value) => {
                 write!(formatter, "noise percentage {value} is not finite or in 0..=100")
             }
@@ -196,18 +184,39 @@ mod tests {
     }
 
     #[test]
-    fn rejects_zero_counts_and_non_divisible_windows() {
+    fn rejects_zero_counts_and_accepts_remainder_windows() {
         let mut config = LaneConfig::RECORD_MINIMUM;
         config.concurrency = 0;
         assert!(matches!(config.validate(), Err(ConfigError::Zero("concurrency"))));
 
         let mut config = LaneConfig::RECORD_MINIMUM;
         config.operations += 1;
-        assert!(matches!(config.validate(), Err(ConfigError::NotDivisible { .. })));
+        assert!(config.validate().is_ok(), "workers distribute an operation remainder");
 
         let mut config = LaneConfig::RECORD_MINIMUM;
         config.warmup_operations += 1;
         assert!(config.validate().is_ok(), "warm-up remainder is distributed across slots");
+    }
+
+    #[test]
+    fn operation_remainder_distribution_totals_exactly_requested_work() {
+        let mut config = LaneConfig::RECORD_MINIMUM;
+        config.operations = 10_000;
+        let base = config.operations / config.concurrency;
+        let remainder = config.operations % config.concurrency;
+        let total: usize =
+            (0..config.concurrency).map(|slot| base + usize::from(slot < remainder)).sum();
+        assert_eq!(total, config.operations);
+        assert_eq!(base, 625);
+        assert_eq!(remainder, 0);
+
+        config.operations = 10_003;
+        let base = config.operations / config.concurrency;
+        let remainder = config.operations % config.concurrency;
+        let total: usize =
+            (0..config.concurrency).map(|slot| base + usize::from(slot < remainder)).sum();
+        assert_eq!(total, config.operations);
+        assert_eq!(remainder, 3);
     }
 
     #[test]

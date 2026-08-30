@@ -75,6 +75,48 @@ type clientSlot struct {
 	client    *terrabase.Client
 	transport *terrabase.Transport
 	slotIndex int
+	usage     usageAdmissionFactory
+}
+
+// usageAdmissionFactory creates the trusted accounting context for one
+// benchmark invocation.  The timestamp is captured once per invocation so
+// every mutation has deterministic admission metadata; the request identity
+// remains the operation's effective idempotency key on each call.
+type usageAdmissionFactory struct {
+	project          string
+	database         string
+	acceptedAtMillis uint64
+}
+
+const (
+	benchmarkUsagePartition    = "benchmark-partition"
+	benchmarkUsageMeterVersion = 1
+	benchmarkUsageUnits        = "1"
+)
+
+func newUsageAdmissionFactory(config Config) usageAdmissionFactory {
+	return usageAdmissionFactory{
+		project:          config.Project,
+		database:         config.Database,
+		acceptedAtMillis: uint64(time.Now().UnixMilli()),
+	}
+}
+
+func (factory usageAdmissionFactory) admission(requestID string) terrabase.UsageAdmissionContext {
+	return terrabase.UsageAdmissionContext{
+		Project:          factory.project,
+		Database:         factory.database,
+		Partition:        benchmarkUsagePartition,
+		OriginRegion:     terrabase.UsageRegionGRU,
+		RequestID:        requestID,
+		AcceptedAtMillis: factory.acceptedAtMillis,
+		MeterVersion:     benchmarkUsageMeterVersion,
+		IntegerUnits:     benchmarkUsageUnits,
+	}
+}
+
+func (factory usageAdmissionFactory) option(requestID string) terrabase.CallOption {
+	return terrabase.WithUsageAdmission(factory.admission(requestID))
 }
 
 func (s *clientSlot) read(ctx context.Context, index int) error {
@@ -90,15 +132,17 @@ func (s *clientSlot) read(ctx context.Context, index int) error {
 
 func (s *clientSlot) write(ctx context.Context, index uint64) error {
 	writeIndex := uint64(s.slotIndex)*3*maxCount + index
+	operationID := fmt.Sprintf("bench-write-%d", writeIndex)
 	outcome, err := s.client.DocumentWrite(ctx, terrabase.DocumentPut{
 		Collection: collectionName,
 		ID:         measuredID(writeIndex),
 		Body:       benchmarkBody("measured", 42),
-	}, terrabase.ExpectAny(), acknowledged, fmt.Sprintf("bench-write-%d", writeIndex))
+	}, terrabase.ExpectAny(), acknowledged, operationID, s.usage.option(operationID))
 	if err != nil {
 		return err
 	}
-	if _, ok := outcome.Committed(); !ok {
+	receipt, ok := outcome.Committed()
+	if !ok {
 		if outcome.Conflict() {
 			return errors.New("measured write conflicted")
 		}
@@ -106,6 +150,9 @@ func (s *clientSlot) write(ctx context.Context, index uint64) error {
 			return fmt.Errorf("measured write refused: %s", reason)
 		}
 		return errors.New("measured write returned no committed outcome")
+	}
+	if receipt.OperationID != operationID {
+		return fmt.Errorf("measured write receipt identity %q differs from operation %q", receipt.OperationID, operationID)
 	}
 	return nil
 }
@@ -142,6 +189,7 @@ func Run(ctx context.Context, config Config) (RunResults, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, config.Timeout)
 	defer cancel()
+	usage := newUsageAdmissionFactory(config)
 	root, err := os.ReadFile(config.RootCertPath)
 	if err != nil {
 		return RunResults{}, fmt.Errorf("read root certificate: %w", err)
@@ -177,7 +225,7 @@ func Run(ctx context.Context, config Config) (RunResults, error) {
 		_ = transport.Close()
 		return RunResults{}, fmt.Errorf("bind seed client: %w", err)
 	}
-	if err := seed(ctx, admin, config.Lane.SeedDocuments); err != nil {
+	if err := seed(ctx, admin, config.Lane.SeedDocuments, usage); err != nil {
 		admin.Close()
 		_ = transport.Close()
 		return RunResults{}, err
@@ -204,7 +252,7 @@ func Run(ctx context.Context, config Config) (RunResults, error) {
 			}
 			return RunResults{}, fmt.Errorf("bind concurrency slot %d: %w", index, bindErr)
 		}
-		slots = append(slots, &clientSlot{client: client, transport: slotTransport, slotIndex: index})
+		slots = append(slots, &clientSlot{client: client, transport: slotTransport, slotIndex: index, usage: usage})
 	}
 	result, err := runSlots(ctx, config, slots)
 	for _, opened := range slots {
@@ -213,18 +261,23 @@ func Run(ctx context.Context, config Config) (RunResults, error) {
 	return result, err
 }
 
-func seed(ctx context.Context, client *terrabase.Client, count int) error {
+func seed(ctx context.Context, client *terrabase.Client, count int, usage usageAdmissionFactory) error {
 	for index := 0; index < count; index++ {
+		operationID := fmt.Sprintf("bench-seed-%d", index)
 		outcome, err := client.DocumentWrite(ctx, terrabase.DocumentPut{
 			Collection: collectionName,
 			ID:         seededID(index),
 			Body:       benchmarkBody(seededName(index), index%100),
-		}, terrabase.ExpectAbsent(), acknowledged, fmt.Sprintf("bench-seed-%d", index))
+		}, terrabase.ExpectAbsent(), acknowledged, operationID, usage.option(operationID))
 		if err != nil {
 			return fmt.Errorf("seed operation %d: %w", index, err)
 		}
-		if _, ok := outcome.Committed(); !ok {
+		receipt, ok := outcome.Committed()
+		if !ok {
 			return fmt.Errorf("seed operation %d did not commit", index)
+		}
+		if receipt.OperationID != operationID {
+			return fmt.Errorf("seed operation %d receipt identity %q differs from operation %q", index, receipt.OperationID, operationID)
 		}
 	}
 	return nil
@@ -303,6 +356,7 @@ func runSlots(ctx context.Context, config Config, slots []slot) (RunResults, err
 		failureMu.Unlock()
 	}
 	perSlotOps := config.Lane.Operations / len(slots)
+	operationRemainder := config.Lane.Operations % len(slots)
 	perWarmup := config.Lane.WarmupOperations / len(slots)
 	warmupRemainder := config.Lane.WarmupOperations % len(slots)
 	threadSamples := make([][][]float64, len(slots))
@@ -312,6 +366,7 @@ func runSlots(ctx context.Context, config Config, slots []slot) (RunResults, err
 		go func(slotIndex int, workerSlot slot) {
 			defer workers.Done()
 			warmupCount := perWarmup
+			warmupOffset := slotIndex*perWarmup + min(slotIndex, warmupRemainder)
 			if slotIndex < warmupRemainder {
 				warmupCount++
 			}
@@ -319,7 +374,7 @@ func runSlots(ctx context.Context, config Config, slots []slot) (RunResults, err
 				if failed.Load() {
 					break
 				}
-				if opErr := doOperation(ctx, workerSlot, workload.SelectMixed(index), index+maxCount, config.Lane.SeedDocuments); opErr != nil {
+				if opErr := doOperation(ctx, workerSlot, workload.SelectMixed(warmupOffset+index), warmupOffset+index+maxCount, config.Lane.SeedDocuments); opErr != nil {
 					recordFailure(fmt.Errorf("warm-up operation %d: %w", index, opErr))
 					break
 				}
@@ -329,14 +384,19 @@ func runSlots(ctx context.Context, config Config, slots []slot) (RunResults, err
 				return
 			}
 			local := make([][]float64, 0, config.Lane.Samples)
+			slotOps := perSlotOps
+			if slotIndex < operationRemainder {
+				slotOps++
+			}
+			operationOffset := slotIndex*perSlotOps + min(slotIndex, operationRemainder)
 			for sample := 0; sample < config.Lane.Samples; sample++ {
 				start.wait()
-				latencies := make([]float64, 0, perSlotOps)
-				for index := 0; index < perSlotOps; index++ {
+				latencies := make([]float64, 0, slotOps)
+				for index := 0; index < slotOps; index++ {
 					if failed.Load() {
 						break
 					}
-					windowIndex := sample*perSlotOps + index
+					windowIndex := sample*config.Lane.Operations + operationOffset + index
 					started := time.Now()
 					if opErr := doOperation(ctx, workerSlot, workload.SelectMixed(windowIndex), windowIndex, config.Lane.SeedDocuments); opErr != nil {
 						recordFailure(fmt.Errorf("measured operation %d: %w", windowIndex, opErr))
@@ -457,6 +517,13 @@ func finite(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value
 
 func max(left, right int) int {
 	if left > right {
+		return left
+	}
+	return right
+}
+
+func min(left, right int) int {
+	if left < right {
 		return left
 	}
 	return right

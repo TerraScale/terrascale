@@ -507,6 +507,13 @@ pub(crate) fn parse_manifest(text: &str) -> Result<BackupManifest, BackupError> 
     if manifest.identity != to_hex(&hasher.finish()) {
         return Err(invalid());
     }
+    // Identity binds the canonical body, so the serialized input must also
+    // be exactly the canonical rendering. Without this comparison, lexical
+    // aliases such as `boundary 07` parsed as the canonical value `7` and
+    // could retain the identity of bytes that were never actually supplied.
+    if manifest.render() != text {
+        return Err(invalid());
+    }
     Ok(manifest)
 }
 
@@ -705,6 +712,13 @@ mod tests {
     fn rejects_incremental_frontier_ahead_of_its_boundary() {
         let mut text = sample().render().replace("kind full", "kind incremental 8");
         text = rebind(text);
+        assert_eq!(parse_manifest(&text), Err(BackupError::ManifestInvalid));
+    }
+
+    #[test]
+    fn rejects_noncanonical_bytes_even_when_they_normalize_to_the_bound_body() {
+        let text = sample().render().replace("boundary 7", "boundary 07");
+
         assert_eq!(parse_manifest(&text), Err(BackupError::ManifestInvalid));
     }
 }

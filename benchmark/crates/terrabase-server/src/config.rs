@@ -825,7 +825,7 @@ fn production_regions_missing(
 }
 
 fn production_socket(value: &str, allow_wildcard: bool) -> Result<SocketAddr, ConfigError> {
-    let address = value.parse().map_err(|_| ConfigError::InvalidListenAddress)?;
+    let address: SocketAddr = value.parse().map_err(|_| ConfigError::InvalidListenAddress)?;
     if address.port() == 0 || (address.ip().is_unspecified() && !allow_wildcard) {
         return Err(ConfigError::InvalidListenAddress);
     }

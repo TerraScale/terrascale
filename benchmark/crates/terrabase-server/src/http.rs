@@ -117,7 +117,6 @@ mod tests {
     use axum::body::Body;
     use axum::body::to_bytes;
     use axum::http::Request;
-    use axum::response::IntoResponse as _;
     use terrabase::observability::Component;
     use terrabase::observability::HealthStatus;
     use terrabase::observability::MAX_PROMETHEUS_BODY_BYTES;

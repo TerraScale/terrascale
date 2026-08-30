@@ -152,6 +152,12 @@ fn main() {
             Ok(()) => println!("served TerraBase runner completed"),
             Err(error) => {
                 eprintln!("the served TerraBase run failed: {error}");
+                // The Rust served runner already retained the canonical
+                // failed attempt. Do not create a second, less-informative
+                // wrapper document for the same invocation.
+                if error.to_string().contains("retained canonical failure") {
+                    std::process::exit(1);
+                }
                 let environment = metrics::host_environment(
                     "not captured: served run failed before identity observation".to_owned(),
                     endpoint_for(target),

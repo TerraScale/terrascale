@@ -1037,6 +1037,12 @@ impl AuthorizationRequest {
             now,
         })
     }
+
+    /// Returns the operation class requested by this authorization check.
+    #[must_use]
+    pub const fn action(&self) -> Action {
+        self.action
+    }
 }
 
 /// Why a request was refused.  These variants are intentionally typed so a

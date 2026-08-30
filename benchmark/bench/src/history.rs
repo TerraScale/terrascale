@@ -309,14 +309,11 @@ fn validate_complete(document: &Value, target: &str, workload: &str) -> Result<C
     let _seed = positive("seed_documents")?;
     let operations = positive("operations")?;
     let samples_count = positive("samples")? as usize;
-    let concurrency = positive("concurrency")?;
+    positive("concurrency")?;
     let warmup = number(config.get("warmup_operations"), "config.warmup_operations")?;
     let noise = number(config.get("noise_percent"), "config.noise_percent")?;
     if warmup < 0.0 || warmup.fract() != 0.0 || !(0.0..=100.0).contains(&noise) {
         return Err("invalid lane configuration".to_owned());
-    }
-    if !operations.is_multiple_of(concurrency) {
-        return Err("config operation count is not divisible by concurrency".to_owned());
     }
     let environment = fields
         .get("environment")

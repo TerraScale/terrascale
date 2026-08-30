@@ -303,9 +303,14 @@ impl S3BackupRepository {
         }
 
         let repository = self.clone();
+        // LIST metadata is only a planning hint. Independently account the
+        // bytes returned by GET so a corrupt or incompatible object store
+        // cannot bypass the repository bound by under-reporting object sizes.
+        let fetched_manifest_bytes = Arc::new(AtomicU64::new(0));
         let fetched = stream::iter(objects)
             .map(move |object| {
                 let repository = repository.clone();
+                let fetched_manifest_bytes = Arc::clone(&fetched_manifest_bytes);
                 async move {
                     if object.size > MANIFEST_LIMIT_BYTES {
                         return Err(
@@ -314,6 +319,9 @@ impl S3BackupRepository {
                     }
                     let bytes =
                         repository.read_object(&object.location, MANIFEST_LIMIT_BYTES).await?;
+                    let bytes_read = u64::try_from(bytes.len())
+                        .map_err(|_| "an S3 manifest length does not fit u64".to_owned())?;
+                    account_manifest_bytes(fetched_manifest_bytes.as_ref(), bytes_read)?;
                     let manifest = BackupManifest::decode(&bytes).map_err(|error| {
                         format!("S3 recovery-point manifest is invalid: {error:?}")
                     })?;
@@ -1058,6 +1066,15 @@ fn payload_matches(payload: &PutPayload, bytes: &[u8]) -> bool {
     offset == bytes.len()
 }
 
+fn account_manifest_bytes(total: &AtomicU64, bytes: u64) -> Result<(), String> {
+    total
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            current.checked_add(bytes).filter(|next| *next <= MAX_MANIFEST_SET_BYTES)
+        })
+        .map(|_| ())
+        .map_err(|_| "the fetched S3 manifests exceed the 256 MiB repository limit".to_owned())
+}
+
 fn identity_prefix(identity: &str) -> &str {
     identity.get(..12).unwrap_or(identity)
 }
@@ -1235,6 +1252,16 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[test]
+    fn fetched_manifest_budget_does_not_trust_listing_sizes() {
+        let total = AtomicU64::new(MAX_MANIFEST_SET_BYTES - 1);
+        account_manifest_bytes(&total, 1).unwrap();
+        assert_eq!(total.load(Ordering::Relaxed), MAX_MANIFEST_SET_BYTES);
+
+        assert!(account_manifest_bytes(&total, 1).is_err());
+        assert_eq!(total.load(Ordering::Relaxed), MAX_MANIFEST_SET_BYTES);
     }
 
     #[tokio::test]

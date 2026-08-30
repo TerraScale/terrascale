@@ -79,7 +79,7 @@ impl SegmentEncryption {
         )
         .map_err(encryption_io)?;
         let ordinal_path = segment_ordinal_path(path);
-        let next = load_or_create_ordinal(&ordinal_path, path.exists())?;
+        let next = load_or_create_ordinal(&ordinal_path, ordinal_path.exists())?;
         let cipher = ArtifactCipher::with_next_ordinal(ProviderMode::LocalFile, key, context, next)
             .map_err(encryption_io)?;
         Ok((cipher, ordinal_path))
@@ -120,6 +120,7 @@ pub(super) struct SegmentMeta {
 ///
 /// Returns the segment's metadata. The file is synced before returning; the
 /// caller publishes it through the manifest.
+#[cfg(test)]
 pub(super) fn write_segment(
     path: &Path,
     id: u64,
@@ -326,7 +327,10 @@ impl SegmentReader {
         }
         let envelope_len = envelope_length_prefix(&bytes).map_err(encryption_io)?;
         if envelope_len != bytes.len() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "segment envelope trailing bytes"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "segment envelope trailing bytes",
+            ));
         }
         let (cipher, ordinal_path) = encryption.cipher(path, id, level)?;
         let next = load_or_create_ordinal(&ordinal_path, true)?;
@@ -392,7 +396,7 @@ impl SegmentReader {
 
     /// Reads and decodes every record from the file, bypassing the cache.
     fn read_all_uncached(&mut self) -> io::Result<Vec<Entry>> {
-        let mut body = self.read_bytes(0, self.records_end)?;
+        let body = self.read_bytes(0, self.records_end)?;
         if body.len() < 20 || &body[..8] != HEADER_MAGIC {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "segment header"));
         }
@@ -450,9 +454,9 @@ impl SegmentReader {
         if let Some(plaintext) = &self.plaintext {
             let start = usize::try_from(start)
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "segment offset"))?;
-            let end = start
-                .checked_add(length)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "segment read overflow"))?;
+            let end = start.checked_add(length).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "segment read overflow")
+            })?;
             return plaintext
                 .get(start..end)
                 .map(ToOwned::to_owned)
@@ -510,10 +514,14 @@ fn verify_plaintext_segment(
     let sparse_offset = fixed_at(&cursor[cursor.len() - 16..cursor.len() - 8]);
     let entry_count = fixed_at(&cursor[cursor.len() - 8..]);
     let footer_start = tail_start + cursor.len() - 24;
-    if sparse_offset < 20 || sparse_offset > footer_start {
+    if sparse_offset < 20
+        || sparse_offset
+            > u64::try_from(footer_start)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "segment size"))?
+    {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "segment footer layout"));
     }
-    let body = &bytes[..usize::try_from(footer_start).expect("segment body fits usize")];
+    let body = &bytes[..footer_start];
     if codec::fnv1a(body) != stored_crc
         || body.len() < 20
         || &body[..8] != HEADER_MAGIC
@@ -556,6 +564,127 @@ fn verify_plaintext_segment(
         sparse,
         records_end,
     ))
+}
+
+fn segment_artifact_id(id: u64, level: u16) -> crate::identity::Ulid {
+    let mut bytes = [0_u8; 16];
+    bytes[..8].copy_from_slice(&id.to_be_bytes());
+    bytes[8..10].copy_from_slice(&level.to_be_bytes());
+    crate::identity::Ulid::from_bytes(bytes)
+}
+
+fn segment_ordinal_path(path: &Path) -> PathBuf {
+    path.with_file_name(format!(
+        "{}.ordinal",
+        path.file_name().and_then(|name| name.to_str()).unwrap_or("segment")
+    ))
+}
+
+fn encryption_io(error: crate::encryption::EncryptionError) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, error)
+}
+
+fn ordinal_checksum(body: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"terrabase.lsm.segment.ordinal.v1\0");
+    hasher.update(body);
+    *hasher.finalize().as_bytes()
+}
+
+fn load_or_create_ordinal(path: &Path, required: bool) -> io::Result<u128> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink()
+                || !metadata.is_file()
+                || metadata.len() != SEGMENT_ORDINAL_BYTES as u64
+            {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "unsafe segment ordinal"));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                if metadata.permissions().mode() & 0o077 != 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "unsafe segment ordinal permissions",
+                    ));
+                }
+            }
+            let mut options = OpenOptions::new();
+            options.read(true);
+            #[cfg(any(target_os = "android", target_os = "linux"))]
+            {
+                use std::os::unix::fs::OpenOptionsExt as _;
+                options.custom_flags(0x20000);
+            }
+            let mut file = options.open(path)?;
+            let opened = file.metadata()?;
+            #[cfg(unix)]
+            if !same_file(&metadata, &opened) {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "segment ordinal changed"));
+            }
+            let mut bytes = vec![0_u8; SEGMENT_ORDINAL_BYTES];
+            file.read_exact(&mut bytes)?;
+            let mut trailing = [0_u8; 1];
+            if file.read(&mut trailing)? != 0 {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "segment ordinal trailing"));
+            }
+            if bytes[..8] != *SEGMENT_ORDINAL_MAGIC || bytes[24..] != ordinal_checksum(&bytes[..24])
+            {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "corrupt segment ordinal"));
+            }
+            Ok(u128::from_be_bytes(bytes[8..24].try_into().expect("ordinal bytes")))
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound && !required => {
+            persist_ordinal(path, 0)?;
+            Ok(0)
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            Err(io::Error::new(io::ErrorKind::InvalidData, "missing segment ordinal"))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn persist_ordinal(path: &Path, ordinal: u128) -> io::Result<()> {
+    let mut body = Vec::with_capacity(SEGMENT_ORDINAL_BYTES);
+    body.extend_from_slice(SEGMENT_ORDINAL_MAGIC);
+    body.extend_from_slice(&ordinal.to_be_bytes());
+    body.extend_from_slice(&ordinal_checksum(&body));
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let temp = path.with_file_name(format!(
+        "{}.tmp-{}-{}",
+        path.file_name().and_then(|name| name.to_str()).unwrap_or("segment.ordinal"),
+        std::process::id(),
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temp)?;
+    if let Err(error) = file.write_all(&body).and_then(|()| file.sync_all()) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error);
+    }
+    drop(file);
+    if let Err(error) = std::fs::rename(&temp, path) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error);
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::File::open(parent)?.sync_data()?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn same_file(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    left.dev() == right.dev() && left.ino() == right.ino()
 }
 
 /// Pops one key-and-trailing-length pair off the back of `cursor`.
@@ -679,6 +808,7 @@ impl SegmentReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::encryption::DatabaseKeyVersion;
     use crate::types::{CollectionName, Document, DocumentId, DocumentValue, TenantId};
 
     fn entry(tenant: &str, id: &str, sequence: u64, value: &[u8]) -> Entry {
@@ -707,6 +837,28 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn segment_encryption(dir: &std::path::Path, key: [u8; 32]) -> SegmentEncryption {
+        let owner = DatabaseOwner::local_development();
+        let provider = LocalFileKeyProvider::at_engine_location(dir);
+        // Seed the owner-only provider with the requested deterministic key
+        // for test isolation; production callers never select this path.
+        let key_path = provider.path();
+        if !key_path.exists() {
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt as _;
+                options.mode(0o600);
+            }
+            std::fs::create_dir_all(key_path.parent().unwrap()).unwrap();
+            let mut file = options.open(key_path).unwrap();
+            file.write_all(&key).unwrap();
+            file.sync_all().unwrap();
+        }
+        SegmentEncryption::new(owner, provider, DatabaseKeyVersion::from_wire_bytes([0; 16]))
     }
 
     fn resign_segment(bytes: &mut [u8]) {
@@ -746,6 +898,35 @@ mod tests {
         std::fs::write(dir.join("seg-1"), &bytes).unwrap();
         let result = SegmentReader::open(&dir.join("seg-1"), 1, 0);
         assert!(result.is_err(), "checksum mismatch fails closed");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn encrypted_segment_round_trip_tamper_truncation_and_wrong_key_refuse() {
+        let dir = segment_dir("encrypted");
+        let path = dir.join("seg-0000000000000001.lsm");
+        let entries = vec![entry("t", "a", 1, b"secret"), entry("t", "b", 2, b"payload")];
+        let encryption = segment_encryption(&dir, [0x44; 32]);
+        write_segment_with_encryption(&path, 1, 0, &entries, Some(&encryption)).unwrap();
+        let raw = std::fs::read(&path).unwrap();
+        assert!(!raw.windows(b"secret".len()).any(|window| window == b"secret"));
+        let reader = SegmentReader::open_with_encryption(&path, 1, 0, &encryption).unwrap();
+        assert_eq!(reader.meta().entry_count, 2);
+
+        let mut tampered = raw.clone();
+        *tampered.last_mut().unwrap() ^= 1;
+        std::fs::write(&path, tampered).unwrap();
+        assert!(SegmentReader::open_with_encryption(&path, 1, 0, &encryption).is_err());
+
+        let mut truncated = raw.clone();
+        truncated.truncate(truncated.len() - 1);
+        std::fs::write(&path, truncated).unwrap();
+        assert!(SegmentReader::open_with_encryption(&path, 1, 0, &encryption).is_err());
+
+        std::fs::write(&path, raw).unwrap();
+        std::fs::write(LocalFileKeyProvider::at_engine_location(&dir).path(), [0x45; 32]).unwrap();
+        let wrong = segment_encryption(&dir, [0x45; 32]);
+        assert!(SegmentReader::open_with_encryption(&path, 1, 0, &wrong).is_err());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

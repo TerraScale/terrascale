@@ -187,6 +187,7 @@ pub(crate) struct LsmStorage {
     dir: PathBuf,
     metrics: Arc<MetricsRegistry>,
     wal: WalLog,
+    segment_encryption: Option<segment::SegmentEncryption>,
     wal_frontier: Option<WalFrontier>,
     memtable: MemTable,
     frozen: Vec<MemTable>,
@@ -270,7 +271,7 @@ impl LsmStorage {
         if format.created {
             super::root::sync_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
         }
-        Self::recover(dir, format.state, metrics, None, false)
+        Self::recover(dir, format.state, metrics, None, None, false)
     }
 
     /// Opens a local-development encrypted WAL after the format marker has
@@ -287,15 +288,17 @@ impl LsmStorage {
         if format.created {
             super::root::sync_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
         }
-        let key = crate::encryption::LocalFileKeyProvider::at_engine_location(dir)
-            .load_or_create()
-            .map_err(|_| LsmOpenError::Unavailable)?;
+        let provider = crate::encryption::LocalFileKeyProvider::at_engine_location(dir);
+        let key = provider.load_or_create().map_err(|_| LsmOpenError::Unavailable)?;
         let key_version = crate::encryption::DatabaseKeyVersion::from_wire_bytes([0_u8; 16]);
+        let segment_encryption =
+            segment::SegmentEncryption::new(owner.clone(), provider, key_version);
         Self::recover(
             dir,
             format.state,
             metrics,
             Some(wal::WalEncryptionConfig { owner, key, key_version }),
+            Some(segment_encryption),
             false,
         )
     }
@@ -312,7 +315,7 @@ impl LsmStorage {
         if format.created {
             super::root::sync_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
         }
-        Self::recover(dir, format.state, metrics, None, true)
+        Self::recover(dir, format.state, metrics, None, None, true)
     }
 
     /// Rebuilds engine state from the manifest anchor, the verifying
@@ -328,6 +331,7 @@ impl LsmStorage {
         format: FormatState,
         metrics: Arc<MetricsRegistry>,
         wal_encryption: Option<wal::WalEncryptionConfig>,
+        segment_encryption: Option<segment::SegmentEncryption>,
         writes_unavailable: bool,
     ) -> Result<Self, LsmOpenError> {
         let retained_path = dir.join("retained");
@@ -369,11 +373,22 @@ impl LsmStorage {
             (None, None) if segment_artifacts => return Err(LsmOpenError::FormatMismatch),
             (None, None) => SegmentManifest::default(),
         };
+        // A local compatibility location has a legacy plaintext WAL; only a
+        // WAL that is already envelope-formatted activates encrypted segment
+        // reads. Fresh empty WALs are encrypted by the Engine open seam.
+        let encrypted_wal = wal_path.metadata().map_or(true, |metadata| metadata.len() == 0)
+            || fs::read(&wal_path).is_ok_and(|bytes| bytes.starts_with(b"TBE1"));
+        let segment_encryption = segment_encryption.filter(|_| encrypted_wal);
         let mut readers: BTreeMap<u64, RefCell<SegmentReader>> = BTreeMap::new();
         let mut segment_documents: Vec<Entry> = Vec::new();
         for meta in &manifest.segments {
-            let mut reader = SegmentReader::open(&segment_path(dir, meta.id), meta.id, meta.level)
-                .map_err(|_| LsmOpenError::FormatMismatch)?;
+            let segment_path = segment_path(dir, meta.id);
+            let mut reader = if let Some(encryption) = &segment_encryption {
+                SegmentReader::open_with_encryption(&segment_path, meta.id, meta.level, encryption)
+            } else {
+                SegmentReader::open(&segment_path, meta.id, meta.level)
+            }
+            .map_err(|_| LsmOpenError::FormatMismatch)?;
             let verified_entries =
                 if reader.meta() == meta { reader.read_all().ok() } else { None };
             let entries = verified_entries.ok_or(LsmOpenError::FormatMismatch)?;
@@ -401,12 +416,7 @@ impl LsmStorage {
         if writes_unavailable && (!manifest.segments.is_empty() || wal.len() != 0) {
             return Err(LsmOpenError::FormatMismatch);
         }
-        if wal.is_encrypted() && !manifest.segments.is_empty() {
-            // The current encrypted vertical slice covers WAL only. Never
-            // reopen an encrypted WAL alongside plaintext immutable segments:
-            // that would permit a downgrade or mixed-format read. A future
-            // segment cipher must make this gate conditional on its own
-            // authenticated segment marker.
+        if wal.is_encrypted() && !manifest.segments.is_empty() && segment_encryption.is_none() {
             return Err(LsmOpenError::FormatMismatch);
         }
         let wal_scan = wal.scan().map_err(|_| LsmOpenError::Unavailable)?;
@@ -477,6 +487,7 @@ impl LsmStorage {
             dir: dir.to_path_buf(),
             metrics,
             wal,
+            segment_encryption,
             wal_frontier,
             memtable: MemTable::default(),
             frozen: Vec::new(),

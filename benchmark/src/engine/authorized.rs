@@ -4,7 +4,7 @@
 //! gateway envelope before obtaining an engine snapshot, and it consults the
 //! durable policy store for every operation.
 
-use std::{collections::BTreeMap, fmt};
+use std::{collections::BTreeMap, fmt, sync::Mutex};
 
 use crate::{
     authorization::{
@@ -27,6 +27,8 @@ pub enum AuthorizedEngineError {
     Engine(EngineError),
     /// The request did not satisfy the fixed gateway binding.
     BindingMismatch,
+    /// The durable policy denied the requested operation.
+    Denied,
 }
 
 impl fmt::Display for AuthorizedEngineError {
@@ -35,11 +37,24 @@ impl fmt::Display for AuthorizedEngineError {
             Self::Authorization(error) => error.fmt(formatter),
             Self::Engine(_) => formatter.write_str("authorized engine operation failed"),
             Self::BindingMismatch => formatter.write_str("authorized engine binding mismatch"),
+            Self::Denied => formatter.write_str("authorized engine operation denied"),
         }
     }
 }
 
 impl std::error::Error for AuthorizedEngineError {}
+
+/// An authenticated channel binding. The context is private and can only be
+/// obtained from [`AuthorizedEngine::bind`].
+pub struct AuthorizedSession {
+    context: PrincipalContext,
+}
+
+impl fmt::Debug for AuthorizedSession {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("AuthorizedSession").finish_non_exhaustive()
+    }
+}
 
 /// The only engine operation surface that accepts public signed contexts.
 pub struct AuthorizedEngine {
@@ -48,7 +63,7 @@ pub struct AuthorizedEngine {
     environment: String,
     gateway_spiffe_principal: String,
     verifier: PrincipalContextVerifier,
-    replay_guard: PrincipalContextReplayGuard,
+    replay_guard: Mutex<PrincipalContextReplayGuard>,
     policy_store: AuthorizationPolicyStore,
 }
 
@@ -63,6 +78,7 @@ impl fmt::Debug for AuthorizedEngine {
     }
 }
 
+#[allow(clippy::missing_errors_doc)]
 impl AuthorizedEngine {
     /// Binds an Engine to one verifier, scope, environment, gateway, and
     /// durable policy store.
@@ -85,36 +101,119 @@ impl AuthorizedEngine {
             environment,
             gateway_spiffe_principal,
             verifier,
-            replay_guard: PrincipalContextReplayGuard::new(),
+            replay_guard: Mutex::new(PrincipalContextReplayGuard::new()),
             policy_store,
         })
     }
 
-    /// Replaces the replay guard only for a new trusted channel/session.
-    pub fn reset_channel(&mut self) {
-        self.replay_guard = PrincipalContextReplayGuard::new();
+    /// Authenticates one logical client channel. The returned handle may be
+    /// reused for multiple operations, while every operation still checks its
+    /// current expiry and durable policy generation.
+    pub fn bind(
+        &self,
+        envelope: &PrincipalContextEnvelope,
+        channel_binding: PrincipalSessionUlid,
+        now: u64,
+    ) -> Result<AuthorizedSession, AuthorizedEngineError> {
+        let mut guard = self.replay_guard.lock().map_err(|_| {
+            AuthorizedEngineError::Authorization(AuthorizationError::PolicyStoreUnavailable)
+        })?;
+        let context = self
+            .verifier
+            .verify_with_replay(envelope, now, channel_binding, &mut guard)
+            .map_err(AuthorizedEngineError::Authorization)?;
+        self.check_binding(&context)?;
+        Ok(AuthorizedSession { context })
     }
 
     /// Verifies and evaluates a request against the current durable policy.
     pub fn authorize(
-        &mut self,
+        &self,
         envelope: &PrincipalContextEnvelope,
         channel_binding: PrincipalSessionUlid,
         request: &AuthorizationRequest,
         now: u64,
     ) -> Result<AuthorizationDecision, AuthorizedEngineError> {
-        let context = self
-            .verifier
-            .verify_with_replay(envelope, now, channel_binding, &mut self.replay_guard)
-            .map_err(AuthorizedEngineError::Authorization)?;
-        self.check_binding(&context)?;
-        Ok(self.policy_store.evaluate(&context, request))
+        let session = self.bind(envelope, channel_binding, now)?;
+        self.authorize_bound(&session, request, now)
+    }
+
+    /// Evaluates a request using an already authenticated channel binding.
+    pub fn authorize_bound(
+        &self,
+        session: &AuthorizedSession,
+        request: &AuthorizationRequest,
+        now: u64,
+    ) -> Result<AuthorizationDecision, AuthorizedEngineError> {
+        self.check_session(session, now)?;
+        Ok(self.policy_store.evaluate(&session.context, request))
+    }
+
+    /// Authorizes a bounded query request. Query planning and execution stay
+    /// in the query module; this seam enforces the exact Action mapping first.
+    pub fn authorize_query(
+        &self,
+        session: &AuthorizedSession,
+        request: &AuthorizationRequest,
+        now: u64,
+    ) -> Result<AuthorizationDecision, AuthorizedEngineError> {
+        self.authorize_category(session, request, crate::authorization::Action::Query, now)
+    }
+
+    /// Authorizes a family read request.
+    pub fn authorize_family_read(
+        &self,
+        session: &AuthorizedSession,
+        request: &AuthorizationRequest,
+        now: u64,
+    ) -> Result<AuthorizationDecision, AuthorizedEngineError> {
+        self.authorize_category(session, request, crate::authorization::Action::Read, now)
+    }
+
+    /// Authorizes a family write request.
+    pub fn authorize_family_write(
+        &self,
+        session: &AuthorizedSession,
+        request: &AuthorizationRequest,
+        now: u64,
+    ) -> Result<AuthorizationDecision, AuthorizedEngineError> {
+        self.authorize_category(session, request, crate::authorization::Action::Mutate, now)
+    }
+
+    /// Authorizes a schema lifecycle request.
+    pub fn authorize_schema(
+        &self,
+        session: &AuthorizedSession,
+        request: &AuthorizationRequest,
+        now: u64,
+    ) -> Result<AuthorizationDecision, AuthorizedEngineError> {
+        self.authorize_category(session, request, crate::authorization::Action::Schema, now)
+    }
+
+    /// Authorizes a subscription request.
+    pub fn authorize_subscription(
+        &self,
+        session: &AuthorizedSession,
+        request: &AuthorizationRequest,
+        now: u64,
+    ) -> Result<AuthorizationDecision, AuthorizedEngineError> {
+        self.authorize_category(session, request, crate::authorization::Action::Subscribe, now)
+    }
+
+    /// Authorizes an administrative request.
+    pub fn authorize_admin(
+        &self,
+        session: &AuthorizedSession,
+        request: &AuthorizationRequest,
+        now: u64,
+    ) -> Result<AuthorizationDecision, AuthorizedEngineError> {
+        self.authorize_category(session, request, crate::authorization::Action::Admin, now)
     }
 
     /// Alias for callers that treat the supplied request as a query or other
     /// read-only operation.
     pub fn authorize_request(
-        &mut self,
+        &self,
         envelope: &PrincipalContextEnvelope,
         channel_binding: PrincipalSessionUlid,
         request: &AuthorizationRequest,
@@ -127,32 +226,27 @@ impl AuthorizedEngine {
     /// policy projection. Policies with predicates are evaluated against the
     /// document before any field is returned.
     pub fn read_fields(
-        &mut self,
+        &self,
         envelope: &PrincipalContextEnvelope,
         channel_binding: PrincipalSessionUlid,
         collection: &CollectionName,
         document_id: &DocumentId,
         now: u64,
     ) -> Result<AuthorizationDecision, AuthorizedEngineError> {
-        let context = self
-            .verifier
-            .verify_with_replay(envelope, now, channel_binding, &mut self.replay_guard)
-            .map_err(AuthorizedEngineError::Authorization)?;
-        self.check_binding(&context)?;
-        let preflight = AuthorizationRequest::try_new(
-            self.expected_scope.clone(),
-            context.audience(),
-            crate::authorization::Action::Read,
-            collection.as_str(),
-            BTreeMap::new(),
-            std::collections::BTreeSet::new(),
-            now,
-        )
-        .map_err(AuthorizedEngineError::Authorization)?;
-        let preflight_decision = self.policy_store.evaluate(&context, &preflight);
-        if !preflight_decision.is_allowed() {
-            return Ok(preflight_decision);
-        }
+        let session = self.bind(envelope, channel_binding, now)?;
+        self.read_fields_bound(&session, collection, document_id, now)
+    }
+
+    /// Reads through an already authenticated channel binding.
+    pub fn read_fields_bound(
+        &self,
+        session: &AuthorizedSession,
+        collection: &CollectionName,
+        document_id: &DocumentId,
+        now: u64,
+    ) -> Result<AuthorizationDecision, AuthorizedEngineError> {
+        self.check_session(session, now)?;
+        let context = &session.context;
         let tenant = TenantId::try_new(&context.tenant_id().to_text())
             .map_err(|_| AuthorizedEngineError::BindingMismatch)?;
         let scope = self.engine.scope_for(&tenant);
@@ -178,7 +272,88 @@ impl AuthorizedEngine {
             now,
         )
         .map_err(AuthorizedEngineError::Authorization)?;
-        Ok(self.policy_store.evaluate(&context, &request))
+        Ok(self.policy_store.evaluate(context, &request))
+    }
+
+    /// Stages and commits one authorized document write. Authorization is
+    /// checked before staging and again immediately before commit.
+    pub fn write(
+        &self,
+        session: &AuthorizedSession,
+        document: crate::types::Document,
+        expected: crate::types::ExpectedVersion,
+        now: u64,
+    ) -> Result<super::CommitOutcome, AuthorizedEngineError> {
+        self.check_session(session, now)?;
+        let context = &session.context;
+        let collection = document.collection().clone();
+        let request = AuthorizationRequest::try_new(
+            self.expected_scope.clone(),
+            context.audience(),
+            crate::authorization::Action::Mutate,
+            collection.as_str(),
+            scalar_fields(&document),
+            std::collections::BTreeSet::new(),
+            now,
+        )
+        .map_err(AuthorizedEngineError::Authorization)?;
+        if !self.policy_store.evaluate(context, &request).is_allowed() {
+            return Err(AuthorizedEngineError::Denied);
+        }
+        let tenant = self.tenant_for(context)?;
+        let snapshot = self.engine.read_snapshot(&tenant).map_err(AuthorizedEngineError::Engine)?;
+        let operation_text = format!("authorized-write-{}-{}", context.session_id(), now);
+        let operation = crate::types::OperationId::try_new(&operation_text)
+            .map_err(|_| AuthorizedEngineError::BindingMismatch)?;
+        let mut transaction = self
+            .engine
+            .begin(&tenant, snapshot, operation)
+            .map_err(AuthorizedEngineError::Engine)?;
+        transaction.put(document, expected).map_err(AuthorizedEngineError::Engine)?;
+        if !self.policy_store.evaluate(context, &request).is_allowed() {
+            return Err(AuthorizedEngineError::Denied);
+        }
+        Ok(transaction.commit(crate::types::LocalDurability::Synced))
+    }
+
+    /// Stages and commits one authorized collection-scoped deletion.
+    pub fn delete(
+        &self,
+        session: &AuthorizedSession,
+        collection: &CollectionName,
+        document_id: DocumentId,
+        expected: crate::types::ExpectedVersion,
+        now: u64,
+    ) -> Result<super::CommitOutcome, AuthorizedEngineError> {
+        self.check_session(session, now)?;
+        let context = &session.context;
+        let request = AuthorizationRequest::try_new(
+            self.expected_scope.clone(),
+            context.audience(),
+            crate::authorization::Action::Mutate,
+            collection.as_str(),
+            BTreeMap::new(),
+            std::collections::BTreeSet::new(),
+            now,
+        )
+        .map_err(AuthorizedEngineError::Authorization)?;
+        if !self.policy_store.evaluate(context, &request).is_allowed() {
+            return Err(AuthorizedEngineError::Denied);
+        }
+        let tenant = self.tenant_for(context)?;
+        let snapshot = self.engine.read_snapshot(&tenant).map_err(AuthorizedEngineError::Engine)?;
+        let operation_text = format!("authorized-delete-{}-{}", context.session_id(), now);
+        let operation = crate::types::OperationId::try_new(&operation_text)
+            .map_err(|_| AuthorizedEngineError::BindingMismatch)?;
+        let mut transaction = self
+            .engine
+            .begin(&tenant, snapshot, operation)
+            .map_err(AuthorizedEngineError::Engine)?;
+        transaction.delete_in_collection(collection, document_id, expected);
+        if !self.policy_store.evaluate(context, &request).is_allowed() {
+            return Err(AuthorizedEngineError::Denied);
+        }
+        Ok(transaction.commit(crate::types::LocalDurability::Synced))
     }
 
     /// Returns the owned Engine after the authorization wrapper is retired.
@@ -201,6 +376,41 @@ impl AuthorizedEngine {
             return Err(AuthorizedEngineError::BindingMismatch);
         }
         Ok(())
+    }
+
+    fn check_session(
+        &self,
+        session: &AuthorizedSession,
+        now: u64,
+    ) -> Result<(), AuthorizedEngineError> {
+        self.check_binding(&session.context)?;
+        if now < session.context.expires_at() {
+            Ok(())
+        } else {
+            Err(AuthorizedEngineError::Authorization(AuthorizationError::ContextExpired))
+        }
+    }
+
+    fn authorize_category(
+        &self,
+        session: &AuthorizedSession,
+        request: &AuthorizationRequest,
+        action: crate::authorization::Action,
+        now: u64,
+    ) -> Result<AuthorizationDecision, AuthorizedEngineError> {
+        if request.action() != action {
+            return Err(AuthorizedEngineError::Denied);
+        }
+        self.authorize_bound(session, request, now)
+    }
+
+    fn tenant_for(
+        &self,
+        context: &PrincipalContext,
+    ) -> Result<crate::types::TenantScope, AuthorizedEngineError> {
+        let tenant = TenantId::try_new(&context.tenant_id().to_text())
+            .map_err(|_| AuthorizedEngineError::BindingMismatch)?;
+        Ok(self.engine.scope_for(&tenant))
     }
 }
 

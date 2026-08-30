@@ -167,6 +167,7 @@ pub fn run<B: Backend>(
         (0..config.concurrency).map(|_| backend.open_slot()).collect::<Result<Vec<_>, _>>()?;
 
     let per_slot_operations = config.operations / config.concurrency;
+    let operation_remainder = config.operations % config.concurrency;
     let per_slot_warmup = config.warmup_operations / config.concurrency;
     let warmup_remainder = config.warmup_operations % config.concurrency;
     let start = Arc::new(Barrier::new(config.concurrency + 1));
@@ -185,11 +186,15 @@ pub fn run<B: Backend>(
         handles.push(std::thread::spawn(move || -> Result<Vec<Vec<f64>>, String> {
             // Warm-up: real work, excluded from every measured sample.
             let mut warmup_error = None;
+            let warmup_offset = slot_index * per_slot_warmup + slot_index.min(warmup_remainder);
             let slot_warmup = per_slot_warmup + usize::from(slot_index < warmup_remainder);
             for index in 0..slot_warmup {
-                if let Err(error) =
-                    one_op(&mut *slot, workload.select_mixed(index), index, config.seed_documents)
-                {
+                if let Err(error) = one_op(
+                    &mut *slot,
+                    workload.select_mixed(warmup_offset + index),
+                    warmup_offset + index,
+                    config.seed_documents,
+                ) {
                     warmup_error = Some(format!("warm-up operation {index} failed: {error}"));
                     break;
                 }
@@ -207,13 +212,17 @@ pub fn run<B: Backend>(
             if let Some(error) = warmup_error {
                 return Err(error);
             }
+            let slot_operations =
+                per_slot_operations + usize::from(slot_index < operation_remainder);
+            let operation_offset =
+                slot_index * per_slot_operations + slot_index.min(operation_remainder);
             let mut samples = Vec::with_capacity(config.samples);
             for sample in 0..config.samples {
                 start.wait();
-                let mut latencies = Vec::with_capacity(per_slot_operations);
+                let mut latencies = Vec::with_capacity(slot_operations);
                 let mut sample_error = None;
-                for index in 0..per_slot_operations {
-                    let window_index = sample * per_slot_operations + index;
+                for index in 0..slot_operations {
+                    let window_index = sample * config.operations + operation_offset + index;
                     let started = Instant::now();
                     if let Err(error) = one_op(
                         &mut *slot,
@@ -296,7 +305,7 @@ pub fn run<B: Backend>(
             for slot_samples in &thread_samples {
                 latencies.extend_from_slice(&slot_samples[sample]);
             }
-            metrics::sample_of((per_slot_operations * config.concurrency) as u64, wall, latencies)
+            metrics::sample_of(config.operations as u64, wall, latencies)
         })
         .collect();
 

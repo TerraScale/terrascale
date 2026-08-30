@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	terrabase "terrascale.tech/terrabase-go"
 )
 
 func testConfig() Config {
@@ -30,8 +32,8 @@ func TestConfigValidationBoundsAndDivisibility(t *testing.T) {
 		t.Fatalf("valid config rejected: %v", err)
 	}
 	config.Lane.Operations++
-	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "divisible") {
-		t.Fatalf("non-divisible operations accepted: %v", err)
+	if err := config.Validate(); err != nil {
+		t.Fatalf("non-divisible operations rejected: %v", err)
 	}
 	config = testConfig()
 	config.Workload = "delete"
@@ -45,6 +47,32 @@ func TestConfigValidationBoundsAndDivisibility(t *testing.T) {
 	}
 }
 
+func TestRunSlotsDistributesRemaindersAndPreservesTotals(t *testing.T) {
+	config := testConfig()
+	config.Lane.Operations = 5
+	config.Lane.WarmupOperations = 3
+	config.Lane.Samples = 1
+	config.Lane.Concurrency = 2
+	slots := []*fakeSlot{{failedAt: -1}, {failedAt: -1}}
+	workers := []slot{slots[0], slots[1]}
+	result, err := runSlots(context.Background(), config, workers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Samples) != 1 || result.Samples[0].Operations != uint64(config.Lane.Operations) {
+		t.Fatalf("sample operation total was not preserved: %+v", result.Samples)
+	}
+	total := 0
+	for _, worker := range slots {
+		worker.mu.Lock()
+		total += worker.operations
+		worker.mu.Unlock()
+	}
+	if total != config.Lane.Operations+config.Lane.WarmupOperations {
+		t.Fatalf("workers executed %d operations, want %d", total, config.Lane.Operations+config.Lane.WarmupOperations)
+	}
+}
+
 func TestWorkloadSelection(t *testing.T) {
 	workload, err := ParseWorkload("mixed")
 	if err != nil {
@@ -55,6 +83,25 @@ func TestWorkloadSelection(t *testing.T) {
 		if got := workload.SelectMixed(index); got != expected {
 			t.Fatalf("index %d: got %v, want %v", index, got, expected)
 		}
+	}
+}
+
+func TestBenchmarkUsageAdmissionIsBoundAndDeterministic(t *testing.T) {
+	config := testConfig()
+	factory := newUsageAdmissionFactory(config)
+	seed := factory.admission("bench-seed-0")
+	write := factory.admission("bench-write-0")
+	if seed.Project != config.Project || seed.Database != config.Database {
+		t.Fatalf("usage scope is not the bound scope: %+v", seed)
+	}
+	if seed.Partition != benchmarkUsagePartition || seed.OriginRegion != terrabase.UsageRegionGRU || seed.MeterVersion != benchmarkUsageMeterVersion || seed.IntegerUnits != benchmarkUsageUnits {
+		t.Fatalf("usage budget contract is wrong: %+v", seed)
+	}
+	if seed.AcceptedAtMillis == 0 || seed.AcceptedAtMillis != write.AcceptedAtMillis {
+		t.Fatalf("usage timestamp is not a non-zero run-scoped value: seed=%+v write=%+v", seed, write)
+	}
+	if seed.RequestID == write.RequestID {
+		t.Fatal("distinct mutations must carry distinct usage identities")
 	}
 }
 

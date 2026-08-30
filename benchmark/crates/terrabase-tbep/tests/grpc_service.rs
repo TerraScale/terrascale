@@ -497,6 +497,42 @@ async fn bounds_fail_closed_before_the_host_runs() {
 }
 
 #[tokio::test]
+async fn query_max_items_uses_the_list_default_and_rejects_oversized_pages() {
+    let socket = socket_path("query-bounds");
+    let server = Arc::new(TbepGrpcServer::new(
+        Arc::new(FixedHost { feed: Mutex::new(None) }) as Arc<dyn TbepHost>,
+        pb::BindingKind::Local,
+    ));
+    let mut listener = server.serve_uds(&socket).expect("the server binds");
+    let channel = connect(socket.clone()).await;
+    let mut engine = EngineServiceClient::new(channel);
+
+    let defaulted = engine
+        .query_execute(identified(pb::EngineServiceQueryExecuteRequest {
+            query_id: 1,
+            text: "from orders".into(),
+            max_items: 0,
+            level: 0,
+        }))
+        .await
+        .expect("zero max_items uses the bounded default");
+    assert!(defaulted.into_inner().documents.is_empty());
+
+    let status = engine
+        .query_execute(identified(pb::EngineServiceQueryExecuteRequest {
+            query_id: 2,
+            text: "from orders".into(),
+            max_items: (registry::MAX_LIST_ITEMS as u32) + 1,
+            level: 0,
+        }))
+        .await
+        .expect_err("max_items above the list bound fails closed");
+    assert_eq!(status.code(), tonic::Code::InvalidArgument);
+    assert_eq!(tbep_code(&status), Some(pb::ErrorCode::InvalidRequest));
+    listener.shutdown();
+}
+
+#[tokio::test]
 async fn identity_metadata_bounds_fail_closed() {
     let socket = socket_path("identity-bounds");
     let server = Arc::new(TbepGrpcServer::new(

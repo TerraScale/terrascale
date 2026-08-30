@@ -139,14 +139,8 @@ func (c Config) Validate() error {
 	if c.Lane.Concurrency <= 0 || c.Lane.Concurrency > maxSlots {
 		return fmt.Errorf("concurrency must be in 1..%d", maxSlots)
 	}
-	if c.Lane.Operations%c.Lane.Concurrency != 0 {
-		return fmt.Errorf("operations must be divisible by concurrency")
-	}
 	if c.Lane.WarmupOperations < 0 || c.Lane.WarmupOperations > maxCount {
 		return fmt.Errorf("warmup must be in 0..%d", maxCount)
-	}
-	if c.Lane.WarmupOperations%c.Lane.Concurrency != 0 {
-		return fmt.Errorf("warmup must be divisible by concurrency")
 	}
 	if !finite(c.Lane.NoisePercent) || c.Lane.NoisePercent < 0 || c.Lane.NoisePercent > 100 {
 		return fmt.Errorf("noise-percent must be finite and in 0..100")

@@ -7,6 +7,8 @@
 
 pub mod config;
 pub mod http;
+#[cfg(feature = "production-fips")]
+pub mod production;
 pub mod runtime;
 
 pub use config::ServerConfig;
