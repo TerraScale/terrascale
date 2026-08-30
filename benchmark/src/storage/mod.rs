@@ -40,7 +40,9 @@ pub(crate) use frontier::{
     LedgerFrontierActivationError, LedgerFrontierActivationReceipt,
     LedgerFrontierActivationRequest, LedgerFrontierStatus,
 };
-pub(crate) use intent::{CommitIntent, CommitResult, OperationResolution, StagedWrite};
+pub(crate) use intent::{
+    CommitIntent, CommitRejection, CommitResult, OperationResolution, StagedWrite, UnknownCause,
+};
 pub(crate) use root::StorageRootId;
 
 pub use compaction::{

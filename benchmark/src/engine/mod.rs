@@ -581,6 +581,31 @@ pub struct Engine {
     /// The Storage Tier Mover's control state (P4): the configured
     /// policy and the pause gate. The handle is [`Engine::tiers`].
     pub(crate) tier_control: Arc<Mutex<crate::tiers::TierControlState>>,
+    /// The group-commit mailbox: waiting intents and the leader flag.
+    /// Shared through the [`Arc`] so cloned engines form one group.
+    pub(crate) commit_mailbox: Arc<Mutex<CommitMailbox>>,
+}
+
+/// The group-commit mailbox state.
+#[derive(Default)]
+pub(crate) struct CommitMailbox {
+    /// Waiting intents, in arrival order, each with its answer channel.
+    queue: Vec<(storage::CommitIntent, std::sync::mpsc::SyncSender<storage::CommitResult>)>,
+    /// Whether a leader is currently driving batches.
+    leader_active: bool,
+}
+
+/// Clears the mailbox's leader flag when dropped, so a panicked batch
+/// driver cannot strand future committers behind a leader that no longer
+/// exists.
+struct LeaderGuard(Arc<Mutex<CommitMailbox>>);
+
+impl Drop for LeaderGuard {
+    fn drop(&mut self) {
+        if let Ok(mut mailbox) = self.0.lock() {
+            mailbox.leader_active = false;
+        }
+    }
 }
 
 impl Engine {
@@ -643,7 +668,37 @@ impl Engine {
             _index_subscription: index_subscription,
             bulk_audit: Arc::new(crate::query::bulk::BulkAuditJournal::new()),
             tier_control: Arc::new(Mutex::new(crate::tiers::TierControlState::default())),
+            commit_mailbox: Arc::new(Mutex::new(CommitMailbox::default())),
         })
+    }
+
+    /// Drains the group-commit mailbox until empty: one storage batch per
+    /// drained group, one answer per waiter.
+    ///
+    /// Called only by the current leader (see [`Transaction::commit`]);
+    /// the `LeaderGuard` the caller holds clears the flag when this
+    /// returns or panics.
+    fn drive_commit_batches(&self) {
+        loop {
+            let batch = {
+                let Ok(mut mailbox) = self.commit_mailbox.lock() else {
+                    return;
+                };
+                if mailbox.queue.is_empty() {
+                    return;
+                }
+                std::mem::take(&mut mailbox.queue)
+            };
+            let intents: Vec<storage::CommitIntent> =
+                batch.iter().map(|(intent, _)| intent.clone()).collect();
+            let results = match self.lock_storage() {
+                Ok(mut storage) => storage.port.commit_batch(intents),
+                Err(_) => vec![storage::CommitResult::Rejected(storage::CommitRejection::Storage); batch.len()],
+            };
+            for ((_, sender), result) in batch.into_iter().zip(results) {
+                let _ = sender.send(result);
+            }
+        }
     }
 
     /// Returns the Storage Tier Mover's typed administration handle
@@ -1485,9 +1540,9 @@ impl Transaction<'_> {
             let _guard = LeaderGuard(Arc::clone(&engine.commit_mailbox));
             engine.drive_commit_batches();
         }
-        let result = receiver.recv().unwrap_or(CommitResult::Unknown(
-            storage::CommitRejectionUnknown::response_interrupted(),
-        ));
+        let result = receiver
+            .recv()
+            .unwrap_or(CommitResult::Unknown(storage::UnknownCause::ResponseInterrupted));
         if let CommitResult::Committed(receipt) = &result {
             let event = CommitPublicationEvent::new(
                 operation.clone(),
