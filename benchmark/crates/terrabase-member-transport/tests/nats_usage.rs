@@ -1,6 +1,6 @@
-//! The NATS KV/config/discovery integration of `TerraBaseV2` (SE-06).
+//! The NATS KV/config/discovery integration of `TerraBase` (SE-06).
 //!
-//! PD-2026-08-26-13 D2 and ADR 0012 D-2: within `TerraBaseV2`, NATS serves
+//! PD-2026-08-26-13 D2 and ADR 0012 D-2: within `TerraBase`, NATS serves
 //! exactly three roles — a key-value store for operational state,
 //! configuration sharing, and service/member discoverability — under the
 //! Orchestrator NATS spec's separation rules (own account and subject

@@ -38,7 +38,7 @@ use crate::types::{
 fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("tbv2-gapq10-{tag}-{}-{index}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-gapq10-{tag}-{}-{index}", std::process::id()))
 }
 
 fn open_engine(tag: &str) -> (PathBuf, Engine) {
@@ -272,6 +272,13 @@ fn delete_by_query_respects_the_selection_limit() {
     assert!(receipt.is_complete());
     assert_eq!(receipt.selected(), 3);
     assert_eq!(receipt.processed(), 3);
+    assert!(
+        receipt
+            .pages()
+            .iter()
+            .all(|page| page.operation_id().as_str().starts_with("terrabase-bulkq-")),
+        "new generated page identities use the canonical product prefix"
+    );
     let remaining = remaining_documents(&engine, &scope);
     assert_eq!(remaining.len(), 2, "the untouched matches stay");
     assert!(remaining.iter().all(|document| document.id().as_str() != "doc-1"));

@@ -13,11 +13,11 @@
 //! the partial write from the degraded window fenced by the epoch step,
 //! never silently completed.
 
+use terrabase::replication::{MemberId, RegionId};
 use terrabase_cluster::{
     DurabilityCoordinator, DurabilityError, DurabilityFailure, DurabilityLevel, DurableAck,
     Membership, RegionMembers,
 };
-use terrabase_v2::replication::{MemberId, RegionId};
 
 /// Two selected Regions, two seats each: the RF=2/2 production shape.
 fn two_region_rf2_membership() -> Membership {

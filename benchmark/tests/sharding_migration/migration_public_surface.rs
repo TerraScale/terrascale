@@ -1,7 +1,7 @@
 //! Public-surface tests for the bucket-migration seam (SH-03).
 //!
 //! These tests reach only what an external caller can construct through
-//! `terrabase_v2::sharding` over the public `TopologyView` and `Engine`
+//! `terrabase::sharding` over the public `TopologyView` and `Engine`
 //! seams: the migration's typed lifecycle operations (start, resume,
 //! confirm, cutover, rollback), the state machine's observable contract,
 //! and the seating rules the cutover enforces. The record-streaming rounds
@@ -14,9 +14,9 @@
 
 use std::path::PathBuf;
 
-use terrabase_v2::TopologyView;
-use terrabase_v2::engine::{Engine, EngineConfig};
-use terrabase_v2::sharding::{
+use terrabase::TopologyView;
+use terrabase::engine::{Engine, EngineConfig};
+use terrabase::sharding::{
     BUCKET_SPACE, Bucket, BucketMigration, BucketMigrationState, BucketRange, BucketRangeTable,
     MigrationError, MoveConfirmation, ShardId, ShardTopology, ShardingError,
 };
@@ -80,7 +80,8 @@ fn raised_view() -> TopologyView {
 /// committed history (the external lifecycle drives a bucket with no
 /// records; the streaming rounds are the in-crate lane's scope).
 fn empty_source(tag: &str) -> (Engine, PathBuf) {
-    let dir = std::env::temp_dir().join(format!("tbv2-sh03-public-{tag}-{}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("terrabase-sh03-public-{tag}-{}", std::process::id()));
     std::fs::remove_dir_all(&dir).ok();
     let config = EngineConfig::durable(&dir).expect("durable location");
     let engine = Engine::open(config).expect("engine opens");

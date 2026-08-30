@@ -7,12 +7,12 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use terrabase::types::DocumentValue;
 use terrabase_replication_core::{ComposeError, ComposedMember, ReconcileReport};
-use terrabase_v2::types::DocumentValue;
 
 fn location(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "tbv2-composed-{tag}-{}-{}",
+        "terrabase-composed-{tag}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -200,9 +200,9 @@ fn invalid_tenant_text_is_refused() {
 /// Member per seat, in canonical order.
 fn three_region_members(
     tag: &str,
-) -> (terrabase_v2::replication::ReplicaSet, Vec<ComposedMember>, Vec<PathBuf>) {
+) -> (terrabase::replication::ReplicaSet, Vec<ComposedMember>, Vec<PathBuf>) {
     use std::collections::BTreeMap;
-    use terrabase_v2::replication::{MemberId, RegionId, ReplicaSet};
+    use terrabase::replication::{MemberId, RegionId, ReplicaSet};
 
     let names = ["a1", "a2", "b1", "b2", "g1", "g2"];
     let mut dirs = Vec::new();
@@ -270,8 +270,8 @@ fn put_write(
 
 #[test]
 fn quorum_writes_during_a_partition_converge_after_the_heal() {
+    use terrabase::replication::{LeaderlessLevel, MemberId};
     use terrabase_replication_core::{ComposedCoordinationError, coordinate_composed_write};
-    use terrabase_v2::replication::{LeaderlessLevel, MemberId};
 
     let (set, mut members, dirs) = three_region_members("coord");
 
@@ -347,8 +347,8 @@ fn quorum_writes_during_a_partition_converge_after_the_heal() {
 
 #[test]
 fn every_member_coordinates_in_rotation_at_full_reach() {
+    use terrabase::replication::{LeaderlessLevel, MemberId};
     use terrabase_replication_core::coordinate_composed_write;
-    use terrabase_v2::replication::{LeaderlessLevel, MemberId};
 
     let (set, mut members, dirs) = three_region_members("rotate");
     for accepting in ["a1", "a2", "b1", "b2", "g1", "g2"] {
@@ -377,23 +377,34 @@ fn every_member_coordinates_in_rotation_at_full_reach() {
 }
 
 #[test]
-fn global_quorum_composed_requires_a_majority_of_regions() {
+fn global_quorum_composed_requires_every_selected_region() {
+    use terrabase::replication::{LeaderlessLevel, MemberId};
     use terrabase_replication_core::{ComposedCoordinationError, coordinate_composed_write};
-    use terrabase_v2::replication::{LeaderlessLevel, MemberId};
 
     let (set, mut members, dirs) = three_region_members("global");
-    // Two Regions reachable: a majority of three.
+    // Two Regions reachable out of three: durable partial work, but no
+    // GlobalQuorum acknowledgement.
     let (reachable, _rest) = members.split_at_mut(4);
-    coordinate_composed_write(
+    let partial = coordinate_composed_write(
         &set,
         &MemberId::try_new("a1").expect("valid member"),
         reachable,
         &put_write("op-global", "order-1", "global-write"),
         LeaderlessLevel::GlobalQuorum,
     )
-    .expect("two regions with regional majorities qualify");
+    .expect_err("every selected Region must reach its regional boundary");
+    assert!(matches!(partial, ComposedCoordinationError::QuorumNotReached { .. }));
 
-    // One Region reachable: not a majority.
+    coordinate_composed_write(
+        &set,
+        &MemberId::try_new("a1").expect("valid member"),
+        &mut members,
+        &put_write("op-global", "order-1", "global-write"),
+        LeaderlessLevel::GlobalQuorum,
+    )
+    .expect("retrying the same identity reaches all selected Regions");
+
+    // One Region reachable: still not the every-Region boundary.
     let (alpha, _rest) = members.split_at_mut(2);
     let error = coordinate_composed_write(
         &set,
@@ -402,7 +413,7 @@ fn global_quorum_composed_requires_a_majority_of_regions() {
         &put_write("op-global-fail", "order-2", "not-global"),
         LeaderlessLevel::GlobalQuorum,
     )
-    .expect_err("one region is not a majority of three");
+    .expect_err("one Region cannot satisfy three selected Regions");
     assert!(matches!(error, ComposedCoordinationError::QuorumNotReached { .. }));
 
     for member in members.drain(..) {
@@ -493,8 +504,8 @@ fn guarded_compaction_waits_for_the_live_set_and_adoption_refuses_own_ops() {
 
 #[test]
 fn a_quorum_read_returns_the_merged_view_and_repairs_the_behind() {
+    use terrabase::replication::MemberId;
     use terrabase_replication_core::{ReadRepairReport, quorum_read_with_repair};
-    use terrabase_v2::replication::MemberId;
 
     let (set, mut members, dirs) = three_region_members("read");
     // a2 (the reader) holds order-1; a1 holds nothing; g1 in another
@@ -550,8 +561,8 @@ fn a_quorum_read_returns_the_merged_view_and_repairs_the_behind() {
 
 #[test]
 fn a_quorum_read_without_a_regional_majority_is_refused() {
+    use terrabase::replication::MemberId;
     use terrabase_replication_core::{ComposeError, quorum_read_with_repair};
-    use terrabase_v2::replication::MemberId;
 
     let (set, mut members, dirs) = three_region_members("read-min");
     // Only a1 is reachable: one of two alpha voters is not a majority.
@@ -576,8 +587,8 @@ fn a_quorum_read_without_a_regional_majority_is_refused() {
 #[test]
 fn an_epoch_change_keeps_every_acknowledged_write() {
     use std::collections::BTreeMap;
+    use terrabase::replication::{LeaderlessLevel, MemberId, RegionId, ReplicaSet};
     use terrabase_replication_core::{EpochError, accept_epoch, coordinate_composed_write};
-    use terrabase_v2::replication::{LeaderlessLevel, MemberId, RegionId, ReplicaSet};
 
     // Epoch 1: alpha seats a1,a2. A write is acknowledged at regional
     // quorum — durably held by both.
@@ -686,8 +697,8 @@ fn an_epoch_change_keeps_every_acknowledged_write() {
 #[test]
 fn a_transition_without_regional_overlap_is_refused() {
     use std::collections::BTreeMap;
+    use terrabase::replication::{MemberId, RegionId, ReplicaSet};
     use terrabase_replication_core::{EpochError, accept_epoch};
-    use terrabase_v2::replication::{MemberId, RegionId, ReplicaSet};
 
     // Epoch 1 seats a1,a2 in alpha; the proposal replaces BOTH with
     // a3,a4: no old majority can intersect a new majority (2 + 2 is
@@ -727,8 +738,8 @@ fn a_transition_without_regional_overlap_is_refused() {
 
 #[test]
 fn admission_refuses_nothing_durable() {
-    use terrabase_v2::families::modes::{AdmissionError, CollectionPolicy, ValueKind};
-    use terrabase_v2::families::{SchemaDefinition, SchemaRule, SchemaVersion};
+    use terrabase::families::modes::{AdmissionError, CollectionPolicy, ValueKind};
+    use terrabase::families::{SchemaDefinition, SchemaRule, SchemaVersion};
 
     let dir = location("admission");
     let mut member = ComposedMember::open("member-a", &dir, "tenant-a").expect("opens");
@@ -787,8 +798,8 @@ fn admission_refuses_nothing_durable() {
 
 #[test]
 fn a_policy_skewed_merge_is_quarantined_then_healed_by_alignment() {
-    use terrabase_v2::families::modes::CollectionPolicy;
-    use terrabase_v2::families::{SchemaDefinition, SchemaRule, SchemaVersion};
+    use terrabase::families::modes::CollectionPolicy;
+    use terrabase::families::{SchemaDefinition, SchemaRule, SchemaVersion};
 
     // Policy skew during a rolling upgrade: member-a validates under a
     // version without the Required rule; member-b already upgraded.
@@ -861,10 +872,10 @@ fn body_int(entries: &[(&str, i64)]) -> BTreeMap<String, DocumentValue> {
 
 #[test]
 fn a_unique_field_is_coordinated_and_refuses_under_partition() {
+    use terrabase::replication::MemberId;
     use terrabase_replication_core::{
         CoordinatedConstraint, RuleClass, TransactionRefusal, coordinate_composed_transaction,
     };
-    use terrabase_v2::replication::MemberId;
 
     let (set, mut members, dirs) = three_region_members("unique");
     let unique = CoordinatedConstraint::UniqueField { field: "email".to_owned() };
@@ -886,10 +897,7 @@ fn a_unique_field_is_coordinated_and_refuses_under_partition() {
     )
     .expect("the first holder is admitted");
     assert_eq!(first.class(), RuleClass::Coordinated, "the API reports the class used");
-    assert_eq!(
-        first.receipt().achieved(),
-        terrabase_v2::replication::LeaderlessLevel::GlobalQuorum
-    );
+    assert_eq!(first.receipt().achieved(), terrabase::replication::LeaderlessLevel::GlobalQuorum);
 
     // A second document claiming the same value is refused, naming the
     // holder — the constraint held against the merged view.
@@ -936,7 +944,7 @@ fn a_unique_field_is_coordinated_and_refuses_under_partition() {
         refusal,
         TransactionRefusal::QuorumUnavailable {
             regions: vec![
-                terrabase_v2::replication::RegionId::try_new("r-gamma").expect("valid region")
+                terrabase::replication::RegionId::try_new("r-gamma").expect("valid region")
             ],
         }
     );
@@ -951,9 +959,9 @@ fn a_unique_field_is_coordinated_and_refuses_under_partition() {
 
 #[test]
 fn a_migration_validates_at_the_target_before_committing() {
+    use terrabase::families::modes::CollectionPolicy;
+    use terrabase::families::{SchemaDefinition, SchemaRule, SchemaVersion};
     use terrabase_replication_core::{MigrationOutcome, migrate_collection};
-    use terrabase_v2::families::modes::CollectionPolicy;
-    use terrabase_v2::families::{SchemaDefinition, SchemaRule, SchemaVersion};
 
     let dir_a = location("mig-a");
     let dir_b = location("mig-b");
@@ -1038,8 +1046,8 @@ fn a_migration_validates_at_the_target_before_committing() {
 
 #[test]
 fn schema_negotiation_fails_closed_on_version_skew() {
-    use terrabase_v2::families::modes::CollectionPolicy;
-    use terrabase_v2::families::{SchemaDefinition, SchemaRule, SchemaVersion};
+    use terrabase::families::modes::CollectionPolicy;
+    use terrabase::families::{SchemaDefinition, SchemaRule, SchemaVersion};
 
     let dir = location("negotiate");
     let mut member = ComposedMember::open("member-a", &dir, "tenant-a").expect("opens");

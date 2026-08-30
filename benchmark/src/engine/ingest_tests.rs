@@ -36,7 +36,8 @@ const OVERSIZED_BYTES: usize = 2 * 1024 * 1024;
 fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("tbv2-gapd10-ingest-{tag}-{}-{index}", std::process::id()))
+    std::env::temp_dir()
+        .join(format!("terrabase-gapd10-ingest-{tag}-{}-{index}", std::process::id()))
 }
 
 fn open_engine(tag: &str) -> Engine {
@@ -114,6 +115,10 @@ fn bulk_ingest_commits_across_multiple_batches_and_reconciles() {
     assert_eq!(receipt.committed_batches(), 3, "20 documents at batch 8 publish as 8 + 8 + 4");
     let last = receipt.last_committed_batch().expect("the final partial batch committed");
     assert_eq!(last.documents(), 4);
+    assert!(
+        last.operation_id().as_str().starts_with("terrabase-ingest-"),
+        "generated ingest operation IDs use the active product name"
+    );
     assert!(matches!(receipt.termination(), IngestTermination::Completed));
     assert!(receipt.is_complete());
     for index in 0..20 {

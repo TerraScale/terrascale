@@ -382,7 +382,7 @@ impl<'engine> FamilyStore<'engine> {
     ///
     /// The plan observes one immutable snapshot and one pass time,
     /// enumerates the tenant's family records through the landed
-    /// [`FamilyStore::snapshot_family_records`] materialization (the same
+    /// `FamilyStore::snapshot_family_records` materialization (the same
     /// W3-F seam backup consumes), and keeps only lifecycle and archival
     /// records; owner presence and version are point reads. An elapsed
     /// expiry plans a deletion, a due refresh marker plans its
@@ -826,7 +826,7 @@ mod tests {
 
     fn location(tag: &str) -> PathBuf {
         let unique = format!(
-            "tbv2-gapf06-{tag}-{}-{}",
+            "terrabase-gapf06-{tag}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1421,7 +1421,7 @@ mod tests {
     fn must_terminate<T: Send + 'static>(tag: &str, run: impl FnOnce() -> T + Send + 'static) -> T {
         let (sender, receiver) = mpsc::channel();
         let worker = std::thread::Builder::new()
-            .name(format!("tbv2-gapf06-{tag}"))
+            .name(format!("terrabase-gapf06-{tag}"))
             .spawn(move || {
                 let value = run();
                 let _ = sender.send(value);

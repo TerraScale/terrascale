@@ -1,7 +1,7 @@
 //! Public-construction backup-core integration tests (BK-01).
 //!
 //! These tests use only public construction: `EngineConfig::durable`,
-//! `Engine::open`, and the public `terrabase_v2::backup` seam. `TenantScope`
+//! `Engine::open`, and the public `terrabase::backup` seam. `TenantScope`
 //! has no public constructor by design (Platform creates it after
 //! authorization), so the data-bearing backup behavior is proved by the
 //! in-crate suite at `src/backup/tests.rs`; this file proves what an
@@ -16,13 +16,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc;
 
-use terrabase_v2::backup::{
+use terrabase::backup::{
     BackupError, BackupKind, BackupPlan, load_recovery_point, run_backup, verify_latest_chain,
 };
-use terrabase_v2::{Engine, EngineConfig};
+use terrabase::{Engine, EngineConfig};
 
 fn location(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("tbv2-bk01-int-{tag}-{}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-bk01-int-{tag}-{}", std::process::id()))
 }
 
 fn open_engine(tag: &str) -> (PathBuf, Engine) {
@@ -77,7 +77,7 @@ fn empty_source_incremental_fails_closed_with_a_typed_error() {
 
     let empty_range = run_backup(
         &engine,
-        BackupPlan::incremental_since(terrabase_v2::StorageSequence::default()),
+        BackupPlan::incremental_since(terrabase::StorageSequence::default()),
         &destination,
     );
     assert_eq!(
@@ -260,8 +260,8 @@ fn concurrent_backup_attempts_on_the_public_seam_reject_the_second() {
     let (entered_tx, entered_rx) = mpsc::channel::<()>();
     let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
     let release_waiter = Arc::clone(&release);
-    let observer: Arc<dyn Fn(terrabase_v2::backup::BackupProgress) + Send + Sync> =
-        Arc::new(move |_progress: terrabase_v2::backup::BackupProgress| {
+    let observer: Arc<dyn Fn(terrabase::backup::BackupProgress) + Send + Sync> =
+        Arc::new(move |_progress: terrabase::backup::BackupProgress| {
             if entered_tx.send(()).is_ok() {
                 let (flag, condvar) = &*release_waiter;
                 let mut released = flag.lock().expect("release lock");

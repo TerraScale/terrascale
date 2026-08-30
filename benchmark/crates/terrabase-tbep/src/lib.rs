@@ -1,8 +1,10 @@
 //! `terrabase-tbep` — the `TerraBase` Engine Protocol engine server.
 //!
 //! TBEP is the custom C#↔Rust process-to-process wire protocol mandated
-//! by charter PD-2026-08-26-02 and ADR 0005 D-2: typed, versioned
-//! `MessagePack` frames — the closed typed operation set, backbone
+//! by ADR 0025: generated, verified `FlatBuffers` over authenticated QUIC.
+//! The legacy UDS conformance binding retains its positional codec while
+//! migration-only consumers are retired; it is not a production listener.
+//! The closed typed operation set, backbone
 //! subscription streams (including the content-free trigger
 //! notifications of PD-2026-08-26-13 D3), sync-delivery frames,
 //! topology/admin reads, and supervision frames — served by the engine
@@ -26,7 +28,7 @@
 //!
 //! Scope limits, stated exactly (the SE-14 record, `docs/sync/tbep.md`):
 //!
-//! - The engine crate (`terrabase-v2`) stays synchronous and
+//! - The engine crate (`terrabase`) stays synchronous and
 //!   zero-dependency; any async transport concern lives in this crate
 //!   only. This packet serves the UDS binding with the standard
 //!   library's synchronous listener plus one thread per connection.
@@ -50,6 +52,7 @@ pub mod codec;
 pub mod codegen;
 pub mod engine_host;
 pub mod envelope;
+mod flatbuffers_server;
 pub mod generated;
 pub mod host;
 pub mod quic;

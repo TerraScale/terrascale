@@ -123,11 +123,16 @@ impl SegmentReader {
     pub(super) fn open(path: &Path, id: u64, level: u16) -> io::Result<Self> {
         let mut file = OpenOptions::new().read(true).open(path)?;
         let byte_len = file.metadata()?.len();
+        if byte_len < 20 + 4 + 32 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "segment truncated"));
+        }
         // The footer's fixed tail is magic(8) + sparse_offset(8) +
         // count(8) + crc(8) = 32 bytes; the keys add up to
         // MAX_KEY_BOUND * 2 at worst. Read a tail window covering it.
-        let tail_window = (32 + 2 * MAX_KEY_BOUND).min(byte_len as usize);
-        let tail_start = byte_len - tail_window as u64;
+        let tail_bound = u64::try_from(32 + 2 * MAX_KEY_BOUND).expect("footer bound fits u64");
+        let tail_window = usize::try_from(byte_len.min(tail_bound))
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "segment is too large"))?;
+        let tail_start = byte_len - u64::try_from(tail_window).expect("tail length fits u64");
         let mut tail = vec![0_u8; tail_window];
         file.seek(SeekFrom::Start(tail_start))?;
         file.read_exact(&mut tail)?;
@@ -150,21 +155,58 @@ impl SegmentReader {
         let sparse_offset = fixed_at(&cursor[cursor.len() - 16..cursor.len() - 8]);
         let entry_count = fixed_at(&cursor[cursor.len() - 8..]);
         let footer_start = tail_start + (cursor.len() - 24) as u64;
-        if sparse_offset > footer_start {
+        if sparse_offset < 20 || sparse_offset > footer_start {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "segment footer layout"));
         }
         // Verify the body checksum: header + records + sparse index.
-        let mut body = vec![0_u8; footer_start as usize];
+        let body_len = usize::try_from(footer_start)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "segment is too large"))?;
+        let mut body = vec![0_u8; body_len];
         file.rewind()?;
         file.read_exact(&mut body)?;
         if codec::fnv1a(&body) != fixed_at(&crc) {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "segment checksum"));
         }
+        if body.len() < 20
+            || &body[..8] != HEADER_MAGIC
+            || u64::from_le_bytes(body[8..16].try_into().expect("segment id")) != id
+            || u16::from_le_bytes(body[16..18].try_into().expect("segment level")) != level
+            || body[18..20] != [0_u8; 2]
+        {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "segment header"));
+        }
         // Keep only the sparse index section in memory.
-        let mut sparse_bytes = vec![0_u8; (footer_start - sparse_offset) as usize];
+        let sparse_len = usize::try_from(footer_start - sparse_offset)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "sparse index is too large"))?;
+        let mut sparse_bytes = vec![0_u8; sparse_len];
         file.seek(SeekFrom::Start(sparse_offset))?;
         file.read_exact(&mut sparse_bytes)?;
         let sparse = decode_sparse(&sparse_bytes)?;
+        let records_end = usize::try_from(sparse_offset).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "record region is too large")
+        })?;
+        let (entries, offsets) = decode_record_region_at(&body[20..records_end], 20)?;
+        let expected_count = u64::try_from(entries.len())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "too many segment records"))?;
+        let actual_min =
+            entries.first().map_or_else(Vec::new, |entry| entry.key.user_key().to_vec());
+        let actual_max =
+            entries.last().map_or_else(Vec::new, |entry| entry.key.user_key().to_vec());
+        let expected_sparse = entries
+            .iter()
+            .zip(offsets)
+            .enumerate()
+            .filter(|(index, _)| index % SPARSE_STRIDE == 0)
+            .map(|(_, (entry, offset))| (entry.key.user_key().to_vec(), offset))
+            .collect::<Vec<_>>();
+        if expected_count != entry_count
+            || actual_min != min_key
+            || actual_max != max_key
+            || entries.windows(2).any(|pair| pair[0].key >= pair[1].key)
+            || sparse != expected_sparse
+        {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "segment semantic mismatch"));
+        }
         Ok(Self {
             file,
             sparse,
@@ -231,11 +273,18 @@ fn decode_sparse(bytes: &[u8]) -> io::Result<Vec<(Vec<u8>, u64)>> {
     let Some(count) = reader.read_u32() else {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "sparse index truncated"));
     };
-    let mut sparse = Vec::with_capacity(count as usize);
+    let count = count as usize;
+    if count > 1_000_000 || count > reader.remaining() / 12 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "sparse index count"));
+    }
+    let mut sparse = Vec::with_capacity(count.min(4096));
     for _ in 0..count {
         let Some(key_len) = reader.read_u32() else {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "sparse entry truncated"));
         };
+        if key_len as usize > MAX_KEY_BOUND {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "sparse key bound"));
+        }
         let Some(key) = reader.take(key_len as usize) else {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "sparse key truncated"));
         };
@@ -244,17 +293,32 @@ fn decode_sparse(bytes: &[u8]) -> io::Result<Vec<(Vec<u8>, u64)>> {
         };
         sparse.push((key.to_owned(), offset));
     }
+    if reader.remaining() != 0 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "sparse index trailing bytes"));
+    }
     Ok(sparse)
 }
 
 /// Decodes one raw record region (no header).
 fn decode_record_region(region: &[u8]) -> io::Result<Vec<Entry>> {
+    decode_record_region_at(region, 0).map(|(entries, _)| entries)
+}
+
+fn decode_record_region_at(region: &[u8], base_offset: u64) -> io::Result<(Vec<Entry>, Vec<u64>)> {
     let mut reader = codec::Reader::new(region);
     let mut entries = Vec::new();
+    let mut offsets = Vec::new();
     while reader.remaining() > 0 {
+        let consumed = region.len() - reader.remaining();
+        let offset = base_offset
+            .checked_add(u64::try_from(consumed).expect("a segment offset fits u64"))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "segment offset overflow"))?;
         let Some(key_len) = reader.read_u32() else {
-            break;
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "record key length truncated"));
         };
+        if key_len as usize > MAX_KEY_BOUND {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "record key bound"));
+        }
         let Some(key) = reader.take(key_len as usize) else {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "record key truncated"));
         };
@@ -263,6 +327,11 @@ fn decode_record_region(region: &[u8]) -> io::Result<Vec<Entry>> {
         };
         let Some(kind) = reader.read_u8() else {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "record kind truncated"));
+        };
+        let deletion = match kind {
+            0 => false,
+            1 => true,
+            _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "record kind invalid")),
         };
         let Some(value_len) = reader.read_u32() else {
             return Err(io::Error::new(
@@ -273,12 +342,16 @@ fn decode_record_region(region: &[u8]) -> io::Result<Vec<Entry>> {
         let Some(value) = reader.take(value_len as usize) else {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "record value truncated"));
         };
-        entries.push(Entry {
-            key: InternalKey::decode(key, sequence, kind != 0),
-            value: value.to_owned(),
-        });
+        let key = InternalKey::decode(key, sequence, deletion)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "record key invalid"))?;
+        let entry = Entry { key, value: value.to_owned() };
+        if !super::persisted_entry_is_semantically_valid(&entry) {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "record value invalid"));
+        }
+        entries.push(entry);
+        offsets.push(offset);
     }
-    Ok(entries)
+    Ok((entries, offsets))
 }
 
 impl SegmentReader {
@@ -299,9 +372,17 @@ impl SegmentReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{CollectionName, DocumentId, TenantId};
+    use crate::types::{CollectionName, Document, DocumentId, DocumentValue, TenantId};
 
     fn entry(tenant: &str, id: &str, sequence: u64, value: &[u8]) -> Entry {
+        let mut document = Document::new(
+            DocumentId::try_new(id).expect("valid document"),
+            CollectionName::try_new("c").expect("valid collection"),
+            DocumentValue::String(String::from_utf8(value.to_vec()).expect("test value is UTF-8")),
+        );
+        document.set_version(sequence);
+        let mut encoded = Vec::new();
+        codec::encode_document(&mut encoded, &document);
         Entry {
             key: InternalKey::document(
                 &TenantId::try_new(tenant).expect("valid tenant"),
@@ -309,15 +390,26 @@ mod tests {
                 &DocumentId::try_new(id).expect("valid document"),
                 sequence,
             ),
-            value: value.to_vec(),
+            value: encoded,
         }
     }
 
     fn segment_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("tbv2-lsm-seg-{tag}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("terrabase-lsm-seg-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn resign_segment(bytes: &mut [u8]) {
+        let footer_start = bytes
+            .windows(FOOTER_MAGIC.len())
+            .rposition(|window| window == FOOTER_MAGIC)
+            .expect("test segment has a footer");
+        let checksum = codec::fnv1a(&bytes[..footer_start]).to_le_bytes();
+        let checksum_start = bytes.len() - 8;
+        bytes[checksum_start..].copy_from_slice(&checksum);
     }
 
     #[test]
@@ -367,6 +459,57 @@ mod tests {
         let read = reader.read_from(Some(target.user_key())).unwrap();
         assert!(!read.is_empty());
         assert!(read[0].key.user_key() <= target.user_key());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rechecksummed_header_identity_reserved_and_sparse_substitutions_fail_closed() {
+        let dir = segment_dir("hostile-structure");
+        let entries = vec![entry("t", "a", 1, b"one"), entry("t", "b", 2, b"two")];
+        let canonical = dir.join("canonical");
+        write_segment(&canonical, 1, 0, &entries).unwrap();
+        let original = std::fs::read(&canonical).unwrap();
+
+        for (tag, mutate) in [
+            ("id", (8_usize, 0x7f_u8)),
+            ("level", (16_usize, 0x01_u8)),
+            ("reserved", (18_usize, 0x01_u8)),
+        ] {
+            let mut bytes = original.clone();
+            bytes[mutate.0] = mutate.1;
+            resign_segment(&mut bytes);
+            let path = dir.join(tag);
+            std::fs::write(&path, bytes).unwrap();
+            assert!(SegmentReader::open(&path, 1, 0).is_err(), "{tag}");
+        }
+
+        let mut sparse = original.clone();
+        let footer_start =
+            sparse.windows(FOOTER_MAGIC.len()).rposition(|window| window == FOOTER_MAGIC).unwrap();
+        let sparse_offset = usize::try_from(u64::from_le_bytes(
+            sparse[footer_start + 8..footer_start + 16].try_into().unwrap(),
+        ))
+        .unwrap();
+        let first_key_len = usize::try_from(u32::from_le_bytes(
+            sparse[sparse_offset + 4..sparse_offset + 8].try_into().unwrap(),
+        ))
+        .unwrap();
+        let first_offset = sparse_offset + 8 + first_key_len;
+        sparse[first_offset] ^= 1;
+        resign_segment(&mut sparse);
+        let sparse_path = dir.join("sparse");
+        std::fs::write(&sparse_path, sparse).unwrap();
+        assert!(SegmentReader::open(&sparse_path, 1, 0).is_err());
+
+        let mut footer_count = original;
+        let footer_start = footer_count
+            .windows(FOOTER_MAGIC.len())
+            .rposition(|window| window == FOOTER_MAGIC)
+            .unwrap();
+        footer_count[footer_start + 16] ^= 1;
+        let footer_path = dir.join("footer-count");
+        std::fs::write(&footer_path, footer_count).unwrap();
+        assert!(SegmentReader::open(&footer_path, 1, 0).is_err());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

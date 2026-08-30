@@ -1,7 +1,7 @@
 //! Public-construction tests for the sharding seam (SH-02).
 //!
 //! These tests reach only what an external caller can construct through
-//! `terrabase_v2::sharding` over the public `TopologyView` seam: the fixed
+//! `terrabase::sharding` over the public `TopologyView` seam: the fixed
 //! bucket space and its derivation, the engine-validated bucket-range table,
 //! the canonical shard identities, the explicit bucket move, and
 //! deterministic routing to the owning Member at its ownership epoch.
@@ -10,12 +10,12 @@
 //! failover qualification (SH-05), and no
 //! performance fact is asserted.
 
-use terrabase_v2::sharding::{
+use terrabase::sharding::{
     BUCKET_SPACE, Bucket, BucketRange, BucketRangeTable, RoutingRequest, ShardId, ShardKey,
     ShardTopology, ShardingError,
 };
-use terrabase_v2::types::CollectionName;
-use terrabase_v2::{DocumentId, MemberId, TenantId, TopologyView};
+use terrabase::types::CollectionName;
+use terrabase::{DocumentId, MemberId, TenantId, TopologyView};
 
 fn shard(number: u32) -> ShardId {
     ShardId::from_number(number)

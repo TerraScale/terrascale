@@ -22,7 +22,7 @@ use super::{
 fn every_optimizer_workload_names_both_sides_of_its_mapping() {
     assert_eq!(optimizer::OptimizerWorkload::ALL.len(), 4);
     for workload in optimizer::OptimizerWorkload::ALL {
-        assert!(!workload.terrabase_v2_operation().is_empty(), "{workload:?}");
+        assert!(!workload.terrabase_operation().is_empty(), "{workload:?}");
         assert!(workload.postgres_equivalent().starts_with("-- "), "{workload:?}");
         assert_eq!(workload.driver_status(), None, "the class drives all four in-process");
     }

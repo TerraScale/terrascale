@@ -8,14 +8,14 @@ authority: ../../../GOAL.md
 
 ## Release posture
 
-The first external TerraBaseV2 release is General Availability. TerraScale
+The first external TerraBase release is General Availability. TerraScale
 does not use a public preview or beta as a substitute for qualification.
 Internal development, staging, fault injection, customer-data-free canaries,
 and a continuous thirty-day soak on the real three-Region production shape are
 mandatory before GA. Resetting a failed soak requires a new uninterrupted
 thirty-day window on the corrected release candidate.
 
-TerraBaseV2 is proprietary closed-source software. TerraScale distributes
+TerraBase is proprietary closed-source software. TerraScale distributes
 engine binaries, symbols, schemas, and private generated bindings only through
 authenticated private Oracle Cloud Infrastructure artifact repositories and
 production delivery paths. Public SDKs and documentation expose no engine
@@ -52,7 +52,7 @@ OCIDs, compartment IDs, and VCN IDs exist only in versioned
 TerraScale.Orchestrator provider-adapter configuration and internal deployment
 evidence. They do not appear in public APIs, database identities, placement
 contracts, checkpoints, causal state, customer-visible logs, or customer
-receipts. TerraBaseV2, TerraScale.Database, both SDKs, and the Dashboard accept
+receipts. TerraBase, TerraScale.Database, both SDKs, and the Dashboard accept
 and emit only `RegionCode`.
 
 A provider mapping is signed, environment-specific, and unique for one catalog

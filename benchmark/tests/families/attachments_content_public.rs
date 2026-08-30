@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use terrabase_v2::{
+use terrabase::{
     Cancellation, Deadline, RequestValidationError,
     families::attachments::{
         AttachmentContentRead, AttachmentRange, AttachmentSegment, MAX_CONTENT_BYTES,

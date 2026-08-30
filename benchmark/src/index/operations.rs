@@ -869,8 +869,8 @@ impl TenantIndexStatistics {
 /// ```compile_fail
 /// // No store may outlive its Engine. This must not compile: `shutdown`
 /// // consumes the Engine while the borrowed store is still live.
-/// use terrabase_v2::{Engine, EngineConfig};
-/// let engine = Engine::open(EngineConfig::durable("/tmp/tbv2-docstore").unwrap()).unwrap();
+/// use terrabase::{Engine, EngineConfig};
+/// let engine = Engine::open(EngineConfig::durable("/tmp/terrabase-docstore").unwrap()).unwrap();
 /// let store = engine.indexes();
 /// engine.shutdown().unwrap();
 /// drop(store);
@@ -879,7 +879,7 @@ impl TenantIndexStatistics {
 /// ```compile_fail
 /// // There is no independent index-store constructor. This must not
 /// // compile.
-/// let store = terrabase_v2::index::operations::IndexStore::open("/tmp/other");
+/// let store = terrabase::index::operations::IndexStore::open("/tmp/other");
 /// ```
 pub struct IndexStore<'engine> {
     engine: &'engine Engine,

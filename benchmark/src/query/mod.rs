@@ -261,8 +261,8 @@ pub(crate) trait GenerationView {
 /// // No store may outlive its Engine. This must not compile: `shutdown`
 /// // consumes the Engine while the borrowed store is still live. The example
 /// // fails on exactly that borrow rule — every other line is valid.
-/// use terrabase_v2::{Engine, EngineConfig};
-/// let engine = Engine::open(EngineConfig::durable("/tmp/tbv2-docstore").unwrap()).unwrap();
+/// use terrabase::{Engine, EngineConfig};
+/// let engine = Engine::open(EngineConfig::durable("/tmp/terrabase-docstore").unwrap()).unwrap();
 /// let store = engine.queries();
 /// engine.shutdown().unwrap();
 /// drop(store);
@@ -271,7 +271,7 @@ pub(crate) trait GenerationView {
 /// ```compile_fail
 /// // There is no independent durable or in-memory query constructor. This
 /// // must not compile.
-/// let store = terrabase_v2::query::QueryStore::open("/tmp/other");
+/// let store = terrabase::query::QueryStore::open("/tmp/other");
 /// ```
 pub struct QueryStore<'engine> {
     engine: &'engine Engine,

@@ -1,7 +1,7 @@
 //! The engine-backed TBEP host (P4): the real durable Engine serving
 //! the protocol's document operations.
 //!
-//! [`EngineHost`] implements [`TbepHost`] over one `terrabase-v2`
+//! [`EngineHost`] implements [`TbepHost`] over one `terrabase`
 //! `Engine` at a durable location: channel binds validate the tenant
 //! identifier, document writes commit at `Synced` through the engine's
 //! transaction path with the envelope's idempotency key as the
@@ -19,8 +19,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use terrabase_v2::engine::{CommitOutcome, Engine, EngineConfig};
-use terrabase_v2::types::{
+use terrabase::engine::{CommitOutcome, Engine, EngineConfig};
+use terrabase::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion as EngineVersion,
     LocalDurability, OperationId, TenantId,
 };
@@ -83,21 +83,21 @@ fn to_engine_expected(expected: &ExpectedVersion) -> EngineVersion {
 const COMPLETED_QUERY_HORIZON: usize = 256;
 
 /// Maps one tier administration failure onto the wire's typed refusal.
-fn tier_error(error: terrabase_v2::tiers::TierAdminError) -> HostingError {
+fn tier_error(error: terrabase::tiers::TierAdminError) -> HostingError {
     match error {
-        terrabase_v2::tiers::TierAdminError::InvalidPolicy => {
+        terrabase::tiers::TierAdminError::InvalidPolicy => {
             HostingError::Invalid("the tier policy is not valid".into())
         }
-        terrabase_v2::tiers::TierAdminError::NotConfigured => {
+        terrabase::tiers::TierAdminError::NotConfigured => {
             HostingError::Refused("no tier policy is configured".into())
         }
-        terrabase_v2::tiers::TierAdminError::Paused => {
+        terrabase::tiers::TierAdminError::Paused => {
             HostingError::Refused("tier runs are paused".into())
         }
-        terrabase_v2::tiers::TierAdminError::UnsupportedBackend => {
+        terrabase::tiers::TierAdminError::UnsupportedBackend => {
             HostingError::Refused("this backend carries no tiers".into())
         }
-        terrabase_v2::tiers::TierAdminError::MoveFailed(receipt) => {
+        terrabase::tiers::TierAdminError::MoveFailed(receipt) => {
             HostingError::EngineFailure(format!(
                 "the mover run failed at segment {} (policy {}, manifest {}->{}, decision {:?})",
                 receipt.segment_id(),
@@ -112,17 +112,17 @@ fn tier_error(error: terrabase_v2::tiers::TierAdminError) -> HostingError {
 
 /// Maps one engine tier receipt onto the wire's.
 fn wire_receipt(
-    receipt: &terrabase_v2::tiers::TierMoveRunReceipt,
+    receipt: &terrabase::tiers::TierMoveRunReceipt,
 ) -> crate::generated::TierMoveReceipt {
     crate::generated::TierMoveReceipt {
         policy_id: receipt.policy_id().to_owned(),
         policy_version: receipt.policy_version(),
         decision: match receipt.decision() {
-            terrabase_v2::tiers::TierDecision::Promote => crate::generated::TierDecision::Promote,
-            terrabase_v2::tiers::TierDecision::Demote => crate::generated::TierDecision::Demote,
-            terrabase_v2::tiers::TierDecision::Split => crate::generated::TierDecision::Split,
-            terrabase_v2::tiers::TierDecision::None => crate::generated::TierDecision::None,
-            terrabase_v2::tiers::TierDecision::Refused => crate::generated::TierDecision::Refused,
+            terrabase::tiers::TierDecision::Promote => crate::generated::TierDecision::Promote,
+            terrabase::tiers::TierDecision::Demote => crate::generated::TierDecision::Demote,
+            terrabase::tiers::TierDecision::Split => crate::generated::TierDecision::Split,
+            terrabase::tiers::TierDecision::None => crate::generated::TierDecision::None,
+            terrabase::tiers::TierDecision::Refused => crate::generated::TierDecision::Refused,
         },
         reasons: receipt
             .reasons()
@@ -148,7 +148,7 @@ pub struct EngineHost {
     instance: u64,
     reads: Mutex<u64>,
     frames_served: Mutex<u64>,
-    live_queries: Mutex<std::collections::HashMap<u64, terrabase_v2::types::Cancellation>>,
+    live_queries: Mutex<std::collections::HashMap<u64, terrabase::types::Cancellation>>,
     completed_queries: Mutex<std::collections::VecDeque<u64>>,
 }
 
@@ -196,7 +196,7 @@ impl EngineHost {
     }
 
     /// Registers one live query's cancellation signal under its id.
-    fn register_live_query(&self, query_id: u64, cancellation: &terrabase_v2::types::Cancellation) {
+    fn register_live_query(&self, query_id: u64, cancellation: &terrabase::types::Cancellation) {
         let mut live = self.live_queries.lock().expect("the live set is not poisoned");
         live.insert(query_id, cancellation.clone());
     }
@@ -241,13 +241,13 @@ impl EngineHost {
         &self,
         tenant: &TenantId,
         collection: &CollectionName,
-    ) -> Result<Option<terrabase_v2::families::SchemaDefinition>, HostingError> {
-        let read = terrabase_v2::families::ValidationRead::try_new(
+    ) -> Result<Option<terrabase::families::SchemaDefinition>, HostingError> {
+        let read = terrabase::families::ValidationRead::try_new(
             collection.clone(),
             None,
-            terrabase_v2::types::Deadline::after(std::time::Duration::from_secs(30))
+            terrabase::types::Deadline::after(std::time::Duration::from_secs(30))
                 .map_err(|_| HostingError::EngineFailure("the deadline is invalid".into()))?,
-            terrabase_v2::types::Cancellation::default(),
+            terrabase::types::Cancellation::default(),
         )
         .map_err(|_| HostingError::Invalid("the validation read is not valid".into()))?;
         let scope = self.engine.scope_for(tenant);
@@ -255,15 +255,15 @@ impl EngineHost {
             .engine
             .read_snapshot(&scope)
             .map_err(|_| HostingError::EngineFailure("the snapshot is unavailable".into()))?;
-        let context = terrabase_v2::families::FamilyReadContext::new(scope, snapshot);
-        let request = terrabase_v2::families::FamilyReadRequest::validation(read);
+        let context = terrabase::families::FamilyReadContext::new(scope, snapshot);
+        let request = terrabase::families::FamilyReadRequest::validation(read);
         match self
             .engine
             .families()
             .read(context, request)
             .map_err(|_| HostingError::EngineFailure("the validation read failed".into()))?
         {
-            terrabase_v2::families::FamilyReadResult::Validation(result) => {
+            terrabase::families::FamilyReadResult::Validation(result) => {
                 Ok(result.policy().cloned())
             }
             _ => Err(HostingError::EngineFailure(
@@ -302,7 +302,7 @@ impl EngineHost {
         &self,
         tenant: &TenantId,
         operation: &str,
-        stage: impl FnOnce(&mut terrabase_v2::engine::Transaction<'_>) -> Result<(), HostingError>,
+        stage: impl FnOnce(&mut terrabase::engine::Transaction<'_>) -> Result<(), HostingError>,
         ack: crate::generated::Acknowledgement,
         idempotency_key: &str,
     ) -> Result<WriteOutcome, HostingError> {
@@ -509,17 +509,17 @@ impl TbepHost for EngineHost {
         // its own cancellation signal — registered under the caller's
         // query id — so a cancel from any channel ends it at a bounded
         // checkpoint.
-        let text = terrabase_v2::operations::TqlQueryText::try_new(&request.text)
+        let text = terrabase::operations::TqlQueryText::try_new(&request.text)
             .map_err(|_| HostingError::Invalid("the query text is not valid".into()))?;
-        let cancellation = terrabase_v2::types::Cancellation::new();
+        let cancellation = terrabase::types::Cancellation::new();
         self.register_live_query(request.query_id, &cancellation);
-        let deadline = terrabase_v2::types::Deadline::after(std::time::Duration::from_secs(30))
+        let deadline = terrabase::types::Deadline::after(std::time::Duration::from_secs(30))
             .map_err(|_| HostingError::EngineFailure("the deadline is invalid".into()))?;
-        let input = terrabase_v2::operations::QueryInput::tql_bounded(text, deadline, cancellation);
+        let input = terrabase::operations::QueryInput::tql_bounded(text, deadline, cancellation);
         let scope = self.engine.scope_for(&tenant);
         let executed = (|| -> Result<
             (
-                Result<terrabase_v2::query::QueryResult, terrabase_v2::query::QueryError>,
+                Result<terrabase::query::QueryResult, terrabase::query::QueryError>,
                 u64,
             ),
             HostingError,
@@ -540,7 +540,7 @@ impl TbepHost for EngineHost {
         let (executed, position) = executed?;
         let result = match executed {
             Ok(result) => result,
-            Err(terrabase_v2::query::QueryError::Cancelled) => {
+            Err(terrabase::query::QueryError::Cancelled) => {
                 return Err(HostingError::Refused("the query was cancelled".into()));
             }
             Err(_) => return Err(HostingError::EngineFailure("the query execution failed".into())),
@@ -721,7 +721,7 @@ impl TbepHost for EngineHost {
         _idempotency_key: &str,
     ) -> Result<crate::generated::TierConfigureResponse, HostingError> {
         self.count_frame();
-        let policy = terrabase_v2::tiers::TierPolicy::try_new(
+        let policy = terrabase::tiers::TierPolicy::try_new(
             &request.policy_id,
             request.version,
             request.nvme_budget_bytes,
@@ -839,14 +839,14 @@ impl TbepHost for EngineHost {
         // version evolution is forward-only in the engine, so the host
         // derives it from the recorded policy.
         let current = self.validation_policy(&tenant, &collection)?;
-        let next_version = terrabase_v2::families::SchemaVersion::try_new(
+        let next_version = terrabase::families::SchemaVersion::try_new(
             current.as_ref().map_or(1, |policy| policy.version().get() + 1),
         )
         .map_err(|_| HostingError::Invalid("the derived schema version is not valid".into()))?;
         let schema = match &request.schema {
             None => None,
             Some(value) => Some(
-                terrabase_v2::families::SchemaDefinition::from_json_schema(
+                terrabase::families::SchemaDefinition::from_json_schema(
                     next_version,
                     &to_engine_value(value),
                 )
@@ -862,14 +862,14 @@ impl TbepHost for EngineHost {
         };
         let operation = OperationId::try_new(identity)
             .map_err(|_| HostingError::Invalid("the operation identity is not valid".into()))?;
-        let write = terrabase_v2::families::ValidationWrite::try_new(
+        let write = terrabase::families::ValidationWrite::try_new(
             self.engine.scope_for(&tenant),
             collection.clone(),
             schema,
             operation,
-            terrabase_v2::types::Deadline::after(std::time::Duration::from_secs(30))
+            terrabase::types::Deadline::after(std::time::Duration::from_secs(30))
                 .map_err(|_| HostingError::EngineFailure("the deadline is invalid".into()))?,
-            terrabase_v2::types::Cancellation::default(),
+            terrabase::types::Cancellation::default(),
         )
         .map_err(|_| HostingError::Invalid("the schema declaration is not valid".into()))?;
         let scope = self.engine.scope_for(&tenant);
@@ -891,7 +891,7 @@ impl TbepHost for EngineHost {
             .families()
             .stage(
                 &mut transaction,
-                terrabase_v2::families::FamilyWriteRequest::schema_validation_update(write),
+                terrabase::families::FamilyWriteRequest::schema_validation_update(write),
             )
             .map_err(|_| HostingError::Refused("the schema declaration was refused".into()))?;
         match transaction.commit(LocalDurability::Synced) {
@@ -935,27 +935,27 @@ impl TbepHost for EngineHost {
             });
         };
         let body = to_engine_value(&request.document);
-        let violations = terrabase_v2::families::violations(&policy, &body)
+        let violations = terrabase::families::violations(&policy, &body)
             .into_iter()
             .map(|violation| crate::generated::SchemaViolation {
                 field: violation.field().to_owned(),
                 kind: match violation.kind() {
-                    terrabase_v2::families::ViolationKind::DocumentNotObject => {
+                    terrabase::families::ViolationKind::DocumentNotObject => {
                         crate::generated::ViolationKind::DocumentNotObject
                     }
-                    terrabase_v2::families::ViolationKind::MissingRequiredField => {
+                    terrabase::families::ViolationKind::MissingRequiredField => {
                         crate::generated::ViolationKind::MissingRequiredField
                     }
-                    terrabase_v2::families::ViolationKind::TypeMismatch => {
+                    terrabase::families::ViolationKind::TypeMismatch => {
                         crate::generated::ViolationKind::TypeMismatch
                     }
-                    terrabase_v2::families::ViolationKind::ValueNotAllowed => {
+                    terrabase::families::ViolationKind::ValueNotAllowed => {
                         crate::generated::ViolationKind::ValueNotAllowed
                     }
-                    terrabase_v2::families::ViolationKind::NumberOutOfRange => {
+                    terrabase::families::ViolationKind::NumberOutOfRange => {
                         crate::generated::ViolationKind::NumberOutOfRange
                     }
-                    terrabase_v2::families::ViolationKind::LengthOutOfRange => {
+                    terrabase::families::ViolationKind::LengthOutOfRange => {
                         crate::generated::ViolationKind::LengthOutOfRange
                     }
                 },

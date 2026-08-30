@@ -1,5 +1,5 @@
 // <copyright file="TbepWire.cs" company="TerraScale">
-// TerraBaseV2 (SE-14). See LICENSE.md.
+// TerraBase (SE-14). See LICENSE.md.
 // </copyright>
 
 namespace TerraBase.Protocol;

@@ -9,7 +9,7 @@
 
 use std::time::Duration;
 
-use terrabase_v2::{
+use terrabase::{
     Cancellation, Deadline, RequestValidationError,
     query::{MAX_PAGE_LIMIT, QueryPaging},
 };

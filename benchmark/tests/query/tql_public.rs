@@ -9,17 +9,17 @@
 
 use std::time::Duration;
 
-use terrabase_v2::QueryInput;
-use terrabase_v2::query::tql::{
+use terrabase::QueryInput;
+use terrabase::query::tql::{
     self, Capability, Direction, ExpressionKind, GrammarVersion, Literal, MetadataField, PageBound,
     PageBoundKind, Paging, PathRoot, PathSegment, ProjectionKind, Quantifier, SourceKind,
     TqlCapabilities, TqlErrorClass, TqlParameters,
 };
-use terrabase_v2::types::{Cancellation, Deadline, DocumentValue, TenantId};
-use terrabase_v2::{Engine, EngineConfig};
+use terrabase::types::{Cancellation, Deadline, DocumentValue, TenantId};
+use terrabase::{Engine, EngineConfig};
 
 fn location(tag: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("tbv2-tql02-public-{tag}-{}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-tql02-public-{tag}-{}", std::process::id()))
 }
 
 fn open_engine(tag: &str) -> (std::path::PathBuf, Engine) {
@@ -120,7 +120,7 @@ fn every_error_carries_version_and_position_where_applicable() {
 #[test]
 fn text_beyond_the_shared_query_text_bound_fails_closed() {
     let oversized = format!("from users where {}", "a = 1 and ".repeat(4096));
-    assert!(oversized.len() > terrabase_v2::MAX_QUERY_TEXT_BYTES);
+    assert!(oversized.len() > terrabase::MAX_QUERY_TEXT_BYTES);
     assert_eq!(
         tql::parse(GrammarVersion::CURRENT, &oversized, &TqlParameters::new()).unwrap_err().class(),
         TqlErrorClass::ParseError
@@ -179,7 +179,7 @@ fn a_full_clause_inventory_parses_into_its_typed_nodes() {
     assert_eq!(query.grouping[0].alias, None);
     assert_eq!(query.ordering.len(), 2);
     assert_eq!(query.ordering[0].direction, Some(Direction::Descending));
-    assert_eq!(query.ordering[0].nulls, Some(terrabase_v2::query::tql::NullsOrder::Last));
+    assert_eq!(query.ordering[0].nulls, Some(terrabase::query::tql::NullsOrder::Last));
     assert_eq!(query.ordering[1].direction, None);
     assert_eq!(
         query.paging.limit.as_ref().map(|bound| match &bound.kind {
@@ -213,7 +213,7 @@ fn metadata_paths_and_array_navigation_parse_to_typed_segments() {
     let ProjectionKind::Items(items) = &query.projection.kind else {
         panic!("the projection is an item list");
     };
-    let root = |item: &terrabase_v2::query::tql::ProjectionItem| {
+    let root = |item: &terrabase::query::tql::ProjectionItem| {
         let ExpressionKind::Path(path) = &item.expr.kind else {
             panic!("every projection item in this vector is a path");
         };
@@ -252,7 +252,7 @@ fn expressions_carry_the_typed_literal_and_operator_nodes() {
     let ExpressionKind::Logical { op, operands } = &filter.kind else {
         panic!("the top-level filter is a conjunction");
     };
-    assert!(*op == terrabase_v2::query::tql::LogicalOperator::And);
+    assert!(*op == terrabase::query::tql::LogicalOperator::And);
     assert_eq!(operands.len(), 2);
     let ExpressionKind::Not { operand } = &operands[0].kind else {
         panic!("the conjunction negates the disjunction");
@@ -260,7 +260,7 @@ fn expressions_carry_the_typed_literal_and_operator_nodes() {
     let ExpressionKind::Logical { op: inner, .. } = &operand.kind else {
         panic!("the not operand is the disjunction");
     };
-    assert!(*inner == terrabase_v2::query::tql::LogicalOperator::Or);
+    assert!(*inner == terrabase::query::tql::LogicalOperator::Or);
     let ExpressionKind::In { quantifier, list, .. } = &operands[1].kind else {
         panic!("the all-in form parses as an In node");
     };
@@ -548,7 +548,7 @@ fn lowering_produces_a_typed_spec_that_compiles_through_the_seam() {
     )
     .expect("the seam-expressible form lowers");
     assert_eq!(
-        spec.source().collection().map(terrabase_v2::types::CollectionName::as_str),
+        spec.source().collection().map(terrabase::types::CollectionName::as_str),
         Some("users")
     );
     assert_eq!(spec.predicate().conditions().len(), 2);
@@ -558,7 +558,7 @@ fn lowering_produces_a_typed_spec_that_compiles_through_the_seam() {
     assert_eq!(spec.paging().limit(), Some(2));
     let plan = store.compile(QueryInput::typed(spec)).expect("the lowered spec compiles");
     assert_eq!(
-        plan.source().collection().map(terrabase_v2::types::CollectionName::as_str),
+        plan.source().collection().map(terrabase::types::CollectionName::as_str),
         Some("users")
     );
     // The seam-glue entry produces the same plan from the TQL artifact.

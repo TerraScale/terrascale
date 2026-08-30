@@ -154,11 +154,8 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn fixture(name: &str) -> String {
-    std::fs::read_to_string(format!(
-        "{}/tests/vectors/adr0023/{name}",
-        env!("CARGO_MANIFEST_DIR")
-    ))
-    .unwrap()
+    std::fs::read_to_string(format!("{}/tests/vectors/adr0023/{name}", env!("CARGO_MANIFEST_DIR")))
+        .unwrap()
 }
 
 /// The full member-to-member frame: codec major, operation count, then
@@ -275,23 +272,21 @@ fn golden_stable_frontier_acknowledgement_bytes_are_stable() {
 #[test]
 fn golden_anti_entropy_causal_summary_is_stable() {
     let causal_digest = hex(&causal_hash(&summary_context()));
-    assert_eq!(
-        causal_digest, "c79fe03e42e3a05220c92f855dc020171a1ca808f0d4bde27c4b64a779f5b2ba",
-    );
+    assert_eq!(causal_digest, "c79fe03e42e3a05220c92f855dc020171a1ca808f0d4bde27c4b64a779f5b2ba",);
     let materialized_digest = hex(&materialized_hash(b"pin:materialized-domain"));
     assert_eq!(
-        materialized_digest, "d83cfb1693928ab2b8414757131efe5a9597b406a750eabdb9d4da2fe682b177",
+        materialized_digest,
+        "d83cfb1693928ab2b8414757131efe5a9597b406a750eabdb9d4da2fe682b177",
     );
 
     let replica = fixture_replica();
     let roots = tree_for_replica(&replica, 2, 64).unwrap().roots();
     let causal_root = hex(&roots.causal);
     let materialized_root = hex(&roots.materialized);
+    assert_eq!(causal_root, "fd880234da64058a1a39e648779ad3ad2b45063be428aa2d6d1c639fc3c66f49",);
     assert_eq!(
-        causal_root, "fd880234da64058a1a39e648779ad3ad2b45063be428aa2d6d1c639fc3c66f49",
-    );
-    assert_eq!(
-        materialized_root, "90e0ec294fdf9b131ebb3e5a6c0eaae85ec4460162aecff1b7ffdcd2f9139977",
+        materialized_root,
+        "90e0ec294fdf9b131ebb3e5a6c0eaae85ec4460162aecff1b7ffdcd2f9139977",
     );
     let vector = fixture("anti-entropy-causal-summary.json");
     assert!(

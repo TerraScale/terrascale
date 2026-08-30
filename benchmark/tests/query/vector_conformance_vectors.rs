@@ -15,7 +15,7 @@
 //! `src/query/vector_tests.rs`, because execution requires a `TenantScope`
 //! and the public surface has no scope constructor by design.
 
-use terrabase_v2::{
+use terrabase::{
     QuerySource,
     query::{
         MAX_VECTOR_DIMENSIONS, MIN_VECTOR_DIMENSIONS, TqlVectorPredicate, VectorEmbeddingType,

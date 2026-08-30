@@ -16,7 +16,7 @@ reactive behavior where it applies. An operation is not public until both SDKs,
 OpenAPI, public examples, contract tests, and the service implementation agree.
 
 The first release uses `/api/v1`. Public clients never call TBEP, FlatBuffers,
-TerraBaseV2, an OCI API, or an untyped raw HTTP escape hatch. Public reactive
+TerraBase, an OCI API, or an untyped raw HTTP escape hatch. Public reactive
 traffic uses only the bounded MessagePack protocol in ADR 0025. The Database
 API translates each supported public operation to a named private TBEP
 operation.

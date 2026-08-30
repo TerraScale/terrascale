@@ -1,4 +1,4 @@
-# TerraBaseV2 production goal
+# TerraBase production goal
 
 Status: pre-production plan. Last documentation audit: 2026-08-29, using the
 `develop` audit baseline at `4075908`. Later branch tips require a new audit.
@@ -10,14 +10,14 @@ production qualification, benchmark result, or release authorization.
 
 ## Goal and scope
 
-Deliver a release candidate of the native TerraBaseV2 engine that can be
+Deliver a release candidate of the native TerraBase engine that can be
 qualified for the TerraScale production gateway, with reproducible artifacts,
 typed failure behavior, durable recovery, secure protocol boundaries, and
 evidence for every supported deployment shape.
 
 In scope:
 
-- the root `terrabase-v2` engine library and its eight Cargo workspace crates;
+- the root `terrabase` engine library and its eight Cargo workspace crates;
 - durable storage, WAL/LSM, indexes, queries, families, sessions, streaming,
   replication, sharding, backup/restore, deletion, usage, and authorization;
 - private TBEP and its generated bindings, transport, vectors, and hostile
@@ -104,9 +104,9 @@ the exact evidence named by that receipt.
 
 | Workstream | Role | Parallel deliverable | Dependency / hand-off |
 | --- | --- | --- | --- |
-| A — protocol | TerraBaseV2 | Schema generator, binding drift gate, vector corpus, hostile decode, negotiation, and cross-language conformance. | Start from ADR 0025; hand protocol version and limits to B and D. |
-| B — engine | TerraBaseV2 | `TbepHost` operation coverage, ULID identity adoption, durable operation journal, deletion execution, restore verification, and tier/sharding integration. | Can start with current native APIs; consumes A's stable protocol and hands receipts to C/D. |
-| C — distributed engine | TerraBaseV2 + Orchestrator | Production-shaped membership, replication, loss/recovery, NATS/control-plane seams, authorization reconnect, and retained-history lanes. | Start with existing in-process lanes; consumes A/B contracts before public-surface tests. |
+| A — protocol | TerraBase | Schema generator, binding drift gate, vector corpus, hostile decode, negotiation, and cross-language conformance. | Start from ADR 0025; hand protocol version and limits to B and D. |
+| B — engine | TerraBase | `TbepHost` operation coverage, ULID identity adoption, durable operation journal, deletion execution, restore verification, and tier/sharding integration. | Can start with current native APIs; consumes A's stable protocol and hands receipts to C/D. |
+| C — distributed engine | TerraBase + Orchestrator | Production-shaped membership, replication, loss/recovery, NATS/control-plane seams, authorization reconnect, and retained-history lanes. | Start with existing in-process lanes; consumes A/B contracts before public-surface tests. |
 | D — gateway and clients | TerraScale.Internals Database service + SDK owners | TerraScale.Database gateway migration into the independently deployable `TerraScale.Internals` service, grant/auth integration, SDK/Studio contract alignment, and host retirement preconditions. | Consumes A's contract and B/C operation/failure evidence; the accepted runtime boundary is ADR 0034. |
 | E — deployment and operations | Orchestrator + TerraBase.Benchmark | OCI placement/admission, native architecture matrix, measured SLO receipts, backup/restore drills, incident runbooks, key lifecycle, and thirty-day soak. | Requires stable B/C/D artifacts and external infrastructure; no local substitute qualifies it. |
 | F — release evidence | Workspace owner | Matrix refresh, receipt index, artifact manifest, compatibility/rollback record, compliance package, and final gate review. | Runs continuously; final sign-off waits for A–E and workspace-owner acceptance. |
@@ -135,7 +135,7 @@ not an unresolved product question.
 
 External evidence follows the established repository boundaries:
 
-- TerraBaseV2 owns native engine, TBEP, and focused correctness evidence and
+- TerraBase owns native engine, TBEP, and focused correctness evidence and
   keeps this qualification matrix current.
 - TerraScale.Internals owns the permanent Database service source. The
   independently deployable service remains the production gateway authority,
@@ -178,6 +178,13 @@ python3 scripts/check_license.py
 ./scripts/check_secrets.sh
 ```
 
+The final candidate gate also runs
+`python3 scripts/check_license.py --release`. The development form may record
+pending distribution terms, but it cannot qualify a release. Release mode
+inventories every first-party Cargo package independently of `cargo-deny`'s
+private-package setting and binds the owner-approved terms, package list, legal
+entity, identifier, version, and approval evidence by SHA-256.
+
 CI additionally runs `scripts/check.sh`. Recovery, replication, compaction,
 backup, protocol, and benchmark work runs its exclusive lane where required by
 the relevant ADR. Generated code is regenerated from its schema owner and
@@ -211,7 +218,7 @@ Acceptance evidence for the production goal must demonstrate:
 
 ## Exit gates
 
-TerraBaseV2 exits this plan only when all of the following are true:
+TerraBase exits this plan only when all of the following are true:
 
 1. ADR 0034 and ADR 0035 remain accepted, every supported product boundary has
    one named authority, and each role has supplied the evidence assigned in

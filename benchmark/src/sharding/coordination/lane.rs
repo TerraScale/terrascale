@@ -61,7 +61,7 @@ const LANE_COLLECTION: &str = "orders";
 
 /// One lane temp directory root, unique per test binary run.
 pub(crate) fn location(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("tbv2-sh05-lane-{tag}-{}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-sh05-lane-{tag}-{}", std::process::id()))
 }
 
 /// The lane's membership view with no shard ownership yet.

@@ -35,10 +35,29 @@ pub(super) struct WalScan {
     /// The byte length of the verified prefix. A file longer than this holds
     /// a torn or unverified trailing frame.
     pub(super) good_bytes: u64,
-    /// A verifying frame exists beyond the first damaged one: the damage is
-    /// mid-file, not an interrupted trailing append, and the open must fail
-    /// closed instead of silently truncating live history.
+    /// The total byte length observed by the scan.
+    pub(super) total_bytes: u64,
+    /// A complete frame failed its checksum or structure, or a frame boundary
+    /// was damaged before later bytes. The open must fail closed instead of
+    /// silently truncating acknowledged history.
     pub(super) mid_file_damage: bool,
+    /// Every verified frame end, in append order.
+    frame_ends: Vec<u64>,
+}
+
+impl WalScan {
+    /// Returns the raw frame boundaries used by the independent BLAKE3
+    /// frontier. The frontier chains the complete 16-byte header and payload.
+    pub(super) fn frame_ends(&self) -> &[u64] {
+        &self.frame_ends
+    }
+}
+
+/// The exact bytes appended for one WAL batch.
+#[derive(Clone, Debug)]
+pub(super) struct WalAppend {
+    pub(super) start: u64,
+    pub(super) frame: Vec<u8>,
 }
 
 /// Encodes one commit batch into a WAL frame payload.
@@ -78,12 +97,23 @@ fn decode_frame(payload: &[u8]) -> Option<Vec<Entry>> {
     let mut entries = Vec::with_capacity(count.min(4096));
     for _ in 0..count {
         let key_len = reader.read_u32()? as usize;
+        if key_len > 4096 {
+            return None;
+        }
         let key = reader.take(key_len)?.to_owned();
         let sequence = reader.read_u64()?;
-        let deletion = reader.read_u8()?;
+        let deletion = match reader.read_u8()? {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
         let value_len = reader.read_u32()? as usize;
         let value = reader.take(value_len)?.to_owned();
-        entries.push(Entry { key: InternalKey::decode(&key, sequence, deletion != 0), value });
+        let entry = Entry { key: InternalKey::decode(&key, sequence, deletion)?, value };
+        if !super::persisted_entry_is_semantically_valid(&entry) {
+            return None;
+        }
+        entries.push(entry);
     }
     if reader.remaining() != 0 {
         return None;
@@ -98,33 +128,43 @@ pub(super) struct WalLog {
 }
 
 impl WalLog {
-    /// Opens or creates the WAL at `path`, truncating any torn tail.
+    /// Opens or creates the WAL at `path`, truncating a verified torn tail.
+    ///
+    /// Legacy recovery uses this helper. Activated recovery calls
+    /// [`Self::open_unrepaired`] and verifies the independent frontier before
+    /// it permits any truncation.
+    #[cfg(test)]
     pub(super) fn open(path: &Path) -> io::Result<Self> {
-        let file = OpenOptions::new().create(true).read(true).append(true).open(path)?;
-        let scan = scan_file(&file)?;
+        let mut wal = Self::open_unrepaired(path)?;
+        let scan = wal.scan()?;
         if scan.mid_file_damage {
             // Live verified history sits behind the damage: fail closed
             // rather than truncate it away.
             return Err(io::Error::new(io::ErrorKind::InvalidData, "wal mid-file damage"));
         }
-        let verified = scan.good_bytes;
-        let len = file.metadata()?.len();
-        if len > verified {
-            // The trailing frame is torn or does not verify: the interrupted
-            // append of a commit that never acknowledged. Drop it.
-            file.set_len(verified)?;
-            file.sync_all()?;
+        if scan.total_bytes > scan.good_bytes {
+            // The trailing frame is structurally incomplete, which is the
+            // only form this append path can prove was never acknowledged.
+            // Complete frames that fail verification were refused above.
+            wal.truncate(scan.good_bytes)?;
         }
-        Ok(Self { file, path_len: verified })
+        Ok(wal)
+    }
+
+    /// Opens or creates the WAL without changing its bytes.
+    pub(super) fn open_unrepaired(path: &Path) -> io::Result<Self> {
+        let file = OpenOptions::new().create(true).read(true).append(true).open(path)?;
+        let path_len = file.metadata()?.len();
+        Ok(Self { file, path_len })
     }
 
     /// Appends one commit batch as a single checksummed frame.
     ///
     /// The write is one `write_all` of the fully built frame, so a partial
     /// frame is only ever the tail.
-    pub(super) fn append(&mut self, entries: &[Entry]) -> io::Result<()> {
+    pub(super) fn append(&mut self, entries: &[Entry]) -> io::Result<WalAppend> {
         let payload = encode_frame(entries);
-        let mut frame = Vec::with_capacity(payload.len() + 12);
+        let mut frame = Vec::with_capacity(payload.len() + 16);
         codec::push_u32(&mut frame, FRAME_MAGIC);
         let checksum = codec::fnv1a(&payload);
         let checksum = (checksum & 0xFFFF_FFFF) | (u64::from(FRAME_MAGIC) << 32);
@@ -133,9 +173,15 @@ impl WalLog {
         let payload_len = payload.len() as u32;
         codec::push_u32(&mut frame, payload_len);
         frame.extend_from_slice(&payload);
+        let start = self.path_len;
         self.file.write_all(&frame)?;
-        self.path_len += frame.len() as u64;
-        Ok(())
+        let frame_len = u64::try_from(frame.len())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "wal frame is too large"))?;
+        self.path_len = self
+            .path_len
+            .checked_add(frame_len)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "wal file is too large"))?;
+        Ok(WalAppend { start, frame })
     }
 
     /// Replays every verified entry. The caller applies them idempotently.
@@ -150,11 +196,29 @@ impl WalLog {
 
     /// Truncates the WAL to zero after a flush checkpoint published every
     /// entry it held into segments.
+    #[cfg(test)]
     pub(super) fn truncate_after_checkpoint(&mut self) -> io::Result<()> {
-        self.file.set_len(0)?;
-        self.file.sync_all()?;
-        self.path_len = 0;
+        self.truncate(0)
+    }
+
+    /// Truncates the file only after the caller has independently verified
+    /// that every removed byte is either checkpointed or an unacknowledged
+    /// torn suffix.
+    pub(super) fn truncate(&mut self, bytes: u64) -> io::Result<()> {
+        self.set_len_unsynced(bytes)?;
+        self.sync_all()
+    }
+
+    /// Changes the WAL length without claiming the metadata is durable yet.
+    pub(super) fn set_len_unsynced(&mut self, bytes: u64) -> io::Result<()> {
+        self.file.set_len(bytes)?;
+        self.path_len = bytes;
         Ok(())
+    }
+
+    /// Syncs WAL data and metadata, including a preceding truncation.
+    pub(super) fn sync_all(&mut self) -> io::Result<()> {
+        self.file.sync_all()
     }
 
     /// The current WAL byte length.
@@ -172,6 +236,7 @@ fn scan_file(file: &File) -> io::Result<WalScan> {
     let mut entries = Vec::new();
     let mut offset = 0_usize;
     let mut mid_file_damage = false;
+    let mut frame_ends = Vec::new();
     while offset < bytes.len() {
         if offset + 16 > bytes.len() {
             // A partial header can only be the trailing torn frame of an
@@ -202,8 +267,11 @@ fn scan_file(file: &File) -> io::Result<WalScan> {
             break;
         };
         if end > bytes.len() {
-            // The declared payload runs past end of file: a trailing torn
-            // frame.
+            // A real interrupted append ends here. A corrupted in-range
+            // length can also claim to run past EOF while swallowing later
+            // valid frames, so a verified successor makes this integrity
+            // damage instead.
+            mid_file_damage = has_verified_frame_after(&bytes, offset);
             break;
         }
         let payload = &bytes[start..end];
@@ -211,16 +279,57 @@ fn scan_file(file: &File) -> io::Result<WalScan> {
         let verified = actual == checksum;
         let decoded = if verified { decode_frame(payload) } else { None };
         let Some(mut decoded) = decoded else {
-            // Checksum or structure failure: mid-file exactly when bytes
-            // sit behind the damaged frame's declared end (the root
-            // store's `classify` rule).
-            mid_file_damage = end < bytes.len();
+            // A complete frame may have been synced and acknowledged. No
+            // payload byte pattern proves otherwise, so checksum or
+            // structural failure refuses the location even at EOF.
+            mid_file_damage = true;
             break;
         };
         entries.append(&mut decoded);
         offset = end;
+        frame_ends.push(u64::try_from(offset).expect("a file offset fits u64"));
     }
-    Ok(WalScan { entries, good_bytes: offset as u64, mid_file_damage })
+    Ok(WalScan {
+        entries,
+        good_bytes: u64::try_from(offset).expect("a file offset fits u64"),
+        total_bytes: u64::try_from(bytes.len()).expect("a file length fits u64"),
+        mid_file_damage,
+        frame_ends,
+    })
+}
+
+/// Reports whether a complete, self-verifying frame begins after a damaged
+/// frame start.
+fn has_verified_frame_after(bytes: &[u8], damaged_offset: usize) -> bool {
+    let Some(search_start) = damaged_offset.checked_add(1) else {
+        return false;
+    };
+    let Some(last_start) = bytes.len().checked_sub(16) else {
+        return false;
+    };
+    if search_start > last_start {
+        return false;
+    }
+    (search_start..=last_start).any(|candidate| {
+        if bytes[candidate..candidate + 4] != FRAME_MAGIC.to_le_bytes() {
+            return false;
+        }
+        let checksum = u64::from_le_bytes(
+            bytes[candidate + 4..candidate + 12].try_into().expect("eight checksum bytes"),
+        );
+        let payload_len = u32::from_le_bytes(
+            bytes[candidate + 12..candidate + 16].try_into().expect("four length bytes"),
+        ) as usize;
+        let payload_start = candidate + 16;
+        let Some(payload_end) = payload_start.checked_add(payload_len) else {
+            return false;
+        };
+        let Some(payload) = bytes.get(payload_start..payload_end) else {
+            return false;
+        };
+        let actual = (codec::fnv1a(payload) & 0xFFFF_FFFF) | (u64::from(FRAME_MAGIC) << 32);
+        actual == checksum && decode_frame(payload).is_some()
+    })
 }
 
 #[cfg(test)]
@@ -237,9 +346,17 @@ impl WalLog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{CollectionName, DocumentId, TenantId};
+    use crate::types::{CollectionName, Document, DocumentId, DocumentValue, TenantId};
 
     fn doc_entry(tenant: &str, id: &str, sequence: u64, value: &[u8]) -> Entry {
+        let mut document = Document::new(
+            DocumentId::try_new(id).expect("valid document"),
+            CollectionName::try_new("c").expect("valid collection"),
+            DocumentValue::String(String::from_utf8(value.to_vec()).expect("test value is UTF-8")),
+        );
+        document.set_version(sequence);
+        let mut encoded = Vec::new();
+        codec::encode_document(&mut encoded, &document);
         Entry {
             key: InternalKey::document(
                 &TenantId::try_new(tenant).expect("valid tenant"),
@@ -247,13 +364,18 @@ mod tests {
                 &DocumentId::try_new(id).expect("valid document"),
                 sequence,
             ),
-            value: value.to_vec(),
+            value: encoded,
         }
+    }
+
+    fn resign_frame(frame: &mut [u8]) {
+        let checksum = (codec::fnv1a(&frame[16..]) & 0xFFFF_FFFF) | (u64::from(FRAME_MAGIC) << 32);
+        frame[4..12].copy_from_slice(&checksum.to_le_bytes());
     }
 
     #[test]
     fn frames_round_trip_through_scan() {
-        let dir = std::env::temp_dir().join(format!("tbv2-lsm-wal-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("terrabase-lsm-wal-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("wal");
         let _ = std::fs::remove_file(&path);
@@ -264,14 +386,66 @@ mod tests {
         let scan = wal.scan().unwrap();
         assert_eq!(scan.entries.len(), 2);
         assert_eq!(scan.entries[0].key.sequence(), 1);
-        assert_eq!(scan.entries[1].value, b"two");
+        let mut reader = codec::Reader::new(&scan.entries[1].value);
+        assert_eq!(
+            codec::decode_document(&mut reader).unwrap().value(),
+            &DocumentValue::String("two".to_owned())
+        );
         assert_eq!(scan.good_bytes, wal.len());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
+    fn fully_rechecksummed_hostile_entry_semantics_fail_closed() {
+        let dir = std::env::temp_dir()
+            .join(format!("terrabase-lsm-wal-hostile-semantics-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let canonical = dir.join("canonical");
+        let mut wal = WalLog::open(&canonical).unwrap();
+        wal.append(&[doc_entry("t", "a", 1, b"one")]).unwrap();
+        wal.sync().unwrap();
+        drop(wal);
+        let original = std::fs::read(&canonical).unwrap();
+        let key_len =
+            usize::try_from(u32::from_le_bytes(original[20..24].try_into().unwrap())).unwrap();
+        let key_start = 24;
+        let kind_offset = key_start + key_len + 8;
+        let value_start = kind_offset + 1 + 4;
+
+        let mut unknown_keyspace = original.clone();
+        unknown_keyspace[key_start] = 0x7f;
+        resign_frame(&mut unknown_keyspace);
+
+        let mut invalid_kind = original.clone();
+        invalid_kind[kind_offset] = 2;
+        resign_frame(&mut invalid_kind);
+
+        let mut mismatched_value = original;
+        let document_id_byte = value_start + 4 + 1 + 4;
+        mismatched_value[document_id_byte] = b'b';
+        resign_frame(&mut mismatched_value);
+
+        for (tag, bytes) in [
+            ("unknown-keyspace", unknown_keyspace),
+            ("invalid-kind", invalid_kind),
+            ("mismatched-value", mismatched_value),
+        ] {
+            let path = dir.join(tag);
+            std::fs::write(&path, bytes).unwrap();
+            assert_eq!(
+                WalLog::open(&path).err().expect("hostile frame must be refused").kind(),
+                io::ErrorKind::InvalidData,
+                "{tag}"
+            );
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn torn_tail_truncates_at_open() {
-        let dir = std::env::temp_dir().join(format!("tbv2-lsm-wal-torn-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("terrabase-lsm-wal-torn-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("wal");
         let _ = std::fs::remove_file(&path);
@@ -292,8 +466,9 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_frame_stops_the_scan() {
-        let dir = std::env::temp_dir().join(format!("tbv2-lsm-wal-corrupt-{}", std::process::id()));
+    fn a_complete_checksum_failure_refuses_the_location_even_at_the_tail() {
+        let dir =
+            std::env::temp_dir().join(format!("terrabase-lsm-wal-corrupt-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("wal");
         let _ = std::fs::remove_file(&path);
@@ -309,15 +484,89 @@ mod tests {
         let last = bytes.len() - 1;
         bytes[last] ^= 0xFF;
         std::fs::write(&path, &bytes).unwrap();
-        let reopened = WalLog::open(&path).unwrap();
-        let rescan = reopened.scan().unwrap();
-        assert_eq!(rescan.entries.len(), 1, "the corrupt frame does not replay");
+        drop(wal);
+        let error = WalLog::open(&path).err().expect("the corrupt location is refused");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_complete_zero_filled_final_payload_refuses_the_location() {
+        let dir = std::env::temp_dir()
+            .join(format!("terrabase-lsm-wal-zero-filled-tail-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("wal");
+        let _ = std::fs::remove_file(&path);
+        let mut wal = WalLog::open(&path).unwrap();
+        wal.append(&[doc_entry("t", "a", 1, b"one")]).unwrap();
+        let good = wal.len();
+        wal.append(&[doc_entry("t", "b", 2, b"two")]).unwrap();
+        wal.sync().unwrap();
+        drop(wal);
+
+        let mut bytes = std::fs::read(&path).unwrap();
+        let good_index = usize::try_from(good).expect("test WAL length fits usize");
+        bytes[good_index + 16..].fill(0);
+        std::fs::write(&path, bytes).unwrap();
+
+        let error = WalLog::open(&path).err().expect("the corrupt location is refused");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            std::fs::metadata(&path).unwrap().len() > good,
+            "recovery must not erase a complete frame that may have been acknowledged"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_zero_filled_middle_payload_refuses_the_location() {
+        let dir = std::env::temp_dir()
+            .join(format!("terrabase-lsm-wal-zero-filled-middle-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("wal");
+        let _ = std::fs::remove_file(&path);
+        let mut wal = WalLog::open(&path).unwrap();
+        wal.append(&[doc_entry("t", "a", 1, b"one")]).unwrap();
+        let first_end = usize::try_from(wal.len()).expect("test WAL length fits usize");
+        wal.append(&[doc_entry("t", "b", 2, b"two")]).unwrap();
+        wal.sync().unwrap();
+        drop(wal);
+
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes[16..first_end].fill(0);
+        std::fs::write(&path, bytes).unwrap();
+
+        let error = WalLog::open(&path).err().expect("middle-frame damage is refused");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_corrupt_length_cannot_swallow_a_later_verified_frame() {
+        let dir = std::env::temp_dir()
+            .join(format!("terrabase-lsm-wal-length-swallow-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("wal");
+        let _ = std::fs::remove_file(&path);
+        let mut wal = WalLog::open(&path).unwrap();
+        wal.append(&[doc_entry("t", "a", 1, b"one")]).unwrap();
+        wal.append(&[doc_entry("t", "b", 2, b"two")]).unwrap();
+        wal.sync().unwrap();
+        drop(wal);
+
+        let mut bytes = std::fs::read(&path).unwrap();
+        let swallowed = u32::try_from(bytes.len()).expect("the test WAL fits a frame length");
+        bytes[12..16].copy_from_slice(&swallowed.to_le_bytes());
+        std::fs::write(&path, bytes).unwrap();
+
+        let error = WalLog::open(&path).err().expect("the damaged location is refused");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn checkpoint_truncation_empties_the_log() {
-        let dir = std::env::temp_dir().join(format!("tbv2-lsm-wal-ck-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("terrabase-lsm-wal-ck-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("wal");
         let _ = std::fs::remove_file(&path);

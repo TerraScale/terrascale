@@ -27,6 +27,34 @@ python3 scripts/check_license.py
 ./scripts/check_secrets.sh
 ```
 
+The development check records the unresolved distribution decision without
+presenting it as release evidence. Candidate admission must also run
+`python3 scripts/check_license.py --release`; that command stays red while the
+manifest or `LICENSE.md` contains a pending marker. Release mode parses every
+source `Cargo.toml`, including excluded tools and private crates omitted by
+`cargo-deny`, and follows declared workspace globs, path dependencies, patches,
+and replacements even below normally skipped build or dependency directories.
+Repository Cargo path overrides and symlinked evidence are refused. Release
+inventory also refuses explicit `package.workspace` roots and inherited
+`workspace = true` dependencies until the checker can reproduce Cargo's owning
+workspace resolution without accepting hidden or external packages. Release
+mode requires one exact package inventory, terms digest, legal entity,
+versioned proprietary identifier, authorized use and distribution rights, and
+approval evidence in `docs/legal/terrabase-license-disposition.json`. The
+approval binds the scope, terms version, package inventory, and exact license
+bytes. Main-branch CI also requires its SHA-256 through the protected
+`TERRABASE_TRUSTED_APPROVAL_SHA256` secret, so repository-controlled files
+cannot approve themselves. Legal owners must provide the terms, disposition,
+reviewer identities, approval bytes, and protected digest; the checker does not
+create or infer them.
+
+If approved repository evidence is present, the development command validates
+its structure and exact internal bindings but reports
+`approved-metadata-untrusted` with `releaseQualified` set to `false`. It does
+not consume or authenticate the protected approval digest. Only `--release`
+may report `approved-for-release`, and only after matching that digest in the
+protected environment.
+
 CI owns the full `scripts/check.sh` gate. Storage, durability, replication,
 compaction, backup, and recovery changes also require the exclusive recovery
 lane and a secret-safe Recovery Receipt. Performance claims require a valid

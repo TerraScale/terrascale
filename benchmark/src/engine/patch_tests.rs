@@ -23,7 +23,8 @@ use crate::types::{
 fn location(tag: &str) -> PathBuf {
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    std::env::temp_dir().join(format!("tbv2-gapd07-patch-{tag}-{}-{index}", std::process::id()))
+    std::env::temp_dir()
+        .join(format!("terrabase-gapd07-patch-{tag}-{}-{index}", std::process::id()))
 }
 
 fn open_engine(tag: &str) -> Engine {

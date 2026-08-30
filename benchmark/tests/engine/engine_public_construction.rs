@@ -7,10 +7,11 @@
 
 use std::path::PathBuf;
 
-use terrabase_v2::{Engine, EngineConfig, EngineOpenError, engine::EngineConfigError};
+use terrabase::{Engine, EngineConfig, EngineOpenError, engine::EngineConfigError};
 
 fn location(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("tbv2-w31-integration-engine-{tag}-{}", std::process::id()))
+    std::env::temp_dir()
+        .join(format!("terrabase-w31-integration-engine-{tag}-{}", std::process::id()))
 }
 
 #[test]

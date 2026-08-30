@@ -724,7 +724,7 @@ mod tests {
 
     fn dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "tbv2-se06-journal-{tag}-{}-{}",
+            "terrabase-se06-journal-{tag}-{}-{}",
             std::process::id(),
             line!()
         ));

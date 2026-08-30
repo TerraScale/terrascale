@@ -1415,7 +1415,7 @@ impl<'engine> Session<'engine> {
     /// Mints the next never-reused operation identity of this session.
     fn next_operation_id(&mut self) -> OperationId {
         let id = OperationId::try_new(&format!(
-            "tbv2-session-{}-{}",
+            "terrabase-session-{}-{}",
             self.identity, self.operation_counter
         ))
         .expect("session operation identities are valid");

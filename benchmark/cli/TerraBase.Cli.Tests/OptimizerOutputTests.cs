@@ -1,5 +1,5 @@
 // <copyright file="OptimizerOutputTests.cs" company="TerraScale">
-// TerraBaseV2 (IX-04). See LICENSE.md.
+// TerraBase (IX-04). See LICENSE.md.
 // </copyright>
 
 namespace TerraBase.Cli.Tests;

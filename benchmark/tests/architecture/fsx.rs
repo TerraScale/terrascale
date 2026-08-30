@@ -85,9 +85,38 @@ pub fn dependency_keys(manifest: &str) -> Vec<String> {
     manifest_table_entries(manifest, "dependencies").into_iter().map(|(key, _)| key).collect()
 }
 
+/// Returns the package names targeted by the exact `[dependencies]` table.
+///
+/// Cargo permits a dependency key to retain an old source-level crate name
+/// while its inline table points at a renamed package. Architecture checks
+/// operate on package identities, so this resolves `package = "..."` when it
+/// is present and otherwise returns the dependency key.
+pub fn dependency_package_names(manifest: &str) -> Vec<String> {
+    manifest_table_entries(manifest, "dependencies")
+        .into_iter()
+        .map(|(key, value)| inline_table_string(&value, "package").unwrap_or(key))
+        .collect()
+}
+
+fn inline_table_string(value: &str, key: &str) -> Option<String> {
+    let marker = format!("{key} =");
+    let after = value.split_once(&marker)?.1.trim_start();
+    let quoted = after.strip_prefix('"')?;
+    let end = quoted.find('"')?;
+    Some(quoted[..end].to_string())
+}
+
 /// Returns the `[package] name` of a manifest, when present.
 pub fn package_name(manifest: &str) -> Option<String> {
     manifest_table_entries(manifest, "package")
+        .into_iter()
+        .find(|(key, _)| key == "name")
+        .map(|(_, value)| value.trim_matches('"').to_string())
+}
+
+/// Returns the explicit `[lib] name`, when the package declares one.
+pub fn library_name(manifest: &str) -> Option<String> {
+    manifest_table_entries(manifest, "lib")
         .into_iter()
         .find(|(key, _)| key == "name")
         .map(|(_, value)| value.trim_matches('"').to_string())

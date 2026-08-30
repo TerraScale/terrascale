@@ -20,6 +20,12 @@ use super::{
         CompactionDriverFacts, CompactionError, CompactionReceipt, RetainedState, StorageCompaction,
     },
     faults::{FaultPlan, FaultPoint},
+    frontier::{
+        ActiveFormat, FRONTIER_FORMAT_MAJOR, FrontierError, LEGACY_FORMAT_MAJOR, LedgerFrontier,
+        LedgerFrontierActivationError, LedgerFrontierActivationIdentity,
+        LedgerFrontierActivationReceipt, LedgerFrontierActivationRequest, LedgerFrontierStatus,
+        STORAGE_FRONTIER_FEATURE, StoreId, VerifiedAnchors,
+    },
     intent::{
         CommitIntent, CommitRejection, CommitResult, OperationResolution, StagedWrite,
         StorageReceipt, UnknownCause,
@@ -28,7 +34,7 @@ use super::{
         HistoryIndex, HistoryWriter, LedgerIndex, LedgerRecord, LedgerState, LedgerWriter,
         OperationEntry, Published, ReadyToPublish, RejectedRecord,
     },
-    retained::{RetainedIndex, RetainedWriter},
+    retained::{RetainedAppend, RetainedIndex, RetainedWriter},
     root::{self, RootTable, StorageRoot, StorageRootId},
     wal::{self, WalCommit, WalWriter},
 };
@@ -36,8 +42,20 @@ use super::{
 /// Magic bytes identifying the V2 storage format.
 const FORMAT_MAGIC: &[u8; 10] = b"TBV2FORMAT";
 
-/// The storage-format version this implementation writes and accepts.
-const FORMAT_VERSION: u64 = 1;
+/// Domain separating the checksummed activated format record.
+const FORMAT_CHECKSUM_DOMAIN: &[u8] = b"terrabase.root-format.v2\0";
+
+const FORMAT_V2_RESERVED_BYTES: usize = 8;
+
+enum FormatState {
+    Legacy,
+    Active(ActiveFormat),
+}
+
+struct FormatOpen {
+    state: FormatState,
+    created: bool,
+}
 
 /// Why a durable location could not be opened.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -59,6 +77,11 @@ pub(crate) struct FileStorage {
     pub(super) wal: WalWriter,
     pub(super) ledger: LedgerWriter,
     pub(super) ledger_index: LedgerIndex,
+    /// The format-1 shadow or format-2 mandatory independent ledger anchor.
+    ledger_frontier: Option<LedgerFrontier>,
+    format_major: u64,
+    activation: Option<LedgerFrontierActivationIdentity>,
+    pub(super) frontier_poisoned: bool,
     /// The durable publication-history journal and its sequence-ordered
     /// index (W4-CA-4), with the durable high-water mark (repair F2).
     pub(super) journal: HistoryWriter,
@@ -75,27 +98,50 @@ pub(crate) struct FileStorage {
     /// not its commit published. New commits allocate past it, so a sequence
     /// is never reused after a mid-publication failure.
     pub(super) sequence_watermark: u64,
+    /// A verified WAL commit exists but has not moved the published pointer
+    /// in this process. A later commit must not branch from the older table.
+    pub(super) publication_blocked: bool,
     pub(super) faults: FaultPlan,
 }
 
 impl FileStorage {
     /// Opens or creates the store at `dir` and recovers it.
+    #[allow(clippy::too_many_lines, reason = "recovery ordering is one fail-closed transaction")]
     pub(crate) fn open(dir: &Path) -> Result<Self, StorageOpenError> {
         fs::create_dir_all(dir).map_err(|_| StorageOpenError::Unavailable)?;
-        let created_format = verify_or_create_format(dir)?;
-        if created_format {
+        let format = verify_or_create_format(dir)?;
+        if format.created {
             root::sync_dir(dir).map_err(|_| StorageOpenError::Unavailable)?;
         }
         let wal_path = dir.join("wal");
         let ledger_path = dir.join("ledger");
         let journal_path = dir.join("history");
         let retained_path = dir.join("retained");
-        let wal_writer = WalWriter::open(&wal_path).map_err(|_| StorageOpenError::Unavailable)?;
-        let ledger_writer =
+        let ledger_exists = ledger_path.try_exists().map_err(|_| StorageOpenError::Unavailable)?;
+        let retained_exists =
+            retained_path.try_exists().map_err(|_| StorageOpenError::Unavailable)?;
+        if !format.created && !ledger_exists {
+            // The operation ledger is part of every existing root-format
+            // location, including an empty one. Recreating it would discard
+            // idempotency and rejection bindings while leaving published
+            // state in place.
+            return Err(StorageOpenError::FormatMismatch);
+        }
+        if matches!(&format.state, FormatState::Active(_)) && !retained_exists {
+            return Err(StorageOpenError::FormatMismatch);
+        }
+
+        // Validate the complete WAL before truncating or recovering any other
+        // artifact. Hostile but checksummed commit groups must not cause root,
+        // manifest, ledger, or retained-store side effects.
+        let report = wal::scan(&wal_path).map_err(|_| StorageOpenError::FormatMismatch)?;
+        let mut wal_writer =
+            WalWriter::open(&wal_path).map_err(|_| StorageOpenError::Unavailable)?;
+        let mut ledger_writer =
             LedgerWriter::open(&ledger_path).map_err(|_| StorageOpenError::Unavailable)?;
-        let journal_writer =
+        let mut journal_writer =
             HistoryWriter::open(&journal_path).map_err(|_| StorageOpenError::Unavailable)?;
-        let retained_writer =
+        let mut retained_writer =
             RetainedWriter::open(&retained_path).map_err(|_| StorageOpenError::Unavailable)?;
         if wal_writer.is_fresh()
             || ledger_writer.is_fresh()
@@ -104,7 +150,15 @@ impl FileStorage {
         {
             root::sync_dir(dir).map_err(|_| StorageOpenError::Unavailable)?;
         }
-        let ledger_index = LedgerIndex::scan(&ledger_path);
+        let ledger_scan =
+            LedgerIndex::scan(&ledger_path).map_err(|_| StorageOpenError::Unavailable)?;
+        if ledger_scan.mid_file_damage {
+            // Losing a later operation binding could make recovery execute
+            // already accepted work under the same identity. Mid-file
+            // damage therefore refuses the location instead of accepting a
+            // partial index.
+            return Err(StorageOpenError::FormatMismatch);
+        }
         let journal_scan = HistoryIndex::scan(&journal_path);
         let retained_scan = RetainedIndex::scan(&retained_path);
         if retained_scan.mid_file_damage {
@@ -115,12 +169,67 @@ impl FileStorage {
             // applies to damage with bytes behind it.
             return Err(StorageOpenError::FormatMismatch);
         }
-        let report = wal::scan(&wal_path).map_err(|_| StorageOpenError::FormatMismatch)?;
+        let (format_major, activation, mut ledger_frontier) = match &format.state {
+            FormatState::Legacy => (LEGACY_FORMAT_MAJOR, None, None),
+            FormatState::Active(active) => {
+                let verified = VerifiedAnchors::from_scans(
+                    &ledger_path,
+                    &ledger_scan,
+                    &retained_path,
+                    &retained_scan,
+                    active.store_id,
+                )
+                .map_err(|_| StorageOpenError::Unavailable)?;
+                let frontier = LedgerFrontier::open_active(dir, active.store_id, &verified)
+                    .map_err(map_frontier_open_error)?;
+                (FRONTIER_FORMAT_MAJOR, Some(active.activation.clone()), Some(frontier))
+            }
+        };
+
+        if ledger_scan.total_bytes > ledger_scan.good_bytes {
+            ledger_writer
+                .truncate(ledger_scan.good_bytes)
+                .map_err(|_| StorageOpenError::Unavailable)?;
+        }
+        if retained_scan.total_bytes > retained_scan.good_bytes {
+            retained_writer
+                .truncate(retained_scan.good_bytes)
+                .map_err(|_| StorageOpenError::Unavailable)?;
+        }
+        if report.torn_tail {
+            wal_writer.truncate(report.good_bytes).map_err(|_| StorageOpenError::Unavailable)?;
+        }
+        if journal_scan.total_bytes > journal_scan.good_bytes {
+            journal_writer
+                .truncate(journal_scan.good_bytes)
+                .map_err(|_| StorageOpenError::Unavailable)?;
+        }
+
+        if matches!(&format.state, FormatState::Legacy) {
+            let store_id = StoreId::generate(dir);
+            let verified = VerifiedAnchors::from_scans(
+                &ledger_path,
+                &ledger_scan,
+                &retained_path,
+                &retained_scan,
+                store_id,
+            )
+            .map_err(|_| StorageOpenError::Unavailable)?;
+            ledger_frontier = Some(
+                LedgerFrontier::rebuild_shadow(dir, store_id, verified.final_anchor())
+                    .map_err(map_frontier_open_error)?,
+            );
+        }
+
         let mut storage = Self {
             dir: dir.to_path_buf(),
             wal: wal_writer,
             ledger: ledger_writer,
-            ledger_index,
+            ledger_index: ledger_scan.index,
+            ledger_frontier,
+            format_major,
+            activation,
+            frontier_poisoned: false,
             journal: journal_writer,
             journal_index: journal_scan.index,
             journal_high_water: journal_scan.high_water,
@@ -129,36 +238,39 @@ impl FileStorage {
             published: StorageRoot::empty(),
             history: BTreeMap::new(),
             sequence_watermark: 0,
+            publication_blocked: false,
             faults: FaultPlan::empty(),
         };
-        if retained_scan.total_bytes > retained_scan.good_bytes {
-            // The trailing record is torn or does not verify: an
-            // interrupted append. Truncate to the verified prefix exactly
-            // as the journal is truncated, so later appends stay scannable.
-            storage
-                .retained
-                .truncate(retained_scan.good_bytes)
-                .map_err(|_| StorageOpenError::Unavailable)?;
-        }
-        if report.torn_tail {
-            // The trailing frame was an interrupted append: drop it so the
-            // store opens on its verified prefix. A truncation that cannot
-            // complete fails the open instead of masking the damage.
-            storage.wal.truncate(report.good_bytes).map_err(|_| StorageOpenError::Unavailable)?;
-        }
-        if journal_scan.total_bytes > journal_scan.good_bytes {
-            // Repair F1: the journal's trailing record is torn or does not
-            // verify. Truncate to the verified prefix exactly as the WAL is
-            // truncated, so later appends land where a scan can see them
-            // instead of freezing the servable window forever. The window
-            // bound and the journaled high-water mark keep reporting the
-            // divergence. A truncation that cannot complete fails the open.
-            storage
-                .journal
-                .truncate(journal_scan.good_bytes)
-                .map_err(|_| StorageOpenError::Unavailable)?;
-        }
         storage.recover(report.commits)?;
+        if storage.ledger_index.entries().any(|entry| {
+            entry.state == LedgerState::Ready
+                && entry.sequence > storage.published.sequence
+                && entry.requested.to_level() != LocalDurability::Buffered
+        }) {
+            // Written and Synced Ready records claim durable root/WAL work.
+            // If neither recovery source can reach that sequence, accepting a
+            // pending prefix would hide acknowledged durable loss. Buffered
+            // Ready records have no WAL group and may remain pending.
+            return Err(StorageOpenError::FormatMismatch);
+        }
+        if storage.published.sequence != 0
+            && !storage
+                .ledger_index
+                .binds_published_root(storage.published.sequence, storage.published.id.as_str())
+        {
+            // The manifest/root head is durable publication evidence even
+            // when the best-effort history append was skipped. Its exact
+            // Ready or Published binding must survive once WAL recovery has
+            // had the chance to reconstruct it.
+            return Err(StorageOpenError::FormatMismatch);
+        }
+        if !storage.journal_index.all_commits_bound_in(&storage.ledger_index) {
+            // Recovery first gets a chance to reconstruct a missing binding
+            // from a verified WAL commit. Anything still journaled without
+            // its `Ready` or `Published` entry proves exact frame-boundary
+            // ledger loss, which a prefix checksum scan alone cannot see.
+            return Err(StorageOpenError::FormatMismatch);
+        }
         Ok(storage)
     }
 
@@ -216,34 +328,19 @@ impl FileStorage {
         }
         for commit in commits {
             if commit.sequence <= sequence {
-                // With a verified manifest this commit's publication
-                // completed long ago and the guard inside
-                // `record_publication` no-ops. With the D7 fallback base
-                // the loaded table already reflects the commit's writes,
-                // but the kill that damaged the manifest may have preceded
-                // its `Published` ledger record, so the bookkeeping still
-                // runs: it is what makes the commit resolve `Committed`
-                // (and a same-identity retry replay) after recovery. The
-                // journal record is deliberately NOT reconstructed here —
-                // a correct write set cannot be derived without the
-                // pre-commit table, and a fabricated one would poison
-                // retained-evidence extraction — so the commit stays
-                // journal-unservable and the compaction divergence gate
-                // (GAP-S1 D5) refuses history reclaim below it, fail
-                // closed.
-                self.record_publication(
-                    &commit.tenant,
-                    &commit.operation,
-                    commit.digest,
-                    &id,
-                    commit.sequence,
-                    false,
-                );
+                self.reconcile_covered_commit(&commit, sequence, &id)?;
                 continue;
             }
             let tenant =
                 TenantId::try_new(&commit.tenant).map_err(|_| StorageOpenError::FormatMismatch)?;
             let applied = table.apply(&tenant, &commit.writes);
+            let expected_id = root::root_identity_of(commit.sequence, &applied);
+            if expected_id.as_str() != commit.root {
+                // WAL commits form one publication chain. A later commit
+                // created from an older table is a sibling branch, not a
+                // successor that recovery may silently rewrite.
+                return Err(StorageOpenError::FormatMismatch);
+            }
             // W4-CA-4: recovery re-derives the reconstructable write set from
             // the tables the roll-forward moved and appends the missing
             // journal record, so a crash between pointer publication and the
@@ -281,13 +378,137 @@ impl FileStorage {
                 &published_id,
                 sequence,
                 false,
-            );
+            )?;
             id = published_id;
         }
         let shared = Arc::new(table);
         self.history.insert(sequence, Arc::clone(&shared));
         self.published = StorageRoot { id, sequence, table: shared };
         Ok(())
+    }
+
+    /// Reconciles a WAL commit at or below the recovered root without
+    /// assuming that a higher manifest proves every earlier branch.
+    fn reconcile_covered_commit(
+        &mut self,
+        commit: &WalCommit,
+        published_sequence: u64,
+        published_id: &StorageRootId,
+    ) -> Result<(), StorageOpenError> {
+        let exact_head =
+            commit.sequence == published_sequence && commit.root == published_id.as_str();
+        let ledger_proves_publication = self.ledger_index.binds_published_commit(
+            &commit.tenant,
+            &commit.operation,
+            commit.digest,
+            commit.sequence,
+            &commit.root,
+        );
+        let journal_proves_publication = self.journal_index.binds_publication(
+            &commit.tenant,
+            &commit.operation,
+            commit.sequence,
+        );
+        if !exact_head && !ledger_proves_publication && !journal_proves_publication {
+            // A higher manifest may be a sibling root created from the table
+            // before this commit. Claiming the commit would then report data
+            // that the published root does not contain.
+            return Err(StorageOpenError::FormatMismatch);
+        }
+        let commit_root =
+            StorageRootId::from_encoded(&commit.root).ok_or(StorageOpenError::FormatMismatch)?;
+        // The journal is deliberately not reconstructed here. Without the
+        // pre-commit table, inventing a write set would poison retained
+        // evidence. Missing history remains visible to the divergence gate.
+        self.record_publication(
+            &commit.tenant,
+            &commit.operation,
+            commit.digest,
+            &commit_root,
+            commit.sequence,
+            false,
+        )?;
+        Ok(())
+    }
+
+    /// Persists one semantically valid ledger transition and advances the
+    /// independent frontier before any in-memory binding becomes visible.
+    fn persist_ledger_record(&mut self, record: &LedgerRecord) -> Result<(), FrontierError> {
+        if self.frontier_poisoned || !self.ledger_index.can_apply(record) {
+            return Err(FrontierError::Integrity);
+        }
+        let Ok(append) = self.ledger.append(record) else {
+            self.frontier_poisoned = true;
+            self.publication_blocked = true;
+            return Err(FrontierError::Unavailable);
+        };
+        if self.ledger.sync().is_err() {
+            self.frontier_poisoned = true;
+            self.publication_blocked = true;
+            return Err(FrontierError::Unavailable);
+        }
+        let record_fault = match record {
+            LedgerRecord::Ready(_) => FaultPoint::ReadyFrontierSync,
+            LedgerRecord::Published(_) => FaultPoint::PublishedFrontierSync,
+            LedgerRecord::Rejected(_) => FaultPoint::RejectedFrontierSync,
+        };
+        if self.faults.fire(FaultPoint::StorageFrontierSync).is_err()
+            || self.faults.fire(record_fault).is_err()
+        {
+            self.frontier_poisoned = true;
+            self.publication_blocked = true;
+            return Err(FrontierError::Unavailable);
+        }
+        let frontier_result = self
+            .ledger_frontier
+            .as_mut()
+            .ok_or(FrontierError::Integrity)
+            .and_then(|frontier| frontier.advance_ledger(&append));
+        if let Err(error) = frontier_result {
+            self.frontier_poisoned = true;
+            self.publication_blocked = true;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Syncs a completed retained-evidence batch, then binds every appended
+    /// frame in one frontier generation before compaction may drop history.
+    pub(super) fn persist_retained_appends(
+        &mut self,
+        appends: &[RetainedAppend],
+    ) -> Result<(), FrontierError> {
+        if self.frontier_poisoned {
+            return Err(FrontierError::Integrity);
+        }
+        if self.retained.sync().is_err() {
+            self.frontier_poisoned = true;
+            self.publication_blocked = true;
+            return Err(FrontierError::Unavailable);
+        }
+        if self.faults.fire(FaultPoint::StorageFrontierSync).is_err()
+            || self.faults.fire(FaultPoint::RetainedFrontierSync).is_err()
+        {
+            self.frontier_poisoned = true;
+            self.publication_blocked = true;
+            return Err(FrontierError::Unavailable);
+        }
+        let result = self
+            .ledger_frontier
+            .as_mut()
+            .ok_or(FrontierError::Integrity)
+            .and_then(|frontier| frontier.advance_retained(appends));
+        if let Err(error) = result {
+            self.frontier_poisoned = true;
+            self.publication_blocked = true;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(super) fn poison_storage_frontier(&mut self) {
+        self.frontier_poisoned = true;
+        self.publication_blocked = true;
     }
 
     /// Appends a `Published` ledger record during recovery, without claiming
@@ -300,25 +521,43 @@ impl FileStorage {
         id: &StorageRootId,
         sequence: u64,
         post_publish_synced: bool,
-    ) {
-        if self
-            .ledger_index
-            .entry_by_text(tenant, operation)
-            .is_some_and(|entry| matches!(entry.state, LedgerState::Published { .. }))
-        {
-            return;
+    ) -> Result<(), StorageOpenError> {
+        if self.ledger_index.binds_published_commit(
+            tenant,
+            operation,
+            digest,
+            sequence,
+            id.as_str(),
+        ) {
+            return Ok(());
+        }
+        if self.ledger_index.entry_by_text(tenant, operation).is_some_and(|entry| {
+            let exact_ready = entry.state == LedgerState::Ready
+                && entry.digest == digest
+                && entry.sequence == sequence
+                && entry.root == id.as_str();
+            let exact_legacy_publication = matches!(entry.state, LedgerState::Published { .. })
+                && !entry.digest_known
+                && entry.sequence == sequence
+                && entry.root == id.as_str();
+            !exact_ready && !exact_legacy_publication
+        }) {
+            return Err(StorageOpenError::FormatMismatch);
         }
         let record = LedgerRecord::Published(Published {
             tenant: tenant.to_owned(),
             operation: operation.to_owned(),
             digest,
+            digest_known: true,
             root: id.as_str().to_owned(),
             sequence,
             post_publish_synced,
         });
-        if self.ledger.append(&record).and_then(|()| self.ledger.sync()).is_ok() {
-            self.ledger_index.apply(record);
+        self.persist_ledger_record(&record).map_err(map_frontier_open_error)?;
+        if !self.ledger_index.apply(record) {
+            return Err(StorageOpenError::FormatMismatch);
         }
+        Ok(())
     }
 
     /// Runs the storage publication order for one validated intent.
@@ -329,14 +568,23 @@ impl FileStorage {
         // definite synchronous answer and never binds the identity durably;
         // only a conflict, which follows validated write work, is recorded as
         // a durable rejection.
-        if intent.writes.is_empty() || Self::has_duplicate_targets(&intent.writes) {
+        if intent.writes.is_empty() || codec::staged_writes_have_duplicate_targets(&intent.writes) {
             return CommitResult::Rejected(CommitRejection::Validation);
         }
         if let Some(entry) = self.ledger_index.entry(&intent.tenant, &intent.operation) {
-            if entry.digest != intent.digest {
+            if !entry.digest_known || entry.digest != intent.digest {
                 return CommitResult::Rejected(CommitRejection::OperationIdReuse);
             }
             return self.replay(entry);
+        }
+        if self.frontier_poisoned {
+            return CommitResult::Rejected(CommitRejection::Storage);
+        }
+        if self.publication_blocked {
+            // A verified earlier commit still needs recovery. Publishing a
+            // different operation from the current table would create a
+            // sibling root and make one of the two write sets disappear.
+            return CommitResult::Rejected(CommitRejection::Storage);
         }
         let snapshot_table = self.table_at(intent.snapshot_sequence);
         let published_table = Arc::clone(&self.published.table);
@@ -375,7 +623,9 @@ impl FileStorage {
         // allocated past every sequence this location has ever named and the
         // watermark advances immediately, so a later failure in this commit
         // can never let another commit reuse this sequence.
-        let sequence = self.sequence_watermark + 1;
+        let Some(sequence) = self.sequence_watermark.checked_add(1) else {
+            return CommitResult::Rejected(CommitRejection::Storage);
+        };
         self.sequence_watermark = sequence;
         let durable_frames = intent.durability != LocalDurability::Buffered;
         let new_table = self.published.table.apply(&intent.tenant, &intent.writes);
@@ -410,15 +660,17 @@ impl FileStorage {
             return CommitResult::Rejected(CommitRejection::Storage);
         }
         if durable_frames {
-            let mut marker = Vec::new();
-            codec::push_str(&mut marker, intent.tenant.as_str());
-            codec::push_str(&mut marker, intent.operation.as_str());
-            codec::push_u64(&mut marker, intent.digest);
-            codec::push_u64(&mut marker, sequence);
-            codec::push_str(&mut marker, root_id.as_str());
+            let marker = wal::encode_commit_marker(
+                intent.tenant.as_str(),
+                intent.operation.as_str(),
+                intent.digest,
+                sequence,
+                root_id.as_str(),
+            );
             if self.wal.append(wal::FRAME_COMMIT_MARKER, &marker).is_err() {
                 return CommitResult::Rejected(CommitRejection::Storage);
             }
+            self.publication_blocked = true;
         }
 
         // Step 5: the requested local durability action.
@@ -437,13 +689,21 @@ impl FileStorage {
                 .and_then(|()| root::write_manifest_temp(&self.dir, sequence, &root_id, true)),
         };
         if write_ok.is_err() {
-            return CommitResult::Rejected(CommitRejection::Storage);
+            return if durable_frames {
+                CommitResult::Unknown(UnknownCause::ResponseInterrupted)
+            } else {
+                CommitResult::Rejected(CommitRejection::Storage)
+            };
         }
 
         // Step 6: append and durably sync the ReadyToPublish record. This
         // sync persists resolution metadata for every durability level.
         if self.faults.fire(FaultPoint::ReadyLedgerSync).is_err() {
-            return CommitResult::Rejected(CommitRejection::Storage);
+            return if durable_frames {
+                CommitResult::Unknown(UnknownCause::ResponseInterrupted)
+            } else {
+                CommitResult::Rejected(CommitRejection::Storage)
+            };
         }
         let ready = LedgerRecord::Ready(ReadyToPublish {
             tenant: intent.tenant.as_str().to_owned(),
@@ -454,17 +714,33 @@ impl FileStorage {
             root: root_id.as_str().to_owned(),
             requested: LocalDurabilityCode::of(intent.durability),
         });
-        if self.ledger.append(&ready).and_then(|()| self.ledger.sync()).is_err() {
-            return CommitResult::Rejected(CommitRejection::Storage);
+        if self.persist_ledger_record(&ready).is_err() {
+            return if durable_frames {
+                CommitResult::Unknown(UnknownCause::ResponseInterrupted)
+            } else {
+                CommitResult::Rejected(CommitRejection::Storage)
+            };
         }
-        self.ledger_index.apply(ready);
+        if !self.ledger_index.apply(ready) {
+            self.publication_blocked = true;
+            return if durable_frames {
+                CommitResult::Unknown(UnknownCause::ResponseInterrupted)
+            } else {
+                CommitResult::Rejected(CommitRejection::Storage)
+            };
+        }
+        self.publication_blocked = true;
 
         // Step 7: atomically publish the root pointer.
         if self.faults.fire(FaultPoint::PointerPublish).is_err() {
-            return CommitResult::Rejected(CommitRejection::Storage);
+            return if durable_frames {
+                CommitResult::Unknown(UnknownCause::ResponseInterrupted)
+            } else {
+                CommitResult::Rejected(CommitRejection::Storage)
+            };
         }
         if durable_frames && root::publish_manifest(&self.dir).is_err() {
-            return CommitResult::Rejected(CommitRejection::Storage);
+            return CommitResult::Unknown(UnknownCause::ResponseInterrupted);
         }
         let shared = Arc::new(new_table);
         self.history.insert(sequence, Arc::clone(&shared));
@@ -527,14 +803,19 @@ impl FileStorage {
             tenant: intent.tenant.as_str().to_owned(),
             operation: intent.operation.as_str().to_owned(),
             digest: intent.digest,
+            digest_known: true,
             root: root_id.as_str().to_owned(),
             sequence,
             post_publish_synced: intent.durability == LocalDurability::Synced,
         });
-        if self.ledger.append(&published).and_then(|()| self.ledger.sync()).is_err() {
+        if self.persist_ledger_record(&published).is_err() {
             return CommitResult::Unknown(UnknownCause::PublishedLedgerSync);
         }
-        self.ledger_index.apply(published);
+        if !self.ledger_index.apply(published) {
+            self.publication_blocked = true;
+            return CommitResult::Unknown(UnknownCause::PublishedLedgerSync);
+        }
+        self.publication_blocked = false;
 
         // Step 9: return only the guarantees of the requested level.
         CommitResult::Committed(StorageReceipt {
@@ -542,29 +823,6 @@ impl FileStorage {
             root: root_id,
             durability: intent.durability,
         })
-    }
-
-    /// Reports whether one write set targets the same document twice.
-    fn has_duplicate_targets(writes: &[StagedWrite]) -> bool {
-        let mut seen: Vec<(String, String)> = Vec::new();
-        for write in writes {
-            let key = match write {
-                StagedWrite::Put { document, .. } => {
-                    (document.collection().as_str().to_owned(), document.id().as_str().to_owned())
-                }
-                StagedWrite::Delete { collection: Some(collection), id, .. } => {
-                    (collection.as_str().to_owned(), id.as_str().to_owned())
-                }
-                StagedWrite::Delete { collection: None, id, .. } => {
-                    (String::new(), id.as_str().to_owned())
-                }
-            };
-            if seen.contains(&key) {
-                return true;
-            }
-            seen.push(key);
-        }
-        false
     }
 
     /// Checks one keyed write against the snapshot and the published view.
@@ -661,10 +919,12 @@ impl FileStorage {
             digest: intent.digest,
             reason,
         });
-        if self.ledger.append(&record).and_then(|()| self.ledger.sync()).is_err() {
-            return CommitResult::Rejected(reason);
+        if self.persist_ledger_record(&record).is_err() {
+            return CommitResult::Rejected(CommitRejection::Storage);
         }
-        self.ledger_index.apply(record);
+        if !self.ledger_index.apply(record) {
+            return CommitResult::Rejected(CommitRejection::Storage);
+        }
         CommitResult::Rejected(reason)
     }
 
@@ -752,31 +1012,133 @@ pub(crate) fn min_level(first: LocalDurability, second: LocalDurability) -> Loca
     }
 }
 
-fn verify_or_create_format(dir: &Path) -> Result<bool, StorageOpenError> {
+fn verify_or_create_format(dir: &Path) -> Result<FormatOpen, StorageOpenError> {
     let path = dir.join("format");
     let bytes = match fs::read(&path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut entries = fs::read_dir(dir).map_err(|_| StorageOpenError::Unavailable)?;
+            if entries.next().transpose().map_err(|_| StorageOpenError::Unavailable)?.is_some() {
+                // A missing marker beside any durable artifact is loss, not a
+                // fresh location. Recreating it could select the wrong format
+                // and erase acknowledged state.
+                return Err(StorageOpenError::FormatMismatch);
+            }
             let mut file = fs::File::create(&path).map_err(|_| StorageOpenError::Unavailable)?;
             let mut head = Vec::new();
             head.extend_from_slice(FORMAT_MAGIC);
-            codec::push_u64(&mut head, FORMAT_VERSION);
+            codec::push_u64(&mut head, LEGACY_FORMAT_MAJOR);
             file.write_all(&head).map_err(|_| StorageOpenError::Unavailable)?;
             file.sync_data().map_err(|_| StorageOpenError::Unavailable)?;
-            return Ok(true);
+            return Ok(FormatOpen { state: FormatState::Legacy, created: true });
         }
         Err(_) => return Err(StorageOpenError::Unavailable),
     };
-    if bytes.len() != FORMAT_MAGIC.len() + 8 || bytes[..FORMAT_MAGIC.len()] != *FORMAT_MAGIC {
+    if bytes.len() < FORMAT_MAGIC.len() + 8 || bytes[..FORMAT_MAGIC.len()] != *FORMAT_MAGIC {
         return Err(StorageOpenError::FormatMismatch);
     }
-    let version = u64::from_le_bytes(
-        bytes[FORMAT_MAGIC.len()..].try_into().map_err(|_| StorageOpenError::FormatMismatch)?,
+    let major = u64::from_le_bytes(
+        bytes[FORMAT_MAGIC.len()..FORMAT_MAGIC.len() + 8]
+            .try_into()
+            .expect("the format major is eight bytes"),
     );
-    if version != FORMAT_VERSION {
+    let state = match major {
+        LEGACY_FORMAT_MAJOR if bytes.len() == FORMAT_MAGIC.len() + 8 => FormatState::Legacy,
+        FRONTIER_FORMAT_MAJOR => FormatState::Active(decode_active_format(&bytes)?),
+        _ => return Err(StorageOpenError::FormatMismatch),
+    };
+    Ok(FormatOpen { state, created: false })
+}
+
+fn encode_active_format(active: &ActiveFormat) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(FORMAT_MAGIC);
+    codec::push_u64(&mut bytes, FRONTIER_FORMAT_MAJOR);
+    codec::push_u64(&mut bytes, STORAGE_FRONTIER_FEATURE);
+    bytes.extend_from_slice(&active.store_id.as_bytes());
+    let activation = active.activation.activation_id.as_str().as_bytes();
+    let activation_len =
+        u16::try_from(activation.len()).expect("a validated operation identity fits u16");
+    codec::push_u16(&mut bytes, activation_len);
+    bytes.extend_from_slice(activation);
+    codec::push_u64(&mut bytes, active.activation.external_fence_generation);
+    bytes.extend_from_slice(&active.activation.external_record_digest);
+    bytes.extend_from_slice(&[0_u8; FORMAT_V2_RESERVED_BYTES]);
+    let checksum = format_checksum(&bytes);
+    bytes.extend_from_slice(&checksum);
+    bytes
+}
+
+fn decode_active_format(bytes: &[u8]) -> Result<ActiveFormat, StorageOpenError> {
+    const FIXED_WITHOUT_ID: usize = 10 + 8 + 8 + 16 + 2 + 8 + 32 + 8 + 32;
+    if bytes.len() < FIXED_WITHOUT_ID + 1 {
         return Err(StorageOpenError::FormatMismatch);
     }
-    Ok(false)
+    let checksum_start = bytes.len() - 32;
+    if bytes[checksum_start..] != format_checksum(&bytes[..checksum_start]) {
+        return Err(StorageOpenError::FormatMismatch);
+    }
+    let mut reader = codec::Reader::new(&bytes[FORMAT_MAGIC.len() + 8..checksum_start]);
+    if reader.read_u64() != Some(STORAGE_FRONTIER_FEATURE) {
+        return Err(StorageOpenError::FormatMismatch);
+    }
+    let mut store_id = [0_u8; 16];
+    store_id.copy_from_slice(reader.take(16).ok_or(StorageOpenError::FormatMismatch)?);
+    let activation_len = reader.read_u16().ok_or(StorageOpenError::FormatMismatch)? as usize;
+    let activation_text =
+        std::str::from_utf8(reader.take(activation_len).ok_or(StorageOpenError::FormatMismatch)?)
+            .map_err(|_| StorageOpenError::FormatMismatch)?;
+    let activation_id =
+        OperationId::try_new(activation_text).map_err(|_| StorageOpenError::FormatMismatch)?;
+    let external_fence_generation = reader.read_u64().ok_or(StorageOpenError::FormatMismatch)?;
+    if external_fence_generation == 0 {
+        return Err(StorageOpenError::FormatMismatch);
+    }
+    let mut external_record_digest = [0_u8; 32];
+    external_record_digest
+        .copy_from_slice(reader.take(32).ok_or(StorageOpenError::FormatMismatch)?);
+    if reader.take(FORMAT_V2_RESERVED_BYTES) != Some(&[0_u8; FORMAT_V2_RESERVED_BYTES])
+        || reader.remaining() != 0
+    {
+        return Err(StorageOpenError::FormatMismatch);
+    }
+    Ok(ActiveFormat {
+        store_id: StoreId::from_bytes(store_id),
+        activation: LedgerFrontierActivationIdentity {
+            activation_id,
+            external_fence_generation,
+            external_record_digest,
+        },
+    })
+}
+
+fn write_active_format(dir: &Path, active: &ActiveFormat) -> Result<(), StorageOpenError> {
+    let temp = dir.join("format.tmp");
+    let path = dir.join("format");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&temp)
+        .map_err(|_| StorageOpenError::Unavailable)?;
+    file.write_all(&encode_active_format(active)).map_err(|_| StorageOpenError::Unavailable)?;
+    file.sync_all().map_err(|_| StorageOpenError::Unavailable)?;
+    fs::rename(&temp, &path).map_err(|_| StorageOpenError::Unavailable)?;
+    root::sync_dir(dir).map_err(|_| StorageOpenError::Unavailable)
+}
+
+fn format_checksum(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(FORMAT_CHECKSUM_DOMAIN);
+    hasher.update(bytes);
+    *hasher.finalize().as_bytes()
+}
+
+fn map_frontier_open_error(error: FrontierError) -> StorageOpenError {
+    match error {
+        FrontierError::Integrity => StorageOpenError::FormatMismatch,
+        FrontierError::Unavailable => StorageOpenError::Unavailable,
+    }
 }
 
 // Helper constructions for identities that already round-tripped through the
@@ -880,6 +1242,109 @@ impl super::StoragePort for FileStorage {
         (StorageSequence::new(self.published.sequence), self.published.id.clone())
     }
 
+    fn ledger_frontier_status(&self) -> LedgerFrontierStatus {
+        if self.frontier_poisoned {
+            return LedgerFrontierStatus::Unavailable;
+        }
+        let Some(frontier) = self.ledger_frontier.as_ref() else {
+            return LedgerFrontierStatus::UnsupportedBackend;
+        };
+        let observation = frontier.observation(self.format_major);
+        match &self.activation {
+            Some(activation) => {
+                LedgerFrontierStatus::Active { observation, activation: activation.clone() }
+            }
+            None => LedgerFrontierStatus::Inactive(observation),
+        }
+    }
+
+    fn activate_ledger_frontier(
+        &mut self,
+        request: &LedgerFrontierActivationRequest,
+    ) -> Result<LedgerFrontierActivationReceipt, LedgerFrontierActivationError> {
+        if let Some(active) = &self.activation {
+            if active != &request.identity {
+                return Err(LedgerFrontierActivationError::AlreadyActivatedByDifferentRecord);
+            }
+            let observation = self
+                .ledger_frontier
+                .as_ref()
+                .ok_or(LedgerFrontierActivationError::IntegrityFailure)?
+                .observation(self.format_major);
+            return Ok(LedgerFrontierActivationReceipt { identity: active.clone(), observation });
+        }
+        if request.identity.external_fence_generation == 0 {
+            return Err(LedgerFrontierActivationError::IntegrityFailure);
+        }
+        if self.frontier_poisoned {
+            return Err(LedgerFrontierActivationError::StorageUnavailable);
+        }
+        if self.publication_blocked
+            || self
+                .ledger_index
+                .entries()
+                .any(|entry| self.resolution_for(entry) == OperationResolution::Pending)
+        {
+            return Err(LedgerFrontierActivationError::NotQuiescent);
+        }
+        let frontier =
+            self.ledger_frontier.as_ref().ok_or(LedgerFrontierActivationError::IntegrityFailure)?;
+        if frontier.observation(self.format_major) != request.expected {
+            return Err(LedgerFrontierActivationError::StaleObservation);
+        }
+
+        let ledger_path = self.dir.join("ledger");
+        let retained_path = self.dir.join("retained");
+        let ledger_scan = LedgerIndex::scan(&ledger_path)
+            .map_err(|_| LedgerFrontierActivationError::StorageUnavailable)?;
+        let retained_scan = RetainedIndex::scan(&retained_path);
+        if ledger_scan.mid_file_damage
+            || ledger_scan.good_bytes != ledger_scan.total_bytes
+            || retained_scan.mid_file_damage
+            || retained_scan.good_bytes != retained_scan.total_bytes
+        {
+            return Err(LedgerFrontierActivationError::IntegrityFailure);
+        }
+        let store_id = frontier.store_id();
+        let verified = VerifiedAnchors::from_scans(
+            &ledger_path,
+            &ledger_scan,
+            &retained_path,
+            &retained_scan,
+            store_id,
+        )
+        .map_err(|_| LedgerFrontierActivationError::StorageUnavailable)?;
+        if verified.final_anchor() != frontier.anchor() {
+            return Err(LedgerFrontierActivationError::IntegrityFailure);
+        }
+        self.ledger
+            .sync()
+            .and_then(|()| self.retained.sync())
+            .map_err(|_| LedgerFrontierActivationError::StorageUnavailable)?;
+        let rebuilt = LedgerFrontier::rebuild_shadow(&self.dir, store_id, verified.final_anchor())
+            .map_err(|error| match error {
+                FrontierError::Integrity => LedgerFrontierActivationError::IntegrityFailure,
+                FrontierError::Unavailable => LedgerFrontierActivationError::StorageUnavailable,
+            })?;
+        self.ledger_frontier = Some(rebuilt);
+        let active = ActiveFormat { store_id, activation: request.identity.clone() };
+        if let Err(error) = write_active_format(&self.dir, &active) {
+            self.frontier_poisoned = true;
+            return Err(match error {
+                StorageOpenError::FormatMismatch => LedgerFrontierActivationError::IntegrityFailure,
+                StorageOpenError::Unavailable => LedgerFrontierActivationError::StorageUnavailable,
+            });
+        }
+        self.format_major = FRONTIER_FORMAT_MAJOR;
+        self.activation = Some(request.identity.clone());
+        let observation = self
+            .ledger_frontier
+            .as_ref()
+            .expect("activation keeps the rebuilt frontier")
+            .observation(self.format_major);
+        Ok(LedgerFrontierActivationReceipt { identity: request.identity.clone(), observation })
+    }
+
     fn compact(
         &mut self,
         request: StorageCompaction,
@@ -913,6 +1378,8 @@ impl super::StoragePort for FileStorage {
     fn flush(&mut self) -> Result<(), ()> {
         self.wal.sync().map_err(|_| ())?;
         self.ledger.sync().map_err(|_| ())?;
+        self.retained.sync().map_err(|_| ())?;
+        self.ledger_frontier.as_mut().ok_or(())?.sync().map_err(|_| ())?;
         self.journal.sync().map_err(|_| ())
     }
 

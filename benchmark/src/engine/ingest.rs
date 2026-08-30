@@ -654,6 +654,6 @@ fn next_stream_identity() -> u64 {
 fn batch_operation_id(identity: u64, next_batch: &mut u64) -> OperationId {
     let ordinal = *next_batch;
     *next_batch = next_batch.saturating_add(1);
-    OperationId::try_new(&format!("tbv2-ingest-{identity}-b{ordinal}"))
+    OperationId::try_new(&format!("terrabase-ingest-{identity}-b{ordinal}"))
         .expect("derived ingest identities are valid")
 }

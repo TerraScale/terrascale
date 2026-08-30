@@ -10,7 +10,7 @@
 #![allow(clippy::float_cmp)] // medians are asserted on exactly representable values
 
 use super::{
-    driver::V2Lane,
+    driver::TerraBaseLane,
     gates::{self, MedianRange, ReferenceComparison, Trend},
     lane::{LaneConfig, LaneError, Workload},
     record::RunRecord,
@@ -207,14 +207,14 @@ fn run_order_alternates_within_a_workload() {
 
 /// The nine declared workloads exist — the five CRUD-class workloads and
 /// the four sync-path workloads the charter mandates beside them — each
-/// carries its PostgreSQL and TerraBaseV2 equivalents as data (the mapping
+/// carries its PostgreSQL and TerraBase equivalents as data (the mapping
 /// document is generated from these, not hand-copied beside them), and the
 /// mixed workload keeps V1's 50/30/20 read/write/query ratio.
 #[test]
 fn every_workload_names_both_sides_of_its_mapping() {
     assert_eq!(Workload::ALL.len(), 9);
     for workload in Workload::ALL {
-        assert!(!workload.terrabase_v2_operation().is_empty());
+        assert!(!workload.terrabase_operation().is_empty());
         assert!(workload.postgres_equivalent().starts_with("-- "), "{workload:?}");
     }
     assert_eq!(Workload::Mixed.mixed_ratios(), Some((50, 30, 20)));
@@ -254,7 +254,7 @@ fn the_sync_path_class_declares_its_open_adapter_slots() {
             "the fairness statement must say there is no comparand: {workload:?}"
         );
         assert!(
-            workload.terrabase_v2_operation().contains("client link"),
+            workload.terrabase_operation().contains("client link"),
             "the mapping must name the client link: {workload:?}"
         );
         let (reason, owner) = workload.driver_status().expect("the open slot is named");
@@ -271,11 +271,11 @@ fn the_sync_path_class_declares_its_open_adapter_slots() {
         Workload::SyncBytesOnWirePerChange,
     ] {
         assert!(
-            workload.terrabase_v2_operation().contains("member link"),
+            workload.terrabase_operation().contains("member link"),
             "the mapping must name the member link: {workload:?}"
         );
     }
-    assert!(Workload::SyncTriggerNotificationSize.terrabase_v2_operation().contains("member link"));
+    assert!(Workload::SyncTriggerNotificationSize.terrabase_operation().contains("member link"));
 
     // The CRUD-class workloads the lane drives keep no open slot, exactly as
     // before the sync-path class was declared.
@@ -359,7 +359,6 @@ fn a_receipt_renders_the_discipline_lines() {
     assert!(!text.contains("PostgreSQL-parity-or-better: met"), "{text}");
     assert!(!text.contains("v2-faster"), "{text}");
     assert!(text.contains("postgresql pin: "), "{text}");
-    assert!(text.contains("terrabase v1 pin: "), "{text}");
 }
 
 /// A regressing recorded run must name an owner; the rule is a function, not
@@ -374,12 +373,12 @@ fn a_regression_assigns_a_named_owner() {
     assert!(RunRecord::regression_follow_up(ObjectiveStatus::Inconclusive).is_none());
 }
 
-/// The V2 side of the lane really runs: the driver seeds a durable engine
+/// The TerraBase side of the lane really runs: the driver seeds a durable engine
 /// and returns exact, deterministic counters for each workload it drives.
 /// These are counters, not timings, so they are reproducible facts.
 #[test]
-fn the_v2_lane_measures_deterministic_counters_per_workload() {
-    let lane = V2Lane::open("counters");
+fn the_terrabase_lane_measures_deterministic_counters_per_workload() {
+    let lane = TerraBaseLane::open("counters");
     lane.seed(32);
 
     let seeded_bytes = lane.durable_bytes();
@@ -411,14 +410,14 @@ fn the_v2_lane_measures_deterministic_counters_per_workload() {
 #[test]
 fn the_durable_byte_counter_is_reproducible() {
     let first = {
-        let lane = V2Lane::open("reproducible-a");
+        let lane = TerraBaseLane::open("reproducible-a");
         lane.seed(16);
         let bytes = lane.durable_bytes();
         lane.remove();
         bytes
     };
     let second = {
-        let lane = V2Lane::open("reproducible-b");
+        let lane = TerraBaseLane::open("reproducible-b");
         lane.seed(16);
         let bytes = lane.durable_bytes();
         lane.remove();
@@ -431,7 +430,7 @@ fn the_durable_byte_counter_is_reproducible() {
 /// and are excluded from the counters, exactly as V1 excluded them.
 #[test]
 fn warm_up_runs_are_excluded_from_the_measurement() {
-    let lane = V2Lane::open("warmup");
+    let lane = TerraBaseLane::open("warmup");
     lane.seed(16);
 
     let warmed = lane.warm_up(Workload::DocumentWrite, 8);
@@ -452,7 +451,7 @@ fn warm_up_runs_are_excluded_from_the_measurement() {
 /// reachable by construction, not by discipline alone.
 #[test]
 fn the_commissioning_sampler_reports_inconclusive_without_references() {
-    let outcome = V2Lane::open("commissioning").commission(Workload::DocumentRead, 3, 4);
+    let outcome = TerraBaseLane::open("commissioning").commission(Workload::DocumentRead, 3, 4);
     assert_eq!(outcome.samples().len(), 3, "one throughput sample per measured round");
     assert!(outcome.samples().iter().all(|sample| *sample > 0.0));
     assert_eq!(outcome.status, ObjectiveStatus::Inconclusive);
@@ -478,14 +477,14 @@ fn the_commissioning_sampler_reports_inconclusive_without_references() {
 /// commissioning receipt cites this test by name.
 #[test]
 fn a_self_comparison_reads_as_parity() {
-    let run = V2Lane::open("self-a").commission(Workload::DocumentRead, 5, 8);
+    let run = TerraBaseLane::open("self-a").commission(Workload::DocumentRead, 5, 8);
     let comparison = throughput(run.samples(), run.samples());
     assert_eq!(comparison.throughput, Trend::Stable);
     assert_eq!(comparison.p95, Trend::Stable);
     assert_eq!(gates::objective_status(comparison), (ObjectiveStatus::Met, Verdict::NoImprovement));
 }
 
-/// The V2-side counter characterization, run for real and transcribed into
+/// The TerraBase-side counter characterization, run for real and transcribed into
 /// `docs/evidence/benchmarks/se15-v2-lane-commissioning-receipt.md`.
 ///
 /// Ignored by default, exactly like the SE-07 UDS characterization: it is a
@@ -499,7 +498,7 @@ fn a_self_comparison_reads_as_parity() {
 /// only and support no verdict.
 #[test]
 #[ignore = "a lane characterization, not a gate; run with --ignored --nocapture"]
-fn v2_lane_counter_characterization() {
+fn terrabase_lane_counter_characterization() {
     let seed_documents = 256;
     let warmup_operations = 128;
     let samples = 3;
@@ -508,7 +507,7 @@ fn v2_lane_counter_characterization() {
     for workload in
         [Workload::DocumentRead, Workload::DocumentWrite, Workload::IndexedQuery, Workload::Mixed]
     {
-        let lane = V2Lane::open(&format!("characterization-{}", workload.as_str()));
+        let lane = TerraBaseLane::open(&format!("characterization-{}", workload.as_str()));
         lane.seed(seed_documents);
         let seeded_bytes = lane.durable_bytes();
         let seed_count = f64::from(u32::try_from(seed_documents).unwrap_or(u32::MAX));

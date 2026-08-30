@@ -433,7 +433,7 @@ struct DocState {
 /// [`ReplicaDoc`]: it applies accepted writes, answers frontier
 /// summaries, exports deltas, and absorbs peers' deltas. Nothing here
 /// distinguishes a coordinator — coordination is request-scoped in the
-/// engine-side leaderless core (`terrabase_v2::replication::leaderless`).
+/// engine-side leaderless core (`terrabase::replication::leaderless`).
 pub struct ReplicaDoc {
     actor: ActorId,
     next_counter: u64,

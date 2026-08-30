@@ -13,8 +13,8 @@
 
 use std::path::Path;
 
+use terrabase::types::DocumentValue;
 use terrabase_replication_core::compose::ComposedWrite;
-use terrabase_v2::types::DocumentValue;
 
 use crate::host::MemberSpec;
 use crate::identity::{ClusterIdentity, ClusterMode};
@@ -202,15 +202,15 @@ impl BackupSet {
 mod tests {
     use std::collections::BTreeMap;
 
+    use terrabase::types::DocumentValue;
     use terrabase_replication_core::compose::ComposedWrite;
-    use terrabase_v2::types::DocumentValue;
 
     use super::{BackupOutcome, BackupPolicy, BackupSet};
     use crate::host::MemberSpec;
 
     fn root(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "tbv2-cluster-backup-{tag}-{}-{}",
+            "terrabase-cluster-backup-{tag}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

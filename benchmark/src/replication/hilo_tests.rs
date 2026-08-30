@@ -42,7 +42,7 @@ const TENANT: &str = "fleet";
 fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("tbv2-repl-hilo-{tag}-{}-{index}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-repl-hilo-{tag}-{}-{index}", std::process::id()))
 }
 
 /// Opens one replication member over a fresh durable Engine location.

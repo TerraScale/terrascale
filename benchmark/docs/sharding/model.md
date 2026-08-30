@@ -1,4 +1,4 @@
-# TerraBaseV2 sharding and logical Partition model
+# TerraBase sharding and logical Partition model
 
 Status: accepted target contract under the workspace `GOAL.md` and ADR 0019.
 Implementation and production limits remain evidence-gated.
@@ -120,7 +120,7 @@ Partition leader.
 
 | Concern | Owner |
 | --- | --- |
-| Hashing, Bucket map validation, routing, causal state, replication, transfer, verification, and migration recovery | TerraBaseV2 |
+| Hashing, Bucket map validation, routing, causal state, replication, transfer, verification, and migration recovery | TerraBase |
 | Customer placement intent, Member capacity, failure domains, scheduling, and repair orchestration | TerraScale.Orchestrator |
 | Public create, update, status, and typed administrative contracts | TerraScale.Database |
 | Customer UI and product workflow | TerraScale.Dashboard through `@terrascale/sdk` |

@@ -1,35 +1,43 @@
-//! `tbep-fbs` — the ADR 0025 phase-1 receiver-decode seam over the
-//! pinned generated TBEP FlatBuffers bindings.
+//! `tbep-fbs` — the verified ADR 0025 codec boundary over the pinned
+//! generated TBEP FlatBuffers bindings.
 //!
-//! This package exists because phase 1 is strictly additive: the served
-//! TBEP codec is still the positional-array one, and the parent
-//! `terrabase-tbep` package must not gain a `flatbuffers` dependency
-//! yet. The committed generated binding
+//! The committed generated binding
 //! `crates/terrabase-tbep/src/generated/fbs/tbep_generated.rs` (one
 //! deterministic artifact from the single-file root schema) is compiled
-//! here via a `#[path]` include, and this module implements the
-//! receiver discipline ADR 0025 requires for network input:
+//! here via a `#[path]` include. This module implements the receiver
+//! discipline ADR 0025 requires for network input:
 //!
 //! 1. reject a frame above the global byte ceiling before any parse;
 //! 2. reject a size prefix that disagrees with the delivered length
 //!    (truncated or trailing bytes) before any parse;
-//! 3. run the structural verifier (`size_prefixed_root_with_opts`)
+//! 3. require the schema's `TBEP` file identifier with a bounded read;
+//! 4. run the structural verifier (`size_prefixed_root_with_opts`)
 //!    with explicit depth and table-count limits before any generated
 //!    accessor reads a field;
-//! 4. gate on protocol major, then on unknown required feature bits,
+//! 5. gate on protocol major, then on unknown required feature bits,
 //!    before touching the body union;
-//! 5. only then apply the typed envelope semantics: correlation and
+//! 6. only then apply the typed envelope semantics: correlation and
 //!    causation ULIDs present, known operation code, body present, and
 //!    the body union member matching the operation discriminant.
 //!
 //! No unsafe code is written here; the `unsafe` that appears in the
 //! compiled module tree is inside the pinned generated bindings.
 
+// `flatc` 25.12.19 emits these three compiler-owned patterns. Keep the
+// exception on the digest-checked generated module so handwritten code
+// still passes `clippy -D warnings` without allowances.
+#[rustfmt::skip]
+#[allow(
+    clippy::derivable_impls,
+    clippy::extra_unused_lifetimes,
+    clippy::missing_safety_doc
+)]
 #[path = "../../../src/generated/fbs/tbep_generated.rs"]
 pub mod tbep_generated;
 
 pub mod hand_encoding;
 pub mod operation_map;
+pub mod production;
 
 pub use operation_map::body_kind_for;
 pub use tbep_generated::terrabase::tbep::{TbepEnvelope, TbepFrame, TbepOperation};
@@ -92,9 +100,12 @@ pub enum DecodeError {
         /// The bytes actually delivered.
         actual: usize,
     },
+    /// The standard FlatBuffers file-identifier slot was absent or did
+    /// not contain the schema's `TBEP` identifier.
+    InvalidIdentifier,
     /// The structural verifier rejected the buffer (truncation inside
-    /// the buffer, invalid or cyclic offsets, unknown union tag,
-    /// misalignment, unterminated string, or depth/table overrun).
+    /// the buffer, invalid or cyclic offsets, misalignment,
+    /// unterminated string, or depth/table overrun).
     Structural(String),
     /// The protocol major is not one this receiver serves.
     VersionSkew {
@@ -116,6 +127,8 @@ pub enum DecodeError {
     UnknownOperation(u16),
     /// The body union member is `NONE`.
     MissingBody,
+    /// The body union tag is not declared by the schema.
+    UnknownBody(u8),
     /// The body union member does not match the operation discriminant.
     OperationBodyMismatch {
         /// The envelope's operation code.
@@ -129,25 +142,25 @@ impl core::fmt::Display for DecodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Empty => write!(f, "empty frame: fewer bytes than the size prefix"),
-            Self::Oversized { len } => write!(
-                f,
-                "frame of {len} bytes exceeds the {MAX_FRAME_BYTES}-byte ceiling"
-            ),
-            Self::Truncated { declared, actual } => write!(
-                f,
-                "size prefix declared {declared} bytes but {actual} were delivered"
-            ),
+            Self::Oversized { len } => {
+                write!(f, "frame of {len} bytes exceeds the {MAX_FRAME_BYTES}-byte ceiling")
+            }
+            Self::Truncated { declared, actual } => {
+                write!(f, "size prefix declared {declared} bytes but {actual} were delivered")
+            }
             Self::Trailing { declared, actual } => write!(
                 f,
                 "size prefix declared {declared} bytes but {actual} were delivered (trailing bytes)"
             ),
+            Self::InvalidIdentifier => {
+                write!(f, "missing or invalid TBEP file identifier")
+            }
             Self::Structural(reason) => {
                 write!(f, "structural verification failed: {reason}")
             }
-            Self::VersionSkew { major, minor } => write!(
-                f,
-                "protocol {major}.{minor} is not TBEP {TBEP_PROTOCOL_MAJOR}.x"
-            ),
+            Self::VersionSkew { major, minor } => {
+                write!(f, "protocol {major}.{minor} is not TBEP {TBEP_PROTOCOL_MAJOR}.x")
+            }
             Self::UnsupportedFeature { unknown } => {
                 write!(f, "unknown required feature bits: {unknown:#x}")
             }
@@ -157,10 +170,12 @@ impl core::fmt::Display for DecodeError {
                 write!(f, "operation code {code} is not registered")
             }
             Self::MissingBody => write!(f, "body union member is NONE"),
-            Self::OperationBodyMismatch { operation, body } => write!(
-                f,
-                "operation code {operation} does not carry body member {body}"
-            ),
+            Self::UnknownBody(tag) => {
+                write!(f, "body union tag {tag} is not declared")
+            }
+            Self::OperationBodyMismatch { operation, body } => {
+                write!(f, "operation code {operation} does not carry body member {body}")
+            }
         }
     }
 }
@@ -181,25 +196,32 @@ pub struct DecodedFrame<'a> {
 ///
 /// Every rejection happens before the corresponding field access:
 /// byte-ceiling and length checks run before any parse, the structural
-/// verifier runs before any generated accessor, and the version and
-/// feature gates run before the body union is touched.
+/// file-identifier check and verifier run before any generated
+/// accessor, and the version and feature gates run before the body
+/// union is touched.
 pub fn decode_envelope(bytes: &[u8]) -> Result<DecodedFrame<'_>, DecodeError> {
     if bytes.len() < SIZE_PREFIX_BYTES {
         return Err(DecodeError::Empty);
     }
     if bytes.len() - SIZE_PREFIX_BYTES > MAX_FRAME_BYTES {
-        return Err(DecodeError::Oversized {
-            len: bytes.len() - SIZE_PREFIX_BYTES,
-        });
+        return Err(DecodeError::Oversized { len: bytes.len() - SIZE_PREFIX_BYTES });
     }
-    let declared =
-        u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+    let declared = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
     let actual = bytes.len() - SIZE_PREFIX_BYTES;
     if declared > actual {
         return Err(DecodeError::Truncated { declared, actual });
     }
     if declared < actual {
         return Err(DecodeError::Trailing { declared, actual });
+    }
+
+    let identifier_start = SIZE_PREFIX_BYTES + core::mem::size_of::<u32>();
+    let identifier = tbep_generated::terrabase::tbep::TBEP_ENVELOPE_IDENTIFIER;
+    let identifier_end = identifier_start + identifier.len();
+    if bytes.len() < identifier_end
+        || &bytes[identifier_start..identifier_end] != identifier.as_bytes()
+    {
+        return Err(DecodeError::InvalidIdentifier);
     }
 
     let options = flatbuffers::VerifierOptions {
@@ -243,8 +265,10 @@ pub fn decode_envelope(bytes: &[u8]) -> Result<DecodedFrame<'_>, DecodeError> {
     if body == TbepFrame::NONE {
         return Err(DecodeError::MissingBody);
     }
-    let expected = body_kind_for(operation)
-        .expect("body_kind_for validated the operation above");
+    if body.variant_name().is_none() {
+        return Err(DecodeError::UnknownBody(body.0));
+    }
+    let expected = body_kind_for(operation).expect("body_kind_for validated the operation above");
     if body != expected {
         return Err(DecodeError::OperationBodyMismatch {
             operation: operation.0,

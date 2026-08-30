@@ -1,5 +1,5 @@
 // <copyright file="GlobalUsings.cs" company="TerraScale">
-// TerraBaseV2 (SE-14). See LICENSE.md.
+// TerraBase (SE-14). See LICENSE.md.
 // </copyright>
 
 global using MessagePack;

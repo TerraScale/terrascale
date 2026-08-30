@@ -12,13 +12,13 @@
 //! pins what an external caller CAN construct today: the member-serving
 //! endpoint pairing and its refusal shapes.
 
-use terrabase_v2::MemberId;
-use terrabase_v2::engine::{Engine, EngineConfig};
-use terrabase_v2::sharding::{MemberServing, ShardServingError, ShardedExecutionError};
+use terrabase::MemberId;
+use terrabase::engine::{Engine, EngineConfig};
+use terrabase::sharding::{MemberServing, ShardServingError, ShardedExecutionError};
 
 fn open_engine(tag: &str) -> Engine {
-    let dir =
-        std::env::temp_dir().join(format!("tbv2-sh04-public-surface-{}-{tag}", std::process::id()));
+    let dir = std::env::temp_dir()
+        .join(format!("terrabase-sh04-public-surface-{}-{tag}", std::process::id()));
     std::fs::remove_dir_all(&dir).ok();
     let config = EngineConfig::durable(&dir).expect("durable location");
     Engine::open(config).expect("engine opens")

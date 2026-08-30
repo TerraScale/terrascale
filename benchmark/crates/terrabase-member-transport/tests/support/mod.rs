@@ -41,7 +41,8 @@ pub const TENANT: &str = "tenant-a";
 pub fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("tbv2-se06-scenario-{tag}-{}-{index}", std::process::id()))
+    std::env::temp_dir()
+        .join(format!("terrabase-se06-scenario-{tag}-{}-{index}", std::process::id()))
 }
 
 /// Opens one lane member over a durable temporary location.

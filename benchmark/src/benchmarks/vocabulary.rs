@@ -5,7 +5,7 @@
 //! - [`Verdict`] describes one measured comparison. Its four tokens are the
 //!   only words a Benchmark Receipt may carry for a comparison.
 //! - [`ObjectiveStatus`] answers the separate question the charter asks per
-//!   run — is TerraBaseV2 at PostgreSQL-parity or better? — with `met`,
+//!   run — is TerraBase at PostgreSQL-parity or better? — with `met`,
 //!   `not met`, or `inconclusive`.
 //!
 //! [`ReferenceRun`] records whether one reference baseline actually
@@ -16,11 +16,11 @@
 /// charter token.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Verdict {
-    /// TerraBaseV2 measurably better than the comparand.
+    /// TerraBase measurably better than the comparand.
     V2Faster,
     /// No measurable difference beyond the gate's noise band.
     NoImprovement,
-    /// TerraBaseV2 measurably worse than the comparand.
+    /// TerraBase measurably worse than the comparand.
     V2Regression,
     /// The evidence cannot support a call.
     Inconclusive,

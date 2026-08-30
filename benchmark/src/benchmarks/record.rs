@@ -37,7 +37,7 @@ pub(crate) struct RunRecord {
     pub workload: Workload,
     /// The lane configuration used.
     pub config: LaneConfig,
-    /// The TerraBaseV2 source identity measured.
+    /// The TerraBase source identity measured.
     pub source_identity: String,
     /// The comparison verdict, from the closed vocabulary.
     pub verdict: Verdict,
@@ -108,7 +108,7 @@ impl RunRecord {
             self.config.warmup_operations,
             self.config.noise_percent
         );
-        let _unused = writeln!(text, "terrabase v2 source: {}", self.source_identity);
+        let _unused = writeln!(text, "terrabase source: {}", self.source_identity);
         let _unused =
             writeln!(text, "postgresql pin: {}", reference::POSTGRESQL_REFERENCE.describe());
         let _unused = writeln!(text, "postgresql reference: {}", self.postgresql.describe());
@@ -128,14 +128,14 @@ impl RunRecord {
     }
 }
 
-/// The TerraBaseV2 source identity a receipt names.
+/// The TerraBase source identity a receipt names.
 ///
 /// The adapter cannot observe the working tree's commit, so it names the
 /// crate version the engine was built as plus the packet branch, and the
 /// evidence receipt records the exact commit beside this line.
 pub(crate) fn source_identity() -> String {
     format!(
-        "terrabase-v2 {} on branch {}, commit recorded in the evidence receipt",
+        "terrabase {} on branch {}, commit recorded in the evidence receipt",
         crate::VERSION,
         branch_name()
     )

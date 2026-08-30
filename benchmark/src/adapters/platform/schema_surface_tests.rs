@@ -44,7 +44,7 @@ use super::{AuditOperation, AuditStage, PlatformAdapter, PlatformError, TrustedA
 const TEST_SECRET: &str = "test-secret-do-not-use";
 
 /// A document field value no audit form may ever contain.
-const AUDIT_CANARY: &str = "tbv2-schema-audit-canary";
+const AUDIT_CANARY: &str = "terrabase-schema-audit-canary";
 
 fn tenant(name: &str) -> TenantId {
     TenantId::try_new(name).expect("valid tenant")
@@ -82,7 +82,7 @@ fn version(value: u64) -> SchemaVersion {
 fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    std::env::temp_dir().join(format!("tbv2-sm04-{tag}-{}-{index}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-sm04-{tag}-{}-{index}", std::process::id()))
 }
 
 fn open_engine(tag: &str) -> Engine {

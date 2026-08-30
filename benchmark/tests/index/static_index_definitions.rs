@@ -6,12 +6,12 @@
 //! options (indexing/storage/analysis), dynamic and compound fields, and
 //! map-reduce output collections are typed, versioned, fail-closed values.
 //! These tests reach the contract only through the public
-//! `terrabase_v2::index::definitions` surface, exactly as an external typed
+//! `terrabase::index::definitions` surface, exactly as an external typed
 //! operation would.
 
 use std::collections::BTreeMap;
 
-use terrabase_v2::{
+use terrabase::{
     index::definitions::{
         AggregationBinding, AggregationFunction, AnalyzerName, CompoundField,
         DefinitionDifferences, DynamicFieldRule, FieldIndexing, FieldStorage, GroupByArrayMode,

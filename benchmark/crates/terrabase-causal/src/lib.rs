@@ -1,4 +1,4 @@
-//! Deterministic causal foundations for `TerraBaseV2`.
+//! Deterministic causal foundations for `TerraBase`.
 //!
 //! This crate has no storage, transport, async-runtime, or wall-clock I/O. Callers
 //! inject physical time and membership-owned identities. The types implement the
@@ -1678,13 +1678,20 @@ pub fn canonical_hash<T: CanonicalEncode>(
         return Err(HashError::InvalidDomain);
     }
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"TerraBaseV2\0");
+    // This prefix is a persisted causal-format identifier. Product renaming
+    // must not change hashes already stored in WALs, snapshots, repairs, or
+    // backups. A future prefix requires an activated codec major and reader
+    // migration under ADR 0031.
+    hasher.update(LEGACY_CANONICAL_HASH_PREFIX);
     hasher.update(&[CODEC_VERSION]);
     hasher.update(&[domain_length]);
     hasher.update(domain.as_bytes());
     hasher.update(&value.canonical_bytes());
     Ok(*hasher.finalize().as_bytes())
 }
+
+/// Persisted canonical-hash prefix retained from the pre-rename format.
+pub const LEGACY_CANONICAL_HASH_PREFIX: &[u8] = b"TerraBaseV2\0";
 
 /// A canonical hashing request failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1879,6 +1886,27 @@ mod tests {
             ]
         );
         assert_eq!(canonical_hash("", &base), Err(HashError::InvalidDomain));
+    }
+
+    #[test]
+    fn product_rename_preserves_legacy_causal_hash_identity() {
+        assert_eq!(LEGACY_CANONICAL_HASH_PREFIX, b"TerraBaseV2\0");
+        let commit = CommitId::new(
+            DatabaseId::from_bytes([1; 16]),
+            PartitionId::new(7),
+            actor(2, 3),
+            OriginCounter::new(4).unwrap(),
+        );
+        let persisted_bytes = commit.canonical_bytes();
+        assert_eq!(CommitId::decode_canonical(&persisted_bytes), Ok(commit));
+        assert_eq!(
+            canonical_hash("commit", &commit).unwrap(),
+            [
+                0x5c, 0x35, 0x81, 0x7d, 0x47, 0xd5, 0x62, 0x93, 0x3e, 0x66, 0x31, 0x01, 0x7d, 0x4b,
+                0xee, 0x22, 0x66, 0xb1, 0x44, 0x76, 0x49, 0x9f, 0xc0, 0xba, 0x9d, 0xac, 0x81, 0x1e,
+                0x80, 0xca, 0x7d, 0x4f,
+            ]
+        );
     }
 
     #[test]

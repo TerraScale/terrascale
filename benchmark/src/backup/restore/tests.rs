@@ -30,7 +30,7 @@ fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir()
-        .join(format!("tbv2-bk02-restore-{tag}-{}-{index}", std::process::id()));
+        .join(format!("terrabase-bk02-restore-{tag}-{}-{index}", std::process::id()));
     // A recycled pid could collide with a crashed earlier run's leftover;
     // every location is test-owned, so start from a clean path.
     let _ = std::fs::remove_dir_all(&path);

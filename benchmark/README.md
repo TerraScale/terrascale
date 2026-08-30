@@ -1,6 +1,6 @@
-# TerraBaseV2
+# TerraBase
 
-TerraBaseV2 is the native Rust engine and protocol workspace for the
+TerraBase is the native Rust engine and protocol workspace for the
 TerraScale database product. It is under active development and is not a
 production or General Availability release. The repository contains meaningful
 correctness evidence, but its deterministic and loopback lanes do not qualify
@@ -14,8 +14,10 @@ Accepted architecture decisions are indexed in [docs/adr/README.md](docs/adr/REA
 
 ## Repository shape
 
-The root package is the `terrabase-v2` Rust library (`src/lib.rs`). Its public
-engine modules cover authorization, backup and restore, deletion, documents
+The root package and Rust library target are `terrabase` (`src/lib.rs`). N-1
+consumers may temporarily alias that package as dependency key `terrabase_v2`
+without retaining an old target in this repository. Its public engine modules
+cover authorization, backup and restore, deletion, documents
 and transactions, families, indexes, queries/TQL, regions, relationships,
 replication, sessions, sharding, storage, streaming, tiers, usage, and the
 platform/protocol adapter seams. The Cargo workspace also contains the native
@@ -40,7 +42,7 @@ The intended product boundary is:
 public clients / SDKs
         -> TerraScale.Database service in TerraScale.Internals (product gateway and authorization boundary)
         -> private TBEP
-        -> TerraBaseV2 engine and durable storage
+        -> TerraBase engine and durable storage
 ```
 
 The repository-local `host/`, `cli/`, and `studio/` trees are migration-source

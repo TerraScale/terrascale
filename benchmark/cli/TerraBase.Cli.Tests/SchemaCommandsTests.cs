@@ -1,5 +1,5 @@
 // <copyright file="SchemaCommandsTests.cs" company="TerraScale">
-// TerraBaseV2 (SM-04). See LICENSE.md.
+// TerraBase (SM-04). See LICENSE.md.
 // </copyright>
 
 namespace TerraBase.Cli.Tests;

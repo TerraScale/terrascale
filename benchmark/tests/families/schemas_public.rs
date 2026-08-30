@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use terrabase_v2::{
+use terrabase::{
     DocumentValue,
     families::{SchemaDefinition, SchemaFieldType, SchemaFormatError, SchemaRule, SchemaVersion},
 };
@@ -306,7 +306,7 @@ fn schema_declarations_are_bounded() {
         (0..257).map(|index| SchemaRule::Required { field: format!("field-{index}") }).collect();
     assert_eq!(
         SchemaDefinition::try_new(version(1), many_rules),
-        Err(terrabase_v2::RequestValidationError::InvalidFamilyPayload)
+        Err(terrabase::RequestValidationError::InvalidFamilyPayload)
     );
 
     let many_values: Vec<String> = (0..257).map(|index| format!("value-{index}")).collect();
@@ -315,7 +315,7 @@ fn schema_declarations_are_bounded() {
             version(1),
             vec![SchemaRule::EnumValues { field: "state".to_owned(), values: many_values }],
         ),
-        Err(terrabase_v2::RequestValidationError::InvalidFamilyPayload)
+        Err(terrabase::RequestValidationError::InvalidFamilyPayload)
     );
 
     let boundary: Vec<SchemaRule> =
@@ -332,15 +332,15 @@ fn versions_and_text_bounds_stay_inside_the_interchange_domain() {
     let above = u64::try_from(i64::MAX).expect("positive") + 1;
     assert_eq!(
         SchemaVersion::try_new(above),
-        Err(terrabase_v2::RequestValidationError::InvalidFamilyPayload)
+        Err(terrabase::RequestValidationError::InvalidFamilyPayload)
     );
     assert_eq!(
         SchemaVersion::try_new(above + 1),
-        Err(terrabase_v2::RequestValidationError::InvalidFamilyPayload)
+        Err(terrabase::RequestValidationError::InvalidFamilyPayload)
     );
     assert_eq!(
         SchemaVersion::try_new(u64::MAX),
-        Err(terrabase_v2::RequestValidationError::InvalidFamilyPayload)
+        Err(terrabase::RequestValidationError::InvalidFamilyPayload)
     );
     let edge = u64::try_from(i64::MAX).expect("positive");
     assert!(SchemaVersion::try_new(edge).is_ok(), "the i64 domain itself stays declarable");
@@ -355,7 +355,7 @@ fn versions_and_text_bounds_stay_inside_the_interchange_domain() {
                     max: None,
                 }],
             ),
-            Err(terrabase_v2::RequestValidationError::InvalidFamilyPayload),
+            Err(terrabase::RequestValidationError::InvalidFamilyPayload),
             "a minimum length above the interchange domain is rejected ({bound})"
         );
         assert_eq!(
@@ -367,7 +367,7 @@ fn versions_and_text_bounds_stay_inside_the_interchange_domain() {
                     max: Some(bound),
                 }],
             ),
-            Err(terrabase_v2::RequestValidationError::InvalidFamilyPayload),
+            Err(terrabase::RequestValidationError::InvalidFamilyPayload),
             "a maximum length above the interchange domain is rejected ({bound})"
         );
     }

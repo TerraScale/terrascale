@@ -7,7 +7,7 @@
 //! the private TBEP carry the value as the typed fixed three-byte ASCII
 //! form [`RegionCode::as_bytes`]; REST and public `MessagePack` carry the
 //! same three characters as a string via [`RegionCode::as_str`] and
-//! [`RegionCode::Display`].
+//! [`std::fmt::Display`].
 //!
 //! Parsers reject lowercase text, wrong lengths, non-ASCII text, and
 //! unregistered codes, and they never normalize input: `"gru"` is a typed

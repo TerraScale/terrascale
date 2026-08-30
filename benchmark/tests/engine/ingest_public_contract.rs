@@ -10,12 +10,12 @@
 
 use std::time::Duration;
 
-use terrabase_v2::engine::{
+use terrabase::engine::{
     BulkIngestRequest, IngestConflictMode, IngestRefusal, IngestRefusalReason,
     MAX_INGEST_BATCH_DOCUMENTS, MAX_INGEST_REFUSAL_DETAILS,
 };
-use terrabase_v2::operations::RequestValidationError;
-use terrabase_v2::types::{CollectionName, Deadline, DocumentId, LocalDurability};
+use terrabase::operations::RequestValidationError;
+use terrabase::types::{CollectionName, Deadline, DocumentId, LocalDurability};
 
 fn base_request() -> BulkIngestRequest {
     BulkIngestRequest::try_new(

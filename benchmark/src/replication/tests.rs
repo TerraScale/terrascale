@@ -46,7 +46,7 @@ use crate::types::{
 fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("tbv2-w4-repl-{tag}-{}-{index}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-w4-repl-{tag}-{}-{index}", std::process::id()))
 }
 
 /// Opens one replication member over a fresh durable Engine location.
@@ -252,7 +252,7 @@ fn local_commit_receipt_contains_no_region_or_member_facts() {
     }
     assert_eq!(
         std::any::type_name::<crate::engine::CommitReceipt>(),
-        "terrabase_v2::engine::CommitReceipt",
+        "terrabase::engine::CommitReceipt",
         "the receipt type stays owned by the engine seam"
     );
     member.close();
@@ -2043,12 +2043,8 @@ fn a_peer_stamp_beyond_the_skew_bound_converges_as_a_conflict() {
 // Region accepts the same logical write at its own two seats, and after
 // the failed Member is recovered and caught up, the degraded Region's
 // local writes resume at the full RF=2 quorum.
-#[test]
-fn member_loss_after_acknowledgement_retains_the_write_and_routes_elsewhere_until_rf2_returns() {
-    // Two Regions, two Members each on separate failure domains, one owned
-    // range per Region: both Regions carry their own local write path, so
-    // one can degrade while the other keeps serving.
-    let topology = TopologyView::new()
+fn after_ack_topology() -> TopologyView {
+    TopologyView::new()
         .with_region("r-alpha")
         .expect("valid region")
         .with_region("r-beta")
@@ -2066,25 +2062,24 @@ fn member_loss_after_acknowledgement_retains_the_write_and_routes_elsewhere_unti
         .with_owner("range-beta", "m-b1")
         .expect("valid owner")
         .validated()
-        .expect("valid topology");
-    let (dir_a1, mut m_a1) = open_member("after-ack-a1", "m-a1", &topology);
-    let (dir_a2, mut m_a2) = open_member("after-ack-a2", "m-a2", &topology);
-    let (dir_b1, mut m_b1) = open_member("after-ack-b1", "m-b1", &topology);
-    let (dir_b2, mut m_b2) = open_member("after-ack-b2", "m-b2", &topology);
-    let mut network = ReplicationNetwork::new();
+        .expect("valid topology")
+}
 
-    // The acknowledged write: a two-Member Region's quorum is both Members,
-    // so RegionQuorum is RF=2/2 — the acknowledged write already survives
-    // either Member's loss.
-    let scope_a1 = scope(&m_a1, "tenant-a");
-    m_a1.commit_write(&scope_a1, put_request("range-alpha", "op-1", "doc-1", "v1"))
+fn acknowledge_initial_after_ack_write(
+    first: &mut ReplicationMember,
+    second: &mut ReplicationMember,
+    network: &mut ReplicationNetwork,
+) {
+    let first_scope = scope(first, "tenant-a");
+    first
+        .commit_write(&first_scope, put_request("range-alpha", "op-1", "doc-1", "v1"))
         .expect("the local write commits");
+    let second_scope = scope(second, "tenant-a");
+    let mut peers = [(second, second_scope)];
     let deadline = network.now().plus_ticks(4);
-    let scope_a2 = scope(&m_a2, "tenant-a");
-    let mut peers = [(&mut m_a2, scope_a2)];
-    let acknowledged = m_a1.wait_for_acknowledgement(
-        &mut network,
-        &scope_a1,
+    let acknowledged = first.wait_for_acknowledgement(
+        network,
+        &first_scope,
         &operation("op-1"),
         AcknowledgementLevel::RegionQuorum,
         &mut peers,
@@ -2102,6 +2097,61 @@ fn member_loss_after_acknowledgement_retains_the_write_and_routes_elsewhere_unti
         ["m-a1", "m-a2"],
         "BOTH Members of the Region durably recorded the acknowledged write"
     );
+}
+
+fn assert_healthy_beta_accepts_routed_write(
+    first: &mut ReplicationMember,
+    second: &mut ReplicationMember,
+    network: &mut ReplicationNetwork,
+) {
+    let first_scope = scope(first, "tenant-a");
+    first
+        .commit_write(&first_scope, put_request("range-beta", "op-2", "doc-2", "v2"))
+        .expect("the other Region's owner commits the same logical write");
+    let second_scope = scope(second, "tenant-a");
+    let mut peers = [(second, second_scope)];
+    let deadline = network.now().plus_ticks(4);
+    let routed = first.wait_for_acknowledgement(
+        network,
+        &first_scope,
+        &operation("op-2"),
+        AcknowledgementLevel::RegionQuorum,
+        &mut peers,
+        deadline,
+    );
+    let ReplicationOutcome::Acknowledged(report) = routed else {
+        panic!("the healthy Region accepts the write at its own quorum: {routed:?}")
+    };
+    assert_eq!(report.observed(), AcknowledgementLevel::RegionQuorum);
+    let contributed = report.contributed();
+    assert_eq!(contributed.len(), 1, "one Region contributed");
+    assert_eq!(contributed[0].0.as_str(), "r-beta");
+    assert_eq!(
+        contributed[0].1.iter().map(MemberId::as_str).collect::<Vec<_>>(),
+        ["m-b1", "m-b2"],
+        "the healthy Region answers at BOTH of its seats while r-alpha is degraded"
+    );
+    let routed_documents = documents_of(first, "tenant-a");
+    assert_eq!(routed_documents.len(), 1, "the routed write is readable in r-beta");
+    assert_eq!(routed_documents[0].id().as_str(), "doc-2");
+}
+
+#[test]
+fn member_loss_after_acknowledgement_retains_the_write_and_routes_elsewhere_until_rf2_returns() {
+    // Two Regions, two Members each on separate failure domains, one owned
+    // range per Region: both Regions carry their own local write path, so
+    // one can degrade while the other keeps serving.
+    let topology = after_ack_topology();
+    let (dir_a1, mut m_a1) = open_member("after-ack-a1", "m-a1", &topology);
+    let (dir_a2, mut m_a2) = open_member("after-ack-a2", "m-a2", &topology);
+    let (dir_b1, mut m_b1) = open_member("after-ack-b1", "m-b1", &topology);
+    let (dir_b2, mut m_b2) = open_member("after-ack-b2", "m-b2", &topology);
+    let mut network = ReplicationNetwork::new();
+
+    // The acknowledged write: a two-Member Region's quorum is both Members,
+    // so RegionQuorum is RF=2/2 — the acknowledged write already survives
+    // either Member's loss.
+    acknowledge_initial_after_ack_write(&mut m_a1, &mut m_a2, &mut network);
 
     // One Member fails AFTER the acknowledgement. The scope minted before
     // the close names the engine the lost Member no longer holds.
@@ -2124,6 +2174,7 @@ fn member_loss_after_acknowledgement_retains_the_write_and_routes_elsewhere_unti
     // does not weaken its RF=2 quorum to the surviving Member, and the
     // refusal is the immediate unreachable-quorum category, not a slower
     // path and not a timeout.
+    let scope_a1 = scope(&m_a1, "tenant-a");
     m_a1.commit_write(&scope_a1, put_request("range-alpha", "op-2", "doc-2", "v2"))
         .expect("the local commit is internal progress only");
     let deadline = network.now().plus_ticks(4);
@@ -2145,35 +2196,7 @@ fn member_loss_after_acknowledgement_retains_the_write_and_routes_elsewhere_unti
     // The same logical write routes to the other selected Region, which
     // still accepts writes at its own full RF=2 quorum: r-beta's two seats
     // contribute, and the write reads back there.
-    let scope_b1 = scope(&m_b1, "tenant-a");
-    m_b1.commit_write(&scope_b1, put_request("range-beta", "op-2", "doc-2", "v2"))
-        .expect("the other Region's owner commits the same logical write");
-    let deadline = network.now().plus_ticks(4);
-    let scope_b2 = scope(&m_b2, "tenant-a");
-    let mut beta_peers = [(&mut m_b2, scope_b2)];
-    let routed = m_b1.wait_for_acknowledgement(
-        &mut network,
-        &scope_b1,
-        &operation("op-2"),
-        AcknowledgementLevel::RegionQuorum,
-        &mut beta_peers,
-        deadline,
-    );
-    let ReplicationOutcome::Acknowledged(routed_report) = routed else {
-        panic!("the healthy Region accepts the write at its own quorum: {routed:?}")
-    };
-    assert_eq!(routed_report.observed(), AcknowledgementLevel::RegionQuorum);
-    let routed_contributed = routed_report.contributed();
-    assert_eq!(routed_contributed.len(), 1, "one Region contributed");
-    assert_eq!(routed_contributed[0].0.as_str(), "r-beta");
-    assert_eq!(
-        routed_contributed[0].1.iter().map(MemberId::as_str).collect::<Vec<_>>(),
-        ["m-b1", "m-b2"],
-        "the healthy Region answers at BOTH of its seats while r-alpha is degraded"
-    );
-    let routed_documents = documents_of(&m_b1, "tenant-a");
-    assert_eq!(routed_documents.len(), 1, "the routed write is readable in r-beta");
-    assert_eq!(routed_documents[0].id().as_str(), "doc-2");
+    assert_healthy_beta_accepts_routed_write(&mut m_b1, &mut m_b2, &mut network);
 
     // The failed Member is recovered from its durable location and catches
     // up on the write it missed while gone — without duplicating the

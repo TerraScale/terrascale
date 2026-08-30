@@ -37,7 +37,7 @@ use crate::{
 fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("tbv2-gapq18-{tag}-{}-{index}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-gapq18-{tag}-{}-{index}", std::process::id()))
 }
 
 fn open_engine(tag: &str) -> (PathBuf, Engine) {

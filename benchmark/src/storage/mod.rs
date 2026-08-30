@@ -17,6 +17,7 @@
 mod codec;
 mod faults;
 mod file;
+mod frontier;
 mod intent;
 mod ledger;
 mod retained;
@@ -35,6 +36,10 @@ mod tests;
 #[cfg(test)]
 pub(crate) use faults::FaultPoint;
 pub(crate) use file::{FileStorage, StorageOpenError};
+pub(crate) use frontier::{
+    LedgerFrontierActivationError, LedgerFrontierActivationReceipt,
+    LedgerFrontierActivationRequest, LedgerFrontierStatus,
+};
 pub(crate) use intent::{CommitIntent, CommitResult, OperationResolution, StagedWrite};
 pub(crate) use root::StorageRootId;
 
@@ -157,6 +162,23 @@ pub(crate) trait StoragePort: Send {
 
     /// Returns the currently published sequence and root identity.
     fn published_state(&self) -> (StorageSequence, StorageRootId);
+
+    /// Reports whether the root-file operation-ledger frontier is inactive or
+    /// has crossed its coordinated activation boundary. Other backends do not
+    /// claim this root-format feature.
+    fn ledger_frontier_status(&self) -> LedgerFrontierStatus {
+        LedgerFrontierStatus::UnsupportedBackend
+    }
+
+    /// Activates the required root-file ledger frontier after an external
+    /// coordinator has fenced every old writer. The raw seam stays private
+    /// until the authenticated administration operation is integrated.
+    fn activate_ledger_frontier(
+        &mut self,
+        _request: &LedgerFrontierActivationRequest,
+    ) -> Result<LedgerFrontierActivationReceipt, LedgerFrontierActivationError> {
+        Err(LedgerFrontierActivationError::UnsupportedBackend)
+    }
 
     /// Runs one compaction pass (GAP-S1): checkpoint, write-ahead log
     /// reclaim, gated history reclaim with durable retained evidence, and

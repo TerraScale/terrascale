@@ -12,7 +12,7 @@
 //! no convergence fact is produced, and no multi-region or production
 //! topology capability is implied by anything below.
 
-use terrabase_v2::{
+use terrabase::{
     AcknowledgementLevel, Convergence, MemberId, RegionId, ReplicationConfig, ReplicationCursor,
     ReplicationError, ReplicationStatus, TopologyView,
 };
@@ -294,7 +294,7 @@ fn replication_cursor_starts_empty_and_reports_only_progress_facts() {
     assert_eq!(cursor.high_water(), None);
     assert_eq!(
         cursor.tenant_progress(
-            &terrabase_v2::types::TenantId::try_new("tenant-a").expect("valid tenant")
+            &terrabase::types::TenantId::try_new("tenant-a").expect("valid tenant")
         ),
         None
     );
@@ -356,14 +356,14 @@ fn topology_views_carry_monotonic_ownership_epochs() {
 fn lane_instants_and_clock_stamps_order_deterministically() {
     // The lane clock and the bounded hybrid logical clock stamps are ordered
     // values of the deterministic lane: no wall time, no sleeps.
-    let early = terrabase_v2::replication::ReplicationInstant::at_ticks(3);
+    let early = terrabase::replication::ReplicationInstant::at_ticks(3);
     let late = early.plus_ticks(2);
     assert_eq!(late.ticks(), 5);
     assert!(early < late);
 
-    let older = terrabase_v2::replication::ReplicationClockStamp::new(3, 4);
-    let newer_physical = terrabase_v2::replication::ReplicationClockStamp::new(4, 1);
-    let newer_logical = terrabase_v2::replication::ReplicationClockStamp::new(3, 5);
+    let older = terrabase::replication::ReplicationClockStamp::new(3, 4);
+    let newer_physical = terrabase::replication::ReplicationClockStamp::new(4, 1);
+    let newer_logical = terrabase::replication::ReplicationClockStamp::new(3, 5);
     assert!(older < newer_physical, "physical time orders first");
     assert!(older < newer_logical, "the logical counter orders within a tick");
     assert_eq!(older.ticks(), 3);

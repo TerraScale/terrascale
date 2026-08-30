@@ -7,7 +7,7 @@
 //! term-vector modes. Nothing here exercises search, scoring, or an index;
 //! those do not exist on this seam yet.
 
-use terrabase_v2::query::{
+use terrabase::query::{
     ANALYZER_LANGUAGE_PREFIX, ANALYZER_LANGUAGE_VERSION, Analyzer, AnalyzerError, AnalyzerKind,
     MAX_ANALYZED_VALUE_BYTES, MAX_TOKENS_PER_FIELD,
 };
@@ -46,24 +46,24 @@ fn the_sandbox_bounds_are_observable_on_the_public_path() {
     let analyzer = Analyzer::resolve("LowerCaseKeywordAnalyzer").unwrap();
     let over_input = "a".repeat(MAX_ANALYZED_VALUE_BYTES + 1);
     assert_eq!(
-        analyzer.analyze("body", &over_input, terrabase_v2::query::TermVectorMode::Frequencies),
+        analyzer.analyze("body", &over_input, terrabase::query::TermVectorMode::Frequencies),
         Err(AnalyzerError::InputTooLarge)
     );
 
     let whitespace = Analyzer::try_new(
-        AnalyzerKind::compose(terrabase_v2::query::TokenizerKind::Whitespace, Vec::new()).unwrap(),
+        AnalyzerKind::compose(terrabase::query::TokenizerKind::Whitespace, Vec::new()).unwrap(),
     )
     .unwrap();
     let over_tokens = "a ".repeat(MAX_TOKENS_PER_FIELD + 1);
     assert_eq!(
-        whitespace.analyze("body", &over_tokens, terrabase_v2::query::TermVectorMode::Frequencies),
+        whitespace.analyze("body", &over_tokens, terrabase::query::TermVectorMode::Frequencies),
         Err(AnalyzerError::TokenBoundExceeded)
     );
 }
 
 #[test]
 fn the_term_vector_contract_is_versioned_and_fails_closed_on_other_versions() {
-    use terrabase_v2::query::{TermVector, TermVectorEntry, TermVectorMode};
+    use terrabase::query::{TermVector, TermVectorEntry, TermVectorMode};
 
     let entry = TermVectorEntry::try_new("term".to_owned(), 1, Vec::new(), Vec::new())
         .expect("valid entry");
@@ -90,7 +90,7 @@ fn the_term_vector_contract_is_versioned_and_fails_closed_on_other_versions() {
 
 #[test]
 fn term_vector_modes_round_trip_the_v1_wire_names() {
-    use terrabase_v2::query::TermVectorMode;
+    use terrabase::query::TermVectorMode;
 
     for (token, mode) in [
         ("No", TermVectorMode::No),

@@ -1,4 +1,4 @@
-//! `terrabase-sync-core`: the `TerraBaseV2` sync-core seam over
+//! `terrabase-sync-core`: the `TerraBase` sync-core seam over
 //! TerraBase-native CRDT types.
 //!
 //! This crate is the engine-side half of the client sync channel behind

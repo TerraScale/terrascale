@@ -257,8 +257,8 @@ impl Workload {
         (self.index() + sample_index).is_multiple_of(2)
     }
 
-    /// The TerraBaseV2 operation this workload measures.
-    pub(crate) const fn terrabase_v2_operation(self) -> &'static str {
+    /// The TerraBase operation this workload measures.
+    pub(crate) const fn terrabase_operation(self) -> &'static str {
         match self {
             Self::DocumentRead => {
                 "Engine::read_snapshot + Transaction::read — one point read by \
@@ -334,26 +334,26 @@ impl Workload {
             }
             Self::SessionCycle => {
                 "-- one connection per cycle: CONNECT; SELECT 1; DISCARD ALL; DISCONNECT;\n-- \
-                 the un-pooled session churn cost, matching TerraBaseV2's per-session \
+                 the un-pooled session churn cost, matching TerraBase's per-session \
                  engine binding"
             }
             Self::SyncCommitToDeliveryLatency => {
                 "-- no PostgreSQL equivalent: PostgreSQL has no push-based client delivery \
                  path, and its nearest surface (LISTEN/NOTIFY) is a payload-carrying channel \
                  notification with no checkpointed delta pull, so it is not a comparable \
-                 contract; this workload compares TerraBaseV2 against its own written \
+                 contract; this workload compares TerraBase against its own written \
                  budgets and the TerraBase V1 baseline"
             }
             Self::SyncDeliveryThroughput => {
                 "-- no PostgreSQL equivalent: PostgreSQL replication (WAL streaming, logical \
                  decoding) is a different wire contract with no shared budget or delivery \
-                 acknowledgement level; this workload compares TerraBaseV2 against its own \
+                 acknowledgement level; this workload compares TerraBase against its own \
                  written budgets and the TerraBase V1 baseline"
             }
             Self::SyncBytesOnWirePerChange => {
                 "-- no PostgreSQL equivalent: PostgreSQL's replication byte counts measure a \
                  different wire contract (WAL frames, not budgeted delta envelopes), so no \
-                 shared budget exists; this workload compares TerraBaseV2 against the \
+                 shared budget exists; this workload compares TerraBase against the \
                  PD-2026-08-26-13 D1 written budgets and the TerraBase V1 baseline"
             }
             Self::SyncTriggerNotificationSize => {
@@ -390,7 +390,7 @@ impl Workload {
                 SYNC_PATH_OWNER,
             )),
             Self::SyncBytesOnWirePerChange => Some((
-                "the deterministic TerraBaseV2-side counters already exist and are pinned \
+                "the deterministic TerraBase-side counters already exist and are pinned \
                  (client link: the sync-core delta-efficiency adapter's per-change byte \
                  counts; member link: the SE-06 lane bytes-on-wire counters); the owed run \
                  is the receipted comparison alongside the PostgreSQL and TerraBase V1 \

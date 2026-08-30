@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use terrabase_v2::{
+use terrabase::{
     Cancellation, Deadline, DocumentId, RequestValidationError,
     families::RevisionPaging,
     families::revisions::{
@@ -58,7 +58,7 @@ fn database_policies_resolve_collection_then_default_then_disabled() {
     let per_collection =
         CollectionRevisionsConfiguration::try_new(Some(3), None, None, false, false)
             .expect("valid per-collection policy");
-    let users = terrabase_v2::types::CollectionName::try_new("users").expect("valid collection");
+    let users = terrabase::types::CollectionName::try_new("users").expect("valid collection");
     let configuration = RevisionsDatabaseConfiguration::try_new(
         Some(collection_policy()),
         vec![(users.clone(), per_collection)],
@@ -69,7 +69,7 @@ fn database_policies_resolve_collection_then_default_then_disabled() {
         configuration.effective(&users).expect("resolves").minimum_revisions_to_keep(),
         Some(3)
     );
-    let orders = terrabase_v2::types::CollectionName::try_new("orders").expect("valid collection");
+    let orders = terrabase::types::CollectionName::try_new("orders").expect("valid collection");
     assert_eq!(
         configuration.effective(&orders).expect("resolves default").minimum_revisions_to_keep(),
         Some(5)

@@ -1,7 +1,7 @@
-//! `TerraBaseV2`'s NATS usage boundary: KV, config sharing, and
+//! `TerraBase`'s NATS usage boundary: KV, config sharing, and
 //! discoverability only — never a data store or data-plane transport.
 //!
-//! Charter PD-2026-08-26-13 D2 and ADR 0012 D-2: within `TerraBaseV2`, NATS
+//! Charter PD-2026-08-26-13 D2 and ADR 0012 D-2: within `TerraBase`, NATS
 //! serves exactly three roles — a key-value store (`JetStream` KV) for
 //! operational key-value state, configuration sharing, and service/member
 //! discoverability — under the Orchestrator NATS spec's separation rules
@@ -44,7 +44,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 
 use crate::identity::{MemberId, RegionId, validate_identifier};
 
-/// The subject namespace prefix of `TerraBaseV2`'s NATS usage: everything the
+/// The subject namespace prefix of `TerraBase`'s NATS usage: everything the
 /// database account may touch lives under here.
 pub const DATABASE_NATS_NAMESPACE: &str = "terrabase.db";
 
@@ -64,7 +64,7 @@ pub const LEASE_TICKS: u64 = 20;
 /// (`transport::MAX_LINK_FRAMES` sized frames).
 pub const FLOW_CONTROL_CATCH_UP_BATCH_RANGE: (u32, u32) = (8, 256);
 
-/// One of the three NATS roles `TerraBaseV2` is allowed (PD-2026-08-26-13 D2).
+/// One of the three NATS roles `TerraBase` is allowed (PD-2026-08-26-13 D2).
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum NatsRole {
     /// The `JetStream` KV role: operational key-value state.
@@ -237,7 +237,7 @@ impl OperationalRecord {
     }
 }
 
-/// The named configuration documents `TerraBaseV2` shares through NATS: a
+/// The named configuration documents `TerraBase` shares through NATS: a
 /// closed set of typed settings, never free-form text.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ConfigName {
@@ -392,7 +392,7 @@ impl DiscoveryRecord {
     }
 }
 
-/// The closed value set of the NATS surface: every record `TerraBaseV2` can
+/// The closed value set of the NATS surface: every record `TerraBase` can
 /// store is one of these three shapes, and none of them carries a byte
 /// payload.
 #[derive(Clone, Debug, Eq, PartialEq)]

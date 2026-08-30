@@ -22,6 +22,9 @@ use crate::types::{
 use super::faults::FaultPoint;
 use super::{
     CompactionPolicy, FileStorage, HistoryReclaimOutcome, StoragePort,
+    frontier::{
+        LedgerFrontierActivationIdentity, LedgerFrontierActivationRequest, LedgerFrontierStatus,
+    },
     intent::{CommitIntent, CommitResult, StagedWrite},
     write_set_digest,
 };
@@ -29,7 +32,8 @@ use super::{
 fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("tbv2-gaps1-compaction-{tag}-{}-{index}", std::process::id()))
+    std::env::temp_dir()
+        .join(format!("terrabase-gaps1-compaction-{tag}-{}-{index}", std::process::id()))
 }
 
 fn tenant() -> TenantId {
@@ -78,6 +82,23 @@ fn open_storage(tag: &str) -> (PathBuf, FileStorage) {
     std::fs::remove_dir_all(&dir).ok();
     let storage = FileStorage::open(&dir).expect("opens a fresh location");
     (dir, storage)
+}
+
+fn activate_frontier(storage: &mut FileStorage, activation: &str) {
+    let expected = match storage.ledger_frontier_status() {
+        LedgerFrontierStatus::Inactive(observation) => observation,
+        status => panic!("root store is inactive before activation, got {status:?}"),
+    };
+    storage
+        .activate_ledger_frontier(&LedgerFrontierActivationRequest {
+            identity: LedgerFrontierActivationIdentity {
+                activation_id: OperationId::try_new(activation).expect("valid activation"),
+                external_fence_generation: 1,
+                external_record_digest: [0x44; 32],
+            },
+            expected,
+        })
+        .expect("frontier activates");
 }
 
 /// Seeds one store with the drill workload: two live documents, one deleted
@@ -198,6 +219,106 @@ fn reclaim_pass_truncates_the_wal_and_removes_superseded_roots() {
             )
             .is_some(),
         "the post-compaction commit's document survives the reopen"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn reclaim_refuses_before_mutation_while_a_ready_publication_needs_the_wal() {
+    let (dir, mut storage) = open_storage("pending-ready");
+    storage.arm_test_fault(FaultPoint::PointerPublish);
+    assert!(matches!(
+        storage.commit(fresh_intent(
+            &storage,
+            "op-pending",
+            vec![put(document("doc-pending", "users", "value"), ExpectedVersion::New)],
+            LocalDurability::Synced,
+        )),
+        CommitResult::Unknown(super::intent::UnknownCause::ResponseInterrupted)
+    ));
+    let wal_bytes = std::fs::metadata(dir.join("wal")).expect("WAL exists").len();
+    assert!(wal_bytes > 0, "the verified commit group awaits recovery");
+
+    assert_eq!(
+        storage.compact(compact_request(CompactionPolicy::Reclaim)).err(),
+        Some(super::compaction::CompactionError::Storage),
+        "compaction cannot discard the only resumable write set"
+    );
+    assert_eq!(
+        std::fs::metadata(dir.join("wal")).expect("WAL remains").len(),
+        wal_bytes,
+        "the refusal happens before WAL truncation"
+    );
+    drop(storage);
+
+    let reopened = FileStorage::open(&dir).expect("recovery resumes the publication");
+    let tenant = tenant();
+    let operation = OperationId::try_new("op-pending").expect("valid operation");
+    assert!(matches!(
+        reopened.resolve_operation(&tenant, &operation),
+        Some(super::intent::OperationResolution::Committed { sequence, .. })
+            if sequence == StorageSequence::new(1)
+    ));
+    let (published, _) = reopened.published_state();
+    assert!(
+        reopened
+            .read_document_at(
+                published,
+                &tenant,
+                &DocumentId::try_new("doc-pending").expect("valid document")
+            )
+            .is_some(),
+        "recovery applies the write set that compaction preserved"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn reclaim_refuses_when_a_verified_wal_commit_precedes_the_ready_record() {
+    let (dir, mut storage) = open_storage("pending-before-ready");
+    storage.arm_test_fault(FaultPoint::ReadyLedgerSync);
+    assert!(matches!(
+        storage.commit(fresh_intent(
+            &storage,
+            "op-pending",
+            vec![put(document("doc-pending", "users", "value"), ExpectedVersion::New)],
+            LocalDurability::Synced,
+        )),
+        CommitResult::Unknown(super::intent::UnknownCause::ResponseInterrupted)
+    ));
+    let wal_bytes = std::fs::metadata(dir.join("wal")).expect("WAL exists").len();
+    assert!(wal_bytes > 0, "the verified commit group awaits recovery");
+
+    assert_eq!(
+        storage.compact(compact_request(CompactionPolicy::Reclaim)).err(),
+        Some(super::compaction::CompactionError::Storage),
+        "compaction cannot rely on the Ready index alone"
+    );
+    assert_eq!(
+        std::fs::metadata(dir.join("wal")).expect("WAL remains").len(),
+        wal_bytes,
+        "the refusal preserves the pre-Ready commit group"
+    );
+    drop(storage);
+
+    let reopened = FileStorage::open(&dir).expect("recovery rolls the commit forward");
+    let tenant = tenant();
+    let operation = OperationId::try_new("op-pending").expect("valid operation");
+    assert!(matches!(
+        reopened.resolve_operation(&tenant, &operation),
+        Some(super::intent::OperationResolution::Committed { sequence, .. })
+            if sequence == StorageSequence::new(1)
+    ));
+    let (published, _) = reopened.published_state();
+    assert!(
+        reopened
+            .read_document_at(
+                published,
+                &tenant,
+                &DocumentId::try_new("doc-pending").expect("valid document")
+            )
+            .is_some(),
+        "recovery applies the preserved write set"
     );
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -635,4 +756,40 @@ fn a_killed_pass_between_the_store_and_the_journal_is_idempotent_on_retry() {
     assert_eq!(reopened.retained_state().facts.len(), 1, "no duplicate facts landed");
     assert_no_loss(&reopened);
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn retained_frontier_failure_poison_stops_before_history_rewrite_and_repairs_on_reopen() {
+    let (dir, mut storage) = open_storage("retained-frontier-failure");
+    seed(&mut storage);
+    activate_frontier(&mut storage, "activate-retained-failure");
+    let history_before = std::fs::read(dir.join("history")).expect("history reads");
+    storage.arm_test_fault(FaultPoint::RetainedFrontierSync);
+    assert!(
+        storage.compact(compact_request(CompactionPolicy::ReclaimHistory)).is_err(),
+        "frontier failure refuses the pass"
+    );
+    assert_eq!(
+        std::fs::read(dir.join("history")).expect("history rereads"),
+        history_before,
+        "history is untouched until retained bytes and their frontier both sync"
+    );
+    assert!(
+        storage.compact(compact_request(CompactionPolicy::ReclaimHistory)).is_err(),
+        "the poisoned handle performs no later compaction mutation"
+    );
+    drop(storage);
+
+    let mut reopened = FileStorage::open(&dir).expect("valid retained suffix repairs on reopen");
+    assert_eq!(
+        reopened.servable_history_start(),
+        Some(StorageSequence::new(1)),
+        "the redundant history window still serves"
+    );
+    reopened
+        .compact(compact_request(CompactionPolicy::ReclaimHistory))
+        .expect("a reopened handle completes the pass");
+    assert_eq!(reopened.retained_state().facts.len(), 1, "the scan deduplicates retry evidence");
+    assert_no_loss(&reopened);
+    std::fs::remove_dir_all(dir).ok();
 }

@@ -36,7 +36,7 @@ use crate::{
 fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("tbv2-w32-query-{tag}-{}-{index}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-w32-query-{tag}-{}-{index}", std::process::id()))
 }
 
 fn open_engine(tag: &str) -> (PathBuf, Engine) {
@@ -498,7 +498,7 @@ fn query_store_compiles_and_executes_against_supplied_snapshot() {
     assert_eq!(result.ordering().keys(), QueryOrdering::default().keys());
     assert!(result.staleness().observations().is_empty());
     assert_eq!(
-        result.index_generation().map(|reference| reference.generation()),
+        result.index_generation().map(super::result::IndexGenerationRef::generation),
         Some(ObservedGeneration::new(1, 1)),
         "the exact equality query is served by its automatic index"
     );

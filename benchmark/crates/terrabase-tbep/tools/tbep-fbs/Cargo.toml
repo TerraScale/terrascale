@@ -1,5 +1,5 @@
-# `tbep-fbs` — compiles and verifies the generated TBEP FlatBuffers
-# bindings of ADR 0025 phase 1.
+# `tbep-fbs` — compiles, verifies, and safely wraps the generated TBEP
+# FlatBuffers bindings of ADR 0025.
 #
 # Own nested workspace on purpose, exactly like `tools/tbep-gen` before
 # it: the parent `terrabase-tbep` package must not gain a `flatbuffers`
@@ -14,10 +14,9 @@
 #
 #     cargo test
 #
-# `terrabase-tbep`'s `tests/fbs_bindings.rs` drives this suite so the
-# single focused check `cargo test -p terrabase-tbep` covers it too.
-
-[workspace]
+# Root CI and `scripts/check.sh` invoke this nested manifest directly so
+# the additive package remains outside the parent workspace while its
+# receiver and pinned-regeneration gates remain mandatory.
 
 [package]
 name = "tbep-fbs"
@@ -25,7 +24,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "LicenseRef-TerraScale-Pending"
-description = "Compiles and verifies the pinned generated TBEP FlatBuffers Rust bindings (ADR 0025 phase 1)"
+description = "Verified generated TBEP FlatBuffers codec boundary (ADR 0025)"
 publish = false
 
 # The generated bindings carry `unsafe` blocks by design of the pinned
@@ -41,6 +40,12 @@ unsafe_code = "allow"
 # The pinned FlatBuffers Rust runtime, matching the pinned `flatc`
 # 25.12.19 exactly (`nixpkgs#flatbuffers`).
 flatbuffers = "=25.12.19"
+# Test-only live interop peer dependencies. This peer is qualification
+# evidence for the generated bindings and framing only; it is not a TBEP
+# production server and is never linked by `terrabase-tbep`.
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "time", "io-util"] }
 # The registry-parity suite parses `schema/tbep-registry.json` with the
 # same JSON stack as the parent crate's tests.
 serde_json = "1.0.150"

@@ -8,11 +8,11 @@
 //! proved by the in-crate session tests instead (`src/session/tests.rs`) —
 //! the same evidence split as GAP-D02's metadata contract.
 
-use terrabase_v2::session::{
+use terrabase::session::{
     DocumentChanges, FieldChange, FieldChangeKind, SessionError, SessionHookVeto, SessionOptions,
     SessionTracking, SessionTransactionMode,
 };
-use terrabase_v2::types::{CollectionName, DocumentId, DocumentValue, LocalDurability};
+use terrabase::types::{CollectionName, DocumentId, DocumentValue, LocalDurability};
 
 fn text(value: &str) -> DocumentValue {
     DocumentValue::String(value.to_owned())

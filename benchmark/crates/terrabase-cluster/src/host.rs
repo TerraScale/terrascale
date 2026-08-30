@@ -6,18 +6,19 @@
 //! fan out through [`coordinate_composed_write`] at the requested
 //! acknowledgement level, reads repair through
 //! [`quorum_read_with_repair`], and membership changes step through
-//! [`accept_epoch`] with the overlapping-quorum precondition. A backup
+//! [`terrabase_replication_core::compose::accept_epoch`] with the
+//! overlapping-quorum precondition. A backup
 //! host refuses every client write permanently at the door; both modes
 //! read (the backup is the last resort of the frozen routing order).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use terrabase::replication::{LeaderlessLevel, MemberId, RegionId, ReplicaSet};
+use terrabase::types::DocumentValue;
 use terrabase_replication_core::compose::{
     self, coordinate_composed_write, quorum_read_with_repair, ComposedWrite,
 };
-use terrabase_v2::replication::{LeaderlessLevel, MemberId, RegionId, ReplicaSet};
-use terrabase_v2::types::DocumentValue;
 
 use crate::backup::{BackupOutcome, BackupPolicy, BackupSet};
 use crate::identity::{ClusterIdentity, ClusterMode, IdentityError};
@@ -517,6 +518,8 @@ fn write_refusal_to_error(refusal: ClusterWriteRefusal) -> ClusterError {
 /// The typed refusal of a cluster-host client operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ClusterWriteRefusal {
+    /// Global durability was requested with fewer than two selected Regions.
+    InsufficientRegions,
     /// The named member is not part of this cluster.
     UnknownMember,
     /// A backup cluster's permanent write refusal, position attached.
@@ -539,6 +542,9 @@ pub enum ClusterWriteRefusal {
 impl ClusterWriteRefusal {
     fn from_coordination(error: compose::ComposedCoordinationError) -> Self {
         match error {
+            compose::ComposedCoordinationError::InsufficientRegions { .. } => {
+                Self::InsufficientRegions
+            }
             compose::ComposedCoordinationError::NotEligible { .. }
             | compose::ComposedCoordinationError::ApplyFailed { .. } => Self::ApplyFailed,
             compose::ComposedCoordinationError::QuorumNotReached { .. } => Self::QuorumNotReached,
@@ -558,15 +564,15 @@ impl ClusterWriteRefusal {
 mod tests {
     use std::collections::BTreeMap;
 
+    use terrabase::replication::{LeaderlessLevel, MemberId, RegionId, ReplicaSet};
+    use terrabase::types::DocumentValue;
     use terrabase_replication_core::compose::ComposedWrite;
-    use terrabase_v2::replication::{LeaderlessLevel, MemberId, RegionId, ReplicaSet};
-    use terrabase_v2::types::DocumentValue;
 
     use super::{ClusterHost, ClusterMode, ClusterWriteRefusal, MemberSpec};
 
     fn root(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "tbv2-cluster-host-{tag}-{}-{}",
+            "terrabase-cluster-host-{tag}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

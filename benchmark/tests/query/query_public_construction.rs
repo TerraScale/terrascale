@@ -8,7 +8,7 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use terrabase_v2::{
+use terrabase::{
     Cancellation, Deadline, Engine, EngineConfig, QueryInput, QueryInputError,
     RequestValidationError, TenantId, TqlQueryText,
     query::{
@@ -20,7 +20,8 @@ use terrabase_v2::{
 };
 
 fn location(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("tbv2-w32-integration-query-{tag}-{}", std::process::id()))
+    std::env::temp_dir()
+        .join(format!("terrabase-w32-integration-query-{tag}-{}", std::process::id()))
 }
 
 fn open_engine(tag: &str) -> (PathBuf, Engine) {
@@ -74,7 +75,7 @@ fn typed_clauses_validate_and_expose_read_only_parts() {
     let query = spec();
     assert_eq!(query.tenant_claim(), &tenant("tenant-a"));
     assert_eq!(
-        query.source().collection().map(terrabase_v2::types::CollectionName::as_str),
+        query.source().collection().map(terrabase::types::CollectionName::as_str),
         Some("users")
     );
     assert_eq!(query.predicate().conditions().len(), 2);
@@ -182,7 +183,7 @@ fn compile_produces_an_immutable_plan_from_public_input() {
     let plan = store.compile(QueryInput::typed(spec())).expect("compiles");
     assert_eq!(plan.tenant_claim(), Some(&tenant("tenant-a")));
     assert_eq!(
-        plan.source().collection().map(terrabase_v2::types::CollectionName::as_str),
+        plan.source().collection().map(terrabase::types::CollectionName::as_str),
         Some("users")
     );
     assert_eq!(plan.ordering().keys().len(), 1);
@@ -259,10 +260,7 @@ fn v1_query_text_public_constructor_validates_and_rejects() {
         "oversized identifiers are rejected as invalid identifiers"
     );
     let oversized = format!("from users where {}", "a = 1 and ".repeat(4096));
-    assert!(
-        oversized.len() > terrabase_v2::MAX_QUERY_TEXT_BYTES,
-        "test text must exceed the bound"
-    );
+    assert!(oversized.len() > terrabase::MAX_QUERY_TEXT_BYTES, "test text must exceed the bound");
     assert_eq!(
         TqlQueryText::try_new(&oversized),
         Err(QueryInputError::UnsupportedGrammar),

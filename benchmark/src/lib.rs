@@ -1,4 +1,4 @@
-//! `TerraBaseV2` engine.
+//! `TerraBase` engine.
 //!
 //! The workspace charter defines the native product boundary and qualification
 //! rules. Accepted architecture is not an implementation or performance claim.
@@ -12,6 +12,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The current repository status. This is metadata, not a database feature.
 pub const STATUS: &str = "w3-1-storage-engine";
+
+pub mod product_identity;
 
 pub mod adapters;
 pub mod authorization;

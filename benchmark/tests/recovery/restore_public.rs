@@ -1,8 +1,8 @@
 //! Public-construction restore integration tests (BK-02).
 //!
 //! These tests use only public construction: `EngineConfig::durable`,
-//! `Engine::open`, the public `terrabase_v2::backup` seam, and the restore
-//! entries on the crate-root `terrabase_v2::RestorePlan`. `TenantScope` has
+//! `Engine::open`, the public `terrabase::backup` seam, and the restore
+//! entries on the crate-root `terrabase::RestorePlan`. `TenantScope` has
 //! no public constructor by design (Platform creates it after
 //! authorization), so the data-bearing restore drills are proved by the
 //! in-crate suite at `src/backup/restore/tests.rs`; this file proves what an
@@ -16,11 +16,11 @@
 
 use std::path::PathBuf;
 
-use terrabase_v2::backup::{BackupError, BackupPlan, RestorePlan, run_backup};
-use terrabase_v2::{Engine, EngineConfig};
+use terrabase::backup::{BackupError, BackupPlan, RestorePlan, run_backup};
+use terrabase::{Engine, EngineConfig};
 
 fn location(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("tbv2-bk02-restore-int-{tag}-{}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-bk02-restore-int-{tag}-{}", std::process::id()))
 }
 
 fn open_engine(tag: &str) -> (PathBuf, Engine) {

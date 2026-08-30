@@ -13,7 +13,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use terrabase_v2::replication::{MemberId, RegionId};
+use terrabase::replication::{MemberId, RegionId};
 
 /// The two active acknowledgement levels owned by this boundary.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -314,6 +314,13 @@ impl PartialObservation {
 /// Why an acknowledgement attempt did not produce a durability receipt.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DurabilityFailure {
+    /// `GlobalDurable` needs at least two selected active Regions.
+    InsufficientRegions {
+        /// The number of selected active Regions in the accepted membership.
+        selected: usize,
+        /// The minimum number required by the durability contract.
+        minimum: usize,
+    },
     /// No required store was observed before the deterministic deadline.
     Timeout(PartialObservation),
     /// At least one store was observed, but the requested boundary was not.
@@ -330,7 +337,9 @@ impl DurabilityFailure {
     pub fn observation(&self) -> Option<&PartialObservation> {
         match self {
             Self::Timeout(observation) | Self::Partial(observation) => Some(observation),
-            Self::InvalidCoordinator { .. } | Self::StaleOperation { .. } => None,
+            Self::InsufficientRegions { .. }
+            | Self::InvalidCoordinator { .. }
+            | Self::StaleOperation { .. } => None,
         }
     }
 
@@ -455,7 +464,7 @@ impl DurabilityCoordinator {
         if self
             .membership
             .members_of(&ack.region)
-            .map_or(true, |members| !members.contains(&ack.member))
+            .is_none_or(|members| !members.contains(&ack.member))
         {
             return Err(DurabilityError::WrongSeat);
         }
@@ -569,6 +578,13 @@ impl DurabilityCoordinator {
             }
         }
 
+        if level == DurabilityLevel::GlobalDurable {
+            let selected = self.membership.regions().len();
+            if selected < 2 {
+                return Err(DurabilityFailure::InsufficientRegions { selected, minimum: 2 });
+            }
+        }
+
         let mut regions = vec![local_region.clone()];
         if level == DurabilityLevel::GlobalDurable {
             regions.extend(
@@ -617,7 +633,7 @@ impl DurabilityCoordinator {
     ) -> Result<DurabilityReceipt, DurabilityFailure> {
         let observation = self.observation(operation, local_region, level);
         let stored = self.stored.get(operation);
-        let local_ok = self.regional_ok(stored, &local_region);
+        let local_ok = self.regional_ok(stored, local_region);
         let global_ok = level == DurabilityLevel::RegionalDurable
             || self
                 .membership
@@ -735,8 +751,14 @@ mod tests {
     }
 
     #[test]
-    fn global_requires_all_regions_for_one_two_and_three_region_shapes() {
-        for names in [&["r1"][..], &["r1", "r2"][..], &["r1", "r2", "r3"][..]] {
+    fn global_refuses_one_region_and_requires_all_regions_for_larger_shapes() {
+        let mut one = DurabilityCoordinator::new(membership(&["r1"]));
+        assert_eq!(
+            one.submit("op", &id("m0a"), DurabilityLevel::GlobalDurable),
+            Err(DurabilityFailure::InsufficientRegions { selected: 1, minimum: 2 })
+        );
+
+        for names in [&["r1", "r2"][..], &["r1", "r2", "r3"][..]] {
             let mut coordinator = DurabilityCoordinator::new(membership(names));
             let receipt =
                 coordinator.submit("op", &id("m0a"), DurabilityLevel::GlobalDurable).unwrap();

@@ -1,12 +1,13 @@
 [package]
-name = "terrabase-v2"
+name = "terrabase"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "LicenseRef-TerraScale-Pending"
-description = "TerraBaseV2 Rust engine foundation"
-repository = "ssh://git@git.terrascale.tech/TerraScale/TerraBaseV2.git"
+description = "TerraBase Rust engine foundation"
+repository = "ssh://git@git.terrascale.tech/TerraScale/TerraBase.git"
 readme = "README.md"
+publish = false
 
 [workspace]
 resolver = "3"
@@ -20,8 +21,10 @@ members = [
   "crates/terrabase-replication-core",
   "crates/terrabase-tbep",
 ]
+exclude = ["crates/terrabase-tbep/tools/tbep-fbs"]
 
 [lib]
+name = "terrabase"
 path = "src/lib.rs"
 
 [dependencies]
@@ -41,3 +44,7 @@ debug = 1
 status = "engine-under-active-development"
 status_note = "Native storage, engine, query, automatic index, replication, sync, backup, and recovery modules remain under qualification. See README 'Honest implementation status' for current limits."
 license_gate = "pending-before-release"
+canonical_product_name = "TerraBase"
+canonical_package_name = "terrabase"
+previous_crate_name = "terrabase_v2"
+source_compatibility = "N-1 consumers may alias package terrabase as dependency key terrabase_v2"

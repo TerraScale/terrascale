@@ -1,5 +1,5 @@
 // <copyright file="SchemaSurfaceTests.cs" company="TerraScale">
-// TerraBaseV2 (SM-04). See LICENSE.md.
+// TerraBase (SM-04). See LICENSE.md.
 // </copyright>
 
 namespace TerraBase.Api.Tests;
@@ -207,7 +207,7 @@ public sealed class SchemaSurfaceTests
         await using var engine = new ScriptedTbepEngine(path);
         await using var host = await HostHarness.StartAsync(new EngineOptions { SocketPath = path });
         var caller = host.As("backend-operator", "tenant-a");
-        const string canary = "tbv2-schema-audit-canary";
+        const string canary = "terrabase-schema-audit-canary";
 
         await HostHarness.SendAsync(caller, "/v1/schemas/users/validate", new Dictionary<string, object> { ["document"] = new Dictionary<string, object> { ["email"] = canary } });
         await HostHarness.SendAsync(

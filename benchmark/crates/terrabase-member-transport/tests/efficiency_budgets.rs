@@ -73,8 +73,8 @@ fn allocated_bytes() -> u64 {
 fn temp_dir(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dir =
-        std::env::temp_dir().join(format!("tbv2-se07-eff-{tag}-{}-{index}", std::process::id()));
+    let dir = std::env::temp_dir()
+        .join(format!("terrabase-se07-eff-{tag}-{}-{index}", std::process::id()));
     std::fs::remove_dir_all(&dir).ok();
     dir
 }

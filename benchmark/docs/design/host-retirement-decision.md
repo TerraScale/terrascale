@@ -2,7 +2,8 @@
 
 Status: analysis record, 2026-08-29. This document gates a later `host/`
 deletion packet; it changes no code. Parents: workspace `GOAL.md`
-("System ownership" — `TerraScale.Database` is the sole TBEP gateway; P6
+("System ownership" — the `TerraScale.Internals`-owned
+`TerraScale.Database` API is the sole TBEP gateway; P6
 "move the public product boundary"), `host/README.md` (marked
 migration-source at 661ce9a), and the native-codec test alignment at
 cddadfd.
@@ -62,7 +63,7 @@ authentication; callers present `X-TB-Principal`/`X-TB-Tenant` headers
 injected by a trusted local backend. `host/README.md` states this must be
 removed after contract migration and must never become public.
 
-## 2. What `TerraScale.Database` covers now
+## 2. What the standalone `TerraScale.Database` snapshot covered
 
 `/home/mariogk/Projects/TerraScale/TerraScale.Database/src/**` — six
 committed slices (a74d6bc bootstrap, b7e666b `document.read` vertical
@@ -166,8 +167,9 @@ The deletion packet may not merge until every item below is true.
    machine-checked C# registry artifact is the host copy, enforced by
    `crates/terrabase-tbep/tests/registry_drift.rs`
    (`committed_csharp_bindings_equal_regeneration`, lines 48–61).
-   Nothing verifies `TerraScale.Database`'s vendored copy against the
-   schema. Add a gate in `TerraScale.Database` CI (compare the vendored
+   Nothing in this recorded snapshot verified the Database API's vendored copy
+   against the schema. Add a gate in the `TerraScale.Internals/src/Database`
+   CI lane (compare the vendored
    `Generated/TbepRegistry.g.cs` against a pinned copy of
    `crates/terrabase-tbep/schema/tbep-registry.json` output, or an
    equivalent cross-repo pin) before deletion.
@@ -176,8 +178,9 @@ The deletion packet may not merge until every item below is true.
    `crates/terrabase-tbep/tools/tbep-gen/src/main.rs` (writes that path),
    and the drift test above must stop referencing `host/`. Cross-repo
    reality: the engine CI checkout does not contain
-   `TerraScale.Database`, so the C# drift assertion must move to the
-   Database side (item 1) or the generator drops its C# output target.
+   `TerraScale.Internals`, so the C# drift assertion must move to the
+   Internals-owned Database side (item 1) or the generator drops its C# output
+   target.
    This needs an explicit decision in the deletion packet.
 3. **CLI re-pointed.** `cli/TerraBase.Cli/TerraBase.Cli.csproj` line 32
    references `host/TerraBase.Protocol`, and the CLI's default `--mode
@@ -190,7 +193,8 @@ The deletion packet may not merge until every item below is true.
    `host/TerraBase.Api[.Tests]`. Those steps must be removed in the same
    change as the deletion; the CLI steps stay only if item 3 resolves.
 5. **Conformance coverage re-homed, not dropped.** All of the following
-   must exist in `TerraScale.Database` (or, where noted, engine-side)
+   must exist in `TerraScale.Internals/src/Database` (or, where noted,
+   engine-side)
    before deletion:
    - SE-04 sync golden vectors (the 9 JSON files under
      `crates/terrabase-sync-core/vectors/terrascale.sync.v2/`, currently
@@ -217,8 +221,9 @@ The deletion packet may not merge until every item below is true.
 
 ## 6. Recommended sequencing
 
-- **Phase A — build the receiving surface (no deletion).** In
-  `TerraScale.Database`: extend the channel to multiplexed calls with a
+- **Phase A — build the receiving surface (no deletion).** In the
+  `TerraScale.Internals`-owned Database API under `src/Database`: extend the
+  channel to multiplexed calls with a
   notification path and negotiation; land the typed operation families
   behind `/api/v1` with the grant/OIDC admission path; land the sync and
   stream surfaces; add a real-engine test harness (the host's
@@ -285,8 +290,9 @@ Documentation and evidence citations:
 - Engine source comments: `src/engine/ingest.rs:67,76`,
   `src/query/bulk.rs:136`, `src/benchmarks/lane.rs:386` — comment-level
   only.
-- Cross-repository: `TerraScale.DotNet/docs/sync/terrascale-sync-v2-client.md:21`
-  cites `TerraBaseV2/host/TerraBase.Api` as its harness.
+- Cross-repository: the current
+  `TerraScale.DotNet/docs/sync/terrascale-sync-v2-client.md` harness citation
+  must name `TerraBase/host/TerraBase.Api` while the migration host remains.
 
 Known inconsistencies the deletion packet must not trust:
 
@@ -307,7 +313,8 @@ Known inconsistencies the deletion packet must not trust:
 
 ## 8. Verification commands used for this record
 
-- `git -C TerraBaseV2 show --stat 661ce9a cddadfd` — migration-source and
+- After the repository rename, the historical revision check is run as
+  `git -C TerraBase show --stat 661ce9a cddadfd` — migration-source and
   codec-alignment commits.
 - `grep -n "MapGet\|MapPost\|MapPut\|MapDelete" host/TerraBase.Api/TypedApi.cs`
   — route inventory.
@@ -324,8 +331,10 @@ Known inconsistencies the deletion packet must not trust:
   the CLI test project references and the `studio/` citations now listed
   in §7; the original filter would have missed them.
 - `grep -rn "UsageEndpoints.Map\|GrantVerifier"` across
-  `TerraScale.Database/src` — confirmed usage route and grant verifier
-  are unwired.
+  `TerraScale.Internals/src/Database` — confirms the current Database API's
+  usage route and grant-verifier wiring state. The historical result recorded
+  above—that both were unwired—remains tied to the standalone repository
+  snapshot.
 
 No build or test commands were run; this packet changes documentation
 only.

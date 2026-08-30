@@ -1,5 +1,5 @@
 // <copyright file="EngineProbesTests.cs" company="TerraScale">
-// TerraBaseV2 (SE-08). See LICENSE.md.
+// TerraBase (SE-08). See LICENSE.md.
 // </copyright>
 
 namespace TerraBase.Api.Tests;

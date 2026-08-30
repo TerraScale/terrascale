@@ -9,7 +9,7 @@
 
 use std::time::Duration;
 
-use terrabase_v2::{
+use terrabase::{
     Cancellation, Deadline, DocumentId, RequestValidationError,
     families::lifecycle::{LifecyclePassStaged, VisibilityRead, VisibilityState},
 };

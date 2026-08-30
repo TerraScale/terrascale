@@ -6,7 +6,7 @@ status: accepted
 
 ## Decision
 
-TerraBaseV2 implements an independent Rust ordered-segment storage engine. It
+TerraBase implements an independent Rust ordered-segment storage engine. It
 adopts the useful organization of a mutable memory segment, immutable frozen
 segments, immutable disk segments, sparse indexes, and background merge. It
 does not embed or port ZoneTree or another database storage format.

@@ -122,7 +122,7 @@ impl CollectionRevisionsConfiguration {
     /// Returns [`RequestValidationError::InvalidFamilyPayload`] for a zero
     /// minimum-keep count, a negative minimum age, a zero per-update
     /// deletion cap, or a count limit above the reserved record's i64
-    /// ceiling ([`MAX_RECORDED_COUNT`]).
+    /// ceiling (`MAX_RECORDED_COUNT`).
     pub fn try_new(
         minimum_revisions_to_keep: Option<u64>,
         minimum_revision_age_to_keep_ms: Option<i64>,
@@ -2503,7 +2503,7 @@ mod tests {
     fn location(tag: &str) -> PathBuf {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let index = COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("tbv2-gapf05-{tag}-{}-{index}", std::process::id()))
+        std::env::temp_dir().join(format!("terrabase-gapf05-{tag}-{}-{index}", std::process::id()))
     }
 
     fn open_engine(tag: &str) -> (PathBuf, Engine) {

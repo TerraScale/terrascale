@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "LicenseRef-TerraScale-Pending"
-description = "TerraBaseV2 native identities, causal contexts, HLC, and canonical codec"
+description = "TerraBase native identities, causal contexts, HLC, and canonical codec"
 publish = false
 
 [lints.rust]

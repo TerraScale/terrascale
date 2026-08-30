@@ -181,7 +181,8 @@ mod tests {
     use super::*;
 
     fn store_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("tbv2-lsm-obj-{tag}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("terrabase-lsm-obj-{tag}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir

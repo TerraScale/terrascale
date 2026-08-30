@@ -11,7 +11,7 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use terrabase_v2::{
+use terrabase::{
     Cancellation, Deadline, Engine, EngineConfig, QueryInput, RequestValidationError, TenantId,
     query::{
         CounterInclude, DocumentInclude, IncludeClause, IncludePath, MAX_INCLUDE_COUNTER_NAMES,
@@ -23,7 +23,8 @@ use terrabase_v2::{
 };
 
 fn location(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("tbv2-q07-includes-integration-{tag}-{}", std::process::id()))
+    std::env::temp_dir()
+        .join(format!("terrabase-q07-includes-integration-{tag}-{}", std::process::id()))
 }
 
 fn open_engine(tag: &str) -> (PathBuf, Engine) {
@@ -146,7 +147,7 @@ fn time_series_includes_validate_their_series_name() {
     let ranged = TimeSeriesInclude::try_new(
         path("owner"),
         "cpu",
-        Some(terrabase_v2::families::TimeSeriesRange::try_new(10, 20).expect("valid range")),
+        Some(terrabase::families::TimeSeriesRange::try_new(10, 20).expect("valid range")),
     )
     .expect("valid ranged series");
     assert_eq!(ranged.range().map(|range| (range.start(), range.end())), Some((10, 20)));
@@ -226,7 +227,7 @@ fn a_compiled_plan_carries_the_frozen_include_clause_list() {
     // result would report is constructible and empty.
     let plain = store.compile(QueryInput::Typed(spec())).expect("compiles");
     assert!(plain.includes().is_empty());
-    assert!(terrabase_v2::query::IncludeSet::default().is_empty());
+    assert!(terrabase::query::IncludeSet::default().is_empty());
 
     let _ = std::fs::remove_dir_all(dir);
 }

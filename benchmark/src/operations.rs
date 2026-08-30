@@ -392,7 +392,7 @@ impl PublicOperation {
 
 /// A typed request to declare, replace, or clear one collection's schema.
 ///
-/// The schema arrives as a [`SchemaDefinition`] — the typed, versioned,
+/// The schema arrives as a [`crate::families::SchemaDefinition`] — the typed, versioned,
 /// bounded rule set of the schema model — never as bytes, text, or a raw
 /// frame body, so the generic family byte path cannot express it and this
 /// constructor cannot smuggle one. A `None` schema clears the collection's
@@ -637,7 +637,7 @@ impl MigrationStatusRequest {
 
 /// A typed request to compute one migration contract's dry run.
 ///
-/// The contract is the typed [`SchemaMigration`] of the migration model; the
+/// The contract is the typed [`crate::families::migrations::SchemaMigration`] of the migration model; the
 /// answer is the plan with its evidence, and nothing is mutated.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MigrationDryRunRequest {

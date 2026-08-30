@@ -162,11 +162,11 @@ transports the range.
 ## 6. SSD-usage accounting (100 GB program budget)
 
 This contract is recorded here and in the workspace charter; the
-program budget for TerraBaseV2 work on this host is 100 GB
+program budget for TerraBase work on this host is 100 GB
 (100,000,000,000 allocated bytes) covering the repository, Rust build
 outputs, WAL/segment data, test and benchmark datasets, caches,
 temporary files, receipts, and any local S3 emulator attributable to
-TerraBaseV2.
+TerraBase.
 
 - Every storage-intensive task records SSD usage before it starts,
   monitors while running, and records after cleanup (a three-line
@@ -177,6 +177,6 @@ TerraBaseV2.
 - Each task reserves its worst-case next batch against the remaining
   budget so a checkpoint cannot overshoot the ceiling. 100 GB is an
   absolute ceiling, not a cleanup trigger.
-- Cleanup touches only TerraBaseV2-owned paths; retained evidence,
+- Cleanup touches only TerraBase-owned paths; retained evidence,
   user files, sibling repositories, and unrelated caches are never
   deleted.

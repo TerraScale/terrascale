@@ -16,18 +16,17 @@
 //! - the **lane configuration** and V1's recorded-run minimums, the
 //!   warm-up discipline, and the order alternation that cancels
 //!   first-run/second-run bias ([`lane`]);
-//! - the **pinned reference identities** — the TerraBase V1 source pin and
-//!   the decided PostgreSQL pin with its full server and client
-//!   configuration — plus the honest status of a reference that did not run
-//!   ([`reference`]);
+//! - the **pinned PostgreSQL reference identity** — the decided PostgreSQL
+//!   pin with its full server and client configuration — plus the honest
+//!   status of a reference that did not run ([`reference`]);
 //! - the **workload mapping as data**: each comparable workload's
-//!   TerraBaseV2 operation and PostgreSQL equivalent, so the mapping
+//!   TerraBase operation and PostgreSQL equivalent, so the mapping
 //!   document is generated from the same source the driver uses
 //!   ([`lane::Workload`]) — including the sync-path workload class
 //!   (PD-2026-08-26-05 D4, PD-2026-08-26-13 D1:
 //!   [`lane::Workload::SYNC_PATH`]), whose four workloads are declared
 //!   open slots with named owners rather than silently absent;
-//! - the **V2-side driver** that really runs the engine workloads and
+//! - the **TerraBase-side driver** that really runs the engine workloads and
 //!   returns exact, deterministic counters ([`driver`]);
 //! - the **receipt renderer** that emits the canonical objective-status
 //!   line every performance receipt must carry ([`record`]);
@@ -39,9 +38,9 @@
 //!
 //! ## What this adapter does not do
 //!
-//! It holds no PostgreSQL client and no V1 server: the engine workspace
-//! adds no external dependency, so the reference *sides* of a lane run are
-//! driven by the operator from the pinned identities in [`reference`]. A
+//! It holds no PostgreSQL client or external reference server: the engine
+//! workspace adds no external dependency, so the operator drives the reference
+//! side of a lane run from the pinned identity in [`reference`]. A
 //! reference that did not execute is recorded as `Unrun` with the concrete
 //! environment gap and a named owner — never as a number, never as a silent
 //! skip, and never as a hidden weakening of the gate.
@@ -72,7 +71,7 @@
 //! without active auto indexes), which the SE-15 gate reads and whose
 //! objective status is still fail-closed to `inconclusive`.
 
-#![allow(clippy::doc_markdown)] // dense with the proper nouns PostgreSQL and TerraBaseV2
+#![allow(clippy::doc_markdown)] // dense with the proper nouns PostgreSQL and TerraBase
 
 mod driver;
 mod gates;

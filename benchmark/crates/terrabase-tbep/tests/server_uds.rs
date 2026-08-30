@@ -11,6 +11,7 @@
 //! bound path. The QUIC binding is deferred per PD-2026-08-26-11 D1;
 //! this suite is the local link class's evidence.
 
+use std::collections::VecDeque;
 use std::io::Read as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::net::UnixStream;
@@ -54,6 +55,7 @@ struct Fixture {
     socket: PathBuf,
     stream: UnixStream,
     correlation: u64,
+    pending: VecDeque<TbepFrame>,
 }
 
 impl Fixture {
@@ -63,7 +65,7 @@ impl Fixture {
         let server = TbepServer::bind(&socket, Arc::new(SyncDeliveryHost::new(9)))
             .expect("the UDS listener binds");
         let stream = UnixStream::connect(&socket).expect("the client connects");
-        Self { server, socket, stream, correlation: 0 }
+        Self { server, socket, stream, correlation: 0, pending: VecDeque::new() }
     }
 
     fn send(&mut self, frame: &TbepFrame) {
@@ -76,6 +78,13 @@ impl Fixture {
     }
 
     fn receive(&mut self) -> TbepFrame {
+        if let Some(frame) = self.pending.pop_front() {
+            return frame;
+        }
+        self.receive_from_stream()
+    }
+
+    fn receive_from_stream(&mut self) -> TbepFrame {
         TbepFrame::read_stream(&mut self.stream)
             .expect("the stream stays healthy")
             .expect("a frame arrives")
@@ -88,7 +97,7 @@ impl Fixture {
         self.send(frame);
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
-            let answer = self.receive();
+            let answer = self.receive_from_stream();
             if answer.causation() == causation {
                 return answer;
             }
@@ -99,6 +108,7 @@ impl Fixture {
                 "an unexpected solicited frame arrived: {:?}",
                 answer.kind()
             );
+            self.pending.push_back(answer);
             assert!(std::time::Instant::now() < deadline, "the answer never arrived");
         }
     }

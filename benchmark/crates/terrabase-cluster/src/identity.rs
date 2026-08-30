@@ -6,9 +6,9 @@
 //! identity document is content-hashed, quorum-pinned, and verified at
 //! every member start and join. `backup` is terminal — no promote,
 //! convert, re-role, or mode-change operation exists anywhere, and a
-//! mode attempt fails with the typed [`ModeImmutable`] error (the
+//! mode attempt fails with the typed [`IdentityError::ModeImmutable`] error (the
 //! wire's `backup_cluster_immutable`), distinct from the write refusal
-//! [`ClusterReadOnly`] (`backup_cluster_read_only`) every client
+//! [`IdentityError::ClusterReadOnly`] (`backup_cluster_read_only`) every client
 //! mutation on a backup member answers with, its replication position
 //! attached.
 
@@ -246,7 +246,7 @@ mod tests {
 
     fn dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "tbv2-cluster-identity-{tag}-{}-{}",
+            "terrabase-cluster-identity-{tag}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

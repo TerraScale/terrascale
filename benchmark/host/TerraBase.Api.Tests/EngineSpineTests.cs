@@ -1,8 +1,10 @@
 // <copyright file="EngineSpineTests.cs" company="TerraScale">
-// TerraBaseV2 (SE-08). See LICENSE.md.
+// TerraBase (SE-08). See LICENSE.md.
 // </copyright>
 
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 
 namespace TerraBase.Api.Tests;
 
@@ -192,46 +194,46 @@ public sealed class EngineNegotiationTests
     [Test]
     public async Task TheClientNegotiatesVersionAndCapabilitiesWithTheRealEngine()
     {
-    var location = Location();
-    var socket = Path.Combine(Path.GetTempPath(), $"tbep-negotiate-{Guid.NewGuid():N}.sock");
-    var process = await StartAsync(socket, location);
-    try
-    {
-        await using var client = TbepClient.Connect(socket);
+        var location = Location();
+        var socket = Path.Combine(Path.GetTempPath(), $"tbep-negotiate-{Guid.NewGuid():N}.sock");
+        var process = await StartAsync(socket, location);
+        try
+        {
+            await using var client = TbepClient.Connect(socket);
 
-        // The highest common version and the known capabilities are
-        // accepted; the unknown one is ignored, never refused.
-        var negotiated = await client.NegotiateAsync([9, 2, 1], ["query-surface", "quantum-tunneling"]);
-        await Assert.That(negotiated.SelectedVersion).IsEqualTo((ushort)1);
-        await Assert.That(negotiated.AcceptedCapabilities).IsEquivalentTo(["query-surface"]);
+            // The highest common version and the known capabilities are
+            // accepted; the unknown one is ignored, never refused.
+            var negotiated = await client.NegotiateAsync([9, 2, 1], ["query-surface", "quantum-tunneling"]);
+            await Assert.That(negotiated.SelectedVersion).IsEqualTo((ushort)1);
+            await Assert.That(negotiated.AcceptedCapabilities).IsEquivalentTo(["query-surface"]);
 
-        // The channel still operates after negotiating.
-        await client.BindChannelAsync("backend", "tenant-a");
-        var read = await client.DocumentReadAsync("orders", "order-none");
-        await Assert.That(read.Found).IsFalse();
-    }
-    finally
-    {
-        await StopAsync(process);
-        Directory.Delete(location, recursive: true);
-    }
+            // The channel still operates after negotiating.
+            await client.BindChannelAsync("backend", "tenant-a");
+            var read = await client.DocumentReadAsync("orders", "order-none");
+            await Assert.That(read.Found).IsFalse();
+        }
+        finally
+        {
+            await StopAsync(process);
+            Directory.Delete(location, recursive: true);
+        }
 
-    // A version the server cannot speak fails closed with the typed
-    // error before any operation frame runs.
-    var mismatchSocket = Path.Combine(Path.GetTempPath(), $"tbep-mismatch-{Guid.NewGuid():N}.sock");
-    var mismatchLocation = Location();
-    var mismatch = await StartAsync(mismatchSocket, mismatchLocation);
-    try
-    {
-        await using var client = TbepClient.Connect(mismatchSocket);
-        await Assert.That(async () => await client.NegotiateAsync([2, 3], [])).Throws<TbepException>();
+        // A version the server cannot speak fails closed with the typed
+        // error before any operation frame runs.
+        var mismatchSocket = Path.Combine(Path.GetTempPath(), $"tbep-mismatch-{Guid.NewGuid():N}.sock");
+        var mismatchLocation = Location();
+        var mismatch = await StartAsync(mismatchSocket, mismatchLocation);
+        try
+        {
+            await using var client = TbepClient.Connect(mismatchSocket);
+            await Assert.That(async () => await client.NegotiateAsync([2, 3], [])).Throws<TbepException>();
+        }
+        finally
+        {
+            await StopAsync(mismatch);
+            Directory.Delete(mismatchLocation, recursive: true);
+        }
     }
-    finally
-    {
-        await StopAsync(mismatch);
-        Directory.Delete(mismatchLocation, recursive: true);
-    }
-}
 }
 
 /// <summary>
@@ -307,7 +309,7 @@ public sealed class EngineTierTests
             }
 
             process.Dispose();
-        
+
             Directory.Delete(location, recursive: true);
         }
     }
@@ -327,31 +329,85 @@ public sealed class EngineQuicTests
         return dir;
     }
 
+    private static X509Certificate2 IssueWorkloadCertificate(
+        X509Certificate2 issuer,
+        string subject,
+        Oid purpose,
+        bool server)
+    {
+        using var key = RSA.Create(2048);
+        var request = new CertificateRequest(
+            subject,
+            key,
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1);
+        request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
+        request.CertificateExtensions.Add(new X509KeyUsageExtension(
+            X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment,
+            true));
+        request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(new OidCollection { purpose }, true));
+        if (server)
+        {
+            var names = new SubjectAlternativeNameBuilder();
+            names.AddDnsName("localhost");
+            request.CertificateExtensions.Add(names.Build());
+        }
+
+        var serial = RandomNumberGenerator.GetBytes(16);
+        serial[0] &= 0x7f;
+        serial[^1] |= 1;
+        DateTimeOffset issuerNotBefore = issuer.NotBefore.ToUniversalTime();
+        DateTimeOffset issuerNotAfter = issuer.NotAfter.ToUniversalTime();
+        using var issued = request.Create(
+            issuer,
+            issuerNotBefore.AddSeconds(1),
+            issuerNotAfter.AddSeconds(-1),
+            serial);
+        return issued.CopyWithPrivateKey(key);
+    }
+
     /// <summary>The spine over QUIC: bind, commit with receipt, read back.</summary>
     [Test]
     [System.Runtime.Versioning.SupportedOSPlatform("linux")]
     public async Task TheClientDrivesTheRealEngineOverQuicTls()
     {
-        // The row provisions its own self-signed identity; the Rust
-        // process reads the PEM pair we write.
+        // The row provisions its own CA and distinct engine and gateway
+        // workload identities. The Rust process trusts only the row CA.
         var home = Path.Combine(Path.GetTempPath(), $"tbep-quic-identity-{Guid.NewGuid():N}");
-        using var rsa = System.Security.Cryptography.RSA.Create(2048);
-        var request = new System.Security.Cryptography.X509Certificates.CertificateRequest(
-            "CN=tbep-quic-row",
-            rsa,
-            System.Security.Cryptography.HashAlgorithmName.SHA256,
-            System.Security.Cryptography.RSASignaturePadding.Pkcs1);
-        var names = new System.Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder();
-        names.AddDnsName("localhost");
-        request.CertificateExtensions.Add(names.Build());
-        using var certificate = request.CreateSelfSigned(
+        using var rootKey = RSA.Create(2048);
+        var rootRequest = new CertificateRequest(
+            "CN=tbep-quic-row-root",
+            rootKey,
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1);
+        rootRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
+        rootRequest.CertificateExtensions.Add(new X509KeyUsageExtension(
+            X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign,
+            true));
+        using var root = rootRequest.CreateSelfSigned(
             DateTimeOffset.UtcNow.AddMinutes(-5),
             DateTimeOffset.UtcNow.AddDays(1));
+        using var serverCertificate = IssueWorkloadCertificate(
+            root,
+            "CN=tbep-engine",
+            new Oid("1.3.6.1.5.5.7.3.1", "Server Authentication"),
+            server: true);
+        using var clientCertificate = IssueWorkloadCertificate(
+            root,
+            "CN=database-gateway",
+            new Oid("1.3.6.1.5.5.7.3.2", "Client Authentication"),
+            server: false);
         Directory.CreateDirectory(home);
         var certPem = Path.Combine(home, "cert.pem");
         var keyPem = Path.Combine(home, "key.pem");
-        await File.WriteAllTextAsync(certPem, certificate.ExportCertificatePem());
-        await File.WriteAllTextAsync(keyPem, rsa.ExportPkcs8PrivateKeyPem());
+        var rootPem = Path.Combine(home, "client-root.pem");
+        await File.WriteAllTextAsync(certPem, serverCertificate.ExportCertificatePem());
+        using (var serverKey = serverCertificate.GetRSAPrivateKey())
+        {
+            await File.WriteAllTextAsync(keyPem, serverKey!.ExportPkcs8PrivateKeyPem());
+        }
+
+        await File.WriteAllTextAsync(rootPem, root.ExportCertificatePem());
 
         var location = Location();
         var socket = Path.Combine(Path.GetTempPath(), $"tbep-quic-row-{Guid.NewGuid():N}.sock");
@@ -362,7 +418,7 @@ public sealed class EngineQuicTests
             StartInfo = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = binary,
-                Arguments = $"{socket} 1 engine:{location} quic:{port}:{certPem}:{keyPem}",
+                Arguments = $"{socket} 1 engine:{location} quic:{port}:{certPem}:{keyPem}:{rootPem}",
                 RedirectStandardOutput = true,
                 RedirectStandardInput = true,
                 RedirectStandardError = true,
@@ -389,7 +445,11 @@ public sealed class EngineQuicTests
                     "this host carries no QUIC platform support (msquic)");
             }
 
-            await using var client = await TerraBase.Protocol.TbepQuic.ConnectAsync("localhost", port, trustServerCertificate: true);
+            await using var client = await TerraBase.Protocol.TbepQuic.ConnectAsync(
+                "127.0.0.1",
+                port,
+                clientCertificate,
+                trustServerCertificate: true);
             await client.BindChannelAsync("backend", "tenant-a");
 
             var write = await client.DocumentWriteAsync(

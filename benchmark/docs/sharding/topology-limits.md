@@ -1,4 +1,4 @@
-# TerraBaseV2 topology limits
+# TerraBase topology limits
 
 Status: current accepted envelope and unqualified calibration.
 

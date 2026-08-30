@@ -6,10 +6,11 @@
 
 use std::path::PathBuf;
 
-use terrabase_v2::{Engine, EngineConfig, engine::EngineConfigError};
+use terrabase::{Engine, EngineConfig, engine::EngineConfigError};
 
 fn location(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("tbv2-w31-integration-storage-{tag}-{}", std::process::id()))
+    std::env::temp_dir()
+        .join(format!("terrabase-w31-integration-storage-{tag}-{}", std::process::id()))
 }
 
 #[test]
@@ -39,7 +40,7 @@ fn relative_locations_are_accepted_as_durable_directories() {
     // absolute temp-dir paths only. If a test here ever adopts a
     // working-directory-relative path, it would break under this chdir; keep
     // every other fixture absolute.
-    let relative = format!("tbv2-w31-relative-{}", std::process::id());
+    let relative = format!("terrabase-w31-relative-{}", std::process::id());
     let base = std::env::temp_dir().join(&relative);
     std::fs::remove_dir_all(&base).ok();
     let previous = std::env::current_dir().expect("reads the working directory");

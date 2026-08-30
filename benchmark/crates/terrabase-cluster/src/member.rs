@@ -5,7 +5,7 @@
 //! member serves client writes and reads through the leaderless
 //! coordinators, and a BACKUP member receives replication while
 //! refusing every client mutation permanently — the typed
-//! [`MutationRefusal::ClusterReadOnly`] carrying its replication
+//! [`MutationRefusal`] carrying its replication
 //! position, the frozen backup-cluster contract §3 word for word. A
 //! backup member never mints a writer identity and never votes.
 
@@ -120,8 +120,8 @@ impl ClusterMember {
         &mut self,
         operation: &str,
         document: &str,
-        body: &std::collections::BTreeMap<String, terrabase_v2::types::DocumentValue>,
-    ) -> Result<terrabase_v2::CommitReceipt, MemberError> {
+        body: &std::collections::BTreeMap<String, terrabase::types::DocumentValue>,
+    ) -> Result<terrabase::CommitReceipt, MemberError> {
         if self.mode() == ClusterMode::Backup {
             // The permanent refusal: the backup never serves a client
             // mutation, whatever the operation, forever.
@@ -144,8 +144,8 @@ impl ClusterMember {
         &mut self,
         operation: &str,
         document: &str,
-        body: &std::collections::BTreeMap<String, terrabase_v2::types::DocumentValue>,
-    ) -> Result<terrabase_v2::CommitReceipt, MemberError> {
+        body: &std::collections::BTreeMap<String, terrabase::types::DocumentValue>,
+    ) -> Result<terrabase::CommitReceipt, MemberError> {
         self.composed_mut()
             .accept_put(operation, document, body)
             .map_err(|_| MemberError::StateRefused)
@@ -161,7 +161,7 @@ impl ClusterMember {
         &mut self,
         operation: &str,
         document: &str,
-    ) -> Result<terrabase_v2::CommitReceipt, MemberError> {
+    ) -> Result<terrabase::CommitReceipt, MemberError> {
         self.composed_mut()
             .accept_delete(operation, document)
             .map_err(|_| MemberError::StateRefused)
@@ -204,7 +204,7 @@ impl ClusterMember {
     ) -> Result<
         std::collections::BTreeMap<
             String,
-            std::collections::BTreeMap<String, terrabase_v2::types::DocumentValue>,
+            std::collections::BTreeMap<String, terrabase::types::DocumentValue>,
         >,
         MemberError,
     > {
@@ -222,7 +222,7 @@ impl ClusterMember {
         &mut self,
         document: &str,
     ) -> Result<
-        Option<std::collections::BTreeMap<String, terrabase_v2::types::DocumentValue>>,
+        Option<std::collections::BTreeMap<String, terrabase::types::DocumentValue>>,
         MemberError,
     > {
         self.composed_mut().visible(document).map_err(|_| MemberError::StateRefused)
@@ -247,14 +247,14 @@ pub enum MemberError {
 mod tests {
     use std::collections::BTreeMap;
 
-    use terrabase_v2::types::DocumentValue;
+    use terrabase::types::DocumentValue;
 
     use super::{ClusterMember, ClusterMode, MemberError};
     use crate::identity::IdentityError;
 
     fn location(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "tbv2-cluster-member-{tag}-{}-{}",
+            "terrabase-cluster-member-{tag}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

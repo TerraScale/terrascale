@@ -2,7 +2,7 @@ name: terrabase checks
 
 on:
   push:
-    branches: [develop]
+    branches: [develop, main]
   pull_request:
 
 jobs:
@@ -15,6 +15,15 @@ jobs:
         with:
           toolchain: 1.97.1
           components: rustfmt, clippy
+      - name: Product-name migration gate
+        run: |
+          python3 -m unittest scripts/test_product_name_check.py
+          python3 scripts/check_product_name.py --tracked-only
+      - name: FlatBuffers receiver and regeneration drift
+        run: |
+          cargo fmt --manifest-path crates/terrabase-tbep/tools/tbep-fbs/Cargo.toml -- --check
+          cargo test --manifest-path crates/terrabase-tbep/tools/tbep-fbs/Cargo.toml --locked
+          cargo clippy --manifest-path crates/terrabase-tbep/tools/tbep-fbs/Cargo.toml --all-targets --locked -- -D warnings
       - name: Format
         run: cargo fmt --all -- --check
       - name: Build
@@ -32,16 +41,20 @@ jobs:
       - name: Documentation
         run: cargo doc --workspace --no-deps --locked
       - name: License metadata
-        run: python3 scripts/check_license.py
+        run: |
+          python3 -m unittest scripts/test_check_license.py
+          python3 scripts/check_license.py
+      - name: Release license admission
+        if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
+        env:
+          TERRABASE_TRUSTED_APPROVAL_SHA256: ${{ secrets.TERRABASE_TRUSTED_APPROVAL_SHA256 }}
+        run: python3 scripts/check_license.py --release
       - name: Secret scan
         run: ./scripts/check_secrets.sh
+      - name: Install pinned cargo-deny
+        run: cargo install cargo-deny --version 0.20.2 --locked
       - name: Dependency, license, and advisory audit
-        run: |
-          if command -v cargo-deny >/dev/null 2>&1; then
-            cargo deny check
-          else
-            echo "cargo-deny unavailable on this runner; audit recorded as unrun"
-          fi
+        run: cargo deny check
 
   # AC-8: the cross-language product is covered by one required gate.
   # C#/.NET client-facing projects (protocol client, API host, CLI) and

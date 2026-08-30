@@ -16,7 +16,7 @@ use crate::types::{
 /// Creates one fresh LSM location directory.
 pub(crate) fn location(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "tbv2-lsm-{tag}-{}-{}",
+        "terrabase-lsm-{tag}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

@@ -514,6 +514,10 @@ pub(super) fn read_cold_segment_entries(
 /// Decodes and verifies the immutable segment format from an object-store
 /// response. This mirrors the on-disk reader's checks without creating a
 /// temporary file (cold reads must not mutate `NVMe` merely to be correct).
+#[allow(
+    clippy::too_many_lines,
+    reason = "cold reads verify the complete immutable segment in one ordered pass"
+)]
 fn decode_segment_bytes(
     bytes: &[u8],
     expected_id: u64,
@@ -527,7 +531,7 @@ fn decode_segment_bytes(
     }
     let id = u64::from_le_bytes(bytes[8..16].try_into().expect("eight bytes"));
     let level = u16::from_le_bytes(bytes[16..18].try_into().expect("two bytes"));
-    if id != expected_id || level != expected_level {
+    if id != expected_id || level != expected_level || bytes[18..20] != [0_u8; 2] {
         return Err(ObjectStoreError::ChecksumMismatch);
     }
     let crc_start = bytes.len().checked_sub(8).ok_or(ObjectStoreError::ChecksumMismatch)?;
@@ -556,11 +560,19 @@ fn decode_segment_bytes(
     // Validate the sparse section too, so a malformed index cannot make a
     // later read silently omit records.
     let mut sparse_reader = codec::Reader::new(&bytes[sparse_offset..fixed_start]);
-    let sparse_count = sparse_reader.read_u32().ok_or(ObjectStoreError::ChecksumMismatch)?;
+    let sparse_count = sparse_reader.read_u32().ok_or(ObjectStoreError::ChecksumMismatch)? as usize;
+    if sparse_count > 1_000_000 || sparse_count > sparse_reader.remaining() / 12 {
+        return Err(ObjectStoreError::ChecksumMismatch);
+    }
+    let mut sparse = Vec::with_capacity(sparse_count.min(4096));
     for _ in 0..sparse_count {
         let key_len = sparse_reader.read_u32().ok_or(ObjectStoreError::ChecksumMismatch)? as usize;
-        sparse_reader.take(key_len).ok_or(ObjectStoreError::ChecksumMismatch)?;
-        sparse_reader.read_u64().ok_or(ObjectStoreError::ChecksumMismatch)?;
+        if key_len > MAX_KEY_BOUND {
+            return Err(ObjectStoreError::ChecksumMismatch);
+        }
+        let key = sparse_reader.take(key_len).ok_or(ObjectStoreError::ChecksumMismatch)?.to_vec();
+        let offset = sparse_reader.read_u64().ok_or(ObjectStoreError::ChecksumMismatch)?;
+        sparse.push((key, offset));
     }
     if sparse_reader.remaining() != 0
         || min_key.len() > MAX_KEY_BOUND
@@ -570,19 +582,49 @@ fn decode_segment_bytes(
     }
     let mut reader = codec::Reader::new(&bytes[20..sparse_offset]);
     let mut entries = Vec::with_capacity(entry_count.min(bytes.len()));
+    let mut offsets = Vec::with_capacity(entry_count.min(bytes.len()));
     while reader.remaining() > 0 {
+        let consumed = bytes[20..sparse_offset].len() - reader.remaining();
+        let offset = 20_u64
+            .checked_add(u64::try_from(consumed).map_err(|_| ObjectStoreError::ChecksumMismatch)?)
+            .ok_or(ObjectStoreError::ChecksumMismatch)?;
         let key_len = reader.read_u32().ok_or(ObjectStoreError::ChecksumMismatch)? as usize;
+        if key_len > MAX_KEY_BOUND {
+            return Err(ObjectStoreError::ChecksumMismatch);
+        }
         let key = reader.take(key_len).ok_or(ObjectStoreError::ChecksumMismatch)?;
         let sequence = reader.read_u64().ok_or(ObjectStoreError::ChecksumMismatch)?;
-        let deletion = reader.read_u8().ok_or(ObjectStoreError::ChecksumMismatch)? != 0;
+        let deletion = match reader.read_u8().ok_or(ObjectStoreError::ChecksumMismatch)? {
+            0 => false,
+            1 => true,
+            _ => return Err(ObjectStoreError::ChecksumMismatch),
+        };
         let value_len = reader.read_u32().ok_or(ObjectStoreError::ChecksumMismatch)? as usize;
         let value = reader.take(value_len).ok_or(ObjectStoreError::ChecksumMismatch)?;
-        entries.push(Entry {
-            key: super::internal::InternalKey::decode(key, sequence, deletion),
-            value: value.to_owned(),
-        });
+        let key = super::internal::InternalKey::decode(key, sequence, deletion)
+            .ok_or(ObjectStoreError::ChecksumMismatch)?;
+        let entry = Entry { key, value: value.to_owned() };
+        if !super::persisted_entry_is_semantically_valid(&entry) {
+            return Err(ObjectStoreError::ChecksumMismatch);
+        }
+        entries.push(entry);
+        offsets.push(offset);
     }
-    if entries.len() != entry_count {
+    let actual_min = entries.first().map_or_else(Vec::new, |entry| entry.key.user_key().to_vec());
+    let actual_max = entries.last().map_or_else(Vec::new, |entry| entry.key.user_key().to_vec());
+    let expected_sparse = entries
+        .iter()
+        .zip(offsets)
+        .enumerate()
+        .filter(|(index, _)| index % 32 == 0)
+        .map(|(_, (entry, offset))| (entry.key.user_key().to_vec(), offset))
+        .collect::<Vec<_>>();
+    if entries.len() != entry_count
+        || entries.windows(2).any(|pair| pair[0].key >= pair[1].key)
+        || actual_min != min_key
+        || actual_max != max_key
+        || sparse != expected_sparse
+    {
         return Err(ObjectStoreError::ChecksumMismatch);
     }
     Ok(entries)

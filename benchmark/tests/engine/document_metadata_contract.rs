@@ -1,10 +1,10 @@
 //! Public construction tests for native document-version contracts.
 
-use terrabase_v2::engine::{
+use terrabase::engine::{
     ConditionalLoadError, DocumentHead, DocumentVersionContract, DocumentVersionContractError,
     HeadCondition,
 };
-use terrabase_v2::replication::ReplicationClockStamp;
+use terrabase::replication::ReplicationClockStamp;
 
 fn contract(version: u64, sequence: u64) -> DocumentVersionContract {
     DocumentVersionContract::try_new(version, sequence, ReplicationClockStamp::new(0, 0))
@@ -52,7 +52,7 @@ fn conditional_load_errors_are_typed() {
     assert_eq!(ConditionalLoadError::Missing, ConditionalLoadError::Missing);
     assert_eq!(ConditionalLoadError::Stale { current }, ConditionalLoadError::Stale { current });
     assert_eq!(
-        ConditionalLoadError::Engine(terrabase_v2::EngineError::StorageFailure),
-        ConditionalLoadError::Engine(terrabase_v2::EngineError::StorageFailure)
+        ConditionalLoadError::Engine(terrabase::EngineError::StorageFailure),
+        ConditionalLoadError::Engine(terrabase::EngineError::StorageFailure)
     );
 }

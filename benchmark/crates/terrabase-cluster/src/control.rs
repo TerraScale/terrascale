@@ -1283,12 +1283,12 @@ mod tests {
         // topology.
         use crate::host::{ClusterHost, MemberSpec};
         use crate::identity::ClusterMode;
+        use terrabase::replication::LeaderlessLevel;
+        use terrabase::types::DocumentValue;
         use terrabase_replication_core::compose::ComposedWrite;
-        use terrabase_v2::replication::LeaderlessLevel;
-        use terrabase_v2::types::DocumentValue;
 
         let dir = std::env::temp_dir().join(format!(
-            "tbv2-cluster-control-dataplane-{}-{}",
+            "terrabase-cluster-control-dataplane-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

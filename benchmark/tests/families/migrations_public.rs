@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use terrabase_v2::families::{
+use terrabase::families::{
     SchemaDefinition, SchemaFieldType, SchemaRule, SchemaVersion,
     migrations::{
         Coercion, FieldOutcome, FieldTransform, MigrationError, RollbackBlockedCause,
@@ -20,8 +20,8 @@ fn version(value: u64) -> SchemaVersion {
     SchemaVersion::try_new(value).expect("valid version")
 }
 
-fn object(fields: &[(&str, terrabase_v2::DocumentValue)]) -> terrabase_v2::DocumentValue {
-    terrabase_v2::DocumentValue::Object(
+fn object(fields: &[(&str, terrabase::DocumentValue)]) -> terrabase::DocumentValue {
+    terrabase::DocumentValue::Object(
         fields
             .iter()
             .map(|(key, value)| ((*key).to_owned(), value.clone()))
@@ -29,12 +29,12 @@ fn object(fields: &[(&str, terrabase_v2::DocumentValue)]) -> terrabase_v2::Docum
     )
 }
 
-fn text(value: &str) -> terrabase_v2::DocumentValue {
-    terrabase_v2::DocumentValue::String(value.to_owned())
+fn text(value: &str) -> terrabase::DocumentValue {
+    terrabase::DocumentValue::String(value.to_owned())
 }
 
-fn integer(value: i64) -> terrabase_v2::DocumentValue {
-    terrabase_v2::DocumentValue::Integer(value)
+fn integer(value: i64) -> terrabase::DocumentValue {
+    terrabase::DocumentValue::Integer(value)
 }
 
 fn users_target(to: u64) -> SchemaDefinition {
@@ -49,8 +49,8 @@ fn users_target(to: u64) -> SchemaDefinition {
     .expect("valid target")
 }
 
-fn users_collection() -> terrabase_v2::types::CollectionName {
-    terrabase_v2::types::CollectionName::try_new("users").expect("valid collection")
+fn users_collection() -> terrabase::types::CollectionName {
+    terrabase::types::CollectionName::try_new("users").expect("valid collection")
 }
 
 #[test]

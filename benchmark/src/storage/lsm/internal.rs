@@ -16,7 +16,7 @@
 //! keys order ascending, sequences order descending, so the newest version of
 //! a user key is always the first a merged scan observes.
 
-use crate::types::{CollectionName, DocumentId, TenantId};
+use crate::types::{CollectionName, DocumentId, OperationId, TenantId};
 
 use super::super::codec;
 
@@ -188,10 +188,67 @@ impl InternalKey {
         self.deletion
     }
 
-    /// Decodes a key read from a segment or WAL frame.
-    pub(super) fn decode(bytes: &[u8], sequence: u64, deletion: bool) -> Self {
-        Self { bytes: bytes.to_vec(), sequence, deletion }
+    /// Decodes and semantically validates a key read from a segment or WAL
+    /// frame. A checksummed frame is not trusted to invent unknown keyspaces,
+    /// malformed identifiers, or a history key that disagrees with its
+    /// internal sequence.
+    pub(super) fn decode(bytes: &[u8], sequence: u64, deletion: bool) -> Option<Self> {
+        let tag = *bytes.first()?;
+        let valid = if tag == Keyspace::Documents.tag() {
+            valid_document_key(&bytes[1..])
+        } else if tag == Keyspace::Ledger.tag() {
+            !deletion && valid_ledger_key(&bytes[1..])
+        } else if tag == Keyspace::History.tag() {
+            !deletion
+                && bytes.len() == 9
+                && u64::from_be_bytes(bytes[1..].try_into().ok()?) == sequence
+        } else if tag == Keyspace::Meta.tag() {
+            !deletion && valid_meta_key(&bytes[1..])
+        } else {
+            false
+        };
+        valid.then(|| Self { bytes: bytes.to_vec(), sequence, deletion })
     }
+}
+
+fn valid_document_key(bytes: &[u8]) -> bool {
+    let parts = bytes.split(|byte| *byte == 0).collect::<Vec<_>>();
+    if parts.len() != 4 || !parts[3].is_empty() {
+        return false;
+    }
+    let Ok(tenant) = std::str::from_utf8(parts[0]) else {
+        return false;
+    };
+    let Ok(collection) = std::str::from_utf8(parts[1]) else {
+        return false;
+    };
+    let Ok(document) = std::str::from_utf8(parts[2]) else {
+        return false;
+    };
+    TenantId::try_new(tenant).is_ok()
+        && CollectionName::try_new(collection).is_ok()
+        && DocumentId::try_new(document).is_ok()
+}
+
+fn valid_ledger_key(bytes: &[u8]) -> bool {
+    let mut reader = codec::Reader::new(bytes);
+    let Some(tenant) = reader.read_string() else {
+        return false;
+    };
+    let Some(operation) = reader.read_string() else {
+        return false;
+    };
+    reader.remaining() == 0
+        && TenantId::try_new(&tenant).is_ok()
+        && OperationId::try_new(&operation).is_ok()
+}
+
+fn valid_meta_key(bytes: &[u8]) -> bool {
+    let mut reader = codec::Reader::new(bytes);
+    let Some(label) = reader.read_string() else {
+        return false;
+    };
+    reader.remaining() == 0 && !label.is_empty() && label.len() <= 4096
 }
 
 /// The exclusive upper bound of the documents keyspace for one tenant: the
@@ -260,5 +317,24 @@ mod tests {
         assert!(key.user_key() < bound.as_slice());
         let foreign = InternalKey::document(&tenant("u"), &collection("a"), &document("a"), 1);
         assert!(bound.as_slice() < foreign.user_key());
+    }
+
+    #[test]
+    fn hostile_decoded_keys_reject_unknown_or_inconsistent_semantics() {
+        assert!(InternalKey::decode(&[0xff], 1, false).is_none());
+        assert!(
+            InternalKey::decode(&[Keyspace::Documents.tag(), b't', 0, b'c', 0], 1, false).is_none()
+        );
+
+        let mut ledger = InternalKey::ledger(&tenant("t"), "op", 1).user_key().to_vec();
+        ledger.push(0);
+        assert!(InternalKey::decode(&ledger, 1, false).is_none());
+        assert!(
+            InternalKey::decode(InternalKey::ledger(&tenant("t"), "op", 1).user_key(), 1, true)
+                .is_none()
+        );
+
+        assert!(InternalKey::decode(InternalKey::history(7).user_key(), 8, false).is_none());
+        assert!(InternalKey::decode(InternalKey::history(7).user_key(), 7, true).is_none());
     }
 }

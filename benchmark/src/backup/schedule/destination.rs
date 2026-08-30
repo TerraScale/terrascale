@@ -137,7 +137,7 @@ impl DestinationConfig {
         self.validate()?;
         std::fs::create_dir_all(&self.root).map_err(|_| DestinationError::Unavailable)?;
         let index = PROBE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let probe = self.root.join(format!(".tbv2-probe-{}-{index}", std::process::id()));
+        let probe = self.root.join(format!(".terrabase-probe-{}-{index}", std::process::id()));
         std::fs::write(&probe, b"probe")
             .and_then(|()| std::fs::remove_file(&probe))
             .map_err(|_| DestinationError::Unavailable)

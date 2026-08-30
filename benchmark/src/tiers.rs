@@ -461,7 +461,7 @@ mod tests {
 
     fn engine(tag: &str) -> Engine {
         let dir = std::env::temp_dir().join(format!(
-            "tbv2-tiers-{tag}-{}-{}",
+            "terrabase-tiers-{tag}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

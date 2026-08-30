@@ -102,7 +102,7 @@ fn document_for_shard(topology: &ShardTopology, shard: ShardId) -> Document {
 }
 
 fn location(tag: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("tbv2-sh05-{tag}-{}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-sh05-{tag}-{}", std::process::id()))
 }
 
 fn open_engine(tag: &str, name: &str) -> Engine {

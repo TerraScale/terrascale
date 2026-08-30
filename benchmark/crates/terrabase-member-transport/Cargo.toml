@@ -13,7 +13,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "LicenseRef-TerraScale-Pending"
-description = "TerraBaseV2 member transport: versioned fail-closed member envelopes over in-process lanes and engine QUIC sockets; NATS never carries member frames"
+description = "TerraBase member transport: versioned fail-closed member envelopes over in-process lanes and engine QUIC sockets; NATS never carries member frames"
 publish = false
 
 # Own workspace root: stays out of the engine workspace without any

@@ -28,7 +28,7 @@ use crate::types::{
 fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("tbv2-w31-engine-{tag}-{}-{index}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-w31-engine-{tag}-{}-{index}", std::process::id()))
 }
 
 fn open_engine(tag: &str) -> (PathBuf, Engine) {
@@ -368,11 +368,10 @@ fn torn_trailing_wal_frame_is_truncated_at_recovery_and_data_survives() {
     );
     engine.shutdown().expect("shuts down");
 
-    // Flip the last byte of the log: an interrupted append of the final frame.
+    // Cut the last byte of the log: an interrupted append of the final frame.
     let wal = dir.join("wal");
     let mut bytes = std::fs::read(&wal).expect("wal reads");
-    let last = bytes.len() - 1;
-    bytes[last] = bytes[last].wrapping_add(1);
+    bytes.pop().expect("the final frame has payload bytes");
     std::fs::write(&wal, bytes).expect("wal rewrites");
 
     let reopened = reopen_engine(&dir);
@@ -388,6 +387,34 @@ fn torn_trailing_wal_frame_is_truncated_at_recovery_and_data_survives() {
         other => panic!("the surviving commit must resolve as committed, got {other:?}"),
     }
     reopened.shutdown().expect("shuts down");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn complete_lsm_wal_checksum_failure_fails_engine_open_closed() {
+    let (dir, engine) = open_engine("final-wal-checksum");
+    commit_put(
+        &engine,
+        "tenant-a",
+        "op-first",
+        "doc-1",
+        "v1",
+        ExpectedVersion::New,
+        LocalDurability::Written,
+    );
+    engine.shutdown().expect("shuts down");
+
+    let wal = dir.join("wal");
+    let mut bytes = std::fs::read(&wal).expect("wal reads");
+    let last = bytes.last_mut().expect("the final frame has payload bytes");
+    *last = last.wrapping_add(1);
+    std::fs::write(&wal, bytes).expect("wal rewrites");
+
+    assert_eq!(
+        Engine::open(EngineConfig::durable(&dir).expect("durable")).err(),
+        Some(EngineOpenError::FormatMismatch),
+        "a complete final frame may have been acknowledged and cannot be truncated as torn"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -437,13 +464,13 @@ fn failed_wal_append_rolls_back_to_the_last_good_offset() {
 }
 
 #[test]
-fn mid_publication_failure_never_reuses_a_storage_sequence() {
+fn mid_publication_failure_blocks_a_later_branch_until_recovery() {
     let (dir, engine) = open_root_engine("sequence-reuse");
     // Commit A fails after its WAL commit group is durable (step 6 fault), so
     // the log already names sequence 1 while nothing published.
     engine.arm_storage_fault(FaultPoint::ReadyLedgerSync);
     assert_eq!(
-        rejected(commit_put(
+        unknown(commit_put(
             &engine,
             "tenant-a",
             "op-a",
@@ -451,12 +478,36 @@ fn mid_publication_failure_never_reuses_a_storage_sequence() {
             "a",
             ExpectedVersion::New,
             LocalDurability::Synced,
+        ))
+        .reason(),
+        UnknownReason::ResponseInterrupted
+    );
+    // B cannot publish from the old table while A's verified group still
+    // awaits recovery. Doing so would create a sibling sequence-2 root that
+    // omits A while recovery later reports A as committed.
+    assert_eq!(
+        rejected(commit_put(
+            &engine,
+            "tenant-a",
+            "op-b",
+            "doc-b",
+            "b",
+            ExpectedVersion::New,
+            LocalDurability::Synced,
         )),
         CommitError::StorageFailure
     );
-    // Commit B then succeeds and must not reuse sequence 1.
+    engine.shutdown().expect("shuts down");
+
+    // Normal reopen, with the manifest untouched, rolls A forward first.
+    // Only then may B publish as A's successor.
+    let reopened = reopen_root_engine(&dir);
+    assert!(
+        read_document(&reopened, "tenant-a", "doc-a").is_some(),
+        "A's recovered resolution and data must agree"
+    );
     let receipt = committed(commit_put(
-        &engine,
+        &reopened,
         "tenant-a",
         "op-b",
         "doc-b",
@@ -464,17 +515,10 @@ fn mid_publication_failure_never_reuses_a_storage_sequence() {
         ExpectedVersion::New,
         LocalDurability::Synced,
     ));
-    assert_eq!(receipt.sequence().get(), 2, "a failed group's sequence is never reused");
-    engine.shutdown().expect("shuts down");
-
-    // Reopen with the manifest gone: the published state is rebuilt from the
-    // write-ahead log, where both groups live. Replay must apply both in
-    // sequence order and serve B's root, never first-wins.
-    std::fs::remove_file(dir.join("manifest")).expect("manifest removes");
-    let reopened = reopen_root_engine(&dir);
+    assert_eq!(receipt.sequence().get(), 2, "recovery preserves the sequence watermark");
     assert!(
         read_document(&reopened, "tenant-a", "doc-b").is_some(),
-        "the later committed operation must survive replay, not be shadowed by the failed one"
+        "B publishes after A instead of replacing it"
     );
     let scope = tenant_scope(&reopened, "tenant-a");
     match reopened.resolve_commit(&scope, operation("op-b")).expect("resolves") {
@@ -633,7 +677,7 @@ fn roll_forward_digest_lets_a_same_identity_retry_replay_after_reopen() {
     let (dir, engine) = open_root_engine("roll-forward-digest");
     engine.arm_storage_fault(FaultPoint::ReadyLedgerSync);
     assert_eq!(
-        rejected(commit_put(
+        unknown(commit_put(
             &engine,
             "tenant-a",
             "op-a",
@@ -641,8 +685,9 @@ fn roll_forward_digest_lets_a_same_identity_retry_replay_after_reopen() {
             "a",
             ExpectedVersion::New,
             LocalDurability::Synced,
-        )),
-        CommitError::StorageFailure
+        ))
+        .reason(),
+        UnknownReason::ResponseInterrupted
     );
     drop(engine);
 
@@ -751,7 +796,35 @@ fn unknown_commit_resolves_from_the_durable_operation_ledger() {
         }
         other => panic!("expected a committed resolution, got {other:?}"),
     }
+    assert_eq!(
+        rejected(commit_put(
+            &engine,
+            "tenant-a",
+            "op-2",
+            "doc-2",
+            "later",
+            ExpectedVersion::New,
+            LocalDurability::Synced,
+        )),
+        CommitError::StorageFailure,
+        "a later commit waits until recovery records op-1's terminal binding"
+    );
     drop(engine);
+
+    let reopened = reopen_root_engine(&dir);
+    assert!(read_document(&reopened, "tenant-a", "doc-1").is_some());
+    let later = committed(commit_put(
+        &reopened,
+        "tenant-a",
+        "op-2",
+        "doc-2",
+        "later",
+        ExpectedVersion::New,
+        LocalDurability::Synced,
+    ));
+    assert_eq!(later.sequence().get(), 2);
+    assert!(read_document(&reopened, "tenant-a", "doc-2").is_some());
+    reopened.shutdown().expect("shuts down");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -797,7 +870,7 @@ fn ready_to_publish_ledger_record_is_durable_before_pointer_replacement() {
         ExpectedVersion::New,
         LocalDurability::Synced,
     );
-    assert_eq!(rejected(outcome), CommitError::StorageFailure);
+    assert_eq!(unknown(outcome).reason(), UnknownReason::ResponseInterrupted);
     assert!(
         read_document(&engine, "tenant-a", "doc-1").is_none(),
         "the pointer must not be replaced before the ledger record is durable"
@@ -819,7 +892,7 @@ fn ready_to_publish_ledger_record_is_durable_before_pointer_replacement() {
         ExpectedVersion::New,
         LocalDurability::Synced,
     );
-    assert_eq!(rejected(outcome), CommitError::StorageFailure);
+    assert_eq!(unknown(outcome).reason(), UnknownReason::ResponseInterrupted);
     assert!(read_document(&engine, "tenant-a", "doc-2").is_none());
     drop(engine);
     let reopened = reopen_root_engine(&dir);

@@ -1,4 +1,4 @@
-# TerraBaseV2 operations studio (Vinext)
+# TerraBase operations studio (Vinext)
 
 Vinext (React 19 RSC on the VitePlus `vp` toolchain) application per the
 workspace stack policy (charter PD-2026-08-26-01 D2; ADR 0006). Consumes a

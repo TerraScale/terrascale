@@ -18,7 +18,7 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use terrabase_v2::types::DocumentValue;
+use terrabase::types::DocumentValue;
 
 use crate::backup::{BackupOutcome, BackupPolicy, BackupSet};
 use crate::host::{ClusterHost, ClusterWriteRefusal};
@@ -212,9 +212,9 @@ mod tests {
     use std::collections::BTreeMap;
     use std::time::{Duration, Instant};
 
+    use terrabase::replication::LeaderlessLevel;
+    use terrabase::types::DocumentValue;
     use terrabase_replication_core::compose::ComposedWrite;
-    use terrabase_v2::replication::LeaderlessLevel;
-    use terrabase_v2::types::DocumentValue;
 
     use super::{BackupLastRouter, ReadRoutingError, ReadSource};
     use crate::backup::{BackupPolicy, BackupSet};
@@ -223,7 +223,7 @@ mod tests {
 
     fn dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "tbv2-cluster-reads-{tag}-{}-{}",
+            "terrabase-cluster-reads-{tag}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -425,15 +425,13 @@ mod tests {
         let set = cluster.set();
         for member in ["backup-1", "backup-2", "backup-3"] {
             assert!(
-                !set.is_voter(
-                    &terrabase_v2::replication::MemberId::try_new(member).expect("valid")
-                ),
+                !set.is_voter(&terrabase::replication::MemberId::try_new(member).expect("valid")),
                 "the backup member {member} is no voter"
             );
         }
         for member in ["member-1", "member-2", "member-3"] {
             assert!(
-                set.is_voter(&terrabase_v2::replication::MemberId::try_new(member).expect("valid")),
+                set.is_voter(&terrabase::replication::MemberId::try_new(member).expect("valid")),
                 "the active member {member} votes"
             );
         }

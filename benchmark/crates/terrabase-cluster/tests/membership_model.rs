@@ -73,12 +73,12 @@ mod model_checker;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use model_checker::{BoundedModel, Bounds, Violation, explore};
+use model_checker::{explore, BoundedModel, Bounds, Violation};
+use terrabase::replication::{MemberId, RegionId};
 use terrabase_cluster::{
     DurabilityCoordinator, DurabilityError, DurabilityFailure, DurabilityLevel, DurableAck,
     Membership, MembershipError, RegionMembers,
 };
-use terrabase_v2::replication::{MemberId, RegionId};
 
 /// One configuration in the shared chain, as a canonical summary.
 #[derive(Clone, Debug, Eq, PartialEq)]

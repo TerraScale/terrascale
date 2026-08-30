@@ -1202,7 +1202,7 @@ pub fn receipt_secret_safety_via_harness<T: MemberTransport>(harness_transport: 
             );
         }
         for forbidden in
-            ["/", "tmp", "tbv2-se06", "wal", "credential", "connec", "password", "token"]
+            ["/", "tmp", "terrabase-se06", "wal", "credential", "connec", "password", "token"]
         {
             assert!(
                 !rendered.contains(forbidden),
@@ -1289,7 +1289,7 @@ pub fn assert_composite_receipt(receipt: &LaneReceipt) {
 
     // Secret safety of the rendered artifact.
     let summary = receipt.summary();
-    for forbidden in ["/", "tmp", "tbv2-se06", "credential", "connec", "password"] {
+    for forbidden in ["/", "tmp", "terrabase-se06", "credential", "connec", "password"] {
         assert!(!summary.contains(forbidden), "a forbidden fact crossed the receipt ({forbidden})");
     }
     eprintln!("{summary}");

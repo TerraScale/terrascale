@@ -8,7 +8,7 @@ authority: ../../../GOAL.md
 
 ## Context
 
-TerraBaseV2 uses Partition-scoped causal metadata and native delta CRDTs. A
+TerraBase uses Partition-scoped causal metadata and native delta CRDTs. A
 generic statement that merges are commutative does not define tag identity,
 removal semantics, counter allocation, canonical bytes, deletion, or safe
 compaction.

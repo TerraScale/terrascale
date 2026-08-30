@@ -35,7 +35,8 @@ use crate::types::{
 fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("tbv2-gapd01-session-{tag}-{}-{index}", std::process::id()))
+    std::env::temp_dir()
+        .join(format!("terrabase-gapd01-session-{tag}-{}-{index}", std::process::id()))
 }
 
 fn open_engine(tag: &str) -> (PathBuf, Engine) {
@@ -1069,6 +1070,10 @@ fn after_save_observes_each_commit_once_with_operation_and_sequence() {
     assert_eq!(events[0], (first.operation_id().as_str().to_owned(), first.sequence().get()));
     assert_eq!(events[1], (second.operation_id().as_str().to_owned(), second.sequence().get()));
     assert_ne!(events[0].0, events[1].0, "each save carries its own operation identity");
+    assert!(
+        events.iter().all(|(operation, _)| operation.starts_with("terrabase-session-")),
+        "new session identities use the canonical product prefix"
+    );
     drop(dir);
 }
 

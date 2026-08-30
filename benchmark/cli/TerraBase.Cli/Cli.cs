@@ -1,5 +1,5 @@
 // <copyright file="Cli.cs" company="TerraScale">
-// TerraBaseV2 (SE-13). See LICENSE.md.
+// TerraBase (SE-13). See LICENSE.md.
 // </copyright>
 
 namespace TerraBase.Cli;
@@ -8,7 +8,7 @@ using System.Text;
 using System.Text.Json;
 
 /// <summary>
-/// The operator CLI of TerraBaseV2 (SE-13): status, document
+/// The operator CLI of TerraBase (SE-13): status, document
 /// browse/read/write, TQL query execution, the <c>changes --follow</c>
 /// tail with checkpoint resume, and session/admin diagnostics — every
 /// command a typed operation. The default mode drives the API host's

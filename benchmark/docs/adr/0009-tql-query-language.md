@@ -6,7 +6,7 @@ status: accepted
 
 ## Decision
 
-TQL is TerraBaseV2's only native query language. It is document-oriented,
+TQL is TerraBase's only native query language. It is document-oriented,
 typed, versioned, deterministic, bounded, and independent from RQL or SQL
 compatibility. TQL text parses to a canonical typed AST before authorization,
 planning, Auto-Index selection, execution, or reactive dependency tracking.

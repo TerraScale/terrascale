@@ -8,7 +8,7 @@ Accepted on 2026-08-29 by direct workspace-owner instruction.
 
 ## Decision
 
-TerraBaseV2 supports one-to-one, one-to-many, and many-to-many relationships
+TerraBase supports one-to-one, one-to-many, and many-to-many relationships
 as native edge records. Edges have stable ULIDs under ADR 0027, CRDT field
 semantics, and engine-owned forward and reverse Auto-Indexes.
 

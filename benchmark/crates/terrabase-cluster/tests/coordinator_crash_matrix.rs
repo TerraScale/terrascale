@@ -30,20 +30,20 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use terrabase::replication::{LeaderlessLevel, MemberId, RegionId, ReplicaSet};
+use terrabase::types::DocumentValue;
 use terrabase_cluster::host::{ClusterHost, MemberSpec};
 use terrabase_cluster::{ClusterMode, ClusterWriteRefusal, ComposedWrite};
 use terrabase_replication_core::{
-    ComposedCoordinationError, ComposedMember, ComposeError, coordinate_composed_write,
+    coordinate_composed_write, ComposeError, ComposedCoordinationError, ComposedMember,
 };
-use terrabase_v2::replication::{LeaderlessLevel, MemberId, RegionId, ReplicaSet};
-use terrabase_v2::types::DocumentValue;
 
 /// The members, in the host's canonical lend order.
 const NAMES: [&str; 4] = ["member-a", "member-b", "member-c", "member-d"];
 
 fn root(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "tbv2-cluster-crash-matrix-{tag}-{}-{}",
+        "terrabase-cluster-crash-matrix-{tag}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -72,8 +72,14 @@ fn member(name: &str) -> MemberId {
 /// spec — the set the crash drives evaluate quorums against.
 fn replica_set() -> ReplicaSet {
     let mut voters = BTreeMap::new();
-    voters.insert(RegionId::try_new("eu-1").expect("valid"), vec![member("member-a"), member("member-b")]);
-    voters.insert(RegionId::try_new("us-1").expect("valid"), vec![member("member-c"), member("member-d")]);
+    voters.insert(
+        RegionId::try_new("eu-1").expect("valid"),
+        vec![member("member-a"), member("member-b")],
+    );
+    voters.insert(
+        RegionId::try_new("us-1").expect("valid"),
+        vec![member("member-c"), member("member-d")],
+    );
     ReplicaSet::new(1, voters)
 }
 
@@ -186,8 +192,8 @@ fn validation_refusal_is_durable_nothing_and_a_mid_validation_loss_commits_once(
 
     // The typed refusal half of the boundary: strict admission refuses
     // the undeclared path BEFORE any WAL append — nothing durable.
-    use terrabase_v2::families::modes::{AdmissionError, CollectionPolicy};
-    use terrabase_v2::families::{SchemaDefinition, SchemaRule, SchemaVersion};
+    use terrabase::families::modes::{AdmissionError, CollectionPolicy};
+    use terrabase::families::{SchemaDefinition, SchemaRule, SchemaVersion};
     let definition = SchemaDefinition::try_new(
         SchemaVersion::try_new(1).expect("valid version"),
         vec![SchemaRule::Required { field: "status".to_owned() }],
@@ -213,7 +219,8 @@ fn validation_refusal_is_durable_nothing_and_a_mid_validation_loss_commits_once(
     drop(members); // the crash: no shutdown, nothing durable to keep
 
     // The retry: the SAME request through healthy member-b commits once.
-    let mut cluster = ClusterHost::open(&root, &spec(), "tenant-a").expect("the healthy cluster reopens");
+    let mut cluster =
+        ClusterHost::open(&root, &spec(), "tenant-a").expect("the healthy cluster reopens");
     let write = put("op-b1", "doc-1", "open");
     let retried = cluster
         .client_write("member-b", &write, LeaderlessLevel::RegionalQuorum)
@@ -231,7 +238,11 @@ fn validation_refusal_is_durable_nothing_and_a_mid_validation_loss_commits_once(
     assert_eq!(replay.operation(), "op-b1");
     assert_eq!(seam_positions(&cluster), vec![1, 1, 1, 1], "no member applied twice");
     cluster
-        .client_write("member-a", &put("op-b1-next", "doc-1", "closed"), LeaderlessLevel::RegionalQuorum)
+        .client_write(
+            "member-a",
+            &put("op-b1-next", "doc-1", "closed"),
+            LeaderlessLevel::RegionalQuorum,
+        )
         .expect("the next write commits");
     assert_all_serve(&mut cluster, "doc-1", "closed");
     let _ = std::fs::remove_dir_all(&root);
@@ -298,10 +309,7 @@ fn loss_after_the_first_member_append_is_a_typed_partial_and_retry_never_reappli
         .expect("the coordinator's own seat stored");
     let crashed_sequence = local.sequence().get();
     assert_eq!(positions(&members), vec![1, 0, 0, 0], "one seat stored, nothing else");
-    assert_eq!(
-        members[0].visible("doc-1"),
-        Ok(Some(body(&[("status", "partial")])))
-    );
+    assert_eq!(members[0].visible("doc-1"), Ok(Some(body(&[("status", "partial")]))));
     assert_eq!(members[1].visible("doc-1"), Ok(None), "the second seat holds nothing");
 
     // The typed partial: any coordinator seeing only the stored seat
@@ -321,7 +329,11 @@ fn loss_after_the_first_member_append_is_a_typed_partial_and_retry_never_reappli
     };
     assert_eq!(contributors.len(), 1, "the stored fact is named, not hidden: {contributors:?}");
     assert_eq!(contributors[0].member(), &member("member-a"));
-    assert_eq!(contributors[0].sequence(), crashed_sequence, "the recorded receipt, not a new apply");
+    assert_eq!(
+        contributors[0].sequence(),
+        crashed_sequence,
+        "the recorded receipt, not a new apply"
+    );
 
     drop(members); // the crash
 
@@ -386,11 +398,7 @@ fn loss_after_the_second_member_append_resolves_committed_with_zero_new_regional
     .expect("the durable regional boundary answers committed");
     assert_eq!(regional.achieved(), LeaderlessLevel::RegionalQuorum);
     assert_eq!(
-        regional
-            .contributors()
-            .iter()
-            .map(|ack| ack.sequence())
-            .collect::<Vec<_>>(),
+        regional.contributors().iter().map(|ack| ack.sequence()).collect::<Vec<_>>(),
         recorded.to_vec(),
         "the recorded sequences answer, not new applies"
     );
@@ -410,12 +418,7 @@ fn loss_after_the_second_member_append_resolves_committed_with_zero_new_regional
         "the crashed Region's seats never re-applied"
     );
     assert_eq!(
-        retried
-            .contributors()
-            .iter()
-            .take(2)
-            .map(|ack| ack.sequence())
-            .collect::<Vec<_>>(),
+        retried.contributors().iter().take(2).map(|ack| ack.sequence()).collect::<Vec<_>>(),
         recorded.to_vec(),
         "the eu-1 contributors are the recorded receipts"
     );
@@ -599,8 +602,9 @@ fn the_typed_outcome_lattice_classifies_every_crash_boundary_at_the_ledger() {
         .record_ack(DurableAck::new("op-y".into(), member("member-a"), region.clone(), 1, 1))
         .expect("the stored fact records");
     ledger.set_member_active(&member("member-b"), false).expect("known");
-    let partial =
-        ledger.submit_until_deadline("op-y", &member("member-a"), regional).expect_err("below RF=2");
+    let partial = ledger
+        .submit_until_deadline("op-y", &member("member-a"), regional)
+        .expect_err("below RF=2");
     assert!(matches!(partial, DurabilityFailure::Partial(_)), "got {partial:?}");
     let observation = partial.observation().expect("carries");
     assert_eq!(observation.stored().len(), 1);

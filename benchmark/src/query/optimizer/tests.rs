@@ -33,7 +33,7 @@ use crate::{
 };
 
 fn location(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("tbv2-ix02-optimizer-{tag}-{}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-ix02-optimizer-{tag}-{}", std::process::id()))
 }
 
 fn open_engine(tag: &str) -> (PathBuf, Engine) {

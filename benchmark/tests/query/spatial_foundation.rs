@@ -9,7 +9,7 @@
 //! distance-error domain, and the point-document predicate behavior with
 //! the V1 relation set.
 
-use terrabase_v2::{
+use terrabase::{
     RequestValidationError,
     query::{
         DEFAULT_DISTANCE_ERROR_PCT, Latitude, Longitude, MAX_DISTANCE_ERROR_PCT,

@@ -23,15 +23,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use terrabase_causal::CanonicalEncode as _;
-use terrabase_v2::CommitReceipt;
-use terrabase_v2::engine::{CommitOutcome, Engine, EngineConfig};
-use terrabase_v2::families::modes::{self, AdmissionError, CollectionPolicy, KnownKinds};
-use terrabase_v2::replication::{LeaderlessLevel, MemberId, RegionId, ReplicaSet};
-use terrabase_v2::types::{
+use terrabase::CommitReceipt;
+use terrabase::engine::{CommitOutcome, Engine, EngineConfig};
+use terrabase::families::modes::{self, AdmissionError, CollectionPolicy, KnownKinds};
+use terrabase::replication::{LeaderlessLevel, MemberId, RegionId, ReplicaSet};
+use terrabase::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
     OperationId, TenantId,
 };
+use terrabase_causal::CanonicalEncode as _;
 
 use crate::{
     ReplicaDoc, ReplicaError, ReplicaExchange, ReplicaFrontier, ReplicaScope, ReplicaValue,
@@ -217,6 +217,13 @@ impl ComposedReceipt {
 /// as the engine-side coordinator's errors, in the composed vocabulary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ComposedCoordinationError {
+    /// `GlobalQuorum` needs at least two selected active Regions.
+    InsufficientRegions {
+        /// The number of selected active Regions in the replica set.
+        selected: usize,
+        /// The minimum number required by the durability contract.
+        minimum: usize,
+    },
     /// The accepting Member is not an eligible voter of the set's
     /// epoch.
     NotEligible {
@@ -336,7 +343,7 @@ pub struct ComposedMember {
     reads: u64,
     known: BTreeSet<String>,
     policy: CollectionPolicy,
-    quarantine: BTreeMap<String, Vec<terrabase_v2::families::SchemaViolation>>,
+    quarantine: BTreeMap<String, Vec<terrabase::families::SchemaViolation>>,
 }
 
 impl ComposedMember {
@@ -434,7 +441,7 @@ impl ComposedMember {
     /// the quarantine register with its auditable violation receipts
     /// (contract §2, point 2).
     #[must_use]
-    pub fn quarantined(&self) -> &BTreeMap<String, Vec<terrabase_v2::families::SchemaViolation>> {
+    pub fn quarantined(&self) -> &BTreeMap<String, Vec<terrabase::families::SchemaViolation>> {
         &self.quarantine
     }
 
@@ -463,7 +470,7 @@ impl ComposedMember {
         let mut kinds = KnownKinds::new();
         if let Some(body) = merged.get(document) {
             for (path, value) in body {
-                kinds.insert(path.clone(), terrabase_v2::families::modes::ValueKind::of(value));
+                kinds.insert(path.clone(), terrabase::families::modes::ValueKind::of(value));
             }
         }
         kinds
@@ -473,7 +480,7 @@ impl ComposedMember {
     /// published storage sequence.
     #[must_use]
     pub fn position(&self) -> u64 {
-        self.engine.published_sequence().map_or(0, terrabase_v2::StorageSequence::get)
+        self.engine.published_sequence().map_or(0, terrabase::StorageSequence::get)
     }
 
     /// Accepts one whole-body put durably: the engine commits it and
@@ -869,6 +876,12 @@ pub fn coordinate_composed_write(
     let Some(accepting_region) = set.region_of(accepting) else {
         return Err(ComposedCoordinationError::NotEligible { epoch: set.epoch() });
     };
+    if level == LeaderlessLevel::GlobalQuorum {
+        let selected = set.regions().len();
+        if selected < 2 {
+            return Err(ComposedCoordinationError::InsufficientRegions { selected, minimum: 2 });
+        }
+    }
     let mut contributors: Vec<ComposedAck> = Vec::new();
     let mut local: Option<CommitReceipt> = None;
     for member in members {
@@ -1132,7 +1145,7 @@ pub fn accept_epoch(
         let union: BTreeSet<_> = old_voters
             .iter()
             .chain(new_voters.iter())
-            .map(terrabase_v2::replication::MemberId::as_str)
+            .map(terrabase::replication::MemberId::as_str)
             .collect();
         let overlaps = old_voters.is_empty()
             || new_voters.is_empty()
@@ -1388,7 +1401,7 @@ pub enum MigrationOutcome {
         /// The document whose transform would violate.
         document: String,
         /// The target-version violations of its transformed body.
-        violations: Vec<terrabase_v2::families::SchemaViolation>,
+        violations: Vec<terrabase::families::SchemaViolation>,
     },
 }
 

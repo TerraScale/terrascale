@@ -1105,7 +1105,7 @@ impl SpatialFieldEncoding {
     /// Renders this encoding to the exact dynamic-field token string V1
     /// derives from the same encoding, so stored queries and index
     /// definitions cross-read — for field names free of
-    /// [`FIELD_TOKEN_DELIMITERS`], which the constructors enforce. V1
+    /// `FIELD_TOKEN_DELIMITERS`, which the constructors enforce. V1
     /// escapes the rest before interpolation; this renderer does not, so
     /// those names refuse construction instead of rendering a token V1
     /// would parse back into different fields.

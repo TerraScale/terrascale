@@ -24,6 +24,41 @@ pub(crate) enum FaultPoint {
     DirectorySync,
     /// Fail the durable sync of the `Published` operation-ledger record.
     PublishedLedgerSync,
+    /// Fail after an append-only safety stream syncs but before the
+    /// independent storage-frontier slot is written and synced.
+    StorageFrontierSync,
+    /// Fail the frontier sync for a Ready ledger transition.
+    ReadyFrontierSync,
+    /// Fail the frontier sync for a Published ledger transition.
+    PublishedFrontierSync,
+    /// Fail the frontier sync for a Rejected ledger transition.
+    RejectedFrontierSync,
+    /// Fail the frontier sync for a retained-evidence batch.
+    RetainedFrontierSync,
+    /// Fail after creating the active-manifest temporary file, before its
+    /// bytes are written.
+    ActivationManifestTempCreated,
+    /// Fail after writing the active-manifest bytes, before syncing them.
+    ActivationManifestWritten,
+    /// Fail after syncing the active-manifest temporary file, before rename.
+    ActivationManifestSynced,
+    /// Fail after renaming the active manifest, before syncing the directory.
+    ActivationManifestRenamed,
+    /// Fail after the active manifest and its directory entry are durable,
+    /// before the format-marker publication starts.
+    ActivationManifestDirectorySynced,
+    /// Fail after creating the active-format temporary file, before its
+    /// bytes are written.
+    ActivationFormatTempCreated,
+    /// Fail after writing the active-format bytes, before syncing them.
+    ActivationFormatWritten,
+    /// Fail after syncing the active-format temporary file, before rename.
+    ActivationFormatSynced,
+    /// Fail after renaming the active format, before syncing the directory.
+    ActivationFormatRenamed,
+    /// Fail after the active format and its directory entry are durable,
+    /// before activation returns its receipt.
+    ActivationFormatDirectorySynced,
     /// Fail the next publication-history journal append. The commit still
     /// publishes: journaling is best-effort, so the injected failure leaves
     /// only the observable divergence between the journaled high-water mark
@@ -32,9 +67,23 @@ pub(crate) enum FaultPoint {
     /// Fail the compaction checkpoint's manifest publication, after the
     /// checkpoint root file is written and synced (GAP-S1 D4).
     CompactionCheckpointPublish,
+    /// Fail after the activated checkpoint manifest is published and
+    /// directory-synced, before either next-epoch frontier slot is written.
+    CompactionCheckpointPublished,
+    /// Fail after the activated checkpoint writes and syncs the first empty
+    /// slot for the next WAL epoch.
+    CompactionWalFrontierFirstSlot,
+    /// Fail after the activated checkpoint writes and syncs the second empty
+    /// slot, before the old WAL is shortened.
+    CompactionWalFrontierSecondSlot,
     /// Fail the compaction pass immediately before the write-ahead log is
     /// truncated to the checkpoint (GAP-S1 D4).
     CompactionWalTruncate,
+    /// Fail after the WAL length changes but before that truncation is synced.
+    CompactionWalSync,
+    /// Fail the disposable legacy WAL-frontier reset after the checkpoint and
+    /// WAL truncation complete.
+    CompactionLegacyFrontierReset,
     /// Fail the compaction pass after the retained-evidence records are
     /// appended but before they are synced (GAP-S1 D4).
     CompactionEvidenceSync,

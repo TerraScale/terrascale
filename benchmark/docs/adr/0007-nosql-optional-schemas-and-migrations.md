@@ -6,7 +6,7 @@ status: accepted
 
 ## Collection modes
 
-TerraBaseV2 remains a NoSQL document database. Each collection uses one mode:
+TerraBase remains a NoSQL document database. Each collection uses one mode:
 
 | Mode | Contract |
 | --- | --- |

@@ -53,7 +53,7 @@ fn lane_member_id(name: &str) -> MemberId {
 fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("tbv2-se06-lane-{tag}-{}-{index}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-se06-lane-{tag}-{}-{index}", std::process::id()))
 }
 
 /// # Panics

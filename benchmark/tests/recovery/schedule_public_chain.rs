@@ -1,7 +1,7 @@
 //! Public-seam scheduled-cadence chain tests (BK-04).
 //!
 //! These tests use only public construction — `EngineConfig::durable`,
-//! `Engine::open`, and the public `terrabase_v2::backup` run/verify seam —
+//! `Engine::open`, and the public `terrabase::backup` run/verify seam —
 //! to prove the chain facts a periodic schedule's decisions rest on: a
 //! first full anchors the destination, an incremental over the anchored
 //! boundary appends as a chain link, and a retried cadence slot is
@@ -19,13 +19,13 @@
 
 use std::path::PathBuf;
 
-use terrabase_v2::backup::{
+use terrabase::backup::{
     BackupKind, BackupPlan, load_recovery_point, run_backup, verify_latest_chain,
 };
-use terrabase_v2::{Engine, EngineConfig, StorageSequence};
+use terrabase::{Engine, EngineConfig, StorageSequence};
 
 fn location(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("tbv2-bk04-int-{tag}-{}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-bk04-int-{tag}-{}", std::process::id()))
 }
 
 fn open_engine(tag: &str) -> (PathBuf, Engine) {
@@ -114,7 +114,7 @@ fn an_unanchored_cadence_link_fails_typed_and_leaves_no_point() {
             &destination
         )
         .err(),
-        Some(terrabase_v2::backup::BackupError::ChainIncomplete)
+        Some(terrabase::backup::BackupError::ChainIncomplete)
     );
     assert_eq!(point_count(&destination), 0, "the rejected run sealed nothing");
 

@@ -1,4 +1,4 @@
-//! Shared logical values used by the `TerraBaseV2` public seams.
+//! Shared logical values used by the `TerraBase` public seams.
 
 #![allow(dead_code)]
 #![allow(clippy::doc_markdown, clippy::missing_errors_doc, clippy::must_use_candidate)]

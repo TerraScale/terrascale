@@ -3,7 +3,7 @@
 //! backup cluster's permanent typed write refusal.
 //!
 //! [`ClusterTbepHost`] implements [`TbepHost`] over one
-//! `terrabase-cluster` [`ClusterHost`](terrabase_cluster::ClusterHost):
+//! `terrabase-cluster` [`ClusterHost`]:
 //! every bound channel's tenant must be the cluster's tenant, document
 //! writes coordinate through the leaderless coordinator at the
 //! requested acknowledgement level, reads repair behind the regional
@@ -15,9 +15,9 @@
 
 use std::sync::Arc;
 
+use terrabase::replication::LeaderlessLevel;
+use terrabase::types::DocumentValue;
 use terrabase_cluster::{ClusterHost, ClusterMode, ClusterWriteRefusal, ComposedWrite};
-use terrabase_v2::replication::LeaderlessLevel;
-use terrabase_v2::types::DocumentValue;
 
 use crate::codec::TbepValue;
 use crate::generated::{
@@ -357,6 +357,9 @@ impl ClusterTbepHost {
 /// Maps the cluster host's write refusal onto the wire's typed error.
 fn cluster_write_refusal(refusal: ClusterWriteRefusal) -> HostingError {
     match refusal {
+        ClusterWriteRefusal::InsufficientRegions => HostingError::Refused(
+            "global_quorum requires at least two selected active Regions".into(),
+        ),
         ClusterWriteRefusal::ClusterReadOnly(refusal) => {
             HostingError::ClusterReadOnly(format!("position={}", refusal.position))
         }

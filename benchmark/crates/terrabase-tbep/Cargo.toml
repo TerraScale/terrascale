@@ -20,7 +20,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "LicenseRef-TerraScale-Pending"
-description = "TerraBaseV2 engine server behind the TerraBase Engine Protocol (TBEP): MessagePack frames over the UDS binding"
+description = "TerraBase engine server behind generated FlatBuffers TBEP over authenticated QUIC"
 publish = false
 
 [lints.rust]
@@ -58,8 +58,15 @@ terrabase-sync-core = { path = "../terrabase-sync-core" }
 # The engine this host serves (P4): the real durable engine behind the
 # document spine.
 terrabase-cluster = { path = "../terrabase-cluster" }
-terrabase-v2 = { path = "../.." }
+terrabase = { path = "../.." }
+# The generated FlatBuffers bindings and their verified, owned production
+# request/response boundary. Keeping the compiler-owned unsafe code in this
+# audited dependency preserves this crate's repository-wide unsafe denial.
+tbep-fbs = { path = "tools/tbep-fbs" }
 
 [dev-dependencies]
 # Self-signed test certificates for the QUIC binding's conformance rows.
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+# The QUIC conformance client builds requests from the same pinned generated
+# FlatBuffers bindings used by the production decoder.
+flatbuffers = "=25.12.19"

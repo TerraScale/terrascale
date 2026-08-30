@@ -3,18 +3,15 @@
 //!
 //! The contract records QUIC+TLS as the supported network binding: the
 //! engine process owns its certificate, clients verify it, and the
-//! same bounded, versioned, typed `MessagePack` frames ride one
-//! bidirectional QUIC stream per channel. The serving loop is the
-//! transport-generic [`crate::server`] core — channel binding, the
-//! overload gate, the slow-consumer policy, and every typed operation
-//! behave exactly as over the local socket.
+//! generated, structurally verified and semantically validated `FlatBuffers`
+//! frames ride one bidirectional QUIC stream per channel. The legacy UDS
+//! positional codec is not reachable through this production listener.
 //!
-//! Honest limits of this landing: client identity is the server's
-//! certificate verification plus the channel's tenant binding — the
-//! short-lived tenant-scoped client tokens and the rotated mTLS member
-//! identities land with the P5 identity machinery; 0-RTT is not
-//! enabled for any traffic (the contract forbids it for mutations, and
-//! no replay-safe read path is qualified).
+//! Every accepted connection presents a client certificate chaining to
+//! an operator-supplied trust anchor. The channel's tenant binding is an
+//! additional application identity and never substitutes for mutual TLS.
+//! 0-RTT is not enabled for any traffic because mutation replay safety has
+//! not been qualified.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -23,13 +20,19 @@ use std::sync::atomic::AtomicUsize;
 use quinn::crypto::rustls::QuicServerConfig;
 use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use tokio::runtime::Handle;
+use tokio::sync::Semaphore;
 
+use crate::flatbuffers_server::serve_flatbuffers_io;
 use crate::host::TbepHost;
-use crate::server::{MAX_INFLIGHT_OPERATIONS, serve_io};
+use crate::server::MAX_INFLIGHT_OPERATIONS;
 
 /// The binding's ALPN identity: every TBEP QUIC endpoint offers and
 /// requires exactly this protocol name.
 pub const TBEP_ALPN: &[&[u8]] = &[b"terrabase.engine.protocol/1"];
+
+/// Maximum authenticated QUIC channels admitted at one listener. Each
+/// channel is sequential and owns at most one engine operation at a time.
+pub const MAX_QUIC_CONNECTIONS: usize = MAX_INFLIGHT_OPERATIONS;
 
 /// A QUIC binding failure.
 #[derive(Debug)]
@@ -73,6 +76,12 @@ impl TbepQuicHandle {
         if let Some(thread) = self.runtime.take() {
             let _ = thread.join();
         }
+    }
+}
+
+impl Drop for TbepQuicHandle {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 
@@ -121,8 +130,9 @@ pub struct TbepQuicServer;
 impl TbepQuicServer {
     /// Binds the QUIC listener and serves the host over TLS 1.3.
     ///
-    /// The certificate and key are the engine process's own — the
-    /// operator provisions them; no credential crosses the wire.
+    /// The leaf-first certificate chain and key are the engine process's
+    /// own. `client_trust_anchors` is the operator-provisioned gateway CA
+    /// bundle; an empty or invalid bundle fails before the socket binds.
     ///
     /// # Errors
     ///
@@ -130,11 +140,19 @@ impl TbepQuicServer {
     /// [`QuicBindError::Runtime`] for the matching failure.
     pub fn bind(
         address: SocketAddr,
-        certificate: CertificateDer<'static>,
+        certificate_chain: Vec<CertificateDer<'static>>,
         key: PrivateKeyDer<'static>,
+        client_trust_anchors: &[CertificateDer<'static>],
         host: Arc<dyn TbepHost>,
     ) -> Result<TbepQuicHandle, QuicBindError> {
-        Self::bind_with_inflight_bound(address, certificate, key, host, MAX_INFLIGHT_OPERATIONS)
+        Self::bind_with_inflight_bound(
+            address,
+            certificate_chain,
+            key,
+            client_trust_anchors,
+            host,
+            MAX_INFLIGHT_OPERATIONS,
+        )
     }
 
     /// Binds with an explicit server-wide in-flight operation bound —
@@ -146,18 +164,34 @@ impl TbepQuicServer {
     /// As [`Self::bind`].
     pub fn bind_with_inflight_bound(
         address: SocketAddr,
-        certificate: CertificateDer<'static>,
+        certificate_chain: Vec<CertificateDer<'static>>,
         key: PrivateKeyDer<'static>,
+        client_trust_anchors: &[CertificateDer<'static>],
         host: Arc<dyn TbepHost>,
         inflight_bound: usize,
     ) -> Result<TbepQuicHandle, QuicBindError> {
+        if client_trust_anchors.is_empty() {
+            return Err(QuicBindError::Tls);
+        }
+        let mut client_roots = rustls::RootCertStore::empty();
+        for anchor in client_trust_anchors {
+            client_roots.add(anchor.clone()).map_err(|_| QuicBindError::Tls)?;
+        }
+        let client_verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(client_roots))
+            .build()
+            .map_err(|_| QuicBindError::Tls)?;
         let mut rustls_config = rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(vec![certificate], key)
+            .with_client_cert_verifier(client_verifier)
+            .with_single_cert(certificate_chain, key)
             .map_err(|_| QuicBindError::Tls)?;
         rustls_config.alpn_protocols = TBEP_ALPN.iter().map(|name| name.to_vec()).collect();
-        let server_config =
+        let server_crypto =
             QuicServerConfig::try_from(rustls_config).map_err(|_| QuicBindError::Tls)?;
+        let mut transport = quinn::TransportConfig::default();
+        transport.max_concurrent_bidi_streams(1_u32.into());
+        transport.max_concurrent_uni_streams(0_u32.into());
+        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_crypto));
+        server_config.transport_config(Arc::new(transport));
         // quinn's endpoint registers its socket with the ambient async
         // runtime, so the runtime exists — and its context is entered —
         // before the listener binds.
@@ -167,16 +201,14 @@ impl TbepQuicServer {
             .build()
             .map_err(|_| QuicBindError::Runtime)?;
         let _context = runtime.enter();
-        let endpoint = quinn::Endpoint::server(
-            quinn::ServerConfig::with_crypto(Arc::new(server_config)),
-            address,
-        )
-        .map_err(|_| QuicBindError::Bind)?;
+        let endpoint =
+            quinn::Endpoint::server(server_config, address).map_err(|_| QuicBindError::Bind)?;
         let serving_handle = runtime.handle().clone();
         let inflight = Arc::new(AtomicUsize::new(0));
         let tenant_gates = Arc::new(crate::server::TenantGates::new(
             crate::server::MAX_TENANT_INFLIGHT_OPERATIONS,
         ));
+        let connections = Arc::new(Semaphore::new(MAX_QUIC_CONNECTIONS));
         // The endpoint is a cloneable handle: the accept loop takes one,
         // the shutdown handle keeps the other.
         let accept_endpoint = endpoint.clone();
@@ -185,30 +217,40 @@ impl TbepQuicServer {
             .spawn(move || {
                 runtime.block_on(async move {
                     while let Some(incoming) = accept_endpoint.accept().await {
-                        let Ok(connection) = incoming.await else { continue };
-                        // One bidirectional stream per channel — the
-                        // same sequential frame discipline the UDS
-                        // binding serves.
-                        // quinn hands the pair back as (send, recv).
-                        let Ok((send, recv)) = connection.accept_bi().await else { continue };
+                        let Ok(connection_permit) = Arc::clone(&connections).try_acquire_owned()
+                        else {
+                            incoming.refuse();
+                            continue;
+                        };
                         let host = Arc::clone(&host);
                         let inflight = Arc::clone(&inflight);
                         let tenant_gates = Arc::clone(&tenant_gates);
-                        let handle = serving_handle.clone();
-                        let _ = std::thread::Builder::new()
-                            .name("tbep-quic-connection".into())
-                            .spawn(move || {
+                        // Handshake and stream-open waits run independently. An
+                        // authenticated client that never opens its channel can
+                        // therefore consume one bounded permit, but cannot stop
+                        // the accept loop or later clients.
+                        serving_handle.spawn(async move {
+                            let Ok(connection) = incoming.await else { return };
+                            // One bidirectional stream per channel: the same
+                            // sequential frame discipline the UDS binding serves.
+                            // quinn hands the pair back as (send, recv).
+                            let Ok((send, recv)) = connection.accept_bi().await else { return };
+                            let handle = Handle::current();
+                            let _ = tokio::task::spawn_blocking(move || {
+                                let _connection_permit = connection_permit;
                                 let reader = QuicReader { handle: handle.clone(), recv };
                                 let writer = QuicWriter { handle, send };
-                                serve_io(
+                                serve_flatbuffers_io(
                                     reader,
                                     writer,
-                                    host,
-                                    inflight,
+                                    &host,
+                                    &inflight,
                                     inflight_bound,
-                                    tenant_gates,
+                                    &tenant_gates,
                                 );
-                            });
+                            })
+                            .await;
+                        });
                     }
                 });
             })
@@ -224,8 +266,34 @@ impl TbepQuicServer {
 /// Returns `None` when the block is absent or its base64 is invalid.
 #[must_use]
 pub fn decode_pem_certificate(pem: &[u8]) -> Option<CertificateDer<'static>> {
-    let der = pem_block(pem, "CERTIFICATE")?;
-    Some(CertificateDer::from(der))
+    decode_pem_certificates(pem)?.into_iter().next()
+}
+
+/// Decodes every PEM `CERTIFICATE` block in order.
+///
+/// # Errors
+///
+/// Returns `None` when the bundle is empty or any certificate block has
+/// invalid base64. The first certificate is the leaf when this bundle is
+/// passed to [`TbepQuicServer::bind`].
+#[must_use]
+pub fn decode_pem_certificates(pem: &[u8]) -> Option<Vec<CertificateDer<'static>>> {
+    let text = std::str::from_utf8(pem).ok()?;
+    let begin = "-----BEGIN CERTIFICATE-----";
+    let end = "-----END CERTIFICATE-----";
+    let mut rest = text;
+    let mut certificates = Vec::new();
+    while let Some(start) = rest.find(begin) {
+        let body_start = start + begin.len();
+        let body_end = rest[body_start..].find(end)? + body_start;
+        let base64: String = rest[body_start..body_end]
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
+        certificates.push(CertificateDer::from(base64_decode(&base64)?));
+        rest = &rest[body_end + end.len()..];
+    }
+    (!certificates.is_empty()).then_some(certificates)
 }
 
 /// Decodes the first PEM `PRIVATE KEY` block (PKCS#8) into its DER key.
@@ -284,7 +352,7 @@ fn base64_decode(text: &str) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::base64_decode;
+    use super::{base64_decode, decode_pem_certificate, decode_pem_certificates};
 
     #[test]
     fn the_pem_base64_closure_decodes_the_standard_alphabet() {
@@ -295,5 +363,23 @@ mod tests {
         assert_eq!(base64_decode("Zm9vYg=="), Some(vec![b'f', b'o', b'o', b'b']));
         assert_eq!(base64_decode("!!!!"), None);
         assert_eq!(base64_decode("Zm9vY"), None, "an impossible tail length refuses");
+    }
+
+    #[test]
+    fn certificate_bundles_preserve_leaf_to_root_order_and_fail_closed() {
+        let bundle = b"-----BEGIN CERTIFICATE-----\nZg==\n-----END CERTIFICATE-----\n\
+                       -----BEGIN CERTIFICATE-----\nZm8=\n-----END CERTIFICATE-----\n";
+        let certificates = decode_pem_certificates(bundle).expect("the bundle decodes");
+        assert_eq!(certificates.len(), 2);
+        assert_eq!(certificates[0].as_ref(), b"f");
+        assert_eq!(certificates[1].as_ref(), b"fo");
+        assert_eq!(decode_pem_certificate(bundle).expect("the first certificate").as_ref(), b"f");
+        assert!(decode_pem_certificates(b"").is_none());
+        assert!(
+            decode_pem_certificates(
+                b"-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----"
+            )
+            .is_none()
+        );
     }
 }

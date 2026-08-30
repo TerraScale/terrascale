@@ -20,14 +20,14 @@
 //! ```compile_fail
 //! // A local commit receipt carries no acknowledgement fact, so no such
 //! // accessor can exist on it.
-//! let receipt: terrabase_v2::CommitReceipt = unimplemented!();
+//! let receipt: terrabase::CommitReceipt = unimplemented!();
 //! let _ = receipt.acknowledgement();
 //! ```
 //!
 //! ```compile_fail
 //! // Health is never a convergence fact: a `ReplicationStatus` cannot be
 //! // turned into a `Convergence` observation (R-2 owns convergence content).
-//! let status = terrabase_v2::ReplicationStatus::Active;
+//! let status = terrabase::ReplicationStatus::Active;
 //! let _ = status.convergence();
 //! ```
 
@@ -64,7 +64,7 @@ use crate::types::{OperationId, StorageSequence, TenantId};
 
 // The tombstone retention watermark is module-level public (GAP-R02): the
 // backup seam carries it on a `BackupPlan`, so it is reachable as
-// `terrabase_v2::replication::*` while staying out of the crate root's
+// `terrabase::replication::*` while staying out of the crate root's
 // re-export list, which the integrator owns.
 pub use retention::{
     ConsumerObservation, DeletionEvidence, MAX_RETENTION_REFUSALS, RetentionAdvance,
@@ -75,7 +75,7 @@ pub use retention::{
 // The typed observation operations and the observable record types they
 // return are module-level public (GAP-R03): an engine-side adapter maps
 // them onto the TBEP observation frames, so the observation vocabulary is
-// reachable as `terrabase_v2::replication::*` while the crate root's
+// reachable as `terrabase::replication::*` while the crate root's
 // re-export list, which the integrator owns, stays untouched.
 pub use member::{DenialSeam, Deposition, FencedBatch, TenantDenial};
 pub use observation::{

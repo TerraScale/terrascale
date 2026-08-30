@@ -16,6 +16,12 @@
 //! commit that cites the accepting record (an ADR or a charter PD id).
 //! Removing a dependency is always allowed; stale allow-list entries are
 //! deliberately not errors so cleanup lanes do not fight this gate.
+//!
+//! Review note (2026-08-30): the product package was renamed from
+//! `terrabase-v2` to `terrabase`. The root manifest and workspace dependency
+//! keys now use the canonical `terrabase` target. N-1 external consumers can
+//! retain `terrabase_v2` as a local Cargo dependency alias without keeping an
+//! old target in this repository.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -31,7 +37,7 @@ use crate::fsx;
 const LAYERS: &[(&str, u32)] = &[
     ("terrabase-causal", 0),
     ("terrabase-crdt", 1),
-    ("terrabase-v2", 2),
+    ("terrabase", 2),
     ("terrabase-sync-core", 3),
     ("terrabase-member-transport", 3),
     ("terrabase-sync-conformance", 4),
@@ -59,15 +65,15 @@ const ALLOWED_EDGES: &[(&str, &str)] = &[
     ("terrabase-sync-conformance", "terrabase-sync-core"),
     ("terrabase-replication-core", "terrabase-causal"),
     ("terrabase-replication-core", "terrabase-crdt"),
-    ("terrabase-replication-core", "terrabase-v2"),
-    ("terrabase-cluster", "terrabase-v2"),
+    ("terrabase-replication-core", "terrabase"),
+    ("terrabase-cluster", "terrabase"),
     ("terrabase-cluster", "terrabase-replication-core"),
-    ("terrabase-tbep", "terrabase-v2"),
+    ("terrabase-tbep", "terrabase"),
     ("terrabase-tbep", "terrabase-sync-core"),
     ("terrabase-tbep", "terrabase-cluster"),
 ];
 
-/// The engine-core crate (`terrabase-v2`) must stay dependency-minimal:
+/// The engine-core package (`terrabase`) must stay dependency-minimal:
 /// GOAL.md 'Dependency direction' — "A lower layer cannot import storage,
 /// networking, query, Dashboard, SDK, or deployment code" — and async
 /// runtimes and networking are confined to the transport and TBEP boundary
@@ -87,8 +93,8 @@ fn load_graph() -> WorkspaceGraph {
     let root_package =
         fsx::package_name(&root_manifest).expect("the root manifest declares a package name");
     assert_eq!(
-        root_package, "terrabase-v2",
-        "renaming the engine-core crate requires a review note in this gate",
+        root_package, "terrabase",
+        "the canonical engine-core package identity changed without a review note",
     );
 
     let mut nodes = BTreeSet::from([root_package]);
@@ -99,7 +105,7 @@ fn load_graph() -> WorkspaceGraph {
         let name = fsx::package_name(&manifest)
             .unwrap_or_else(|| panic!("member {member} declares no [package] name"));
         assert!(nodes.insert(name.clone()), "duplicate workspace package name {name}",);
-        let dependencies = fsx::dependency_keys(&manifest);
+        let dependencies = fsx::dependency_package_names(&manifest);
         let (crate_deps, external_deps): (Vec<_>, Vec<_>) =
             dependencies.into_iter().partition(|dependency| dependency.starts_with("terrabase"));
         internal.insert(name.clone(), crate_deps);
@@ -198,11 +204,11 @@ fn workspace_crate_dag_matches_the_frozen_allow_list() {
 #[test]
 fn foundational_and_engine_core_crates_have_no_internal_dependencies() {
     let graph = load_graph();
-    // terrabase-causal is the deepest foundation and terrabase-v2 carries the
+    // terrabase-causal is the deepest foundation and terrabase carries the
     // engine core (storage, families, query, index, reactive state); both must
     // stay free of internal dependencies so nothing can reverse the layering
     // through them.
-    let dependency_free = ["terrabase-causal", "terrabase-v2"];
+    let dependency_free = ["terrabase-causal", "terrabase"];
     for crate_name in dependency_free {
         let dependencies = graph.internal.get(crate_name).cloned().unwrap_or_default();
         assert!(
@@ -221,7 +227,7 @@ fn foundational_and_engine_core_crates_have_no_internal_dependencies() {
 #[test]
 fn engine_core_external_dependencies_stay_minimal() {
     let graph = load_graph();
-    let external = graph.external.get("terrabase-v2").cloned().unwrap_or_default();
+    let external = graph.external.get("terrabase").cloned().unwrap_or_default();
     let unexpected: Vec<&String> = external
         .iter()
         .filter(|dependency| !ENGINE_CORE_EXTERNAL_DEPS.contains(&dependency.as_str()))

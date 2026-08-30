@@ -9,14 +9,14 @@
 
 use std::time::Duration;
 
-use terrabase_v2::engine::{DocumentPatch, PatchOperation, PatchPath, PatchPathSegment};
-use terrabase_v2::operations::RequestValidationError;
-use terrabase_v2::query::{
+use terrabase::engine::{DocumentPatch, PatchOperation, PatchPath, PatchPathSegment};
+use terrabase::operations::RequestValidationError;
+use terrabase::query::{
     BulkByQueryOptions, DeleteByQueryRequest, DeletionConfirmation, MAX_BULK_PAGE_DOCUMENTS,
     OrderDirection, OrderingKey, PatchByQueryRequest, QueryOrdering, QueryPaging, QueryPredicate,
     QueryProjection, QuerySource, QuerySpec, StalenessMode, StalenessPolicy,
 };
-use terrabase_v2::types::{
+use terrabase::types::{
     Cancellation, CollectionName, Deadline, DocumentValue, LocalDurability, OperationId, TenantId,
 };
 
@@ -83,7 +83,7 @@ fn delete_requests_refuse_by_default_and_carry_the_confirmation_token() {
     assert_eq!(request.durability(), LocalDurability::Written);
     assert_eq!(request.options().page_documents(), MAX_BULK_PAGE_DOCUMENTS);
     assert_eq!(
-        request.query().source().collection().map(terrabase_v2::types::CollectionName::as_str),
+        request.query().source().collection().map(terrabase::types::CollectionName::as_str),
         Some("orders")
     );
     assert!(request.operation_id().is_none());

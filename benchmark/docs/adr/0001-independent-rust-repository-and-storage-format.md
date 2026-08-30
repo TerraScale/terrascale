@@ -4,7 +4,7 @@ status: accepted
 
 # Independent Rust engine and native storage format
 
-TerraBaseV2 is an independent Rust database engine with a native storage
+TerraBase is an independent Rust database engine with a native storage
 format. It does not embed, port, open, import, or translate RavenDB or
 TerraBase V1 storage.
 
@@ -23,7 +23,7 @@ rewrite contract and recovery evidence.
 V2 starts with empty native databases. No V1 migration, dual write, change
 tail, compatibility reader, rollback reader, or Smuggler path exists.
 
-TerraBaseV2 owns database behavior. It does not host a queue, generic job or
+TerraBase owns database behavior. It does not host a queue, generic job or
 workflow runtime, ETL system, function service, agent execution environment,
 or plugin host. A new database feature requires a TerraScale product use case,
 a deterministic correctness contract, a bounded resource model, recovery and

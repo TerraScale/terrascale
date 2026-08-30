@@ -51,7 +51,7 @@ pub enum LeaderlessLevel {
     /// the accepting Region. The minimum successful write
     /// acknowledgement.
     RegionalQuorum,
-    /// `RegionalQuorum` in a majority of eligible active Regions,
+    /// `RegionalQuorum` in every selected active Region,
     /// including the accepting Region.
     GlobalQuorum,
 }
@@ -115,10 +115,10 @@ impl ReplicaSet {
         self.voters_of(region).len() / 2 + 1
     }
 
-    /// The majority threshold of eligible active Regions.
+    /// The number of selected active Regions required for global durability.
     #[must_use]
     pub fn global_threshold(&self) -> usize {
-        self.regions().len() / 2 + 1
+        self.regions().len()
     }
 }
 
@@ -286,6 +286,13 @@ impl LeaderlessReceipt {
 /// Why a leaderless write did not succeed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LeaderlessError {
+    /// `GlobalQuorum` needs at least two selected active Regions.
+    InsufficientRegions {
+        /// The number of selected active Regions in the replica set.
+        selected: usize,
+        /// The minimum number required by the durability contract.
+        minimum: usize,
+    },
     /// The accepting Member is not an eligible voter of the set's epoch.
     NotEligible {
         /// The rejecting epoch.
@@ -398,6 +405,12 @@ pub fn coordinate_write(
     let Some(accepting_region) = set.region_of(accepting) else {
         return Err(LeaderlessError::NotEligible { epoch: set.epoch() });
     };
+    if level == LeaderlessLevel::GlobalQuorum {
+        let selected = set.regions().len();
+        if selected < 2 {
+            return Err(LeaderlessError::InsufficientRegions { selected, minimum: 2 });
+        }
+    }
     // Fan out to every eligible reachable replica: the coordinator
     // itself and every other voter of the set. Remote links run in
     // parallel in the production transport; this core proves the
@@ -432,8 +445,8 @@ pub fn coordinate_write(
     if regional_count < set.regional_threshold(&accepting_region) {
         return Err(LeaderlessError::QuorumNotReached { contributors });
     }
-    // GlobalQuorum: RegionalQuorum in a majority of eligible Regions,
-    // including the accepting Region (established above).
+    // GlobalQuorum: RegionalQuorum in every selected Region, including the
+    // accepting Region established above.
     if level == LeaderlessLevel::GlobalQuorum {
         let qualified_regions = set
             .regions()
@@ -497,7 +510,7 @@ mod tests {
     /// Opens one scratch engine standing in for one Member.
     fn engine_for(tag: &str) -> (PathBuf, Engine) {
         let dir = std::env::temp_dir().join(format!(
-            "tbv2-leaderless-{tag}-{}-{}",
+            "terrabase-leaderless-{tag}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -625,11 +638,9 @@ mod tests {
     }
 
     #[test]
-    fn global_quorum_requires_a_majority_of_qualifying_regions() {
+    fn global_quorum_requires_every_selected_region() {
         let set = three_region_set();
-        // Two Regions' Members reachable: a majority of three, each with
-        // its own regional majority.
-        let engines = build_engines(&["a1", "a2", "b1", "b2"]);
+        let engines = build_engines(&["a1", "a2", "b1", "b2", "g1", "g2"]);
         let fan = endpoints(&engines, &set);
         let tenant = tenant_of("tenant-a");
         let receipt = coordinate_write(
@@ -640,8 +651,11 @@ mod tests {
             &put_write("op-global", "doc-1"),
             LeaderlessLevel::GlobalQuorum,
         )
-        .expect("two of three Regions with regional majorities qualify");
-        assert_eq!(receipt.contributing_regions(), vec![region_id("r-alpha"), region_id("r-beta")]);
+        .expect("every selected Region has a regional majority");
+        assert_eq!(
+            receipt.contributing_regions(),
+            vec![region_id("r-alpha"), region_id("r-beta"), region_id("r-gamma")]
+        );
         cleanup(&engines);
     }
 

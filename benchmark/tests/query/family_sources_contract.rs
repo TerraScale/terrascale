@@ -10,22 +10,22 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use terrabase_v2::engine::{Engine, EngineConfig};
-use terrabase_v2::families::{TimeSeriesPaging, TimeSeriesRange};
-use terrabase_v2::index::definitions::{
+use terrabase::engine::{Engine, EngineConfig};
+use terrabase::families::{TimeSeriesPaging, TimeSeriesRange};
+use terrabase::index::definitions::{
     IndexDefinitionError, IndexLanguageVersion, MAX_NAME_BYTES, MapExpression, MapOutputField,
     MapSource, MapStage, StaticIndexDefinition, StaticIndexName,
 };
-use terrabase_v2::operations::{QueryInput, RequestValidationError};
-use terrabase_v2::query::{
+use terrabase::operations::{QueryInput, RequestValidationError};
+use terrabase::query::{
     OrderDirection, OrderingKey, QueryError, QueryOrdering, QueryPaging, QueryPredicate,
     QueryProjection, QuerySource, QuerySourceKind, QuerySpec, StalenessMode, StalenessPolicy,
 };
-use terrabase_v2::types::{Cancellation, CollectionName, Deadline, TenantId};
+use terrabase::types::{Cancellation, CollectionName, Deadline, TenantId};
 
 fn location(tag: &str) -> PathBuf {
     let index = std::process::id();
-    std::env::temp_dir().join(format!("tbv2-q19-public-{tag}-{index}"))
+    std::env::temp_dir().join(format!("terrabase-q19-public-{tag}-{index}"))
 }
 
 fn open_engine(tag: &str) -> (PathBuf, Engine) {
@@ -120,7 +120,7 @@ fn family_source_specs_compile_through_the_public_seam() {
     }
 
     // The fail-closed rule: family sources are index-less.
-    let namespace = terrabase_v2::query::IndexNamespace::try_new(
+    let namespace = terrabase::query::IndexNamespace::try_new(
         TenantId::try_new("tenant-a").expect("valid tenant"),
         "Auto/ByValue",
     )

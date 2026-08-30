@@ -9,7 +9,7 @@
 //! V2-owned typed frames, encoded by this crate's native CRDT substrate
 //! over `terrabase-crdt` and `terrabase-causal`. The frame vocabulary,
 //! envelope discipline, session semantics, payload encoding, and error
-//! taxonomy are all `TerraBaseV2`'s; no external CRDT engine's payload
+//! taxonomy are all `TerraBase`'s; no external CRDT engine's payload
 //! is spoken, and the superseded codec codes fail closed.
 //!
 //! Scope limits, stated exactly:

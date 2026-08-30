@@ -150,6 +150,48 @@ fn an_active_cluster_serves_quorum_writes_and_reads_over_uds() {
 }
 
 #[test]
+fn a_single_region_refuses_global_quorum_over_uds_before_commit() {
+    let mut fixture = Fixture::bind("one-region-global", ClusterMode::Active);
+    fixture.bind_channel();
+
+    let answer = fixture.call(
+        DocumentWriteRequest {
+            document: DocumentPut {
+                id: "order-global".into(),
+                collection: "orders".into(),
+                body: order_body(),
+            },
+            expected: ExpectedVersion::Absent,
+            operation_id: "op-one-region-global".into(),
+            ack: Some(Acknowledgement::GlobalQuorum),
+        },
+        Some(&IdempotencyKey::new("op-one-region-global").expect("valid key")),
+    );
+    let TbepBody::Error(error) = answer.body() else {
+        panic!("the one-Region global write refuses, got {:?}", answer.kind());
+    };
+    assert_eq!(error.code, ErrorCode::OperationRefused);
+    assert!(
+        error.detail.contains("at least two selected active Regions"),
+        "the refusal explains the topology requirement: {}",
+        error.detail
+    );
+
+    let answer = fixture.call(
+        DocumentReadRequest {
+            collection: "orders".into(),
+            document: "order-global".into(),
+            level: None,
+        },
+        None,
+    );
+    let TbepBody::DocumentReadResponse(response) = answer.body() else {
+        panic!("the read answers after refusal, got {:?}", answer.kind());
+    };
+    assert!(!response.found, "the refused write must not become visible");
+}
+
+#[test]
 fn a_backup_cluster_answers_every_client_mutation_with_the_typed_read_only_error() {
     let mut fixture = Fixture::bind("backup", ClusterMode::Backup);
     fixture.bind_channel();

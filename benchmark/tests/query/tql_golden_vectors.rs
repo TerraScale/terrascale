@@ -12,11 +12,11 @@
 
 use std::collections::BTreeSet;
 
-use terrabase_v2::query::tql::{
+use terrabase::query::tql::{
     self, Capability, Expression, ExpressionKind, GrammarVersion, ProjectionKind, TqlCapabilities,
     TqlErrorClass, TqlParameters, TqlQuery,
 };
-use terrabase_v2::types::DocumentValue;
+use terrabase::types::DocumentValue;
 
 /// One golden vector: parse input triple plus the expected outcome.
 struct Vector {

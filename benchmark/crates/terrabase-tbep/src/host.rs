@@ -23,7 +23,7 @@
 //! The Rust engine-backed host (documents, queries, families, the engine
 //! backbone) is deliberately NOT in this crate yet: the engine crate's
 //! Platform-adapter constructors are crate-private by design (W5-E keeps
-//! `PlatformAdapter::new` in-crate), so wiring `terrabase-v2` behind this
+//! `PlatformAdapter::new` in-crate), so wiring `terrabase` behind this
 //! seam is a named integrator action — a small public engine-side
 //! constructor plus this crate's `impl TbepHost for it`. The seam below
 //! is shaped so that wiring is thin: every method maps one TBEP request

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "LicenseRef-TerraScale-Pending"
-description = "TerraBaseV2 native bounded CRDT registers"
+description = "TerraBase native bounded CRDT registers"
 publish = false
 
 [lints.rust]

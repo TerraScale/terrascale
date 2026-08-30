@@ -1,5 +1,5 @@
 // <copyright file="HostFixture.cs" company="TerraScale">
-// TerraBaseV2 (SE-13). See LICENSE.md.
+// TerraBase (SE-13). See LICENSE.md.
 // </copyright>
 
 namespace TerraBase.Cli.Tests;

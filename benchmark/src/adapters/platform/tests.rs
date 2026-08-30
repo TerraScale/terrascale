@@ -59,7 +59,7 @@ use super::{
 const TEST_SECRET: &str = "test-secret-do-not-use";
 
 /// A document field value no audit form may ever contain.
-const AUDIT_CANARY: &str = "tbv2-audit-canary-value";
+const AUDIT_CANARY: &str = "terrabase-audit-canary-value";
 
 fn tenant(name: &str) -> TenantId {
     TenantId::try_new(name).expect("valid tenant")
@@ -98,7 +98,8 @@ fn object_document(id: &str, collection_name: &str, name: &str) -> Document {
 fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    std::env::temp_dir().join(format!("tbv2-w5e-platform-{tag}-{}-{index}", std::process::id()))
+    std::env::temp_dir()
+        .join(format!("terrabase-w5e-platform-{tag}-{}-{index}", std::process::id()))
 }
 
 /// Opens one durable Engine for a dispatch test.

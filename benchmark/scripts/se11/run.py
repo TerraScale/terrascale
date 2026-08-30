@@ -1641,11 +1641,11 @@ hosts and temp-dir sockets only; backend-context fixtures
 secrets; no live systems; the engine and hosts are throwaway processes
 under the run's temp directory.
 
-- TerraBaseV2 worktree: branch `fleet/se11-2`
+- TerraBase worktree: branch `fleet/se11-2`
 - Sibling SDK checkouts (read-only, never edited or pushed):
   TerraScale.TypeScript @ `{ts}`, TerraScale.DotNet @ `{dotnet}`
 - Reproduce: `python3 scripts/se11/run.py --scenario {name}` from the
-  TerraBaseV2 worktree root (the fresh-checkout sequence was recorded in
+  TerraBase worktree root (the fresh-checkout sequence was recorded in
   `docs/evidence/sync/se11-live-update-tracer.md`, deleted by the legacy
   parity scrub 8f697ba; it survives in git history at 8f697ba^, and the
   per-scenario receipts in this directory remain the record).

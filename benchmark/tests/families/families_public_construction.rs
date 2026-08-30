@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use terrabase_v2::{
+use terrabase::{
     Cancellation, Deadline, DocumentId, FamilyKind, FamilyReadRequest, RequestValidationError,
     families::{
         ArchivalReadRequest, AttachmentRead, CompareExchangeRead, CounterRead, IdentityRead,

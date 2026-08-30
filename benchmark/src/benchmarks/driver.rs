@@ -1,4 +1,4 @@
-//! The TerraBaseV2 side of the benchmark lane: an in-process driver that
+//! The TerraBase side of the benchmark lane: an in-process driver that
 //! runs the mapped workloads against a durable Engine and returns exact,
 //! deterministic counters.
 //!
@@ -76,8 +76,8 @@ impl Commissioning {
 /// window collides with another.
 static WINDOW: AtomicU64 = AtomicU64::new(0);
 
-/// The in-process TerraBaseV2 side of one lane run.
-pub(crate) struct V2Lane {
+/// The in-process TerraBase side of one lane run.
+pub(crate) struct TerraBaseLane {
     engine: Engine,
     dir: PathBuf,
     scope: TenantScope,
@@ -86,7 +86,7 @@ pub(crate) struct V2Lane {
     operations: AtomicU64,
 }
 
-impl V2Lane {
+impl TerraBaseLane {
     /// Opens a durable engine under a fresh system-temp location.
     pub(crate) fn open(tag: &str) -> Self {
         Self::open_with_lifecycle(tag, crate::query::optimizer::LifecycleThresholds::DEFAULT)
@@ -102,7 +102,7 @@ impl V2Lane {
     ) -> Self {
         let index = WINDOW.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir()
-            .join(format!("tbv2-se15-bench-{tag}-{}-{index}", std::process::id()));
+            .join(format!("terrabase-se15-bench-{tag}-{}-{index}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
         let location = EngineConfig::durable(&dir).expect("durable location");
         let engine =

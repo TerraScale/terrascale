@@ -28,7 +28,7 @@ validity, OCI price inputs, and confidence intervals.
 
 ## Fair workload contracts
 
-One versioned workload manifest drives TerraBaseV2 and every comparison
+One versioned workload manifest drives TerraBase and every comparison
 adapter. It fixes logical operations, payloads, indexes, query meaning,
 consistency, durability, error policy, retry policy, concurrency, offered rate,
 dataset size, cache state, and validation digest. A competitor is compared only
@@ -142,7 +142,7 @@ requirement.
 
 ## RavenDB gate
 
-TerraBaseV2 must be materially faster than RavenDB on every required comparable
+TerraBase must be materially faster than RavenDB on every required comparable
 hot-path workload. Before either candidate runs, each workload manifest
 preregisters one of these matched-load gates. The workload passes individually
 as `v2-faster` only when that gate passes:
@@ -156,7 +156,7 @@ All designated guardrails remain non-inferior within five percent. An aggregate
 cannot compensate for a missed workload. A workload with different semantics
 is marked not comparable and supports no speed claim.
 RavenDB creates no V1 parity, migration, query, client, data-format, or feature
-scope for TerraBaseV2.
+scope for TerraBase.
 
 ## Regression baselines
 
@@ -224,7 +224,7 @@ candidate must also be non-inferior to the matching last promoted baseline
 after the first baseline exists.
 
 Twenty-Region qualification is not an initial release gate. It begins only
-after TerraBaseV2 is production-ready and operating in the three-Region
+after TerraBase is production-ready and operating in the three-Region
 catalog. Catalog expansion beyond three requires deterministic twenty-Region
 capacity and fault qualification plus real evidence for each new Region before
 that Region becomes selectable.

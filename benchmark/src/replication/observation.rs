@@ -33,7 +33,7 @@
 //! // No document body can leave the observation surface: a conflicts
 //! // observation has no such accessor, so the content restriction is a
 //! // construction property, not a filter.
-//! let observation: terrabase_v2::replication::ConflictsObservation =
+//! let observation: terrabase::replication::ConflictsObservation =
 //!     unimplemented!();
 //! let _ = observation.documents();
 //! ```
@@ -41,7 +41,7 @@
 //! ```compile_fail
 //! // The cursor observation reports positions in the storage-sequence
 //! // space, never the documents the positions describe.
-//! let observation: terrabase_v2::replication::CursorObservation =
+//! let observation: terrabase::replication::CursorObservation =
 //!     unimplemented!();
 //! let _ = observation.documents();
 //! ```

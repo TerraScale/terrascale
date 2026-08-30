@@ -29,7 +29,7 @@ integration, and cutover as cross-repository work.
 
 The `TerraScale.Internals`-owned, independently deployable TerraScale.Database
 service is the sole production gateway between public clients and the
-TerraBaseV2 engine. The standalone `TerraScale.Database` repository is
+TerraBase engine. The standalone `TerraScale.Database` repository is
 transitional and may be retired only after the provenance, generated-binding
 parity, supported-operation cutover, and rollback gates in this ADR and the
 workspace release plan are accepted. The repository-local `host/` lane remains
@@ -54,7 +54,7 @@ authorized by this record to bypass the gateway.
 
 - Public route ownership, grant verification, key management, and customer
   audit policy stay with the product gateway and control-plane owners.
-- TerraBaseV2 must maintain a stable, bounded, typed private TBEP contract and
+- TerraBase must maintain a stable, bounded, typed private TBEP contract and
   provide the vectors, drift checks, hostile-decode checks, and failure
   semantics needed by that gateway.
 - The local host can continue to provide real-engine and conformance evidence,

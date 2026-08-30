@@ -114,6 +114,17 @@ impl RetainedFact {
 pub(crate) struct RetainedWriter {
     file: File,
     fresh: bool,
+    path_len: u64,
+}
+
+/// The exact retained-evidence frame written by one successful append.
+///
+/// The independent storage frontier hashes these bytes only after the
+/// retained file itself has been synced.
+#[derive(Debug)]
+pub(super) struct RetainedAppend {
+    pub(super) start: u64,
+    pub(super) frame: Vec<u8>,
 }
 
 impl RetainedWriter {
@@ -121,7 +132,8 @@ impl RetainedWriter {
     pub(crate) fn open(path: &Path) -> io::Result<Self> {
         let fresh = !path.exists();
         let file = OpenOptions::new().create(true).append(true).read(true).open(path)?;
-        Ok(Self { file, fresh })
+        let path_len = file.metadata()?.len();
+        Ok(Self { file, fresh, path_len })
     }
 
     /// Reports whether this open created the file.
@@ -129,9 +141,20 @@ impl RetainedWriter {
         self.fresh
     }
 
+    /// Returns the current append offset.
+    pub(crate) const fn len(&self) -> u64 {
+        self.path_len
+    }
+
     /// Appends one checksummed fact record.
     #[allow(clippy::cast_possible_truncation)]
-    pub(crate) fn append_fact(&mut self, fact: &RetainedFact) -> io::Result<()> {
+    pub(crate) fn append_fact(&mut self, fact: &RetainedFact) -> io::Result<RetainedAppend> {
+        if fact.sequence.get() == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "retained fact sequence must be nonzero",
+            ));
+        }
         let mut payload = Vec::new();
         codec::push_u8(&mut payload, RETAINED_RECORD_FACT);
         codec::push_str(&mut payload, fact.tenant.as_str());
@@ -151,7 +174,7 @@ impl RetainedWriter {
         codec::push_u32(&mut frame, payload.len() as u32);
         codec::push_u64(&mut frame, codec::fnv1a(&payload));
         frame.extend_from_slice(&payload);
-        self.file.write_all(&frame)
+        self.append_frame(frame)
     }
 
     /// Appends one checksummed bound record: the durable declaration that
@@ -172,7 +195,19 @@ impl RetainedWriter {
         bound: u64,
         head: u64,
         non_deletion: &[(TenantId, Option<StorageSequence>)],
-    ) -> io::Result<()> {
+    ) -> io::Result<RetainedAppend> {
+        let mut tenants = BTreeSet::new();
+        if bound == 0
+            || head < bound
+            || non_deletion.iter().any(|(tenant, through)| {
+                !tenants.insert(tenant) || through.is_some_and(|sequence| sequence.get() >= bound)
+            })
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "retained bound declaration is semantically invalid",
+            ));
+        }
         let mut payload = Vec::new();
         codec::push_u8(&mut payload, RETAINED_RECORD_BOUND);
         codec::push_u64(&mut payload, bound);
@@ -206,17 +241,32 @@ impl RetainedWriter {
         codec::push_u32(&mut frame, payload.len() as u32);
         codec::push_u64(&mut frame, codec::fnv1a(&payload));
         frame.extend_from_slice(&payload);
-        self.file.write_all(&frame)
+        self.append_frame(frame)
     }
 
     /// Truncates the store to its verified prefix length.
     pub(crate) fn truncate(&mut self, good_bytes: u64) -> io::Result<()> {
-        self.file.set_len(good_bytes)
+        self.file.set_len(good_bytes)?;
+        self.file.sync_all()?;
+        self.path_len = good_bytes;
+        Ok(())
     }
 
     /// Flushes the appended bytes to the device.
     pub(crate) fn sync(&mut self) -> io::Result<()> {
         self.file.sync_data()
+    }
+
+    fn append_frame(&mut self, frame: Vec<u8>) -> io::Result<RetainedAppend> {
+        let start = self.path_len;
+        self.file.write_all(&frame)?;
+        let frame_len = u64::try_from(frame.len()).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "retained frame is too large")
+        })?;
+        self.path_len = self.path_len.checked_add(frame_len).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "retained file is too large")
+        })?;
+        Ok(RetainedAppend { start, frame })
     }
 }
 
@@ -231,6 +281,14 @@ pub(crate) struct RetainedScan {
     /// Whether damage was found with bytes behind it: mid-file integrity
     /// loss, which fails the open.
     pub(crate) mid_file_damage: bool,
+    /// Every semantically verified frame end, in append order.
+    frame_ends: Vec<u64>,
+}
+
+impl RetainedScan {
+    pub(super) fn frame_ends(&self) -> &[u64] {
+        &self.frame_ends
+    }
 }
 
 /// The in-memory index over the retained-evidence store.
@@ -268,6 +326,7 @@ impl RetainedIndex {
             good_bytes: 0,
             total_bytes: 0,
             mid_file_damage: false,
+            frame_ends: Vec::new(),
         };
         let mut bytes = Vec::new();
         let Ok(mut file) = File::open(path) else {
@@ -282,14 +341,13 @@ impl RetainedIndex {
         let mut index = Self::default();
         let mut good_bytes: u64 = 0;
         let mut reader = Reader::new(&bytes);
+        let mut frame_ends = Vec::new();
         while reader.remaining() > 0 {
             let frame_start = total - reader.remaining();
             let before = reader.remaining();
             let Some(record) = read_retained_record(&mut reader) else {
                 // The reader stopped somewhere inside this frame. Where
                 // exactly decides torn tail versus mid-file damage.
-                let consumed = before.saturating_sub(reader.remaining());
-                let stopped = frame_start + consumed;
                 let mid_file = match declared_frame(&bytes, frame_start) {
                     // The header itself is cut off by the end of the file:
                     // the only explanation is an interrupted append.
@@ -297,15 +355,30 @@ impl RetainedIndex {
                     // A length no legal record could carry is a damaged
                     // length field, not a torn tail.
                     Some((length, _)) if length > MAX_RETAINED_RECORD_BYTES => true,
-                    Some((_, end)) => end <= total && (end < total || stopped < end),
+                    // A legal length running past EOF is an interrupted append
+                    // only when it does not conceal a later verified record.
+                    Some((_, end)) if end > total => {
+                        has_verified_retained_frame_after(&bytes, frame_start)
+                    }
+                    // All declared bytes exist. A checksum, structure, or
+                    // semantic failure may have been acknowledged, even at
+                    // EOF, so it is integrity damage rather than a torn tail.
+                    Some((_, _)) => true,
                 };
-                return RetainedScan { index, good_bytes, total_bytes, mid_file_damage: mid_file };
+                return RetainedScan {
+                    index,
+                    good_bytes,
+                    total_bytes,
+                    mid_file_damage: mid_file,
+                    frame_ends,
+                };
             };
             let consumed = before.saturating_sub(reader.remaining());
             match record {
                 RetainedRecord::Fact(fact) => {
-                    index.identities.insert(fact.identity());
-                    index.facts.push(fact);
+                    if index.identities.insert(fact.identity()) {
+                        index.facts.push(fact);
+                    }
                 }
                 RetainedRecord::Bound { bound, head, non_deletion } => {
                     index.bound = Some(match index.bound {
@@ -325,8 +398,9 @@ impl RetainedIndex {
                 }
             }
             good_bytes += consumed as u64;
+            frame_ends.push(good_bytes);
         }
-        RetainedScan { index, good_bytes, total_bytes, mid_file_damage: false }
+        RetainedScan { index, good_bytes, total_bytes, mid_file_damage: false, frame_ends }
     }
 
     /// Holds one fact if its identity is new, reporting whether it landed.
@@ -379,6 +453,28 @@ fn declared_frame(bytes: &[u8], frame_start: usize) -> Option<(usize, usize)> {
     Some((length, frame_start + HEADER_BYTES + length))
 }
 
+fn has_verified_retained_frame_after(bytes: &[u8], damaged_start: usize) -> bool {
+    let Some(search_start) = damaged_start.checked_add(1) else {
+        return false;
+    };
+    let Some(last_start) = bytes.len().checked_sub(HEADER_BYTES) else {
+        return false;
+    };
+    if search_start > last_start {
+        return false;
+    }
+    (search_start..=last_start).any(|candidate| {
+        let Some((length, end)) = declared_frame(bytes, candidate) else {
+            return false;
+        };
+        if length > MAX_RETAINED_RECORD_BYTES || end > bytes.len() {
+            return false;
+        }
+        let mut reader = Reader::new(&bytes[candidate..end]);
+        read_retained_record(&mut reader).is_some() && reader.remaining() == 0
+    })
+}
+
 /// One decoded record of the store.
 enum RetainedRecord {
     Fact(RetainedFact),
@@ -394,7 +490,7 @@ fn read_retained_record(reader: &mut Reader<'_>) -> Option<RetainedRecord> {
         return None;
     }
     let mut payload_reader = Reader::new(payload);
-    match payload_reader.read_u8()? {
+    let record = match payload_reader.read_u8()? {
         RETAINED_RECORD_FACT => {
             let tenant = TenantId::try_new(&payload_reader.read_string()?).ok()?;
             let collection = match payload_reader.read_u8()? {
@@ -434,6 +530,26 @@ fn read_retained_record(reader: &mut Reader<'_>) -> Option<RetainedRecord> {
             Some(RetainedRecord::Bound { bound, head, non_deletion })
         }
         _ => None,
+    }?;
+    if payload_reader.remaining() != 0 {
+        return None;
+    }
+    match &record {
+        RetainedRecord::Fact(fact) if fact.sequence.get() == 0 => None,
+        RetainedRecord::Bound { bound, head, non_deletion }
+            if *bound == 0
+                || *head < *bound
+                || non_deletion.iter().any(|(_, through)| {
+                    through.is_some_and(|sequence| sequence.get() >= *bound)
+                })
+                || {
+                    let mut tenants = BTreeSet::new();
+                    non_deletion.iter().any(|(tenant, _)| !tenants.insert(tenant))
+                } =>
+        {
+            None
+        }
+        _ => Some(record),
     }
 }
 
@@ -442,11 +558,14 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{HEADER_BYTES, MAX_RETAINED_RECORD_BYTES, RetainedIndex, RetainedWriter};
-    use crate::types::{StorageSequence, TenantId};
+    use crate::{
+        storage::codec,
+        types::{StorageSequence, TenantId},
+    };
 
     /// One temp location per test, never shared across the fleet's runs.
     fn location(tag: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("tbv2-fups-retained-{tag}-{}", std::process::id()))
+        std::env::temp_dir().join(format!("terrabase-fups-retained-{tag}-{}", std::process::id()))
     }
 
     /// One tenant whose encoded row is the maximum 268 bytes: a 255-byte
@@ -471,12 +590,14 @@ mod tests {
         let path = location("largest-legal");
         let rows = largest_legal_window();
         let mut writer = RetainedWriter::open(&path).expect("opens");
-        writer.append_bound(7, 7, &rows).expect("the largest legal window is written");
+        writer
+            .append_bound(u64::MAX, u64::MAX, &rows)
+            .expect("the largest legal window is written");
         writer.sync().expect("syncs");
         drop(writer);
         let scan = RetainedIndex::scan(&path);
         assert!(!scan.mid_file_damage, "an intact record at the ceiling is not damage");
-        assert_eq!(scan.index.declared_bound(), Some(7));
+        assert_eq!(scan.index.declared_bound(), Some(u64::MAX));
         assert_eq!(scan.index.non_deletion().len(), rows.len());
         assert_eq!(
             scan.total_bytes,
@@ -493,7 +614,7 @@ mod tests {
         rows.push(wide_tenant(rows.len()));
         let mut writer = RetainedWriter::open(&path).expect("opens");
         let refusal = writer
-            .append_bound(7, 7, &rows)
+            .append_bound(u64::MAX, u64::MAX, &rows)
             .expect_err("a bound record past the ceiling would misclassify as damage when torn");
         assert_eq!(
             refusal.kind(),
@@ -567,5 +688,33 @@ mod tests {
         assert_eq!(scan.good_bytes, verified);
         assert_eq!(scan.index.declared_bound(), Some(4));
         std::fs::remove_dir_all(&path).ok();
+    }
+
+    #[test]
+    fn a_complete_checksummed_record_with_trailing_fields_is_integrity_damage() {
+        let path = location("trailing-fields");
+        let mut writer = RetainedWriter::open(&path).expect("opens");
+        writer
+            .append_bound(4, 4, &[(TenantId::try_new("tenant-a").expect("valid"), None)])
+            .expect("bound writes");
+        writer.sync().expect("bound syncs");
+        drop(writer);
+
+        let original = std::fs::read(&path).expect("store reads");
+        let mut payload = original[HEADER_BYTES..].to_vec();
+        payload.push(0xa5);
+        let mut hostile = Vec::new();
+        codec::push_u32(
+            &mut hostile,
+            u32::try_from(payload.len()).expect("payload fits frame length"),
+        );
+        codec::push_u64(&mut hostile, codec::fnv1a(&payload));
+        hostile.extend_from_slice(&payload);
+        std::fs::write(&path, hostile).expect("hostile record writes");
+
+        let scan = RetainedIndex::scan(&path);
+        assert!(scan.mid_file_damage);
+        assert_eq!(scan.good_bytes, 0);
+        std::fs::remove_file(path).ok();
     }
 }

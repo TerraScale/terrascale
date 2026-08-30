@@ -29,43 +29,43 @@ use crate::types::TenantId;
 /// Writes every frozen memtable out as a level-0 segment and publishes the
 /// manifest that names them. Returns the segments written.
 pub(super) fn flush_frozen(storage: &mut LsmStorage) -> Vec<SegmentMeta> {
+    if storage.frozen.is_empty() {
+        return Vec::new();
+    }
     let mut written = Vec::new();
     let dir = storage.dir().to_path_buf();
-    while !storage.frozen.is_empty() {
-        let frozen = storage.frozen.remove(0);
+    let mut candidate = storage.manifest.clone();
+    let mut readers = Vec::new();
+    for frozen in &storage.frozen {
         let entries: Vec<Entry> = frozen.iter().collect();
         if entries.is_empty() {
             continue;
         }
-        let id = storage.manifest.allocate_segment_id();
+        let id = candidate.allocate_segment_id();
         let path = super::segment_path(&dir, id);
-        if segment::write_segment(&path, id, 0, &entries).is_err() {
-            // A failed flush leaves the frozen table in place; the next
-            // pass retries. Data is still durable in the WAL.
-            storage.frozen.insert(0, frozen);
-            break;
-        }
-        let meta = SegmentMeta {
-            id,
-            level: 0,
-            entry_count: entries.len() as u64,
-            byte_len: std::fs::metadata(&path).map_or(0, |meta| meta.len()),
-            min_key: entries.first().map_or_else(Vec::new, |entry| entry.key.user_key().to_vec()),
-            max_key: entries.last().map_or_else(Vec::new, |entry| entry.key.user_key().to_vec()),
+        let Ok(meta) = segment::write_segment(&path, id, 0, &entries) else {
+            return Vec::new();
         };
-        if let Ok(reader) = segment::SegmentReader::open(&path, id, 0) {
-            storage.readers.insert(id, std::cell::RefCell::new(reader));
-        }
-        storage.manifest.segments.push(meta.clone());
+        let Ok(reader) = segment::SegmentReader::open(&path, id, 0) else {
+            return Vec::new();
+        };
+        candidate.segments.push(meta.clone());
+        readers.push((id, std::cell::RefCell::new(reader)));
         written.push(meta);
     }
-    if !written.is_empty() {
-        storage.manifest.epoch += 1;
-        storage.manifest.wal_checkpoint = storage.sequence_watermark;
-        if storage.manifest.publish(&dir).is_ok() {
-            let _ = storage.wal.truncate_after_checkpoint();
-        }
+    if written.is_empty() {
+        storage.frozen.clear();
+        return written;
     }
+    candidate.epoch = candidate.epoch.saturating_add(1);
+    if candidate.publish(&dir).is_err() {
+        return Vec::new();
+    }
+    for (id, reader) in readers {
+        storage.readers.insert(id, reader);
+    }
+    storage.manifest = candidate;
+    storage.frozen.clear();
     written
 }
 
@@ -139,6 +139,9 @@ pub(crate) fn run_compaction(
     storage: &mut LsmStorage,
     request: StorageCompaction,
 ) -> Result<(CompactionReceipt, CompactionDriverFacts), CompactionError> {
+    if storage.frontier_poisoned && storage.activation.is_some() {
+        return Err(CompactionError::Storage);
+    }
     let StorageCompaction { policy, floor, progress } = request;
     let progress = progress.as_ref();
     let mut phases: Vec<CompactionPhase> = Vec::new();
@@ -156,7 +159,7 @@ pub(crate) fn run_compaction(
     let frozen_live = std::mem::take(&mut storage.memtable);
     storage.frozen.push(frozen_live);
     flush_frozen(storage);
-    if storage.faults_mut().fire(FaultPoint::CompactionCheckpointPublish).is_err() {
+    if !storage.frozen.is_empty() || storage.publish_wal_checkpoint_impl().is_err() {
         return Err(CompactionError::Storage);
     }
     let checkpoint_sequence = storage.published_sequence_impl();
@@ -166,10 +169,6 @@ pub(crate) fn run_compaction(
     // Phase: write-ahead log reclaim. Only the published checkpoint makes
     // this safe.
     emit(progress, CompactionPhase::WalReclaim, false, 0, wal_bytes_before);
-    if storage.faults_mut().fire(FaultPoint::CompactionWalTruncate).is_err() {
-        return Err(CompactionError::Storage);
-    }
-    let _ = storage.wal_truncate_impl();
     phases.push(CompactionPhase::WalReclaim);
     emit(progress, CompactionPhase::WalReclaim, true, wal_bytes_before, wal_bytes_before);
 
@@ -261,9 +260,6 @@ pub(crate) fn run_compaction(
                 .append_retained_facts_impl(&facts, bound, candidate_head, &non_deletion)
                 .is_err()
             {
-                return Err(CompactionError::Storage);
-            }
-            if storage.faults_mut().fire(FaultPoint::CompactionEvidenceSync).is_err() {
                 return Err(CompactionError::Storage);
             }
             evidence_retained = u64::try_from(facts.len()).unwrap_or(u64::MAX);

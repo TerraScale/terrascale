@@ -9,11 +9,11 @@
 //! What lives here, in the SE-15 lane's shape:
 //!
 //! - the **ad-hoc workload class as data** ([`OptimizerWorkload`]): each
-//!   workload's TerraBaseV2 operation and PostgreSQL equivalent, including
+//!   workload's TerraBase operation and PostgreSQL equivalent, including
 //!   the fairness asymmetry the charter requires be stated rather than
 //!   hidden — PostgreSQL has no automatic index creation, so the comparable
 //!   act on the query workloads is the operator's manual `CREATE INDEX`,
-//!   and the write-path workload compares TerraBaseV2 against itself;
+//!   and the write-path workload compares TerraBase against itself;
 //! - the **budgets as constants** ([`budgets`]), each one carrying the
 //!   identifier and the measured quantity that decides it. The budgets were
 //!   written before any measurement ran
@@ -33,8 +33,8 @@
 //! baseline is `Unrun` with its reason and owner
 //! ([`super::reference`]), and the objective status of every receipt here is
 //! `inconclusive`. The one comparison that **does** exist is the write-path
-//! overhead comparison — TerraBaseV2 with active auto indexes against
-//! TerraBaseV2 without — and its verdict is recorded with the exact
+//! overhead comparison — TerraBase with active auto indexes against
+//! TerraBase without — and its verdict is recorded with the exact
 //! vocabulary while its objective status stays `inconclusive`.
 //!
 //! Execution remains the W3-2 bounded snapshot scan: no query here is
@@ -48,7 +48,7 @@
 //! (`QueryStore::recent_index_selections`, `QueryStore::registered_indexes`)
 //! plus the lane's durable-byte counter.
 
-#![allow(clippy::doc_markdown)] // dense with the proper nouns PostgreSQL and TerraBaseV2
+#![allow(clippy::doc_markdown)] // dense with the proper nouns PostgreSQL and TerraBase
 
 use std::{collections::BTreeMap, fmt::Write as _, time::Duration};
 
@@ -69,7 +69,7 @@ use crate::{
 };
 
 use super::{
-    driver::V2Lane,
+    driver::TerraBaseLane,
     gates::{self, MedianRange, Trend},
     lane::LaneConfig,
     reference,
@@ -107,8 +107,8 @@ impl OptimizerWorkload {
         }
     }
 
-    /// The TerraBaseV2 operation this workload measures.
-    pub(crate) const fn terrabase_v2_operation(self) -> &'static str {
+    /// The TerraBase operation this workload measures.
+    pub(crate) const fn terrabase_operation(self) -> &'static str {
         match self {
             Self::SingleCollection => {
                 "Engine::queries().compile + execute — S sequential ad-hoc \
@@ -149,7 +149,7 @@ impl OptimizerWorkload {
             Self::RegistryBound => {
                 "-- no PostgreSQL equivalent: PostgreSQL's index count per table is \
                  operator-chosen and bounded by no engine rule, so no shared budget exists; \
-                 this workload compares TerraBaseV2 against its own written bound"
+                 this workload compares TerraBase against its own written bound"
             }
         }
     }
@@ -259,7 +259,7 @@ pub(crate) struct RegistryWindow {
 }
 
 /// The write-path overhead comparison: the one comparison that exists on
-/// this host, both sides TerraBaseV2.
+/// this host, both sides TerraBase.
 #[derive(Clone, Debug)]
 pub(crate) struct WritePathComparison {
     /// Durable bytes per write with no active auto index, one entry per
@@ -305,7 +305,7 @@ impl WritePathComparison {
 /// The in-process driver of the ad-hoc class: a durable engine plus the
 /// ad-hoc operations and typed reads the workloads need.
 pub(crate) struct AdHocLane {
-    lane: V2Lane,
+    lane: TerraBaseLane,
 }
 
 impl AdHocLane {
@@ -319,7 +319,7 @@ impl AdHocLane {
             defaults.delete_after_idle(),
             Duration::ZERO,
         );
-        Self { lane: V2Lane::open_with_lifecycle(tag, thresholds) }
+        Self { lane: TerraBaseLane::open_with_lifecycle(tag, thresholds) }
     }
 
     /// Seeds one collection with `documents` documents carrying `fields`,
@@ -657,7 +657,7 @@ pub(crate) struct OptimizerRunRecord {
     pub label: String,
     /// The workload measured.
     pub workload: OptimizerWorkload,
-    /// The TerraBaseV2 source identity measured.
+    /// The TerraBase source identity measured.
     pub source_identity: String,
     /// The comparison verdict: the closed vocabulary, used only where a
     /// comparison exists.
@@ -712,7 +712,7 @@ impl OptimizerRunRecord {
         let mut text = String::new();
         let _unused = writeln!(text, "run label: {}", self.label);
         let _unused = writeln!(text, "workload: {}", self.workload.as_str());
-        let _unused = writeln!(text, "terrabase v2 source: {}", self.source_identity);
+        let _unused = writeln!(text, "terrabase source: {}", self.source_identity);
         let _unused =
             writeln!(text, "postgresql pin: {}", reference::POSTGRESQL_REFERENCE.describe());
         let _unused = writeln!(

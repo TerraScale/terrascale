@@ -1,14 +1,15 @@
 // <copyright file="TbepQuic.cs" company="TerraScale">
-// TerraBaseV2 (SE-14). See LICENSE.md.
+// TerraBase (SE-14). See LICENSE.md.
 // </copyright>
 
 namespace TerraBase.Protocol;
 
 using System.Net;
 using System.Net.Quic;
-using System.Runtime.Versioning;
 using System.Net.Security;
+using System.Runtime.Versioning;
 using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
 
 /// <summary>
 /// The TBEP client's QUIC+TLS binding (P4): the same client discipline
@@ -25,16 +26,24 @@ public static class TbepQuic
     /// <summary>Connects one TBEP channel over QUIC+TLS to a serving engine process.</summary>
     /// <param name="host">The engine's QUIC host name (the certificate's name).</param>
     /// <param name="port">The engine's QUIC port.</param>
+    /// <param name="clientCertificate">The gateway workload identity presented to the engine.</param>
     /// <param name="trustServerCertificate">Whether the row trusts the presented certificate unverified — test rows with self-signed identities only; production verifies.</param>
     /// <param name="cancellationToken">A cancellation token.</param>
     /// <returns>The connected client, unbound.</returns>
     /// <exception cref="System.PlatformNotSupportedException">The platform carries no QUIC support.</exception>
     /// <exception cref="System.Security.Authentication.AuthenticationException">The TLS handshake failed.</exception>
-    public static async Task<TbepClient> ConnectAsync(string host, int port, bool trustServerCertificate, CancellationToken cancellationToken = default)
+    public static async Task<TbepClient> ConnectAsync(
+        string host,
+        int port,
+        X509Certificate2 clientCertificate,
+        bool trustServerCertificate,
+        CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(clientCertificate);
         var options = new SslClientAuthenticationOptions
         {
             ApplicationProtocols = [Protocol],
+            ClientCertificates = new X509CertificateCollection { clientCertificate },
             TargetHost = host,
         };
         if (trustServerCertificate)
@@ -47,6 +56,8 @@ public static class TbepQuic
             {
                 RemoteEndPoint = new DnsEndPoint(host, port),
                 ClientAuthenticationOptions = options,
+                DefaultCloseErrorCode = 1,
+                DefaultStreamErrorCode = 1,
             },
             cancellationToken).ConfigureAwait(false);
         var stream = await connection.OpenOutboundStreamAsync(

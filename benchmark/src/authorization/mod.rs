@@ -1,7 +1,7 @@
 //! Bounded, versioned authorization evaluation for the private engine.
 //!
 //! This module deliberately starts after authentication.  A trusted gateway
-//! supplies [`VerifiedPrincipalInput`] through the crate-private construction
+//! supplies `VerifiedPrincipalInput` through the crate-private construction
 //! seam; the engine never parses public claims, passwords, tokens, or keys.
 
 use std::{

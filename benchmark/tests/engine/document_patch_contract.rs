@@ -9,13 +9,13 @@
 //! no-partial-write proof — is proved by the in-crate engine tests instead
 //! (`src/engine/patch_tests.rs`).
 
-use terrabase_v2::engine::{
+use terrabase::engine::{
     AddOrPatch, DocumentPatch, MAX_PATCH_FIELD_BYTES, MAX_PATCH_OPERATIONS,
     MAX_PATCH_PATH_SEGMENTS, PatchError, PatchOperation, PatchOutcome, PatchPath, PatchPathSegment,
 };
-use terrabase_v2::operations::RequestValidationError;
-use terrabase_v2::types::CollectionName;
-use terrabase_v2::{Document, DocumentId, DocumentValue, EngineError, ExpectedVersion};
+use terrabase::operations::RequestValidationError;
+use terrabase::types::CollectionName;
+use terrabase::{Document, DocumentId, DocumentValue, EngineError, ExpectedVersion};
 
 fn collection() -> CollectionName {
     CollectionName::try_new("users").expect("valid identifier")

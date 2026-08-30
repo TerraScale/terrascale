@@ -13,15 +13,15 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use terrabase::replication::{LeaderlessLevel, MemberId, RegionId, ReplicaSet};
+use terrabase::types::DocumentValue;
 use terrabase_cluster::backup::{BackupPolicy, BackupSet};
 use terrabase_cluster::host::{ClusterHost, MemberSpec};
 use terrabase_cluster::{ClusterMode, ComposedWrite};
-use terrabase_v2::replication::{LeaderlessLevel, MemberId, RegionId, ReplicaSet};
-use terrabase_v2::types::DocumentValue;
 
 fn dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "tbv2-cluster-qualification-{tag}-{}-{}",
+        "terrabase-cluster-qualification-{tag}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -144,7 +144,7 @@ fn ac3_the_acknowledgement_levels_answer_distinct_receipts_and_backups_never_vot
         .expect("regional commits");
     assert_eq!(regional.achieved(), LeaderlessLevel::RegionalQuorum);
 
-    // Global: a majority of Regions contributes.
+    // Global: every selected Region contributes.
     let global = cluster
         .client_write("member-d", &put("op-g", "doc-g", "open"), LeaderlessLevel::GlobalQuorum)
         .expect("global commits");
@@ -305,7 +305,7 @@ fn scenario9_restore_from_backup_mints_a_new_active_identity_and_the_backup_stay
 
     // A non-empty target refuses: a restore never merges silently.
     let occupied = std::env::temp_dir()
-        .join(format!("tbv2-cluster-qualification-scenario9-occupied-{}", std::process::id()));
+        .join(format!("terrabase-cluster-qualification-scenario9-occupied-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&occupied);
     std::fs::create_dir_all(&occupied).unwrap();
     std::fs::write(occupied.join("marker"), b"x").unwrap();

@@ -44,7 +44,7 @@ use crate::types::{
 fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("tbv2-w4-stream-{tag}-{}-{index}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-w4-stream-{tag}-{}-{index}", std::process::id()))
 }
 
 /// Opens one durable engine and returns it with its location for cleanup.

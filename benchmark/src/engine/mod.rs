@@ -56,7 +56,9 @@ use crate::{
     },
     storage::{
         self, CommitIntent, CommitPublicationEvent, CommitResult, CompactionError,
-        CompactionReceipt, CompactionRequest, PublishedCommit, StagedWrite, StoragePort,
+        CompactionReceipt, CompactionRequest, LedgerFrontierActivationError,
+        LedgerFrontierActivationReceipt, LedgerFrontierActivationRequest, LedgerFrontierStatus,
+        PublishedCommit, StagedWrite, StoragePort,
     },
     streaming::StreamStore,
     types::{
@@ -201,12 +203,12 @@ impl Drop for SubscriptionGuard {
 ///
 /// ```compile_fail
 /// // No ephemeral durable Engine constructor exists. This must not compile.
-/// let engine = terrabase_v2::Engine::new_in_memory();
+/// let engine = terrabase::Engine::new_in_memory();
 /// ```
 ///
 /// ```compile_fail
 /// // Neither does a memory-backed configuration path. This must not compile.
-/// let config = terrabase_v2::EngineConfig::from_memory();
+/// let config = terrabase::EngineConfig::from_memory();
 /// ```
 #[derive(Clone, Debug)]
 pub struct EngineConfig {
@@ -237,8 +239,8 @@ fn backend_of_location(location: &Path, configured: StorageBackend) -> StorageBa
     if configured != StorageBackend::Lsm {
         return configured;
     }
-    match std::fs::read_to_string(location.join("format")) {
-        Ok(content) if content.starts_with("TBV2FORMAT") => StorageBackend::RootFiles,
+    match std::fs::read(location.join("format")) {
+        Ok(bytes) if bytes.starts_with(b"TBV2FORMAT") => StorageBackend::RootFiles,
         _ => configured,
     }
 }
@@ -553,7 +555,7 @@ pub(crate) struct StorageState {
 ///
 /// ```compile_fail
 /// // There is no in-memory durable constructor. This must not compile.
-/// let engine = terrabase_v2::engine::Engine::ephemeral();
+/// let engine = terrabase::engine::Engine::ephemeral();
 /// ```
 pub struct Engine {
     identity: u128,
@@ -656,6 +658,34 @@ impl Engine {
     /// them — read it to forge scopes and snapshots.
     pub(crate) fn identity(&self) -> u128 {
         self.identity
+    }
+
+    /// Returns the root backend's coordinated storage-frontier status.
+    #[allow(dead_code, reason = "consumed by the authenticated activation handoff")]
+    pub(crate) fn ledger_frontier_status(
+        &self,
+    ) -> Result<LedgerFrontierStatus, LedgerFrontierActivationError> {
+        let storage =
+            self.storage.lock().map_err(|_| LedgerFrontierActivationError::StorageUnavailable)?;
+        Ok(storage.port.ledger_frontier_status())
+    }
+
+    /// Activates the root storage frontier while holding the transaction
+    /// reservation gate and storage lock. No new transaction can start until
+    /// the format marker has been published or the operation has refused.
+    #[allow(dead_code, reason = "consumed by the authenticated activation handoff")]
+    pub(crate) fn activate_ledger_frontier(
+        &self,
+        request: &LedgerFrontierActivationRequest,
+    ) -> Result<LedgerFrontierActivationReceipt, LedgerFrontierActivationError> {
+        let in_flight =
+            self.in_flight.lock().map_err(|_| LedgerFrontierActivationError::StorageUnavailable)?;
+        if !in_flight.is_empty() {
+            return Err(LedgerFrontierActivationError::NotQuiescent);
+        }
+        let mut storage =
+            self.storage.lock().map_err(|_| LedgerFrontierActivationError::StorageUnavailable)?;
+        storage.port.activate_ledger_frontier(request)
     }
 
     /// Mints the tenant scope bound to this Engine.

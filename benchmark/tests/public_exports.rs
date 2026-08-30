@@ -1,4 +1,4 @@
-use terrabase_v2::{
+use terrabase::{
     CallerContext, CallerContextError, CallerEvidence, Cancellation, CommitOutcome, CommitReceipt,
     CredentialInput, CredentialKind, Deadline, Document, DocumentId, DocumentMetadata,
     DocumentReadRequest, DocumentValue, DocumentWriteRequest, Engine as RootEngine, EngineConfig,

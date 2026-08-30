@@ -593,7 +593,7 @@ fn resolve_range(
 /// ```compile_fail
 /// // There is no independent reader constructor: readers open only from a
 /// // FamilyStore bound to a durable Engine. This must not compile.
-/// let reader = terrabase_v2::families::attachments::AttachmentContentReader::new();
+/// let reader = terrabase::families::attachments::AttachmentContentReader::new();
 /// ```
 pub struct AttachmentContentReader<'engine> {
     transaction: Option<Transaction<'engine>>,

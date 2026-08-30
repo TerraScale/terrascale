@@ -6,7 +6,7 @@ status: accepted
 
 ## Decision
 
-TerraBaseV2 owns one internal Operations Studio under `studio/`. It is a
+TerraBase owns one internal Operations Studio under `studio/`. It is a
 Vinext React application on the repository's pinned VitePlus `vp` toolchain.
 It is not the customer Dashboard and does not own authentication, Organizations,
 Projects, Users, Payments, MCP, or customer product workflows.

@@ -589,7 +589,7 @@ pub enum FamilyError {
 ///
 /// ```compile_fail
 /// // No store may outlive its Engine. This must not compile.
-/// let engine = terrabase_v2::engine::Engine::open(config)?;
+/// let engine = terrabase::engine::Engine::open(config)?;
 /// let store = engine.families();
 /// engine.shutdown()?;
 /// let _ = store;
@@ -598,7 +598,7 @@ pub enum FamilyError {
 /// ```compile_fail
 /// // There is no independent durable or in-memory store constructor. This
 /// // must not compile.
-/// let store = terrabase_v2::families::FamilyStore::open("/tmp/other");
+/// let store = terrabase::families::FamilyStore::open("/tmp/other");
 /// ```
 pub struct FamilyStore<'engine> {
     engine: &'engine Engine,

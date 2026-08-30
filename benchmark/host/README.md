@@ -1,4 +1,4 @@
-# TerraBaseV2 API host (C#)
+# TerraBase API host (C#)
 
 > Migration-source documentation. The supported target host is the independent
 > C#/.NET 10 `TerraScale.Database` service. It uses QUIC TBEP on loopback and

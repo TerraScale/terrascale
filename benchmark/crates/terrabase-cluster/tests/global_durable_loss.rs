@@ -25,13 +25,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+use terrabase::replication::{LeaderlessLevel, MemberId, RegionId};
+use terrabase::types::DocumentValue;
 use terrabase_cluster::durability::{
     DurabilityCoordinator, DurabilityFailure, DurabilityLevel, Membership, RegionMembers,
 };
 use terrabase_cluster::host::{ClusterHost, MemberSpec};
 use terrabase_cluster::{ClusterMode, ComposedWrite};
-use terrabase_v2::replication::{LeaderlessLevel, MemberId, RegionId};
-use terrabase_v2::types::DocumentValue;
 
 /// The three selected Regions of every lane shape, in canonical order.
 const REGIONS: [&str; 3] = ["r-alpha", "r-beta", "r-gamma"];
@@ -84,7 +84,7 @@ fn put(operation: &str, document: &str, status: &str) -> ComposedWrite {
 
 fn dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "tbv2-cluster-global-durable-loss-{tag}-{}-{}",
+        "terrabase-cluster-global-durable-loss-{tag}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -300,64 +300,27 @@ fn global_durable_demands_every_selected_region_and_refuses_typed_when_one_canno
     assert_eq!(recovered.contributors().len(), 6);
 }
 
-/// The single-selected-Region shape: the ledger answers a DEGENERATE
-/// GlobalDurable receipt whose durable footprint is that one Region (the
-/// behavior pinned by the in-crate row
-/// `global_requires_all_regions_for_one_two_and_three_region_shapes`),
-/// and the complete loss of that Region takes the acknowledged write.
-/// The charter's RPO 0 promise is conditioned on at least two selected
-/// active Regions; with one, there is nothing to lose a Region against
-/// and still keep a copy.
+/// The single-selected-Region shape fails closed before it stores anything.
+/// A caller must request the regional level instead of receiving a receipt
+/// whose name could imply protection from complete Region loss.
 #[test]
-fn a_single_selected_region_gets_no_region_loss_protection_from_the_global_level() {
+fn a_single_selected_region_refuses_global_durable_before_storage() {
     let solo =
         Membership::new(1, 1, vec![RegionMembers::try_new("r-solo", ["m-s1", "m-s2"]).unwrap()])
             .unwrap();
     let mut ledger = DurabilityCoordinator::new(solo);
 
-    let receipt = ledger
+    let refusal = ledger
         .submit("op-only", &member("m-s1"), DurabilityLevel::GlobalDurable)
-        .expect("the degenerate single-Region shape acknowledges today");
-    assert_eq!(receipt.level(), DurabilityLevel::GlobalDurable, "the level is named");
-    assert_eq!(
-        receipt.contributors().len(),
-        2,
-        "the footprint is one Region: no WAN boundary was crossed"
-    );
-    assert!(
-        receipt.contributors().iter().all(|ack| ack.region().as_str() == "r-solo"),
-        "the receipt names only the sole selected Region"
-    );
+        .expect_err("one selected Region cannot acknowledge GlobalDurable");
+    assert_eq!(refusal, DurabilityFailure::InsufficientRegions { selected: 1, minimum: 2 });
+    assert!(refusal.observation().is_none(), "the admission refusal stores no partial state");
 
-    // The complete loss of the only selected Region: both Members.
-    ledger.set_member_active(&member("m-s1"), false).unwrap();
-    ledger.set_member_active(&member("m-s2"), false).unwrap();
-
-    // Every durable contributor named on the receipt was inside the lost
-    // Region — zero surviving copies of the acknowledged write.
-    assert!(
-        receipt.contributors().iter().all(|ack| ack.region().as_str() == "r-solo"),
-        "the whole footprint is the lost Region: the acknowledged write is gone"
-    );
-
-    // And the boundary cannot be re-established: the typed outcome names
-    // the lost Region, and no failure variant claims the level.
-    let after = ledger
-        .submit_until_deadline("op-only", &member("m-s1"), DurabilityLevel::GlobalDurable)
-        .expect_err("no seat is active to answer for");
-    assert!(matches!(after, DurabilityFailure::Timeout(_)), "typed timeout, got {after:?}");
-    assert!(!after.is_durable());
-    assert_eq!(
-        after
-            .observation()
-            .unwrap()
-            .missing_regions()
-            .iter()
-            .map(RegionId::as_str)
-            .collect::<Vec<_>>(),
-        ["r-solo"],
-        "the typed outcome states the lost Region's boundary is gone"
-    );
+    let regional = ledger
+        .submit("op-only", &member("m-s1"), DurabilityLevel::RegionalDurable)
+        .expect("the same identity may be admitted at RegionalDurable");
+    assert_eq!(regional.level(), DurabilityLevel::RegionalDurable);
+    assert_eq!(regional.contributors().len(), 2);
 }
 
 /// The real-member half: the same three-Region RF=2 shape as durable

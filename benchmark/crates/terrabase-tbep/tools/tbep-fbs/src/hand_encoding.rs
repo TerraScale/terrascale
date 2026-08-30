@@ -9,27 +9,28 @@
 //! The envelope layout it produces is exactly the layout the schema
 //! describes. All offsets below are relative to the FlatBuffers region
 //! (the byte after the 4-byte size prefix); all integers are
-//! little-endian; the table sits at a multiple of 8 so the `u64`
-//! feature field is aligned.
+//! little-endian. The complete size-prefixed buffer is the verifier's
+//! alignment origin, so the envelope table begins at absolute byte 32
+//! and its `u64` feature field begins at absolute byte 40.
 //!
 //! ```text
 //! offset  size  content
-//!      0     4  u32 root offset (to the envelope table = 32, relative)
-//!      4     4  padding
+//!      0     4  u32 root offset (to the envelope table = 28, relative)
+//!      4     4  file identifier "TBEP"
 //!      8    20  envelope vtable: u16 len, u16 table_len, 8 field slots
-//!     28     4  padding
-//!     32    56  envelope table T
-//!   T+0=32   4  i32 soffset back to the vtable (T - 8 = 24)
-//!   T+4=36   2  u16 protocol_major     (field id 0)
-//!   T+6=38   2  u16 protocol_minor     (field id 1)
-//!   T+8=40   8  u64 required_features  (field id 2)
-//!  T+16=48   2  u16 operation          (field id 3)
-//!  T+18=50  16  correlation ULID       (field id 4)
-//!  T+34=66  16  causation ULID         (field id 5)
-//!  T+50=82   1  u8  body union tag     (field id 6)
-//!  T+51=83   1  padding
-//!  T+52=84   4  u32 body offset        (field id 7, relative to T+52)
-//!     88   ...  the body table
+//!     28    56  envelope table T
+//!   T+0=28   4  i32 soffset back to the vtable (T - 8 = 20)
+//!   T+4=32   2  u16 protocol_major     (field id 0)
+//!   T+6=34   2  u16 protocol_minor     (field id 1)
+//!   T+8=36   8  u64 required_features  (field id 2)
+//!  T+16=44   2  u16 operation          (field id 3)
+//!  T+18=46  16  correlation ULID       (field id 4)
+//!  T+34=62  16  causation ULID         (field id 5)
+//!  T+50=78   1  u8  body union tag     (field id 6)
+//!  T+51=79   1  padding
+//!  T+52=80   4  u32 body offset        (field id 7, relative to T+52)
+//!     84     8  the body vtable
+//!     92   ...  the body table and its descendants
 //! ```
 
 /// The mutable pieces of one hand-encoded envelope. Byte-level hostile
@@ -51,8 +52,8 @@ pub struct HandEnvelope {
     pub causation: [u8; 16],
     /// The body union tag byte.
     pub body_type: u8,
-    /// The encoded body table (appended at offset 88), or `None` to
-    /// leave the body fields out entirely.
+    /// The encoded body vtable, table, and descendants (appended at
+    /// offset 84), or `None` to leave the body fields out entirely.
     pub body: Option<Vec<u8>>,
     /// When `false`, the correlation vtable slot is omitted (field
     /// absent) for the missing-correlation semantic case.
@@ -88,21 +89,24 @@ impl HandEnvelope {
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         const ROOT: usize = 0;
+        const IDENTIFIER: usize = 4;
         const VTABLE: usize = 8;
-        const TABLE: usize = 32;
+        const TABLE: usize = 28;
         const TABLE_LEN: usize = 56;
         const BODY_OFFSET_FIELD: usize = TABLE + 52;
         const BODY_AT: usize = TABLE + TABLE_LEN;
+        const BODY_TABLE_AT: usize = BODY_AT + 8;
 
         let body = self.body.clone().unwrap_or_default();
-        let body_offset = (BODY_AT - BODY_OFFSET_FIELD) as u32;
+        let body_offset = (BODY_TABLE_AT - BODY_OFFSET_FIELD) as u32;
 
         let mut flat = vec![0_u8; BODY_AT];
         flat[ROOT..ROOT + 4].copy_from_slice(&(TABLE as u32).to_le_bytes());
+        flat[IDENTIFIER..IDENTIFIER + 4].copy_from_slice(b"TBEP");
         // Vtable: 4 header bytes + 8 slots of 2 bytes.
         flat[VTABLE..VTABLE + 2].copy_from_slice(&20_u16.to_le_bytes());
         flat[VTABLE + 2..VTABLE + 4].copy_from_slice(&(TABLE_LEN as u16).to_le_bytes());
-        let mut slots = [0xFFFF_u16; 8];
+        let mut slots = [0_u16; 8];
         slots[0] = 4; // protocol_major
         slots[1] = 6; // protocol_minor
         slots[2] = 8; // required_features
@@ -122,14 +126,10 @@ impl HandEnvelope {
             flat[at..at + 2].copy_from_slice(&slot.to_le_bytes());
         }
         // Envelope table.
-        flat[TABLE..TABLE + 4]
-            .copy_from_slice(&((TABLE - VTABLE) as i32).to_le_bytes());
-        flat[TABLE + 4..TABLE + 6]
-            .copy_from_slice(&self.protocol_major.to_le_bytes());
-        flat[TABLE + 6..TABLE + 8]
-            .copy_from_slice(&self.protocol_minor.to_le_bytes());
-        flat[TABLE + 8..TABLE + 16]
-            .copy_from_slice(&self.required_features.to_le_bytes());
+        flat[TABLE..TABLE + 4].copy_from_slice(&((TABLE - VTABLE) as i32).to_le_bytes());
+        flat[TABLE + 4..TABLE + 6].copy_from_slice(&self.protocol_major.to_le_bytes());
+        flat[TABLE + 6..TABLE + 8].copy_from_slice(&self.protocol_minor.to_le_bytes());
+        flat[TABLE + 8..TABLE + 16].copy_from_slice(&self.required_features.to_le_bytes());
         flat[TABLE + 16..TABLE + 18].copy_from_slice(&self.operation.to_le_bytes());
         flat[TABLE + 18..TABLE + 34].copy_from_slice(&self.correlation);
         flat[TABLE + 34..TABLE + 50].copy_from_slice(&self.causation);
@@ -182,9 +182,8 @@ pub fn encode_error_frame(code: u16, detail: &str) -> Vec<u8> {
 }
 
 /// Encode a minimal `DocumentWriteResponse` body table whose `outcome`
-/// union (tag and offset) is fully controlled by the caller. This is the
-/// substrate for the cyclic-offset hostile cases: an offset of `0`
-/// targets the offset field itself, making the table self-referential.
+/// union tag and offset are fully controlled by the caller. Hostile
+/// cases use this to target misaligned or out-of-bounds nested tables.
 #[must_use]
 pub fn encode_document_write_response(outcome_type: u8, outcome_offset: u32) -> Vec<u8> {
     let mut out = Vec::with_capacity(20);

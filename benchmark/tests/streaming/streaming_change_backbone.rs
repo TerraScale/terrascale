@@ -9,8 +9,8 @@
 
 use std::time::Duration;
 
-use terrabase_v2::types::CollectionName;
-use terrabase_v2::{
+use terrabase::types::CollectionName;
+use terrabase::{
     ChangeFilter, ChangeKind, DocumentId, OperationId, RequestValidationError, streaming,
     streaming::ChangeCheckpoint,
 };
@@ -114,25 +114,22 @@ fn change_notification_tap_serves_the_public_trigger_surface() {
     // content-free two-identifier hints, and reads the counted drops - with
     // no scope at all, because a hint is engine-scoped and carries no
     // tenant dimension and no document data.
-    let dir = std::env::temp_dir().join(format!("tbv2-se03-trigger-public-{}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("terrabase-se03-trigger-public-{}", std::process::id()));
     std::fs::remove_dir_all(&dir).ok();
-    let engine = terrabase_v2::Engine::open(
-        terrabase_v2::EngineConfig::durable(&dir).expect("durable location"),
-    )
-    .expect("opens");
+    let engine =
+        terrabase::Engine::open(terrabase::EngineConfig::durable(&dir).expect("durable location"))
+            .expect("opens");
     let store = engine.streams();
     let tap = store.change_notifications(4).expect("tap opens");
     assert!(tap.try_pop().is_none(), "an idle tap serves no hint");
     assert_eq!(tap.dropped(), 0);
 
     // The capacity bound is part of the request contract.
-    assert_eq!(
-        store.change_notifications(0).unwrap_err(),
-        terrabase_v2::StreamError::InvalidSource
-    );
+    assert_eq!(store.change_notifications(0).unwrap_err(), terrabase::StreamError::InvalidSource);
     assert_eq!(
         store.change_notifications(streaming::MAX_CHANGE_NOTIFICATION_CAPACITY + 1).unwrap_err(),
-        terrabase_v2::StreamError::InvalidSource
+        terrabase::StreamError::InvalidSource
     );
 
     // Dropping the tap detaches its hint ingress; the engine keeps serving.

@@ -1,8 +1,8 @@
 //! Public-construction tombstone-retention tests (GAP-R02).
 //!
 //! These tests use only public construction: the
-//! `terrabase_v2::replication` watermark types, the public
-//! `terrabase_v2::backup` seam, and `EngineConfig::durable`/`Engine::open`.
+//! `terrabase::replication` watermark types, the public
+//! `terrabase::backup` seam, and `EngineConfig::durable`/`Engine::open`.
 //! `TenantScope` has no public constructor by design (Platform creates it
 //! after authorization) and neither has `StorageSequence`, so the
 //! data-bearing below-bound behavior — a member catching up across a
@@ -21,16 +21,16 @@
 
 use std::path::PathBuf;
 
-use terrabase_v2::backup::{BackupKind, BackupPlan, RestorePlan, run_backup, verify_latest_chain};
-use terrabase_v2::replication::{
+use terrabase::backup::{BackupKind, BackupPlan, RestorePlan, run_backup, verify_latest_chain};
+use terrabase::replication::{
     ConsumerObservation, RetentionConsumer, RetentionRefusal, SharedTombstoneRetention,
     TombstoneRetention,
 };
-use terrabase_v2::types::{StorageSequence, TenantId};
-use terrabase_v2::{Engine, EngineConfig};
+use terrabase::types::{StorageSequence, TenantId};
+use terrabase::{Engine, EngineConfig};
 
 fn location(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("tbv2-gapr02-int-{tag}-{}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-gapr02-int-{tag}-{}", std::process::id()))
 }
 
 fn open_engine(tag: &str) -> (PathBuf, Engine) {

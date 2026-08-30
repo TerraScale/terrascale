@@ -12,7 +12,7 @@ use std::time::Duration;
 use terrabase_tbep::generated::{
     ChannelBindRequest, ErrorCode, NegotiationRequest, SupervisionHealthRequest,
 };
-use terrabase_tbep::{SyncDeliveryHost, TbepBody, TbepFrame, TbepServer};
+use terrabase_tbep::{EnvelopeError, SyncDeliveryHost, TbepBody, TbepFrame, TbepServer};
 
 /// One server over the sync-delivery host plus fresh client streams.
 struct Fixture {
@@ -108,10 +108,11 @@ fn a_version_mismatch_fails_closed_with_the_typed_error_before_any_operation() {
     // closed socket (EPIPE), and no further frame ever answers.
     let frame = TbepFrame::seal(SupervisionHealthRequest {}, 2, 0, None).expect("seals");
     let _ = frame.write_stream(&mut client);
-    assert!(
-        TbepFrame::read_stream(&mut client).expect("healthy").is_none(),
-        "the stream ended at the mismatch"
-    );
+    match TbepFrame::read_stream(&mut client) {
+        Ok(None) | Err(EnvelopeError::Io(_)) => {}
+        Ok(Some(frame)) => panic!("the closed stream answered with {:?}", frame.kind()),
+        Err(error) => panic!("the closed stream returned a decode error: {error:?}"),
+    }
 }
 
 #[test]

@@ -348,9 +348,17 @@ fn replication_receipt_is_secret_safe_and_names_scenario_faults_and_limits() {
                 "document content crossed the receipt ({canary}): {rendered}"
             );
         }
-        for forbidden in
-            ["/", "tmp", "tbv2-w4", "wal", "ledger", "credential", "connec", "password", "token"]
-        {
+        for forbidden in [
+            "/",
+            "tmp",
+            "terrabase-w4",
+            "wal",
+            "ledger",
+            "credential",
+            "connec",
+            "password",
+            "token",
+        ] {
             assert!(
                 !rendered.contains(forbidden),
                 "a forbidden fact crossed the receipt ({forbidden}): {rendered}"

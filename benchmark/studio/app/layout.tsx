@@ -6,7 +6,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "TerraBase Studio",
-  description: "TerraBaseV2 operations studio",
+  description: "TerraBase operations studio",
 };
 
 export default function RootLayout({
@@ -29,7 +29,7 @@ export default function RootLayout({
           <header className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-line bg-canvas/90 py-3 backdrop-blur">
             <p className="flex items-baseline gap-2">
               <span className="text-base font-semibold text-ink">TerraBase Studio</span>
-              <span className="text-xs text-ink-faint">TerraBaseV2 operations</span>
+              <span className="text-xs text-ink-faint">TerraBase operations</span>
             </p>
             <StudioNav />
           </header>

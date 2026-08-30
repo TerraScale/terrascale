@@ -87,7 +87,7 @@ pub(crate) const POSTGRESQL_REFERENCE: ReferencePin = ReferencePin {
         (
             "data_directory",
             "fresh empty directory per run, on the same storage class as the \
-                            TerraBaseV2 engine location, discarded afterwards",
+                            TerraBase engine location, discarded afterwards",
         ),
         ("logging_collector", "off — no query logging during measured samples"),
         (
@@ -114,7 +114,7 @@ pub(crate) const POSTGRESQL_REFERENCE: ReferencePin = ReferencePin {
         (
             "resource limits",
             "none — no container CPU or memory cap, matching the \
-                             TerraBaseV2 side",
+                             TerraBase side",
         ),
     ],
     client_configuration: &[
@@ -123,13 +123,13 @@ pub(crate) const POSTGRESQL_REFERENCE: ReferencePin = ReferencePin {
             "one connection per concurrency slot, prepared statements, no \
                     application-level cache",
         ),
-        ("concurrency", "16 in-flight operations, matching the TerraBaseV2 side"),
+        ("concurrency", "16 in-flight operations, matching the TerraBase side"),
         (
             "warmup",
             "1000 operations per workload before any measured sample, excluded from \
                     every measured sample",
         ),
-        ("order", "PostgreSQL and TerraBaseV2 alternate which side runs first each sample"),
+        ("order", "PostgreSQL and TerraBase alternate which side runs first each sample"),
         (
             "isolation",
             "each statement runs in its own transaction (autocommit), matching \

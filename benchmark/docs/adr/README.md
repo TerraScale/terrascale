@@ -1,4 +1,4 @@
-# TerraBaseV2 ADR index
+# TerraBase ADR index
 
 Architecture Decision Records (ADRs) document decisions that are expensive to
 reverse. The workspace charter remains the product authority. `accepted`

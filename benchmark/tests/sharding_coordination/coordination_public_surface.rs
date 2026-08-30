@@ -1,7 +1,7 @@
 //! External-caller construction of the SH-05 coordination surface
 //! (failover decisions, cluster transactions, per-shard recovery reports).
 //!
-//! These tests use only what `terrabase_v2::sharding::coordination` and
+//! These tests use only what `terrabase::sharding::coordination` and
 //! its public dependencies expose: the sharding topology seam and the
 //! coordination types. The data-bearing execution and fault scenarios
 //! live in the crate-private suite and lane: execution needs a
@@ -14,17 +14,17 @@
 //! No claim here extends beyond observable behavior; the tracked lane
 //! receipts under `docs/evidence/sharding/` record the qualification runs.
 
-use terrabase_v2::Engine;
-use terrabase_v2::EngineConfig;
-use terrabase_v2::replication::{MemberId, TopologyView};
-use terrabase_v2::sharding::coordination::{
+use terrabase::Engine;
+use terrabase::EngineConfig;
+use terrabase::replication::{MemberId, TopologyView};
+use terrabase::sharding::coordination::{
     ClusterStage, ClusterTransaction, EngineWriteServing, FailoverDecision, FailoverError,
     MemberRecovery, ShardLoss, ShardRecoveryReport,
 };
-use terrabase_v2::sharding::{
+use terrabase::sharding::{
     BUCKET_SPACE, BucketRange, BucketRangeTable, RoutingRequest, ShardId, ShardTopology,
 };
-use terrabase_v2::types::{
+use terrabase::types::{
     CollectionName, Document, DocumentId, DocumentValue, OperationId, TenantId,
 };
 
@@ -94,8 +94,8 @@ fn document_for_shard(topology: &ShardTopology, shard: ShardId) -> Document {
 }
 
 fn open_engine(tag: &str, name: &str) -> Engine {
-    let dir =
-        std::env::temp_dir().join(format!("tbv2-sh05-pub-{tag}-{name}-{}", std::process::id()));
+    let dir = std::env::temp_dir()
+        .join(format!("terrabase-sh05-pub-{tag}-{name}-{}", std::process::id()));
     std::fs::remove_dir_all(&dir).ok();
     Engine::open(EngineConfig::durable(&dir).expect("durable location")).expect("engine opens")
 }
@@ -183,10 +183,10 @@ fn external_serving_seats_engines_and_refuses_duplicates() {
 #[test]
 fn cluster_atomicity_limits_are_public_constants() {
     let limits = [
-        terrabase_v2::sharding::coordination::ATOMIC_WITHIN_ONE_SHARD,
-        terrabase_v2::sharding::coordination::CROSS_SHARD_NOT_ATOMIC,
-        terrabase_v2::sharding::coordination::NO_CROSS_SHARD_ROLLBACK,
-        terrabase_v2::sharding::coordination::SHARD_LOCAL_ACKNOWLEDGEMENT,
+        terrabase::sharding::coordination::ATOMIC_WITHIN_ONE_SHARD,
+        terrabase::sharding::coordination::CROSS_SHARD_NOT_ATOMIC,
+        terrabase::sharding::coordination::NO_CROSS_SHARD_ROLLBACK,
+        terrabase::sharding::coordination::SHARD_LOCAL_ACKNOWLEDGEMENT,
     ];
     assert!(limits.iter().all(|limit| !limit.is_empty()));
     assert!(limits[1].contains("not atomic"), "{}", limits[1]);

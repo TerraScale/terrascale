@@ -367,11 +367,12 @@ pub(super) fn encode_staged_write(out: &mut Vec<u8>, write: &StagedWrite) {
 pub(super) fn decode_staged_write(reader: &mut Reader<'_>) -> Option<StagedWrite> {
     match reader.read_u8()? {
         1 => {
-            let _collection = CollectionName::try_new(&reader.read_string()?).ok()?;
-            let _id = DocumentId::try_new(&reader.read_string()?).ok()?;
+            let collection = CollectionName::try_new(&reader.read_string()?).ok()?;
+            let id = DocumentId::try_new(&reader.read_string()?).ok()?;
             let expected = decode_expected(reader)?;
             let document = decode_document(reader)?;
-            Some(StagedWrite::Put { document, expected })
+            (document.collection() == &collection && document.id() == &id)
+                .then_some(StagedWrite::Put { document, expected })
         }
         2 => {
             let collection = CollectionName::try_new(&reader.read_string()?).ok()?;
@@ -386,6 +387,32 @@ pub(super) fn decode_staged_write(reader: &mut Reader<'_>) -> Option<StagedWrite
         }
         _ => None,
     }
+}
+
+/// Reports whether two writes can address the same logical document.
+///
+/// A collection-less delete asserts that the identifier is absent from every
+/// collection, so it conflicts with any other write carrying that identifier.
+pub(crate) fn staged_writes_have_duplicate_targets(writes: &[StagedWrite]) -> bool {
+    let mut seen: Vec<(Option<&str>, &str)> = Vec::new();
+    for write in writes {
+        let target = match write {
+            StagedWrite::Put { document, .. } => {
+                (Some(document.collection().as_str()), document.id().as_str())
+            }
+            StagedWrite::Delete { collection, id, .. } => {
+                (collection.as_ref().map(CollectionName::as_str), id.as_str())
+            }
+        };
+        if seen.iter().any(|(collection, id)| {
+            *id == target.1
+                && (collection.is_none() || target.0.is_none() || *collection == target.0)
+        }) {
+            return true;
+        }
+        seen.push(target);
+    }
+    false
 }
 
 /// Appends one encoded reconstructable publication write (W4-CA-4).

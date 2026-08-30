@@ -51,7 +51,7 @@ use crate::{
 fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("tbv2-w3f-family-{tag}-{}-{index}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-w3f-family-{tag}-{}-{index}", std::process::id()))
 }
 
 fn open_engine(tag: &str) -> (PathBuf, Engine) {
@@ -4293,13 +4293,23 @@ fn schema_free_collections_are_byte_for_byte_unaffected() {
             .count();
         assert_eq!(reserved, 0, "a schema-free script records no family state");
         engine.shutdown().expect("shuts down");
-        let fingerprint = tree_fingerprint(&dir);
+        let fingerprint = tree_fingerprint(&dir)
+            .into_iter()
+            .filter(|(path, _)| {
+                path.file_name().is_some_and(|name| {
+                    name != "format" && name != "wal.frontier" && name != "retained.frontier"
+                })
+            })
+            .collect();
         (sequences, fingerprint)
     };
     let (sequences_a, tree_a) = run("sm02-bytes-a");
     let (sequences_b, tree_b) = run("sm02-bytes-b");
     assert_eq!(sequences_a, sequences_b, "the sequences stay identical");
-    assert_eq!(tree_a, tree_b, "the durable trees stay byte-for-byte identical");
+    assert_eq!(
+        tree_a, tree_b,
+        "schema-free application bytes stay identical; per-store frontier identities are metadata"
+    );
 }
 
 #[test]

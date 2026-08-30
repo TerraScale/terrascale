@@ -25,7 +25,7 @@ use super::{
     faults::FaultPoint,
     ledger::{self, HistoryWriter},
     retained::RetainedFact,
-    root,
+    root, wal,
 };
 
 /// Which durable artifacts one compaction pass may reclaim (decision D2).
@@ -424,6 +424,10 @@ impl FileStorage {
         &mut self,
         request: StorageCompaction,
     ) -> Result<(CompactionReceipt, CompactionDriverFacts), CompactionError> {
+        if self.frontier_poisoned {
+            return Err(CompactionError::Storage);
+        }
+        self.ensure_wal_reclaim_is_safe()?;
         let StorageCompaction { policy, floor, progress } = request;
         let progress = progress.as_ref();
         let mut phases: Vec<CompactionPhase> = Vec::new();
@@ -534,6 +538,31 @@ impl FileStorage {
         Ok((receipt, facts))
     }
 
+    /// Refuses compaction while the WAL or ledger still holds a publication
+    /// that the current root and terminal operation binding do not cover.
+    fn ensure_wal_reclaim_is_safe(&self) -> Result<(), CompactionError> {
+        // Buffered operations have no WAL group, so the Ready index is their
+        // only resumable publication signal.
+        if self.ledger_index.has_ready_after(self.published.sequence) {
+            return Err(CompactionError::Storage);
+        }
+        let wal_report = wal::scan(&self.dir.join("wal")).map_err(|_| CompactionError::Storage)?;
+        let uncovered = wal_report.commits.iter().any(|commit| {
+            commit.sequence > self.published.sequence
+                || !self.ledger_index.binds_published_commit(
+                    &commit.tenant,
+                    &commit.operation,
+                    commit.digest,
+                    commit.sequence,
+                    &commit.root,
+                )
+        });
+        if wal_report.torn_tail || uncovered {
+            return Err(CompactionError::Storage);
+        }
+        Ok(())
+    }
+
     /// Checkpoints the published root: writes and syncs the root file,
     /// writes, publishes, and syncs the manifest, and syncs the directory.
     fn compact_checkpoint(&mut self) -> Result<Option<StorageSequence>, CompactionError> {
@@ -549,7 +578,10 @@ impl FileStorage {
         }
         root::publish_manifest(&self.dir).map_err(|_| CompactionError::Storage)?;
         root::sync_file(&self.dir.join("manifest")).map_err(|_| CompactionError::Storage)?;
-        root::sync_dir(&self.dir).map_err(|_| CompactionError::Storage)?;
+        if root::sync_dir(&self.dir).is_err() {
+            self.poison_storage_frontier();
+            return Err(CompactionError::Storage);
+        }
         Ok(Some(StorageSequence::new(sequence)))
     }
 
@@ -635,21 +667,34 @@ impl FileStorage {
                 }
             }
         }
+        let mut appends = Vec::with_capacity(facts.len().saturating_add(1));
         for fact in &facts {
-            self.retained.append_fact(fact).map_err(|_| CompactionError::Storage)?;
+            let Ok(append) = self.retained.append_fact(fact) else {
+                self.poison_storage_frontier();
+                return Err(CompactionError::Storage);
+            };
+            appends.push(append);
         }
         let non_deletion = non_deletion.into_iter().collect::<Vec<_>>();
-        self.retained
-            .append_bound(bound, head.unwrap_or(bound), &non_deletion)
-            .map_err(|_| CompactionError::Storage)?;
+        let Ok(append) = self.retained.append_bound(bound, head.unwrap_or(bound), &non_deletion)
+        else {
+            self.poison_storage_frontier();
+            return Err(CompactionError::Storage);
+        };
+        appends.push(append);
         if self.faults.fire(FaultPoint::CompactionEvidenceSync).is_err() {
+            self.poison_storage_frontier();
             return Err(CompactionError::Storage);
         }
-        self.retained.sync().map_err(|_| CompactionError::Storage)?;
-        root::sync_dir(&self.dir).map_err(|_| CompactionError::Storage)?;
+        self.persist_retained_appends(&appends).map_err(|_| CompactionError::Storage)?;
+        if root::sync_dir(&self.dir).is_err() {
+            self.poison_storage_frontier();
+            return Err(CompactionError::Storage);
+        }
         for fact in &facts {
             self.retained_index.upsert_fact(fact.clone());
         }
+        self.retained_index.declare_bound(bound, head.unwrap_or(bound));
         let retained = u64::try_from(facts.len()).unwrap_or(u64::MAX);
         Ok(EvidenceExtraction { window, extracted, retained, below_floor })
     }

@@ -10,15 +10,15 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use terrabase_v2::types::CollectionName;
-use terrabase_v2::{
+use terrabase::types::CollectionName;
+use terrabase::{
     Cancellation, Deadline, DocumentId, Engine, EngineConfig, RequestValidationError,
     StreamPosition, StreamSource, StreamStore, SubscriptionSpec,
     streaming::{self, ChangeFilter, ChangeKind, DocumentStreamSelector, TimeSeriesStreamRange},
 };
 
 fn location(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("tbv2-w4-stream-public-{tag}-{}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-w4-stream-public-{tag}-{}", std::process::id()))
 }
 
 fn deadline() -> Deadline {
@@ -170,7 +170,7 @@ fn public_construction_validates_typed_stream_requests() {
         TimeSeriesStreamRange::try_new(
             document("host-1"),
             "cpu".to_owned(),
-            Some(terrabase_v2::families::TimeSeriesRange::try_new(100, 200).expect("range")),
+            Some(terrabase::families::TimeSeriesRange::try_new(100, 200).expect("range")),
             deadline(),
             Cancellation::new()
         )

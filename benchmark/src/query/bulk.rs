@@ -9,7 +9,7 @@
 //! (`AbstractDatabaseQueryRunner.cs:184-196`, batches of 4096 at `:153`,
 //! pinned V1 tree). The patch half's per-document body is exactly the
 //! GAP-D07 typed [`DocumentPatch`] applied through
-//! [`apply_document_patch`](crate::engine::apply_document_patch); there is
+//! [`apply_document_patch`]; there is
 //! no second patch language and no script body (charter
 //! `PD-2026-08-26-08` D2). The delete half stages through
 //! [`Transaction::delete_in_collection`](crate::engine::Transaction), the
@@ -239,7 +239,7 @@ impl DeleteByQueryRequest {
 /// patch applied to every match, and the execution options.
 ///
 /// The patch is data, not a program: it is the same
-/// [`DocumentPatch`](crate::engine::DocumentPatch) vocabulary GAP-D07
+/// [`DocumentPatch`] vocabulary GAP-D07
 /// defined, applied per matched document under
 /// [`ExpectedVersion::Any`] — V1's patch-by-query runs its command with a
 /// null change vector (`AbstractDatabaseQueryRunner.cs:120`, pinned V1
@@ -798,7 +798,7 @@ impl BulkRun {
     fn run_identity(&self) -> OperationId {
         match &self.operation_id {
             Some(named) => named.clone(),
-            None => OperationId::try_new(&format!("tbv2-bulkq-{}", next_run_identity()))
+            None => OperationId::try_new(&format!("terrabase-bulkq-{}", next_run_identity()))
                 .expect("derived run identities are valid"),
         }
     }

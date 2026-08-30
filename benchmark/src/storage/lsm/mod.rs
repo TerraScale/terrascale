@@ -38,11 +38,13 @@ pub(crate) mod tier;
 #[cfg(test)]
 mod tier_matrix_tests;
 pub(crate) mod wal;
+pub(crate) mod wal_frontier;
 
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     fs,
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -55,6 +57,12 @@ use crate::usage::{
     UsageFactId, UsageFactLedger, UsageScope,
 };
 
+use super::frontier::{
+    ActiveFormat, FRONTIER_FORMAT_MAJOR, LEGACY_FORMAT_MAJOR, LedgerFrontierActivationError,
+    LedgerFrontierActivationIdentity, LedgerFrontierActivationReceipt,
+    LedgerFrontierActivationRequest, LedgerFrontierObservation, LedgerFrontierStatus,
+    STORAGE_FRONTIER_FEATURE, StoreId,
+};
 use super::{
     PublishedCommit, PublishedWrite, StoragePort, codec,
     faults::{FaultPlan, FaultPoint},
@@ -65,14 +73,29 @@ use super::{
     root::StorageRootId,
 };
 use internal::{Entry, InternalKey};
-use manifest::SegmentManifest;
+use manifest::{ActiveWalManifest, SegmentManifest, WalCheckpoint};
 use memtable::MemTable;
 use segment::{SegmentMeta, SegmentReader};
 use wal::WalLog;
+use wal_frontier::{FrontierError, RetainedFrontier, VerifiedStream, WalFrontier};
 
 /// The LSM location's format marker: a directory carrying this marker
 /// belongs to the LSM engine; anything else fails closed at open.
 const FORMAT_MARKER: &str = "TBV2LSM1";
+const ACTIVE_FORMAT_MAGIC: &[u8; 8] = b"TBLSMACT";
+const ACTIVE_FORMAT_DOMAIN: &[u8] = b"terrabase.lsm-format.v2\0";
+const ACTIVE_FORMAT_RESERVED: usize = 8;
+const INITIAL_WAL_EPOCH: u64 = 1;
+
+enum FormatState {
+    Legacy,
+    Active(ActiveFormat),
+}
+
+struct FormatOpen {
+    state: FormatState,
+    created: bool,
+}
 
 /// The meta-keyspace label holding the declared history floor.
 const META_HISTORY_FLOOR: &str = "history-floor";
@@ -123,6 +146,7 @@ impl Default for LsmTuning {
 pub(crate) struct LsmStorage {
     dir: PathBuf,
     wal: WalLog,
+    wal_frontier: Option<WalFrontier>,
     memtable: MemTable,
     frozen: Vec<MemTable>,
     manifest: SegmentManifest,
@@ -143,6 +167,11 @@ pub(crate) struct LsmStorage {
     history_floor: Option<u64>,
     retained: super::retained::RetainedWriter,
     retained_index: super::retained::RetainedIndex,
+    retained_frontier: Option<RetainedFrontier>,
+    format_major: u64,
+    activation: Option<LedgerFrontierActivationIdentity>,
+    store_id: StoreId,
+    frontier_poisoned: bool,
     usage_index: UsageFactLedger,
     /// A malformed or conflicting persisted fact makes recovery fail closed.
     usage_corrupt: bool,
@@ -153,29 +182,33 @@ impl LsmStorage {
     /// Opens or creates an LSM location, recovering it.
     pub(crate) fn open(dir: &Path) -> Result<Self, LsmOpenError> {
         fs::create_dir_all(dir).map_err(|_| LsmOpenError::Unavailable)?;
-        let marker = dir.join("format");
-        match fs::read_to_string(&marker) {
-            Ok(content) if content.trim() == FORMAT_MARKER => {}
-            Ok(_) => return Err(LsmOpenError::FormatMismatch),
-            Err(_) => {
-                // A fresh location: any pre-existing file makes it foreign.
-                let populated = fs::read_dir(dir)
-                    .map_or(0, |entries| entries.filter_map(Result::ok).count())
-                    > 0;
-                if populated {
-                    return Err(LsmOpenError::FormatMismatch);
-                }
-                fs::write(&marker, FORMAT_MARKER).map_err(|_| LsmOpenError::Unavailable)?;
-                super::root::sync_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
-            }
+        let format = verify_or_create_format(dir)?;
+        if format.created {
+            super::root::sync_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
         }
-        Self::recover(dir)
+        Self::recover(dir, format.state)
     }
 
     /// Rebuilds engine state from the manifest anchor, the verifying
     /// segments, the retained-evidence store, and the WAL tail.
-    fn recover(dir: &Path) -> Result<Self, LsmOpenError> {
+    #[allow(
+        clippy::needless_pass_by_value,
+        clippy::single_match_else,
+        clippy::too_many_lines,
+        reason = "recovery consumes one format decision and preserves ordered fail-closed stages"
+    )]
+    fn recover(dir: &Path, format: FormatState) -> Result<Self, LsmOpenError> {
         let retained_path = dir.join("retained");
+        let wal_path = dir.join("wal");
+        let active_format = match &format {
+            FormatState::Legacy => None,
+            FormatState::Active(active) => Some(active),
+        };
+        let retained_exists = retained_path.try_exists().map_err(|_| LsmOpenError::Unavailable)?;
+        let wal_exists = wal_path.try_exists().map_err(|_| LsmOpenError::Unavailable)?;
+        if active_format.is_some() && (!retained_exists || !wal_exists) {
+            return Err(LsmOpenError::FormatMismatch);
+        }
         let mut retained = super::retained::RetainedWriter::open(&retained_path)
             .map_err(|_| LsmOpenError::Unavailable)?;
         let retained_scan = super::retained::RetainedIndex::scan(&retained_path);
@@ -184,33 +217,36 @@ impl LsmStorage {
             // bound; unreadable evidence fails the open (GAP-S1 D3).
             return Err(LsmOpenError::FormatMismatch);
         }
-        if retained_scan.total_bytes > retained_scan.good_bytes {
-            retained.truncate(retained_scan.good_bytes).map_err(|_| LsmOpenError::Unavailable)?;
-        }
-        let mut manifest = SegmentManifest::read(dir).unwrap_or_default();
-        let mut readers: BTreeMap<u64, RefCell<SegmentReader>> = BTreeMap::new();
-        let mut verified: Vec<SegmentMeta> = Vec::new();
-        for meta in &manifest.segments {
-            if let Ok(reader) =
-                SegmentReader::open(&segment_path(dir, meta.id), meta.id, meta.level)
-            {
-                verified.push(meta.clone());
-                readers.insert(meta.id, RefCell::new(reader));
-            } else {
-                verified.clear();
-                readers.clear();
-                break;
-            }
-        }
-        if verified.is_empty() && !manifest.segments.is_empty() {
-            // The manifest does not verify against its segments: rebuild the
-            // segment set from the verifying files on disk. WAL replay above
-            // the rebuilt state is idempotent by internal key.
-            manifest = rebuild_manifest_from_directory(dir, &mut readers, &manifest);
+        let read_manifest = if active_format.is_some() {
+            SegmentManifest::read_active(dir)
         } else {
-            manifest.segments = verified;
+            SegmentManifest::read(dir)
         }
-        let wal = WalLog::open(&dir.join("wal")).map_err(|error| {
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::InvalidData {
+                LsmOpenError::FormatMismatch
+            } else {
+                LsmOpenError::Unavailable
+            }
+        })?;
+        let segment_artifacts = has_segment_artifacts(dir)?;
+        let manifest = match (active_format, read_manifest) {
+            (Some(_), Some(manifest)) if manifest.active_wal.is_some() => manifest,
+            (None, Some(manifest)) if manifest.active_wal.is_none() => manifest,
+            (Some(_), _) | (None, Some(_)) => return Err(LsmOpenError::FormatMismatch),
+            (None, None) if segment_artifacts => return Err(LsmOpenError::FormatMismatch),
+            (None, None) => SegmentManifest::default(),
+        };
+        let mut readers: BTreeMap<u64, RefCell<SegmentReader>> = BTreeMap::new();
+        for meta in &manifest.segments {
+            let mut reader = SegmentReader::open(&segment_path(dir, meta.id), meta.id, meta.level)
+                .map_err(|_| LsmOpenError::FormatMismatch)?;
+            if reader.meta() != meta || reader.read_all().is_err() {
+                return Err(LsmOpenError::FormatMismatch);
+            }
+            readers.insert(meta.id, RefCell::new(reader));
+        }
+        let mut wal = WalLog::open_unrepaired(&wal_path).map_err(|error| {
             if error.kind() == std::io::ErrorKind::InvalidData {
                 // Mid-file damage: verified history sits behind it, so the
                 // location's bytes do not verify — a format failure, not an
@@ -220,9 +256,74 @@ impl LsmStorage {
                 LsmOpenError::Unavailable
             }
         })?;
+        let wal_scan = wal.scan().map_err(|_| LsmOpenError::Unavailable)?;
+        let store_id =
+            active_format.map_or_else(|| StoreId::generate(dir), |active| active.store_id);
+        let (format_major, activation, wal_frontier, retained_frontier, replay_wal) =
+            match active_format {
+                Some(active) => {
+                    let active_wal = manifest.active_wal.ok_or(LsmOpenError::FormatMismatch)?;
+                    let (wal_frontier, replay_wal) = recover_active_wal(
+                        dir,
+                        &wal_path,
+                        &mut wal,
+                        &wal_scan,
+                        active.store_id,
+                        active_wal,
+                    )?;
+                    let retained_frontier = recover_active_retained(
+                        dir,
+                        &retained_path,
+                        &mut retained,
+                        &retained_scan,
+                        active.store_id,
+                    )?;
+                    (
+                        FRONTIER_FORMAT_MAJOR,
+                        Some(active.activation.clone()),
+                        Some(wal_frontier),
+                        Some(retained_frontier),
+                        replay_wal,
+                    )
+                }
+                None => {
+                    if wal_scan.mid_file_damage {
+                        return Err(LsmOpenError::FormatMismatch);
+                    }
+                    if wal_scan.total_bytes > wal_scan.good_bytes {
+                        wal.truncate(wal_scan.good_bytes).map_err(|_| LsmOpenError::Unavailable)?;
+                    }
+                    if retained_scan.total_bytes > retained_scan.good_bytes {
+                        retained
+                            .truncate(retained_scan.good_bytes)
+                            .map_err(|_| LsmOpenError::Unavailable)?;
+                    }
+                    let verified_wal =
+                        VerifiedStream::for_wal(&wal_path, &wal_scan, store_id, INITIAL_WAL_EPOCH)
+                            .map_err(|_| LsmOpenError::Unavailable)?;
+                    let verified_retained =
+                        VerifiedStream::for_retained(&retained_path, &retained_scan, store_id)
+                            .map_err(|_| LsmOpenError::Unavailable)?;
+                    let wal_frontier = WalFrontier::rebuild_shadow(
+                        dir,
+                        store_id,
+                        INITIAL_WAL_EPOCH,
+                        verified_wal.final_anchor(),
+                    )
+                    .map_err(map_frontier_open_error)?;
+                    let retained_frontier = RetainedFrontier::rebuild_shadow(
+                        dir,
+                        store_id,
+                        verified_retained.final_anchor(),
+                    )
+                    .map_err(map_frontier_open_error)?;
+                    (LEGACY_FORMAT_MAJOR, None, Some(wal_frontier), Some(retained_frontier), true)
+                }
+            };
         let mut engine = Self {
             dir: dir.to_path_buf(),
             wal,
+            wal_frontier,
             memtable: MemTable::default(),
             frozen: Vec::new(),
             manifest,
@@ -235,16 +336,22 @@ impl LsmStorage {
             history_floor: None,
             retained,
             retained_index: retained_scan.index,
+            retained_frontier,
+            format_major,
+            activation,
+            store_id,
+            frontier_poisoned: false,
             usage_index: UsageFactLedger::default(),
             usage_corrupt: false,
             faults: FaultPlan::empty(),
         };
         engine.rebuild_indexes_from_segments();
         engine.rebuild_indexes_from_cold_tier();
-        let wal_scan = engine.wal.scan().map_err(|_| LsmOpenError::Unavailable)?;
         let mut watermark = engine.sequence_watermark;
-        for entry in &wal_scan.entries {
-            watermark = watermark.max(entry.key.sequence());
+        if replay_wal {
+            for entry in &wal_scan.entries {
+                watermark = watermark.max(entry.key.sequence());
+            }
         }
         for sequence in engine.history_index.keys() {
             watermark = watermark.max(*sequence);
@@ -253,8 +360,10 @@ impl LsmStorage {
             watermark = watermark.max(entry.sequence);
         }
         engine.sequence_watermark = watermark;
-        for entry in wal_scan.entries {
-            engine.apply_entry_to_memory(&entry);
+        if replay_wal {
+            for entry in wal_scan.entries {
+                engine.apply_entry_to_memory(&entry);
+            }
         }
         if engine.usage_corrupt {
             return Err(LsmOpenError::FormatMismatch);
@@ -532,6 +641,9 @@ impl LsmStorage {
             }
             return replay(entry);
         }
+        if self.frontier_poisoned && self.activation.is_some() {
+            return CommitResult::Rejected(CommitRejection::Storage);
+        }
         // Step 3: conflict-check every write against the snapshot and the
         // published view.
         let snapshot_sequence = intent.snapshot_sequence.get();
@@ -730,13 +842,36 @@ impl LsmStorage {
         if self.faults.fire(FaultPoint::PointerPublish).is_err() {
             return CommitResult::Rejected(CommitRejection::Storage);
         }
-        if self.wal.append(&durable_batch).is_err() {
+        let Ok(append) = self.append_wal_batch(&durable_batch) else {
             return CommitResult::Rejected(CommitRejection::Storage);
-        }
+        };
         if intent.durability == LocalDurability::Synced
             && self.faults.fire(FaultPoint::ReadyLedgerSync).is_err()
         {
-            return CommitResult::Rejected(CommitRejection::Storage);
+            if self.activation.is_some() {
+                self.frontier_poisoned = true;
+            }
+            return self.finish_publication(
+                &entries,
+                &ledger_entry,
+                Some(UnknownCause::ResponseInterrupted),
+                false,
+            );
+        }
+        if self
+            .witness_wal_append(
+                &append,
+                intent.durability == LocalDurability::Synced,
+                FaultPoint::ReadyFrontierSync,
+            )
+            .is_err()
+        {
+            return self.finish_publication(
+                &entries,
+                &ledger_entry,
+                Some(UnknownCause::ResponseInterrupted),
+                false,
+            );
         }
         if intent.durability == LocalDurability::Synced
             && self.faults.fire(FaultPoint::PointerSync).is_err()
@@ -758,9 +893,6 @@ impl LsmStorage {
                 false,
             );
         }
-        if intent.durability == LocalDurability::Synced && self.wal.sync().is_err() {
-            return CommitResult::Rejected(CommitRejection::Storage);
-        }
         if intent.durability == LocalDurability::Synced {
             // The batch is durable and synced. The flip frame upgrades the
             // ledger entry's proven durability; its absence after a crash or
@@ -779,7 +911,18 @@ impl LsmStorage {
                 key: InternalKey::ledger(&intent.tenant, intent.operation.as_str(), sequence),
                 value: encode_ledger_value(&synced_entry),
             }];
-            if self.wal.append(&flip).is_err() || self.wal.sync().is_err() {
+            let Ok(flip_append) = self.append_wal_batch(&flip) else {
+                return self.finish_publication(
+                    &entries,
+                    &ledger_entry,
+                    Some(UnknownCause::PublishedLedgerSync),
+                    false,
+                );
+            };
+            if self
+                .witness_wal_append(&flip_append, true, FaultPoint::PublishedFrontierSync)
+                .is_err()
+            {
                 return self.finish_publication(
                     &entries,
                     &ledger_entry,
@@ -794,6 +937,66 @@ impl LsmStorage {
             None,
             intent.durability == LocalDurability::Synced,
         )
+    }
+
+    /// Appends a complete WAL frame, rolling back an interrupted `write_all`
+    /// so an append error remains a definite pre-publication failure.
+    fn append_wal_batch(&mut self, entries: &[Entry]) -> Result<wal::WalAppend, ()> {
+        if self.frontier_poisoned && self.activation.is_some() {
+            return Err(());
+        }
+        let start = self.wal.len();
+        if let Ok(append) = self.wal.append(entries) {
+            Ok(append)
+        } else {
+            if self.wal.truncate(start).is_err() {
+                self.frontier_poisoned = true;
+            }
+            Err(())
+        }
+    }
+
+    /// Syncs an append as required and advances the independent frontier
+    /// before any in-memory state can expose the batch.
+    fn witness_wal_append(
+        &mut self,
+        append: &wal::WalAppend,
+        legacy_sync_required: bool,
+        specific_fault: FaultPoint,
+    ) -> Result<(), ()> {
+        let active = self.activation.is_some();
+        if (active || legacy_sync_required) && self.wal.sync().is_err() {
+            if active {
+                self.frontier_poisoned = true;
+            }
+            return Err(());
+        }
+        if active {
+            if self.faults.fire(FaultPoint::StorageFrontierSync).is_err()
+                || self.faults.fire(specific_fault).is_err()
+            {
+                self.frontier_poisoned = true;
+                return Err(());
+            }
+            let Some(frontier) = self.wal_frontier.as_mut() else {
+                self.frontier_poisoned = true;
+                return Err(());
+            };
+            if frontier.advance(append).is_err() {
+                self.frontier_poisoned = true;
+                return Err(());
+            }
+        } else if self
+            .wal_frontier
+            .as_mut()
+            .is_some_and(|frontier| frontier.advance(append).is_err())
+        {
+            // The legacy shadow is disposable and must not change the old
+            // writer contract. It only blocks activation until a reopen
+            // rebuilds it from the streams.
+            self.frontier_poisoned = true;
+        }
+        Ok(())
     }
 
     /// Applies the published batch to memory and returns the receipt.
@@ -846,17 +1049,19 @@ impl LsmStorage {
             self.apply_entry_to_memory(&flip);
         }
         self.root_head = StorageRootId::from_recorded(ledger_entry.root.clone());
-        if self
-            .memtable
-            .should_rotate(self.tuning.max_memtable_bytes, self.tuning.max_memtable_entries)
-        {
-            let replacement = std::mem::take(&mut self.memtable);
-            self.frozen.push(replacement);
-        }
-        if self.frozen.len() >= 2 {
-            // Keep the frozen backlog bounded: flush inline. The flush is
-            // bounded by the memtable bound, never by table size.
-            compact::flush_frozen(self);
+        if !self.frontier_poisoned {
+            if self
+                .memtable
+                .should_rotate(self.tuning.max_memtable_bytes, self.tuning.max_memtable_entries)
+            {
+                let replacement = std::mem::take(&mut self.memtable);
+                self.frozen.push(replacement);
+            }
+            if self.frozen.len() >= 2 {
+                // Keep the frozen backlog bounded: flush inline. The flush is
+                // bounded by the memtable bound, never by table size.
+                compact::flush_frozen(self);
+            }
         }
         CommitResult::Committed(StorageReceipt {
             sequence: StorageSequence::new(ledger_entry.sequence),
@@ -867,8 +1072,11 @@ impl LsmStorage {
 
     /// Records one conflict rejection durably, then reports it.
     fn record_rejection(&mut self, intent: &CommitIntent, reason: CommitRejection) -> CommitResult {
+        if self.frontier_poisoned {
+            return CommitResult::Rejected(CommitRejection::Storage);
+        }
         let Some(sequence) = self.sequence_watermark.checked_add(1) else {
-            return CommitResult::Rejected(reason);
+            return CommitResult::Rejected(CommitRejection::Storage);
         };
         self.sequence_watermark = sequence;
         let entry = LedgerEntry {
@@ -880,20 +1088,18 @@ impl LsmStorage {
             post_publish_synced: false,
             rejection: Some(reason),
         };
-        if intent.durability != LocalDurability::Buffered {
-            let batch = vec![Entry {
-                key: InternalKey::ledger(&intent.tenant, intent.operation.as_str(), sequence),
-                value: encode_ledger_value(&entry),
-            }];
-            if self.wal.append(&batch).is_err() {
-                return CommitResult::Rejected(reason);
-            }
-            let _ = self.wal.sync();
+        let persisted = Entry {
+            key: InternalKey::ledger(&intent.tenant, intent.operation.as_str(), sequence),
+            value: encode_ledger_value(&entry),
+        };
+        let batch = vec![persisted.clone()];
+        let Ok(append) = self.append_wal_batch(&batch) else {
+            return CommitResult::Rejected(CommitRejection::Storage);
+        };
+        if self.witness_wal_append(&append, true, FaultPoint::RejectedFrontierSync).is_err() {
+            return CommitResult::Rejected(CommitRejection::Storage);
         }
-        self.ledger_index.insert(
-            (intent.tenant.as_str().to_owned(), intent.operation.as_str().to_owned()),
-            entry,
-        );
+        self.apply_entry_to_memory(&persisted);
         CommitResult::Rejected(reason)
     }
 
@@ -960,6 +1166,55 @@ fn decode_document_key(user_key: &[u8]) -> Option<(String, String, String)> {
         String::from_utf8(collection.to_vec()).ok()?,
         String::from_utf8(document.to_vec()).ok()?,
     ))
+}
+
+/// Validates the logical meaning of a structurally decoded WAL or segment
+/// entry. Checksums prove byte consistency, not that hostile bytes describe a
+/// legal `TerraBase` key/value pair.
+fn persisted_entry_is_semantically_valid(entry: &Entry) -> bool {
+    let tag = entry.key.tag();
+    if tag == internal::Keyspace::Documents.tag() {
+        if entry.key.is_deletion() {
+            return entry.value.is_empty();
+        }
+        let Some((_tenant, collection, document)) = decode_document_key(entry.key.user_key())
+        else {
+            return false;
+        };
+        let mut reader = codec::Reader::new(&entry.value);
+        let Some(decoded) = codec::decode_document(&mut reader) else {
+            return false;
+        };
+        reader.remaining() == 0
+            && decoded.collection().as_str() == collection
+            && decoded.id().as_str() == document
+    } else if tag == internal::Keyspace::Ledger.tag() {
+        let Some(record) = decode_ledger_value(&entry.value) else {
+            return false;
+        };
+        record.sequence == entry.key.sequence()
+            && if record.committed {
+                record.rejection.is_none()
+                    && record.root.len() == 32
+                    && record.root.bytes().all(|byte| byte.is_ascii_hexdigit())
+            } else {
+                record.rejection.is_some() && record.root.is_empty() && !record.post_publish_synced
+            }
+    } else if tag == internal::Keyspace::History.tag() {
+        decode_history_value(&entry.value)
+            .is_some_and(|commit| commit.sequence().get() == entry.key.sequence())
+    } else if tag == internal::Keyspace::Meta.tag() {
+        let label = meta_label(entry.key.user_key());
+        if label == META_HISTORY_FLOOR {
+            decode_meta_bound(&entry.value).is_some()
+        } else if label.starts_with(USAGE_LABEL_PREFIX) {
+            decode_usage_entry(entry).is_some()
+        } else {
+            false
+        }
+    } else {
+        false
+    }
 }
 
 /// Returns the meta label of one meta-keyspace user key.
@@ -1116,12 +1371,23 @@ fn decode_ledger_value(bytes: &[u8]) -> Option<LedgerEntry> {
     let sequence = reader.read_u64()?;
     let root = reader.read_string()?;
     let requested = durability_of(reader.read_u8()?)?;
-    let committed = reader.read_u8()? != 0;
-    let post_publish_synced = reader.read_u8()? != 0;
+    let committed = match reader.read_u8()? {
+        0 => false,
+        1 => true,
+        _ => return None,
+    };
+    let post_publish_synced = match reader.read_u8()? {
+        0 => false,
+        1 => true,
+        _ => return None,
+    };
     let rejection = match reader.read_u8()? {
         0 => None,
         code => Some(decode_rejection(code)?),
     };
+    if reader.remaining() != 0 {
+        return None;
+    }
     Some(LedgerEntry {
         digest,
         sequence,
@@ -1139,7 +1405,7 @@ fn decode_history_value(bytes: &[u8]) -> Option<PublishedCommit> {
     let length = reader.read_u32()? as usize;
     let checksum = reader.read_u64()?;
     let payload = reader.take(length)?;
-    if codec::fnv1a(payload) != checksum {
+    if codec::fnv1a(payload) != checksum || reader.remaining() != 0 {
         return None;
     }
     ledger::decode_commit_payload(payload)
@@ -1148,7 +1414,8 @@ fn decode_history_value(bytes: &[u8]) -> Option<PublishedCommit> {
 /// Decodes one meta bound value.
 fn decode_meta_bound(bytes: &[u8]) -> Option<u64> {
     let mut reader = codec::Reader::new(bytes);
-    reader.read_u64()
+    let bound = reader.read_u64()?;
+    (reader.remaining() == 0).then_some(bound)
 }
 
 /// Maps a durability level to its one-byte code.
@@ -1157,6 +1424,247 @@ fn durability_code(level: LocalDurability) -> u8 {
         LocalDurability::Buffered => 0,
         LocalDurability::Written => 1,
         LocalDurability::Synced => 2,
+    }
+}
+
+fn verify_or_create_format(dir: &Path) -> Result<FormatOpen, LsmOpenError> {
+    let path = dir.join("format");
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut entries = fs::read_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
+            if entries.next().transpose().map_err(|_| LsmOpenError::Unavailable)?.is_some() {
+                return Err(LsmOpenError::FormatMismatch);
+            }
+            let mut file = fs::File::create(&path).map_err(|_| LsmOpenError::Unavailable)?;
+            file.write_all(FORMAT_MARKER.as_bytes()).map_err(|_| LsmOpenError::Unavailable)?;
+            file.sync_all().map_err(|_| LsmOpenError::Unavailable)?;
+            return Ok(FormatOpen { state: FormatState::Legacy, created: true });
+        }
+        Err(_) => return Err(LsmOpenError::Unavailable),
+    };
+    if std::str::from_utf8(&bytes).is_ok_and(|text| text.trim() == FORMAT_MARKER) {
+        return Ok(FormatOpen { state: FormatState::Legacy, created: false });
+    }
+    decode_active_format(&bytes)
+        .map(|active| FormatOpen { state: FormatState::Active(active), created: false })
+}
+
+fn encode_active_format(active: &ActiveFormat) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(FORMAT_MARKER.as_bytes());
+    bytes.extend_from_slice(ACTIVE_FORMAT_MAGIC);
+    codec::push_u64(&mut bytes, FRONTIER_FORMAT_MAJOR);
+    codec::push_u64(&mut bytes, STORAGE_FRONTIER_FEATURE);
+    bytes.extend_from_slice(&active.store_id.as_bytes());
+    let identity = active.activation.activation_id.as_str().as_bytes();
+    let identity_len =
+        u16::try_from(identity.len()).expect("a validated operation identity fits u16");
+    codec::push_u16(&mut bytes, identity_len);
+    bytes.extend_from_slice(identity);
+    codec::push_u64(&mut bytes, active.activation.external_fence_generation);
+    bytes.extend_from_slice(&active.activation.external_record_digest);
+    bytes.extend_from_slice(&[0_u8; ACTIVE_FORMAT_RESERVED]);
+    let checksum = active_format_checksum(&bytes);
+    bytes.extend_from_slice(&checksum);
+    bytes
+}
+
+fn decode_active_format(bytes: &[u8]) -> Result<ActiveFormat, LsmOpenError> {
+    const FIXED_WITHOUT_ID: usize = 9 + 8 + 8 + 8 + 16 + 2 + 8 + 32 + 8 + 32;
+    if bytes.len() < FIXED_WITHOUT_ID + 1
+        || !bytes.starts_with(FORMAT_MARKER.as_bytes())
+        || bytes.get(FORMAT_MARKER.len()..FORMAT_MARKER.len() + 8) != Some(ACTIVE_FORMAT_MAGIC)
+    {
+        return Err(LsmOpenError::FormatMismatch);
+    }
+    let checksum_start = bytes.len() - 32;
+    if bytes[checksum_start..] != active_format_checksum(&bytes[..checksum_start]) {
+        return Err(LsmOpenError::FormatMismatch);
+    }
+    let body_start = FORMAT_MARKER.len() + ACTIVE_FORMAT_MAGIC.len();
+    let mut reader = codec::Reader::new(&bytes[body_start..checksum_start]);
+    if reader.read_u64() != Some(FRONTIER_FORMAT_MAJOR)
+        || reader.read_u64() != Some(STORAGE_FRONTIER_FEATURE)
+    {
+        return Err(LsmOpenError::FormatMismatch);
+    }
+    let mut store_id = [0_u8; 16];
+    store_id.copy_from_slice(reader.take(16).ok_or(LsmOpenError::FormatMismatch)?);
+    let identity_len = reader.read_u16().ok_or(LsmOpenError::FormatMismatch)? as usize;
+    let identity_text =
+        std::str::from_utf8(reader.take(identity_len).ok_or(LsmOpenError::FormatMismatch)?)
+            .map_err(|_| LsmOpenError::FormatMismatch)?;
+    let activation_id =
+        OperationId::try_new(identity_text).map_err(|_| LsmOpenError::FormatMismatch)?;
+    let external_fence_generation = reader.read_u64().ok_or(LsmOpenError::FormatMismatch)?;
+    if external_fence_generation == 0 {
+        return Err(LsmOpenError::FormatMismatch);
+    }
+    let mut external_record_digest = [0_u8; 32];
+    external_record_digest.copy_from_slice(reader.take(32).ok_or(LsmOpenError::FormatMismatch)?);
+    if reader.take(ACTIVE_FORMAT_RESERVED) != Some(&[0_u8; ACTIVE_FORMAT_RESERVED])
+        || reader.remaining() != 0
+    {
+        return Err(LsmOpenError::FormatMismatch);
+    }
+    Ok(ActiveFormat {
+        store_id: StoreId::from_bytes(store_id),
+        activation: LedgerFrontierActivationIdentity {
+            activation_id,
+            external_fence_generation,
+            external_record_digest,
+        },
+    })
+}
+
+fn write_active_format(
+    dir: &Path,
+    active: &ActiveFormat,
+    faults: &mut FaultPlan,
+) -> Result<(), LsmOpenError> {
+    let temp = dir.join("format.tmp");
+    let live = dir.join("format");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&temp)
+        .map_err(|_| LsmOpenError::Unavailable)?;
+    faults.fire(FaultPoint::ActivationFormatTempCreated).map_err(|_| LsmOpenError::Unavailable)?;
+    file.write_all(&encode_active_format(active)).map_err(|_| LsmOpenError::Unavailable)?;
+    faults.fire(FaultPoint::ActivationFormatWritten).map_err(|_| LsmOpenError::Unavailable)?;
+    file.sync_all().map_err(|_| LsmOpenError::Unavailable)?;
+    faults.fire(FaultPoint::ActivationFormatSynced).map_err(|_| LsmOpenError::Unavailable)?;
+    fs::rename(&temp, &live).map_err(|_| LsmOpenError::Unavailable)?;
+    faults.fire(FaultPoint::ActivationFormatRenamed).map_err(|_| LsmOpenError::Unavailable)?;
+    super::root::sync_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
+    faults.fire(FaultPoint::ActivationFormatDirectorySynced).map_err(|_| LsmOpenError::Unavailable)
+}
+
+fn active_format_checksum(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(ACTIVE_FORMAT_DOMAIN);
+    hasher.update(bytes);
+    *hasher.finalize().as_bytes()
+}
+
+fn has_segment_artifacts(dir: &Path) -> Result<bool, LsmOpenError> {
+    let entries = fs::read_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
+    Ok(entries.filter_map(Result::ok).any(|entry| {
+        entry.file_name().to_str().is_some_and(|name| {
+            name.starts_with("seg-")
+                && Path::new(name).extension().is_some_and(|extension| extension == "lsm")
+        })
+    }))
+}
+
+fn recover_active_retained(
+    dir: &Path,
+    retained_path: &Path,
+    retained: &mut super::retained::RetainedWriter,
+    scan: &super::retained::RetainedScan,
+    store_id: StoreId,
+) -> Result<RetainedFrontier, LsmOpenError> {
+    let verified = VerifiedStream::for_retained(retained_path, scan, store_id)
+        .map_err(|_| LsmOpenError::Unavailable)?;
+    let mut frontier =
+        RetainedFrontier::open_active(dir, store_id).map_err(map_frontier_open_error)?;
+    frontier.repair_or_advance(&verified).map_err(map_frontier_open_error)?;
+    if scan.total_bytes > scan.good_bytes {
+        retained.truncate(scan.good_bytes).map_err(|_| LsmOpenError::Unavailable)?;
+    }
+    Ok(frontier)
+}
+
+fn recover_active_wal(
+    dir: &Path,
+    wal_path: &Path,
+    wal: &mut WalLog,
+    scan: &wal::WalScan,
+    store_id: StoreId,
+    manifest: ActiveWalManifest,
+) -> Result<(WalFrontier, bool), LsmOpenError> {
+    let mut frontier = WalFrontier::open_active(dir, store_id).map_err(map_frontier_open_error)?;
+    if manifest.checkpoint.is_some() && frontier.epoch_established(manifest.live_epoch) {
+        if scan.total_bytes != 0 {
+            wal.truncate(0).map_err(|_| LsmOpenError::Unavailable)?;
+        }
+        return Ok((frontier, false));
+    }
+    if scan.mid_file_damage {
+        return Err(LsmOpenError::FormatMismatch);
+    }
+    let selected = frontier.anchor();
+    if selected.epoch == manifest.live_epoch {
+        let live = VerifiedStream::for_wal(wal_path, scan, store_id, manifest.live_epoch)
+            .map_err(|_| LsmOpenError::Unavailable)?;
+        if selected == live.empty_anchor()
+            && let Some(checkpoint) = manifest.checkpoint
+        {
+            let old = VerifiedStream::for_wal(wal_path, scan, store_id, checkpoint.anchor.epoch)
+                .map_err(|_| LsmOpenError::Unavailable)?;
+            if old.final_anchor() == checkpoint.anchor && scan.good_bytes == checkpoint.anchor.bytes
+            {
+                for slot in frontier.slots().iter().flatten() {
+                    let valid = if slot.anchor.epoch == manifest.live_epoch {
+                        slot.anchor == live.empty_anchor()
+                    } else if slot.anchor.epoch == checkpoint.anchor.epoch {
+                        old.contains(slot.anchor)
+                    } else {
+                        false
+                    };
+                    if !valid {
+                        return Err(LsmOpenError::FormatMismatch);
+                    }
+                }
+                frontier
+                    .ensure_epoch_established(manifest.live_epoch)
+                    .map_err(map_frontier_open_error)?;
+                wal.truncate(0).map_err(|_| LsmOpenError::Unavailable)?;
+                return Ok((frontier, false));
+            }
+        }
+        frontier.repair_or_advance(&live).map_err(map_frontier_open_error)?;
+        if scan.total_bytes > scan.good_bytes {
+            wal.truncate(scan.good_bytes).map_err(|_| LsmOpenError::Unavailable)?;
+        }
+        return Ok((frontier, true));
+    }
+
+    let checkpoint = manifest.checkpoint.ok_or(LsmOpenError::FormatMismatch)?;
+    if selected != checkpoint.anchor {
+        return Err(LsmOpenError::FormatMismatch);
+    }
+    let old = VerifiedStream::for_wal(wal_path, scan, store_id, checkpoint.anchor.epoch)
+        .map_err(|_| LsmOpenError::Unavailable)?;
+    if old.final_anchor() != checkpoint.anchor || scan.good_bytes != checkpoint.anchor.bytes {
+        return Err(LsmOpenError::FormatMismatch);
+    }
+    for slot in frontier.slots().iter().flatten() {
+        if slot.anchor.epoch != checkpoint.anchor.epoch || !old.contains(slot.anchor) {
+            return Err(LsmOpenError::FormatMismatch);
+        }
+    }
+    frontier
+        .write_epoch_zero(checkpoint.next_epoch)
+        .and_then(|()| frontier.write_epoch_zero(checkpoint.next_epoch))
+        .map_err(map_frontier_open_error)?;
+    wal.truncate(0).map_err(|_| LsmOpenError::Unavailable)?;
+    Ok((frontier, false))
+}
+
+fn map_frontier_open_error(error: FrontierError) -> LsmOpenError {
+    match error {
+        FrontierError::Integrity => LsmOpenError::FormatMismatch,
+        FrontierError::Unavailable => LsmOpenError::Unavailable,
+    }
+}
+
+fn map_activation_frontier_error(error: FrontierError) -> LedgerFrontierActivationError {
+    match error {
+        FrontierError::Integrity => LedgerFrontierActivationError::IntegrityFailure,
+        FrontierError::Unavailable => LedgerFrontierActivationError::StorageUnavailable,
     }
 }
 
@@ -1194,47 +1702,6 @@ fn decode_rejection(code: u8) -> Option<CommitRejection> {
 /// Returns the segment file path of one segment identity.
 fn segment_path(dir: &Path, id: u64) -> PathBuf {
     dir.join(format!("seg-{id:016x}.lsm"))
-}
-
-/// Rebuilds a manifest from the verifying segment files on disk.
-fn rebuild_manifest_from_directory(
-    dir: &Path,
-    readers: &mut BTreeMap<u64, RefCell<SegmentReader>>,
-    previous: &SegmentManifest,
-) -> SegmentManifest {
-    let mut manifest = SegmentManifest {
-        epoch: previous.epoch + 1,
-        next_segment_id: previous.next_segment_id,
-        wal_checkpoint: 0,
-        segments: Vec::new(),
-    };
-    let Ok(entries) = fs::read_dir(dir) else {
-        return manifest;
-    };
-    let mut candidates: Vec<(u64, u16)> = Vec::new();
-    for entry in entries.filter_map(Result::ok) {
-        let file_name = entry.file_name();
-        let Some(hex) = file_name
-            .to_str()
-            .and_then(|name| name.strip_prefix("seg-"))
-            .and_then(|stem| stem.strip_suffix(".lsm"))
-        else {
-            continue;
-        };
-        let Ok(id) = u64::from_str_radix(hex, 16) else { continue };
-        let level =
-            previous.segments.iter().find(|meta| meta.id == id).map_or(0, |meta| meta.level);
-        candidates.push((id, level));
-    }
-    candidates.sort_unstable();
-    for (id, level) in candidates {
-        if let Ok(reader) = SegmentReader::open(&segment_path(dir, id), id, level) {
-            manifest.next_segment_id = manifest.next_segment_id.max(id + 1);
-            manifest.segments.push(reader.meta().clone());
-            readers.insert(id, RefCell::new(reader));
-        }
-    }
-    manifest
 }
 
 /// The merged documents of one tenant at a sequence, in canonical order.
@@ -1401,6 +1868,114 @@ impl StoragePort for LsmStorage {
         )
     }
 
+    fn ledger_frontier_status(&self) -> LedgerFrontierStatus {
+        if self.frontier_poisoned {
+            return LedgerFrontierStatus::Unavailable;
+        }
+        let Some(observation) = self.frontier_observation() else {
+            return LedgerFrontierStatus::Unavailable;
+        };
+        match &self.activation {
+            Some(activation) => {
+                LedgerFrontierStatus::Active { observation, activation: activation.clone() }
+            }
+            None => LedgerFrontierStatus::Inactive(observation),
+        }
+    }
+
+    fn activate_ledger_frontier(
+        &mut self,
+        request: &LedgerFrontierActivationRequest,
+    ) -> Result<LedgerFrontierActivationReceipt, LedgerFrontierActivationError> {
+        if self.frontier_poisoned {
+            return Err(LedgerFrontierActivationError::StorageUnavailable);
+        }
+        if let Some(active) = &self.activation {
+            if active != &request.identity {
+                return Err(LedgerFrontierActivationError::AlreadyActivatedByDifferentRecord);
+            }
+            let observation = self
+                .frontier_observation()
+                .ok_or(LedgerFrontierActivationError::IntegrityFailure)?;
+            return Ok(LedgerFrontierActivationReceipt { identity: active.clone(), observation });
+        }
+        if request.identity.external_fence_generation == 0 {
+            return Err(LedgerFrontierActivationError::IntegrityFailure);
+        }
+        if self.frontier_observation().as_ref() != Some(&request.expected) {
+            return Err(LedgerFrontierActivationError::StaleObservation);
+        }
+        let wal_path = self.dir.join("wal");
+        let retained_path = self.dir.join("retained");
+        let wal_scan =
+            self.wal.scan().map_err(|_| LedgerFrontierActivationError::StorageUnavailable)?;
+        let retained_scan = super::retained::RetainedIndex::scan(&retained_path);
+        if wal_scan.mid_file_damage
+            || wal_scan.good_bytes != wal_scan.total_bytes
+            || retained_scan.mid_file_damage
+            || retained_scan.good_bytes != retained_scan.total_bytes
+        {
+            return Err(LedgerFrontierActivationError::IntegrityFailure);
+        }
+        let wal_epoch = self
+            .wal_frontier
+            .as_ref()
+            .ok_or(LedgerFrontierActivationError::IntegrityFailure)?
+            .anchor()
+            .epoch;
+        let verified_wal = VerifiedStream::for_wal(&wal_path, &wal_scan, self.store_id, wal_epoch)
+            .map_err(|_| LedgerFrontierActivationError::StorageUnavailable)?;
+        let verified_retained =
+            VerifiedStream::for_retained(&retained_path, &retained_scan, self.store_id)
+                .map_err(|_| LedgerFrontierActivationError::StorageUnavailable)?;
+        if self.wal_frontier.as_ref().map(WalFrontier::anchor) != Some(verified_wal.final_anchor())
+            || self.retained_frontier.as_ref().map(RetainedFrontier::anchor)
+                != Some(verified_retained.final_anchor())
+        {
+            return Err(LedgerFrontierActivationError::IntegrityFailure);
+        }
+        self.wal
+            .sync()
+            .and_then(|()| self.retained.sync())
+            .map_err(|_| LedgerFrontierActivationError::StorageUnavailable)?;
+        let wal_frontier = WalFrontier::rebuild_shadow(
+            &self.dir,
+            self.store_id,
+            wal_epoch,
+            verified_wal.final_anchor(),
+        )
+        .map_err(map_activation_frontier_error)?;
+        let retained_frontier = RetainedFrontier::rebuild_shadow(
+            &self.dir,
+            self.store_id,
+            verified_retained.final_anchor(),
+        )
+        .map_err(map_activation_frontier_error)?;
+        self.wal_frontier = Some(wal_frontier);
+        self.retained_frontier = Some(retained_frontier);
+
+        let mut activated_manifest = self.manifest.clone();
+        activated_manifest.epoch = activated_manifest.epoch.saturating_add(1);
+        activated_manifest.active_wal =
+            Some(ActiveWalManifest { live_epoch: wal_epoch, checkpoint: None });
+        if activated_manifest.publish_activation(&self.dir, &mut self.faults).is_err() {
+            self.frontier_poisoned = true;
+            return Err(LedgerFrontierActivationError::StorageUnavailable);
+        }
+        self.manifest = activated_manifest;
+        let active = ActiveFormat { store_id: self.store_id, activation: request.identity.clone() };
+        if write_active_format(&self.dir, &active, &mut self.faults).is_err() {
+            self.frontier_poisoned = true;
+            self.activation = Some(request.identity.clone());
+            return Err(LedgerFrontierActivationError::StorageUnavailable);
+        }
+        self.format_major = FRONTIER_FORMAT_MAJOR;
+        self.activation = Some(request.identity.clone());
+        let observation =
+            self.frontier_observation().expect("activation retains both frontier handles");
+        Ok(LedgerFrontierActivationReceipt { identity: request.identity.clone(), observation })
+    }
+
     fn compact(
         &mut self,
         request: super::compaction::StorageCompaction,
@@ -1424,6 +1999,9 @@ impl StoragePort for LsmStorage {
         policy: &tier::TierMovePolicy,
         home_region: &str,
     ) -> Result<tier::MoverOutcome, tier::TierUnsupported> {
+        if self.frontier_poisoned && self.activation.is_some() {
+            return Err(tier::TierUnsupported);
+        }
         // The engine-owned local Tier-2 store: content-addressed objects
         // beside the segments. Remote object stores arrive with the
         // cold-tier landing; the seam stays typed.
@@ -1442,6 +2020,9 @@ impl StoragePort for LsmStorage {
     }
 
     fn flush(&mut self) -> Result<(), ()> {
+        if self.frontier_poisoned && self.activation.is_some() {
+            return Err(());
+        }
         self.wal.sync().map_err(|_| ())
     }
 
@@ -1453,6 +2034,23 @@ impl StoragePort for LsmStorage {
 
 /// Crate-private accessors the compact module and tests use.
 impl LsmStorage {
+    fn frontier_observation(&self) -> Option<LedgerFrontierObservation> {
+        let wal = self.wal_frontier.as_ref()?;
+        let retained = self.retained_frontier.as_ref()?;
+        let wal_anchor = wal.anchor();
+        let retained_anchor = retained.anchor();
+        Some(LedgerFrontierObservation {
+            format_major: self.format_major,
+            frontier_generation: wal.generation(),
+            ledger_bytes: wal_anchor.bytes,
+            record_count: wal_anchor.frame_count,
+            chain_head: wal_anchor.chain_head,
+            retained_bytes: retained_anchor.bytes,
+            retained_record_count: retained_anchor.frame_count,
+            retained_chain_head: retained_anchor.chain_head,
+        })
+    }
+
     /// The directory the engine lives in.
     pub(super) fn dir(&self) -> &Path {
         &self.dir
@@ -1490,9 +2088,112 @@ impl LsmStorage {
         self.usage_index.facts().cloned().collect()
     }
 
-    /// Truncates the WAL after a published checkpoint.
-    pub(super) fn wal_truncate_impl(&mut self) -> Result<(), ()> {
-        self.wal.truncate_after_checkpoint().map_err(|_| ())
+    /// Publishes a manifest bound to the exact old WAL anchor, establishes
+    /// both slots of the next epoch, then truncates and syncs the old WAL.
+    pub(super) fn publish_wal_checkpoint_impl(&mut self) -> Result<(), ()> {
+        if !self.frozen.is_empty() {
+            return Err(());
+        }
+        let active = self.activation.is_some();
+        let mut candidate = self.manifest.clone();
+        candidate.epoch = candidate.epoch.checked_add(1).ok_or(())?;
+        candidate.wal_checkpoint = self.sequence_watermark;
+        let current_anchor = self.wal_frontier.as_ref().ok_or(())?.anchor();
+        let frontier_next_epoch = current_anchor.epoch.checked_add(1).ok_or(())?;
+        let next_epoch = if active {
+            let anchor = current_anchor;
+            let next_epoch = frontier_next_epoch;
+            candidate.active_wal = Some(ActiveWalManifest {
+                live_epoch: next_epoch,
+                checkpoint: Some(WalCheckpoint { anchor, next_epoch }),
+            });
+            Some(next_epoch)
+        } else {
+            candidate.active_wal = None;
+            None
+        };
+        if self.faults.fire(FaultPoint::CompactionCheckpointPublish).is_err() {
+            return Err(());
+        }
+        if candidate.publish(&self.dir).is_err() {
+            self.frontier_poisoned = true;
+            return Err(());
+        }
+        self.manifest = candidate;
+        if self.faults.fire(FaultPoint::CompactionCheckpointPublished).is_err() {
+            if active {
+                self.frontier_poisoned = true;
+            }
+            return Err(());
+        }
+        if let Some(next_epoch) = next_epoch {
+            let Some(frontier) = self.wal_frontier.as_mut() else {
+                self.frontier_poisoned = true;
+                return Err(());
+            };
+            if frontier.write_epoch_zero(next_epoch).is_err() {
+                self.frontier_poisoned = true;
+                return Err(());
+            }
+            if self.faults.fire(FaultPoint::CompactionWalFrontierFirstSlot).is_err() {
+                self.frontier_poisoned = true;
+                return Err(());
+            }
+            if frontier.write_epoch_zero(next_epoch).is_err() {
+                self.frontier_poisoned = true;
+                return Err(());
+            }
+            if self.faults.fire(FaultPoint::CompactionWalFrontierSecondSlot).is_err() {
+                self.frontier_poisoned = true;
+                return Err(());
+            }
+        }
+        if self.faults.fire(FaultPoint::CompactionWalTruncate).is_err() {
+            if active {
+                self.frontier_poisoned = true;
+            }
+            return Err(());
+        }
+        if self.wal.set_len_unsynced(0).is_err() {
+            if active {
+                self.frontier_poisoned = true;
+            }
+            return Err(());
+        }
+        let wal_sync_failed = self.faults.fire(FaultPoint::CompactionWalSync).is_err()
+            || self.wal.sync_all().is_err();
+        if wal_sync_failed {
+            if active {
+                self.frontier_poisoned = true;
+            } else {
+                let _ = self.reset_legacy_wal_shadow(frontier_next_epoch);
+            }
+            return Err(());
+        }
+        if !active {
+            self.reset_legacy_wal_shadow(frontier_next_epoch)?;
+        }
+        Ok(())
+    }
+
+    fn reset_legacy_wal_shadow(&mut self, next_epoch: u64) -> Result<(), ()> {
+        if self.faults.fire(FaultPoint::CompactionLegacyFrontierReset).is_err() {
+            self.frontier_poisoned = true;
+            return Err(());
+        }
+        let Some(frontier) = self.wal_frontier.as_mut() else {
+            self.frontier_poisoned = true;
+            return Err(());
+        };
+        if frontier.write_epoch_zero(next_epoch).is_err()
+            || frontier.write_epoch_zero(next_epoch).is_err()
+        {
+            // A legacy shadow never changes the old writer contract. Reopen
+            // rebuilds it from the stream if this best-effort reset fails.
+            self.frontier_poisoned = true;
+            return Err(());
+        }
+        Ok(())
     }
 
     /// Appends the window's retained facts and declares the bound durably.
@@ -1503,19 +2204,68 @@ impl LsmStorage {
         head: u64,
         non_deletion: &[(TenantId, Option<StorageSequence>)],
     ) -> Result<(), ()> {
+        if self.frontier_poisoned && self.activation.is_some() {
+            return Err(());
+        }
+        let start = self.retained.len();
         let mut appended = Vec::new();
+        let mut durable_appends = Vec::new();
         for fact in facts {
             // Check the index before writing. A retry can revisit the same
             // evidence after the first append was synced; appending first
             // would grow the durable stream with an indistinguishable
             // duplicate even though the in-memory index correctly dedups.
             if !self.retained_index.contains_fact(fact) {
-                self.retained.append_fact(fact).map_err(|_| ())?;
+                if let Ok(append) = self.retained.append_fact(fact) {
+                    durable_appends.push(append);
+                } else {
+                    if self.retained.truncate(start).is_err() {
+                        self.frontier_poisoned = true;
+                    }
+                    return Err(());
+                }
                 appended.push(fact.clone());
             }
         }
-        self.retained.append_bound(bound, head, non_deletion).map_err(|_| ())?;
-        self.retained.sync().map_err(|_| ())?;
+        if let Ok(append) = self.retained.append_bound(bound, head, non_deletion) {
+            durable_appends.push(append);
+        } else {
+            if self.retained.truncate(start).is_err() {
+                self.frontier_poisoned = true;
+            }
+            return Err(());
+        }
+        if self.faults.fire(FaultPoint::CompactionEvidenceSync).is_err()
+            || self.retained.sync().is_err()
+        {
+            if self.activation.is_some() {
+                self.frontier_poisoned = true;
+            }
+            return Err(());
+        }
+        if self.activation.is_some() {
+            if self.faults.fire(FaultPoint::RetainedFrontierSync).is_err() {
+                self.frontier_poisoned = true;
+                return Err(());
+            }
+            let Some(frontier) = self.retained_frontier.as_mut() else {
+                self.frontier_poisoned = true;
+                return Err(());
+            };
+            if frontier.advance(&durable_appends).is_err() {
+                self.frontier_poisoned = true;
+                return Err(());
+            }
+        } else if self
+            .retained_frontier
+            .as_mut()
+            .is_some_and(|frontier| frontier.advance(&durable_appends).is_err())
+        {
+            // The format-1 frontier is a non-authoritative shadow. Its
+            // failure must not poison durable application state; activation
+            // rescans both streams and refuses a stale shadow until reopen
+            // repairs it. Format 2 takes the fail-closed branch above.
+        }
         for fact in appended {
             self.retained_index.upsert_fact(fact);
         }
@@ -1532,10 +2282,10 @@ impl LsmStorage {
             key: InternalKey::meta(META_HISTORY_FLOOR, self.sequence_watermark + 1),
             value,
         }];
-        self.wal.append(&batch).map_err(|_| ())?;
-        self.wal.sync().map_err(|_| ())?;
+        let append = self.append_wal_batch(&batch)?;
+        self.witness_wal_append(&append, true, FaultPoint::ReadyFrontierSync)?;
         self.sequence_watermark += 1;
-        self.history_floor = Some(bound);
+        self.apply_entry_to_memory(&batch[0]);
         self.history_index.retain(|sequence, _| *sequence >= bound);
         Ok(())
     }

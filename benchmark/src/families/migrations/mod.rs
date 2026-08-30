@@ -6,7 +6,7 @@
 //! identities (CONTEXT: Schema Migration): a forward-only version step, a
 //! closed list of declarative field transforms, and the target schema the
 //! collection validates under afterwards. It moves one collection inside this
-//! engine only; `TerraBaseV2` has no cross-engine data transfer contract.
+//! engine only; `TerraBase` has no cross-engine data transfer contract.
 //!
 //! The style is declarative-first, and the programmatic escape is the
 //! engine's own typed document seam, never an embedded interpreter: the

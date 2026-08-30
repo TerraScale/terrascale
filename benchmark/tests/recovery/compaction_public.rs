@@ -2,7 +2,7 @@
 //!
 //! These tests use only public construction: `EngineConfig::durable`,
 //! `Engine::open`, the crate-root compaction types, and — for the retention
-//! integration — the public `terrabase_v2::replication` watermark handle.
+//! integration — the public `terrabase::replication` watermark handle.
 //! `TenantScope` has no public constructor by design (Platform creates it
 //! after authorization), so the data-bearing compaction drills are in-crate:
 //! the kill-point matrix, the divergence and retention-floor gates, and the
@@ -23,15 +23,15 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use terrabase_v2::backup::{BackupPlan, RestorePlan, run_backup, verify_latest_chain};
-use terrabase_v2::replication::SharedTombstoneRetention;
-use terrabase_v2::{
+use terrabase::backup::{BackupPlan, RestorePlan, run_backup, verify_latest_chain};
+use terrabase::replication::SharedTombstoneRetention;
+use terrabase::{
     CompactionError, CompactionPhase, CompactionPolicy, CompactionReceipt, CompactionRequest,
     Engine, EngineConfig, HistoryReclaimOutcome,
 };
 
 fn location(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("tbv2-gaps1-int-{tag}-{}", std::process::id()))
+    std::env::temp_dir().join(format!("terrabase-gaps1-int-{tag}-{}", std::process::id()))
 }
 
 fn open_engine(tag: &str) -> (PathBuf, Engine) {
@@ -48,7 +48,7 @@ fn a_reclaim_pass_reports_bounded_facts_and_progress_publicly() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = Arc::clone(&events);
     let request = CompactionRequest::new(CompactionPolicy::Reclaim).with_progress(Arc::new(
-        move |progress: &terrabase_v2::CompactionProgress| {
+        move |progress: &terrabase::CompactionProgress| {
             sink.lock().expect("progress lock").push(progress.clone());
         },
     ));
@@ -164,7 +164,7 @@ fn compaction_composes_with_the_public_backup_and_restore_seam() {
     // backup source and the restored location is a real engine location.
     run_backup(
         &engine,
-        BackupPlan::incremental_since(terrabase_v2::StorageSequence::default()),
+        BackupPlan::incremental_since(terrabase::StorageSequence::default()),
         &destination,
     )
     .expect("a backup runs after compaction");

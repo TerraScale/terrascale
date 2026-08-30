@@ -13,7 +13,7 @@
 
 use std::time::Duration;
 
-use terrabase_v2::{
+use terrabase::{
     Cancellation, Deadline, QueryPredicate, QuerySource,
     query::{
         MAX_VECTOR_DIMENSIONS, MAX_VECTOR_SEARCH_LIMIT, MIN_VECTOR_DIMENSIONS, QueryCondition,
@@ -24,7 +24,7 @@ use terrabase_v2::{
     types::{CollectionName, DocumentValue},
 };
 
-fn collection(name: &str) -> terrabase_v2::types::CollectionName {
+fn collection(name: &str) -> terrabase::types::CollectionName {
     CollectionName::try_new(name).expect("valid collection name")
 }
 
