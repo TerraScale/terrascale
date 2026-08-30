@@ -1573,6 +1573,7 @@ dependencies = [
  "axum",
  "serde",
  "terrabase",
+ "terrabase-cluster",
  "terrabase-tbep",
  "tokio",
  "toml",

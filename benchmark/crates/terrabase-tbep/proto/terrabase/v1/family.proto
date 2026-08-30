@@ -4,6 +4,45 @@ package terrabase.v1;
 
 option go_package = "terrascale.tech/terrabase-go/terrabase/v1;v1";
 
+// Shared recursive document values and mutation preconditions.  They live in
+// this imported contract so family payloads can use the same wire types as
+// the engine messages without an import cycle.
+enum NullValue {
+  NULL_VALUE_UNSPECIFIED = 0;
+  NULL_VALUE_NULL = 1;
+}
+
+message ValueEntry {
+  string name = 1;
+  Value value = 2;
+}
+
+message ValueList { repeated Value items = 1; }
+
+message Value {
+  oneof kind {
+    NullValue null = 1;
+    bool boolean = 2;
+    sint64 integer = 3;
+    double number = 4;
+    string text = 5;
+    ValueList list = 6;
+    ValueMap map = 7;
+  }
+}
+
+message ValueMap { repeated ValueEntry entries = 1; }
+
+message ExpectedVersion {
+  oneof discipline {
+    ExpectedAbsent absent = 1;
+    ExpectedAny any = 2;
+    uint64 exact = 3;
+  }
+}
+message ExpectedAbsent {}
+message ExpectedAny {}
+
 // Versioned payload carried inside EngineServiceFamily{Read,Write}.  The
 // outer operation remains opaque for N/N-1 compatibility; this message is
 // the canonical v1 payload and is deliberately a closed oneof.
@@ -25,6 +64,9 @@ message FamilyRequestPayload {
     FamilyIdentityWrite identity_write = 14;
     FamilyLifecycleWrite lifecycle_write = 15;
     FamilyArchivalWrite archival_write = 16;
+    FamilyAttachmentContentRead attachment_content_read = 17;
+    FamilyAttachmentContentWrite attachment_content_write = 18;
+    FamilyAttachmentContentDelete attachment_content_delete = 19;
   }
 }
 
@@ -70,6 +112,22 @@ message FamilyAttachmentDelete { string name = 1; }
 message FamilyAttachmentRename { string from = 1; string to = 2; }
 message FamilyAttachmentCopy { string name = 1; string to_document = 2; string to_name = 3; }
 message FamilyAttachmentMove { string name = 1; string to_document = 2; string to_name = 3; }
+
+// Attachment content is digest-addressed and transported as bounded segments
+// (at most 64 KiB each, with the family's 8 MiB total ceiling).
+message FamilyAttachmentContentRead {
+  string digest = 1;
+  oneof range { FamilyAttachmentContentByteRange bytes = 2; uint64 suffix = 3; }
+}
+message FamilyAttachmentContentByteRange {
+  uint64 from = 1;
+  optional uint64 to = 2;
+}
+message FamilyAttachmentContentWrite {
+  optional string expected_digest = 1;
+  repeated bytes segments = 2;
+}
+message FamilyAttachmentContentDelete { string digest = 1; }
 
 message FamilyCounterWrite {
   string document = 1;
@@ -160,6 +218,7 @@ message FamilyResponsePayload {
     FamilyLifecycleResponse expiration_refresh = 7;
     FamilyArchivalResponse archival = 8;
     FamilyWriteReceiptResponse write = 9;
+    FamilyAttachmentContentResponse attachment_content = 10;
   }
 }
 message FamilyAttachmentResponse { repeated FamilyAttachmentEntry entries = 1; }
@@ -177,3 +236,14 @@ message FamilyIdentityEntry { string name = 1; uint64 next = 2; }
 message FamilyLifecycleResponse { bool present = 1; optional int64 expires_at = 2; }
 message FamilyArchivalResponse { bool present = 1; bool archived = 2; }
 message FamilyWriteReceiptResponse { uint64 sequence = 1; string operation_id = 2; }
+message FamilyAttachmentContentResponse {
+  string digest = 1;
+  uint64 size = 2;
+  uint64 segments = 3;
+  repeated FamilyAttachmentContentChunk chunks = 4;
+}
+message FamilyAttachmentContentChunk {
+  uint64 offset = 1;
+  bytes bytes = 2;
+  bool last = 3;
+}

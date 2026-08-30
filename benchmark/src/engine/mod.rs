@@ -16,6 +16,7 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
+mod authorized;
 mod ingest;
 mod metadata;
 mod patch;
@@ -33,6 +34,7 @@ mod patch_tests;
 mod tests;
 
 pub use crate::storage::DatabaseOwner;
+pub use authorized::{AuthorizedEngine, AuthorizedEngineError};
 pub use ingest::{
     BulkIngestRequest, IngestBatchReceipt, IngestConflictMode, IngestReceipt, IngestRefusal,
     IngestRefusalReason, IngestStream, IngestTermination, MAX_INGEST_BATCH_DOCUMENTS,

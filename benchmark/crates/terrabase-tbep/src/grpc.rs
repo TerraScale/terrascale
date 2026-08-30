@@ -423,7 +423,7 @@ pub struct TbepGrpcServer {
     frames_served: AtomicU64,
     inflight: Arc<AtomicUsize>,
     draining: Arc<std::sync::atomic::AtomicBool>,
-    active_queries: Arc<Mutex<BTreeSet<(String, u64)>>>,
+    active_queries: Arc<Mutex<BTreeSet<(registry::BoundScope, u64)>>>,
 }
 
 impl TbepGrpcServer {
@@ -492,10 +492,10 @@ impl TbepGrpcServer {
         scope: &registry::BoundScope,
         query_id: u64,
     ) -> Result<Arc<QueryLifecycle>, Status> {
-        let key = (scope.tenant.clone(), query_id);
+        let key = (scope.clone(), query_id);
         let mut active = self.active_queries.lock().expect("the active query lock is not poisoned");
         if !active.insert(key.clone()) {
-            return Err(conversion_error("the query id is already active for this tenant"));
+            return Err(conversion_error("the query id is already active for this bound scope"));
         }
         Ok(Arc::new(QueryLifecycle {
             state: Mutex::new(QueryLifecycleState::default()),
@@ -1019,10 +1019,18 @@ struct QueryLifecycleState {
 /// accidentally target a new query reusing the same ID.
 struct QueryLifecycle {
     state: Mutex<QueryLifecycleState>,
-    active: Arc<Mutex<BTreeSet<(String, u64)>>>,
-    key: (String, u64),
+    active: Arc<Mutex<BTreeSet<(registry::BoundScope, u64)>>>,
+    key: (registry::BoundScope, u64),
     host: Arc<dyn TbepHost>,
     scope: registry::BoundScope,
+}
+
+impl Drop for QueryLifecycle {
+    fn drop(&mut self) {
+        // This is the last-owner fallback for a task that was queued on the
+        // blocking pool and gets dropped before its execution guard runs.
+        self.remove_active();
+    }
 }
 
 impl QueryLifecycle {
@@ -1078,13 +1086,11 @@ impl QueryLifecycle {
         }
 
         let lifecycle = Arc::clone(self);
-        let _ = std::thread::Builder::new()
-            .name("tbep-query-cancel".into())
-            .spawn(move || {
-                let request = registry::QueryCancelRequest { query_id: lifecycle.key.1 };
-                let _ = lifecycle.host.query_cancel(&lifecycle.scope, &request);
-                lifecycle.cancel_finished();
-            });
+        let _ = std::thread::Builder::new().name("tbep-query-cancel".into()).spawn(move || {
+            let request = registry::QueryCancelRequest { query_id: lifecycle.key.1 };
+            let _ = lifecycle.host.query_cancel(&lifecycle.scope, &request);
+            lifecycle.cancel_finished();
+        });
     }
 
     fn cancel_finished(&self) {
@@ -1283,6 +1289,10 @@ fn host_error(error: HostingError) -> Status {
 
 fn conversion_error(detail: &str) -> Status {
     tbep_status(Code::InvalidArgument, pb::ErrorCode::InvalidRequest, detail)
+}
+
+fn response_size_error(detail: &str) -> Status {
+    tbep_status(Code::ResourceExhausted, pb::ErrorCode::RequestTooLarge, detail)
 }
 
 /// Runs one host call behind the overload gate on the blocking pool.
@@ -2453,20 +2463,34 @@ impl EngineService for Arc<TbepGrpcServer> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
+        let max_items = match message.max_items {
+            0 => DEFAULT_QUERY_MAX_ITEMS,
+            value if value <= DEFAULT_QUERY_MAX_ITEMS => value,
+            _ => return Err(conversion_error("query max_items exceeds the response list bound")),
+        };
         let domain = registry::QueryExecuteRequest {
             query_id: message.query_id,
             text: message.text,
-            max_items: message.max_items,
+            max_items,
             level: read_level(message.level),
         };
         domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let lifecycle = self.register_query(&identity.tenant, domain.query_id)?;
+        let _cancellation = QueryCancellationGuard(Arc::clone(&lifecycle));
         let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response = run_host(self.as_ref(), MetricOperation::Query, move || {
-            host.query_execute(&tenant, &domain)
-        })
-        .await?;
-        Ok(Response::new(pb::EngineServiceQueryExecuteResponse {
+        let tenant = identity.tenant.clone();
+        let response =
+            run_query_host(self.as_ref(), lifecycle, move || host.query_execute(&tenant, &domain))
+                .await?;
+        if response.documents.len() > usize::try_from(max_items).unwrap_or(usize::MAX) {
+            return Err(conversion_error(
+                "the host returned more query documents than max_items permits",
+            ));
+        }
+        if response.documents.len() > registry::MAX_LIST_ITEMS {
+            return Err(conversion_error("the host returned too many query documents"));
+        }
+        let response = pb::EngineServiceQueryExecuteResponse {
             documents: response.documents.iter().map(document_body).collect(),
             count: response.count,
             terminal: match response.terminal {
@@ -2474,7 +2498,13 @@ impl EngineService for Arc<TbepGrpcServer> {
                 registry::QueryTerminal::Truncated => pb::QueryTerminal::Truncated as i32,
             },
             position: response.position.unwrap_or_default(),
-        }))
+        };
+        if response.encoded_len() > self.config.max_message_bytes() {
+            return Err(response_size_error(
+                "the query response exceeds the configured message bound",
+            ));
+        }
+        Ok(Response::new(response))
     }
 
     async fn query_cancel(

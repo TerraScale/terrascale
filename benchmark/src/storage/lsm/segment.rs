@@ -20,16 +20,71 @@
 use std::{
     fs::{File, OpenOptions},
     io::{self, Read, Seek, SeekFrom, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use super::super::codec;
 use super::internal::{Entry, InternalKey};
+use crate::encryption::{
+    ArtifactCipher, ArtifactKind, Compression, DatabaseKeyVersion, EncryptionContext, KeyPurpose,
+    KeyScope, LocalFileKeyProvider, ProviderMode, envelope_length_prefix,
+};
+use crate::storage::DatabaseOwner;
 
 const HEADER_MAGIC: &[u8; 8] = b"TBLSMSG1";
 const FOOTER_MAGIC: &[u8; 8] = b"TBLSMFT1";
 /// One sparse-index entry per this many records.
 const SPARSE_STRIDE: usize = 32;
+const SEGMENT_ORDINAL_MAGIC: &[u8; 8] = b"TBSEGOR1";
+const SEGMENT_ORDINAL_BYTES: usize = 8 + 16 + 32;
+const MAX_ENCRYPTED_SEGMENT_BYTES: usize = 64 * 1024 * 1024 + 4096;
+
+/// Local artifact-key inputs retained by the LSM owner. The provider reloads
+/// the key for each immutable segment operation; raw key bytes never enter
+/// this configuration or the segment reader.
+#[derive(Clone)]
+pub(super) struct SegmentEncryption {
+    owner: DatabaseOwner,
+    provider: LocalFileKeyProvider,
+    key_version: DatabaseKeyVersion,
+}
+
+impl SegmentEncryption {
+    pub(super) fn new(
+        owner: DatabaseOwner,
+        provider: LocalFileKeyProvider,
+        key_version: DatabaseKeyVersion,
+    ) -> Self {
+        Self { owner, provider, key_version }
+    }
+
+    fn cipher(&self, path: &Path, id: u64, level: u16) -> io::Result<(ArtifactCipher, PathBuf)> {
+        let key = self.provider.load_or_create().map_err(encryption_io)?;
+        let scope = KeyScope::new_with_project(
+            self.owner.environment().as_str(),
+            self.owner.tenant(),
+            self.owner.project(),
+            self.owner.database(),
+            KeyPurpose::Data,
+        )
+        .map_err(encryption_io)?;
+        let artifact_id = segment_artifact_id(id, level);
+        let context = EncryptionContext::for_artifact(
+            &scope,
+            ArtifactKind::Segment,
+            artifact_id,
+            self.key_version,
+            1,
+            Compression::None,
+        )
+        .map_err(encryption_io)?;
+        let ordinal_path = segment_ordinal_path(path);
+        let next = load_or_create_ordinal(&ordinal_path, path.exists())?;
+        let cipher = ArtifactCipher::with_next_ordinal(ProviderMode::LocalFile, key, context, next)
+            .map_err(encryption_io)?;
+        Ok((cipher, ordinal_path))
+    }
+}
 
 /// Segments with at most this many records keep their decoded records in
 /// memory: the sparse-index read path costs a file read and a record
@@ -71,6 +126,18 @@ pub(super) fn write_segment(
     level: u16,
     entries: &[Entry],
 ) -> io::Result<SegmentMeta> {
+    write_segment_with_encryption(path, id, level, entries, None)
+}
+
+/// Writes one segment, encrypting the complete native segment bytes when an
+/// artifact configuration is supplied.
+pub(super) fn write_segment_with_encryption(
+    path: &Path,
+    id: u64,
+    level: u16,
+    entries: &[Entry],
+    encryption: Option<&SegmentEncryption>,
+) -> io::Result<SegmentMeta> {
     debug_assert!(entries.windows(2).all(|pair| pair[0].key <= pair[1].key) || entries.len() < 2);
     let mut file = OpenOptions::new().create(true).write(true).truncate(true).open(path)?;
     let mut body = Vec::new();
@@ -111,16 +178,28 @@ pub(super) fn write_segment(
     codec::push_u32(&mut footer, max_key.len() as u32);
     let crc = codec::fnv1a(&body);
     codec::push_u64(&mut footer, crc);
-    file.write_all(&body)?;
-    file.write_all(&footer)?;
+    let mut plaintext = body;
+    plaintext.extend_from_slice(&footer);
+    let output = if let Some(encryption) = encryption {
+        let (mut cipher, ordinal_path) = encryption.cipher(path, id, level)?;
+        let reservation = cipher.reserve_ordinal().map_err(encryption_io)?;
+        persist_ordinal(&ordinal_path, reservation.next_ordinal())?;
+        cipher.seal_reserved(reservation, &plaintext).map_err(encryption_io)?
+    } else {
+        plaintext
+    };
+    file.write_all(&output)?;
     file.sync_all()?;
-    let byte_len = (body.len() + footer.len()) as u64;
+    let byte_len = output.len() as u64;
     Ok(SegmentMeta { id, level, entry_count: entries.len() as u64, byte_len, min_key, max_key })
 }
 
 /// An open immutable segment reader.
 pub(super) struct SegmentReader {
     file: File,
+    /// Decrypted immutable bytes for encrypted segments. This is bounded by
+    /// `MAX_ENCRYPTED_SEGMENT_BYTES` and is never written back to storage.
+    plaintext: Option<Vec<u8>>,
     /// The sparse index, in file order.
     sparse: Vec<(Vec<u8>, u64)>,
     meta: SegmentMeta,
@@ -225,11 +304,41 @@ impl SegmentReader {
         }
         Ok(Self {
             file,
+            plaintext: None,
             sparse,
             meta: SegmentMeta { id, level, entry_count, byte_len, min_key, max_key },
             records_end: sparse_offset,
             cached: None,
         })
+    }
+
+    /// Opens and authenticates an encrypted immutable segment before any
+    /// native record/index decoding. Plaintext segment bytes are refused.
+    pub(super) fn open_with_encryption(
+        path: &Path,
+        id: u64,
+        level: u16,
+        encryption: &SegmentEncryption,
+    ) -> io::Result<Self> {
+        let bytes = std::fs::read(path)?;
+        if bytes.len() > MAX_ENCRYPTED_SEGMENT_BYTES {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "encrypted segment too large"));
+        }
+        let envelope_len = envelope_length_prefix(&bytes).map_err(encryption_io)?;
+        if envelope_len != bytes.len() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "segment envelope trailing bytes"));
+        }
+        let (cipher, ordinal_path) = encryption.cipher(path, id, level)?;
+        let next = load_or_create_ordinal(&ordinal_path, true)?;
+        let plaintext = cipher.open(&bytes).map_err(encryption_io)?;
+        if plaintext.len() > crate::encryption::MAX_PLAINTEXT_BYTES {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "segment plaintext too large"));
+        }
+        let (mut meta, sparse, records_end) = verify_plaintext_segment(&plaintext, id, level)?;
+        meta.byte_len = u64::try_from(bytes.len()).expect("segment file length fits u64");
+        let file = OpenOptions::new().read(true).open(path)?;
+        let _ = next; // Loading verifies the persisted ordinal state.
+        Ok(Self { file, plaintext: Some(plaintext), sparse, meta, records_end, cached: None })
     }
 
     /// Populates the decoded-record cache when this segment is small
@@ -283,9 +392,7 @@ impl SegmentReader {
 
     /// Reads and decodes every record from the file, bypassing the cache.
     fn read_all_uncached(&mut self) -> io::Result<Vec<Entry>> {
-        let mut body = vec![0_u8; self.records_end as usize];
-        self.file.rewind()?;
-        self.file.read_exact(&mut body)?;
+        let mut body = self.read_bytes(0, self.records_end)?;
         if body.len() < 20 || &body[..8] != HEADER_MAGIC {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "segment header"));
         }
@@ -306,9 +413,7 @@ impl SegmentReader {
             return Ok(cached);
         }
         let start = self.seek_offset(from);
-        let mut body = vec![0_u8; (self.records_end - start) as usize];
-        self.file.seek(SeekFrom::Start(start))?;
-        self.file.read_exact(&mut body)?;
+        let body = self.read_bytes(start, self.records_end - start)?;
         decode_record_region(&body)
     }
 
@@ -335,10 +440,28 @@ impl SegmentReader {
         }
         let start = from.map_or(20_u64, |from| self.seek_offset(from));
         let stop = self.stop_offset(end).max(start).min(self.records_end);
-        let mut body = vec![0_u8; (stop - start) as usize];
+        let body = self.read_bytes(start, stop - start)?;
+        decode_record_region(&body)
+    }
+
+    fn read_bytes(&mut self, start: u64, length: u64) -> io::Result<Vec<u8>> {
+        let length = usize::try_from(length)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "segment read too large"))?;
+        if let Some(plaintext) = &self.plaintext {
+            let start = usize::try_from(start)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "segment offset"))?;
+            let end = start
+                .checked_add(length)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "segment read overflow"))?;
+            return plaintext
+                .get(start..end)
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "segment read bounds"));
+        }
+        let mut body = vec![0_u8; length];
         self.file.seek(SeekFrom::Start(start))?;
         self.file.read_exact(&mut body)?;
-        decode_record_region(&body)
+        Ok(body)
     }
 
     /// The offset of the first sparse anchor whose key is `>= bound`, or
@@ -363,6 +486,77 @@ impl Drop for SegmentReader {
 
 /// The largest key the footer tail window can carry.
 const MAX_KEY_BOUND: usize = 4096;
+
+fn verify_plaintext_segment(
+    bytes: &[u8],
+    id: u64,
+    level: u16,
+) -> io::Result<(SegmentMeta, Vec<(Vec<u8>, u64)>, u64)> {
+    if bytes.len() < 20 + 4 + 32 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "segment truncated"));
+    }
+    let tail_window = bytes.len().min(32 + 2 * MAX_KEY_BOUND);
+    let tail_start = bytes.len() - tail_window;
+    let tail = &bytes[tail_start..];
+    let crc_start = tail.len() - 8;
+    let stored_crc = u64::from_le_bytes(tail[crc_start..].try_into().expect("segment crc"));
+    let mut cursor = &tail[..crc_start];
+    let max_key = pop_key_back(&mut cursor)?;
+    let min_key = pop_key_back(&mut cursor)?;
+    if cursor.len() < 24 || &cursor[cursor.len() - 24..cursor.len() - 16] != FOOTER_MAGIC {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "segment footer magic"));
+    }
+    let fixed_at = |value: &[u8]| u64::from_le_bytes(value.try_into().expect("segment field"));
+    let sparse_offset = fixed_at(&cursor[cursor.len() - 16..cursor.len() - 8]);
+    let entry_count = fixed_at(&cursor[cursor.len() - 8..]);
+    let footer_start = tail_start + cursor.len() - 24;
+    if sparse_offset < 20 || sparse_offset > footer_start {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "segment footer layout"));
+    }
+    let body = &bytes[..usize::try_from(footer_start).expect("segment body fits usize")];
+    if codec::fnv1a(body) != stored_crc
+        || body.len() < 20
+        || &body[..8] != HEADER_MAGIC
+        || u64::from_le_bytes(body[8..16].try_into().expect("segment id")) != id
+        || u16::from_le_bytes(body[16..18].try_into().expect("segment level")) != level
+        || body[18..20] != [0; 2]
+    {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "segment body verification"));
+    }
+    let sparse_start = usize::try_from(sparse_offset).expect("sparse offset fits usize");
+    let sparse = decode_sparse(&body[sparse_start..])?;
+    let records_end = sparse_offset;
+    let (entries, offsets) = decode_record_region_at(&body[20..sparse_start], 20)?;
+    let expected_sparse = entries
+        .iter()
+        .zip(offsets)
+        .enumerate()
+        .filter(|(index, _)| index % SPARSE_STRIDE == 0)
+        .map(|(_, (entry, offset))| (entry.key.user_key().to_vec(), offset))
+        .collect::<Vec<_>>();
+    let actual_min = entries.first().map_or_else(Vec::new, |entry| entry.key.user_key().to_vec());
+    let actual_max = entries.last().map_or_else(Vec::new, |entry| entry.key.user_key().to_vec());
+    if u64::try_from(entries.len()).expect("entry count fits u64") != entry_count
+        || actual_min != min_key
+        || actual_max != max_key
+        || entries.windows(2).any(|pair| pair[0].key >= pair[1].key)
+        || sparse != expected_sparse
+    {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "segment semantic mismatch"));
+    }
+    Ok((
+        SegmentMeta {
+            id,
+            level,
+            entry_count,
+            byte_len: u64::try_from(bytes.len()).expect("segment length fits u64"),
+            min_key,
+            max_key,
+        },
+        sparse,
+        records_end,
+    ))
+}
 
 /// Pops one key-and-trailing-length pair off the back of `cursor`.
 fn pop_key_back(cursor: &mut &[u8]) -> io::Result<Vec<u8>> {

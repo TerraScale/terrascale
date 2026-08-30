@@ -36,47 +36,6 @@ import "terrabase/v1/family.proto";
 option go_package = "terrascale.tech/terrabase-go/terrabase/v1;v1";
 
 // ---------------------------------------------------------------------------
-// The recursive document value
-// ---------------------------------------------------------------------------
-
-// The closed null marker (mirrors google.protobuf.NullValue).
-enum NullValue {
-  NULL_VALUE_UNSPECIFIED = 0;
-  NULL_VALUE_NULL = 1;
-}
-
-// One ordered map entry of an object value. Object fields are canonically
-// name-sorted by the engine; clients treat objects as maps.
-message ValueEntry {
-  string name = 1; // 1..=64 bytes.
-  Value value = 2;
-}
-
-// An ordered array of values.
-message ValueList {
-  repeated Value items = 1; // <= 4096 items.
-}
-
-// The recursive document-body value: the payload type of document bodies,
-// schema declarations, and sync field values.
-message Value {
-  oneof kind {
-    NullValue null = 1;
-    bool boolean = 2;
-    sint64 integer = 3;
-    double number = 4;
-    string text = 5; // <= 1 MiB.
-    ValueList list = 6;
-    ValueMap map = 7;
-  }
-}
-
-// An object value: name-sorted field entries.
-message ValueMap {
-  repeated ValueEntry entries = 1; // <= 1024 entries.
-}
-
-// ---------------------------------------------------------------------------
 // Shared closed vocabularies
 // ---------------------------------------------------------------------------
 
@@ -151,21 +110,6 @@ message CommitReceipt {
   Acknowledgement acknowledgement = 4;
   BackupOutcome backup = 5;
 }
-
-// The expected-version discipline of a mutation.
-message ExpectedVersion {
-  oneof discipline {
-    ExpectedAbsent absent = 1;
-    ExpectedAny any = 2;
-    uint64 exact = 3;
-  }
-}
-
-// The document must not yet exist.
-message ExpectedAbsent {}
-
-// The document may exist at any version.
-message ExpectedAny {}
 
 // Why a mutation was refused.
 enum WriteReason {

@@ -9,8 +9,16 @@ publish = false
 
 [features]
 default = ["local-crypto"]
-local-crypto = ["terrabase/local-crypto", "terrabase-tbep/local-crypto"]
-production-fips = ["terrabase/production-fips", "terrabase-tbep/production-fips"]
+local-crypto = [
+  "terrabase/local-crypto",
+  "terrabase-tbep/local-crypto",
+  "terrabase-cluster/local-crypto",
+]
+production-fips = [
+  "terrabase/production-fips",
+  "terrabase-tbep/production-fips",
+  "terrabase-cluster/production-fips",
+]
 
 [lints.rust]
 unsafe_code = "deny"
@@ -22,6 +30,7 @@ pedantic = "warn"
 [dependencies]
 terrabase = { path = "../..", default-features = false }
 terrabase-tbep = { path = "../terrabase-tbep", default-features = false }
+terrabase-cluster = { path = "../terrabase-cluster", default-features = false }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", default-features = false, features = [

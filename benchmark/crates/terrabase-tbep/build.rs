@@ -10,9 +10,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = "proto/terrabase/v1/engine.proto";
     let file_path = std::path::Path::new(file);
     println!("cargo:rerun-if-changed={}", file_path.display());
+    println!("cargo:rerun-if-changed=proto/terrabase/v1/family.proto");
     println!("cargo:rerun-if-changed=build.rs");
 
-    let file_descriptors = protox::compile([file_path], [file_path.parent().unwrap()])?;
+    let file_descriptors = protox::compile([file_path], [std::path::Path::new("proto")])?;
     tonic_prost_build::compile_fds(file_descriptors)?;
 
     Ok(())

@@ -3048,7 +3048,7 @@ mod tests {
     async fn document_stream_clamps_zero_and_oversized_limits() {
         let state = studio("document-stream-limit-bounds");
         test_seed_sample(state.as_ref()).expect("sample documents are durable");
-        for (limit, expected) in [("0", "1 item(s)"), ("10000", "6 item(s)")] {
+        for (limit, expected) in [("0", "1 item(s)"), ("10000", "3 item(s)")] {
             let response = router(Arc::clone(&state))
                 .oneshot(
                     Request::builder()

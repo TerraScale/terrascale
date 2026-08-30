@@ -658,7 +658,7 @@ mod hostile_fixtures {
         fixture.write("near.txt", near_misses.as_bytes());
         fixture.track("near.txt");
         let binary_value = ["Terra", "Base", "V2"].concat();
-        let binary = [b'\0'].into_iter().chain(binary_value.bytes()).collect::<Vec<_>>();
+        let binary = b"\0".iter().copied().chain(binary_value.bytes()).collect::<Vec<_>>();
         fixture.write("payload.bin", &binary);
         fixture.track("payload.bin");
         let report = scan_repository(&fixture.root, &format!("{ALLOWLIST_HEADER}\n")).unwrap();

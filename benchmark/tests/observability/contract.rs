@@ -302,11 +302,11 @@ fn every_exposed_label_name_belongs_to_its_closed_family() {
             &["operation", "reason"]
         } else if matches!(name, "terrabase_queue_depth" | "terrabase_queue_capacity") {
             &["queue"]
-        } else if matches!(name, "terrabase_wal_fsync_total" | "terrabase_commits_total") {
-            &["outcome"]
         } else if matches!(
             name,
-            "terrabase_wal_fsync_duration_seconds_sum"
+            "terrabase_wal_fsync_total"
+                | "terrabase_commits_total"
+                | "terrabase_wal_fsync_duration_seconds_sum"
                 | "terrabase_wal_fsync_duration_seconds_count"
                 | "terrabase_commit_duration_seconds_sum"
                 | "terrabase_commit_duration_seconds_count"
@@ -318,11 +318,12 @@ fn every_exposed_label_name_belongs_to_its_closed_family() {
                 | "terrabase_commit_duration_seconds_bucket"
         ) {
             &["outcome", "le"]
-        } else if matches!(name, "terrabase_replication_lag_seconds" | "terrabase_active_members") {
-            &["region"]
         } else if matches!(
             name,
-            "terrabase_replication_backlog_bytes" | "terrabase_replication_frontier_health"
+            "terrabase_replication_lag_seconds"
+                | "terrabase_active_members"
+                | "terrabase_replication_backlog_bytes"
+                | "terrabase_replication_frontier_health"
         ) {
             &["region"]
         } else if matches!(

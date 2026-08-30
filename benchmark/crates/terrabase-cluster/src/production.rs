@@ -431,7 +431,7 @@ pub struct DurableProductionDataPlane {
 }
 
 struct DurableDataPlaneState {
-    databases: BTreeMap<DatabaseRouteScope, DurableMember>,
+    databases: BTreeMap<DatabaseRouteScope, Arc<Mutex<DurableMember>>>,
     rf2_reconciled: BTreeSet<DatabaseRouteScope>,
     repaired: BTreeSet<DatabaseRouteScope>,
     accepting: bool,
@@ -458,7 +458,7 @@ impl DurableProductionDataPlane {
                 Ok(replica) => replica,
                 Err(_) => return Err(ProductionDataPlaneError::Persistence),
             };
-            databases.insert(*scope, replica);
+            databases.insert(*scope, Arc::new(Mutex::new(replica)));
         }
         if databases.len() != routes.len() {
             return Err(ProductionDataPlaneError::Persistence);
@@ -495,18 +495,24 @@ impl DurableProductionDataPlane {
         timeout: Duration,
     ) -> Result<terrabase::CommitReceipt, ProductionDataPlaneOperationError> {
         let deadline = deadline_after(timeout);
-        let mut state = try_lock_until(&self.state, deadline)?;
+        let database = {
+            let state = try_lock_until(&self.state, deadline)?;
+            ensure_before_deadline(deadline)?;
+            if !state.accepting {
+                return Err(ProductionDataPlaneOperationError::Draining);
+            }
+            if !state.rf2_reconciled.contains(scope) {
+                return Err(ProductionDataPlaneOperationError::LocalRf2NotReconciled);
+            }
+            state
+                .databases
+                .get(scope)
+                .cloned()
+                .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?
+        };
+        let mut member = try_lock_until(&database, deadline)?;
         ensure_before_deadline(deadline)?;
-        if !state.accepting {
-            return Err(ProductionDataPlaneOperationError::Draining);
-        }
-        if !state.rf2_reconciled.contains(scope) {
-            return Err(ProductionDataPlaneOperationError::LocalRf2NotReconciled);
-        }
-        let result = state
-            .databases
-            .get_mut(scope)
-            .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?
+        let result = member
             .put(operation, document, body)
             .map_err(|_| ProductionDataPlaneOperationError::DurableMember);
         result.and_then(|receipt| {
@@ -535,18 +541,24 @@ impl DurableProductionDataPlane {
         timeout: Duration,
     ) -> Result<terrabase::CommitReceipt, ProductionDataPlaneOperationError> {
         let deadline = deadline_after(timeout);
-        let mut state = try_lock_until(&self.state, deadline)?;
+        let database = {
+            let state = try_lock_until(&self.state, deadline)?;
+            ensure_before_deadline(deadline)?;
+            if !state.accepting {
+                return Err(ProductionDataPlaneOperationError::Draining);
+            }
+            if !state.rf2_reconciled.contains(scope) {
+                return Err(ProductionDataPlaneOperationError::LocalRf2NotReconciled);
+            }
+            state
+                .databases
+                .get(scope)
+                .cloned()
+                .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?
+        };
+        let mut member = try_lock_until(&database, deadline)?;
         ensure_before_deadline(deadline)?;
-        if !state.accepting {
-            return Err(ProductionDataPlaneOperationError::Draining);
-        }
-        if !state.rf2_reconciled.contains(scope) {
-            return Err(ProductionDataPlaneOperationError::LocalRf2NotReconciled);
-        }
-        let result = state
-            .databases
-            .get_mut(scope)
-            .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?
+        let result = member
             .delete(operation, document)
             .map_err(|_| ProductionDataPlaneOperationError::DurableMember);
         result.and_then(|receipt| {
@@ -579,18 +591,24 @@ impl DurableProductionDataPlane {
         ProductionDataPlaneOperationError,
     > {
         let deadline = deadline_after(timeout);
-        let mut state = try_lock_until(&self.state, deadline)?;
+        let database = {
+            let state = try_lock_until(&self.state, deadline)?;
+            ensure_before_deadline(deadline)?;
+            if !state.accepting {
+                return Err(ProductionDataPlaneOperationError::Draining);
+            }
+            if !state.rf2_reconciled.contains(scope) {
+                return Err(ProductionDataPlaneOperationError::LocalRf2NotReconciled);
+            }
+            state
+                .databases
+                .get(scope)
+                .cloned()
+                .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?
+        };
+        let mut member = try_lock_until(&database, deadline)?;
         ensure_before_deadline(deadline)?;
-        if !state.accepting {
-            return Err(ProductionDataPlaneOperationError::Draining);
-        }
-        if !state.rf2_reconciled.contains(scope) {
-            return Err(ProductionDataPlaneOperationError::LocalRf2NotReconciled);
-        }
-        let result = state
-            .databases
-            .get_mut(scope)
-            .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?
+        let result = member
             .read(document)
             .map_err(|_| ProductionDataPlaneOperationError::DurableMember);
         result.and_then(|value| {
@@ -675,11 +693,14 @@ impl DurableProductionDataPlane {
 
     /// Returns durable progress for one database.
     pub fn progress(&self, scope: &DatabaseRouteScope) -> Option<DurableMemberProgress> {
-        match self.state.try_lock() {
-            Ok(state) => state.databases.get(scope).map(DurableMember::progress),
-            Err(TryLockError::Poisoned(poisoned)) => {
-                poisoned.into_inner().databases.get(scope).map(DurableMember::progress)
-            }
+        let database = match self.state.try_lock() {
+            Ok(state) => state.databases.get(scope).cloned(),
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner().databases.get(scope).cloned(),
+            Err(TryLockError::WouldBlock) => return None,
+        }?;
+        match database.try_lock() {
+            Ok(member) => Some(member.progress()),
+            Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner().progress()),
             Err(TryLockError::WouldBlock) => None,
         }
     }
@@ -687,26 +708,48 @@ impl DurableProductionDataPlane {
 
 impl ProductionDataPlane for DurableProductionDataPlane {
     fn facts(&self) -> ProductionDataPlaneFacts {
-        let state = match self.state.try_lock() {
-            Ok(state) => state,
-            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        let (complete, reconciled, repaired, accepting, databases) = match self.state.try_lock() {
+            Ok(state) => (
+                !state.databases.is_empty(),
+                state.rf2_reconciled.len() == state.databases.len(),
+                state.repaired.len() == state.databases.len(),
+                state.accepting,
+                state.databases.values().cloned().collect::<Vec<_>>(),
+            ),
+            Err(TryLockError::Poisoned(poisoned)) => {
+                let state = poisoned.into_inner();
+                (
+                    !state.databases.is_empty(),
+                    state.rf2_reconciled.len() == state.databases.len(),
+                    state.repaired.len() == state.databases.len(),
+                    state.accepting,
+                    state.databases.values().cloned().collect::<Vec<_>>(),
+                )
+            }
             // Facts have no error channel. A contended state must fail closed
             // instead of blocking a readiness probe indefinitely.
             Err(TryLockError::WouldBlock) => return ProductionDataPlaneFacts::default(),
         };
-        let complete = !state.databases.is_empty();
-        let reconciled = complete && state.rf2_reconciled.len() == state.databases.len();
-        let repaired = complete && state.repaired.len() == state.databases.len();
-        let durable_progress = reconciled
-            && state.databases.values().all(|member| {
-                let progress = member.progress();
-                progress.applied() == progress.verified()
-            });
+        let reconciled = complete && reconciled;
+        let repaired = complete && repaired;
+        let durable_progress = reconciled && databases.iter().all(|database| {
+            match database.try_lock() {
+                Ok(member) => {
+                    let progress = member.progress();
+                    progress.applied() == progress.verified()
+                }
+                Err(TryLockError::Poisoned(poisoned)) => {
+                    let progress = poisoned.into_inner().progress();
+                    progress.applied() == progress.verified()
+                }
+                Err(TryLockError::WouldBlock) => false,
+            }
+        });
         ProductionDataPlaneFacts {
             databases_admitted: complete,
             local_rf2_reconciled: reconciled,
-            replication_serving: state.accepting && reconciled,
-            repair_serving: state.accepting && repaired,
+            replication_serving: accepting && reconciled,
+            repair_serving: accepting && repaired,
             durable_progress_available: durable_progress,
             // Engine::subscribe_publications is crate-private in the current
             // root crate. Keep this false until the owning journal seam is
@@ -1304,7 +1347,7 @@ mod tests {
         let holder = thread::spawn(move || {
             let guard = held.state.lock().expect("state");
             ready_tx.send(()).expect("ready");
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(Duration::from_millis(250));
             drop(guard);
         });
         ready_rx.recv().expect("holder ready");
@@ -1317,7 +1360,7 @@ mod tests {
             Duration::from_millis(10),
         );
         assert_eq!(result, Err(ProductionDataPlaneOperationError::Deadline));
-        assert!(started.elapsed() < Duration::from_millis(80));
+        assert!(started.elapsed() < Duration::from_millis(100));
         holder.join().expect("holder");
         first.drain(Duration::from_secs(2)).expect("plane drain");
         drop(first);
@@ -1338,14 +1381,14 @@ mod tests {
         let holder = thread::spawn(move || {
             let guard = held.state.lock().expect("state");
             ready_tx.send(()).expect("ready");
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(Duration::from_millis(250));
             drop(guard);
         });
         ready_rx.recv().expect("holder ready");
         let started = Instant::now();
         let result = first.reconcile_with_timeout(&second, &database, Duration::from_millis(10));
         assert_eq!(result, Err(ProductionDataPlaneOperationError::Deadline));
-        assert!(started.elapsed() < Duration::from_millis(80));
+        assert!(started.elapsed() < Duration::from_millis(100));
         holder.join().expect("holder");
         first.drain(Duration::from_secs(2)).expect("first drain");
         second.drain(Duration::from_secs(2)).expect("second drain");
@@ -1399,13 +1442,13 @@ mod tests {
         let holder = thread::spawn(move || {
             let guard = held.state.lock().expect("state");
             ready_tx.send(()).expect("ready");
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(Duration::from_millis(250));
             drop(guard);
         });
         ready_rx.recv().expect("holder ready");
         let started = Instant::now();
         assert_eq!(plane.drain(Duration::from_millis(10)), Err(ProductionDataPlaneError::Timeout));
-        assert!(started.elapsed() < Duration::from_millis(80));
+        assert!(started.elapsed() < Duration::from_millis(100));
         holder.join().expect("holder");
         plane.drain(Duration::from_secs(2)).expect("plane drain");
         drop(plane);

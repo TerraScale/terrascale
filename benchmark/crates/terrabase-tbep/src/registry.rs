@@ -1864,7 +1864,15 @@ impl QueryExecuteRequest {
     ///
     /// Returns the first bounds violation.
     pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        if self.query_id == 0 {
+            return Err(invalid_usage("query_id"));
+        }
         crate::value::check_str_bound(&self.text, 16384, "text")?;
+        if self.max_items == 0
+            || usize::try_from(self.max_items).unwrap_or(usize::MAX) > MAX_LIST_ITEMS
+        {
+            return Err(invalid_usage("max_items"));
+        }
         Ok(())
     }
 }
@@ -4238,5 +4246,23 @@ mod tests {
         assert_eq!(budget_for_class("control"), Some(256));
         assert_eq!(budget_for_class("operation_large"), Some(65_536));
         assert!(families().contains(&"documents"));
+    }
+
+    #[test]
+    fn query_execute_request_rejects_invalid_bounds() {
+        let valid = QueryExecuteRequest { query_id: 1, text: "select *".into(), max_items: 1, level: None };
+        assert!(valid.validate().is_ok());
+
+        let mut invalid = valid.clone();
+        invalid.query_id = 0;
+        assert_eq!(invalid.validate(), Err(invalid_usage("query_id")));
+
+        let mut invalid = valid.clone();
+        invalid.max_items = 0;
+        assert_eq!(invalid.validate(), Err(invalid_usage("max_items")));
+
+        let mut invalid = valid;
+        invalid.max_items = (MAX_LIST_ITEMS as u32) + 1;
+        assert_eq!(invalid.validate(), Err(invalid_usage("max_items")));
     }
 }
