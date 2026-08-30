@@ -53,8 +53,11 @@ use std::{
 use crate::{
     engine::{CommitPublicationSink, Engine, SubscriptionGuard},
     replication::ConflictRecord,
-    storage::CommitPublicationEvent,
-    types::{Cancellation, OperationId, StorageSequence, TenantScope},
+    storage::{CommitPublicationEvent, PublishedWrite},
+    types::{
+        Cancellation, CollectionName, DocumentId, DocumentValue, OperationId, StorageSequence,
+        TenantScope,
+    },
 };
 
 use super::{
@@ -176,6 +179,100 @@ pub struct ChangeReplayBatch {
     next: Option<ChangeCheckpoint>,
     filtered_dropped: u64,
     drained: bool,
+}
+
+/// One document mutation reconstructed from the durable publication journal.
+///
+/// This is the content-bearing companion to [`ChangeEvent`], used by the
+/// server's sync materializer. It is never emitted as a notification. A put
+/// carries the exact published value, while a delete carries no body.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SyncJournalMutation {
+    /// The complete published document value.
+    Put(DocumentValue),
+    /// The published document deletion.
+    Delete,
+}
+
+/// One document record reconstructed from the durable publication journal.
+///
+/// The record keeps both the storage sequence and the exact write position
+/// within that commit. Consumers advance only after applying this record, so
+/// an in-memory delivery cache can never create a revision on its own.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SyncJournalRecord {
+    position: ChangeCheckpoint,
+    operation_id: OperationId,
+    collection: CollectionName,
+    document: DocumentId,
+    mutation: SyncJournalMutation,
+}
+
+impl SyncJournalRecord {
+    /// Returns the exclusive durable cursor after this write.
+    #[must_use]
+    pub const fn position(&self) -> ChangeCheckpoint {
+        self.position
+    }
+
+    /// Returns the commit's global storage sequence.
+    #[must_use]
+    pub const fn storage_sequence(&self) -> u64 {
+        self.position.sequence()
+    }
+
+    /// Returns the stable operation identity of the published commit.
+    #[must_use]
+    pub const fn operation_id(&self) -> &OperationId {
+        &self.operation_id
+    }
+
+    /// Returns the changed collection.
+    #[must_use]
+    pub const fn collection(&self) -> &CollectionName {
+        &self.collection
+    }
+
+    /// Returns the changed document identity.
+    #[must_use]
+    pub const fn document(&self) -> &DocumentId {
+        &self.document
+    }
+
+    /// Returns the published mutation.
+    #[must_use]
+    pub const fn mutation(&self) -> &SyncJournalMutation {
+        &self.mutation
+    }
+}
+
+/// One bounded page of document records reconstructed from the durable
+/// publication journal.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SyncJournalBatch {
+    records: Vec<SyncJournalRecord>,
+    next: Option<ChangeCheckpoint>,
+    drained: bool,
+}
+
+impl SyncJournalBatch {
+    /// Returns the records in durable journal order.
+    #[must_use]
+    pub fn records(&self) -> &[SyncJournalRecord] {
+        &self.records
+    }
+
+    /// Returns the cursor after every write this page examined.
+    #[must_use]
+    pub const fn next_checkpoint(&self) -> Option<ChangeCheckpoint> {
+        self.next
+    }
+
+    /// Reports whether the scan reached the journal's current end.
+    #[must_use]
+    pub const fn drained(&self) -> bool {
+        self.drained
+    }
 }
 
 impl ChangeReplayBatch {
@@ -318,6 +415,103 @@ pub(crate) fn replay(
         after = last.sequence();
     }
     Ok(ChangeReplayBatch::new(events, boundary, filtered_dropped, drained))
+}
+
+/// Reconstructs one bounded page of document mutations from the durable
+/// publication journal for the server's sync materializer.
+pub(crate) fn replay_sync_journal(
+    engine: &Engine,
+    scope: &TenantScope,
+    after: Option<ChangeCheckpoint>,
+    limit: u32,
+    cancellation: &Cancellation,
+) -> Result<SyncJournalBatch, StreamError> {
+    if limit == 0 || limit > super::MAX_STREAM_BATCH_ITEMS {
+        return Err(StreamError::InvalidSource);
+    }
+    if cancellation.is_cancelled() {
+        return Err(StreamError::Cancelled);
+    }
+    subscription::validated_identity(engine, scope)?;
+
+    let (cursor_sequence, cursor_write_index) = match after {
+        Some(checkpoint) => (checkpoint.sequence(), checkpoint.write_index()),
+        None => match engine.servable_history_start() {
+            Ok(Some(start)) => (start.get().saturating_sub(1), 0),
+            _ => (0, 0),
+        },
+    };
+    let limit_index = usize::try_from(limit).unwrap_or(usize::MAX);
+    let page_limit = limit.saturating_add(1);
+    let mut records = Vec::new();
+    let mut examined = 0_usize;
+    let mut boundary = None;
+    let mut drained = false;
+    let mut journal_after = if cursor_write_index > 0 {
+        StorageSequence::new(cursor_sequence.saturating_sub(1))
+    } else {
+        StorageSequence::new(cursor_sequence)
+    };
+
+    'pages: while examined < MAX_SUBSCRIPTION_SCAN_EVENTS {
+        if cancellation.is_cancelled() {
+            return Err(StreamError::Cancelled);
+        }
+        let page = engine
+            .tenant_commits(scope.tenant(), journal_after, page_limit)
+            .map_err(|error| sources::map_engine_error(&error))?;
+        let Some(last) = page.last() else {
+            drained = true;
+            break;
+        };
+        for commit in &page {
+            for (write_index, write) in commit.writes().iter().enumerate() {
+                let index = u32::try_from(write_index).unwrap_or(u32::MAX);
+                if subscription::position_covered(
+                    cursor_sequence,
+                    cursor_write_index,
+                    commit.sequence(),
+                    index,
+                ) {
+                    continue;
+                }
+                let position =
+                    ChangeCheckpoint::after(commit.sequence().get(), index.saturating_add(1));
+                let (collection, document, mutation) = match write {
+                    PublishedWrite::Put { document } => (
+                        document.collection().clone(),
+                        document.id().clone(),
+                        SyncJournalMutation::Put(document.value().clone()),
+                    ),
+                    PublishedWrite::Delete { collection: Some(collection), id, .. } => {
+                        (collection.clone(), id.clone(), SyncJournalMutation::Delete)
+                    }
+                    PublishedWrite::Delete { collection: None, .. } => {
+                        boundary = Some(position);
+                        examined += 1;
+                        continue;
+                    }
+                };
+                if records.len() >= limit_index {
+                    break 'pages;
+                }
+                records.push(SyncJournalRecord {
+                    position,
+                    operation_id: commit.operation_id().clone(),
+                    collection,
+                    document,
+                    mutation,
+                });
+                boundary = Some(position);
+                examined += 1;
+                if examined >= MAX_SUBSCRIPTION_SCAN_EVENTS {
+                    break 'pages;
+                }
+            }
+        }
+        journal_after = last.sequence();
+    }
+    Ok(SyncJournalBatch { records, next: boundary, drained })
 }
 
 /// Offers one conflict observation to the change-event backbone (SE-03).

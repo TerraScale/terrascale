@@ -48,7 +48,8 @@ use crate::{
 
 pub use backbone::{
     ChangeCheckpoint, ChangeNotification, ChangeNotificationTap, ChangeReplayBatch,
-    ChangeReplayRequest, MAX_CHANGE_NOTIFICATION_CAPACITY,
+    ChangeReplayRequest, MAX_CHANGE_NOTIFICATION_CAPACITY, SyncJournalBatch, SyncJournalMutation,
+    SyncJournalRecord,
 };
 pub use payloads::{
     AttachmentChangeEntry, AttachmentChangePayload, CHANGE_PAYLOAD_DIGEST_BYTES,
@@ -195,6 +196,29 @@ impl<'engine> StreamStore<'engine> {
         cancellation: &Cancellation,
     ) -> Result<ChangeReplayBatch, StreamError> {
         backbone::replay(self.engine, scope, request, cancellation)
+    }
+
+    /// Reconstructs a bounded page of document mutations from the durable
+    /// publication journal for a sync-delivery materializer.
+    ///
+    /// Unlike notification events, these records carry the exact published
+    /// document value. They remain pull-only and scope-bound, and the caller
+    /// must preserve the returned checkpoint to avoid advancing derived sync
+    /// state without a journal record.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StreamError::InvalidSource`] for an invalid limit,
+    /// [`StreamError::Cancelled`] for a cancelled signal, or the typed
+    /// scope and journal errors reported by durable replay.
+    pub fn replay_sync_journal(
+        &self,
+        scope: &TenantScope,
+        after: Option<ChangeCheckpoint>,
+        limit: u32,
+        cancellation: &Cancellation,
+    ) -> Result<SyncJournalBatch, StreamError> {
+        backbone::replay_sync_journal(self.engine, scope, after, limit, cancellation)
     }
 
     /// Acquires one bounded change-notification tap for this `Engine`

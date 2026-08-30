@@ -5,8 +5,10 @@
 //! streams, and the supervision contract. The server ([`crate::server`])
 //! serves any `TbepHost` over the UDS binding.
 //!
-//! Two hosts ship in this crate:
+//! Three hosts ship in this crate:
 //!
+//! - [`crate::member_host::MemberHost`] — the opt-in TB-1a composition of one
+//!   engine with journal-derived sync and backbone delivery.
 //! - [`SyncDeliveryHost`] — the real serving half over the adopted sync
 //!   core (`terrabase-sync-core`, the SE-02 GO decision): sync sessions,
 //!   byte-budgeted delta and snapshot delivery, checkpoint
@@ -20,14 +22,9 @@
 //!   outcomes. It is a fixture, not an engine: it invents no database
 //!   behavior.
 //!
-//! The Rust engine-backed host (documents, queries, families, the engine
-//! backbone) is deliberately NOT in this crate yet: the engine crate's
-//! Platform-adapter constructors are crate-private by design (W5-E keeps
-//! `PlatformAdapter::new` in-crate), so wiring `terrabase` behind this
-//! seam is a named integrator action — a small public engine-side
-//! constructor plus this crate's `impl TbepHost for it`. The seam below
-//! is shaped so that wiring is thin: every method maps one TBEP request
-//! onto one engine-seam call.
+//! [`crate::engine_host::EngineHost`] remains the production harness during
+//! this staged landing. `MemberHost` is available only through its explicit
+//! construction option.
 
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
@@ -49,6 +46,9 @@ use terrabase_sync_core::SyncCoreError;
 use terrabase_sync_core::SyncScope;
 use terrabase_sync_core::SyncValue;
 use terrabase_sync_core::protocol::PayloadCodec;
+
+use terrabase::streaming::{ChangeCheckpoint, SyncJournalMutation, SyncJournalRecord};
+use terrabase::types::DocumentValue;
 
 use crate::registry::AdminStatusResponse;
 use crate::registry::BackboneAcknowledgeRequest;
@@ -139,6 +139,9 @@ const JOURNAL_BOUND: usize = CHECKPOINT_WINDOW;
 /// callers must refuse new resources once a cap is reached.
 const SUBSCRIPTION_QUEUE_BOUND: usize = 64;
 const MAX_SCOPES: usize = 4096;
+/// Engine-owned family records participate in the durable backbone, but they
+/// are not a customer sync-session collection.
+const RESERVED_FAMILY_COLLECTION: &str = "terrabase.families";
 const MAX_SESSIONS: usize = 4096;
 const MAX_SUBSCRIPTIONS: usize = 1024;
 const MAX_SESSIONS_PER_TENANT: usize = 256;
@@ -798,10 +801,31 @@ pub trait TbepHost: Send + Sync {
 #[derive(Clone, Debug, PartialEq)]
 struct JournalRecord {
     sequence: u64,
+    write_index: u32,
     operation_id: String,
     kind: ChangeKind,
     collection: String,
     document: String,
+}
+
+/// The database identity that owns materialized delivery state. The
+/// authenticated principal owns sessions and subscriptions, but two admitted
+/// channels for the same database must observe the same journal-derived view.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct DeliveryScope {
+    tenant: String,
+    project: String,
+    database: String,
+}
+
+impl DeliveryScope {
+    fn of(scope: &BoundScope) -> Self {
+        Self {
+            tenant: scope.tenant.clone(),
+            project: scope.project.clone(),
+            database: scope.database.clone(),
+        }
+    }
 }
 
 /// The serving state of one tenant collection scope.
@@ -885,7 +909,8 @@ struct SubscriptionState {
 }
 
 struct HostState {
-    scopes: BTreeMap<(BoundScope, String), ScopeState>,
+    scopes: BTreeMap<(DeliveryScope, String), ScopeState>,
+    durable_cursors: BTreeMap<DeliveryScope, ChangeCheckpoint>,
     sessions: BTreeMap<u64, SessionState>,
     subscriptions: BTreeMap<u64, SubscriptionState>,
     next_session: u64,
@@ -914,6 +939,7 @@ impl SyncDeliveryHost {
         Self {
             state: Mutex::new(HostState {
                 scopes: BTreeMap::new(),
+                durable_cursors: BTreeMap::new(),
                 sessions: BTreeMap::new(),
                 subscriptions: BTreeMap::new(),
                 next_session: 0,
@@ -941,7 +967,7 @@ impl SyncDeliveryHost {
         scope: &BoundScope,
         collection: &str,
     ) -> Result<(), HostingError> {
-        if state.scopes.contains_key(&(scope.clone(), collection.to_owned())) {
+        if state.scopes.contains_key(&(DeliveryScope::of(scope), collection.to_owned())) {
             return Ok(());
         }
         if state.scopes.len() >= MAX_SCOPES {
@@ -983,24 +1009,26 @@ impl SyncDeliveryHost {
     }
 
     fn scope<'a>(
-        scopes: &'a mut BTreeMap<(BoundScope, String), ScopeState>,
+        scopes: &'a mut BTreeMap<(DeliveryScope, String), ScopeState>,
         bound_scope: &BoundScope,
         collection: &str,
     ) -> &'a mut ScopeState {
-        scopes.entry((bound_scope.clone(), collection.to_string())).or_insert_with(|| ScopeState {
-            core: SyncCore::new(
-                SyncScope::new(&bound_scope.tenant, collection),
-                SyncCoreConfig {
-                    batch_byte_budget: BATCH_BYTE_BUDGET,
-                    checkpoint_window: CHECKPOINT_WINDOW,
-                },
-            )
-            .expect("the sync core constructs for valid scopes"),
-            journal: VecDeque::new(),
-            next_sequence: 1,
-            applied_keys: BTreeMap::new(),
-            applied_order: VecDeque::new(),
-        })
+        scopes.entry((DeliveryScope::of(bound_scope), collection.to_string())).or_insert_with(
+            || ScopeState {
+                core: SyncCore::new(
+                    SyncScope::new(&bound_scope.tenant, collection),
+                    SyncCoreConfig {
+                        batch_byte_budget: BATCH_BYTE_BUDGET,
+                        checkpoint_window: CHECKPOINT_WINDOW,
+                    },
+                )
+                .expect("the sync core constructs for valid scopes"),
+                journal: VecDeque::new(),
+                next_sequence: 1,
+                applied_keys: BTreeMap::new(),
+                applied_order: VecDeque::new(),
+            },
+        )
     }
 
     /// Looks up one session for its owning tenant: an unknown session
@@ -1071,6 +1099,228 @@ impl SyncDeliveryHost {
         candidate.storage_sequence >= previous.storage_sequence
             && candidate.end_for(terrabase_sync_core::SERVER_PEER_ID).unwrap_or(0)
                 >= previous.end_for(terrabase_sync_core::SERVER_PEER_ID).unwrap_or(0)
+    }
+
+    fn durable_position_is_after(
+        candidate: ChangeCheckpoint,
+        current: Option<ChangeCheckpoint>,
+    ) -> bool {
+        current.is_none_or(|current| {
+            (candidate.sequence(), candidate.write_index())
+                > (current.sequence(), current.write_index())
+        })
+    }
+
+    fn ordered_events(
+        state: &HostState,
+        scope: &DeliveryScope,
+        collections: Option<&[String]>,
+        from: u64,
+    ) -> Vec<crate::registry::ChangeEvent> {
+        let mut records: Vec<&JournalRecord> = state
+            .scopes
+            .iter()
+            .filter(|((record_scope, collection), _)| {
+                record_scope == scope
+                    && collections.is_none_or(|collections| collections.contains(collection))
+            })
+            .flat_map(|(_, scope)| scope.journal.iter())
+            .filter(|record| record.sequence >= from)
+            .collect();
+        records.sort_by_key(|record| (record.sequence, record.write_index));
+        records.truncate(crate::registry::MAX_LIST_ITEMS);
+        records
+            .into_iter()
+            .map(|record| crate::registry::ChangeEvent {
+                sequence: record.sequence,
+                operation_id: record.operation_id.clone(),
+                kind: record.kind,
+                collection: record.collection.clone(),
+                document: record.document.clone(),
+            })
+            .collect()
+    }
+
+    /// Returns the last engine-journal position applied to this database's
+    /// derived delivery state.
+    pub(crate) fn durable_cursor(&self, scope: &BoundScope) -> Option<ChangeCheckpoint> {
+        self.lock().durable_cursors.get(&DeliveryScope::of(scope)).copied()
+    }
+
+    /// Advances past journal writes that intentionally produced no sync
+    /// record, such as a provable no-op delete.
+    pub(crate) fn advance_durable_cursor(&self, scope: &BoundScope, checkpoint: ChangeCheckpoint) {
+        let mut state = self.lock();
+        let key = DeliveryScope::of(scope);
+        if Self::durable_position_is_after(checkpoint, state.durable_cursors.get(&key).copied()) {
+            state.durable_cursors.insert(key, checkpoint);
+        }
+    }
+
+    /// Returns the collection owned by one admitted session.
+    pub(crate) fn collection_for_session(
+        &self,
+        scope: &BoundScope,
+        session_id: u64,
+    ) -> Result<String, HostingError> {
+        let state = self.lock();
+        Self::session_collection(&state, scope, session_id)
+    }
+
+    /// Applies records pulled from the engine's durable publication journal.
+    ///
+    /// This is the only composition path that advances a `MemberHost` sync
+    /// revision. The standalone host's mutation path remains available to its
+    /// existing conformance fixtures.
+    pub(crate) fn apply_durable_records(
+        &self,
+        bound_scope: &BoundScope,
+        records: &[SyncJournalRecord],
+    ) -> Result<(), HostingError> {
+        let mut state = self.lock();
+        Self::ensure_admission(&state)?;
+        let delivery_scope = DeliveryScope::of(bound_scope);
+        let mut applied = Vec::new();
+        for record in records {
+            if !Self::durable_position_is_after(
+                record.position(),
+                state.durable_cursors.get(&delivery_scope).copied(),
+            ) {
+                continue;
+            }
+            Self::can_add_scope(&state, bound_scope, record.collection().as_str())?;
+            {
+                let scope =
+                    Self::scope(&mut state.scopes, bound_scope, record.collection().as_str());
+                if record.collection().as_str() != RESERVED_FAMILY_COLLECTION {
+                    let change = match record.mutation() {
+                        SyncJournalMutation::Put(value) => {
+                            JournalChange::Put { body: sync_body(value)? }
+                        }
+                        SyncJournalMutation::Delete => JournalChange::Delete,
+                    };
+                    let sequence = scope.next_sequence;
+                    scope
+                        .core
+                        .apply(&JournalCommit {
+                            storage_sequence: sequence,
+                            operation_id: record.operation_id().as_str().to_owned(),
+                            document_id: record.document().as_str().to_owned(),
+                            change,
+                        })
+                        .map_err(|error| HostingError::EngineFailure(error.to_string()))?;
+                    scope.next_sequence = scope.next_sequence.saturating_add(1);
+                }
+                scope.record(JournalRecord {
+                    sequence: record.storage_sequence(),
+                    write_index: record.position().write_index(),
+                    operation_id: record.operation_id().as_str().to_owned(),
+                    kind: match record.mutation() {
+                        SyncJournalMutation::Put(_) => ChangeKind::Put,
+                        SyncJournalMutation::Delete => ChangeKind::Delete,
+                    },
+                    collection: record.collection().as_str().to_owned(),
+                    document: record.document().as_str().to_owned(),
+                });
+            }
+            state.durable_cursors.insert(delivery_scope.clone(), record.position());
+            applied.push(record.clone());
+        }
+        if !applied.is_empty() {
+            Self::publish_durable_records(&mut state, bound_scope, &applied);
+        }
+        Ok(())
+    }
+
+    fn publish_durable_records(
+        state: &mut HostState,
+        bound_scope: &BoundScope,
+        records: &[SyncJournalRecord],
+    ) {
+        let ids: Vec<u64> = state.subscriptions.keys().copied().collect();
+        let mut failed = Vec::new();
+        for id in ids {
+            let Some(subscription) = state.subscriptions.get(&id) else {
+                continue;
+            };
+            if DeliveryScope::of(&subscription.scope) != DeliveryScope::of(bound_scope) {
+                continue;
+            }
+            let from = subscription.next_sequence;
+            let events = Self::ordered_events(
+                state,
+                &DeliveryScope::of(bound_scope),
+                subscription.collections.as_deref(),
+                from,
+            );
+            let Some(subscription) = state.subscriptions.get_mut(&id) else {
+                continue;
+            };
+            if let Some(last) = events.last() {
+                let next_sequence = last.sequence.saturating_add(1);
+                if subscription
+                    .feed
+                    .try_send(TbepNotification::Batch(SubscriptionBatch {
+                        subscription_id: id,
+                        from_sequence: from,
+                        events,
+                        next_sequence,
+                    }))
+                    .is_err()
+                {
+                    failed.push(id);
+                    continue;
+                }
+                subscription.next_sequence = next_sequence;
+            }
+            for record in records {
+                if let Some(collections) = &subscription.collections
+                    && !collections
+                        .iter()
+                        .any(|collection| collection == record.collection().as_str())
+                {
+                    continue;
+                }
+                if subscription
+                    .feed
+                    .try_send(TbepNotification::Trigger(crate::registry::TriggerNotification {
+                        subscription_id: id,
+                        collection: record.collection().as_str().to_owned(),
+                        sequence: record.storage_sequence(),
+                        operation_id: record.operation_id().as_str().to_owned(),
+                    }))
+                    .is_err()
+                {
+                    failed.push(id);
+                    break;
+                }
+            }
+        }
+        for id in failed {
+            state.subscriptions.remove(&id);
+        }
+    }
+}
+
+fn sync_body(value: &DocumentValue) -> Result<BTreeMap<String, SyncValue>, HostingError> {
+    let DocumentValue::Object(fields) = value else {
+        return Err(HostingError::EngineFailure(
+            "durable sync requires an object document body".into(),
+        ));
+    };
+    fields.iter().map(|(name, value)| Ok((name.clone(), sync_value(value)?))).collect()
+}
+
+fn sync_value(value: &DocumentValue) -> Result<SyncValue, HostingError> {
+    match value {
+        DocumentValue::Null => Ok(SyncValue::Null),
+        DocumentValue::Boolean(value) => Ok(SyncValue::Bool(*value)),
+        DocumentValue::Integer(value) => Ok(SyncValue::Int(*value)),
+        DocumentValue::Number(value) => Ok(SyncValue::Float(*value)),
+        DocumentValue::String(value) => Ok(SyncValue::Str(value.clone())),
+        DocumentValue::Array(_) | DocumentValue::Object(_) => Err(HostingError::EngineFailure(
+            "durable sync cannot materialize a composite document field".into(),
+        )),
     }
 }
 
@@ -1181,22 +1431,14 @@ impl TbepHost for SyncDeliveryHost {
             SubscriptionStart::Live => 0,
             SubscriptionStart::Sequence(sequence) => *sequence,
         };
-        // Replay the retained windows of every matching scope of this
-        // tenant, in sequence order, up to the list bound.
-        let mut events: Vec<crate::registry::ChangeEvent> = Vec::new();
-        for ((event_scope, scope_collection), scope) in &state.scopes {
-            if event_scope != bound_scope {
-                continue;
-            }
-            if let Some(collections) = &request.collections
-                && !collections.iter().any(|collection| collection == scope_collection)
-            {
-                continue;
-            }
-            events.extend(scope.events_from(from, crate::registry::MAX_LIST_ITEMS));
-        }
-        events.sort_by_key(|event| event.sequence);
-        events.truncate(crate::registry::MAX_LIST_ITEMS);
+        // Replay the retained windows in durable write order. The write index
+        // breaks ties for atomic commits that published several documents.
+        let events = Self::ordered_events(
+            &state,
+            &DeliveryScope::of(bound_scope),
+            request.collections.as_deref(),
+            from,
+        );
         let next_sequence = events.last().map_or(from, |event| event.sequence + 1);
         if !events.is_empty() {
             sender
@@ -1296,6 +1538,11 @@ impl TbepHost for SyncDeliveryHost {
         Self::ensure_admission(&state)?;
         if request.collection.len() > 64 {
             return Err(HostingError::Invalid("collection exceeds the sync bound".into()));
+        }
+        if request.collection == RESERVED_FAMILY_COLLECTION {
+            return Err(HostingError::SessionRefused(
+                "the engine family collection is not a sync-session collection".into(),
+            ));
         }
         Self::can_add_scope(&state, bound_scope, &request.collection)?;
         Self::can_add_session(&state, bound_scope)?;
@@ -1562,6 +1809,7 @@ impl TbepHost for SyncDeliveryHost {
         scope.record_applied(idempotency_key.to_string(), receipt.clone());
         let record = JournalRecord {
             sequence,
+            write_index: 0,
             operation_id: idempotency_key.to_string(),
             kind: match &request.change {
                 crate::registry::SyncChange::Put(_) => ChangeKind::Put,

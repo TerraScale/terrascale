@@ -15,6 +15,9 @@
 //! - [`host`]: the hosting seam the engine process wires
 //!   ([`host::TbepHost`]) plus the shipped [`host::SyncDeliveryHost`]
 //!   over the adopted sync core.
+//! - [`member_host`]: the explicitly enabled TB-1a composition over one
+//!   durable engine publication journal. The production harness continues to
+//!   construct `EngineHost` until the later host-cutover stage.
 //! - [`grpc`]: the tonic serving layer — prost⇄domain conversion,
 //!   metadata discipline, streaming subscriptions, and the UDS and
 //!   TLS listeners.
@@ -24,13 +27,10 @@
 //! - The engine crate (`terrabase`) stays synchronous and
 //!   zero-dependency; every async transport concern lives in this crate
 //!   only.
-//! - The Rust engine-backed document/query/family operations and the
-//!   engine backbone subscriptions ride the [`host::TbepHost`] seam: the
-//!   engine crate's Platform adapter constructors are crate-private by
-//!   design (W5-E), so the engine-side wiring of that seam is a named
-//!   integrator action. The shipped [`host::SyncDeliveryHost`] serves
-//!   the sync-delivery family, supervision, and admin reads over the
-//!   real `terrabase-sync-core` today.
+//! - [`member_host::MemberHost`] combines the engine-backed operations with
+//!   sync and backbone delivery derived from that engine's durable publication
+//!   journal. Construction requires the TB-1a option; the production harness
+//!   remains on `EngineHost` during this staged landing.
 //! - No performance claim is made anywhere in this crate
 //!   (PD-2026-08-26-03); the per-operation message-size bounds below
 //!   hold written definitions, and the conformance corpus recomputes
@@ -44,6 +44,7 @@ pub mod engine_host;
 pub mod family_codec;
 pub mod grpc;
 pub mod host;
+pub mod member_host;
 pub mod registry;
 pub mod value;
 
@@ -67,5 +68,6 @@ pub use grpc::TbepGrpcServer;
 pub use host::HostingError;
 pub use host::SyncDeliveryHost;
 pub use host::TbepHost;
+pub use member_host::{MemberHost, MemberHostOptions};
 pub use value::BodyError;
 pub use value::TbepValue;

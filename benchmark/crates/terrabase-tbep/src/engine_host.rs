@@ -6,8 +6,9 @@
 //! identifier, document writes commit at `Synced` through the engine's
 //! transaction path with the RPC's idempotency key as the
 //! operation identity, and document reads serve the published body
-//! with its version. This is the serving spine `terrabase-go` exercises;
-//! `SyncDeliveryHost` remains the sync-session specialist beside it.
+//! with its version. This remains the production serving spine
+//! `terrabase-go` exercises. The opt-in `MemberHost` composes it with the
+//! sync-session specialist without changing this harness.
 //!
 //! The host also serves queries, collection schemas, acknowledgement and read
 //! levels with positions, topology, query cancellation, and Storage Tier Mover
@@ -538,6 +539,30 @@ impl EngineHost {
     #[must_use]
     pub fn metrics(&self) -> Arc<MetricsRegistry> {
         self.engine.metrics()
+    }
+
+    /// Pulls one bounded page from this host's engine publication journal for
+    /// the opt-in `MemberHost` sync materializer.
+    pub(crate) fn replay_sync_journal(
+        &self,
+        scope: &BoundScope,
+        after: Option<terrabase::streaming::ChangeCheckpoint>,
+    ) -> Result<terrabase::streaming::SyncJournalBatch, HostingError> {
+        let tenant = self.tenant_of_scope(scope)?;
+        let engine_scope = self.engine.scope_for(&tenant);
+        self.engine
+            .streams()
+            .replay_sync_journal(
+                &engine_scope,
+                after,
+                terrabase::streaming::MAX_STREAM_BATCH_ITEMS,
+                &terrabase::types::Cancellation::default(),
+            )
+            .map_err(|error| {
+                HostingError::EngineFailure(format!(
+                    "the durable sync journal could not be replayed: {error:?}"
+                ))
+            })
     }
 
     fn admit_scope(&self, scope: &BoundScope) -> Result<(), HostingError> {
