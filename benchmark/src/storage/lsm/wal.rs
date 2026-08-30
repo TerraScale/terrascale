@@ -439,9 +439,15 @@ fn scan_encrypted_file(file: &File, wal_cipher: &WalCipher) -> io::Result<WalSca
     while offset < bytes.len() {
         let remaining = &bytes[offset..];
         if remaining.len() < 29 {
-            // A write interrupted inside the magic itself is still a torn
-            // trailing envelope; arbitrary bytes at the tail are damage.
-            mid_file_damage = !ENCRYPTED_MAGIC.starts_with(remaining);
+            // A write interrupted inside the magic itself, or after the
+            // complete magic but before the fixed envelope header, is a torn
+            // trailing envelope. Arbitrary bytes with a mismatching prefix
+            // are damage.
+            mid_file_damage = if remaining.len() < 4 {
+                !ENCRYPTED_MAGIC.starts_with(remaining)
+            } else {
+                remaining[..4] != *ENCRYPTED_MAGIC
+            };
             break;
         }
         if remaining[..4] != *ENCRYPTED_MAGIC {
@@ -1031,22 +1037,24 @@ mod tests {
         )
         .unwrap();
         assert!(reader.scan().unwrap().mid_file_damage);
-        let mut truncated = original;
-        truncated.truncate(usize::try_from(first_end).unwrap() + 3);
-        std::fs::write(&path, truncated).unwrap();
-        let reader = WalLog::open_unrepaired_with_encryption(
-            &path,
-            WalEncryptionConfig {
-                owner,
-                key: DatabaseKey::from_bytes([0x5a; 32]),
-                key_version: DatabaseKeyVersion::from_wire_bytes([0; 16]),
-            },
-        )
-        .unwrap();
-        let scan = reader.scan().unwrap();
-        assert!(!scan.mid_file_damage);
-        assert_eq!(scan.entries.len(), 1);
-        assert_eq!(scan.good_bytes, first_end);
+        for cut in 1..29 {
+            let mut truncated = original.clone();
+            truncated.truncate(usize::try_from(first_end).unwrap() + cut);
+            std::fs::write(&path, truncated).unwrap();
+            let reader = WalLog::open_unrepaired_with_encryption(
+                &path,
+                WalEncryptionConfig {
+                    owner: owner.clone(),
+                    key: DatabaseKey::from_bytes([0x5a; 32]),
+                    key_version: DatabaseKeyVersion::from_wire_bytes([0; 16]),
+                },
+            )
+            .unwrap();
+            let scan = reader.scan().unwrap();
+            assert!(!scan.mid_file_damage, "torn cut {cut}");
+            assert_eq!(scan.entries.len(), 1, "torn cut {cut}");
+            assert_eq!(scan.good_bytes, first_end, "torn cut {cut}");
+        }
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 

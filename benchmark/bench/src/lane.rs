@@ -305,6 +305,7 @@ pub fn run<B: Backend>(
         target: backend.target_name(),
         workload: workload.as_str().to_owned(),
         config,
+        comparability: metrics::comparability(&config, backend.target_name(), &environment, None),
         environment,
         samples,
         limits: backend.limits(),

@@ -158,6 +158,16 @@ fn main() {
                     workload: workload.as_str().to_owned(),
                     config: lane_config,
                     error: error.to_string(),
+                    comparability: metrics::comparability(
+                        &lane_config,
+                        target.as_str(),
+                        &metrics::host_environment(
+                            "not captured: served run failed before identity observation".to_owned(),
+                            endpoint_for(target),
+                            transport_for(target),
+                        ),
+                        Some(&boundary),
+                    ),
                     environment: metrics::host_environment(
                         "not captured: served run failed before identity observation".to_owned(),
                         endpoint_for(target),
@@ -201,6 +211,16 @@ fn main() {
                 workload: workload.as_str().to_owned(),
                 config: lane_config,
                 error,
+                comparability: metrics::comparability(
+                    &lane_config,
+                    target.as_str(),
+                    &metrics::host_environment(
+                        "not captured: run failed before identity observation".to_owned(),
+                        endpoint_for(target),
+                        transport_for(target),
+                    ),
+                    None,
+                ),
                 environment: metrics::host_environment(
                     "not captured: run failed before identity observation".to_owned(),
                     endpoint_for(target),

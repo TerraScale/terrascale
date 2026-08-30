@@ -187,6 +187,7 @@ pub(crate) trait StoragePort: Send {
     /// of materializing (and in the LSM engine, decoding) the rest of the
     /// tenant. Canonical order is the order of [`StoragePort::documents_at`]
     /// restricted to the collection.
+    #[allow(dead_code, reason = "compatibility collection-wide read seam")]
     fn documents_in_collection_at(
         &self,
         sequence: StorageSequence,

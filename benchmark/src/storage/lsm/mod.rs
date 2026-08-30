@@ -157,11 +157,6 @@ pub(crate) enum LsmOpenError {
     Unavailable,
 }
 
-/// Storage encryption configuration supplied by the Engine open boundary.
-pub(crate) struct LsmEncryptionConfig {
-    pub(crate) wal: wal::WalEncryptionConfig,
-}
-
 /// Tuning bounds of one LSM location.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct LsmTuning {
@@ -261,6 +256,7 @@ impl LsmStorage {
     ///
     /// Returns [`LsmOpenError::FormatMismatch`] when persisted bytes do not
     /// verify, and [`LsmOpenError::Unavailable`] for I/O failures.
+    #[cfg(test)]
     pub(crate) fn open_with_metrics(
         dir: &Path,
         metrics: Arc<MetricsRegistry>,
@@ -271,21 +267,6 @@ impl LsmStorage {
             super::root::sync_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
         }
         Self::recover(dir, format.state, metrics, None, false)
-    }
-
-    /// Opens an Engine-owned local encrypted WAL. Other artifact kinds remain
-    /// on compatibility formats until their encrypted formats are available.
-    pub(crate) fn open_with_metrics_and_encryption(
-        dir: &Path,
-        metrics: Arc<MetricsRegistry>,
-        encryption: LsmEncryptionConfig,
-    ) -> Result<Self, LsmOpenError> {
-        fs::create_dir_all(dir).map_err(|_| LsmOpenError::Unavailable)?;
-        let format = verify_or_create_format(dir)?;
-        if format.created {
-            super::root::sync_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
-        }
-        Self::recover(dir, format.state, metrics, Some(encryption.wal), false)
     }
 
     /// Opens a local-development encrypted WAL after the format marker has
@@ -1654,6 +1635,7 @@ fn tenant_prefix(tenant: &TenantId) -> Vec<u8> {
 /// [`internal::tenant_upper_bound`] uses for the tenant — because no legal
 /// identifier may begin with a byte at or below `0x01` (identifiers reject
 /// control characters) and no legal collection name may contain NUL.
+#[allow(dead_code, reason = "retained for the collection-wide compatibility seam")]
 fn collection_bounds(tenant: &TenantId, collection: &CollectionName) -> (Vec<u8>, Vec<u8>) {
     let mut start = tenant_prefix(tenant);
     bytes_extend_identifier(&mut start, collection.as_str());
@@ -1667,6 +1649,7 @@ fn collection_bounds(tenant: &TenantId, collection: &CollectionName) -> (Vec<u8>
 /// Appends one identifier in the same order-preserving encoding
 /// [`internal::InternalKey`] uses, so locally built bounds and key-built
 /// ranges always agree on order.
+#[allow(dead_code, reason = "retained for the collection-wide compatibility seam")]
 fn bytes_extend_identifier(out: &mut Vec<u8>, value: &str) {
     out.extend_from_slice(value.as_bytes());
     out.push(0);

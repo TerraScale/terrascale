@@ -860,9 +860,8 @@ fn select_chain(
     let mut chain = vec![head.clone()];
     let mut visited = BTreeSet::from([head.manifest.identity().to_owned()]);
     while let Some(base) = chain.last().and_then(|point| point.manifest.base_sequence()) {
-        let current = chain
-            .last()
-            .ok_or_else(|| "the selected S3 recovery chain is empty".to_owned())?;
+        let current =
+            chain.last().ok_or_else(|| "the selected S3 recovery chain is empty".to_owned())?;
         let required_tenants: BTreeSet<_> = chain
             .iter()
             .flat_map(|point| point.manifest.tenants().iter().map(|entry| entry.tenant()))
@@ -1156,6 +1155,35 @@ mod tests {
         }
     }
 
+    fn remote_point(manifest: &BackupManifest) -> RemoteRecoveryPoint {
+        RemoteRecoveryPoint {
+            manifest: manifest.clone(),
+            modified_millis: 0,
+            modified_at: "1970-01-01T00:00:00Z".to_owned(),
+        }
+    }
+
+    fn put_test_document(
+        state: &crate::state::StudioState,
+        tenant_name: &str,
+        document_name: &str,
+    ) {
+        let tenant = crate::engine_ops::tenant(tenant_name).unwrap();
+        let collection = crate::engine_ops::collection("users").unwrap();
+        let document = crate::engine_ops::document_id(document_name).unwrap();
+        let outcome = crate::engine_ops::put_document(
+            state.engine.as_ref(),
+            state.next_operation().unwrap(),
+            &tenant,
+            &collection,
+            &document,
+            crate::json::from_json(serde_json::json!({"tenant": tenant_name})),
+            terrabase::ExpectedVersion::Any,
+        )
+        .unwrap();
+        assert!(matches!(outcome, terrabase::CommitOutcome::Committed(_)));
+    }
+
     #[test]
     fn settings_reject_secret_bearing_and_insecure_endpoints() {
         let mut settings = S3BackupSettings {
@@ -1290,6 +1318,140 @@ mod tests {
         assert!(latest.restored_documents() > 0);
     }
 
+    #[test]
+    fn an_incremental_refuses_ambiguous_same_boundary_roots() {
+        let root = test_root("ambiguous-roots");
+        let state = sample_state(&root);
+        put_test_document(state.as_ref(), "later-tenant", "later-root-document");
+        let destination = root.join("staged");
+        let demo = crate::engine_ops::tenant("demo").unwrap();
+        let all_root = terrabase::backup::run_backup(
+            state.engine.as_ref(),
+            terrabase::BackupPlan::full(),
+            &destination,
+        )
+        .unwrap();
+        let demo_root = terrabase::backup::run_backup(
+            state.engine.as_ref(),
+            terrabase::BackupPlan::full().with_tenants([demo.clone()]),
+            &destination,
+        )
+        .unwrap();
+        assert_eq!(
+            all_root.manifest().boundary_sequence(),
+            demo_root.manifest().boundary_sequence()
+        );
+
+        put_test_document(state.as_ref(), "demo", "after-roots");
+        let incremental = terrabase::backup::run_backup(
+            state.engine.as_ref(),
+            terrabase::BackupPlan::incremental_since(all_root.manifest().boundary_sequence())
+                .with_tenants([demo]),
+            &destination,
+        )
+        .unwrap();
+        let points = vec![
+            remote_point(all_root.manifest()),
+            remote_point(demo_root.manifest()),
+            remote_point(incremental.manifest()),
+        ];
+
+        let failure = select_chain(&points, Some(incremental.manifest().identity())).unwrap_err();
+        assert_eq!(failure, "the selected S3 recovery chain has ambiguous full roots");
+    }
+
+    #[test]
+    fn predecessor_selection_uses_the_only_root_that_covers_the_chain_scope() {
+        let root = test_root("compatible-root");
+        let state = sample_state(&root);
+        put_test_document(state.as_ref(), "later-tenant", "later-root-document");
+        let destination = root.join("staged");
+        let demo = crate::engine_ops::tenant("demo").unwrap();
+        let later = crate::engine_ops::tenant("later-tenant").unwrap();
+        let demo_root = terrabase::backup::run_backup(
+            state.engine.as_ref(),
+            terrabase::BackupPlan::full().with_tenants([demo]),
+            &destination,
+        )
+        .unwrap();
+        let later_root = terrabase::backup::run_backup(
+            state.engine.as_ref(),
+            terrabase::BackupPlan::full().with_tenants([later.clone()]),
+            &destination,
+        )
+        .unwrap();
+        assert_eq!(
+            demo_root.manifest().boundary_sequence(),
+            later_root.manifest().boundary_sequence()
+        );
+
+        put_test_document(state.as_ref(), "later-tenant", "after-roots");
+        let incremental = terrabase::backup::run_backup(
+            state.engine.as_ref(),
+            terrabase::BackupPlan::incremental_since(later_root.manifest().boundary_sequence())
+                .with_tenants([later]),
+            &destination,
+        )
+        .unwrap();
+        let points = vec![
+            remote_point(demo_root.manifest()),
+            remote_point(later_root.manifest()),
+            remote_point(incremental.manifest()),
+        ];
+
+        let chain = select_chain(&points, Some(incremental.manifest().identity())).unwrap();
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[0].manifest.identity(), later_root.manifest().identity());
+    }
+
+    #[test]
+    fn latest_selection_refuses_forked_incrementals_at_one_boundary() {
+        let root = test_root("forked-heads");
+        let state = sample_state(&root);
+        put_test_document(state.as_ref(), "later-tenant", "later-root-document");
+        let destination = root.join("staged");
+        let full = terrabase::backup::run_backup(
+            state.engine.as_ref(),
+            terrabase::BackupPlan::full(),
+            &destination,
+        )
+        .unwrap();
+        let base = full.manifest().boundary_sequence();
+        put_test_document(state.as_ref(), "demo", "demo-fork");
+        put_test_document(state.as_ref(), "later-tenant", "later-fork");
+
+        let demo_incremental = terrabase::backup::run_backup(
+            state.engine.as_ref(),
+            terrabase::BackupPlan::incremental_since(base)
+                .with_tenants([crate::engine_ops::tenant("demo").unwrap()]),
+            &destination,
+        )
+        .unwrap();
+        let later_incremental = terrabase::backup::run_backup(
+            state.engine.as_ref(),
+            terrabase::BackupPlan::incremental_since(base)
+                .with_tenants([crate::engine_ops::tenant("later-tenant").unwrap()]),
+            &destination,
+        )
+        .unwrap();
+        assert_eq!(
+            demo_incremental.manifest().boundary_sequence(),
+            later_incremental.manifest().boundary_sequence()
+        );
+        let points = vec![
+            remote_point(full.manifest()),
+            remote_point(demo_incremental.manifest()),
+            remote_point(later_incremental.manifest()),
+        ];
+
+        assert_eq!(
+            select_chain(&points, None).unwrap_err(),
+            "the newest S3 recovery boundary is ambiguous"
+        );
+        assert!(select_chain(&points, Some(demo_incremental.manifest().identity())).is_ok());
+        assert!(select_chain(&points, Some(later_incremental.manifest().identity())).is_ok());
+    }
+
     #[tokio::test]
     async fn a_new_tenant_forces_a_new_full_root() {
         let root = test_root("tenant-expansion");
@@ -1336,6 +1498,47 @@ mod tests {
         restore_from_s3(&repository, &root.join("scratch"), root.join("restored"), None)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_all_tenant_run_rolls_over_a_root_that_excluded_an_unchanged_tenant() {
+        let root = test_root("preexisting-tenant-expansion");
+        let state = sample_state(&root);
+        put_test_document(state.as_ref(), "later-tenant", "existing-before-root");
+        let repository = memory_repository(Arc::new(InMemory::new()));
+        let settings = test_settings();
+        backup_to_s3(
+            &repository,
+            Arc::clone(&state.engine),
+            &root.join("scratch"),
+            &settings,
+            BackupRunMode::Full,
+            vec![crate::engine_ops::tenant("demo").unwrap()],
+        )
+        .await
+        .unwrap();
+
+        // There are no writes after the scoped root. The incremental must
+        // still bind the all-tenant selection and force a self-contained
+        // replacement root instead of silently omitting later-tenant.
+        let next = backup_to_s3(
+            &repository,
+            Arc::clone(&state.engine),
+            &root.join("scratch"),
+            &settings,
+            BackupRunMode::Automatic,
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(next.result.manifest().kind(), BackupKind::Full);
+        assert!(
+            next.result
+                .manifest()
+                .tenants()
+                .iter()
+                .any(|entry| entry.tenant().as_str() == "later-tenant")
+        );
     }
 
     #[tokio::test]

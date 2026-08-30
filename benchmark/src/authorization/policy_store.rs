@@ -43,6 +43,27 @@ pub struct PolicyStoreSnapshot {
     policies: BTreeMap<ResourceScope, Policy>,
 }
 
+/// A move-only key handle for the authenticated policy journal.
+///
+/// Runtimes should construct this from their trusted key-provider adapter and
+/// pass it to [`AuthorizationPolicyStore::open_with_key`]. It is deliberately
+/// neither `Clone` nor `Copy`.
+pub struct PolicyStoreKey([u8; AUTHENTICATION_BYTES]);
+
+impl PolicyStoreKey {
+    /// Wraps key material supplied by a trusted key provider.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; AUTHENTICATION_BYTES]) -> Self {
+        Self(bytes)
+    }
+}
+
+impl Drop for PolicyStoreKey {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
 impl std::fmt::Debug for PolicyStoreSnapshot {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -97,6 +118,7 @@ struct RecoveredState {
     snapshot: PolicyStoreSnapshot,
     previous_tag: [u8; AUTHENTICATION_BYTES],
     record_count: u64,
+    truncated_tail: bool,
     expiries: BTreeMap<ResourceScope, u64>,
     generations: BTreeMap<ResourceScope, u64>,
     revoked_principals: BTreeMap<(ResourceScope, PrincipalUlid), u64>,
@@ -137,6 +159,23 @@ impl AuthorizationPolicyStore {
         path: impl AsRef<Path>,
         authentication_key: [u8; AUTHENTICATION_BYTES],
     ) -> Result<Self, AuthorizationError> {
+        Self::open_with_key(path, PolicyStoreKey::from_bytes(authentication_key))
+    }
+
+    /// Opens the journal using a move-only key-provider result.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same durable-store refusals as [`Self::open`].
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "the key handle is intentionally consumed at the trust boundary"
+    )]
+    pub fn open_with_key(
+        path: impl AsRef<Path>,
+        authentication_key: PolicyStoreKey,
+    ) -> Result<Self, AuthorizationError> {
+        let authentication_key = authentication_key.0;
         let path = path.as_ref().to_path_buf();
         reject_symlink(&path)?;
         if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
@@ -159,13 +198,21 @@ impl AuthorizationPolicyStore {
         let RecoveredState {
             snapshot,
             previous_tag,
+            record_count,
+            truncated_tail,
             expiries,
             generations,
             revoked_principals,
             revoked_grants,
         } = recovered;
         let head_path = head_path_for(&path)?;
-        reconcile_head(&head_path, &authentication_key, record_count, &previous_tag)?;
+        reconcile_head(
+            &head_path,
+            &authentication_key,
+            record_count,
+            &previous_tag,
+            truncated_tail,
+        )?;
         file.seek(SeekFrom::End(0)).map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
         Ok(Self {
             path,
@@ -248,8 +295,15 @@ impl AuthorizationPolicyStore {
         self.expiries.insert(scope.clone(), expires_at);
         self.generations.insert(scope, generation);
         self.previous_tag.copy_from_slice(tag.as_bytes());
-        self.record_count = self.record_count.checked_add(1).ok_or(AuthorizationError::PolicyStoreUnavailable)?;
-        reconcile_head(&self.head_path, &self.authentication_key, self.record_count, &self.previous_tag)?;
+        self.record_count =
+            self.record_count.checked_add(1).ok_or(AuthorizationError::PolicyStoreUnavailable)?;
+        reconcile_head(
+            &self.head_path,
+            &self.authentication_key,
+            self.record_count,
+            &self.previous_tag,
+            false,
+        )?;
         Ok(())
     }
 
@@ -338,8 +392,15 @@ impl AuthorizationPolicyStore {
             revocation,
         );
         self.previous_tag.copy_from_slice(tag.as_bytes());
-        self.record_count = self.record_count.checked_add(1).ok_or(AuthorizationError::PolicyStoreUnavailable)?;
-        reconcile_head(&self.head_path, &self.authentication_key, self.record_count, &self.previous_tag)?;
+        self.record_count =
+            self.record_count.checked_add(1).ok_or(AuthorizationError::PolicyStoreUnavailable)?;
+        reconcile_head(
+            &self.head_path,
+            &self.authentication_key,
+            self.record_count,
+            &self.previous_tag,
+            false,
+        )?;
         Ok(())
     }
 
@@ -432,6 +493,7 @@ fn sync_parent(path: &Path) -> Result<(), AuthorizationError> {
 }
 
 fn acquire_writer_lease(path: &Path) -> Result<File, AuthorizationError> {
+    reject_symlink(path)?;
     let mut options = OpenOptions::new();
     options.read(true).write(true).create(true);
     #[cfg(unix)]
@@ -461,7 +523,11 @@ fn head_path_for(path: &Path) -> Result<PathBuf, AuthorizationError> {
     Ok(path.with_file_name(head_name))
 }
 
-fn head_tag(key: &[u8; AUTHENTICATION_BYTES], count: u64, tag: &[u8; AUTHENTICATION_BYTES]) -> blake3::Hash {
+fn head_tag(
+    key: &[u8; AUTHENTICATION_BYTES],
+    count: u64,
+    tag: &[u8; AUTHENTICATION_BYTES],
+) -> blake3::Hash {
     let mut hasher = blake3::Hasher::new_keyed(key);
     hasher.update(HEAD_DOMAIN);
     hasher.update(&count.to_le_bytes());
@@ -474,21 +540,29 @@ fn reconcile_head(
     key: &[u8; AUTHENTICATION_BYTES],
     count: u64,
     tag: &[u8; AUTHENTICATION_BYTES],
+    truncated_tail: bool,
 ) -> Result<(), AuthorizationError> {
     let mut expected = Vec::with_capacity(80);
     expected.extend_from_slice(HEAD_MAGIC);
     expected.extend_from_slice(&count.to_le_bytes());
     expected.extend_from_slice(tag);
     expected.extend_from_slice(head_tag(key, count, tag).as_bytes());
-    match OpenOptions::new().read(true).open(path) {
+    reject_symlink(path)?;
+    let mut read_options = OpenOptions::new();
+    read_options.read(true);
+    #[cfg(unix)]
+    read_options.custom_flags(0o00_400_000);
+    match read_options.open(path) {
         Ok(mut file) => {
             validate_open_file(&file)?;
-            let length = file.metadata().map_err(|_| AuthorizationError::PolicyStoreUnavailable)?.len();
+            let length =
+                file.metadata().map_err(|_| AuthorizationError::PolicyStoreUnavailable)?.len();
             if length != expected.len() as u64 {
                 return Err(AuthorizationError::PolicyJournalCorrupt);
             }
             let mut actual = Vec::new();
-            file.read_to_end(&mut actual).map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
+            file.read_to_end(&mut actual)
+                .map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
             if actual.len() != expected.len() || actual[..8] != *HEAD_MAGIC {
                 return Err(AuthorizationError::PolicyJournalCorrupt);
             }
@@ -496,7 +570,7 @@ fn reconcile_head(
             let head_record_tag: [u8; 32] = actual[16..48].try_into().unwrap();
             let head_mac: [u8; 32] = actual[48..80].try_into().unwrap();
             if head_tag(key, head_count, &head_record_tag).as_bytes() != head_mac.as_slice()
-                || head_count > count
+                || (head_count > count && !truncated_tail)
                 || (head_count == count && head_record_tag != *tag)
             {
                 return Err(AuthorizationError::PolicyJournalCorrupt);
@@ -517,7 +591,9 @@ fn reconcile_head(
         .and_then(|()| file.sync_all())
         .map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
     if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
-        File::open(parent).and_then(|directory| directory.sync_all()).map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
+        File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
     }
     Ok(())
 }
@@ -566,6 +642,7 @@ fn replay(
     let mut offset = JOURNAL_MAGIC.len();
     let mut previous_tag = [0_u8; AUTHENTICATION_BYTES];
     let mut record_count = 0_u64;
+    let mut truncated_tail = false;
     let mut policies = BTreeMap::new();
     let mut expiries = BTreeMap::new();
     let mut generations = BTreeMap::new();
@@ -576,6 +653,7 @@ fn replay(
         let length_end = offset.checked_add(4).ok_or(AuthorizationError::PolicyJournalCorrupt)?;
         if length_end > bytes.len() {
             truncate_tail(file, record_start as u64)?;
+            truncated_tail = true;
             break;
         }
         let record_len = bytes
@@ -594,10 +672,12 @@ fn replay(
             .ok_or(AuthorizationError::PolicyJournalCorrupt)?;
         let Some(payload) = bytes.get(length_end..payload_end) else {
             truncate_tail(file, record_start as u64)?;
+            truncated_tail = true;
             break;
         };
         let Some(tag) = bytes.get(payload_end..tag_end) else {
             truncate_tail(file, record_start as u64)?;
+            truncated_tail = true;
             break;
         };
         if authenticate(authentication_key, &previous_tag, payload).as_bytes() != tag {
@@ -632,13 +712,15 @@ fn replay(
             }
         }
         previous_tag.copy_from_slice(tag);
-        record_count = record_count.checked_add(1).ok_or(AuthorizationError::PolicyJournalCorrupt)?;
+        record_count =
+            record_count.checked_add(1).ok_or(AuthorizationError::PolicyJournalCorrupt)?;
         offset = tag_end;
     }
     Ok(RecoveredState {
         snapshot: PolicyStoreSnapshot { policies },
         previous_tag,
         record_count,
+        truncated_tail,
         expiries,
         generations,
         revoked_principals,
@@ -658,18 +740,12 @@ fn append_frame(
     payload: &[u8],
     tag: &blake3::Hash,
 ) -> Result<(), AuthorizationError> {
-    let current = file
-        .metadata()
-        .map_err(|_| AuthorizationError::PolicyStoreUnavailable)?
-        .len();
+    let current = file.metadata().map_err(|_| AuthorizationError::PolicyStoreUnavailable)?.len();
     let frame_len = 4_u64
         .checked_add(u64::from(payload_len))
         .and_then(|length| length.checked_add(AUTHENTICATION_BYTES as u64))
         .ok_or(AuthorizationError::ExceedsBound("policy journal"))?;
-    if current
-        .checked_add(frame_len)
-        .is_none_or(|length| length > MAX_JOURNAL_BYTES)
-    {
+    if current.checked_add(frame_len).is_none_or(|length| length > MAX_JOURNAL_BYTES) {
         return Err(AuthorizationError::ExceedsBound("policy journal"));
     }
     file.write_all(&payload_len.to_le_bytes())

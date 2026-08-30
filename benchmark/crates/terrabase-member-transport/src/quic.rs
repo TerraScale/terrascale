@@ -744,6 +744,10 @@ pub enum QuicLaneError {
     Certificates,
 }
 
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "the local profile is infallible, but production-fips validates the active FIPS provider"
+)]
 fn install_rustls_provider() -> Result<(), QuicLaneError> {
     #[cfg(feature = "production-fips")]
     {

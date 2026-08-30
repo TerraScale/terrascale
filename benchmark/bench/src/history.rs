@@ -7,6 +7,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
+use crate::config::LaneConfig;
+use crate::metrics;
+
 const WORKLOADS: [&str; 4] = ["read", "write", "query", "mixed"];
 const TARGETS: [&str; 3] = ["terrabase", "postgresql", "ravendb"];
 
@@ -23,12 +26,41 @@ struct Sample {
 struct Complete {
     identity: String,
     samples: Vec<Sample>,
+    comparability: Comparability,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Comparability {
+    run_group: String,
+    config_digest: String,
+    controlled_host_identity: String,
+    time_window: String,
+    window_start_unix_seconds: u64,
+    window_end_unix_seconds: u64,
+    workload_version: String,
+    boundary_class: String,
+    concurrency: u64,
+    samples: u64,
+    warmup_operations: u64,
+    noise_percent: f64,
+    seed_policy: String,
+    document_policy: String,
+    operation_policy: String,
+    write_id_policy: String,
+    durability_semantics: String,
+    server_configuration_provenance: String,
+}
+
+#[derive(Debug)]
+struct Failure {
+    path: String,
+    error: Option<String>,
 }
 
 #[derive(Debug)]
 enum Loaded {
     Missing,
-    Failed,
+    Failed(Failure),
     Invalid(String),
     Complete(Complete),
 }
@@ -49,35 +81,82 @@ pub fn run(arguments: impl Iterator<Item = String>) -> Result<PathBuf, String> {
             _ => unreachable!(),
         }
     }
-    let mut rows = Vec::new();
-    let mut identities = Vec::new();
+    let mut loaded = Vec::new();
     let mut found = false;
     for workload in WORKLOADS {
         for target in TARGETS {
-            match load(&results, target, workload) {
-                Loaded::Missing => {
-                    rows.push(format!("| {workload} | {target} | missing | — | — | — | — | — |"))
-                }
-                Loaded::Failed => {
-                    found = true;
-                    rows.push(format!("| {workload} | {target} | failed | — | — | — | — | — |"));
-                }
-                Loaded::Invalid(error) => {
-                    found = true;
-                    rows.push(format!("| {workload} | {target} | invalid | — | — | — | — | — |"));
-                    eprintln!("invalid {target}/{workload} result: {error}");
-                }
-                Loaded::Complete(document) => {
-                    found = true;
-                    identities.push((target, document.identity));
-                    rows.push(render_row(workload, target, &document.samples));
-                }
-            }
+            let document = load(&results, target, workload);
+            found |= !matches!(document, Loaded::Missing);
+            loaded.push((workload, target, document));
         }
     }
     if !found {
         return Err(format!("no results documents found under {}", results.display()));
     }
+    // A document is only comparable with another document when every
+    // admission fact agrees.  Keep the check workload-local so a read run
+    // cannot accidentally admit a write run with different provenance.
+    let mut group_errors = std::collections::BTreeMap::new();
+    for workload in WORKLOADS {
+        let complete: Vec<_> = loaded
+            .iter()
+            .filter(|(candidate_workload, _, document)| {
+                *candidate_workload == workload && matches!(document, Loaded::Complete(_))
+            })
+            .collect();
+        if let Some((_, _, Loaded::Complete(first))) = complete.first() {
+            for (_, target, document) in complete.iter().skip(1) {
+                let Loaded::Complete(candidate) = document else { unreachable!() };
+                if let Some(field) = differing_field(&first.comparability, &candidate.comparability)
+                {
+                    group_errors.insert(
+                        workload,
+                        format!("{target} differs from the comparison group in {field}"),
+                    );
+                    break;
+                }
+            }
+        }
+    }
+
+    let mut rows = Vec::new();
+    let mut identities = std::collections::BTreeMap::new();
+    let mut admission = Vec::new();
+    for (workload, target, document) in loaded {
+        match document {
+            Loaded::Missing => rows.push(format!(
+                "| {workload} | {target} | missing | — | — | — | — | — |"
+            )),
+            Loaded::Failed(failure) => {
+                rows.push(format!("| {workload} | {target} | failed | — | — | — | — | — |"));
+                if let Some(error) = failure.error {
+                    admission.push(format!("- {target}/{workload}: failed/raw — {error}"));
+                }
+            }
+            Loaded::Invalid(error) => {
+                rows.push(format!("| {workload} | {target} | invalid | — | — | — | — | — |"));
+                eprintln!("invalid {target}/{workload} result: {error}");
+                admission.push(format!("- {target}/{workload}: invalid — {error}"));
+            }
+            Loaded::Complete(document) => {
+                if let Some(error) = group_errors.get(workload) {
+                    rows.push(format!("| {workload} | {target} | invalid | — | — | — | — | — |"));
+                    eprintln!("invalid {target}/{workload} result: {error}");
+                    admission.push(format!("- {target}/{workload}: invalid — {error}"));
+                } else {
+                    identities.entry(target).or_insert(document.identity);
+                    rows.push(render_row(workload, target, &document.samples));
+                }
+            }
+        }
+    }
+    for workload in WORKLOADS {
+        let status = group_errors
+            .get(workload)
+            .map_or("admitted facts (no verdict)", |_| "not comparable");
+        admission.push(format!("- {workload}: {status}"));
+    }
+
     let mut output = String::new();
     output.push_str("# Benchmark history\n\n");
     output.push_str("Every row is derived from a lane results document under `bench/results/`\n");
@@ -91,6 +170,12 @@ pub fn run(arguments: impl Iterator<Item = String>) -> Result<PathBuf, String> {
     output.push_str("per `LaneConfig::RECORD_MINIMUM`.\n\n## Sides\n\n");
     for (target, identity) in identities {
         output.push_str(&format!("- **{target}**: {identity}\n"));
+    }
+    output.push_str("\n## Admission and comparability\n\n");
+    output.push_str("Only rows with a valid comparability contract may join a workload comparison; no verdict is produced by this renderer. Failed/raw attempts remain retained and never contribute measurements.\n\n");
+    for line in admission {
+        output.push_str(&line);
+        output.push('\n');
     }
     output.push_str("\n## Results (median across samples)\n\n");
     output.push_str("| workload | side | status | ops/s | p50 µs (median–max) | p95 µs | p99 µs | sample wall ms |\n");
@@ -140,7 +225,12 @@ fn load(results: &Path, target: &str, workload: &str) -> Loaded {
         return Loaded::Invalid("document is not an object".to_owned());
     };
     match fields.get("status").and_then(Value::as_str) {
-        Some("failed") => return Loaded::Failed,
+        Some("failed") => {
+            return Loaded::Failed(Failure {
+                path: path.display().to_string(),
+                error: fields.get("error").and_then(Value::as_str).map(str::to_owned),
+            });
+        }
         Some("complete") | None => {}
         Some(status) => return Loaded::Invalid(format!("invalid status {status:?}")),
     }
@@ -223,6 +313,12 @@ fn validate_complete(document: &Value, target: &str, workload: &str) -> Result<C
     if unix <= 0.0 || unix.fract() != 0.0 || cpus <= 0.0 || cpus.fract() != 0.0 {
         return Err("invalid environment counters".to_owned());
     }
+    let comparability = validate_comparability(
+        fields.get("comparability"),
+        config,
+        environment,
+        target,
+    )?;
     let values =
         fields.get("samples").and_then(Value::as_array).ok_or("samples is not an array")?;
     if values.len() != samples_count {
@@ -257,7 +353,164 @@ fn validate_complete(document: &Value, target: &str, workload: &str) -> Result<C
         }
         samples.push(Sample { wall_seconds: wall, throughput, p50, p95, p99 });
     }
-    Ok(Complete { identity, samples })
+    Ok(Complete { identity, samples, comparability })
+}
+
+fn validate_comparability(
+    value: Option<&Value>,
+    config: &serde_json::Map<String, Value>,
+    environment: &serde_json::Map<String, Value>,
+    target: &str,
+) -> Result<Comparability, String> {
+    let fields = value
+        .and_then(Value::as_object)
+        .ok_or("comparability is not an object")?;
+    let string = |name: &str| -> Result<String, String> {
+        fields
+            .get(name)
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| format!("comparability.{name} is not a non-empty string"))
+    };
+    let run_group = string("run_group")?;
+    if run_group == "unassigned" {
+        return Err("comparability.run_group is unassigned".to_owned());
+    }
+    let config_digest = string("config_digest")?;
+    if config_digest.len() != 64 || !config_digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("comparability.config_digest is not a SHA-256 digest".to_owned());
+    }
+    let controlled_host_identity = string("controlled_host_identity")?;
+    let time_window = string("time_window")?;
+    let workload_version = string("workload_version")?;
+    let boundary_class = string("boundary_class")?;
+    if boundary_class.eq_ignore_ascii_case("in-process") {
+        return Err("in-process boundary is not a served comparison boundary".to_owned());
+    }
+    let seed_policy = string("seed_policy")?;
+    let document_policy = string("document_policy")?;
+    let operation_policy = string("operation_policy")?;
+    let write_id_policy = string("write_id_policy")?;
+    let durability_semantics = string("durability_semantics")?;
+    let server_configuration_provenance = string("server_configuration_provenance")?;
+    let positive_u64 = |name: &str| -> Result<u64, String> {
+        let value = number(fields.get(name), &format!("comparability.{name}"))?;
+        if value <= 0.0 || value.fract() != 0.0 {
+            return Err(format!("comparability.{name} is not positive"));
+        }
+        Ok(value as u64)
+    };
+    let concurrency = positive_u64("concurrency")?;
+    let samples = positive_u64("samples")?;
+    let warmup_operations = number(
+        fields.get("warmup_operations"),
+        "comparability.warmup_operations",
+    )?;
+    if warmup_operations < 0.0 || warmup_operations.fract() != 0.0 {
+        return Err("comparability.warmup_operations is invalid".to_owned());
+    }
+    let noise_percent = number(fields.get("noise_percent"), "comparability.noise_percent")?;
+    if !(0.0..=100.0).contains(&noise_percent) {
+        return Err("comparability.noise_percent is outside 0..=100".to_owned());
+    }
+    let window_start = positive_u64("window_start_unix_seconds")?;
+    let window_end = positive_u64("window_end_unix_seconds")?;
+    if window_end < window_start || window_end - window_start > 86_400 {
+        return Err("comparability time window is invalid".to_owned());
+    }
+    if concurrency != positive_config(config, "concurrency")?
+        || samples != positive_config(config, "samples")?
+        || warmup_operations != number(config.get("warmup_operations"), "config.warmup_operations")?
+        || noise_percent != number(config.get("noise_percent"), "config.noise_percent")?
+    {
+        return Err("comparability configuration does not match config".to_owned());
+    }
+    if config_digest != config_digest_for(config)? {
+        return Err("comparability.config_digest does not match config".to_owned());
+    }
+    let observed_host = environment
+        .get("kernel")
+        .and_then(Value::as_str)
+        .ok_or("environment.kernel is not a string")?;
+    if !controlled_host_identity.contains(observed_host) {
+        return Err("comparability host identity does not identify environment.kernel".to_owned());
+    }
+    if target == "terrabase" && boundary_class == "unknown" {
+        return Err("TerraBase boundary class is unknown".to_owned());
+    }
+    Ok(Comparability {
+        run_group,
+        config_digest,
+        controlled_host_identity,
+        time_window,
+        window_start_unix_seconds: window_start,
+        window_end_unix_seconds: window_end,
+        workload_version,
+        boundary_class,
+        concurrency,
+        samples,
+        warmup_operations: warmup_operations as u64,
+        noise_percent,
+        seed_policy,
+        document_policy,
+        operation_policy,
+        write_id_policy,
+        durability_semantics,
+        server_configuration_provenance,
+    })
+}
+
+fn positive_config(config: &serde_json::Map<String, Value>, name: &str) -> Result<u64, String> {
+    let value = number(config.get(name), &format!("config.{name}"))?;
+    if value <= 0.0 || value.fract() != 0.0 {
+        return Err(format!("config.{name} is not positive"));
+    }
+    Ok(value as u64)
+}
+
+fn config_digest_for(config: &serde_json::Map<String, Value>) -> Result<String, String> {
+    let lane = LaneConfig {
+        seed_documents: positive_config(config, "seed_documents")? as usize,
+        operations: positive_config(config, "operations")? as usize,
+        samples: positive_config(config, "samples")? as usize,
+        concurrency: positive_config(config, "concurrency")? as usize,
+        warmup_operations: {
+            let value = number(config.get("warmup_operations"), "config.warmup_operations")?;
+            if value < 0.0 || value.fract() != 0.0 { return Err("invalid warmup".to_owned()); }
+            value as usize
+        },
+        noise_percent: number(config.get("noise_percent"), "config.noise_percent")?,
+    };
+    Ok(metrics::config_digest(&lane))
+}
+
+fn differing_field(left: &Comparability, right: &Comparability) -> Option<&'static str> {
+    macro_rules! compare {
+        ($($field:ident),+ $(,)?) => { $(if left.$field != right.$field { return Some(stringify!($field)); })+ };
+    }
+    compare!(
+        run_group,
+        config_digest,
+        controlled_host_identity,
+        time_window,
+        workload_version,
+        boundary_class,
+        concurrency,
+        samples,
+        warmup_operations,
+        noise_percent,
+        seed_policy,
+        document_policy,
+        operation_policy,
+        write_id_policy,
+        durability_semantics,
+        server_configuration_provenance,
+    );
+    // The measurement windows may be different moments inside one controlled
+    // run group; validity is bounded above, while exact equality would make
+    // sequentially driven sides impossible to admit.
+    None
 }
 
 fn number(value: Option<&Value>, name: &str) -> Result<f64, String> {

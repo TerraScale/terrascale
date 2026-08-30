@@ -170,6 +170,11 @@ impl KeyScope {
     }
 
     /// Creates a scope bound to the complete durable owner tuple.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncryptionError::InvalidKeyMetadata`] for an invalid
+    /// environment identity.
     pub fn new_with_project(
         environment: impl Into<String>,
         tenant: TenantUlid,

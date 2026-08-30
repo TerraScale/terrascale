@@ -865,6 +865,10 @@ mod tests {
     }
 
     fn complete_document(config: &ServedRunnerConfig, endpoint: &str) -> String {
+        let operations = u64::try_from(config.lane.operations).expect("test operation count fits");
+        let throughput = f64::from(
+            u32::try_from(config.lane.operations).expect("test operation count fits exactly"),
+        );
         let side = SideFacts {
             target: "terrabase".to_owned(),
             workload: config.workload.as_str().to_owned(),
@@ -874,9 +878,9 @@ mod tests {
             client_transport: config.transport_identity.clone(),
             samples: vec![
                 SampleFacts {
-                    operations: config.lane.operations as u64,
+                    operations,
                     wall_seconds: 1.0,
-                    throughput_ops_per_s: config.lane.operations as f64,
+                    throughput_ops_per_s: throughput,
                     p50_us: 1.0,
                     p95_us: 2.0,
                     p99_us: 3.0,

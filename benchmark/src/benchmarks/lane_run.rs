@@ -75,7 +75,7 @@ impl SampleFacts {
     /// Reduces one window the way `bench/src/metrics.rs::sample_of` does:
     /// nearest-rank percentiles over exact per-operation latencies.
     pub(crate) fn of(operations: u64, wall_seconds: f64, mut latencies_us: Vec<f64>) -> Self {
-        latencies_us.sort_by(|left, right| left.total_cmp(right));
+        latencies_us.sort_by(f64::total_cmp);
         let percentile = |fraction: f64| -> f64 {
             if latencies_us.is_empty() {
                 return 0.0;
@@ -1073,7 +1073,10 @@ mod tests {
         assert_eq!(read.target, side.target);
         assert_eq!(read.workload, side.workload);
         assert_eq!(read.samples.len(), side.samples.len());
-        assert_eq!(read.samples[0].throughput_ops_per_s, side.samples[0].throughput_ops_per_s);
+        assert_eq!(
+            read.samples[0].throughput_ops_per_s.to_bits(),
+            side.samples[0].throughput_ops_per_s.to_bits()
+        );
         assert_eq!(read.observed_identity, side.observed_identity);
     }
 
@@ -1111,7 +1114,7 @@ mod tests {
                 .map(|index| SampleFacts {
                     operations: 10,
                     wall_seconds: 0.01,
-                    throughput_ops_per_s: 1_000.0 + index as f64,
+                    throughput_ops_per_s: 1_000.0 + f64::from(index),
                     p50_us: 5.0,
                     p95_us: 8.0,
                     p99_us: 9.0,
@@ -1357,12 +1360,10 @@ mod tests {
                 &side,
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map(|since| since.as_secs())
-                    .unwrap_or(0),
+                    .map_or(0, |since| since.as_secs()),
                 &std::fs::read_to_string("/proc/sys/kernel/osrelease")
-                    .map(|text| format!("Linux {}", text.trim()))
-                    .unwrap_or_else(|_| "unknown".to_owned()),
-                std::thread::available_parallelism().map(|count| count.get()).unwrap_or(0),
+                    .map_or_else(|_| "unknown".to_owned(), |text| format!("Linux {}", text.trim())),
+                std::thread::available_parallelism().map_or(0, std::num::NonZero::get),
                 &limits,
             );
             let facts_path = references_dir.join(format!("terrabase-{name}.json"));

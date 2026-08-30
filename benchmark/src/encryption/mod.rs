@@ -242,6 +242,11 @@ impl EncryptionContext {
 
     /// Builds a context bound to a project as well as tenant and database.
     /// The older [`Self::new`] form remains readable for compatibility data.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncryptionError::InvalidContext`] when any context identity
+    /// or format value is invalid.
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_project(
         environment: impl Into<String>,
@@ -516,7 +521,7 @@ impl ArtifactCipher {
         let scope = metadata.scope();
         if context.environment() != scope.environment()
             || context.tenant() != scope.tenant().to_text()
-            || context.project() != scope.project().map(|project| project.to_text()).as_deref()
+            || context.project() != scope.project().map(ProjectUlid::to_text).as_deref()
             || context.database() != scope.database().to_text()
             || context.key_version() != metadata.version().to_text()
         {

@@ -933,7 +933,7 @@ impl UsageAdmissionContext {
             project_id: self.project_id.clone(),
             database_id: self.database_id.clone(),
             partition_id: self.partition_id.clone(),
-            region_id: self.origin_region.clone(),
+            region_id: self.origin_region,
         };
         UsageFact::try_new(
             definition,
@@ -1116,7 +1116,7 @@ impl UsageRecordRequest {
             project_id: self.project_id.clone(),
             database_id: self.database_id.clone(),
             partition_id: self.partition_id.clone(),
-            region_id: self.origin_region.clone(),
+            region_id: self.origin_region,
         };
         let identity = match self.meter {
             UsageRecordMeter::AdmittedRequestUnits => {

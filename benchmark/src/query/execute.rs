@@ -642,10 +642,10 @@ fn retain_candidate(
     };
     *retained_bytes = (*retained_bytes).saturating_add(document_bytes(document));
     retained.insert(position, document.clone());
-    if retained.len() > capacity {
-        if let Some(removed) = retained.pop() {
-            *retained_bytes = (*retained_bytes).saturating_sub(document_bytes(&removed));
-        }
+    if retained.len() > capacity
+        && let Some(removed) = retained.pop()
+    {
+        *retained_bytes = (*retained_bytes).saturating_sub(document_bytes(&removed));
     }
     if *retained_bytes > MAX_RETAINED_CANDIDATE_BYTES {
         return Err(QueryError::CandidateBoundExceeded);

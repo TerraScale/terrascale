@@ -17,7 +17,7 @@ use crate::identity::{
 mod policy_store;
 mod signed;
 
-pub use policy_store::{AuthorizationPolicyStore, PolicyStoreSnapshot};
+pub use policy_store::{AuthorizationPolicyStore, PolicyStoreKey, PolicyStoreSnapshot};
 pub use signed::{
     AuthorizationCryptoMode, PrincipalContextEnvelope, PrincipalContextKey, PrincipalContextKeySet,
     PrincipalContextPayload, PrincipalContextReplayGuard, PrincipalContextSigner,

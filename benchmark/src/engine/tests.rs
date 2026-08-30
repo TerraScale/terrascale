@@ -222,12 +222,12 @@ fn synced_commit_reopens_with_the_published_document() {
     assert_eq!(receipt.durability(), LocalDurability::Synced);
     engine.shutdown().expect("shuts down");
 
-    let reopened = reopen_engine(&dir);
+    let reopened = reopen_engine(dir);
     let found = read_document(&reopened, "tenant-a", "doc-1").expect("survives the reopen");
     assert_eq!(found.value(), &DocumentValue::String("ada".to_owned()));
     assert_eq!(found.metadata().version(), 1);
     reopened.shutdown().expect("shuts down");
-    std::fs::remove_dir_all(&dir).ok();
+    std::fs::remove_dir_all(dir).ok();
 }
 
 #[test]
