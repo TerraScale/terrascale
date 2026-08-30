@@ -886,6 +886,67 @@ mod tests {
         lane.remove();
     }
 
+    /// Sub-call attribution for one point read, so the serial floor can be
+    /// attributed to its exact seam.
+    #[test]
+    fn probe_read_subcall_costs() {
+        use std::time::Instant;
+        let lane = TerraBaseLane::open("subcall");
+        lane.seed(200);
+        let engine = lane.engine();
+        let scope = lane.scope();
+
+        let mut snapshot_ns = 0_u128;
+        let mut begin_ns = 0_u128;
+        let mut read_ns = 0_u128;
+        let mut drop_ns = 0_u128;
+        for index in 0..300_u64 {
+            let started = Instant::now();
+            let snapshot = engine.read_snapshot(scope).expect("snapshot");
+            snapshot_ns += started.elapsed().as_nanos();
+
+            let started = Instant::now();
+            let operation = OperationIdProbe::new(index);
+            let transaction = engine.begin(scope, snapshot, operation).expect("begins");
+            begin_ns += started.elapsed().as_nanos();
+
+            let started = Instant::now();
+            let document = transaction.read(&DocumentIdProbe::of(index)).expect("reads");
+            read_ns += started.elapsed().as_nanos();
+            assert!(document.is_some());
+
+            let started = Instant::now();
+            drop(transaction);
+            drop_ns += started.elapsed().as_nanos();
+        }
+        println!(
+            "probe read subcalls over 300 ops: snapshot {:.1} us/op, begin {:.1} us/op, read {:.1} us/op, drop {:.1} us/op",
+            snapshot_ns as f64 / 300.0 / 1_000.0,
+            begin_ns as f64 / 300.0 / 1_000.0,
+            read_ns as f64 / 300.0 / 1_000.0,
+            drop_ns as f64 / 300.0 / 1_000.0,
+        );
+        lane.remove();
+    }
+
+    /// The probe's private operation-id helper.
+    struct OperationIdProbe;
+
+    impl OperationIdProbe {
+        fn new(index: u64) -> crate::types::OperationId {
+            crate::types::OperationId::try_new(&format!("probe-read-{index}")).expect("valid identifier")
+        }
+    }
+
+    /// The probe's private document-id helper.
+    struct DocumentIdProbe;
+
+    impl DocumentIdProbe {
+        fn of(index: u64) -> crate::types::DocumentId {
+            crate::types::DocumentId::try_new(&format!("seed-{}", index % 200)).expect("valid identifier")
+        }
+    }
+
     fn config_as_tuple(config: LaneConfig) -> String {
         format!(
             "seed {} / ops {} / samples {} / concurrency {} / warmup {}",

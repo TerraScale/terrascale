@@ -108,6 +108,15 @@ func (c *Client) Identity() Identity {
 	return c.identity
 }
 
+// metadataFromOutgoing reads the caller-set outgoing metadata the
+// identity join must preserve.
+func metadataFromOutgoing(ctx context.Context) metadata.MD {
+	if existing, ok := metadata.FromOutgoingContext(ctx); ok {
+		return existing
+	}
+	return metadata.MD{}
+}
+
 func identityInterceptors(identity Identity) []grpc.DialOption {
 	outgoing := metadata.Pairs(PrincipalMetadata, identity.Principal, TenantMetadata, identity.Tenant)
 	unary := func(
@@ -119,7 +128,9 @@ func identityInterceptors(identity Identity) []grpc.DialOption {
 		invoker grpc.UnaryInvoker,
 		opts ...grpc.CallOption,
 	) error {
-		return invoker(metadata.NewOutgoingContext(ctx, outgoing), method, req, reply, cc, opts...)
+		// Join, not replace: per-call metadata the caller already
+		// appended (an idempotency key) must survive the identity.
+		return invoker(metadata.NewOutgoingContext(ctx, metadata.Join(outgoing, metadataFromOutgoing(ctx))), method, req, reply, cc, opts...)
 	}
 	stream := func(
 		ctx context.Context,
@@ -129,7 +140,7 @@ func identityInterceptors(identity Identity) []grpc.DialOption {
 		streamer grpc.Streamer,
 		opts ...grpc.CallOption,
 	) (grpc.ClientStream, error) {
-		return streamer(metadata.NewOutgoingContext(ctx, outgoing), desc, cc, method, opts...)
+		return streamer(metadata.NewOutgoingContext(ctx, metadata.Join(outgoing, metadataFromOutgoing(ctx))), desc, cc, method, opts...)
 	}
 	return []grpc.DialOption{
 		grpc.WithChainUnaryInterceptor(unary),
