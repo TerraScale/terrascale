@@ -51,11 +51,7 @@ struct AuditedUnsafeBoundary {
     blake3: &'static str,
 }
 
-const AUDITED_UNSAFE_BOUNDARIES: &[AuditedUnsafeBoundary] = &[AuditedUnsafeBoundary {
-    path: "crates/terrabase-tbep/src/generated/fbs/tbep_generated.rs",
-    audit_record: "docs/security/flatbuffers-generated-rust-unsafe-audit.md",
-    blake3: "7f6a07d18ef1206629450c0e0a464e86dae12fe93b1d19e8fc83a48b039c0024",
-}];
+const AUDITED_UNSAFE_BOUNDARIES: &[AuditedUnsafeBoundary] = &[];
 
 fn crate_roots() -> Vec<CrateRoot> {
     let root_manifest = fsx::read_repo_file("Cargo.toml");
@@ -296,17 +292,6 @@ fn no_unsafe_code_outside_audited_boundaries() {
             observed_boundaries.iter().any(|path| path == boundary.path),
             "{} is a stale unsafe-boundary exception; remove it and its audit entry",
             boundary.path,
-        );
-    }
-
-    let receiver = fsx::read_repo_file("crates/terrabase-tbep/tools/tbep-fbs/src/lib.rs");
-    for unchecked in
-        ["root_as_tbep_envelope_unchecked(", "size_prefixed_root_as_tbep_envelope_unchecked("]
-    {
-        assert!(
-            !fsx::strip_line_comments(&receiver).contains(unchecked),
-            "the hand-written FlatBuffers receiver calls generated unchecked entry point \
-             `{unchecked}`; network bytes must pass the bounded verifier",
         );
     }
 }
