@@ -703,6 +703,35 @@ mod tests {
     }
 
     #[test]
+    fn package_and_resolution_order_cannot_change_output() {
+        let original = metadata("MIT OR Apache-2.0");
+        let mut reordered = original.clone();
+        reordered["packages"].as_array_mut().expect("array").reverse();
+        reordered["resolve"]["nodes"].as_array_mut().expect("array").reverse();
+        let first = encode_limited(
+            &build_document(&original, "root", "target", "artifact", &"a".repeat(64))
+                .expect("document"),
+        )
+        .expect("JSON");
+        let second = encode_limited(
+            &build_document(&reordered, "root", "target", "artifact", &"a".repeat(64))
+                .expect("document"),
+        )
+        .expect("JSON");
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn malformed_resolution_graph_is_rejected() {
+        let mut missing = metadata("MIT");
+        missing["resolve"].as_object_mut().expect("object").remove("nodes");
+        assert!(build_document(&missing, "root", "target", "artifact", &"a".repeat(64)).is_err());
+        let mut unknown = metadata("MIT");
+        unknown["resolve"]["nodes"][0]["deps"][0]["pkg"] = json!("missing");
+        assert!(build_document(&unknown, "root", "target", "artifact", &"a".repeat(64)).is_err());
+    }
+
+    #[test]
     fn malformed_license_and_missing_license_are_rejected() {
         for license in ["not an SPDX expression", "DefinitelyNotSPDX"] {
             assert!(
@@ -732,6 +761,8 @@ mod tests {
         assert!(validate_json(&oversized, 0, "metadata").is_err());
         let output = vec![b'x'; MAX_OUTPUT_BYTES + 1];
         assert!(output.len() > MAX_OUTPUT_BYTES);
+        let mut writer = LimitedWriter { bytes: Vec::new() };
+        assert!(writer.write_all(&output).is_err());
         let mut huge = metadata("MIT");
         huge["packages"].as_array_mut().expect("array").extend((0..MAX_PACKAGES + 1).map(|index| json!({"id":format!("id{index}"),"name":format!("dep{index}"),"version":"1.0.0","license":"MIT"})));
         assert!(build_document(&huge, "root", "target", "artifact", &"a".repeat(64)).is_err());
