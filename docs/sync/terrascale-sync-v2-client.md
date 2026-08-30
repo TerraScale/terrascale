@@ -150,10 +150,12 @@ construction with an actionable error rather than a silent 401.
   mebibytes, the host-surface counterpart of the frame layer's decode
   bound); a body past it is the typed host failure, never an unbounded
   parse.
-- Delivery payloads (`loro-delta/1`, `loro-snapshot/1`) are opaque at
-  this layer by the wrapped-Loro decision: the codec never re-encodes
-  them, and consumers hand the bytes to their document layer. The
-  client-side subset is the single-writer receive path
+- Delivery payloads are opaque at this layer: the current codec accepts
+  `terrabase-native/1` deltas and `terrabase-snapshot/1` snapshots, never
+  re-encodes them, and hands the bytes to the document layer. The earlier
+  packet called these payloads `loro-delta/1` and `loro-snapshot/1`; that
+  naming is retained as migration history, not as the current codec identity.
+  The client-side subset is the single-writer receive path
   (PD-2026-08-26-12 D1/D3).
 
 ## Failure surfaces
@@ -413,3 +415,20 @@ tests take toward the engine.
   only, and a consumer on another framework fails at package
   resolution with the standard NuGet error — the explicit, non-divergent
   failure the ticket row asks for.
+
+## Result-view engine status
+
+The repository now also contains `TerraScaleSyncV2ViewEngine` and
+`TerraScaleSyncV2ViewModels`, which implement the transport-independent result
+view state machine described by the accepted replacement direction. The engine
+validates bounded snapshots, applies result deltas atomically, tracks opaque
+view checkpoints and authorization generations, detects divergence, and keeps
+reversible optimistic presentation separate from authoritative state. Its
+tests cover these behaviors.
+
+The engine owns no route, framing, authentication, or transport binding. It is
+not a replacement for the SE-10 checkpoint session, and it does not change the
+SE-10 wire or corpus contract. A public binding still requires the owning
+contract, generated schema, and shared Rust/TypeScript/.NET semantic corpus.
+Until those artifacts and live authorization/recovery receipts exist, the
+workspace goal continues to treat v2 as migration evidence.

@@ -1,39 +1,60 @@
 # TerraScale.DotNet
 
-Official .NET 10 SDK for TerraScale's versioned public APIs.
+`TerraScale.DotNet` is the official .NET 10 client for TerraScale's named,
+versioned public API operations. `TerraScale.EntityFrameworkCore` is a
+separate source integration package built on the client.
 
-The workspace `../GOAL.md` defines target architecture. An accepted target is
-not a released SDK capability.
+The checkout is a development candidate. The package projects currently
+declare version `0.1.0`; this README does not claim that version is ready for
+customer production. See [GOAL.md](GOAL.md) for the qualification plan and
+known blockers.
 
-## Service boundary
+## Scope
 
-The SDK uses public TerraScale HTTPS and reactive contracts:
+The repository contains:
 
-- Dashboard owns Better Auth, Organizations, Projects, Users, Payments, HTTP
-  MCP, and those public product routes.
-- The independent C#/.NET 10 `TerraScale.Database` service owns database,
-  query, placement, backup, usage, and reactive routes.
-- TerraBaseV2 is private. The SDK never speaks TBEP, connects to a Member,
-  consumes native replication data, or uses NATS.
+- the `TerraScaleClient` HTTP client and named clients for project, database,
+  repository, document, query, schema, change-feed, queue, billing, usage,
+  access, credential, notification, administration, backup, and restore
+  operations;
+- `TerraScaleTypedRepository<TEntity>` for generic typed document operations;
+- the `TerraScale.EntityFrameworkCore` source integration;
+- the current WebSocket `TerraScaleSyncClient` and its resumable live-query
+  session; and
+- the `terrascale.sync.v2` codec, checkpoint session, and transport-independent
+  result-view engine.
 
-One customer API origin may route typed paths to both services without merging
-their ownership.
+The customer-facing client calls only versioned public HTTP, WebSocket, and SSE
+contracts. It does not open engine sessions, use a private wire protocol,
+connect to storage members, or use a broker as a data path. The separate v2
+checkpoint exercise is explicitly documented as not customer-ready. A public
+contract must exist before a new named operation or transport binding is added
+here.
 
-## Packages
+## Support and packages
 
-~~~bash
+The projects target `net10.0`. The repository pins SDK `10.0.400` in
+`global.json`, uses nullable reference types and warnings as errors, and
+generates XML documentation for both package projects.
+
+Install the packages from the feed selected by your release process:
+
+```bash
 dotnet add package TerraScale.DotNet
 dotnet add package TerraScale.EntityFrameworkCore
-~~~
+```
 
-`TerraScale.EntityFrameworkCore` is a separate package that uses the public
-SDK. It does not reference TerraBase or server projects.
+The package metadata currently declares `0.1.0`. Check the admitted release
+manifest for the version and digest that a production consumer may install.
 
-## Configure
+## Create a client
 
-Use a Project API key:
+`HttpClient` remains caller-owned. Select one authentication mode. A project
+API key requires `ProjectId`; a static bearer token and a
+`BearerTokenProvider` are mutually exclusive. The provider is called before
+each request and retry, so token acquisition and refresh stay in the caller.
 
-~~~csharp
+```csharp
 using TerraScale.DotNet;
 
 var client = new TerraScaleClient(
@@ -42,153 +63,185 @@ var client = new TerraScaleClient(
     {
         BaseAddress = new Uri("https://api.terrascale.tech"),
         ProjectId = "01J00000000000000000000000",
-        ApiKey = "<project-api-key>"
+        ApiKey = Environment.GetEnvironmentVariable("TERRASCALE_API_KEY")
     });
-~~~
 
-Or provide an OAuth bearer token:
+var databases = await client.Databases.ListAsync(cancellationToken);
+```
 
-~~~csharp
+For an OAuth or machine-to-machine token, replace `ApiKey` and `ProjectId`
+with `BearerToken` or `BearerTokenProvider`:
+
+```csharp
 var client = new TerraScaleClient(
     new HttpClient(),
     new TerraScaleClientOptions
     {
         BaseAddress = new Uri("https://api.terrascale.tech"),
-        BearerTokenProvider = cancellationToken =>
-            tokenCache.GetAccessTokenAsync(cancellationToken)
+        BearerTokenProvider = tokenCache.GetAccessTokenAsync
     });
-~~~
+```
 
-The current default origin is `https://api.terrascale.tech`. Final
-single-origin edge routing awaits owner confirmation.
+`TerraScaleClientOptions` also supports a preferred region, failover or strict
+regional affinity, optional automatic session-consistency tokens, bounded
+transient retries, an idempotency-key factory, and a request-ID factory. Strict
+regional affinity requires `PreferredRegion`. The client validates conflicting
+authentication, missing project/database context, retry limits, and regional
+configuration at construction.
 
-The SDK never logs credentials or owns token persistence. Token acquisition and
-refresh remain in the calling application.
+## Named API clients
 
-## Idempotent mutations
+The root client exposes these named properties. Their exact request and model
+contracts are the public source in `src/TerraScale.DotNet` and the focused
+tests in `tests/TerraScale.DotNet.Tests`.
 
-Configure `TerraScaleClientOptions.IdempotencyKeyFactory` or pass an
-operation-specific key. One logical mutation reuses the same key for every
-retry.
+| Property | Current scope |
+| --- | --- |
+| `Databases`, `ProjectDatabases`, `Collections` | Logical database, project-database, and collection reads and lifecycle |
+| `Repositories`, `Documents`, `TypedRepository<TEntity>` | Repository lifecycle plus untyped and typed document CRUD, patch, batch, list, and query |
+| `Tql`, `Schemas`, `Changes` | TQL queries, schema configuration/validation, and repository/TQL change streams |
+| `Projects`, `Access`, `Regions`, `Environments` | Project, team-member, region-catalog, and database-environment operations |
+| `SavedQueries`, `SavedQueriesV2`, `SavedQueriesV3` | Versioned saved-query operations and snapshot pagination |
+| `Queues` | Project queue/topic lifecycle, publish, receive, acknowledgement, lock, purge, and dead-letter operations |
+| `ProjectUsage`, `Billing` | Project/organization usage, invoices, pricing, access, checkout, and portal operations |
+| `ApiKeys`, `M2MApplications` | Project API-key and machine-to-machine application lifecycle |
+| `Notifications`, `Administration` | User notifications and role-protected platform administration |
+| `Backups` | Backup policy, plan/execute, jobs, restore points, and restores |
+| `Sync` | Explicit resumable WebSocket live-query sessions |
 
-Keys are nonblank and at most 128 characters. Reusing a key with different
-input is a typed conflict. Replay retention and response headers follow the
-owning public contract.
+`ForDatabase(databaseId)` and `ForEnvironment(databaseId, environmentId)`
+return a new client context over the same caller-owned transport. They set
+defaults for repository operations; they do not create a database or change
+server-side authorization.
 
-Unsafe mutations do not retry. Validation, authentication, authorization, and
-deterministic conflict failures are not automatic retry candidates.
+## Typed repositories
 
-## Region and durability model
+The typed facade materializes generic entities using its configured JSON
+options. The untyped methods return `JsonElement`-backed models. Typed Sync
+live queries take a caller-supplied `JsonTypeInfo<TEntity>`; use a
+source-generated context for those queries.
 
-A database selects one through twenty active Regions, initially GRU, SFO, and
-FRA. Every selected Region stores every logical Partition and accepts writes.
+```csharp
+var orders = client.Repository<Order>("orders");
+var created = await orders.CreateAsync(
+    new Order("ORD-100", "new"),
+    cancellationToken);
 
-- `RegionalDurable` is the no-WAN default and requires both local RF=2
-  Members.
-- `GlobalDurable` pays WAN latency and requires every selected active Region.
-- Backup is an independent optional read-only copy.
+var page = await orders.QueryAsync(
+    TerraScaleQuery.From("orders").OrderBy("number").Take(20),
+    cancellationToken);
 
-A preferred Region is a failover-capable hint. Strict affinity fails instead
-of silently routing elsewhere.
+public sealed record Order(string Number, string Status);
+```
 
-Automatic session consistency retains opaque causal tokens for eligible reads.
-The SDK does not expose replica identities, DVVs, physical Members, or raw
-Partition state.
+Mutating methods accept an operation-specific idempotency key where the public
+operation requires one. Automatic retries are limited to documented transient
+responses and never apply to validation, authentication, authorization, or
+deterministic conflict failures. If a mutation has a partial outcome, inspect
+`TerraScaleApiException` and the returned operation metadata before retrying.
 
-## Honest sync status
+## Entity Framework Core integration
 
-This repository still contains a Loro-era `terrascale.sync.v2` implementation
-and corpus. It uses collection sessions, host-local context, opaque Loro
-deltas, and server-ack-only presentation. It is historical implementation
-evidence and does not implement the accepted replacement.
+`TerraScale.EntityFrameworkCore` is not a database provider. It adds source
+metadata to an ordinary `DbContext` and sends entity operations through the
+public SDK. It supports asynchronous, cancellation-aware add, upsert, get,
+find, list, query, delete, and source save operations.
 
-The replacement .NET reactive client will:
+```csharp
+services.AddTerraScaleEntityFrameworkCore<OrdersContext>(options =>
+{
+    options.BaseAddress = new Uri("https://api.terrascale.tech");
+    options.ProjectId = Environment.GetEnvironmentVariable("TERRASCALE_PROJECT_ID");
+    options.ApiKey = Environment.GetEnvironmentVariable("TERRASCALE_API_KEY");
+});
 
-- subscribe to bounded typed TQL queries;
-- receive authorized result snapshots, insert, update, patch, remove, move, or
-  reset;
-- use opaque view-scoped checkpoints;
-- apply reversible optimistic presentation for connected online writes;
-- reject durable writes while disconnected;
-- reauthorize on grant refresh and reconnect;
-- remove results after permission loss;
-- recover across Region movement through sparse causal tokens;
-- bound every queue, buffer, result, and reconnect path; and
-- pass one semantic corpus shared with Rust and TypeScript.
+services.AddDbContext<OrdersContext>(options =>
+    options.UseTerraScaleSource(source =>
+        source.RepositoryNameResolver = entityType => entityType.ClrType.Name));
+```
 
-No old Loro byte vector qualifies the replacement. Until the generated schema
-and semantic corpus pass, current v2 conformance remains unqualified.
+The EF Core integration remains in `src/TerraScale.EntityFrameworkCore`,
+references only the SDK and EF Core, and has a separate real-HTTP test project.
 
-## Public API coverage
+## Sync status
 
-The SDK exposes only named operations present in the reviewed public contract.
-Current generated descriptors and tests, not this README, are the authority for
-the exact released operation list.
+There are three distinct sync-related surfaces in the checkout:
 
-Public families may include:
+1. `TerraScaleSyncClient` opens the current WebSocket session, registers
+   bounded TQL live queries, executes idempotent mutations, applies optional
+   reversible optimistic presentation, reconnects with bounded backoff, and
+   exposes non-sensitive connection diagnostics. `StartAsync` begins the
+   session; disposing the session releases the network resources.
+2. `TerraScaleSyncV2Client` and `TerraScaleSyncV2Session` implement the
+   checked-in v2 frame/session exercise over HTTP and SSE. The session supports
+   setup/resume, checkpoint-ordered delta pulls, snapshot resync, checkpoint
+   acknowledgement, content-free trigger handling, bounded stream reconnects,
+   and server-ack-only mutations. Its options require a backend context and
+   absolute transport base address, so this surface is not a customer-ready
+   public contract merely because it is public in the assembly.
+3. `TerraScaleSyncV2ViewEngine` and `TerraScaleSyncV2ViewModels` implement the
+   result-view state machine without transport or routes. They cover bounded
+   snapshots, atomic result deltas, opaque checkpoints, authorization generation
+   changes, divergence, and reversible optimistic presentation. A transport
+   binding for this engine is still a separate work item.
 
-- identity and session operations;
-- Organizations, Projects, membership, and credentials;
-- database lifecycle, placement, environment, repository, document, TQL, and
-  schema operations;
-- backup, restore, PITR, and export;
-- usage, billing, and notifications;
-- reactive subscriptions; and
-- role-protected administration.
+The workspace goal treats the existing v2 session and corpus as migration
+evidence. The accepted replacement requires authorized bounded TQL result
+views, view-scoped checkpoints, permission-driven removals, Region movement,
+backpressure, and one semantic corpus shared with the other official clients.
+Do not infer replacement readiness from the existing codec or from passing
+loopback tests. See [the sync implementation record](docs/sync/terrascale-sync-v2-client.md).
 
-Dashboard owns identity and product route implementations.
-`TerraScale.Database` owns database and reactive implementations. The SDK
-does not call either runtime's private routes.
+## Errors and resource rules
 
-Payment checkout, subscriptions, portal, and supported lifecycle follow the
-official Better Auth Stripe plugin. Polar and provider-neutral duplicate
-payment state are retired targets.
+`TerraScaleApiException` preserves the safe HTTP status, public error code,
+request ID, retry guidance, and bounded response details. It does not expose
+credentials, private endpoints, stack traces, or storage paths. All public
+operations are asynchronous and cancellation-aware. The SDK never disposes a
+caller-owned `HttpClient`, blocks on async work, or starts hidden background
+work outside an owned sync session.
 
-## Database and environment safety
+## Verification
 
-Customers create native databases through public Database API operations. A
-small database begins with one logical Partition. The API does not ask
-customers to choose physical shard count or Members.
+Run the repository checks with the pinned .NET SDK:
 
-Environments, when enabled, are native engine-enforced scopes. They are never
-implemented through caller-controlled collection-name prefixes.
+```bash
+dotnet build TerraScale.DotNet.slnx --configuration Release
+dotnet test TerraScale.DotNet.slnx --configuration Release --no-build --no-progress
+```
 
-The SDK sends public ULID identities and placement choices. It never constructs
-physical storage names.
+The default test run covers serialization, route construction, validation,
+retry behavior, API error handling, sync state and transport fixtures, v2
+golden vectors, workflow policy checks, and package-consumer fixtures. Live
+customer/API tests are environment-gated. Missing configuration causes an
+explicit skip, not a substitute mock or fake service. The expected variables
+and opt-in lifecycle flags are listed in
+`tests/TerraScale.DotNet.Tests/TerraScaleApiE2E.cs`.
 
-## Errors
-
-`TerraScaleApiException` preserves the safe public status, error code,
-request identity, retry guidance, and structured details. It does not expose
-raw remote bodies, stack traces, credentials, private endpoints, or storage
-paths.
-
-Partial mutation outcomes preserve the idempotency identity and enough
-documented status to resolve a retry without guessing whether durable work
-occurred.
-
-## Development
-
-~~~bash
-dotnet build -m
-dotnet run --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj --configuration Release
-dotnet run --project tests/TerraScale.EntityFrameworkCore.Tests/TerraScale.EntityFrameworkCore.Tests.csproj --configuration Release
-~~~
-
-Use the exact project paths present in the checkout if they differ from these
-examples.
-
-Live tests target fixed DevHost public routes and skip when required endpoints
-or credentials are absent. They do not substitute mocks or direct server
-references. The new Database API needs a fixed DevHost route before its live
-tests can become current.
+The v2 corpus is copied into test output from
+`tests/TerraScale.DotNet.Tests/vectors/terrascale.sync.v2/`. Its manifest pins
+nine vector files, their sizes, and SHA-256 digests before any conformance step
+runs.
 
 ## Release qualification
 
-One immutable package archive is built, inspected, installed into clean .NET
-consumers, and bound to its source revision and digest. Compilation does not
-replace live customer, tenant-isolation, contract, reactive conformance, or
-publication evidence.
+The package workflow has two separate paths:
 
-The Orchestrator-owned `develop` to `main` promotion path publishes only the
-exact admitted package.
+- pull requests run an untrusted, secretless build and test validation;
+- the protected delivery workflow consumes an immutable package handoff,
+  verifies its SHA-256 digest and source revision/tree, inspects the archive,
+  installs it into a clean consumer, and emits a verification receipt.
+
+`scripts/verify-package-candidate.sh` rejects dirty no-argument packs,
+symlinked or malformed packages, unexpected archive content, metadata that
+does not match the source revision, and handoffs that do not match
+`origin/develop`. This proves package provenance and archive safety. It does
+not prove live API compatibility, tenant isolation, reactive cross-client
+conformance, publication, or the production gates in [GOAL.md](GOAL.md).
+
+The regression wrapper
+`tests/TerraScale.DotNet.Tests/verify-package-candidate-tests.sh` currently
+stops before its fixtures because it tries to commit an unchanged copy of the
+already tracked verifier. Treat that wrapper as a release-harness gap until
+the fixture creates a real baseline change; the direct verifier and manual
+immutable-package check remain usable.
