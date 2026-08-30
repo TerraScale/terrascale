@@ -61,6 +61,14 @@ pub(crate) trait StoragePort: Send {
     /// Runs the publication order for one validated commit intent.
     fn commit(&mut self, intent: CommitIntent) -> CommitResult;
 
+    /// Runs the publication order for a batch of validated commit intents
+    /// under one shared durable append where the implementation supports
+    /// it (group commit). The default commits each intent alone, which is
+    /// exactly the serial behavior.
+    fn commit_batch(&mut self, intents: Vec<CommitIntent>) -> Vec<CommitResult> {
+        intents.into_iter().map(|intent| self.commit(intent)).collect()
+    }
+
     /// Returns the durable resolution of one operation identity, if recorded.
     fn resolve_operation(
         &self,

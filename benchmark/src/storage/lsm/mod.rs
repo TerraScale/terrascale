@@ -112,6 +112,29 @@ struct LedgerEntry {
     rejection: Option<CommitRejection>,
 }
 
+/// One intent's fully prepared commit: everything [`LsmStorage::
+/// commit_batch`] needs to publish it after the batch's shared durable
+/// append. Built by [`LsmStorage::prepare_commit`] without touching
+/// durable state.
+struct PreparedCommit {
+    /// The intent's position in the batch's results vector, set by the
+    /// batch driver.
+    index: usize,
+    /// Every entry of the commit, applied to memory on publication.
+    entries: Vec<Entry>,
+    /// The entries this intent appends durably (document bytes excluded
+    /// for `Buffered`, the history record excluded under the journal-append
+    /// fault).
+    durable_batch: Vec<Entry>,
+    /// The operation-resolution record.
+    ledger_entry: LedgerEntry,
+    /// The post-sync flip record that upgrades a `Synced` resolution from
+    /// `Written`.
+    flip: Entry,
+    /// Whether the intent requested `Synced` durability.
+    synced: bool,
+}
+
 /// Why an LSM location could not be opened.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LsmOpenError {
@@ -669,26 +692,176 @@ impl LsmStorage {
     }
 
     /// Encodes, appends, and applies one commit batch.
+    pub(crate) fn commit_intent(&mut self, intent: &CommitIntent) -> CommitResult {
+        self.commit_batch(vec![intent.clone()])
+            .pop()
+            .expect("a one-intent batch returns one result")
+    }
+
+    /// Commits a batch of intents under one durable append, one WAL sync,
+    /// and one frontier advance: the group-commit shape.
+    ///
+    /// The batch is exactly equivalent to committing each intent alone in
+    /// order — every step below runs per intent in sequence order except
+    /// the file syncs, which run once for the whole batch. A waiter's
+    /// acknowledgement still implies its records are durable (the batch's
+    /// single sync covers them), and a crash mid-batch leaves the same
+    /// states a crash between serial commits would.
+    #[allow(clippy::too_many_lines)]
+    pub(crate) fn commit_batch(&mut self, intents: Vec<CommitIntent>) -> Vec<CommitResult> {
+        let mut results: Vec<Option<CommitResult>> = intents.iter().map(|_| None).collect();
+        let mut prepared: Vec<PreparedCommit> = Vec::with_capacity(intents.len());
+        for (index, intent) in intents.iter().enumerate() {
+            match self.prepare_commit(intent) {
+                Ok(mut item) => {
+                    item.index = index;
+                    prepared.push(item);
+                }
+                Err(result) => results[index] = Some(result),
+            }
+        }
+        if prepared.is_empty() {
+            return results.into_iter().map(Option::unwrap).collect();
+        }
+
+        // The pre-append fault gates now guard one durable append; a serial
+        // caller fires them exactly as before (a batch of one fires once).
+        if self.faults.fire(FaultPoint::CommitMarkerApplication).is_err()
+            || self.faults.fire(FaultPoint::WalAppend).is_err()
+            || self.faults.fire(FaultPoint::PointerPublish).is_err()
+        {
+            for item in &prepared {
+                results[item.index] =
+                    Some(CommitResult::Rejected(CommitRejection::Storage));
+            }
+            return results.into_iter().map(Option::unwrap).collect();
+        }
+        let any_synced = prepared.iter().any(|item| item.synced);
+        let mut durable: Vec<Entry> = Vec::with_capacity(
+            prepared.iter().map(|item| item.durable_batch.len()).sum(),
+        );
+        for item in &prepared {
+            durable.extend(item.durable_batch.iter().cloned());
+        }
+        let Ok(append) = self.append_wal_batch(&durable) else {
+            for item in &prepared {
+                results[item.index] = Some(CommitResult::Rejected(CommitRejection::Storage));
+            }
+            return results.into_iter().map(Option::unwrap).collect();
+        };
+        if any_synced && self.faults.fire(FaultPoint::ReadyLedgerSync).is_err() {
+            if self.activation.is_some() {
+                self.frontier_poisoned = true;
+            }
+            for item in &prepared {
+                results[item.index] = Some(self.finish_publication(
+                    &item.entries,
+                    &item.ledger_entry,
+                    Some(UnknownCause::ResponseInterrupted),
+                    false,
+                ));
+            }
+            return results.into_iter().map(Option::unwrap).collect();
+        }
+        if self
+            .witness_wal_append(&append, any_synced, FaultPoint::ReadyFrontierSync)
+            .is_err()
+        {
+            for item in &prepared {
+                results[item.index] = Some(self.finish_publication(
+                    &item.entries,
+                    &item.ledger_entry,
+                    Some(UnknownCause::ResponseInterrupted),
+                    false,
+                ));
+            }
+            return results.into_iter().map(Option::unwrap).collect();
+        }
+        if any_synced
+            && (self.faults.fire(FaultPoint::PointerSync).is_err()
+                || self.faults.fire(FaultPoint::DirectorySync).is_err())
+        {
+            for item in &prepared {
+                let cause = if item.synced {
+                    Some(UnknownCause::PostPublicationPointerSync)
+                } else {
+                    None
+                };
+                results[item.index] = Some(self.finish_publication(
+                    &item.entries,
+                    &item.ledger_entry,
+                    cause,
+                    false,
+                ));
+            }
+            return results.into_iter().map(Option::unwrap).collect();
+        }
+
+        // The flip frame upgrades every Synced item's proven durability in
+        // one durable append; its absence after a crash leaves an honest
+        // `Written` resolution, exactly as the per-commit flip did.
+        let synced_items: Vec<&PreparedCommit> =
+            prepared.iter().filter(|item| item.synced).collect();
+        let flip_witnessed = if synced_items.is_empty() {
+            true
+        } else if self.faults.fire(FaultPoint::PublishedLedgerSync).is_err() {
+            false
+        } else {
+            let mut flips: Vec<Entry> = Vec::with_capacity(synced_items.len());
+            for item in &synced_items {
+                flips.push(item.flip.clone());
+            }
+            match self.append_wal_batch(&flips) {
+                Ok(flip_append) => {
+                    self.witness_wal_append(&flip_append, true, FaultPoint::PublishedFrontierSync)
+                        .is_ok()
+                }
+                Err(()) => false,
+            }
+        };
+        for item in &prepared {
+            let cause = if item.synced && !flip_witnessed {
+                Some(UnknownCause::PublishedLedgerSync)
+            } else {
+                None
+            };
+            results[item.index] = Some(self.finish_publication(
+                &item.entries,
+                &item.ledger_entry,
+                cause,
+                item.synced && flip_witnessed,
+            ));
+        }
+        results.into_iter().map(Option::unwrap).collect()
+    }
+
+    /// Validates, conflict-checks, and encodes one intent without touching
+    /// durable state: the prepare phase of [`Self::commit_batch`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the intent's definite result (a rejection, or the replay of
+    /// an already-durable identity) without recording anything new.
     #[allow(
         clippy::too_many_lines,
         reason = "one publication order, mirrored from the root store's proven sequence"
     )]
-    pub(crate) fn commit_intent(&mut self, intent: &CommitIntent) -> CommitResult {
+    fn prepare_commit(&mut self, intent: &CommitIntent) -> Result<PreparedCommit, CommitResult> {
         // Step 1: validate the request without allocating anything. A
         // validation failure never binds the identity.
         if intent.writes.is_empty() || has_duplicate_targets(&intent.writes) {
-            return CommitResult::Rejected(CommitRejection::Validation);
+            return Err(CommitResult::Rejected(CommitRejection::Validation));
         }
         // Step 2: resolve a retried identity durably.
         let identity = (intent.tenant.as_str().to_owned(), intent.operation.as_str().to_owned());
         if let Some(entry) = self.ledger_index.get(&identity) {
             if entry.digest != intent.digest {
-                return CommitResult::Rejected(CommitRejection::OperationIdReuse);
+                return Err(CommitResult::Rejected(CommitRejection::OperationIdReuse));
             }
-            return replay(entry);
+            return Err(replay(entry));
         }
         if self.frontier_poisoned && self.activation.is_some() {
-            return CommitResult::Rejected(CommitRejection::Storage);
+            return Err(CommitResult::Rejected(CommitRejection::Storage));
         }
         // Step 3: conflict-check every write against the snapshot and the
         // published view.
@@ -698,7 +871,7 @@ impl LsmStorage {
             if let StagedWrite::Put { document, .. } = write
                 && !codec::document_within_limits(document)
             {
-                return CommitResult::Rejected(CommitRejection::Validation);
+                return Err(CommitResult::Rejected(CommitRejection::Validation));
             }
             let mismatch = match write {
                 StagedWrite::Put { document, expected } => {
@@ -724,13 +897,13 @@ impl LsmStorage {
                     ),
             };
             if mismatch {
-                return self.record_rejection(intent, CommitRejection::Conflict);
+                return Err(self.record_rejection(intent, CommitRejection::Conflict));
             }
         }
         // Step 4: allocate the sequence past everything this location has
         // ever named; a later failure can never let another commit reuse it.
         let Some(sequence) = self.sequence_watermark.checked_add(1) else {
-            return CommitResult::Rejected(CommitRejection::Storage);
+            return Err(CommitResult::Rejected(CommitRejection::Storage));
         };
         let root_id = chain_root(&self.root_head, sequence, intent.digest);
         // Step 5: build the ordered batch. Documents, ledger record, and
@@ -846,26 +1019,17 @@ impl LsmStorage {
         let Ok(usage_fact) =
             accepted_mutation_usage(&intent.tenant, &intent.operation, sequence, &entries)
         else {
-            return CommitResult::Rejected(CommitRejection::Storage);
+            return Err(CommitResult::Rejected(CommitRejection::Storage));
         };
         entries.push(Entry {
             key: InternalKey::meta(&usage_label(&usage_fact), sequence),
             value: usage_fact.encoded(),
         });
         self.sequence_watermark = sequence;
-        // Step 6: durable append. `Buffered` writes no document bytes, but
-        // its resolution records are still durable (the old store's rule:
-        // resolution metadata persists for every durability level, so a
-        // reopened Buffered commit resolves instead of reporting Pending).
-        //
-        // Fault mapping mirrors the root store's publication-order split:
-        // `WalAppend`, `CommitMarkerApplication`, and `PointerPublish` fail
-        // BEFORE the durable append — a definite rejection with nothing
-        // applied; `JournalAppend` skips the history record (the commit
-        // still publishes, and the high-water mark discloses the gap);
-        // `ReadyLedgerSync` fails the durable sync of the resolution
-        // record; `PointerSync` and `DirectorySync` interrupt the response
-        // of an already-durable commit.
+        // The per-intent durable filter: `Buffered` writes no document
+        // bytes, and the journal-append fault skips the history record.
+        // The fault fires per intent, so a serial caller fires it exactly
+        // as before (a batch of one fires once).
         let skip_journal = self.faults.fire(FaultPoint::JournalAppend).is_err();
         let durable_batch: Vec<Entry> = entries
             .iter()
@@ -879,110 +1043,20 @@ impl LsmStorage {
             })
             .cloned()
             .collect();
-        if self.faults.fire(FaultPoint::CommitMarkerApplication).is_err() {
-            return CommitResult::Rejected(CommitRejection::Storage);
-        }
-        if self.faults.fire(FaultPoint::WalAppend).is_err() {
-            return CommitResult::Rejected(CommitRejection::Storage);
-        }
-        if self.faults.fire(FaultPoint::PointerPublish).is_err() {
-            return CommitResult::Rejected(CommitRejection::Storage);
-        }
-        let Ok(append) = self.append_wal_batch(&durable_batch) else {
-            return CommitResult::Rejected(CommitRejection::Storage);
+        let mut synced_entry = ledger_entry.clone();
+        synced_entry.post_publish_synced = true;
+        let flip = Entry {
+            key: InternalKey::ledger(&intent.tenant, intent.operation.as_str(), sequence),
+            value: encode_ledger_value(&synced_entry),
         };
-        if intent.durability == LocalDurability::Synced
-            && self.faults.fire(FaultPoint::ReadyLedgerSync).is_err()
-        {
-            if self.activation.is_some() {
-                self.frontier_poisoned = true;
-            }
-            return self.finish_publication(
-                &entries,
-                &ledger_entry,
-                Some(UnknownCause::ResponseInterrupted),
-                false,
-            );
-        }
-        if self
-            .witness_wal_append(
-                &append,
-                intent.durability == LocalDurability::Synced,
-                FaultPoint::ReadyFrontierSync,
-            )
-            .is_err()
-        {
-            return self.finish_publication(
-                &entries,
-                &ledger_entry,
-                Some(UnknownCause::ResponseInterrupted),
-                false,
-            );
-        }
-        if intent.durability == LocalDurability::Synced
-            && self.faults.fire(FaultPoint::PointerSync).is_err()
-        {
-            return self.finish_publication(
-                &entries,
-                &ledger_entry,
-                Some(UnknownCause::PostPublicationPointerSync),
-                false,
-            );
-        }
-        if intent.durability == LocalDurability::Synced
-            && self.faults.fire(FaultPoint::DirectorySync).is_err()
-        {
-            return self.finish_publication(
-                &entries,
-                &ledger_entry,
-                Some(UnknownCause::PostPublicationDirectorySync),
-                false,
-            );
-        }
-        if intent.durability == LocalDurability::Synced {
-            // The batch is durable and synced. The flip frame upgrades the
-            // ledger entry's proven durability; its absence after a crash or
-            // fault leaves an honest `Written` resolution.
-            if self.faults.fire(FaultPoint::PublishedLedgerSync).is_err() {
-                return self.finish_publication(
-                    &entries,
-                    &ledger_entry,
-                    Some(UnknownCause::PublishedLedgerSync),
-                    false,
-                );
-            }
-            let mut synced_entry = ledger_entry.clone();
-            synced_entry.post_publish_synced = true;
-            let flip = vec![Entry {
-                key: InternalKey::ledger(&intent.tenant, intent.operation.as_str(), sequence),
-                value: encode_ledger_value(&synced_entry),
-            }];
-            let Ok(flip_append) = self.append_wal_batch(&flip) else {
-                return self.finish_publication(
-                    &entries,
-                    &ledger_entry,
-                    Some(UnknownCause::PublishedLedgerSync),
-                    false,
-                );
-            };
-            if self
-                .witness_wal_append(&flip_append, true, FaultPoint::PublishedFrontierSync)
-                .is_err()
-            {
-                return self.finish_publication(
-                    &entries,
-                    &ledger_entry,
-                    Some(UnknownCause::PublishedLedgerSync),
-                    false,
-                );
-            }
-        }
-        self.finish_publication(
-            &entries,
-            &ledger_entry,
-            None,
-            intent.durability == LocalDurability::Synced,
-        )
+        Ok(PreparedCommit {
+            index: usize::MAX,
+            entries,
+            durable_batch,
+            ledger_entry,
+            flip,
+            synced: intent.durability == LocalDurability::Synced,
+        })
     }
 
     /// Appends a complete WAL frame, rolling back an interrupted `write_all`
@@ -1795,6 +1869,10 @@ fn tenant_documents_from_at(
 impl StoragePort for LsmStorage {
     fn commit(&mut self, intent: CommitIntent) -> CommitResult {
         self.commit_intent(&intent)
+    }
+
+    fn commit_batch(&mut self, intents: Vec<CommitIntent>) -> Vec<CommitResult> {
+        LsmStorage::commit_batch(self, intents)
     }
 
     fn resolve_operation(

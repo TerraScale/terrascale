@@ -1446,6 +1446,11 @@ impl Transaction<'_> {
     /// One call publishes all staged writes atomically, or reports a typed
     /// rejection with no partial writes, or reports an uncertain outcome that
     /// keeps this transaction's operation identity for durable resolution.
+    ///
+    /// Concurrent publishers form one group: whichever caller becomes the
+    /// batch leader drains every waiting intent into one storage batch, so
+    /// the batch's durable append and syncs are shared. A solo caller is a
+    /// batch of one and behaves exactly as a serial commit.
     #[must_use]
     pub fn commit(mut self, durability: LocalDurability) -> CommitOutcome {
         let writes = std::mem::take(&mut self.writes);
@@ -1459,12 +1464,30 @@ impl Transaction<'_> {
         };
         let engine = self.engine;
         let operation = self.operation.clone();
-        let result = {
-            let Ok(mut storage) = engine.lock_storage() else {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let become_leader = {
+            let Ok(mut mailbox) = engine.commit_mailbox.lock() else {
                 return CommitOutcome::Rejected(CommitError::StorageFailure);
             };
-            storage.port.commit(intent)
+            mailbox.queue.push((intent, sender));
+            if mailbox.leader_active {
+                false
+            } else {
+                mailbox.leader_active = true;
+                true
+            }
         };
+        if become_leader {
+            // A panic inside the driver must not strand the flag or the
+            // waiters: the guard clears leadership on the way out, and the
+            // waiters' senders drop, turning their waits into the honest
+            // uncertain outcome.
+            let _guard = LeaderGuard(Arc::clone(&engine.commit_mailbox));
+            engine.drive_commit_batches();
+        }
+        let result = receiver.recv().unwrap_or(CommitResult::Unknown(
+            storage::CommitRejectionUnknown::response_interrupted(),
+        ));
         if let CommitResult::Committed(receipt) = &result {
             let event = CommitPublicationEvent::new(
                 operation.clone(),
