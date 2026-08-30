@@ -1,21 +1,21 @@
 # Starting alert policy for the bounded TerraBase metric contract.
-# Review and pin thresholds against the accepted SLO/configuration before GA.
+# Review and pin thresholds against the accepted SLO and capacity profile before GA.
 groups:
   - name: terrabase-availability
     interval: 30s
     rules:
       - alert: TerraBaseScrapeMissing
-        expr: up{job="terrabase"} == 0
+        expr: up{job="terrabase"} == 0 or absent(up{job="terrabase"})
         for: 5m
         labels:
           service: terrabase
           severity: critical
         annotations:
           summary: TerraBase metrics scrape is unavailable
-          description: The private TerraBase metrics target has failed scraping for five minutes.
+          description: The private TerraBase metrics target has failed or disappeared for five minutes.
 
       - alert: TerraBaseReadinessLost
-        expr: terrabase_ready == 0
+        expr: terrabase_liveness == 1 and on(job, instance) terrabase_ready == 0
         for: 5m
         labels:
           service: terrabase
@@ -25,14 +25,14 @@ groups:
           description: Required admission or dependency checks have not been healthy for five minutes.
 
       - alert: TerraBaseComponentUnhealthy
-        expr: terrabase_component_health == 0
+        expr: terrabase_component_health <= 0
         for: 5m
         labels:
           service: terrabase
           severity: critical
         annotations:
-          summary: A TerraBase component is unhealthy
-          description: A bounded component health gauge is zero; inspect the component label and runbook.
+          summary: A TerraBase component is unhealthy or unknown
+          description: The {{ $labels.component }} component is unhealthy or has no trustworthy observation; inspect readiness and the operator runbook.
 
       - alert: TerraBaseComponentDegraded
         expr: terrabase_component_health == 0.5
@@ -42,22 +42,115 @@ groups:
           severity: warning
         annotations:
           summary: A TerraBase component is degraded
-          description: A bounded component is serving with reduced health or redundancy.
+          description: The {{ $labels.component }} component is serving with reduced health or redundancy.
 
+  - name: terrabase-traffic-and-saturation
+    interval: 30s
+    rules:
       - alert: TerraBaseRequestErrorsHigh
         expr: |
           (
-            sum(rate(terrabase_requests_total{outcome=~"error|timeout"}[5m]))
+            sum by (region, operation) (
+              rate(terrabase_requests_total{outcome=~"error|timeout"}[5m])
+            )
             /
-            clamp_min(sum(rate(terrabase_requests_total[5m])), 1)
+            clamp_min(
+              sum by (region, operation) (rate(terrabase_requests_total[5m])),
+              0.001
+            )
           ) > 0.01
+          and on (region, operation)
+          sum by (region, operation) (rate(terrabase_requests_total[5m])) > 1
         for: 10m
         labels:
           service: terrabase
           severity: warning
         annotations:
           summary: TerraBase engine error or timeout rate is high
-          description: Errors and timeouts exceed one percent for ten minutes; inspect operation and Region series.
+          description: Errors and timeouts exceed one percent for {{ $labels.operation }} in {{ $labels.region }} while traffic exceeds one request per second.
+
+      - alert: TerraBaseQueueSaturationHigh
+        expr: terrabase_queue_depth / clamp_min(terrabase_queue_capacity, 1) > 0.80
+        for: 10m
+        labels:
+          service: terrabase
+          severity: warning
+        annotations:
+          summary: A TerraBase work queue is above 80 percent
+          description: Queue {{ $labels.queue }} has remained above the starting saturation threshold for ten minutes.
+
+      - alert: TerraBaseAdmissionRejectionsHigh
+        expr: sum by (operation, reason) (rate(terrabase_admission_rejections_total[5m])) > 1
+        for: 10m
+        labels:
+          service: terrabase
+          severity: warning
+        annotations:
+          summary: TerraBase admission rejections are sustained
+          description: Operation {{ $labels.operation }} is being rejected for {{ $labels.reason }} above one request per second.
+
+      - alert: TerraBaseReadLatencyP99High
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le, region, operation) (
+              rate(terrabase_request_duration_seconds_bucket{operation="read",outcome="success"}[5m])
+            )
+          ) > 0.010
+          and on (region, operation)
+          sum by (region, operation) (
+            rate(terrabase_requests_total{operation="read",outcome="success"}[5m])
+          ) > 1
+        for: 10m
+        labels:
+          service: terrabase
+          severity: warning
+        annotations:
+          summary: TerraBase successful read p99 is above 10 ms
+          description: Engine read latency in {{ $labels.region }} has exceeded the ADR 0033 starting threshold for ten minutes at sustained traffic.
+
+      - alert: TerraBaseWriteLatencyP99High
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le, region, operation) (
+              rate(terrabase_request_duration_seconds_bucket{operation="write",outcome="success"}[5m])
+            )
+          ) > 0.020
+          and on (region, operation)
+          sum by (region, operation) (
+            rate(terrabase_requests_total{operation="write",outcome="success"}[5m])
+          ) > 1
+        for: 10m
+        labels:
+          service: terrabase
+          severity: warning
+        annotations:
+          summary: TerraBase successful write p99 is above 20 ms
+          description: Engine write latency in {{ $labels.region }} has exceeded the ADR 0033 starting threshold for ten minutes at sustained traffic.
+
+  - name: terrabase-durability-and-replication
+    interval: 30s
+    rules:
+      - alert: TerraBaseWalFsyncErrors
+        expr: increase(terrabase_wal_fsync_total{outcome="error"}[5m]) > 0
+        for: 1m
+        labels:
+          service: terrabase
+          severity: critical
+        annotations:
+          summary: TerraBase WAL fsync failed
+          description: At least one WAL fsync failed in the last five minutes; preserve WAL and storage evidence.
+
+      - alert: TerraBaseCommitOutcomeUnknown
+        expr: increase(terrabase_commits_total{outcome="unknown"}[5m]) > 0
+        for: 1m
+        labels:
+          service: terrabase
+          severity: critical
+        annotations:
+          summary: TerraBase reported an indeterminate commit outcome
+          description: A caller-visible commit requires durability resolution; follow the indeterminate commit runbook.
 
       - alert: TerraBaseReplicationLagHigh
         expr: terrabase_replication_lag_seconds > 5
@@ -67,7 +160,27 @@ groups:
           severity: warning
         annotations:
           summary: TerraBase replication lag is high
-          description: A Region has exceeded the starting five-second lag threshold for ten minutes.
+          description: Region {{ $labels.region }} has exceeded five seconds of observed lag for ten minutes.
+
+      - alert: TerraBaseReplicationLagCritical
+        expr: terrabase_replication_lag_seconds > 30
+        for: 5m
+        labels:
+          service: terrabase
+          severity: critical
+        annotations:
+          summary: TerraBase replication lag is critical
+          description: Region {{ $labels.region }} has exceeded thirty seconds of observed lag for five minutes.
+
+      - alert: TerraBaseReplicationFrontierUnhealthy
+        expr: terrabase_replication_frontier_health <= 0
+        for: 5m
+        labels:
+          service: terrabase
+          severity: critical
+        annotations:
+          summary: TerraBase replication frontier is unhealthy or unknown
+          description: Region {{ $labels.region }} lacks a healthy verified replication frontier.
 
       - alert: TerraBaseActiveMembersLow
         expr: terrabase_active_members < 2
@@ -76,5 +189,98 @@ groups:
           service: terrabase
           severity: critical
         annotations:
-          summary: TerraBase has fewer than two active members
-          description: Confirm the database's selected topology before treating this as a quorum incident.
+          summary: TerraBase has fewer than two active Members
+          description: Region {{ $labels.region }} reports fewer than two active Members; confirm the selected topology before treating this as a quorum incident.
+
+  - name: terrabase-storage-and-background-work
+    interval: 30s
+    rules:
+      - alert: TerraBaseStorageCapacityMissing
+        expr: absent(terrabase_storage_capacity_bytes{job="terrabase"})
+        for: 15m
+        labels:
+          service: terrabase
+          severity: warning
+        annotations:
+          summary: TerraBase finite storage capacity is not reported
+          description: Storage utilization and headroom alerts are unavailable; restore the capacity collector instead of publishing a guessed value.
+
+      - alert: TerraBaseStorageUtilizationHigh
+        expr: terrabase_storage_bytes / clamp_min(terrabase_storage_capacity_bytes, 1) > 0.80 and terrabase_storage_capacity_bytes > 0
+        for: 30m
+        labels:
+          service: terrabase
+          severity: warning
+        annotations:
+          summary: TerraBase storage utilization is above 80 percent
+          description: Storage {{ $labels.tier }} is above the warning threshold; verify growth and prepare qualified expansion or movement.
+
+      - alert: TerraBaseStorageUtilizationCritical
+        expr: terrabase_storage_bytes / clamp_min(terrabase_storage_capacity_bytes, 1) > 0.90 and terrabase_storage_capacity_bytes > 0
+        for: 15m
+        labels:
+          service: terrabase
+          severity: critical
+        annotations:
+          summary: TerraBase storage utilization is above 90 percent
+          description: Storage {{ $labels.tier }} is above the critical threshold; use the qualified expansion or movement runbook and preserve WAL and segment evidence.
+
+      - alert: TerraBaseStorageErrors
+        expr: sum by (tier, operation) (increase(terrabase_storage_errors_total[5m])) > 0
+        for: 1m
+        labels:
+          service: terrabase
+          severity: critical
+        annotations:
+          summary: TerraBase storage operation failed
+          description: Storage {{ $labels.operation }} failed on {{ $labels.tier }} in the last five minutes.
+
+      - alert: TerraBaseCompactionBacklogHigh
+        expr: terrabase_compaction_backlog_bytes / clamp_min(terrabase_storage_bytes, 1) > 0.20
+        for: 30m
+        labels:
+          service: terrabase
+          severity: warning
+        annotations:
+          summary: TerraBase compaction backlog is high
+          description: Pending compaction bytes on {{ $labels.tier }} exceed twenty percent of observed storage.
+
+      - alert: TerraBaseCompactionErrors
+        expr: increase(terrabase_compaction_runs_total{outcome="error"}[15m]) > 0
+        for: 1m
+        labels:
+          service: terrabase
+          severity: warning
+        annotations:
+          summary: TerraBase compaction failed
+          description: At least one compaction run failed in the last fifteen minutes.
+
+      - alert: TerraBaseContinuousBackupStale
+        expr: terrabase_backup_last_success_age_seconds{mode="continuous"} > 86400
+        for: 15m
+        labels:
+          service: terrabase
+          severity: critical
+        annotations:
+          summary: TerraBase continuous backup is older than one day
+          description: No verified continuous backup success has been observed within the ADR 0033 daily recovery-point target.
+
+      - alert: TerraBaseBackupErrors
+        expr: sum by (mode) (increase(terrabase_backup_runs_total{outcome="error"}[30m])) > 0
+        for: 1m
+        labels:
+          service: terrabase
+          severity: warning
+        annotations:
+          summary: TerraBase backup failed
+          description: A {{ $labels.mode }} backup failed in the last thirty minutes.
+
+      - alert: TerraBaseUsageExportErrors
+        expr: increase(terrabase_usage_export_failures_total[15m]) > 0
+        for: 1m
+        labels:
+          service: terrabase
+          severity: warning
+        annotations:
+          summary: TerraBase usage export failed
+          description: Authoritative usage publication failed in the last fifteen minutes; inspect the usage-export queue and frontier.

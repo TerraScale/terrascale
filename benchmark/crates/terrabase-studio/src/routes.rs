@@ -354,7 +354,7 @@ async fn usage_page(State(state): State<Arc<StudioState>>) -> Html<String> {
 
 async fn backups_page(State(state): State<Arc<StudioState>>) -> Html<String> {
     let points = load_remote_recovery_points(state.as_ref()).await;
-    Html(backups::render(state.as_ref(), points.as_deref()))
+    Html(backups::render(state.as_ref(), points.as_deref().map_err(String::as_str)))
 }
 
 fn page_failure(message: String) -> String {
@@ -1131,7 +1131,7 @@ async fn backup_configure(
     State(state): State<Arc<StudioState>>,
     Form(form): Form<BackupConfigureForm>,
 ) -> Response {
-    let outcome = async {
+    let outcome: Result<String, String> = async {
         let mut settings = S3BackupSettings {
             enabled: form.enabled.is_some(),
             bucket: form.bucket,
@@ -1234,7 +1234,7 @@ async fn backup_run(
 }
 
 async fn backup_verify(State(state): State<Arc<StudioState>>) -> Response {
-    let outcome = async {
+    let outcome: Result<String, String> = async {
         let _job = state.backup_job.lock().await;
         let repository = configured_backup_repository(state.as_ref())?;
         let chain = verify_s3_chain(&repository, &state.config.backup_scratch_dir(), None).await?;
@@ -1271,7 +1271,7 @@ async fn backup_restore(
     State(state): State<Arc<StudioState>>,
     Form(form): Form<BackupRestoreForm>,
 ) -> Response {
-    let outcome = async {
+    let outcome: Result<String, String> = async {
         let _job = state.backup_job.lock().await;
         let repository = configured_backup_repository(state.as_ref())?;
         let target = backups::restore_target(&form.target)?;
@@ -1321,7 +1321,7 @@ async fn load_remote_recovery_points(
 
 async fn backup_chain_fragment(state: &StudioState) -> String {
     let points = load_remote_recovery_points(state).await;
-    backups::chain_fragment(points.as_deref())
+    backups::chain_fragment(points.as_deref().map_err(String::as_str))
 }
 
 fn parse_positive(text: &str, label: &str) -> Result<u64, String> {
@@ -1722,6 +1722,41 @@ mod tests {
         assert!(policy.contains("script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net"));
         assert!(policy.contains("worker-src data: blob:"));
         assert!(policy.contains("object-src 'none'"));
+    }
+
+    #[tokio::test]
+    async fn metrics_preview_has_a_private_text_route_separate_from_the_ui() {
+        let app = router(studio("metrics-boundary"));
+        let ui = app
+            .clone()
+            .oneshot(Request::builder().uri("/metrics").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(ui.status(), StatusCode::OK);
+        assert_eq!(ui.headers().get(header::CONTENT_TYPE).unwrap(), "text/html; charset=utf-8");
+        assert_security_headers(&ui);
+        let ui_body = axum::body::to_bytes(ui.into_body(), 1 << 20).await.unwrap();
+        assert!(String::from_utf8_lossy(&ui_body).contains("Metrics"));
+
+        let preview = app
+            .oneshot(Request::builder().uri("/metrics/prometheus").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(preview.status(), StatusCode::OK);
+        assert_eq!(
+            preview.headers().get(header::CONTENT_TYPE).unwrap(),
+            "text/plain; version=0.0.4; charset=utf-8"
+        );
+        assert_security_headers(&preview);
+        let preview_body = axum::body::to_bytes(preview.into_body(), 1 << 20).await.unwrap();
+        assert!(String::from_utf8_lossy(&preview_body).contains("# HELP terrabase_build_info"));
+    }
+
+    fn assert_security_headers(response: &Response) {
+        assert_eq!(response.headers().get(header::X_CONTENT_TYPE_OPTIONS).unwrap(), "nosniff");
+        assert_eq!(response.headers().get(header::X_FRAME_OPTIONS).unwrap(), "DENY");
+        assert_eq!(response.headers().get(header::REFERRER_POLICY).unwrap(), "no-referrer");
+        assert!(response.headers().get(header::CONTENT_SECURITY_POLICY).is_some());
     }
 
     #[tokio::test]

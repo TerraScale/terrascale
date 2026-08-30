@@ -141,11 +141,11 @@ func eventFrom(frame *v1.BackboneStreamEvent) (Event, error) {
 // Recv must not be called concurrently; Acknowledge, Unsubscribe, and
 // Close may.
 type Subscription struct {
-	client *Client
-	stream v1.Backbone_SubscribeClient
-	ctx    context.Context
-	cancel context.CancelFunc
-	id     atomic.Uint64
+	client    *Client
+	stream    v1.Backbone_SubscribeClient
+	ctx       context.Context
+	cancel    context.CancelFunc
+	id        atomic.Uint64
 	confirmed bool
 	closed    bool
 }

@@ -52,10 +52,7 @@ use crate::types::{
     CollectionName, Document, DocumentId, ExpectedVersion, LocalDurability, OperationId,
     StorageSequence, TenantId,
 };
-use crate::usage::{
-    DurableUsageFact, MeasurementWindow, MeterCatalog, MeterKind, MintingIdentity, UsageFact,
-    UsageFactId, UsageFactLedger, UsageScope,
-};
+use crate::usage::{DurableUsageFact, UsageAdmissionContext, UsageFactLedger};
 
 use super::frontier::{
     ActiveFormat, FRONTIER_FORMAT_MAJOR, LEGACY_FORMAT_MAJOR, LedgerFrontierActivationError,
@@ -1181,18 +1178,19 @@ impl LsmStorage {
             key: InternalKey::history(sequence),
             value: ledger::encode_commit_frame(&commit),
         });
-        // Usage is part of the same WAL batch as the accepted mutation. The
-        // fact is minted only after validation and identity resolution, and
-        // its sequence and tenant are bound in the checksummed envelope.
-        let Ok(usage_fact) =
-            accepted_mutation_usage(&intent.tenant, &intent.operation, sequence, &entries)
-        else {
-            return Err(CommitResult::Rejected(CommitRejection::Storage));
-        };
-        entries.push(Entry {
-            key: InternalKey::meta(&usage_label(&usage_fact), sequence),
-            value: usage_fact.encoded(),
-        });
+        // An admitted origin request records its trusted usage fact in the
+        // same WAL batch as the mutation. Replication, repair, and internal
+        // writes carry no admission and never mint billable origin usage.
+        if let Some(admission) = &intent.usage_admission {
+            let Ok(usage_fact) = accepted_mutation_usage(&intent.tenant, admission, sequence)
+            else {
+                return Err(CommitResult::Rejected(CommitRejection::Storage));
+            };
+            entries.push(Entry {
+                key: InternalKey::meta(&usage_label(&usage_fact), sequence),
+                value: usage_fact.encoded(),
+            });
+        }
         self.sequence_watermark = sequence;
         // The per-intent durable filter: `Buffered` writes no document
         // bytes, and the journal-append fault skips the history record.
@@ -1559,48 +1557,13 @@ fn usage_label(fact: &DurableUsageFact) -> String {
     format!("{USAGE_LABEL_PREFIX}{:020}:{}", fact.sequence(), fact.fact().identity().id())
 }
 
-/// Builds the origin usage fact for one accepted mutation.
-///
-/// The current engine seam carries tenant and operation identity, but not the
-/// public Project/Database/Partition placement context. Until that context is
-/// admitted by the higher API layer, those three scope components are bound to
-/// the validated tenant. This is conservative: facts cannot cross tenants or
-/// accidentally claim another database's usage.
+/// Builds the trusted origin usage fact for one accepted mutation.
 fn accepted_mutation_usage(
     tenant: &TenantId,
-    operation: &OperationId,
+    admission: &UsageAdmissionContext,
     sequence: u64,
-    entries: &[Entry],
 ) -> Result<DurableUsageFact, ()> {
-    let region = crate::replication::RegionId::try_new("local").map_err(|_| ())?;
-    let scope = UsageScope::try_new(
-        tenant.clone(),
-        tenant.as_str(),
-        tenant.as_str(),
-        tenant.as_str(),
-        region,
-    )
-    .map_err(|_| ())?;
-    let mut bytes = 0_usize;
-    for entry in entries {
-        if entry.key.tag() == internal::Keyspace::Documents.tag() {
-            bytes = bytes.checked_add(entry.value.len()).ok_or(())?;
-        }
-    }
-    // A delete carries no value bytes but is still one accepted origin event.
-    let delta = i128::try_from(bytes.max(1)).map_err(|_| ())?;
-    let end = sequence.checked_add(1).ok_or(())?;
-    let definition =
-        MeterCatalog::initial().get(MeterKind::StoredByteHours, 1).copied().ok_or(())?;
-    let id = UsageFactId::try_new(operation.as_str()).map_err(|_| ())?;
-    let fact = UsageFact::try_new(
-        definition,
-        scope,
-        MintingIdentity::AcceptedOriginCommit(id),
-        MeasurementWindow::interval(sequence, end).map_err(|_| ())?,
-        delta,
-    )
-    .map_err(|_| ())?;
+    let fact = admission.fact_for(tenant.clone()).map_err(|_| ())?;
     DurableUsageFact::try_new(fact, sequence, 1).map_err(|_| ())
 }
 

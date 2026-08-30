@@ -211,8 +211,8 @@ pub fn record_segment(
         .first()
         .map(|region| region.name.clone())
         .ok_or_else(|| "the topology has no region to attribute the segment to".to_owned())?;
-    let region_id =
-        terrabase::RegionId::try_new(&region).map_err(|error| format!("region: {error:?}"))?;
+    let region_id = terrabase::RegionCode::from_text(&region.to_uppercase())
+        .map_err(|error| format!("region: {error:?}"))?;
 
     let published = crate::engine_ops::published_sequence(state.engine.as_ref())
         .map_err(|error| error.to_string())?

@@ -21,6 +21,7 @@ mod routes;
 mod s3_backup;
 mod state;
 
+use std::future::Future;
 use std::sync::Arc;
 
 use state::{Config, StudioState};
@@ -63,11 +64,26 @@ async fn run(config: Config) -> Result<(), String> {
         .map_err(|error| format!("cannot bind {address}: {error}"))?;
     println!("  serving         : http://{address}/");
 
+    serve_with_shutdown(listener, app, async move {
+        shutdown_signal().await;
+        shutdown_state.begin_shutdown();
+    })
+    .await
+}
+
+/// Serves one Studio listener until its shutdown future resolves. Keeping the
+/// drain boundary in a small function makes the listener-release guarantee
+/// directly testable without sending process signals in a unit test.
+async fn serve_with_shutdown<F>(
+    listener: tokio::net::TcpListener,
+    app: axum::Router,
+    shutdown: F,
+) -> Result<(), String>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
     axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            shutdown_signal().await;
-            shutdown_state.begin_shutdown();
-        })
+        .with_graceful_shutdown(shutdown)
         .await
         .map_err(|error| format!("the listener failed: {error}"))
 }
@@ -114,8 +130,42 @@ mod tests {
     fn studio_accepts_only_numeric_loopback_listeners() {
         assert_eq!(loopback_address("127.0.0.1:8090").unwrap().port(), 8090);
         assert!(loopback_address("[::1]:8090").unwrap().ip().is_loopback());
-        assert!(loopback_address("0.0.0.0:8090").is_err());
-        assert!(loopback_address("192.0.2.1:8090").is_err());
-        assert!(loopback_address("localhost:8090").is_err());
+        for address in [
+            "0.0.0.0:8090",
+            "192.0.2.1:8090",
+            "255.255.255.255:8090",
+            "localhost:8090",
+            "[::]:8090",
+            "[2001:db8::1]:8090",
+            "[fe80::1]:8090",
+            "[::ffff:127.0.0.1]:8090",
+        ] {
+            assert!(loopback_address(address).is_err(), "accepted non-loopback {address}");
+        }
+    }
+
+    #[tokio::test]
+    async fn graceful_shutdown_drains_and_releases_the_listener() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (shutdown, wait) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(serve_with_shutdown(listener, axum::Router::new(), async move {
+            let _ = wait.await;
+        }));
+
+        // The first listener owns the address before the server task is
+        // scheduled, so a second bind proves admission is active.
+        assert!(tokio::net::TcpListener::bind(address).await.is_err());
+        shutdown.send(()).expect("shutdown receiver is alive");
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), server)
+            .await
+            .expect("graceful shutdown completes within its bound")
+            .expect("server task does not panic");
+        assert!(result.is_ok(), "listener returned an error: {result:?}");
+
+        // Axum has completed its drain, so the same ephemeral address is
+        // immediately available again.
+        let rebound = tokio::net::TcpListener::bind(address).await;
+        assert!(rebound.is_ok(), "listener was not released after shutdown");
     }
 }

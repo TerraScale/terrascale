@@ -119,8 +119,18 @@ jobs:
               *.yml|*.yaml) yq eval '.' "$path" >/dev/null ;;
             esac
           done < <(git ls-files '*.json' '*.yml' '*.yaml')
-          jq -e '.. | strings | select(contains("terrabase_requests_total"))' deploy/observability/grafana-dashboard.json >/dev/null
-          yq -e '.. | select(tag == "!!str") | select(test("terrabase_ready"))' deploy/observability/prometheus-rules.yml >/dev/null
+          jq -e '
+            ([.panels[].title] | index("Requests / second")) != null and
+            ([.panels[].title] | index("Storage utilization by tier")) != null and
+            ([.. | strings | select(contains("terrabase_requests_total"))] | length) > 0 and
+            ([.. | strings | select(contains("terrabase_storage_capacity_bytes"))] | length) > 0
+          ' deploy/observability/grafana-dashboard.json >/dev/null
+          yq -e '
+            [.groups[].rules[] | select(.alert == "TerraBaseReadinessLost")] | length == 1
+          ' deploy/observability/prometheus-rules.yml >/dev/null
+          yq -e '
+            [.groups[].rules[] | select(.alert == "TerraBaseStorageUtilizationCritical")] | length == 1
+          ' deploy/observability/prometheus-rules.yml >/dev/null
       - name: Install pinned cargo-deny
         run: cargo install cargo-deny --version 0.20.2 --locked
       - name: Dependency, license, and advisory audits

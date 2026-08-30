@@ -16,7 +16,44 @@ const (
 	maxUsageFacts             = 256
 	maxUsageCanonicalBytes    = 64 << 10
 	usageChecksumBytes        = 32
+	maxAdmittedRequestUnits   = "1000000"
+	maxPublicEgressBytes      = "1099511627776"
 )
+
+// UsageRegion is the closed Region vocabulary accepted by usage accounting.
+type UsageRegion uint8
+
+const (
+	UsageRegionGRU UsageRegion = iota + 1
+	UsageRegionSFO
+	UsageRegionFRA
+)
+
+func (region UsageRegion) proto() (v1.UsageRegion, bool) {
+	switch region {
+	case UsageRegionGRU:
+		return v1.UsageRegion_USAGE_REGION_GRU, true
+	case UsageRegionSFO:
+		return v1.UsageRegion_USAGE_REGION_SFO, true
+	case UsageRegionFRA:
+		return v1.UsageRegion_USAGE_REGION_FRA, true
+	default:
+		return v1.UsageRegion_USAGE_REGION_UNSPECIFIED, false
+	}
+}
+
+func usageRegionFromProto(region v1.UsageRegion) (UsageRegion, bool) {
+	switch region {
+	case v1.UsageRegion_USAGE_REGION_GRU:
+		return UsageRegionGRU, true
+	case v1.UsageRegion_USAGE_REGION_SFO:
+		return UsageRegionSFO, true
+	case v1.UsageRegion_USAGE_REGION_FRA:
+		return UsageRegionFRA, true
+	default:
+		return 0, false
+	}
+}
 
 // UsageAdmissionContext attaches trusted admitted-request accounting to the
 // same durable mutation. RequestID must equal the mutation's effective
@@ -25,7 +62,7 @@ type UsageAdmissionContext struct {
 	Project          string
 	Database         string
 	Partition        string
-	OriginRegion     string
+	OriginRegion     UsageRegion
 	RequestID        string
 	AcceptedAtMillis uint64
 	MeterVersion     uint32
@@ -52,8 +89,9 @@ func (admission UsageAdmissionContext) protoForKey(key string) (*v1.UsageAdmissi
 	if err := usageIdentifier("partition", admission.Partition, maxUsageScopeBytes); err != nil {
 		return nil, err
 	}
-	if err := usageIdentifier("origin region", admission.OriginRegion, maxUsageScopeBytes); err != nil {
-		return nil, err
+	region, ok := admission.OriginRegion.proto()
+	if !ok {
+		return nil, localError("the usage origin region is outside the closed vocabulary")
 	}
 	if err := usageIdentifier("request id", admission.RequestID, MaxIdempotencyBytes); err != nil {
 		return nil, err
@@ -70,11 +108,14 @@ func (admission UsageAdmissionContext) protoForKey(key string) (*v1.UsageAdmissi
 	if !canonicalI128(admission.IntegerUnits, true) {
 		return nil, localError("the usage integer units are not a canonical positive i128")
 	}
+	if !positiveDecimalAtMost(admission.IntegerUnits, maxAdmittedRequestUnits) {
+		return nil, localError("the admitted request units exceed %s", maxAdmittedRequestUnits)
+	}
 	return &v1.UsageAdmissionContext{
 		Project:          admission.Project,
 		Database:         admission.Database,
 		Partition:        admission.Partition,
-		OriginRegion:     admission.OriginRegion,
+		OriginRegion:     region,
 		RequestId:        admission.RequestID,
 		AcceptedAtMillis: admission.AcceptedAtMillis,
 		MeterVersion:     admission.MeterVersion,
@@ -101,6 +142,17 @@ func (meter UsageRecordMeter) proto() (v1.UsageRecordMeter, bool) {
 	}
 }
 
+func (meter UsageRecordMeter) maximumUnits() (string, bool) {
+	switch meter {
+	case UsageRecordAdmittedRequestUnits:
+		return maxAdmittedRequestUnits, true
+	case UsageRecordPublicEgressBytes:
+		return maxPublicEgressBytes, true
+	default:
+		return "", false
+	}
+}
+
 // UsageRecordInput is one public-boundary usage fact that cannot attach to an
 // engine mutation. FactID is also its idempotency key.
 type UsageRecordInput struct {
@@ -108,7 +160,7 @@ type UsageRecordInput struct {
 	Project          string
 	Database         string
 	Partition        string
-	OriginRegion     string
+	OriginRegion     UsageRegion
 	FactID           string
 	RecordedAtMillis uint64
 	MeterVersion     uint32
@@ -130,6 +182,10 @@ func (c *Client) UsageRecord(ctx context.Context, input UsageRecordInput) (Usage
 	if !ok {
 		return UsageRecordReceipt{}, localError("the usage record meter is outside the closed vocabulary")
 	}
+	region, ok := input.OriginRegion.proto()
+	if !ok {
+		return UsageRecordReceipt{}, localError("the usage origin region is outside the closed vocabulary")
+	}
 	for _, field := range []struct {
 		name  string
 		value string
@@ -138,7 +194,6 @@ func (c *Client) UsageRecord(ctx context.Context, input UsageRecordInput) (Usage
 		{"project", input.Project, maxUsageScopeBytes},
 		{"database", input.Database, maxUsageScopeBytes},
 		{"partition", input.Partition, maxUsageScopeBytes},
-		{"origin region", input.OriginRegion, maxUsageScopeBytes},
 		{"fact id", input.FactID, MaxIdempotencyBytes},
 	} {
 		if err := usageIdentifier(field.name, field.value, field.limit); err != nil {
@@ -154,6 +209,10 @@ func (c *Client) UsageRecord(ctx context.Context, input UsageRecordInput) (Usage
 	if !canonicalI128(input.IntegerUnits, true) {
 		return UsageRecordReceipt{}, localError("the usage integer units are not a canonical positive i128")
 	}
+	maximum, _ := input.Meter.maximumUnits()
+	if !positiveDecimalAtMost(input.IntegerUnits, maximum) {
+		return UsageRecordReceipt{}, localError("the usage integer units exceed the %s meter limit", input.Meter)
+	}
 	ctx, err := c.outgoing(ctx, true, input.FactID)
 	if err != nil {
 		return UsageRecordReceipt{}, err
@@ -163,7 +222,7 @@ func (c *Client) UsageRecord(ctx context.Context, input UsageRecordInput) (Usage
 		Project:          input.Project,
 		Database:         input.Database,
 		Partition:        input.Partition,
-		OriginRegion:     input.OriginRegion,
+		OriginRegion:     region,
 		FactId:           input.FactID,
 		RecordedAtMillis: input.RecordedAtMillis,
 		MeterVersion:     input.MeterVersion,
@@ -186,35 +245,24 @@ func (c *Client) UsageRecord(ctx context.Context, input UsageRecordInput) (Usage
 type UsageMeter uint8
 
 const (
-	UsageMeterStoredByteHours UsageMeter = iota + 1
-	UsageMeterAdmittedRequestUnits
+	UsageMeterAdmittedRequestUnits UsageMeter = iota + 1
 	UsageMeterPublicEgressBytes
-	UsageMeterActiveRegionSeats
-	UsageMeterBackupByteHours
-	UsageMeterRestoreWork
 )
 
 // UsageUnit is the exact integer unit of an exported fact.
 type UsageUnit uint8
 
 const (
-	UsageUnitByteHour UsageUnit = iota + 1
-	UsageUnitRequest
+	UsageUnitRequest UsageUnit = iota + 1
 	UsageUnitByte
-	UsageUnitSeatHour
-	UsageUnitRestoreWork
 )
 
 // UsageChargeScope is the scope at which one meter charges.
 type UsageChargeScope uint8
 
 const (
-	UsageChargeActiveRegionCopy UsageChargeScope = iota + 1
-	UsageChargeAdmittedRequest
+	UsageChargeAdmittedRequest UsageChargeScope = iota + 1
 	UsageChargePublicEgress
-	UsageChargeActiveRegionSeat
-	UsageChargeBackupCopy
-	UsageChargeExplicitRestore
 )
 
 // UsageMintingRule names the stable event identity that prevents duplicate
@@ -222,12 +270,8 @@ const (
 type UsageMintingRule uint8
 
 const (
-	UsageMintAcceptedOriginCommit UsageMintingRule = iota + 1
-	UsageMintStableAdmittedRequest
+	UsageMintStableAdmittedRequest UsageMintingRule = iota + 1
 	UsageMintPublicResponse
-	UsageMintActiveRegionHour
-	UsageMintBackupByteHour
-	UsageMintExplicitRestore
 )
 
 // UsageFact is one WAL-durable canonical accounting fact. IntegerDelta stays
@@ -243,7 +287,7 @@ type UsageFact struct {
 	Project                string
 	Database               string
 	Partition              string
-	Region                 string
+	Region                 UsageRegion
 	MeasurementStartMillis uint64
 	MeasurementEndMillis   uint64
 	IntegerDelta           string
@@ -354,7 +398,6 @@ func usageFactFrom(wire *v1.UsageFact, tenant string) (UsageFact, error) {
 		{"project", wire.GetProject(), maxUsageScopeBytes},
 		{"database", wire.GetDatabase(), maxUsageScopeBytes},
 		{"partition", wire.GetPartition(), maxUsageScopeBytes},
-		{"region", wire.GetRegion(), maxUsageScopeBytes},
 	} {
 		if err := usageResponseIdentifier(field.name, field.value, field.limit); err != nil {
 			return UsageFact{}, err
@@ -362,6 +405,10 @@ func usageFactFrom(wire *v1.UsageFact, tenant string) (UsageFact, error) {
 	}
 	if wire.GetTenant() != tenant {
 		return UsageFact{}, contractError("the engine returned a usage fact for another tenant")
+	}
+	region, ok := usageRegionFromProto(wire.GetRegion())
+	if !ok {
+		return UsageFact{}, contractError("the engine returned an invalid usage region")
 	}
 	meter, unit, scope, rule, ok := usageContractFrom(wire)
 	if !ok {
@@ -391,7 +438,7 @@ func usageFactFrom(wire *v1.UsageFact, tenant string) (UsageFact, error) {
 		Project:                wire.GetProject(),
 		Database:               wire.GetDatabase(),
 		Partition:              wire.GetPartition(),
-		Region:                 wire.GetRegion(),
+		Region:                 region,
 		MeasurementStartMillis: wire.GetMeasurementStartMillis(),
 		MeasurementEndMillis:   wire.GetMeasurementEndMillis(),
 		IntegerDelta:           wire.GetIntegerDelta(),
@@ -411,18 +458,31 @@ func usageContractFrom(wire *v1.UsageFact) (UsageMeter, UsageUnit, UsageChargeSc
 		scope v1.UsageChargeScope
 		rule  v1.UsageMintingRule
 	}
-	contracts := []contract{
-		{v1.UsageMeter_USAGE_METER_STORED_BYTE_HOURS, v1.UsageUnit_USAGE_UNIT_BYTE_HOUR, v1.UsageChargeScope_USAGE_CHARGE_SCOPE_ACTIVE_REGION_COPY, v1.UsageMintingRule_USAGE_MINTING_RULE_ACCEPTED_ORIGIN_COMMIT},
-		{v1.UsageMeter_USAGE_METER_ADMITTED_REQUEST_UNITS, v1.UsageUnit_USAGE_UNIT_REQUEST_UNIT, v1.UsageChargeScope_USAGE_CHARGE_SCOPE_ADMITTED_REQUEST, v1.UsageMintingRule_USAGE_MINTING_RULE_STABLE_ADMITTED_REQUEST},
-		{v1.UsageMeter_USAGE_METER_PUBLIC_EGRESS_BYTES, v1.UsageUnit_USAGE_UNIT_BYTE, v1.UsageChargeScope_USAGE_CHARGE_SCOPE_PUBLIC_EGRESS, v1.UsageMintingRule_USAGE_MINTING_RULE_PUBLIC_RESPONSE},
-		{v1.UsageMeter_USAGE_METER_ACTIVE_REGION_SEATS, v1.UsageUnit_USAGE_UNIT_SEAT_HOUR, v1.UsageChargeScope_USAGE_CHARGE_SCOPE_ACTIVE_REGION_SEAT, v1.UsageMintingRule_USAGE_MINTING_RULE_ACTIVE_REGION_HOUR},
-		{v1.UsageMeter_USAGE_METER_BACKUP_BYTE_HOURS, v1.UsageUnit_USAGE_UNIT_BYTE_HOUR, v1.UsageChargeScope_USAGE_CHARGE_SCOPE_BACKUP_COPY, v1.UsageMintingRule_USAGE_MINTING_RULE_BACKUP_BYTE_HOUR},
-		{v1.UsageMeter_USAGE_METER_RESTORE_WORK, v1.UsageUnit_USAGE_UNIT_RESTORE_WORK, v1.UsageChargeScope_USAGE_CHARGE_SCOPE_EXPLICIT_RESTORE, v1.UsageMintingRule_USAGE_MINTING_RULE_EXPLICIT_RESTORE},
+	contracts := []struct {
+		contract
+		publicMeter UsageMeter
+		publicUnit  UsageUnit
+		publicScope UsageChargeScope
+		publicRule  UsageMintingRule
+	}{
+		{
+			contract:    contract{v1.UsageMeter_USAGE_METER_ADMITTED_REQUEST_UNITS, v1.UsageUnit_USAGE_UNIT_REQUEST_UNIT, v1.UsageChargeScope_USAGE_CHARGE_SCOPE_ADMITTED_REQUEST, v1.UsageMintingRule_USAGE_MINTING_RULE_STABLE_ADMITTED_REQUEST},
+			publicMeter: UsageMeterAdmittedRequestUnits,
+			publicUnit:  UsageUnitRequest,
+			publicScope: UsageChargeAdmittedRequest,
+			publicRule:  UsageMintStableAdmittedRequest,
+		},
+		{
+			contract:    contract{v1.UsageMeter_USAGE_METER_PUBLIC_EGRESS_BYTES, v1.UsageUnit_USAGE_UNIT_BYTE, v1.UsageChargeScope_USAGE_CHARGE_SCOPE_PUBLIC_EGRESS, v1.UsageMintingRule_USAGE_MINTING_RULE_PUBLIC_RESPONSE},
+			publicMeter: UsageMeterPublicEgressBytes,
+			publicUnit:  UsageUnitByte,
+			publicScope: UsageChargePublicEgress,
+			publicRule:  UsageMintPublicResponse,
+		},
 	}
-	for index, expected := range contracts {
+	for _, expected := range contracts {
 		if wire.GetMeter() == expected.meter && wire.GetUnit() == expected.unit && wire.GetChargeScope() == expected.scope && wire.GetMintingRule() == expected.rule {
-			value := index + 1
-			return UsageMeter(value), UsageUnit(expected.unit), UsageChargeScope(expected.scope), UsageMintingRule(expected.rule), true
+			return expected.publicMeter, expected.publicUnit, expected.publicScope, expected.publicRule, true
 		}
 	}
 	return 0, 0, 0, 0, false
@@ -477,6 +537,23 @@ func canonicalI128(value string, positiveOnly bool) bool {
 		maximum = "170141183460469231731687303715884105728"
 	}
 	return len(digits) < len(maximum) || len(digits) == len(maximum) && digits <= maximum
+}
+
+func positiveDecimalAtMost(value, maximum string) bool {
+	return len(value) < len(maximum) || len(value) == len(maximum) && value <= maximum
+}
+
+func (region UsageRegion) String() string {
+	switch region {
+	case UsageRegionGRU:
+		return "gru"
+	case UsageRegionSFO:
+		return "sfo"
+	case UsageRegionFRA:
+		return "fra"
+	default:
+		return fmt.Sprintf("unknown(%d)", uint8(region))
+	}
 }
 
 func (meter UsageRecordMeter) String() string {

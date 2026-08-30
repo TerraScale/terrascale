@@ -346,6 +346,7 @@ async fn mutations_require_their_idempotency_key() {
             }),
             operation_id: "op-1".into(),
             ack: 0,
+            usage: None,
         }))
         .await
         .expect_err("a keyless mutation fails");
@@ -363,6 +364,7 @@ async fn mutations_require_their_idempotency_key() {
         }),
         operation_id: "op-1".into(),
         ack: 0,
+        usage: None,
     });
     duplicate.metadata_mut().append("x-tb-idempotency-key", "op-1".parse().unwrap());
     duplicate.metadata_mut().append("x-tb-idempotency-key", "op-2".parse().unwrap());
@@ -416,6 +418,7 @@ async fn bind_write_read_and_delete_round_trip() {
             }),
             operation_id: "op-1".into(),
             ack: 0,
+            usage: None,
         }))
         .await
         .expect("the write commits");
@@ -451,6 +454,7 @@ async fn bind_write_read_and_delete_round_trip() {
             }),
             operation_id: "op-2".into(),
             ack: 0,
+            usage: None,
         }))
         .await
         .expect("the delete answers");
@@ -548,6 +552,7 @@ async fn hostile_values_fail_closed_before_the_host_runs() {
             }),
             operation_id: "op-1".into(),
             ack: 0,
+            usage: None,
         }))
         .await
         .expect_err("an oversized value list fails");
@@ -566,6 +571,7 @@ async fn hostile_values_fail_closed_before_the_host_runs() {
             }),
             operation_id: "op-1".into(),
             ack: 0,
+            usage: None,
         }))
         .await
         .expect_err("a non-finite value fails");
@@ -804,6 +810,7 @@ async fn the_real_sync_delivery_core_serves_one_session_over_grpc() {
                     }],
                 })),
             }),
+            usage: None,
         }))
         .await
         .expect("the mutation applies")

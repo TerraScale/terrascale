@@ -674,7 +674,7 @@ fn usage_admission(
         project: value.project.clone(),
         database: value.database.clone(),
         partition: value.partition.clone(),
-        origin_region: value.origin_region.clone(),
+        origin_region: usage_region_from_pb(value.origin_region)?,
         request_id: value.request_id.clone(),
         accepted_at_millis: value.accepted_at_millis,
         meter_version: value.meter_version,
@@ -684,6 +684,23 @@ fn usage_admission(
         .validate_for_key(idempotency_key)
         .map_err(|error| conversion_error(&error.to_string()))?;
     Ok(Some(domain))
+}
+
+fn usage_region_from_pb(value: i32) -> Result<registry::UsageRegion, Status> {
+    match pb::UsageRegion::try_from(value) {
+        Ok(pb::UsageRegion::Gru) => Ok(registry::UsageRegion::Gru),
+        Ok(pb::UsageRegion::Sfo) => Ok(registry::UsageRegion::Sfo),
+        Ok(pb::UsageRegion::Fra) => Ok(registry::UsageRegion::Fra),
+        _ => Err(conversion_error("usage Region is outside the closed vocabulary")),
+    }
+}
+
+const fn usage_region_pb(value: registry::UsageRegion) -> i32 {
+    match value {
+        registry::UsageRegion::Gru => pb::UsageRegion::Gru as i32,
+        registry::UsageRegion::Sfo => pb::UsageRegion::Sfo as i32,
+        registry::UsageRegion::Fra => pb::UsageRegion::Fra as i32,
+    }
 }
 
 const MAX_VALUE_DEPTH: usize = 64;
@@ -1241,64 +1258,35 @@ fn usage_fact_pb(value: &registry::UsageFact) -> pb::UsageFact {
     pb::UsageFact {
         fact_id: value.fact_id.clone(),
         meter: match value.meter {
-            registry::UsageMeter::StoredByteHours => pb::UsageMeter::StoredByteHours as i32,
             registry::UsageMeter::AdmittedRequestUnits => {
                 pb::UsageMeter::AdmittedRequestUnits as i32
             }
             registry::UsageMeter::PublicEgressBytes => pb::UsageMeter::PublicEgressBytes as i32,
-            registry::UsageMeter::ActiveRegionSeats => pb::UsageMeter::ActiveRegionSeats as i32,
-            registry::UsageMeter::BackupByteHours => pb::UsageMeter::BackupByteHours as i32,
-            registry::UsageMeter::RestoreWork => pb::UsageMeter::RestoreWork as i32,
         },
         meter_version: value.meter_version,
         unit: match value.unit {
-            registry::UsageUnit::ByteHour => pb::UsageUnit::ByteHour as i32,
             registry::UsageUnit::RequestUnit => pb::UsageUnit::RequestUnit as i32,
             registry::UsageUnit::Byte => pb::UsageUnit::Byte as i32,
-            registry::UsageUnit::SeatHour => pb::UsageUnit::SeatHour as i32,
-            registry::UsageUnit::RestoreWork => pb::UsageUnit::RestoreWork as i32,
         },
         charge_scope: match value.charge_scope {
-            registry::UsageChargeScope::ActiveRegionCopy => {
-                pb::UsageChargeScope::ActiveRegionCopy as i32
-            }
             registry::UsageChargeScope::AdmittedRequest => {
                 pb::UsageChargeScope::AdmittedRequest as i32
             }
             registry::UsageChargeScope::PublicEgress => pb::UsageChargeScope::PublicEgress as i32,
-            registry::UsageChargeScope::ActiveRegionSeat => {
-                pb::UsageChargeScope::ActiveRegionSeat as i32
-            }
-            registry::UsageChargeScope::BackupCopy => pb::UsageChargeScope::BackupCopy as i32,
-            registry::UsageChargeScope::ExplicitRestore => {
-                pb::UsageChargeScope::ExplicitRestore as i32
-            }
         },
         minting_rule: match value.minting_rule {
-            registry::UsageMintingRule::AcceptedOriginCommit => {
-                pb::UsageMintingRule::AcceptedOriginCommit as i32
-            }
             registry::UsageMintingRule::StableAdmittedRequest => {
                 pb::UsageMintingRule::StableAdmittedRequest as i32
             }
             registry::UsageMintingRule::PublicResponse => {
                 pb::UsageMintingRule::PublicResponse as i32
             }
-            registry::UsageMintingRule::ActiveRegionHour => {
-                pb::UsageMintingRule::ActiveRegionHour as i32
-            }
-            registry::UsageMintingRule::BackupByteHour => {
-                pb::UsageMintingRule::BackupByteHour as i32
-            }
-            registry::UsageMintingRule::ExplicitRestore => {
-                pb::UsageMintingRule::ExplicitRestore as i32
-            }
         },
         tenant: value.tenant.clone(),
         project: value.project.clone(),
         database: value.database.clone(),
         partition: value.partition.clone(),
-        region: value.region.clone(),
+        region: usage_region_pb(value.region),
         measurement_start_millis: value.measurement_start_millis,
         measurement_end_millis: value.measurement_end_millis,
         integer_delta: value.integer_delta.clone(),
@@ -1364,10 +1352,12 @@ fn is_closed(event: &pb::BackboneStreamEvent) -> bool {
     matches!(event.event, Some(pb::backbone_stream_event::Event::Closed(_)))
 }
 
-/// The response stream owns the stop signal for the synchronous feed pump.
+/// The bounded response stream for one backbone subscription.
+//
+// It owns the stop signal for the synchronous feed pump.
 /// Dropping the response (for example, when a client cancels or disconnects)
 /// wakes both an idle feed receive and a pump waiting for queue capacity.
-struct SubscriptionStream {
+pub struct SubscriptionStream {
     receiver: ReceiverStream<Result<pb::BackboneStreamEvent, Status>>,
     stop: Option<std::sync::mpsc::Sender<()>>,
 }
@@ -2380,7 +2370,7 @@ impl Usage for Arc<TbepGrpcServer> {
             project: message.project,
             database: message.database,
             partition: message.partition,
-            origin_region: message.origin_region,
+            origin_region: usage_region_from_pb(message.origin_region)?,
             fact_id: message.fact_id,
             recorded_at_millis: message.recorded_at_millis,
             meter_version: message.meter_version,

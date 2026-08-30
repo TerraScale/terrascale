@@ -2483,80 +2483,63 @@ impl AdminStatusResponse {
 /// The closed usage meter vocabulary.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum UsageMeter {
-    /// Stored bytes multiplied by elapsed hours for one active Region copy.
-    StoredByteHours,
     /// Units assigned by the admitted-request cost table.
     AdmittedRequestUnits,
     /// Public response and change-stream bytes.
     PublicEgressBytes,
-    /// Active Region seats multiplied by elapsed hours.
-    ActiveRegionSeats,
-    /// Immutable backup bytes multiplied by elapsed hours.
-    BackupByteHours,
-    /// Explicit restore work.
-    RestoreWork,
 }
 
 /// The integer unit of one usage fact.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UsageUnit {
-    /// Bytes multiplied by hours.
-    ByteHour,
     /// One admitted request cost unit.
     RequestUnit,
     /// One public byte.
     Byte,
-    /// One active Region seat multiplied by hours.
-    SeatHour,
-    /// One explicit restore work unit.
-    RestoreWork,
 }
 
 /// The scope at which one usage meter charges.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UsageChargeScope {
-    /// One selected active Region copy.
-    ActiveRegionCopy,
     /// One admitted request.
     AdmittedRequest,
     /// One public response or change-stream delivery.
     PublicEgress,
-    /// One selected active Region seat.
-    ActiveRegionSeat,
-    /// One immutable backup copy.
-    BackupCopy,
-    /// One explicit restore operation.
-    ExplicitRestore,
 }
 
 /// The stable event identity that controls usage minting.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum UsageMintingRule {
-    /// Mint once for an accepted origin commit.
-    AcceptedOriginCommit,
     /// Mint once for a stable admitted request identity.
     StableAdmittedRequest,
     /// Mint once for one public response or change-stream delivery.
     PublicResponse,
-    /// Mint once for an active Region interval.
-    ActiveRegionHour,
-    /// Mint once for an immutable backup interval.
-    BackupByteHour,
-    /// Mint once for explicit restore work.
-    ExplicitRestore,
 }
+
+/// The closed airport-code Region vocabulary accepted by usage accounting.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum UsageRegion {
+    /// Sao Paulo, Brazil.
+    Gru,
+    /// San Francisco, United States.
+    Sfo,
+    /// Frankfurt, Germany.
+    Fra,
+}
+
+/// Maximum admitted-request units carried by one fact.
+pub const MAX_ADMITTED_REQUEST_UNITS_PER_FACT: i128 = 1_000_000;
+
+/// Maximum public-egress bytes carried by one fact.
+pub const MAX_PUBLIC_EGRESS_BYTES_PER_FACT: i128 = 1_099_511_627_776;
 
 impl UsageMintingRule {
     /// Returns the protocol discriminant used in stable fact ordering.
     #[must_use]
     pub const fn code(self) -> u8 {
         match self {
-            Self::AcceptedOriginCommit => 1,
             Self::StableAdmittedRequest => 2,
             Self::PublicResponse => 3,
-            Self::ActiveRegionHour => 4,
-            Self::BackupByteHour => 5,
-            Self::ExplicitRestore => 6,
         }
     }
 }
@@ -2566,11 +2549,6 @@ impl UsageMeter {
     #[must_use]
     pub const fn contract(self) -> (UsageUnit, UsageChargeScope, UsageMintingRule) {
         match self {
-            Self::StoredByteHours => (
-                UsageUnit::ByteHour,
-                UsageChargeScope::ActiveRegionCopy,
-                UsageMintingRule::AcceptedOriginCommit,
-            ),
             Self::AdmittedRequestUnits => (
                 UsageUnit::RequestUnit,
                 UsageChargeScope::AdmittedRequest,
@@ -2579,21 +2557,6 @@ impl UsageMeter {
             Self::PublicEgressBytes => {
                 (UsageUnit::Byte, UsageChargeScope::PublicEgress, UsageMintingRule::PublicResponse)
             }
-            Self::ActiveRegionSeats => (
-                UsageUnit::SeatHour,
-                UsageChargeScope::ActiveRegionSeat,
-                UsageMintingRule::ActiveRegionHour,
-            ),
-            Self::BackupByteHours => (
-                UsageUnit::ByteHour,
-                UsageChargeScope::BackupCopy,
-                UsageMintingRule::BackupByteHour,
-            ),
-            Self::RestoreWork => (
-                UsageUnit::RestoreWork,
-                UsageChargeScope::ExplicitRestore,
-                UsageMintingRule::ExplicitRestore,
-            ),
         }
     }
 }
@@ -2608,7 +2571,7 @@ pub struct UsageAdmissionContext {
     /// The Partition identity.
     pub partition: String,
     /// The Region that admitted the request.
-    pub origin_region: String,
+    pub origin_region: UsageRegion,
     /// The stable admitted request identity.
     pub request_id: String,
     /// The trusted admission time in Unix milliseconds.
@@ -2629,7 +2592,6 @@ impl UsageAdmissionContext {
         usage_identifier(&self.project, 255, "project")?;
         usage_identifier(&self.database, 255, "database")?;
         usage_identifier(&self.partition, 255, "partition")?;
-        usage_identifier(&self.origin_region, 255, "origin_region")?;
         usage_identifier(&self.request_id, 128, "request_id")?;
         if self.request_id != idempotency_key
             || self.accepted_at_millis == 0
@@ -2637,7 +2599,11 @@ impl UsageAdmissionContext {
         {
             return Err(invalid_usage("usage_admission"));
         }
-        positive_i128(&self.integer_units, "integer_units")
+        let units = positive_i128(&self.integer_units, "integer_units")?;
+        if units > MAX_ADMITTED_REQUEST_UNITS_PER_FACT {
+            return Err(invalid_usage("integer_units"));
+        }
+        Ok(())
     }
 }
 
@@ -2648,6 +2614,15 @@ pub enum UsageRecordMeter {
     AdmittedRequestUnits,
     /// Public response or change-stream bytes.
     PublicEgressBytes,
+}
+
+impl UsageRecordMeter {
+    const fn unit_limit(self) -> i128 {
+        match self {
+            Self::AdmittedRequestUnits => MAX_ADMITTED_REQUEST_UNITS_PER_FACT,
+            Self::PublicEgressBytes => MAX_PUBLIC_EGRESS_BYTES_PER_FACT,
+        }
+    }
 }
 
 /// One bounded, idempotent standalone usage record.
@@ -2662,7 +2637,7 @@ pub struct UsageRecordRequest {
     /// The Partition identity.
     pub partition: String,
     /// The Region that observed the work.
-    pub origin_region: String,
+    pub origin_region: UsageRegion,
     /// The stable fact identity.
     pub fact_id: String,
     /// The trusted recording time in Unix milliseconds.
@@ -2683,7 +2658,6 @@ impl UsageRecordRequest {
         usage_identifier(&self.project, 255, "project")?;
         usage_identifier(&self.database, 255, "database")?;
         usage_identifier(&self.partition, 255, "partition")?;
-        usage_identifier(&self.origin_region, 255, "origin_region")?;
         usage_identifier(&self.fact_id, 128, "fact_id")?;
         if self.fact_id != idempotency_key
             || self.recorded_at_millis == 0
@@ -2691,7 +2665,11 @@ impl UsageRecordRequest {
         {
             return Err(invalid_usage("usage_record"));
         }
-        positive_i128(&self.integer_units, "integer_units")
+        let units = positive_i128(&self.integer_units, "integer_units")?;
+        if units > self.meter.unit_limit() {
+            return Err(invalid_usage("integer_units"));
+        }
+        Ok(())
     }
 }
 
@@ -2744,7 +2722,7 @@ pub struct UsageFact {
     /// The Partition identity.
     pub partition: String,
     /// The origin Region identity.
-    pub region: String,
+    pub region: UsageRegion,
     /// The inclusive measurement-window start in Unix milliseconds.
     pub measurement_start_millis: u64,
     /// The exclusive measurement-window end in Unix milliseconds.
@@ -2775,7 +2753,6 @@ impl UsageFact {
         usage_identifier(&self.project, 255, "project")?;
         usage_identifier(&self.database, 255, "database")?;
         usage_identifier(&self.partition, 255, "partition")?;
-        usage_identifier(&self.region, 255, "region")?;
         if self.meter_version == 0
             || self.sequence == 0
             || self.replica_epoch == 0
@@ -2896,13 +2873,13 @@ fn usage_bytes(
     Ok(())
 }
 
-fn positive_i128(value: &str, field: &'static str) -> Result<(), crate::value::BodyError> {
+fn positive_i128(value: &str, field: &'static str) -> Result<i128, crate::value::BodyError> {
     crate::value::check_str_bound(value, 39, field)?;
     let parsed = value.parse::<i128>().map_err(|_| invalid_usage(field))?;
     if parsed <= 0 || parsed.to_string() != value {
         return Err(invalid_usage(field));
     }
-    Ok(())
+    Ok(parsed)
 }
 
 /// The `replication_conflicts_request` frame body.

@@ -1262,7 +1262,7 @@ impl Engine {
         {
             return Err(UsageCommandError::InvalidRequest);
         }
-        let mut storage = self.storage.lock().map_err(|_| UsageCommandError::StorageUnavailable)?;
+        let storage = self.storage.lock().map_err(|_| UsageCommandError::StorageUnavailable)?;
         let current = storage.port.published_state().0;
         let snapshot = decoded.as_ref().map_or(current, |state| state.snapshot);
         if snapshot > current {

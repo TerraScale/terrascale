@@ -1160,17 +1160,37 @@ mod tests {
     #[test]
     fn newest_retained_complete_attempt_wins_by_filename_timestamp() {
         let directory = temporary_results_directory();
-        write_reference_attempt(
-            &directory,
-            "postgresql-read-100-9-0.json",
-            &complete_document("older"),
-        );
-        write_reference_attempt(
-            &directory,
-            "postgresql-read-200-1-0.json",
-            &complete_document("newer"),
-        );
-        let selected = read_reference_document(&directory, "postgresql", "read");
+        let fixture = json::parse(include_str!(
+            "../../bench/scripts/retained-attempt-selection-fixture.json"
+        ))
+        .expect("shared selection fixture");
+        let json::Value::Obj(fields) = fixture else { panic!("fixture object") };
+        let target = match fields.get("target") {
+            Some(json::Value::Str(value)) => value,
+            _ => panic!("fixture target"),
+        };
+        let workload = match fields.get("workload") {
+            Some(json::Value::Str(value)) => value,
+            _ => panic!("fixture workload"),
+        };
+        let attempts = match fields.get("attempts") {
+            Some(json::Value::Arr(values)) => values
+                .iter()
+                .map(|value| match value {
+                    json::Value::Str(value) => value.as_str(),
+                    _ => panic!("fixture attempt"),
+                })
+                .collect::<Vec<_>>(),
+            _ => panic!("fixture attempts"),
+        };
+        let newest = match fields.get("newest") {
+            Some(json::Value::Str(value)) => value,
+            _ => panic!("fixture newest"),
+        };
+        write_reference_attempt(&directory, attempts[0], &complete_document("older"));
+        write_reference_attempt(&directory, attempts[1], &complete_document("newer"));
+        let selected = read_reference_document(&directory, target, workload);
+        assert!(directory.join(newest).is_file());
         assert!(
             matches!(selected, ReferenceDocument::Complete(ref side) if side.observed_identity == "newer")
         );
@@ -1192,7 +1212,7 @@ mod tests {
         );
         let selected = read_reference_document(&directory, "postgresql", "read");
         assert!(
-            matches!(selected, ReferenceDocument::Failed { reason, .. } if reason == "connection refused")
+            matches!(&selected, ReferenceDocument::Failed { reason, .. } if reason == "connection refused")
         );
         assert!(selected.side().is_none());
         std::fs::remove_dir_all(directory).expect("cleanup");
@@ -1208,7 +1228,7 @@ mod tests {
         );
         write_reference_attempt(&directory, "postgresql-read-200-1-0.json", "{broken");
         let selected = read_reference_document(&directory, "postgresql", "read");
-        assert!(matches!(selected, ReferenceDocument::Invalid { .. }));
+        assert!(matches!(&selected, ReferenceDocument::Invalid { .. }));
         assert!(selected.side().is_none());
         std::fs::remove_dir_all(directory).expect("cleanup");
     }

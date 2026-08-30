@@ -1944,6 +1944,10 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+fn saturating_increment(value: &mut u64) {
+    *value = value.saturating_add(1);
+}
+
 /// Redacts secrets from diagnostic text before it is handed to logs or an
 /// operator-facing health adapter.
 ///

@@ -1,0 +1,9 @@
+{
+  "target": "postgresql",
+  "workload": "read",
+  "attempts": [
+    "postgresql-read-100-9-0.json",
+    "postgresql-read-200-1-0.json"
+  ],
+  "newest": "postgresql-read-200-1-0.json"
+}

@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	v1 "terrascale.tech/terrabase-go/terrabase/v1"
 )
@@ -171,9 +172,9 @@ func (fake *fakeTBEP) admitUsage(usage *v1.UsageAdmissionContext, key string) er
 		return engineStatus(codes.InvalidArgument, v1.ErrorCode_ERROR_CODE_IDEMPOTENCY_PAIRING,
 			"the usage admission request identity differs from the idempotency key")
 	}
-	copied := *usage
+	copied := proto.Clone(usage).(*v1.UsageAdmissionContext)
 	fake.mu.Lock()
-	fake.admissions = append(fake.admissions, &copied)
+	fake.admissions = append(fake.admissions, copied)
 	fake.mu.Unlock()
 	return nil
 }
@@ -184,8 +185,7 @@ func (fake *fakeTBEP) lastAdmission() *v1.UsageAdmissionContext {
 	if len(fake.admissions) == 0 {
 		return nil
 	}
-	copied := *fake.admissions[len(fake.admissions)-1]
-	return &copied
+	return proto.Clone(fake.admissions[len(fake.admissions)-1]).(*v1.UsageAdmissionContext)
 }
 
 // put stores one document and records the backbone change.
@@ -777,15 +777,14 @@ func (fake *fakeTBEP) Record(ctx context.Context, request *v1.UsageRecordRequest
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
 	if previous := fake.usageFacts[request.GetFactId()]; previous != nil {
-		copied := *previous
+		copied := proto.Clone(previous).(*v1.UsageRecordResponse)
 		copied.AlreadyRecorded = true
-		return &copied, nil
+		return copied, nil
 	}
 	fake.sequence++
 	receipt := &v1.UsageRecordResponse{Sequence: fake.sequence, ReplicaEpoch: 7}
 	fake.usageFacts[request.GetFactId()] = receipt
-	copied := *receipt
-	return &copied, nil
+	return proto.Clone(receipt).(*v1.UsageRecordResponse), nil
 }
 
 func (fake *fakeTBEP) Export(ctx context.Context, request *v1.UsageExportRequest) (*v1.UsageExportResponse, error) {

@@ -182,6 +182,7 @@ pub enum BackupRunMode {
 pub struct RemoteRecoveryPoint {
     manifest: BackupManifest,
     modified_millis: i64,
+    modified_at: String,
 }
 
 impl RemoteRecoveryPoint {
@@ -193,6 +194,11 @@ impl RemoteRecoveryPoint {
     /// Returns the S3 object's last-modified time as Unix milliseconds.
     pub fn modified_millis(&self) -> i64 {
         self.modified_millis
+    }
+
+    /// Returns the S3 object's last-modified time as an RFC 3339 timestamp.
+    pub fn modified_at(&self) -> &str {
+        &self.modified_at
     }
 }
 
@@ -282,6 +288,7 @@ impl S3BackupRepository {
                     Ok(RemoteRecoveryPoint {
                         manifest,
                         modified_millis: object.last_modified.timestamp_millis(),
+                        modified_at: object.last_modified.to_rfc3339(),
                     })
                 }
             })
@@ -389,7 +396,7 @@ impl S3BackupRepository {
     }
 
     fn object_path(&self, identity: &str, file: &str) -> ObjectPath {
-        self.prefix.child(format!("rp-{identity}")).child(file)
+        self.prefix.clone().join(format!("rp-{identity}")).join(file)
     }
 }
 
@@ -807,7 +814,7 @@ mod tests {
             "memory://database-a".to_owned(),
         )
         .unwrap();
-        let location = repository.prefix.child("object");
+        let location = repository.prefix.clone().join("object");
         assert!(repository.put_immutable(location.clone(), b"same".to_vec()).await.unwrap());
         assert!(!repository.put_immutable(location.clone(), b"same".to_vec()).await.unwrap());
         assert!(repository.put_immutable(location, b"different".to_vec()).await.is_err());

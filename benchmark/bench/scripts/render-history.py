@@ -7,12 +7,13 @@ adapter (`src/benchmarks/`) owns every verdict; this script only tabulates
 the facts those documents record, so a table can never mint a claim the
 lane did not produce.
 
-Usage: python3 bench/scripts/render-history.py [--out PATH]
+Usage: python3 bench/scripts/render-history.py [--history-dir DIR]
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import math
 import pathlib
@@ -21,6 +22,22 @@ import sys
 
 WORKLOADS = ["read", "write", "query", "mixed"]
 TARGETS = ["terrabase", "postgresql", "ravendb"]
+
+
+def write_retained(history_dir: pathlib.Path, contents: str) -> pathlib.Path:
+    """Writes one immutable Markdown snapshot inside the history directory."""
+    history_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+    for attempt in range(100):
+        suffix = "" if attempt == 0 else f"-{attempt}"
+        path = history_dir / f"benchmark-{stamp}{suffix}.md"
+        try:
+            with path.open("x") as handle:
+                handle.write(contents)
+        except FileExistsError:
+            continue
+        return path
+    raise FileExistsError("could not allocate a unique benchmark history filename")
 
 
 def _attempt_key(path: pathlib.Path, target: str, workload: str) -> tuple[int, int, str]:
@@ -103,11 +120,17 @@ def revision_of(document: dict) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results", default="bench/results", type=pathlib.Path)
-    parser.add_argument("--out", default="docs/evidence/benchmarks/benchmark-history.md", type=pathlib.Path)
+    parser.add_argument(
+        "--history-dir",
+        default="docs/evidence/benchmarks/history",
+        type=pathlib.Path,
+        help="directory that retains immutable Markdown snapshots",
+    )
     arguments = parser.parse_args()
 
     rows: list[str] = []
     identities: dict[str, str] = {}
+    documents_found = False
     for workload in WORKLOADS:
         engine = load(arguments.results, "terrabase", workload)
         postgresql = load(arguments.results, "postgresql", workload)
@@ -118,7 +141,11 @@ def main() -> int:
             ("ravendb", ravendb),
         ):
             if document is None:
+                rows.append(
+                    f"| {workload} | {target} | missing | — | — | — | — | — |"
+                )
                 continue
+            documents_found = True
             identities[target] = revision_of(document)
             status = document.get("status", "complete")
             samples = document.get("samples", [])
@@ -138,7 +165,7 @@ def main() -> int:
                 row = f"| {workload} | {target} | {status} | — | — | — | — | — |"
             rows.append(row)
 
-    if not rows:
+    if not documents_found:
         print("no results documents found under", arguments.results, file=sys.stderr)
         return 1
 
@@ -171,9 +198,8 @@ def main() -> int:
         *rows,
         "",
     ]
-    arguments.out.parent.mkdir(parents=True, exist_ok=True)
-    arguments.out.write_text("\n".join(lines))
-    print(f"wrote {arguments.out} with {len(rows)} rows")
+    path = write_retained(arguments.history_dir, "\n".join(lines))
+    print(f"wrote {path} with {len(rows)} rows")
     return 0
 
 

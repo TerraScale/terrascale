@@ -423,7 +423,7 @@ mod tests {
             format!("<tr class=\"x\">{}{}</tr>", cell("a"), cell_raw(&badge(Tone::Good, "ok")));
         let markup = table(&["one", "two"], &[row.clone()], "nothing");
         assert_eq!(markup.matches("<tr").count(), 1, "exactly one <tr> per row");
-        assert!(markup.contains(row));
+        assert!(markup.contains(row.as_str()));
         assert!(!markup.contains("<tr class=\"border-b transition-colors hover:bg-muted/50\"><tr"));
     }
 

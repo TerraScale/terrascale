@@ -41,6 +41,12 @@ is malformed. Such an attempt remains visible with `failed` or `invalid` status,
 and the comparison is inconclusive; an older successful file must never mask
 it. Historical files are never used to fill missing samples from a newer run.
 
+Each renderer invocation creates a timestamped Markdown snapshot under
+`docs/evidence/benchmarks/history/`. It uses exclusive creation and never
+replaces an earlier report. The `--history-dir` option may move that retained
+folder for an isolated test run, but the renderer accepts no single output file
+that could overwrite benchmark history.
+
 Each retained result names the observed server identity, endpoint, client
 transport, kernel, logical CPU count, timestamp, configuration, limits, and
 per-sample raw facts. Failed attempts retain the error and host facts but no

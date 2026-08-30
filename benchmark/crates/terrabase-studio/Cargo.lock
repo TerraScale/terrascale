@@ -1559,8 +1559,10 @@ dependencies = [
 name = "terrabase"
 version = "0.1.0"
 dependencies = [
+ "aws-lc-rs",
  "blake3",
  "ulid",
+ "zeroize",
 ]
 
 [[package]]
