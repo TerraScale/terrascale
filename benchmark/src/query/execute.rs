@@ -519,6 +519,8 @@ fn collect_matches(
         return Err(QueryError::InvalidSpec);
     };
     let mut matched = Vec::new();
+    let mut retained_bytes = 0_usize;
+    let mut matched_count = 0_u64;
     let mut scanned: u64 = 0;
     let mut skipped: u64 = 0;
     for (position, document) in documents.iter().enumerate() {
@@ -532,24 +534,20 @@ fn collect_matches(
         }
         scanned = scanned.saturating_add(1);
         if model::matches(query.predicate(), document) {
-            retain_candidate(query, &mut matched, document, retained_capacity)?;
+            matched_count = matched_count.saturating_add(1);
+            if query.paging().limit().is_none() && matched_count > retained_capacity as u64 {
+                return Err(QueryError::CandidateBoundExceeded);
+            }
+            retain_candidate(
+                query,
+                &mut matched,
+                &mut retained_bytes,
+                document,
+                retained_capacity,
+            )?;
         } else {
             skipped = skipped.saturating_add(1);
         }
-    }
-    let matched_count = u64::try_from(
-        documents
-            .iter()
-            .filter(|document| {
-                document.collection() == source_collection
-                    && indexed_ids.is_none_or(|ids| ids.contains(document.id()))
-                    && model::matches(query.predicate(), document)
-            })
-            .count(),
-    )
-    .unwrap_or(u64::MAX);
-    if query.paging().limit().is_none() && matched_count > retained_capacity as u64 {
-        return Err(QueryError::CandidateBoundExceeded);
     }
     Ok((matched, matched_count, scanned, skipped))
 }
@@ -566,6 +564,7 @@ fn scan_collection(
 ) -> Result<(Vec<Document>, u64, u64, u64), QueryError> {
     let mut after = None;
     let mut matched = Vec::new();
+    let mut retained_bytes = 0_usize;
     let mut matched_count = 0_u64;
     let mut scanned = 0_u64;
     let mut skipped = 0_u64;
@@ -593,7 +592,16 @@ fn scan_collection(
             scanned = scanned.saturating_add(1);
             if model::matches(query.predicate(), document) {
                 matched_count = matched_count.saturating_add(1);
-                retain_candidate(query, &mut matched, document, retained_capacity)?;
+                if query.paging().limit().is_none() && matched_count > retained_capacity as u64 {
+                    return Err(QueryError::CandidateBoundExceeded);
+                }
+                retain_candidate(
+                    query,
+                    &mut matched,
+                    &mut retained_bytes,
+                    document,
+                    retained_capacity,
+                )?;
             } else {
                 skipped = skipped.saturating_add(1);
             }
@@ -603,9 +611,6 @@ fn scan_collection(
         }
         after = page.last().map(|document| document.id().clone());
     }
-    if query.paging().limit().is_none() && matched_count > retained_capacity as u64 {
-        return Err(QueryError::CandidateBoundExceeded);
-    }
     Ok((matched, matched_count, scanned, skipped))
 }
 
@@ -614,16 +619,35 @@ fn scan_collection(
 fn retain_candidate(
     query: &NormalizedQuery,
     retained: &mut Vec<Document>,
+    retained_bytes: &mut usize,
     document: &Document,
     capacity: usize,
 ) -> Result<(), QueryError> {
-    retained.push(document.clone());
-    retained.sort_by(|left, right| model::compare_documents(query.ordering(), left, right));
+    check_bounds(query.deadline(), query.cancellation_signal())?;
+    let position = {
+        let mut low = 0;
+        let mut high = retained.len();
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if model::compare_documents(query.ordering(), &retained[middle], document)
+                == std::cmp::Ordering::Greater
+            {
+                high = middle;
+            } else {
+                // Insert after equal keys to preserve stable canonical order.
+                low = middle + 1;
+            }
+        }
+        low
+    };
+    *retained_bytes = (*retained_bytes).saturating_add(document_bytes(document));
+    retained.insert(position, document.clone());
     if retained.len() > capacity {
-        retained.pop();
+        if let Some(removed) = retained.pop() {
+            *retained_bytes = (*retained_bytes).saturating_sub(document_bytes(&removed));
+        }
     }
-    let bytes = retained.iter().map(document_bytes).sum::<usize>();
-    if bytes > MAX_RETAINED_CANDIDATE_BYTES {
+    if *retained_bytes > MAX_RETAINED_CANDIDATE_BYTES {
         return Err(QueryError::CandidateBoundExceeded);
     }
     Ok(())
@@ -646,13 +670,11 @@ fn document_value_bytes(value: &DocumentValue) -> usize {
         | DocumentValue::Number(_) => 8,
         DocumentValue::String(value) => value.len().saturating_add(8),
         DocumentValue::Array(values) => {
-            values.iter().map(document_value_bytes).sum::<usize>().saturating_add(8)
+            values.iter().fold(8, |bytes, value| bytes.saturating_add(document_value_bytes(value)))
         }
-        DocumentValue::Object(values) => values
-            .iter()
-            .map(|(key, value)| key.len().saturating_add(document_value_bytes(value)))
-            .sum::<usize>()
-            .saturating_add(8),
+        DocumentValue::Object(values) => values.iter().fold(8, |bytes, (key, value)| {
+            bytes.saturating_add(key.len()).saturating_add(document_value_bytes(value))
+        }),
     }
 }
 
