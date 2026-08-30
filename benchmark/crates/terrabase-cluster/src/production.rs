@@ -526,6 +526,12 @@ impl DurableProductionDataPlane {
         ProductionDataPlaneOperationError,
     > {
         let mut state = lock_unpoisoned(&self.state);
+        if !state.accepting {
+            return Err(ProductionDataPlaneOperationError::Draining);
+        }
+        if !state.rf2_reconciled.contains(scope) {
+            return Err(ProductionDataPlaneOperationError::LocalRf2NotReconciled);
+        }
         state
             .databases
             .get_mut(scope)
@@ -554,19 +560,39 @@ impl DurableProductionDataPlane {
         if std::ptr::eq(self, peer) {
             return Err(ProductionDataPlaneOperationError::DurableMember);
         }
-        let mut left = lock_unpoisoned(&self.state);
-        let mut right = lock_unpoisoned(&peer.state);
+        // Always acquire both state locks by object address. Two peer
+        // sessions may reconcile concurrently in opposite directions; a
+        // fixed order prevents those sessions from deadlocking.
+        let self_first = (self as *const Self) < (peer as *const Self);
+        let (mut left, mut right, local_is_left) = if self_first {
+            (lock_unpoisoned(&self.state), lock_unpoisoned(&peer.state), true)
+        } else {
+            (lock_unpoisoned(&peer.state), lock_unpoisoned(&self.state), false)
+        };
         if !left.accepting || !right.accepting {
             return Err(ProductionDataPlaneOperationError::Draining);
         }
-        let local = left
-            .databases
-            .get_mut(scope)
-            .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?;
-        let remote = right
-            .databases
-            .get_mut(scope)
-            .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?;
+        let (local, remote) = if local_is_left {
+            (
+                left.databases
+                    .get_mut(scope)
+                    .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?,
+                right
+                    .databases
+                    .get_mut(scope)
+                    .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?,
+            )
+        } else {
+            (
+                right
+                    .databases
+                    .get_mut(scope)
+                    .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?,
+                left.databases
+                    .get_mut(scope)
+                    .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?,
+            )
+        };
         local.reconcile_with_timeout(remote, timeout).map_err(|error| match error {
             DurableMemberError::Timeout => ProductionDataPlaneOperationError::Deadline,
             _ => ProductionDataPlaneOperationError::DurableMember,
@@ -590,10 +616,10 @@ impl ProductionDataPlane for DurableProductionDataPlane {
         let complete = !state.databases.is_empty();
         let reconciled = complete && state.rf2_reconciled.len() == state.databases.len();
         let repaired = complete && state.repaired.len() == state.databases.len();
-        let durable_progress = complete
+        let durable_progress = reconciled
             && state.databases.values().all(|member| {
                 let progress = member.progress();
-                progress.stored() >= progress.applied()
+                progress.applied() == progress.verified()
             });
         ProductionDataPlaneFacts {
             databases_admitted: complete,

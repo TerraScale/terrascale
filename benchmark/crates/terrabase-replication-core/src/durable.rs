@@ -434,9 +434,7 @@ impl DurableMember {
             .truncate(true)
             .open(&temporary)
             .map_err(|_| DurableMemberError::Persistence)?;
-        snapshot
-            .write_all(&bytes)
-            .map_err(|_| DurableMemberError::Persistence)?;
+        snapshot.write_all(&bytes).map_err(|_| DurableMemberError::Persistence)?;
         snapshot.sync_all().map_err(|_| DurableMemberError::Persistence)?;
         drop(snapshot);
         fs::rename(temporary, self.location.join(SNAPSHOT))
@@ -613,14 +611,28 @@ mod tests {
             first.merkle_roots().expect("first roots"),
             second.merkle_roots().expect("second roots")
         );
+        assert_eq!(first.progress().applied(), first.progress().verified());
+        assert_eq!(second.progress().applied(), second.progress().verified());
+        first.delete("operation-delete", "document-a").expect("delete");
+        first.reconcile_with(&mut second).expect("delete repair");
+        assert_eq!(second.read("document-a").expect("deleted read"), None);
         second.drain().expect("drain second");
         first.drain().expect("drain first");
         second_catalog.close(std::time::Duration::from_secs(1)).expect("close second");
         first_catalog.close(std::time::Duration::from_secs(1)).expect("close first");
 
-        let (_, mut revived) = member(&first_path, "member-a");
-        assert_eq!(revived.read("document-a").expect("recovered read"), Some(body("one")));
-        revived.drain().expect("drain revived");
+        let (revived_second_catalog, mut revived_second) = member(&second_path, "member-b");
+        assert_eq!(revived_second.read("document-a").expect("deleted read after restart"), None);
+        revived_second.drain().expect("drain revived second");
+        revived_second_catalog
+            .close(std::time::Duration::from_secs(1))
+            .expect("close revived second");
+        let (revived_first_catalog, mut revived_first) = member(&first_path, "member-a");
+        assert_eq!(revived_first.read("document-a").expect("recovered read"), None);
+        revived_first.drain().expect("drain revived first");
+        revived_first_catalog
+            .close(std::time::Duration::from_secs(1))
+            .expect("close revived first");
         let _ = fs::remove_dir_all(first_path);
         let _ = fs::remove_dir_all(second_path);
     }
