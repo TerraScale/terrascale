@@ -41,6 +41,12 @@
 #![deny(missing_docs)]
 #![warn(clippy::all, clippy::pedantic)]
 
+#[cfg(all(feature = "local-crypto", feature = "production-fips"))]
+compile_error!("select exactly one of `local-crypto` or `production-fips`");
+
+#[cfg(not(any(feature = "local-crypto", feature = "production-fips")))]
+compile_error!("select one of `local-crypto` or `production-fips`");
+
 pub mod clock;
 pub mod envelope;
 pub mod identity;
@@ -49,6 +55,8 @@ pub mod journal;
 pub mod lane;
 pub mod member;
 pub mod nats_usage;
+#[cfg(feature = "production-fips")]
+pub mod production;
 pub mod quic;
 pub mod receipt;
 pub mod transport;

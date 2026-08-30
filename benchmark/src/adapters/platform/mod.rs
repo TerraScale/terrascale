@@ -518,7 +518,11 @@ fn map_engine_error(error: EngineError, identity: Option<OperationId>) -> Platfo
         EngineError::InvalidDocument => PlatformError::InvalidRequest,
         EngineError::Deadline => PlatformError::Deadline { operation_id: identity },
         EngineError::Cancelled => PlatformError::Cancelled { operation_id: identity },
-        EngineError::StorageFailure => PlatformError::EngineFailure { operation_id: identity },
+        EngineError::StorageFailure
+        | EngineError::SnapshotPageLimitExceeded
+        | EngineError::SnapshotBoundaryUnavailable => {
+            PlatformError::EngineFailure { operation_id: identity }
+        }
     }
 }
 

@@ -144,6 +144,8 @@ pub(crate) fn map_engine_error(error: &EngineError) -> StreamError {
         // The frozen stream error set has no storage-failure case; an
         // unusable storage lock means the engine cannot serve the stream.
         EngineError::StorageFailure
+        | EngineError::SnapshotPageLimitExceeded
+        | EngineError::SnapshotBoundaryUnavailable
         | EngineError::Conflict
         | EngineError::Deadline
         | EngineError::Cancelled

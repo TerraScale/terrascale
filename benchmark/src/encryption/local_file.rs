@@ -4,6 +4,9 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
+#[cfg(any(target_os = "android", target_os = "linux"))]
+use std::os::unix::fs::OpenOptionsExt as _;
+
 use aws_lc_rs::rand;
 use zeroize::Zeroize;
 
@@ -107,7 +110,13 @@ fn load_existing(path: &Path) -> Result<DatabaseKey, LoadError> {
         return Err(LoadError::Unsafe);
     }
     private_mode(&before)?;
-    let mut file = OpenOptions::new().read(true).open(path).map_err(|_| LoadError::Io)?;
+    let mut options = OpenOptions::new();
+    options.read(true);
+    // Linux and Android expose O_NOFOLLOW through the stable custom-flags
+    // escape hatch. The metadata checks remain in place on other Unix hosts.
+    #[cfg(any(target_os = "android", target_os = "linux"))]
+    options.custom_flags(0x20000);
+    let mut file = options.open(path).map_err(|_| LoadError::Io)?;
     let opened = file.metadata().map_err(|_| LoadError::Io)?;
     if !opened.is_file() || opened.len() != KEY_BYTES as u64 || !same_file(&before, &opened) {
         return Err(LoadError::Unsafe);

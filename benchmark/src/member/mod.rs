@@ -14,11 +14,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::identity::DatabaseUlid;
 use crate::engine::EngineConfigError;
 use crate::{Engine, EngineConfig, EngineOpenError, EngineShutdownError};
 
 /// The maximum UTF-8 byte length of a database identity.
-pub const MAX_DATABASE_ID_BYTES: usize = 128;
+pub const MAX_DATABASE_ID_BYTES: usize = 26;
 /// The maximum number of databases in one Member catalog.
 pub const MAX_DATABASES: usize = 1_024;
 /// The maximum byte length accepted for a database location specification.
@@ -26,41 +27,42 @@ pub const MAX_LOCATION_BYTES: usize = 4_096;
 /// The maximum admission capacity accepted by one Member.
 pub const MAX_ADMISSION_PERMITS: usize = 1_000_000;
 
-/// A canonical, bounded identity for one database.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct DatabaseId(String);
+/// A zero-cost catalog view over the canonical ADR 0027 database identity.
+///
+/// The wrapped [`DatabaseUlid`] is the only database entity identity.  This
+/// name exists solely to keep the storage catalog's API explicit.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct DatabaseId(DatabaseUlid);
 
 impl DatabaseId {
     /// Creates a database identity accepted by the Member catalog.
     ///
     /// Identities are intentionally restricted to filesystem-neutral ASCII
     /// characters.  They are never used directly as a filesystem path.
-    pub fn try_new(value: impl Into<String>) -> Result<Self, CatalogValidationError> {
-        let value = value.into();
-        if value.is_empty() || value.len() > MAX_DATABASE_ID_BYTES {
-            return Err(CatalogValidationError::InvalidDatabaseIdentity);
-        }
-        if value == "." || value == ".." || !value.bytes().all(is_database_id_byte) {
-            return Err(CatalogValidationError::InvalidDatabaseIdentity);
-        }
-        Ok(Self(value))
+    pub fn try_new(value: impl AsRef<str>) -> Result<Self, CatalogValidationError> {
+        DatabaseUlid::from_text(value.as_ref())
+            .map(Self)
+            .map_err(|_| CatalogValidationError::InvalidDatabaseIdentity)
     }
 
     /// Returns the canonical identity text.
     #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
+    pub fn as_str(&self) -> String {
+        self.0.to_text()
+    }
+
+    /// Returns the wrapped ADR 0027 identity.
+    #[must_use]
+    pub const fn value(self) -> DatabaseUlid {
+        self.0
     }
 }
 
 impl std::fmt::Display for DatabaseId {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.0)
+        std::fmt::Display::fmt(&self.0, formatter)
     }
-}
-
-fn is_database_id_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
 }
 
 /// One database's logical identity and relative durable location.
@@ -117,6 +119,8 @@ pub enum CatalogValidationError {
     InvalidDatabaseIdentity,
     /// A database location is empty, absolute, or contains traversal.
     InvalidDatabaseLocation,
+    /// No database entries were supplied.
+    EmptyCatalog,
     /// A location specification exceeds the bounded path size.
     LocationTooLong,
     /// More than [`MAX_DATABASES`] entries were supplied.
@@ -135,9 +139,19 @@ pub enum MemberOpenError {
     /// The catalog did not pass validation.
     Validation(CatalogValidationError),
     /// Engine configuration could not be constructed for a database.
-    EngineConfig { database: DatabaseId, error: EngineConfigError },
+    EngineConfig {
+        /// The database whose configuration failed.
+        database: DatabaseId,
+        /// The engine configuration refusal.
+        error: EngineConfigError,
+    },
     /// A database engine failed to open.  No Member is returned.
-    EngineOpen { database: DatabaseId, error: EngineOpenError },
+    EngineOpen {
+        /// The database whose engine failed to open.
+        database: DatabaseId,
+        /// The durable engine open failure.
+        error: EngineOpenError,
+    },
 }
 
 /// Errors returned when acquiring or draining the Member.
@@ -154,7 +168,12 @@ pub enum MemberError {
     /// The bounded drain deadline elapsed while work remained active.
     DrainTimeout,
     /// An engine failed its final durable flush.
-    Shutdown { database: DatabaseId, error: EngineShutdownError },
+    Shutdown {
+        /// The database whose engine failed to close.
+        database: DatabaseId,
+        /// The durable engine shutdown failure.
+        error: EngineShutdownError,
+    },
 }
 
 /// Identifies which admission limit rejected an operation.
@@ -226,6 +245,9 @@ struct MemberInner {
 pub struct Member {
     inner: Arc<MemberInner>,
 }
+
+/// Compatibility name for the root-owned database catalog.
+pub type MemberCatalog = Member;
 
 impl Member {
     /// Validates the complete catalog, then opens every durable engine.
@@ -476,7 +498,13 @@ fn collect_and_validate_specs(
 fn validate_location(root: &Path, relative: &Path) -> Result<PathBuf, CatalogValidationError> {
     if relative.is_absolute()
         || relative.components().any(|component| {
-            matches!(component, Component::ParentDir | Component::CurDir | Component::RootDir)
+            matches!(
+                component,
+                Component::ParentDir
+                    | Component::CurDir
+                    | Component::RootDir
+                    | Component::Prefix(_)
+            )
         })
     {
         return Err(CatalogValidationError::InvalidDatabaseLocation);

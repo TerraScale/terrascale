@@ -16,7 +16,7 @@ use std::{
 
 use crate::engine::{
     CommitError, CommitOutcome, DurableResolution, Engine, EngineConfig, EngineConfigError,
-    EngineError, EngineOpenError, UnknownReason,
+    EngineError, EngineOpenError, MAX_SNAPSHOT_RECORD_PAGE, UnknownReason,
 };
 use crate::replication::SharedTombstoneRetention;
 use crate::storage::{CompactionPolicy, CompactionRequest, FaultPoint, HistoryReclaimOutcome};
@@ -2214,6 +2214,82 @@ fn snapshot_documents_from_serves_bounded_windows_and_validates_the_view() {
         reopened.snapshot_documents_from(&reopened_scope, &snapshot, None, 2),
         Err(EngineError::SnapshotEngineMismatch),
         "a snapshot from the closed instance is rejected"
+    );
+    drop(reopened);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn snapshot_records_from_pages_full_keys_and_winning_durability() {
+    let (dir, engine) = open_engine("engine-record-pages");
+    let scope = tenant_scope(&engine, "tenant-a");
+    for (operation_name, id, collection, value, durability, expected) in [
+        ("record-1", "same", "alpha", "a1", LocalDurability::Written, ExpectedVersion::New),
+        ("record-2", "same", "beta", "b1", LocalDurability::Synced, ExpectedVersion::New),
+        ("record-3", "same", "alpha", "a2", LocalDurability::Buffered, ExpectedVersion::Exact(1)),
+    ] {
+        let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+        let mut transaction =
+            engine.begin(&scope, snapshot, operation(operation_name)).expect("begins");
+        transaction.put(document(id, collection, value), expected).expect("stages");
+        assert!(matches!(transaction.commit(durability), CommitOutcome::Committed(_)));
+    }
+    let boundary = engine.published_sequence().expect("boundary");
+    let mut records = Vec::new();
+    let mut after = None;
+    loop {
+        let page = engine
+            .snapshot_records_from(tenant("tenant-a"), boundary, after.clone(), 1)
+            .expect("bounded page");
+        let Some(record) = page.into_iter().next() else {
+            break;
+        };
+        after = Some((record.document().collection().clone(), record.document().id().clone()));
+        records.push(record);
+    }
+    assert_eq!(records.len(), 2, "same identifier in two collections remains lossless");
+    assert_eq!(records[0].document().collection().as_str(), "alpha");
+    assert_eq!(records[0].document().value(), &DocumentValue::String("a2".to_owned()));
+    assert_eq!(records[0].durability(), LocalDurability::Buffered);
+    assert_eq!(records[1].document().collection().as_str(), "beta");
+    assert_eq!(records[1].durability(), LocalDurability::Synced);
+    assert!(matches!(
+        engine.snapshot_records_from(tenant("tenant-a"), boundary, after, 1),
+        Ok(page) if page.is_empty()
+    ));
+    assert!(matches!(
+        engine.snapshot_records_from(
+            tenant("tenant-a"),
+            boundary,
+            None,
+            MAX_SNAPSHOT_RECORD_PAGE + 1
+        ),
+        Err(EngineError::SnapshotPageLimitExceeded)
+    ));
+
+    // A later publication cannot enter a page stream pinned at the earlier
+    // boundary.
+    committed(commit_put(
+        &engine,
+        "tenant-a",
+        "record-after-boundary",
+        "later",
+        "later",
+        ExpectedVersion::New,
+        LocalDurability::Synced,
+    ));
+    let first = engine
+        .snapshot_records_from(tenant("tenant-a"), boundary, None, MAX_SNAPSHOT_RECORD_PAGE)
+        .expect("old boundary remains readable");
+    assert!(first.iter().all(|record| record.document().id().as_str() != "later"));
+    drop(engine);
+    let reopened = reopen_engine(&dir);
+    assert_eq!(
+        reopened
+            .snapshot_records_from(tenant("tenant-a"), boundary, None, MAX_SNAPSHOT_RECORD_PAGE)
+            .expect("boundary survives restart")
+            .len(),
+        2
     );
     drop(reopened);
     std::fs::remove_dir_all(&dir).ok();

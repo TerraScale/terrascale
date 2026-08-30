@@ -1336,46 +1336,7 @@ impl Engine {
         scope: &TenantScope,
         request: UsagePageRequest,
     ) -> Result<UsagePage, UsageCommandError> {
-        let result: Result<UsagePage, UsageCommandError> = (|| {
-            self.validate_scope(scope).map_err(|_| UsageCommandError::ScopeMismatch)?;
-            let decoded = request.continuation().map(decode_usage_continuation).transpose()?;
-            if let Some(state) = &decoded
-                && (&state.tenant != scope.tenant()
-                    || state.window != request.window()
-                    || state.page_size != request.page_size())
-            {
-                return Err(UsageCommandError::InvalidRequest);
-            }
-            let storage = self.storage.lock().map_err(|_| UsageCommandError::StorageUnavailable)?;
-            let current = storage.port.published_state().0;
-            let snapshot = decoded.as_ref().map_or(current, |state| state.snapshot);
-            if snapshot > current {
-                return Err(UsageCommandError::InvalidRequest);
-            }
-            let after = decoded.as_ref().map(|state| &state.after);
-            let fetch = request.page_size().saturating_add(1);
-            let mut facts = storage
-                .port
-                .usage_facts_page(scope.tenant(), snapshot, after, request.window(), fetch)
-                .map_err(map_usage_storage_error)?;
-            drop(storage);
-            let has_more = facts.len() > request.page_size() as usize;
-            if has_more {
-                facts.truncate(request.page_size() as usize);
-            }
-            let continuation = if has_more {
-                let last = facts.last().ok_or(UsageCommandError::CorruptStorage)?;
-                Some(encode_usage_continuation(
-                    scope.tenant(),
-                    snapshot,
-                    &request,
-                    &UsageFactPosition::of(last),
-                ))
-            } else {
-                None
-            };
-            Ok(UsagePage::new(facts, snapshot, continuation))
-        })();
+        let result = self.usage_page_unobserved(scope, request);
         match &result {
             Ok(page) => {
                 let _ = self.metrics.advance_usage_export_frontier(page.snapshot_sequence().get());
@@ -1383,6 +1344,51 @@ impl Engine {
             Err(_) => self.metrics.record_usage_export_failure(),
         };
         result
+    }
+
+    fn usage_page_unobserved(
+        &self,
+        scope: &TenantScope,
+        request: UsagePageRequest,
+    ) -> Result<UsagePage, UsageCommandError> {
+        self.validate_scope(scope).map_err(|_| UsageCommandError::ScopeMismatch)?;
+        let decoded = request.continuation().map(decode_usage_continuation).transpose()?;
+        if let Some(state) = &decoded
+            && (&state.tenant != scope.tenant()
+                || state.window != request.window()
+                || state.page_size != request.page_size())
+        {
+            return Err(UsageCommandError::InvalidRequest);
+        }
+        let storage = self.storage.lock().map_err(|_| UsageCommandError::StorageUnavailable)?;
+        let current = storage.port.published_state().0;
+        let snapshot = decoded.as_ref().map_or(current, |state| state.snapshot);
+        if snapshot > current {
+            return Err(UsageCommandError::InvalidRequest);
+        }
+        let after = decoded.as_ref().map(|state| &state.after);
+        let fetch = request.page_size().saturating_add(1);
+        let mut facts = storage
+            .port
+            .usage_facts_page(scope.tenant(), snapshot, after, request.window(), fetch)
+            .map_err(map_usage_storage_error)?;
+        drop(storage);
+        let has_more = facts.len() > request.page_size() as usize;
+        if has_more {
+            facts.truncate(request.page_size() as usize);
+        }
+        let continuation = if has_more {
+            let last = facts.last().ok_or(UsageCommandError::CorruptStorage)?;
+            Some(encode_usage_continuation(
+                scope.tenant(),
+                snapshot,
+                &request,
+                &UsageFactPosition::of(last),
+            ))
+        } else {
+            None
+        };
+        Ok(UsagePage::new(facts, snapshot, continuation))
     }
 
     /// Begins an Engine-borrowing transaction.

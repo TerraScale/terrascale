@@ -42,32 +42,44 @@ func startFakeTransport(t *testing.T, options ...Option) (*Transport, *fakeTBEP)
 
 func TestSharedTransportKeepsIdentityImmutable(t *testing.T) {
 	transport, fake := startFakeTransport(t)
-	alpha, alphaBinding, err := transport.Bind(context.Background(), "orders-api", "tenant-a")
+	alphaScope := BindingScope{
+		Principal: "spiffe://terrascale.test/gateway/orders",
+		Tenant:    "tenant-a",
+		Project:   "project-a",
+		Database:  "database-a",
+	}
+	betaScope := BindingScope{
+		Principal: "spiffe://terrascale.test/gateway/analytics",
+		Tenant:    "tenant-b",
+		Project:   "project-b",
+		Database:  "database-b",
+	}
+	alpha, alphaBinding, err := transport.Bind(context.Background(), alphaScope)
 	if err != nil {
 		t.Fatalf("tenant-a could not bind: %v", err)
 	}
-	beta, betaBinding, err := transport.Bind(context.Background(), "analytics-api", "tenant-b")
+	beta, betaBinding, err := transport.Bind(context.Background(), betaScope)
 	if err != nil {
 		t.Fatalf("tenant-b could not bind: %v", err)
 	}
-	if alphaBinding.Tenant != "tenant-a" || betaBinding.Tenant != "tenant-b" {
+	if alphaBinding.Scope != alphaScope || betaBinding.Scope != betaScope {
 		t.Fatalf("the bindings are wrong: alpha=%+v beta=%+v", alphaBinding, betaBinding)
 	}
-	if _, err := alpha.Bind(context.Background(), "attacker", "tenant-b"); !errors.Is(err, ErrAlreadyBound) {
+	if _, err := alpha.Bind(context.Background(), betaScope); !errors.Is(err, ErrAlreadyBound) {
 		t.Fatalf("a logical client must not be rebound, got %v", err)
 	}
 
 	if _, _, err := alpha.DocumentRead(context.Background(), "books", "doc", ReadLevelDefault); err != nil {
 		t.Fatalf("tenant-a read failed: %v", err)
 	}
-	if tenant := fake.lastTenant(); tenant != "tenant-a" {
-		t.Fatalf("tenant-a identity did not ride the shared connection, got %q", tenant)
+	if scope := fake.lastScope(); scope != alphaScope {
+		t.Fatalf("alpha scope did not ride the shared connection, got %+v", scope)
 	}
 	if _, _, err := beta.DocumentRead(context.Background(), "books", "doc", ReadLevelDefault); err != nil {
 		t.Fatalf("tenant-b read failed: %v", err)
 	}
-	if tenant := fake.lastTenant(); tenant != "tenant-b" {
-		t.Fatalf("tenant-b identity did not ride the shared connection, got %q", tenant)
+	if scope := fake.lastScope(); scope != betaScope {
+		t.Fatalf("beta scope did not ride the shared connection, got %+v", scope)
 	}
 
 	var wait sync.WaitGroup
@@ -140,15 +152,16 @@ func TestSharedTransportReconnectsWithoutRebinding(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	client, _, err := transport.Bind(ctx, "orders-api", "tenant-a")
+	scope := testScope("spiffe://terrascale.test/gateway/orders", "tenant-a")
+	client, _, err := transport.Bind(ctx, scope)
 	if err != nil {
 		t.Fatalf("the initial transport bind failed: %v", err)
 	}
 	if _, _, err := client.DocumentRead(ctx, "books", "doc", ReadLevelDefault); err != nil {
 		t.Fatalf("the initial read failed: %v", err)
 	}
-	if tenant := firstFake.lastTenant(); tenant != "tenant-a" {
-		t.Fatalf("the first server observed tenant %q", tenant)
+	if got := firstFake.lastScope(); got != scope {
+		t.Fatalf("the first server observed scope %+v", got)
 	}
 
 	secondServer, secondFake, secondListener := serve()
@@ -180,8 +193,8 @@ func TestSharedTransportReconnectsWithoutRebinding(t *testing.T) {
 		case <-time.After(25 * time.Millisecond):
 		}
 	}
-	if tenant := secondFake.lastTenant(); tenant != "tenant-a" {
-		t.Fatalf("the reconnected client lost its immutable tenant identity, got %q", tenant)
+	if got := secondFake.lastScope(); got != scope {
+		t.Fatalf("the reconnected client lost its immutable scope, got %+v", got)
 	}
 }
 
@@ -207,7 +220,7 @@ func TestNewClientDoesNotOwnInjectedConnection(t *testing.T) {
 	if err := client.Close(); err != nil {
 		t.Fatalf("the repeated logical close failed: %v", err)
 	}
-	if _, err := NewClient(nil).Bind(context.Background(), "principal", "tenant"); !errors.Is(err, ErrClientClosed) {
+	if _, err := NewClient(nil).Bind(context.Background(), testScope("principal", "tenant")); !errors.Is(err, ErrClientClosed) {
 		t.Fatalf("a nil injected connection must fail without panicking, got %v", err)
 	}
 }
@@ -232,14 +245,15 @@ func TestUnixSocketInterop(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := client.Bind(ctx, "local-tool", "tenant-local"); err != nil {
+	unixScope := testScope("local-tool", "tenant-local")
+	if _, err := client.Bind(ctx, unixScope); err != nil {
 		t.Fatalf("the Unix client could not bind: %v", err)
 	}
 	if _, _, err := client.DocumentRead(ctx, "books", "doc", ReadLevelDefault); err != nil {
 		t.Fatalf("the Unix document read failed: %v", err)
 	}
-	if tenant := fake.lastTenant(); tenant != "tenant-local" {
-		t.Fatalf("the Unix RPC carried the wrong tenant %q", tenant)
+	if got := fake.lastScope(); got != unixScope {
+		t.Fatalf("the Unix RPC carried the wrong scope %+v", got)
 	}
 
 	if _, err := DialUnix("relative.sock"); err == nil {
@@ -283,7 +297,7 @@ func TestTLS13AndInstrumentationOptions(t *testing.T) {
 			return streamer(ctx, descriptor, conn, method, options...)
 		}),
 	)
-	client, _, err := transport.Bind(context.Background(), "orders-api", "tenant-a")
+	client, _, err := transport.Bind(context.Background(), testScope("spiffe://terrascale.test/gateway/orders", "tenant-a"))
 	if err != nil {
 		t.Fatalf("the instrumented client could not bind: %v", err)
 	}
@@ -341,15 +355,15 @@ func TestCancellationAndDeadlineRemainInspectable(t *testing.T) {
 }
 
 func TestWholeMessageLimit(t *testing.T) {
-	request := &v1.FamilyWriteRequest{Request: make([]byte, maxFrameBytes+1)}
+	request := &v1.EngineServiceFamilyWriteRequest{Request: make([]byte, maxFrameBytes+1)}
 	if err := checkMessageSize("request", request); !errors.Is(err, ErrRequestTooLarge) {
 		t.Fatalf("an oversized request must answer ErrRequestTooLarge, got %v", err)
 	}
-	response := &v1.FamilyReadResponse{Response: make([]byte, maxFrameBytes+1)}
+	response := &v1.EngineServiceFamilyReadResponse{Response: make([]byte, maxFrameBytes+1)}
 	if err := checkMessageSize("response", response); !errors.Is(err, ErrEngineFailure) {
 		t.Fatalf("an oversized response must answer ErrEngineFailure, got %v", err)
 	}
-	if err := checkMessageSize("request", &v1.FamilyWriteRequest{Request: []byte(strings.Repeat("x", 8))}); err != nil {
+	if err := checkMessageSize("request", &v1.EngineServiceFamilyWriteRequest{Request: []byte(strings.Repeat("x", 8))}); err != nil {
 		t.Fatalf("a bounded request was refused: %v", err)
 	}
 }

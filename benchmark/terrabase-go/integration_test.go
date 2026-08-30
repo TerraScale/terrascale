@@ -128,11 +128,17 @@ func TestProductionHarnessInterop(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	binding, err := client.Bind(ctx, "go-integration", "tenant-go")
+	scope := BindingScope{
+		Principal: testGatewayPrincipal,
+		Tenant:    "tenant-go",
+		Project:   "project-go",
+		Database:  "database-go",
+	}
+	binding, err := client.Bind(ctx, scope)
 	if err != nil {
 		t.Fatalf("the channel bind against the real engine failed: %v", err)
 	}
-	if binding.Tenant != "tenant-go" || binding.ServingInstance == 0 {
+	if binding.Scope != scope || binding.ServingInstance == 0 {
 		t.Fatalf("the bind answer is wrong: %+v", binding)
 	}
 
@@ -184,7 +190,7 @@ func TestProductionHarnessInterop(t *testing.T) {
 	// The durable engine does not yet expose production accounting facts. A
 	// successful fake export proves conversion only; this live lane must retain
 	// the engine's closed usage_unavailable refusal until accounting is wired.
-	if _, err := client.UsageExport(ctx, UsageExportRequest{PageSize: 1}); !errors.Is(err, ErrUsageUnavailable) {
+	if _, err := client.UsageExport(ctx, UsageServiceExportRequest{PageSize: 1}); !errors.Is(err, ErrUsageUnavailable) {
 		t.Fatalf("the live usage export must answer ErrUsageUnavailable, got %v", err)
 	}
 

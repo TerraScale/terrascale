@@ -48,8 +48,13 @@ func main() {
 
     ctx := context.Background()
 
-    // Bind the channel identity every later RPC carries.
-    if _, err := client.Bind(ctx, "orders-api", "tenant-a"); err != nil {
+    // Bind the authenticated gateway and exact database every later RPC carries.
+    if _, err := client.Bind(ctx, terrabase.BindingScope{
+        Principal: "spiffe://terrascale.internal/gateway/database-api",
+        Tenant:    "tenant-a",
+        Project:   "project-a",
+        Database:  "database-a",
+    }); err != nil {
         log.Fatal(err)
     }
 
@@ -187,7 +192,7 @@ TERRABASE_HARNESS=1 go test -tags integration ./...   # live lane (needs cargo)
 ```
 
 The offline suite runs a fake TBEP server implemented from the
-generated service stubs over `bufconn`: identity and idempotency
+generated service stubs over `bufconn`: complete binding-scope and idempotency
 enforcement, engine-shaped failures, document lifecycle, value
 round-trips, subscription streaming, local bounds, and a full-surface
 smoke test. A second bufconn lane runs a real mutually authenticated

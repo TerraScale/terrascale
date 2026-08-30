@@ -1381,6 +1381,8 @@ fn map_engine_error(error: &crate::engine::EngineError) -> VectorSearchError {
         // keep the storage-failure class.
         crate::engine::EngineError::SnapshotTenantMismatch
         | crate::engine::EngineError::StorageFailure
+        | crate::engine::EngineError::SnapshotPageLimitExceeded
+        | crate::engine::EngineError::SnapshotBoundaryUnavailable
         | crate::engine::EngineError::Conflict
         | crate::engine::EngineError::InvalidDocument
         | crate::engine::EngineError::OperationIdReuse { .. } => VectorSearchError::StorageFailure,

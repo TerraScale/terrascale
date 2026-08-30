@@ -69,8 +69,8 @@ impl ProviderMode {
     #[must_use]
     pub const fn identity(self) -> &'static str {
         match self {
-            Self::LocalFile => "aws-lc:local-file",
-            Self::ProductionFips => "aws-lc-fips:oci-vault",
+            Self::LocalFile => "aws-lc-rs:local-file-non-fips",
+            Self::ProductionFips => "aws-lc-rs:production-fips",
         }
     }
 
@@ -96,6 +96,8 @@ pub enum EncryptionError {
     SizeLimit,
     /// The 96-bit ordinal nonce space has been exhausted.
     OrdinalExhausted,
+    /// A reservation was reused or does not belong to this cipher.
+    OrdinalReservationInvalid,
     /// The envelope or AAD has an invalid version, shape, or length.
     MalformedEnvelope,
     /// The provider rejected the encryption or decryption operation.
@@ -131,6 +133,7 @@ impl fmt::Display for EncryptionError {
             Self::InvalidContext => "invalid encryption context",
             Self::SizeLimit => "encryption input exceeds size limit",
             Self::OrdinalExhausted => "96-bit encryption ordinal exhausted",
+            Self::OrdinalReservationInvalid => "invalid encryption ordinal reservation",
             Self::MalformedEnvelope => "malformed encryption envelope",
             Self::CryptographicFailure => "cryptographic provider failure",
             Self::AuthenticationFailed => "encryption authentication failed",
@@ -328,6 +331,9 @@ impl EncryptionContext {
     fn derivation_info(&self) -> Vec<u8> {
         let mut info = Vec::with_capacity(256);
         info.extend_from_slice(b"terrabase/artifact-key/v1\0");
+        append_string(&mut info, &self.environment);
+        append_string(&mut info, &self.tenant);
+        append_string(&mut info, &self.database);
         append_string(&mut info, &self.artifact_kind);
         append_string(&mut info, &self.artifact_id);
         info.extend_from_slice(&self.format_major.to_be_bytes());
@@ -354,12 +360,37 @@ impl EncryptionContext {
     }
 }
 
+/// A durable reservation of one artifact ordinal.
+///
+/// Owners persist the returned next ordinal before writing the envelope. A
+/// crash therefore leaves a gap rather than permitting nonce reuse.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OrdinalReservation {
+    ordinal: u128,
+    next_ordinal: u128,
+}
+
+impl OrdinalReservation {
+    /// Returns the reserved 96-bit ordinal.
+    #[must_use]
+    pub const fn ordinal(self) -> u128 {
+        self.ordinal
+    }
+
+    /// Returns the next ordinal that an owner should durably record.
+    #[must_use]
+    pub const fn next_ordinal(self) -> u128 {
+        self.next_ordinal
+    }
+}
+
 /// An encryptor/decryptor for one artifact key and its monotonic ordinal.
 pub struct ArtifactCipher {
     key: aead::LessSafeKey,
     context: EncryptionContext,
     mode: ProviderMode,
     next_ordinal: u128,
+    reserved_ordinal: Option<u128>,
 }
 
 impl fmt::Debug for ArtifactCipher {
@@ -399,10 +430,49 @@ impl ArtifactCipher {
         next_ordinal: u128,
     ) -> Result<Self, EncryptionError> {
         context.validate()?;
-        // A linked FIPS-capable library is not enough to authorize production:
-        // the production key must come from the future OCI Vault seam. Keep
-        // raw local key construction fail-closed until that capability exists.
-        if mode.is_production() {
+        let cipher = Self::from_key(mode, &database_key, context, next_ordinal, false)?;
+        drop(database_key);
+        Ok(cipher)
+    }
+
+    /// Creates a production cipher from a provider-issued, unexpired lease.
+    ///
+    /// Raw [`DatabaseKey`] values are never accepted for production. The
+    /// Orchestrator adapter must issue the lease through
+    /// [`KeyWrappingProvider::unwrap_database_key`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the lease is expired, its metadata does not match
+    /// the context, the FIPS module is unavailable, or the ordinal is invalid.
+    pub fn from_database_key_lease(
+        lease: &DatabaseKeyLease,
+        context: EncryptionContext,
+        next_ordinal: u128,
+    ) -> Result<Self, EncryptionError> {
+        let metadata = lease.metadata();
+        let scope = metadata.scope();
+        if context.environment() != scope.environment()
+            || context.tenant() != scope.tenant().to_text()
+            || context.database() != scope.database().to_text()
+            || context.key_version() != metadata.version().to_text()
+        {
+            return Err(EncryptionError::InvalidKeyMetadata);
+        }
+        lease.with_database_key(|key| {
+            Self::from_key(ProviderMode::ProductionFips, key, context, next_ordinal, true)
+        })?
+    }
+
+    fn from_key(
+        mode: ProviderMode,
+        database_key: &DatabaseKey,
+        context: EncryptionContext,
+        next_ordinal: u128,
+        provider_authorized: bool,
+    ) -> Result<Self, EncryptionError> {
+        context.validate()?;
+        if mode.is_production() && (!provider_authorized || aws_lc_rs::try_fips_mode().is_err()) {
             return Err(EncryptionError::ProductionProviderUnavailable);
         }
         if next_ordinal > MAX_ORDINAL {
@@ -411,14 +481,19 @@ impl ArtifactCipher {
 
         let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, b"terrabase/database-key/v1");
         let prk = salt.extract(&database_key.bytes);
-        drop(database_key);
         let info = context.derivation_info();
         let info_parts = [info.as_slice()];
         let okm = prk
             .expand(&info_parts, &aead::AES_256_GCM)
             .map_err(|_| EncryptionError::CryptographicFailure)?;
         let unbound = aead::UnboundKey::from(okm);
-        Ok(Self { key: aead::LessSafeKey::new(unbound), context, mode, next_ordinal })
+        Ok(Self {
+            key: aead::LessSafeKey::new(unbound),
+            context,
+            mode,
+            next_ordinal,
+            reserved_ordinal: None,
+        })
     }
 
     /// Returns the selected provider mode.
@@ -433,6 +508,30 @@ impl ArtifactCipher {
         self.next_ordinal
     }
 
+    /// Reserves the next ordinal and advances the durable recovery point.
+    ///
+    /// Persist [`OrdinalReservation::next_ordinal`] before writing the
+    /// envelope. An abandoned reservation is intentionally a harmless gap.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncryptionError::OrdinalExhausted`] when the 96-bit space is
+    /// exhausted, or [`EncryptionError::OrdinalReservationInvalid`] when a
+    /// previous reservation is still awaiting sealing.
+    pub fn reserve_ordinal(&mut self) -> Result<OrdinalReservation, EncryptionError> {
+        if self.reserved_ordinal.is_some() {
+            return Err(EncryptionError::OrdinalReservationInvalid);
+        }
+        let ordinal = self.next_ordinal;
+        if ordinal > MAX_ORDINAL {
+            return Err(EncryptionError::OrdinalExhausted);
+        }
+        let next_ordinal = ordinal.checked_add(1).ok_or(EncryptionError::OrdinalExhausted)?;
+        self.next_ordinal = next_ordinal;
+        self.reserved_ordinal = Some(ordinal);
+        Ok(OrdinalReservation { ordinal, next_ordinal })
+    }
+
     /// Encrypts one bounded plaintext into a versioned envelope.
     ///
     /// # Errors
@@ -440,14 +539,36 @@ impl ArtifactCipher {
     /// Returns an error when the plaintext is too large, the ordinal is
     /// exhausted, or the cryptographic provider rejects the operation.
     pub fn seal(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+        let reservation = self.reserve_ordinal()?;
+        self.seal_reserved(reservation, plaintext)
+    }
+
+    /// Seals plaintext using an ordinal previously returned by
+    /// [`Self::reserve_ordinal`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a reused reservation, oversized plaintext, or a
+    /// cryptographic provider failure. The reservation remains consumed on
+    /// failure, preventing a retry from reusing its nonce.
+    pub fn seal_reserved(
+        &mut self,
+        reservation: OrdinalReservation,
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, EncryptionError> {
+        if self.reserved_ordinal != Some(reservation.ordinal)
+            || reservation.next_ordinal != self.next_ordinal
+        {
+            return Err(EncryptionError::OrdinalReservationInvalid);
+        }
+        self.reserved_ordinal = None;
+        self.seal_at(reservation.ordinal, plaintext)
+    }
+
+    fn seal_at(&self, ordinal: u128, plaintext: &[u8]) -> Result<Vec<u8>, EncryptionError> {
         if plaintext.len() > MAX_PLAINTEXT_BYTES {
             return Err(EncryptionError::SizeLimit);
         }
-        let ordinal = self.next_ordinal;
-        if ordinal > MAX_ORDINAL {
-            return Err(EncryptionError::OrdinalExhausted);
-        }
-        let next = ordinal.checked_add(1).ok_or(EncryptionError::OrdinalExhausted)?;
         let digest = sha256(plaintext);
         let aad = self.context.canonical_aad(ordinal, plaintext.len() as u64, &digest);
         if aad.len() > MAX_AAD_BYTES {
@@ -470,7 +591,6 @@ impl ArtifactCipher {
         envelope.extend_from_slice(&ciphertext_len.to_be_bytes());
         envelope.extend_from_slice(&aad);
         envelope.extend_from_slice(&ciphertext);
-        self.next_ordinal = next;
         Ok(envelope)
     }
 

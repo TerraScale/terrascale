@@ -1,7 +1,12 @@
 use terrabase::encryption::{
-    ArtifactCipher, Compression, DatabaseKey, EncryptionContext, EncryptionError,
-    LocalFileKeyProvider, MAX_PLAINTEXT_BYTES, ProviderMode,
+    ArtifactCipher, ArtifactKind, Compression, DatabaseKey, DatabaseKeyVersion, EncryptionContext,
+    EncryptionError, KeyProviderIdentity, KeyPurpose, KeyRotation, KeyScope, KeyVersionMetadata,
+    KeyWrappingProvider, LocalFileKeyProvider, MAX_PLAINTEXT_BYTES, ProductionCapabilityStatus,
+    ProviderCapability, ProviderMode, UnconfiguredOciVaultProvider, WrappedDatabaseKey,
+    production_capability_status,
 };
+use terrabase::identity::{DatabaseUlid, TenantUlid, Ulid};
+use terrabase::regions::RegionCode;
 
 #[test]
 fn aws_lc_aes_256_gcm_known_answer() {
@@ -9,18 +14,13 @@ fn aws_lc_aes_256_gcm_known_answer() {
     let key = aws_lc_rs::aead::LessSafeKey::new(key);
     let nonce = aws_lc_rs::aead::Nonce::assume_unique_for_key([0; 12]);
     let mut ciphertext = [0; 16].to_vec();
-    key.seal_in_place_append_tag(
-        nonce,
-        aws_lc_rs::aead::Aad::empty(),
-        &mut ciphertext,
-    )
-    .unwrap();
+    key.seal_in_place_append_tag(nonce, aws_lc_rs::aead::Aad::empty(), &mut ciphertext).unwrap();
     assert_eq!(
         ciphertext,
         [
-            0xce, 0xa7, 0x40, 0x3d, 0x4d, 0x60, 0x6b, 0x6e, 0x07, 0x4e, 0xc5, 0xd3, 0xba,
-            0xf3, 0x9d, 0x18, 0xd0, 0xd1, 0xc8, 0xa7, 0x99, 0x99, 0x6b, 0xf0, 0x26, 0x5b,
-            0x98, 0xb5, 0xd4, 0x8a, 0xb9, 0x19,
+            0xce, 0xa7, 0x40, 0x3d, 0x4d, 0x60, 0x6b, 0x6e, 0x07, 0x4e, 0xc5, 0xd3, 0xba, 0xf3,
+            0x9d, 0x18, 0xd0, 0xd1, 0xc8, 0xa7, 0x99, 0x99, 0x6b, 0xf0, 0x26, 0x5b, 0x98, 0xb5,
+            0xd4, 0x8a, 0xb9, 0x19,
         ]
     );
 }
@@ -46,8 +46,8 @@ fn cipher(key: [u8; 32]) -> ArtifactCipher {
 
 #[test]
 fn local_provider_is_explicit_and_production_fails_closed() {
-    assert_eq!(ProviderMode::LocalFile.identity(), "aws-lc:local-file");
-    assert_eq!(ProviderMode::ProductionFips.identity(), "aws-lc-fips:oci-vault");
+    assert_eq!(ProviderMode::LocalFile.identity(), "aws-lc-rs:local-file-non-fips");
+    assert_eq!(ProviderMode::ProductionFips.identity(), "aws-lc-rs:production-fips");
     assert!(matches!(
         ArtifactCipher::new(
             ProviderMode::ProductionFips,
@@ -58,6 +58,62 @@ fn local_provider_is_explicit_and_production_fails_closed() {
     ));
 }
 
+#[test]
+fn key_derivation_domains_environment_tenant_and_database() {
+    let plaintext = b"same ordinal, distinct scope";
+    let scopes = [
+        context("01JTENANT"),
+        EncryptionContext::new(
+            "production",
+            "01JTENANT",
+            "01JDATABASE",
+            "wal",
+            "01JARTIFACT",
+            "01JKEYVERSION",
+            1,
+            Compression::None,
+        )
+        .unwrap(),
+        EncryptionContext::new(
+            "local",
+            "01JOTHER",
+            "01JDATABASE",
+            "wal",
+            "01JARTIFACT",
+            "01JKEYVERSION",
+            1,
+            Compression::None,
+        )
+        .unwrap(),
+        EncryptionContext::new(
+            "local",
+            "01JTENANT",
+            "01JOTHERDB",
+            "wal",
+            "01JARTIFACT",
+            "01JKEYVERSION",
+            1,
+            Compression::None,
+        )
+        .unwrap(),
+    ];
+    let mut ciphers = scopes.map(|scope| {
+        ArtifactCipher::new(ProviderMode::LocalFile, DatabaseKey::from_bytes([0x42; 32]), scope)
+            .unwrap()
+    });
+    let envelopes = ciphers.each_mut().map(|cipher| cipher.seal(plaintext).unwrap());
+    let ciphertext_start = |envelope: &[u8]| {
+        let aad_len = u32::from_be_bytes(envelope[17..21].try_into().unwrap()) as usize;
+        29 + aad_len
+    };
+    let first = ciphertext_start(&envelopes[0]);
+    let first_ciphertext = &envelopes[0][first..first + plaintext.len()];
+    for envelope in &envelopes[1..] {
+        let start = ciphertext_start(envelope);
+        assert_ne!(first_ciphertext, &envelope[start..start + plaintext.len()]);
+    }
+}
+
 #[cfg(feature = "production-fips")]
 #[test]
 fn production_profile_links_an_operational_aws_lc_fips_module() {
@@ -65,14 +121,33 @@ fn production_profile_links_an_operational_aws_lc_fips_module() {
 }
 
 #[test]
-fn round_trip_and_repeatability_are_stable() {
+fn sequential_ordinals_produce_unique_envelopes() {
     let plaintext = b"known-answer plaintext";
-    let mut first = cipher([3; 32]);
-    let mut second = cipher([3; 32]);
-    let envelope = first.seal(plaintext).unwrap();
-    let repeated = second.seal(plaintext).unwrap();
-    assert_eq!(envelope, repeated);
-    assert_eq!(first.open(&envelope).unwrap(), plaintext);
+    let mut writer = cipher([3; 32]);
+    let first = writer.seal(plaintext).unwrap();
+    let second = writer.seal(plaintext).unwrap();
+    assert_ne!(first, second);
+    assert_eq!(writer.open(&first).unwrap(), plaintext);
+    assert_eq!(writer.open(&second).unwrap(), plaintext);
+}
+
+#[test]
+fn reserved_ordinals_survive_restart_without_nonce_reuse() {
+    let mut writer = cipher([6; 32]);
+    let abandoned = writer.reserve_ordinal().unwrap();
+    assert_eq!(abandoned.ordinal(), 0);
+    assert_eq!(abandoned.next_ordinal(), 1);
+
+    let mut recovered = ArtifactCipher::with_next_ordinal(
+        ProviderMode::LocalFile,
+        DatabaseKey::from_bytes([6; 32]),
+        context("01JTENANT"),
+        abandoned.next_ordinal(),
+    )
+    .unwrap();
+    let after_restart = recovered.seal(b"after restart").unwrap();
+    assert_eq!(recovered.next_ordinal(), 2);
+    assert_eq!(recovered.open(&after_restart).unwrap(), b"after restart");
 }
 
 #[test]
@@ -124,10 +199,145 @@ fn replay_and_ordinal_exhaustion_are_refused() {
 }
 
 #[test]
+fn ordinal_reservation_consumes_nonce_before_retry() {
+    let mut writer = cipher([0x31; 32]);
+    let reservation = writer.reserve_ordinal().unwrap();
+    assert_eq!(reservation.ordinal(), 0);
+    assert_eq!(reservation.next_ordinal(), 1);
+    assert_eq!(writer.next_ordinal(), reservation.next_ordinal());
+    let envelope = writer.seal_reserved(reservation, b"reserved").unwrap();
+    assert_eq!(writer.open(&envelope).unwrap(), b"reserved");
+    assert_eq!(
+        writer.seal_reserved(reservation, b"retry"),
+        Err(EncryptionError::OrdinalReservationInvalid)
+    );
+}
+
+#[test]
 fn malformed_and_oversized_inputs_fail_before_crypto() {
     let mut c = cipher([1; 32]);
     assert_eq!(c.seal(&vec![0; MAX_PLAINTEXT_BYTES + 1]), Err(EncryptionError::SizeLimit));
+    assert_eq!(c.next_ordinal(), 1, "a failed seal must still consume its nonce");
     assert_eq!(c.open(b"TBE1"), Err(EncryptionError::MalformedEnvelope));
+}
+
+#[test]
+fn key_versions_and_purposes_are_bound_to_artifact_keys() {
+    let scope = typed_scope(KeyPurpose::Data);
+    let artifact = Ulid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap();
+    let first_version = DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FAW").unwrap();
+    let next_version = DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FAX").unwrap();
+    let first_context = EncryptionContext::for_artifact(
+        &scope,
+        ArtifactKind::Wal,
+        artifact,
+        first_version,
+        1,
+        Compression::None,
+    )
+    .unwrap();
+    let next_context = EncryptionContext::for_artifact(
+        &scope,
+        ArtifactKind::Wal,
+        artifact,
+        next_version,
+        1,
+        Compression::None,
+    )
+    .unwrap();
+    let mut first = ArtifactCipher::new(
+        ProviderMode::LocalFile,
+        DatabaseKey::from_bytes([12; 32]),
+        first_context,
+    )
+    .unwrap();
+    let next = ArtifactCipher::new(
+        ProviderMode::LocalFile,
+        DatabaseKey::from_bytes([12; 32]),
+        next_context,
+    )
+    .unwrap();
+    let envelope = first.seal(b"old version").unwrap();
+    assert_eq!(next.open(&envelope), Err(EncryptionError::AuthenticationFailed));
+
+    assert_eq!(
+        EncryptionContext::for_artifact(
+            &scope,
+            ArtifactKind::Backup,
+            artifact,
+            next_version,
+            1,
+            Compression::None,
+        ),
+        Err(EncryptionError::InvalidKeyMetadata)
+    );
+}
+
+#[test]
+fn rotation_preserves_scope_and_advances_version() {
+    let scope = typed_scope(KeyPurpose::Data);
+    let current = KeyVersionMetadata::new(
+        scope.clone(),
+        DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FAY").unwrap(),
+    );
+    let next = KeyVersionMetadata::new(
+        scope.clone(),
+        DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FAZ").unwrap(),
+    );
+    let rotation = KeyRotation::new(current.clone(), next.clone()).unwrap();
+    assert_eq!(rotation.current(), &current);
+    assert_eq!(rotation.next(), &next);
+    assert_eq!(
+        KeyRotation::new(current.clone(), current.clone()),
+        Err(EncryptionError::InvalidKeyRotation)
+    );
+
+    let backup_scope = typed_scope(KeyPurpose::Backup);
+    assert_eq!(
+        KeyRotation::new(current, KeyVersionMetadata::new(backup_scope, next.version()),),
+        Err(EncryptionError::InvalidKeyRotation)
+    );
+}
+
+#[test]
+fn oci_vault_seam_is_unconfigured_and_fails_closed() {
+    let provider = UnconfiguredOciVaultProvider::new();
+    assert_eq!(provider.identity(), KeyProviderIdentity::OciVault);
+    assert_eq!(provider.capability(), ProviderCapability::Unconfigured);
+    assert!(!production_capability_status(&provider).is_production_ready());
+    #[cfg(feature = "local-crypto")]
+    assert_eq!(
+        production_capability_status(&provider),
+        ProductionCapabilityStatus::LocalCryptoSelected
+    );
+    #[cfg(feature = "production-fips")]
+    assert_eq!(
+        production_capability_status(&provider),
+        ProductionCapabilityStatus::OciVaultUnconfigured
+    );
+
+    let metadata = KeyVersionMetadata::new(
+        typed_scope(KeyPurpose::Data),
+        DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap(),
+    );
+    assert!(matches!(
+        provider.wrap_database_key(&metadata, RegionCode::GRU, &DatabaseKey::from_bytes([8; 32])),
+        Err(EncryptionError::KeyProviderUnconfigured)
+    ));
+
+    let wrapper = WrappedDatabaseKey::new(
+        metadata,
+        RegionCode::GRU,
+        KeyProviderIdentity::OciVault,
+        [1; 32],
+        vec![2; 48],
+    )
+    .unwrap();
+    assert!(matches!(
+        provider.unwrap_database_key(&wrapper, std::time::Duration::from_secs(30)),
+        Err(EncryptionError::KeyProviderUnconfigured)
+    ));
+    assert!(!format!("{wrapper:?}").contains("[2, 2"));
 }
 
 #[test]
@@ -184,4 +394,14 @@ fn unique_directory(label: &str) -> std::path::PathBuf {
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ))
+}
+
+fn typed_scope(purpose: KeyPurpose) -> KeyScope {
+    KeyScope::new(
+        "production",
+        TenantUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB1").unwrap(),
+        DatabaseUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB2").unwrap(),
+        purpose,
+    )
+    .unwrap()
 }

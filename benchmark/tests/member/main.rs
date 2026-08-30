@@ -10,7 +10,7 @@ use terrabase::{
     OperationId, TenantId,
     member::{
         AdmissionLimits, AdmissionScope, CatalogValidationError, DatabaseId, DatabaseSpec,
-        LifecycleState, Member, MemberError, MemberOpenError,
+        LifecycleState, MAX_DATABASES, Member, MemberError, MemberOpenError,
     },
 };
 
@@ -125,6 +125,24 @@ fn catalog_rejects_path_attacks_and_duplicate_locations() {
     assert!(matches!(
         Member::open(root.path(), [spec("one", "same"), spec("two", "same/")], limits(2, 1)),
         Err(MemberOpenError::Validation(CatalogValidationError::DuplicateDatabaseLocation))
+    ));
+    assert!(matches!(
+        Member::open(root.path(), [spec("same", "first"), spec("same", "second")], limits(2, 1)),
+        Err(MemberOpenError::Validation(CatalogValidationError::DuplicateDatabaseIdentity))
+    ));
+    let oversized = (0..=MAX_DATABASES)
+        .map(|index| DatabaseSpec::new(format!("db-{index}"), format!("db-{index}")))
+        .collect::<Vec<_>>();
+    assert!(matches!(
+        Member::open(root.path(), oversized, limits(1, 1)),
+        Err(MemberOpenError::Validation(CatalogValidationError::CatalogTooLarge))
+    ));
+
+    let root_file = root.path().join("not-a-root");
+    fs::write(&root_file, b"file").expect("root file writes");
+    assert!(matches!(
+        Member::open(&root_file, [spec("db", "db")], limits(1, 1)),
+        Err(MemberOpenError::Validation(CatalogValidationError::InvalidRoot))
     ));
 
     #[cfg(unix)]

@@ -58,7 +58,7 @@ fn index_card(state: &StudioState) -> String {
         action = html::select("action", "Action", &actions),
         confirmation = html::confirmation_fields(
             "<tenant selected above>/<index name entered above>",
-            "index <selected action value>",
+            "run index action",
         ),
         primary = ButtonStyle::Primary.classes(),
         receipt = html::receipt_region_with("index-receipt"),

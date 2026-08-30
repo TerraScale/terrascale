@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 use terrabase::observability::Component;
 use terrabase::observability::HealthStatus;
-use terrabase::observability::MetricsRegistry;
 use terrabase::observability::ServiceState;
 use terrabase_tbep::TbepHost;
 use terrabase_tbep::engine_host::EngineHost;
@@ -37,12 +36,18 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
     let private_key = read_pem(&config.server_private_key, true)?;
     let client_ca = read_pem(&config.client_ca, false)?;
 
-    let metrics = Arc::new(MetricsRegistry::new());
-    metrics.set_component_health(Component::Metrics, HealthStatus::Healthy);
     let host = Arc::new(
-        EngineHost::open(&config.engine_location, config.instance_id)
+        EngineHost::open(
+            &config.engine_location,
+            config.instance_id,
+            &config.tenant,
+            &config.project,
+            &config.database,
+        )
             .map_err(|error| DaemonError::Engine(error.detail()))?,
     );
+    let metrics = host.metrics();
+    metrics.set_component_health(Component::Metrics, HealthStatus::Healthy);
     metrics.set_component_health(Component::Storage, HealthStatus::Healthy);
 
     let network = Arc::new(TbepGrpcServer::with_config_and_metrics(
@@ -233,6 +238,9 @@ mod tests {
     async fn configured_gateway_identity_reaches_secret_validation() {
         let config = ServerConfig {
             engine_location: "/var/lib/terrabase".into(),
+            tenant: "tenant-a".into(),
+            project: "project-a".into(),
+            database: "database-a".into(),
             instance_id: 1,
             region: Region::Gru,
             tbep_listen: SocketAddr::from(([127, 0, 0, 1], 8421)),

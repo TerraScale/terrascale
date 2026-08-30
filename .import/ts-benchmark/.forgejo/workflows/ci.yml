@@ -104,7 +104,7 @@ jobs:
       - name: Release packaging definitions
         run: |
           jq --exit-status . .terrascale/deploy.json >/dev/null
-          bash -n deploy/release/candidate.sh deploy/release/package.sh deploy/release/reproduce.sh deploy/release/require-production-capability.sh deploy/release/sign.sh deploy/release/verify-source-binding.sh deploy/release/verify.sh scripts/validate-release-contracts.sh
+          bash -n deploy/release/candidate.sh deploy/release/package.sh deploy/release/reproduce.sh deploy/release/require-fips-toolchain.sh deploy/release/require-production-capability.sh deploy/release/sign.sh deploy/release/verify-source-binding.sh deploy/release/verify.sh scripts/validate-release-contracts.sh
           scripts/validate-release-contracts.sh
           python3 -m py_compile deploy/release/generate_sbom.py
           python3 deploy/release/generate_sbom.py --help >/dev/null
@@ -237,4 +237,5 @@ jobs:
           go list -mod=readonly ./...
           go vet -mod=readonly ./...
           go test -mod=readonly ./...
+          go test -mod=readonly -race ./...
         working-directory: terrabase-go

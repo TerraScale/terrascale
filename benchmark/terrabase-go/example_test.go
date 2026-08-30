@@ -43,8 +43,13 @@ func Example() {
 
 	ctx := context.Background()
 
-	// 2. Bind the channel: every later RPC carries this identity.
-	binding, err := client.Bind(ctx, "orders-api", "tenant-a")
+	// 2. Bind the channel. Every later RPC carries this exact database scope.
+	binding, err := client.Bind(ctx, terrabase.BindingScope{
+		Principal: "spiffe://terrascale.internal/gateway/database-api",
+		Tenant:    "tenant-a",
+		Project:   "project-a",
+		Database:  "database-a",
+	})
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -155,8 +155,14 @@ func Run(ctx context.Context, config Config) (RunResults, error) {
 		return RunResults{}, fmt.Errorf("dial mTLS endpoint: %w", err)
 	}
 	defer transport.Close()
+	scope := terrabase.BindingScope{
+		Principal: config.Principal,
+		Tenant:    config.Tenant,
+		Project:   config.Project,
+		Database:  config.Database,
+	}
 
-	admin, _, err := transport.Bind(ctx, config.Principal, config.Tenant)
+	admin, _, err := transport.Bind(ctx, scope)
 	if err != nil {
 		return RunResults{}, fmt.Errorf("bind seed client: %w", err)
 	}
@@ -168,7 +174,7 @@ func Run(ctx context.Context, config Config) (RunResults, error) {
 
 	slots := make([]slot, 0, config.Lane.Concurrency)
 	for index := 0; index < config.Lane.Concurrency; index++ {
-		client, _, bindErr := transport.Bind(ctx, config.Principal, config.Tenant)
+		client, _, bindErr := transport.Bind(ctx, scope)
 		if bindErr != nil {
 			for _, opened := range slots {
 				opened.close()

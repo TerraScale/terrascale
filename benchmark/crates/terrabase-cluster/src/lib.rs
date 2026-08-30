@@ -9,12 +9,20 @@
 //! plane here carries the typed semantics, and the live-server rows
 //! are recorded unrun where no broker runs).
 
+#[cfg(all(feature = "local-crypto", feature = "production-fips"))]
+compile_error!("select exactly one of `local-crypto` or `production-fips`");
+
+#[cfg(not(any(feature = "local-crypto", feature = "production-fips")))]
+compile_error!("select one of `local-crypto` or `production-fips`");
+
 pub mod backup;
 pub mod control;
 pub mod durability;
 pub mod host;
 pub mod identity;
 pub mod member;
+#[cfg(feature = "production-fips")]
+pub mod production;
 pub mod reads;
 
 pub use backup::{BackupOutcome, BackupPolicy, BackupSet};

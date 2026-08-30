@@ -60,6 +60,7 @@ fn create_card(state: &StudioState) -> String {
         "<form class=\"grid gap-4\" data-on:submit=\"if (!confirm('Create or update this index? Updating an existing definition can replace its generation.')) return; @post('/indexes/create', {{contentType: 'form', retry: 'never'}})\">\n\
 <div class=\"grid gap-4 md:grid-cols-2\">{tenant}{name}{collection}{fields}</div>\n\
 <div class=\"grid gap-4 md:grid-cols-3\">{capabilities}{priority}{lock}</div>\n\
+{confirmation}\n\
 <button type=\"submit\" class=\"inline-flex w-fit items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\">Create or update index</button>\n\
 </form>\n\
 <p class=\"mt-4 text-xs text-muted-foreground\">Fields are a comma-separated list. The engine validates names, duplicate fields, capability shape, namespace bounds, and deployment locks.</p>",
@@ -68,6 +69,10 @@ fn create_card(state: &StudioState) -> String {
         collection =
             html::text_input("collection", "Collection", &collection, "collection identifier",),
         fields = html::text_input("fields", "Fields", "name", "name, created_at"),
+        confirmation = html::confirmation_fields(
+            "<tenant entered above>/<index name entered above>",
+            "create or update index",
+        ),
         capabilities = html::select(
             "capabilities",
             "Field capabilities",

@@ -16,7 +16,8 @@ func testConfig() Config {
 	return Config{
 		Endpoint:     "127.0.0.1:443",
 		RootCertPath: "/tmp/root.pem", ClientCertPath: "/tmp/client.pem", ClientKeyPath: "/tmp/client.key",
-		Principal: "bench", Tenant: "benchmark-tenant", ServerIdentity: "server-1",
+		Principal: "spiffe://terrascale.test/gateway/benchmark", Tenant: "benchmark-tenant",
+		Project: "benchmark-project", Database: "benchmark-database", ServerIdentity: "server-1",
 		SourceIdentity: "source-1", TransportIdentity: "Go terrabase-go mTLS",
 		Workload: "read", OutputPath: "/tmp/result.json", Timeout: time.Minute,
 		Lane: LaneConfig{SeedDocuments: 8, Operations: 8, Samples: 2, Concurrency: 2, WarmupOperations: 4, NoisePercent: 5},

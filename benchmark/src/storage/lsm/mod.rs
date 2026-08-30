@@ -236,11 +236,22 @@ pub(crate) struct LsmStorage {
 
 impl LsmStorage {
     /// Opens or creates an LSM location, recovering it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LsmOpenError::FormatMismatch`] when persisted bytes do not
+    /// verify, and [`LsmOpenError::Unavailable`] for I/O failures.
+    #[cfg(test)]
     pub(crate) fn open(dir: &Path) -> Result<Self, LsmOpenError> {
         Self::open_with_metrics(dir, Arc::new(MetricsRegistry::new()))
     }
 
     /// Opens an LSM location with the Engine-owned metrics registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LsmOpenError::FormatMismatch`] when persisted bytes do not
+    /// verify, and [`LsmOpenError::Unavailable`] for I/O failures.
     pub(crate) fn open_with_metrics(
         dir: &Path,
         metrics: Arc<MetricsRegistry>,

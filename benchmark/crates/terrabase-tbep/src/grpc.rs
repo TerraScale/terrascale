@@ -3,12 +3,11 @@
 //!
 //! Responsibilities, in the order a request meets them:
 //!
-//! 1. **Identity.** Every RPC except `Channel/Bind` requires the
-//!    `x-tb-principal` and `x-tb-tenant` metadata; a missing identity
-//!    fails closed with the `unbound_channel` error code. The transport
-//!    is mutually authenticated TLS in production; the request principal
-//!    must exactly match the single admitted SPIFFE URI SAN on the verified
-//!    peer certificate.
+//! 1. **Identity.** Every RPC except `Channel/Bind` requires the complete
+//!    `x-tb-principal`, `x-tb-tenant`, `x-tb-project`, and `x-tb-database`
+//!    scope. Missing, duplicated, or invalid metadata fails closed with the
+//!    `unbound_channel` error code. Production mTLS authenticates the gateway
+//!    principal; metadata carries the immutable database routing scope.
 //! 2. **Idempotency.** Mutation RPCs require the
 //!    `x-tb-idempotency-key` metadata (1..=128 bytes, no control
 //!    characters); the engine deduplicates retries within its retained
@@ -68,23 +67,23 @@ use crate::host::TbepHost;
 use crate::host::TbepNotification;
 use crate::proto::terrabase::v1 as pb;
 use crate::proto::terrabase::v1::backbone_server::Backbone;
-use crate::proto::terrabase::v1::backbone_server::BackboneServer;
+use crate::proto::terrabase::v1::backbone_service_server::BackboneServiceServer;
 use crate::proto::terrabase::v1::channel_server::Channel;
-use crate::proto::terrabase::v1::channel_server::ChannelServer;
+use crate::proto::terrabase::v1::channel_service_server::ChannelServiceServer;
 use crate::proto::terrabase::v1::engine_server::Engine;
-use crate::proto::terrabase::v1::engine_server::EngineServer;
+use crate::proto::terrabase::v1::engine_service_server::EngineServiceServer;
 use crate::proto::terrabase::v1::maintenance_server::Maintenance;
-use crate::proto::terrabase::v1::maintenance_server::MaintenanceServer;
+use crate::proto::terrabase::v1::maintenance_service_server::MaintenanceServiceServer;
 use crate::proto::terrabase::v1::replication_server::Replication;
-use crate::proto::terrabase::v1::replication_server::ReplicationServer;
+use crate::proto::terrabase::v1::replication_service_server::ReplicationServiceServer;
 use crate::proto::terrabase::v1::schema_server::Schema;
-use crate::proto::terrabase::v1::schema_server::SchemaServer;
+use crate::proto::terrabase::v1::schema_service_server::SchemaServiceServer;
 use crate::proto::terrabase::v1::sync_server::Sync;
-use crate::proto::terrabase::v1::sync_server::SyncServer;
+use crate::proto::terrabase::v1::sync_service_server::SyncServiceServer;
 use crate::proto::terrabase::v1::tier_server::Tier;
-use crate::proto::terrabase::v1::tier_server::TierServer;
+use crate::proto::terrabase::v1::tier_service_server::TierServiceServer;
 use crate::proto::terrabase::v1::usage_server::Usage;
-use crate::proto::terrabase::v1::usage_server::UsageServer;
+use crate::proto::terrabase::v1::usage_service_server::UsageServiceServer;
 use crate::registry;
 use crate::value::TbepValue;
 
@@ -92,6 +91,10 @@ use crate::value::TbepValue;
 pub const PRINCIPAL_METADATA: &str = "x-tb-principal";
 /// The metadata key carrying the backend-supplied tenant.
 pub const TENANT_METADATA: &str = "x-tb-tenant";
+/// The metadata key carrying the bound Project identity.
+pub const PROJECT_METADATA: &str = "x-tb-project";
+/// The metadata key carrying the bound Database identity.
+pub const DATABASE_METADATA: &str = "x-tb-database";
 /// The metadata key carrying a mutation's retry identity.
 pub const IDEMPOTENCY_METADATA: &str = "x-tb-idempotency-key";
 
@@ -103,6 +106,8 @@ pub const MAX_PRINCIPAL_BYTES: usize = 128;
 
 /// The maximum UTF-8 byte length of the tenant metadata value.
 pub const MAX_TENANT_BYTES: usize = 64;
+/// The maximum UTF-8 byte length of Project and Database identities.
+pub const MAX_SCOPE_ID_BYTES: usize = 255;
 
 /// Default maximum in-flight host operations admitted by the overload gate.
 pub const MAX_INFLIGHT_OPERATIONS: usize = 128;
@@ -832,47 +837,47 @@ fn serve_routes(
     }
     Ok(builder
         .add_service(
-            ChannelServer::new(Arc::clone(&server))
+            ChannelServiceServer::new(Arc::clone(&server))
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         )
         .add_service(
-            EngineServer::new(Arc::clone(&server))
+            EngineServiceServer::new(Arc::clone(&server))
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         )
         .add_service(
-            BackboneServer::new(Arc::clone(&server))
+            BackboneServiceServer::new(Arc::clone(&server))
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         )
         .add_service(
-            SyncServer::new(Arc::clone(&server))
+            SyncServiceServer::new(Arc::clone(&server))
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         )
         .add_service(
-            SchemaServer::new(Arc::clone(&server))
+            SchemaServiceServer::new(Arc::clone(&server))
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         )
         .add_service(
-            ReplicationServer::new(Arc::clone(&server))
+            ReplicationServiceServer::new(Arc::clone(&server))
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         )
         .add_service(
-            MaintenanceServer::new(Arc::clone(&server))
+            MaintenanceServiceServer::new(Arc::clone(&server))
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         )
         .add_service(
-            UsageServer::new(Arc::clone(&server))
+            UsageServiceServer::new(Arc::clone(&server))
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         )
         .add_service(
-            TierServer::new(server)
+            TierServiceServer::new(server)
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         ))
@@ -894,14 +899,29 @@ impl Drop for Permit {
 /// The application identity one RPC carries.
 struct Identity {
     principal: String,
-    tenant: String,
+    tenant: registry::BoundScope,
 }
 
 impl Identity {
     fn of<T>(request: &Request<T>) -> Result<Self, Status> {
         let metadata = request.metadata();
         let principal = metadata_value(metadata, PRINCIPAL_METADATA, MAX_PRINCIPAL_BYTES)?;
-        let tenant = metadata_value(metadata, TENANT_METADATA, MAX_TENANT_BYTES)?;
+        let tenant_name = metadata_value(metadata, TENANT_METADATA, MAX_TENANT_BYTES)?;
+        let project = metadata_value(metadata, PROJECT_METADATA, MAX_SCOPE_ID_BYTES)?;
+        let database = metadata_value(metadata, DATABASE_METADATA, MAX_SCOPE_ID_BYTES)?;
+        let tenant = registry::BoundScope {
+            principal: principal.clone(),
+            tenant: tenant_name,
+            project,
+            database,
+        };
+        tenant.validate().map_err(|_| {
+            tbep_status(
+                Code::Unauthenticated,
+                pb::ErrorCode::UnboundChannel,
+                "the RPC bound scope is outside its validated form",
+            )
+        })?;
         Ok(Self { principal, tenant })
     }
 }
@@ -1148,6 +1168,7 @@ fn invalid(detail: &str) -> HostingError {
 fn usage_admission(
     value: Option<&pb::UsageAdmissionContext>,
     idempotency_key: &str,
+    scope: &registry::BoundScope,
 ) -> Result<Option<registry::UsageAdmissionContext>, Status> {
     let Some(value) = value else {
         return Ok(None);
@@ -1165,6 +1186,11 @@ fn usage_admission(
     domain
         .validate_for_key(idempotency_key)
         .map_err(|error| conversion_error(&error.to_string()))?;
+    if domain.project != scope.project || domain.database != scope.database {
+        return Err(conversion_error(
+            "usage admission does not match the bound Project and Database",
+        ));
+    }
     Ok(Some(domain))
 }
 
@@ -1795,7 +1821,7 @@ fn change_event(value: &registry::ChangeEvent) -> pb::ChangeEvent {
     }
 }
 
-fn notification_event(notification: TbepNotification) -> pb::BackboneStreamEvent {
+fn notification_event(notification: TbepNotification) -> pb::SubscribeResponse {
     let event = match notification {
         TbepNotification::Batch(batch) => {
             pb::backbone_stream_event::Event::Batch(pb::SubscriptionBatch {
@@ -1827,10 +1853,10 @@ fn notification_event(notification: TbepNotification) -> pb::BackboneStreamEvent
             })
         }
     };
-    pb::BackboneStreamEvent { event: Some(event) }
+    pb::SubscribeResponse { event: Some(event) }
 }
 
-fn is_closed(event: &pb::BackboneStreamEvent) -> bool {
+fn is_closed(event: &pb::SubscribeResponse) -> bool {
     matches!(event.event, Some(pb::backbone_stream_event::Event::Closed(_)))
 }
 
@@ -1840,12 +1866,12 @@ fn is_closed(event: &pb::BackboneStreamEvent) -> bool {
 /// Dropping the response (for example, when a client cancels or disconnects)
 /// wakes both an idle feed receive and a pump waiting for queue capacity.
 pub struct SubscriptionStream {
-    receiver: ReceiverStream<Result<pb::BackboneStreamEvent, Status>>,
+    receiver: ReceiverStream<Result<pb::SubscribeResponse, Status>>,
     stop: Option<std::sync::mpsc::Sender<()>>,
 }
 
 impl Stream for SubscriptionStream {
-    type Item = Result<pb::BackboneStreamEvent, Status>;
+    type Item = Result<pb::SubscribeResponse, Status>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.receiver).poll_next(cx)
@@ -1865,51 +1891,57 @@ impl Drop for SubscriptionStream {
 // ---------------------------------------------------------------------------
 
 #[tonic::async_trait]
-impl Channel for Arc<TbepGrpcServer> {
+impl ChannelService for Arc<TbepGrpcServer> {
     async fn bind(
         &self,
-        request: Request<pb::ChannelBindRequest>,
-    ) -> Result<Response<pb::ChannelBindResponse>, Status> {
+        request: Request<pb::ChannelServiceBindRequest>,
+    ) -> Result<Response<pb::ChannelServiceBindResponse>, Status> {
         self.counted();
         if self.binding == pb::BindingKind::NetworkMtls {
             self.authenticate_gateway(&request, &request.get_ref().principal)?;
         }
         let message = request.into_inner();
-        let domain =
-            registry::ChannelBindRequest { principal: message.principal, tenant: message.tenant };
-        if domain.principal.is_empty() || domain.tenant.is_empty() {
-            return Err(conversion_error("a bind carries no application identity"));
-        }
+        let domain = registry::ChannelServiceBindRequest {
+            scope: registry::BoundScope {
+                principal: message.principal,
+                tenant: message.tenant,
+                project: message.project,
+                database: message.database,
+            },
+        };
         domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
-        let expected_tenant = domain.tenant.clone();
+        let expected_scope = domain.scope.clone();
         let host = Arc::clone(&self.host);
         let response =
             run_host(self.as_ref(), MetricOperation::Other, move || host.bind_channel(&domain))
                 .await?;
-        if response.tenant != expected_tenant || response.validate().is_err() {
+        if response.scope != expected_scope || response.validate().is_err() {
             return Err(tbep_status(
                 Code::Internal,
                 pb::ErrorCode::EngineFailure,
                 "the host returned an invalid channel binding",
             ));
         }
-        Ok(Response::new(pb::ChannelBindResponse {
-            tenant: response.tenant,
+        Ok(Response::new(pb::ChannelServiceBindResponse {
+            principal: response.scope.principal,
+            tenant: response.scope.tenant,
             serving_instance: response.serving_instance,
+            project: response.scope.project,
+            database: response.scope.database,
         }))
     }
 }
 
 #[tonic::async_trait]
-impl Engine for Arc<TbepGrpcServer> {
+impl EngineService for Arc<TbepGrpcServer> {
     async fn document_read(
         &self,
-        request: Request<pb::DocumentReadRequest>,
-    ) -> Result<Response<pb::DocumentReadResponse>, Status> {
+        request: Request<pb::EngineServiceDocumentReadRequest>,
+    ) -> Result<Response<pb::EngineServiceDocumentReadResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
-        let domain = registry::DocumentReadRequest {
+        let domain = registry::EngineServiceDocumentReadRequest {
             collection: message.collection,
             document: message.document,
             level: read_level(message.level),
@@ -1921,7 +1953,7 @@ impl Engine for Arc<TbepGrpcServer> {
             host.document_read(&tenant, &domain)
         })
         .await?;
-        Ok(Response::new(pb::DocumentReadResponse {
+        Ok(Response::new(pb::EngineServiceDocumentReadResponse {
             found: response.found,
             document: response.document.as_ref().map(document_body),
             position: response.position.unwrap_or_default(),
@@ -1930,15 +1962,15 @@ impl Engine for Arc<TbepGrpcServer> {
 
     async fn document_write(
         &self,
-        request: Request<pb::DocumentWriteRequest>,
-    ) -> Result<Response<pb::DocumentWriteResponse>, Status> {
+        request: Request<pb::EngineServiceDocumentWriteRequest>,
+    ) -> Result<Response<pb::EngineServiceDocumentWriteResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
         let document =
             message.document.as_ref().map(document_put).transpose().map_err(host_error)?;
-        let domain = registry::DocumentWriteRequest {
+        let domain = registry::EngineServiceDocumentWriteRequest {
             document: document.ok_or_else(|| conversion_error("a write carries no document"))?,
             expected: message
                 .expected
@@ -1949,7 +1981,7 @@ impl Engine for Arc<TbepGrpcServer> {
                 .ok_or_else(|| conversion_error("a write carries no expected version"))?,
             operation_id: message.operation_id,
             ack: acknowledgement(message.ack),
-            usage: usage_admission(message.usage.as_ref(), &key)?,
+            usage: usage_admission(message.usage.as_ref(), &key, &identity.tenant)?,
         };
         self.require_mutation_usage(domain.usage.is_some())?;
         domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
@@ -1959,20 +1991,20 @@ impl Engine for Arc<TbepGrpcServer> {
             host.document_write(&tenant, &domain, &key)
         })
         .await?;
-        Ok(Response::new(pb::DocumentWriteResponse {
+        Ok(Response::new(pb::EngineServiceDocumentWriteResponse {
             outcome: Some(write_outcome_pb(&response.outcome)),
         }))
     }
 
     async fn document_delete(
         &self,
-        request: Request<pb::DocumentDeleteRequest>,
-    ) -> Result<Response<pb::DocumentDeleteResponse>, Status> {
+        request: Request<pb::EngineServiceDocumentDeleteRequest>,
+    ) -> Result<Response<pb::EngineServiceDocumentDeleteResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
-        let domain = registry::DocumentDeleteRequest {
+        let domain = registry::EngineServiceDocumentDeleteRequest {
             collection: message.collection,
             document: message.document,
             expected: message
@@ -1984,7 +2016,7 @@ impl Engine for Arc<TbepGrpcServer> {
                 .ok_or_else(|| conversion_error("a delete carries no expected version"))?,
             operation_id: message.operation_id,
             ack: acknowledgement(message.ack),
-            usage: usage_admission(message.usage.as_ref(), &key)?,
+            usage: usage_admission(message.usage.as_ref(), &key, &identity.tenant)?,
         };
         self.require_mutation_usage(domain.usage.is_some())?;
         domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
@@ -1994,15 +2026,15 @@ impl Engine for Arc<TbepGrpcServer> {
             host.document_delete(&tenant, &domain, &key)
         })
         .await?;
-        Ok(Response::new(pb::DocumentDeleteResponse {
+        Ok(Response::new(pb::EngineServiceDocumentDeleteResponse {
             outcome: Some(write_outcome_pb(&response.outcome)),
         }))
     }
 
     async fn document_batch(
         &self,
-        request: Request<pb::DocumentBatchRequest>,
-    ) -> Result<Response<pb::DocumentBatchResponse>, Status> {
+        request: Request<pb::EngineServiceDocumentBatchRequest>,
+    ) -> Result<Response<pb::EngineServiceDocumentBatchResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
@@ -2028,10 +2060,10 @@ impl Engine for Arc<TbepGrpcServer> {
                 operation_id: item.operation_id.clone(),
             });
         }
-        let domain = registry::DocumentBatchRequest {
+        let domain = registry::EngineServiceDocumentBatchRequest {
             items,
             ack: acknowledgement(message.ack),
-            usage: usage_admission(message.usage.as_ref(), &key)?,
+            usage: usage_admission(message.usage.as_ref(), &key, &identity.tenant)?,
         };
         self.require_mutation_usage(domain.usage.is_some())?;
         domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
@@ -2041,19 +2073,19 @@ impl Engine for Arc<TbepGrpcServer> {
             host.document_batch(&tenant, &domain, &key)
         })
         .await?;
-        Ok(Response::new(pb::DocumentBatchResponse {
+        Ok(Response::new(pb::EngineServiceDocumentBatchResponse {
             outcome: Some(write_outcome_pb(&response.outcome)),
         }))
     }
 
     async fn query_execute(
         &self,
-        request: Request<pb::QueryExecuteRequest>,
-    ) -> Result<Response<pb::QueryExecuteResponse>, Status> {
+        request: Request<pb::EngineServiceQueryExecuteRequest>,
+    ) -> Result<Response<pb::EngineServiceQueryExecuteResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
-        let domain = registry::QueryExecuteRequest {
+        let domain = registry::EngineServiceQueryExecuteRequest {
             query_id: message.query_id,
             text: message.text,
             max_items: message.max_items,
@@ -2066,7 +2098,7 @@ impl Engine for Arc<TbepGrpcServer> {
             host.query_execute(&tenant, &domain)
         })
         .await?;
-        Ok(Response::new(pb::QueryExecuteResponse {
+        Ok(Response::new(pb::EngineServiceQueryExecuteResponse {
             documents: response.documents.iter().map(document_body).collect(),
             count: response.count,
             terminal: match response.terminal {
@@ -2079,19 +2111,19 @@ impl Engine for Arc<TbepGrpcServer> {
 
     async fn query_cancel(
         &self,
-        request: Request<pb::QueryCancelRequest>,
-    ) -> Result<Response<pb::QueryCancelResponse>, Status> {
+        request: Request<pb::EngineServiceQueryCancelRequest>,
+    ) -> Result<Response<pb::EngineServiceQueryCancelResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
-        let domain = registry::QueryCancelRequest { query_id: message.query_id };
+        let domain = registry::EngineServiceQueryCancelRequest { query_id: message.query_id };
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response = run_host(self.as_ref(), MetricOperation::Query, move || {
             host.query_cancel(&tenant, &domain)
         })
         .await?;
-        Ok(Response::new(pb::QueryCancelResponse {
+        Ok(Response::new(pb::EngineServiceQueryCancelResponse {
             outcome: match response.outcome {
                 registry::CancelOutcome::Cancelled => pb::CancelOutcome::Cancelled as i32,
                 registry::CancelOutcome::AlreadyComplete => {
@@ -2104,15 +2136,15 @@ impl Engine for Arc<TbepGrpcServer> {
 
     async fn family_read(
         &self,
-        request: Request<pb::FamilyReadRequest>,
-    ) -> Result<Response<pb::FamilyReadResponse>, Status> {
+        request: Request<pb::EngineServiceFamilyReadRequest>,
+    ) -> Result<Response<pb::EngineServiceFamilyReadResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
         if message.request.len() > self.config.max_message_bytes() {
             return Err(conversion_error("a family request exceeds its byte bound"));
         }
-        let domain = registry::FamilyReadRequest {
+        let domain = registry::EngineServiceFamilyReadRequest {
             family: message.family,
             name: message.name,
             request_codec: message.request_codec,
@@ -2125,7 +2157,7 @@ impl Engine for Arc<TbepGrpcServer> {
             host.family_read(&tenant, &domain)
         })
         .await?;
-        Ok(Response::new(pb::FamilyReadResponse {
+        Ok(Response::new(pb::EngineServiceFamilyReadResponse {
             response_codec: response.response_codec,
             response: response.response,
         }))
@@ -2133,8 +2165,8 @@ impl Engine for Arc<TbepGrpcServer> {
 
     async fn family_write(
         &self,
-        request: Request<pb::FamilyWriteRequest>,
-    ) -> Result<Response<pb::FamilyWriteResponse>, Status> {
+        request: Request<pb::EngineServiceFamilyWriteRequest>,
+    ) -> Result<Response<pb::EngineServiceFamilyWriteResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
@@ -2142,13 +2174,13 @@ impl Engine for Arc<TbepGrpcServer> {
         if message.request.len() > self.config.max_message_bytes() {
             return Err(conversion_error("a family request exceeds its byte bound"));
         }
-        let domain = registry::FamilyWriteRequest {
+        let domain = registry::EngineServiceFamilyWriteRequest {
             family: message.family,
             name: message.name,
             request_codec: message.request_codec,
             request: message.request,
             operation_id: message.operation_id,
-            usage: usage_admission(message.usage.as_ref(), &key)?,
+            usage: usage_admission(message.usage.as_ref(), &key, &identity.tenant)?,
         };
         self.require_mutation_usage(domain.usage.is_some())?;
         domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
@@ -2158,7 +2190,7 @@ impl Engine for Arc<TbepGrpcServer> {
             host.family_write(&tenant, &domain, &key)
         })
         .await?;
-        Ok(Response::new(pb::FamilyWriteResponse {
+        Ok(Response::new(pb::EngineServiceFamilyWriteResponse {
             response_codec: response.response_codec,
             response: response.response,
         }))
@@ -2166,17 +2198,17 @@ impl Engine for Arc<TbepGrpcServer> {
 }
 
 #[tonic::async_trait]
-impl Backbone for Arc<TbepGrpcServer> {
+impl BackboneService for Arc<TbepGrpcServer> {
     type SubscribeStream = SubscriptionStream;
 
     async fn subscribe(
         &self,
-        request: Request<pb::BackboneSubscribeRequest>,
+        request: Request<pb::BackboneServiceSubscribeRequest>,
     ) -> Result<Response<Self::SubscribeStream>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
-        let domain = registry::BackboneSubscribeRequest {
+        let domain = registry::BackboneServiceSubscribeRequest {
             subscription_id: message.subscription_id,
             collections: (!message.collections.is_empty()).then_some(message.collections),
             from: message
@@ -2196,9 +2228,9 @@ impl Backbone for Arc<TbepGrpcServer> {
         .await?;
         let (sender, receiver) = mpsc::channel(OUTBOUND_DEPTH);
         let (stop, stop_signal) = std::sync::mpsc::channel::<()>();
-        let subscribed = pb::BackboneStreamEvent {
+        let subscribed = pb::SubscribeResponse {
             event: Some(pb::backbone_stream_event::Event::Subscribed(
-                pb::BackboneSubscribeResponse {
+                pb::BackboneServiceSubscribeResponse {
                     subscription_id: response.subscription_id,
                     start_sequence: response.start_sequence,
                 },
@@ -2270,12 +2302,12 @@ impl Backbone for Arc<TbepGrpcServer> {
 
     async fn acknowledge(
         &self,
-        request: Request<pb::BackboneAcknowledgeRequest>,
-    ) -> Result<Response<pb::BackboneAcknowledgeResponse>, Status> {
+        request: Request<pb::BackboneServiceAcknowledgeRequest>,
+    ) -> Result<Response<pb::BackboneServiceAcknowledgeResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
-        let domain = registry::BackboneAcknowledgeRequest {
+        let domain = registry::BackboneServiceAcknowledgeRequest {
             subscription_id: message.subscription_id,
             through_sequence: message.through_sequence,
         };
@@ -2285,7 +2317,7 @@ impl Backbone for Arc<TbepGrpcServer> {
             host.backbone_acknowledge(&tenant, &domain)
         })
         .await?;
-        Ok(Response::new(pb::BackboneAcknowledgeResponse {
+        Ok(Response::new(pb::BackboneServiceAcknowledgeResponse {
             subscription_id: response.subscription_id,
             acknowledged_through: response.acknowledged_through,
         }))
@@ -2293,38 +2325,38 @@ impl Backbone for Arc<TbepGrpcServer> {
 
     async fn unsubscribe(
         &self,
-        request: Request<pb::BackboneUnsubscribeRequest>,
-    ) -> Result<Response<pb::BackboneUnsubscribeResponse>, Status> {
+        request: Request<pb::BackboneServiceUnsubscribeRequest>,
+    ) -> Result<Response<pb::BackboneServiceUnsubscribeResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
         let domain =
-            registry::BackboneUnsubscribeRequest { subscription_id: message.subscription_id };
+            registry::BackboneServiceUnsubscribeRequest { subscription_id: message.subscription_id };
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response = run_host(self.as_ref(), MetricOperation::Subscribe, move || {
             host.backbone_unsubscribe(&tenant, &domain)
         })
         .await?;
-        Ok(Response::new(pb::BackboneUnsubscribeResponse {
+        Ok(Response::new(pb::BackboneServiceUnsubscribeResponse {
             subscription_id: response.subscription_id,
         }))
     }
 }
 
 #[tonic::async_trait]
-impl Sync for Arc<TbepGrpcServer> {
+impl SyncService for Arc<TbepGrpcServer> {
     async fn session_setup(
         &self,
-        request: Request<pb::SyncSessionSetupRequest>,
-    ) -> Result<Response<pb::SyncSessionSetupResponse>, Status> {
+        request: Request<pb::SyncServiceSessionSetupRequest>,
+    ) -> Result<Response<pb::SyncServiceSessionSetupResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
         if message.resume.len() > MAX_SYNC_TOKEN_BYTES {
             return Err(conversion_error("a sync resume token exceeds its byte bound"));
         }
-        let domain = registry::SyncSessionSetupRequest {
+        let domain = registry::SyncServiceSessionSetupRequest {
             collection: message.collection,
             resume: (!message.resume.is_empty()).then_some(message.resume),
         };
@@ -2335,7 +2367,7 @@ impl Sync for Arc<TbepGrpcServer> {
             host.sync_session_setup(&tenant, &domain)
         })
         .await?;
-        Ok(Response::new(pb::SyncSessionSetupResponse {
+        Ok(Response::new(pb::SyncServiceSessionSetupResponse {
             session_id: response.session_id,
             checkpoint: response.checkpoint,
             retained_floor: response.retained_floor,
@@ -2344,8 +2376,8 @@ impl Sync for Arc<TbepGrpcServer> {
 
     async fn delta_pull(
         &self,
-        request: Request<pb::SyncDeltaPullRequest>,
-    ) -> Result<Response<pb::SyncDeltaPullResponse>, Status> {
+        request: Request<pb::SyncServiceDeltaPullRequest>,
+    ) -> Result<Response<pb::SyncServiceDeltaPullResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
@@ -2353,7 +2385,7 @@ impl Sync for Arc<TbepGrpcServer> {
             return Err(conversion_error("a sync cursor exceeds its byte bound"));
         }
         let domain =
-            registry::SyncDeltaPullRequest { session_id: message.session_id, from: message.from };
+            registry::SyncServiceDeltaPullRequest { session_id: message.session_id, from: message.from };
         domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
@@ -2361,7 +2393,7 @@ impl Sync for Arc<TbepGrpcServer> {
             host.sync_delta_pull(&tenant, &domain)
         })
         .await?;
-        Ok(Response::new(pb::SyncDeltaPullResponse {
+        Ok(Response::new(pb::SyncServiceDeltaPullResponse {
             session_id: response.session_id,
             payload_codec: response.payload_codec,
             payload: response.payload,
@@ -2373,19 +2405,19 @@ impl Sync for Arc<TbepGrpcServer> {
 
     async fn snapshot_pull(
         &self,
-        request: Request<pb::SyncSnapshotPullRequest>,
-    ) -> Result<Response<pb::SyncSnapshotPullResponse>, Status> {
+        request: Request<pb::SyncServiceSnapshotPullRequest>,
+    ) -> Result<Response<pb::SyncServiceSnapshotPullResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
-        let domain = registry::SyncSnapshotPullRequest { session_id: message.session_id };
+        let domain = registry::SyncServiceSnapshotPullRequest { session_id: message.session_id };
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response = run_host(self.as_ref(), MetricOperation::Subscribe, move || {
             host.sync_snapshot_pull(&tenant, &domain)
         })
         .await?;
-        Ok(Response::new(pb::SyncSnapshotPullResponse {
+        Ok(Response::new(pb::SyncServiceSnapshotPullResponse {
             session_id: response.session_id,
             payload_codec: response.payload_codec,
             payload: response.payload,
@@ -2395,15 +2427,15 @@ impl Sync for Arc<TbepGrpcServer> {
 
     async fn checkpoint_ack(
         &self,
-        request: Request<pb::SyncCheckpointAckRequest>,
-    ) -> Result<Response<pb::SyncCheckpointAckResponse>, Status> {
+        request: Request<pb::SyncServiceCheckpointAckRequest>,
+    ) -> Result<Response<pb::SyncServiceCheckpointAckResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
         if message.checkpoint.len() > MAX_SYNC_TOKEN_BYTES {
             return Err(conversion_error("a sync checkpoint exceeds its byte bound"));
         }
-        let domain = registry::SyncCheckpointAckRequest {
+        let domain = registry::SyncServiceCheckpointAckRequest {
             session_id: message.session_id,
             checkpoint: message.checkpoint,
         };
@@ -2414,18 +2446,18 @@ impl Sync for Arc<TbepGrpcServer> {
             host.sync_checkpoint_ack(&tenant, &domain)
         })
         .await?;
-        Ok(Response::new(pb::SyncCheckpointAckResponse { session_id: response.session_id }))
+        Ok(Response::new(pb::SyncServiceCheckpointAckResponse { session_id: response.session_id }))
     }
 
     async fn mutation_submit(
         &self,
-        request: Request<pb::SyncMutationSubmitRequest>,
-    ) -> Result<Response<pb::SyncMutationSubmitResponse>, Status> {
+        request: Request<pb::SyncServiceMutationSubmitRequest>,
+    ) -> Result<Response<pb::SyncServiceMutationSubmitResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
-        let domain = registry::SyncMutationSubmitRequest {
+        let domain = registry::SyncServiceMutationSubmitRequest {
             session_id: message.session_id,
             document: message.document,
             change: message
@@ -2435,7 +2467,7 @@ impl Sync for Arc<TbepGrpcServer> {
                 .transpose()
                 .map_err(host_error)?
                 .ok_or_else(|| conversion_error("a sync mutation carries no change"))?,
-            usage: usage_admission(message.usage.as_ref(), &key)?,
+            usage: usage_admission(message.usage.as_ref(), &key, &identity.tenant)?,
         };
         self.require_mutation_usage(domain.usage.is_some())?;
         domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
@@ -2445,7 +2477,7 @@ impl Sync for Arc<TbepGrpcServer> {
             host.sync_mutation_submit(&tenant, &domain, &key)
         })
         .await?;
-        Ok(Response::new(pb::SyncMutationSubmitResponse {
+        Ok(Response::new(pb::SyncServiceMutationSubmitResponse {
             session_id: response.session_id,
             outcome: Some(mutation_outcome_pb(&response.outcome)),
         }))
@@ -2453,33 +2485,33 @@ impl Sync for Arc<TbepGrpcServer> {
 
     async fn session_close(
         &self,
-        request: Request<pb::SyncSessionCloseRequest>,
-    ) -> Result<Response<pb::SyncSessionCloseResponse>, Status> {
+        request: Request<pb::SyncServiceSessionCloseRequest>,
+    ) -> Result<Response<pb::SyncServiceSessionCloseResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
-        let domain = registry::SyncSessionCloseRequest { session_id: message.session_id };
+        let domain = registry::SyncServiceSessionCloseRequest { session_id: message.session_id };
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response = run_host(self.as_ref(), MetricOperation::Subscribe, move || {
             host.sync_session_close(&tenant, &domain)
         })
         .await?;
-        Ok(Response::new(pb::SyncSessionCloseResponse { session_id: response.session_id }))
+        Ok(Response::new(pb::SyncServiceSessionCloseResponse { session_id: response.session_id }))
     }
 }
 
 #[tonic::async_trait]
-impl Schema for Arc<TbepGrpcServer> {
+impl SchemaService for Arc<TbepGrpcServer> {
     async fn declare(
         &self,
-        request: Request<pb::SchemaDeclareRequest>,
-    ) -> Result<Response<pb::SchemaDeclareResponse>, Status> {
+        request: Request<pb::SchemaServiceDeclareRequest>,
+    ) -> Result<Response<pb::SchemaServiceDeclareResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
-        let domain = registry::SchemaDeclareRequest {
+        let domain = registry::SchemaServiceDeclareRequest {
             collection: message.collection,
             schema: message.schema.as_ref().map(value_from_pb).transpose().map_err(host_error)?,
             operation_id: message.operation_id,
@@ -2491,7 +2523,7 @@ impl Schema for Arc<TbepGrpcServer> {
             host.schema_declare(&tenant, &domain, &key)
         })
         .await?;
-        Ok(Response::new(pb::SchemaDeclareResponse {
+        Ok(Response::new(pb::SchemaServiceDeclareResponse {
             enforced_version: response.enforced_version.unwrap_or_default(),
             rule_count: response.rule_count,
         }))
@@ -2499,19 +2531,19 @@ impl Schema for Arc<TbepGrpcServer> {
 
     async fn status(
         &self,
-        request: Request<pb::SchemaStatusRequest>,
-    ) -> Result<Response<pb::SchemaStatusResponse>, Status> {
+        request: Request<pb::SchemaServiceStatusRequest>,
+    ) -> Result<Response<pb::SchemaServiceStatusResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
-        let domain = registry::SchemaStatusRequest { collection: message.collection };
+        let domain = registry::SchemaServiceStatusRequest { collection: message.collection };
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response = run_host(self.as_ref(), MetricOperation::Read, move || {
             host.schema_status(&tenant, &domain)
         })
         .await?;
-        Ok(Response::new(pb::SchemaStatusResponse {
+        Ok(Response::new(pb::SchemaServiceStatusResponse {
             enforced_version: response.enforced_version.unwrap_or_default(),
             rule_count: response.rule_count,
         }))
@@ -2519,12 +2551,12 @@ impl Schema for Arc<TbepGrpcServer> {
 
     async fn validate(
         &self,
-        request: Request<pb::SchemaValidateRequest>,
-    ) -> Result<Response<pb::SchemaValidateResponse>, Status> {
+        request: Request<pb::SchemaServiceValidateRequest>,
+    ) -> Result<Response<pb::SchemaServiceValidateResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
-        let domain = registry::SchemaValidateRequest {
+        let domain = registry::SchemaServiceValidateRequest {
             collection: message.collection,
             document: message
                 .document
@@ -2541,7 +2573,7 @@ impl Schema for Arc<TbepGrpcServer> {
             host.schema_validate(&tenant, &domain)
         })
         .await?;
-        Ok(Response::new(pb::SchemaValidateResponse {
+        Ok(Response::new(pb::SchemaServiceValidateResponse {
             enforced_version: response.enforced_version.unwrap_or_default(),
             valid: response.valid,
             violations: response.violations.iter().map(schema_violation_pb).collect(),
@@ -2628,11 +2660,11 @@ impl Schema for Arc<TbepGrpcServer> {
 }
 
 #[tonic::async_trait]
-impl Replication for Arc<TbepGrpcServer> {
+impl ReplicationService for Arc<TbepGrpcServer> {
     async fn conflicts(
         &self,
-        request: Request<pb::ReplicationConflictsRequest>,
-    ) -> Result<Response<pb::ReplicationConflictsResponse>, Status> {
+        request: Request<pb::ReplicationServiceConflictsRequest>,
+    ) -> Result<Response<pb::ReplicationServiceConflictsResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
@@ -2641,7 +2673,7 @@ impl Replication for Arc<TbepGrpcServer> {
             host.replication_conflicts(&tenant)
         })
         .await?;
-        Ok(Response::new(pb::ReplicationConflictsResponse {
+        Ok(Response::new(pb::ReplicationServiceConflictsResponse {
             member: response.member,
             records: response.records.iter().map(conflict_record).collect(),
         }))
@@ -2649,8 +2681,8 @@ impl Replication for Arc<TbepGrpcServer> {
 
     async fn fenced(
         &self,
-        request: Request<pb::ReplicationFencedRequest>,
-    ) -> Result<Response<pb::ReplicationFencedResponse>, Status> {
+        request: Request<pb::ReplicationServiceFencedRequest>,
+    ) -> Result<Response<pb::ReplicationServiceFencedResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
@@ -2659,7 +2691,7 @@ impl Replication for Arc<TbepGrpcServer> {
             host.replication_fenced(&tenant)
         })
         .await?;
-        Ok(Response::new(pb::ReplicationFencedResponse {
+        Ok(Response::new(pb::ReplicationServiceFencedResponse {
             member: response.member,
             records: response.records.iter().map(fenced_record).collect(),
         }))
@@ -2667,8 +2699,8 @@ impl Replication for Arc<TbepGrpcServer> {
 
     async fn depositions(
         &self,
-        request: Request<pb::ReplicationDepositionsRequest>,
-    ) -> Result<Response<pb::ReplicationDepositionsResponse>, Status> {
+        request: Request<pb::ReplicationServiceDepositionsRequest>,
+    ) -> Result<Response<pb::ReplicationServiceDepositionsResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
@@ -2677,7 +2709,7 @@ impl Replication for Arc<TbepGrpcServer> {
             host.replication_depositions(&tenant)
         })
         .await?;
-        Ok(Response::new(pb::ReplicationDepositionsResponse {
+        Ok(Response::new(pb::ReplicationServiceDepositionsResponse {
             member: response.member,
             records: response.records.iter().map(deposition_record).collect(),
         }))
@@ -2685,8 +2717,8 @@ impl Replication for Arc<TbepGrpcServer> {
 
     async fn cursor(
         &self,
-        request: Request<pb::ReplicationCursorRequest>,
-    ) -> Result<Response<pb::ReplicationCursorResponse>, Status> {
+        request: Request<pb::ReplicationServiceCursorRequest>,
+    ) -> Result<Response<pb::ReplicationServiceCursorResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
@@ -2695,7 +2727,7 @@ impl Replication for Arc<TbepGrpcServer> {
             host.replication_cursor(&tenant)
         })
         .await?;
-        Ok(Response::new(pb::ReplicationCursorResponse {
+        Ok(Response::new(pb::ReplicationServiceCursorResponse {
             member: response.member,
             position: response.position.unwrap_or_default(),
         }))
@@ -2703,8 +2735,8 @@ impl Replication for Arc<TbepGrpcServer> {
 
     async fn health(
         &self,
-        request: Request<pb::ReplicationHealthRequest>,
-    ) -> Result<Response<pb::ReplicationHealthResponse>, Status> {
+        request: Request<pb::ReplicationServiceHealthRequest>,
+    ) -> Result<Response<pb::ReplicationServiceHealthResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
@@ -2713,7 +2745,7 @@ impl Replication for Arc<TbepGrpcServer> {
             host.replication_health(&tenant)
         })
         .await?;
-        Ok(Response::new(pb::ReplicationHealthResponse {
+        Ok(Response::new(pb::ReplicationServiceHealthResponse {
             member: response.member,
             status: replication_status_pb(response.status),
         }))
@@ -2721,8 +2753,8 @@ impl Replication for Arc<TbepGrpcServer> {
 
     async fn denials(
         &self,
-        request: Request<pb::ReplicationDenialsRequest>,
-    ) -> Result<Response<pb::ReplicationDenialsResponse>, Status> {
+        request: Request<pb::ReplicationServiceDenialsRequest>,
+    ) -> Result<Response<pb::ReplicationServiceDenialsResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
@@ -2731,7 +2763,7 @@ impl Replication for Arc<TbepGrpcServer> {
             host.replication_denials(&tenant)
         })
         .await?;
-        Ok(Response::new(pb::ReplicationDenialsResponse {
+        Ok(Response::new(pb::ReplicationServiceDenialsResponse {
             member: response.member,
             records: response.records.iter().map(denial_record).collect(),
         }))
@@ -2739,11 +2771,11 @@ impl Replication for Arc<TbepGrpcServer> {
 }
 
 #[tonic::async_trait]
-impl Maintenance for Arc<TbepGrpcServer> {
+impl MaintenanceService for Arc<TbepGrpcServer> {
     async fn topology_read(
         &self,
-        request: Request<pb::TopologyReadRequest>,
-    ) -> Result<Response<pb::TopologyReadResponse>, Status> {
+        request: Request<pb::MaintenanceServiceTopologyReadRequest>,
+    ) -> Result<Response<pb::MaintenanceServiceTopologyReadResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
@@ -2751,7 +2783,7 @@ impl Maintenance for Arc<TbepGrpcServer> {
         let response =
             run_host(self.as_ref(), MetricOperation::Other, move || host.topology_read(&tenant))
                 .await?;
-        Ok(Response::new(pb::TopologyReadResponse {
+        Ok(Response::new(pb::MaintenanceServiceTopologyReadResponse {
             binding: self.binding as i32,
             subsystems: response.subsystems,
             engine_topology_available: response.engine_topology_available,
@@ -2761,8 +2793,8 @@ impl Maintenance for Arc<TbepGrpcServer> {
 
     async fn admin_status(
         &self,
-        request: Request<pb::AdminStatusRequest>,
-    ) -> Result<Response<pb::AdminStatusResponse>, Status> {
+        request: Request<pb::MaintenanceServiceAdminStatusRequest>,
+    ) -> Result<Response<pb::MaintenanceServiceAdminStatusResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let _ = identity;
@@ -2770,7 +2802,7 @@ impl Maintenance for Arc<TbepGrpcServer> {
         let served = self.frames_served();
         let response =
             run_host(self.as_ref(), MetricOperation::Other, move || host.admin_status()).await?;
-        Ok(Response::new(pb::AdminStatusResponse {
+        Ok(Response::new(pb::MaintenanceServiceAdminStatusResponse {
             registry_version: response.registry_version,
             frames_served: response.frames_served.max(served),
             sessions: response.sessions,
@@ -2781,8 +2813,8 @@ impl Maintenance for Arc<TbepGrpcServer> {
 
     async fn supervision_health(
         &self,
-        request: Request<pb::SupervisionHealthRequest>,
-    ) -> Result<Response<pb::SupervisionHealthResponse>, Status> {
+        request: Request<pb::MaintenanceServiceSupervisionHealthRequest>,
+    ) -> Result<Response<pb::MaintenanceServiceSupervisionHealthResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let _ = identity;
@@ -2790,7 +2822,7 @@ impl Maintenance for Arc<TbepGrpcServer> {
         let served = self.frames_served();
         let response =
             run_host(self.as_ref(), MetricOperation::Other, move || host.health()).await?;
-        Ok(Response::new(pb::SupervisionHealthResponse {
+        Ok(Response::new(pb::MaintenanceServiceSupervisionHealthResponse {
             state: match response.state {
                 registry::HealthState::Starting => pb::HealthState::Starting as i32,
                 registry::HealthState::Serving => pb::HealthState::Serving as i32,
@@ -2805,13 +2837,13 @@ impl Maintenance for Arc<TbepGrpcServer> {
 
     async fn supervision_shutdown(
         &self,
-        request: Request<pb::SupervisionShutdownRequest>,
-    ) -> Result<Response<pb::SupervisionShutdownResponse>, Status> {
+        request: Request<pb::MaintenanceServiceSupervisionShutdownRequest>,
+    ) -> Result<Response<pb::MaintenanceServiceSupervisionShutdownResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let _ = identity;
         let message = request.into_inner();
-        let domain = registry::SupervisionShutdownRequest {
+        let domain = registry::MaintenanceServiceSupervisionShutdownRequest {
             reason: match pb::ShutdownReason::try_from(message.reason) {
                 Ok(pb::ShutdownReason::Operator) => registry::ShutdownReason::Operator,
                 Ok(pb::ShutdownReason::Supervisor) => registry::ShutdownReason::Supervisor,
@@ -2824,7 +2856,7 @@ impl Maintenance for Arc<TbepGrpcServer> {
         let response =
             run_host(self.as_ref(), MetricOperation::Other, move || host.begin_shutdown(&domain))
                 .await?;
-        Ok(Response::new(pb::SupervisionShutdownResponse {
+        Ok(Response::new(pb::MaintenanceServiceSupervisionShutdownResponse {
             state: match response.state {
                 registry::HealthState::Starting => pb::HealthState::Starting as i32,
                 registry::HealthState::Serving => pb::HealthState::Serving as i32,
@@ -2837,11 +2869,11 @@ impl Maintenance for Arc<TbepGrpcServer> {
 }
 
 #[tonic::async_trait]
-impl Usage for Arc<TbepGrpcServer> {
+impl UsageService for Arc<TbepGrpcServer> {
     async fn record(
         &self,
-        request: Request<pb::UsageRecordRequest>,
-    ) -> Result<Response<pb::UsageRecordResponse>, Status> {
+        request: Request<pb::UsageServiceRecordRequest>,
+    ) -> Result<Response<pb::UsageServiceRecordResponse>, Status> {
         self.counted();
         let identity = self.require_usage_rpc(&request)?;
         let key = idempotency_key(&request)?;
@@ -2855,7 +2887,7 @@ impl Usage for Arc<TbepGrpcServer> {
             }
             _ => return Err(conversion_error("a usage record carries no supported meter")),
         };
-        let domain = registry::UsageRecordRequest {
+        let domain = registry::UsageServiceRecordRequest {
             meter,
             project: message.project,
             database: message.database,
@@ -2867,6 +2899,13 @@ impl Usage for Arc<TbepGrpcServer> {
             integer_units: message.integer_units,
         };
         domain.validate_for_key(&key).map_err(|error| conversion_error(&error.to_string()))?;
+        if domain.project != identity.tenant.project
+            || domain.database != identity.tenant.database
+        {
+            return Err(conversion_error(
+                "the usage record does not match the bound Project and Database",
+            ));
+        }
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response = run_host(self.as_ref(), MetricOperation::Write, move || {
@@ -2878,7 +2917,7 @@ impl Usage for Arc<TbepGrpcServer> {
                 "the host returned an invalid usage receipt: {error}"
             )))
         })?;
-        Ok(Response::new(pb::UsageRecordResponse {
+        Ok(Response::new(pb::UsageServiceRecordResponse {
             sequence: response.sequence,
             replica_epoch: response.replica_epoch,
             already_recorded: response.already_recorded,
@@ -2887,12 +2926,12 @@ impl Usage for Arc<TbepGrpcServer> {
 
     async fn export(
         &self,
-        request: Request<pb::UsageExportRequest>,
-    ) -> Result<Response<pb::UsageExportResponse>, Status> {
+        request: Request<pb::UsageServiceExportRequest>,
+    ) -> Result<Response<pb::UsageServiceExportResponse>, Status> {
         self.counted();
         let identity = self.require_usage_rpc(&request)?;
         let message = request.into_inner();
-        let domain = registry::UsageExportRequest {
+        let domain = registry::UsageServiceExportRequest {
             window_start_millis: message.window_start_millis,
             window_end_millis: message.window_end_millis,
             page_size: message.page_size,
@@ -2901,7 +2940,7 @@ impl Usage for Arc<TbepGrpcServer> {
         domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
-        let expected_tenant = tenant.clone();
+        let expected_tenant = tenant.tenant.clone();
         let response = run_host(self.as_ref(), MetricOperation::Read, move || {
             host.usage_export(&tenant, &domain)
         })
@@ -2916,7 +2955,7 @@ impl Usage for Arc<TbepGrpcServer> {
                 "the host returned a fact outside the bound tenant".into(),
             )));
         }
-        Ok(Response::new(pb::UsageExportResponse {
+        Ok(Response::new(pb::UsageServiceExportResponse {
             facts: response.facts.iter().map(usage_fact_pb).collect(),
             continuation: response.continuation,
             snapshot_sequence: response.snapshot_sequence,
@@ -2925,16 +2964,16 @@ impl Usage for Arc<TbepGrpcServer> {
 }
 
 #[tonic::async_trait]
-impl Tier for Arc<TbepGrpcServer> {
+impl TierService for Arc<TbepGrpcServer> {
     async fn configure(
         &self,
-        request: Request<pb::TierConfigureRequest>,
-    ) -> Result<Response<pb::TierConfigureResponse>, Status> {
+        request: Request<pb::TierServiceConfigureRequest>,
+    ) -> Result<Response<pb::TierServiceConfigureResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
-        let domain = registry::TierConfigureRequest {
+        let domain = registry::TierServiceConfigureRequest {
             policy_id: message.policy_id,
             version: message.version,
             nvme_budget_bytes: message.nvme_budget_bytes,
@@ -2949,7 +2988,7 @@ impl Tier for Arc<TbepGrpcServer> {
             host.tier_configure(&tenant, &domain, &key)
         })
         .await?;
-        Ok(Response::new(pb::TierConfigureResponse {
+        Ok(Response::new(pb::TierServiceConfigureResponse {
             policy_id: response.policy_id,
             version: response.version,
             paused: response.paused,
@@ -2958,8 +2997,8 @@ impl Tier for Arc<TbepGrpcServer> {
 
     async fn inspect(
         &self,
-        request: Request<pb::TierInspectRequest>,
-    ) -> Result<Response<pb::TierInspectResponse>, Status> {
+        request: Request<pb::TierServiceInspectRequest>,
+    ) -> Result<Response<pb::TierServiceInspectResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
@@ -2967,7 +3006,7 @@ impl Tier for Arc<TbepGrpcServer> {
         let response =
             run_host(self.as_ref(), MetricOperation::Read, move || host.tier_inspect(&tenant))
                 .await?;
-        Ok(Response::new(pb::TierInspectResponse {
+        Ok(Response::new(pb::TierServiceInspectResponse {
             configured: response.configured,
             paused: response.paused,
             manifest_epoch: response.manifest_epoch,
@@ -2978,8 +3017,8 @@ impl Tier for Arc<TbepGrpcServer> {
 
     async fn dry_run(
         &self,
-        request: Request<pb::TierDryRunRequest>,
-    ) -> Result<Response<pb::TierDryRunResponse>, Status> {
+        request: Request<pb::TierServiceDryRunRequest>,
+    ) -> Result<Response<pb::TierServiceDryRunResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
@@ -2987,15 +3026,15 @@ impl Tier for Arc<TbepGrpcServer> {
         let response =
             run_host(self.as_ref(), MetricOperation::Other, move || host.tier_dry_run(&tenant))
                 .await?;
-        Ok(Response::new(pb::TierDryRunResponse {
+        Ok(Response::new(pb::TierServiceDryRunResponse {
             receipt: Some(tier_move_receipt(&response.receipt)),
         }))
     }
 
     async fn explain(
         &self,
-        request: Request<pb::TierExplainRequest>,
-    ) -> Result<Response<pb::TierExplainResponse>, Status> {
+        request: Request<pb::TierServiceExplainRequest>,
+    ) -> Result<Response<pb::TierServiceExplainResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
@@ -3003,15 +3042,15 @@ impl Tier for Arc<TbepGrpcServer> {
         let response =
             run_host(self.as_ref(), MetricOperation::Read, move || host.tier_explain(&tenant))
                 .await?;
-        Ok(Response::new(pb::TierExplainResponse {
+        Ok(Response::new(pb::TierServiceExplainResponse {
             receipt: Some(tier_move_receipt(&response.receipt)),
         }))
     }
 
     async fn run(
         &self,
-        request: Request<pb::TierRunRequest>,
-    ) -> Result<Response<pb::TierRunResponse>, Status> {
+        request: Request<pb::TierServiceRunRequest>,
+    ) -> Result<Response<pb::TierServiceRunResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
@@ -3021,15 +3060,15 @@ impl Tier for Arc<TbepGrpcServer> {
             host.tier_run(&tenant, &key)
         })
         .await?;
-        Ok(Response::new(pb::TierRunResponse {
+        Ok(Response::new(pb::TierServiceRunResponse {
             receipt: Some(tier_move_receipt(&response.receipt)),
         }))
     }
 
     async fn pause(
         &self,
-        request: Request<pb::TierPauseRequest>,
-    ) -> Result<Response<pb::TierPauseResponse>, Status> {
+        request: Request<pb::TierServicePauseRequest>,
+    ) -> Result<Response<pb::TierServicePauseResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
@@ -3038,13 +3077,13 @@ impl Tier for Arc<TbepGrpcServer> {
         let response =
             run_host(self.as_ref(), MetricOperation::Write, move || host.tier_pause(&tenant, &key))
                 .await?;
-        Ok(Response::new(pb::TierPauseResponse { paused: response.paused }))
+        Ok(Response::new(pb::TierServicePauseResponse { paused: response.paused }))
     }
 
     async fn resume(
         &self,
-        request: Request<pb::TierResumeRequest>,
-    ) -> Result<Response<pb::TierResumeResponse>, Status> {
+        request: Request<pb::TierServiceResumeRequest>,
+    ) -> Result<Response<pb::TierServiceResumeResponse>, Status> {
         self.counted();
         let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
@@ -3054,6 +3093,6 @@ impl Tier for Arc<TbepGrpcServer> {
             host.tier_resume(&tenant, &key)
         })
         .await?;
-        Ok(Response::new(pb::TierResumeResponse { paused: response.paused }))
+        Ok(Response::new(pb::TierServiceResumeResponse { paused: response.paused }))
     }
 }

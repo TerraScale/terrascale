@@ -1894,9 +1894,14 @@ impl IndexCatalog {
             .collect()
     }
 
-    /// Returns the published segment of a namespace's newest published epoch.
-    #[allow(dead_code, reason = "observed by the index tests")]
-    pub(crate) fn segment(&self, namespace: &IndexNamespace) -> Option<IndexSegment> {
+    /// Returns the published segment of a namespace's newest published epoch,
+    /// behind its shared handle.
+    ///
+    /// The handle clone is the whole cost of the read: the segment is
+    /// immutable once published, so the executor's per-query narrowing read
+    /// borrows one thousand-entry segment instead of copying it, and the
+    /// compare-and-publish rule keeps the handle it sees monotonic.
+    pub(crate) fn segment(&self, namespace: &IndexNamespace) -> Option<Arc<IndexSegment>> {
         let state = self.state.lock().expect("index lock");
         let entry = state.namespaces.get(&namespace.catalog_key())?;
         let epoch = entry.published_epoch()?;
@@ -1949,7 +1954,7 @@ impl IndexCatalog {
         while epoch_state.history.len() > MAX_GENERATION_HISTORY {
             epoch_state.history.pop_front();
         }
-        epoch_state.published = Some(segment);
+        epoch_state.published = Some(Arc::new(segment));
         // A publication changes catalog truth, so cached selections of every
         // shape invalidate with this revision.
         state.optimizer.revision += 1;

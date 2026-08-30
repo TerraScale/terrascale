@@ -25,7 +25,9 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const DEFAULT_AUTHORITY: &str = "terrabase-bench";
 const SERVED_IDENTITY: &str = "tbep-production-harness/network-mtls/v1";
 const DEFAULT_SOURCE_IDENTITY: &str = "terrabase-rust-served-boundary-benchmark/v1";
-const DEFAULT_TRANSPORT_IDENTITY: &str = "terrabase-go network mTLS over loopback TCP";
+const ADAPTER_CONTRACT_IDENTITY: &str = "terrabase-go/network-mtls/per-slot-connection/v2";
+const DEFAULT_TRANSPORT_IDENTITY: &str =
+    "terrabase-go/network-mtls/per-slot-connection/v2 (network mTLS over loopback TCP)";
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Configuration for one served-boundary workload.
@@ -53,6 +55,10 @@ pub(crate) struct ServedRunnerConfig {
     pub principal: String,
     /// Bound tenant.
     pub tenant: String,
+    /// Bound project scope.
+    pub project: String,
+    /// Bound database scope.
+    pub database: String,
     /// Source identity retained in result limits.
     pub source_identity: String,
     /// Network mTLS transport identity retained in result facts.
@@ -100,16 +106,24 @@ impl ServedRunnerConfig {
         for (name, value) in [
             ("principal", &self.principal),
             ("tenant", &self.tenant),
+            ("project", &self.project),
+            ("database", &self.database),
             ("source identity", &self.source_identity),
             ("transport identity", &self.transport_identity),
         ] {
             validate_text(name, value)?;
         }
+        if !self.principal.starts_with("spiffe://") {
+            return Err(
+                "principal must be a SPIFFE URI for the mTLS client certificate SAN".to_owned()
+            );
+        }
         if self.transport_identity.contains("in-process")
-            || !self.transport_identity.contains("mTLS")
+            || !self.transport_identity.contains(ADAPTER_CONTRACT_IDENTITY)
         {
-            return Err("transport identity must describe network mTLS, not in-process execution"
-                .to_owned());
+            return Err(format!(
+                "transport identity must contain the exact adapter contract marker {ADAPTER_CONTRACT_IDENTITY:?}"
+            ));
         }
         Ok(())
     }
@@ -139,6 +153,8 @@ impl ServedRunnerConfig {
                 .unwrap_or_else(|| SERVED_IDENTITY.to_owned()),
             principal: required_string("TERRABASE_BENCH_PRINCIPAL")?,
             tenant: required_string("TERRABASE_BENCH_TENANT")?,
+            project: required_string("TERRABASE_BENCH_PROJECT")?,
+            database: required_string("TERRABASE_BENCH_DATABASE")?,
             source_identity: optional_env("TERRABASE_BENCH_SOURCE_IDENTITY")
                 .unwrap_or_else(|| DEFAULT_SOURCE_IDENTITY.to_owned()),
             transport_identity: optional_env("TERRABASE_BENCH_TRANSPORT_IDENTITY")
@@ -276,7 +292,9 @@ fn make_pki(config: &ServedRunnerConfig, dir: &Path, deadline: Instant) -> Resul
         "subjectAltName=DNS:terrabase-bench,IP:127.0.0.1\nextendedKeyUsage=serverAuth\n",
     )
     .map_err(|e| format!("write server certificate extensions: {e}"))?;
-    fs::write(&client_ext, "extendedKeyUsage=clientAuth\n")
+    let client_extensions =
+        format!("subjectAltName=URI:{}\nextendedKeyUsage=clientAuth\n", config.principal);
+    fs::write(&client_ext, client_extensions)
         .map_err(|e| format!("write client certificate extensions: {e}"))?;
     openssl(
         config,
@@ -511,6 +529,8 @@ fn run_adapter(
         ("--authority", DEFAULT_AUTHORITY.to_owned()),
         ("--principal", config.principal.clone()),
         ("--tenant", config.tenant.clone()),
+        ("--project", config.project.clone()),
+        ("--database", config.database.clone()),
         ("--server-identity", config.server_identity.clone()),
         ("--source-identity", config.source_identity.clone()),
         ("--transport-identity", config.transport_identity.clone()),
@@ -580,7 +600,7 @@ fn validate_output(
     }
     if facts.client_transport != config.transport_identity
         || facts.client_transport.contains("in-process")
-        || !facts.client_transport.contains("mTLS")
+        || !facts.client_transport.contains(ADAPTER_CONTRACT_IDENTITY)
     {
         return Err(
             "adapter result does not identify the requested network mTLS boundary".to_owned()
@@ -792,6 +812,7 @@ fn json_string(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::lane_run::SampleFacts;
     use super::*;
 
     fn config(workload: Workload) -> ServedRunnerConfig {
@@ -805,8 +826,10 @@ mod tests {
             output_directory: std::env::temp_dir().join("terrabase-served-runner-tests"),
             timeout: Duration::from_secs(1),
             server_identity: SERVED_IDENTITY.to_owned(),
-            principal: "benchmark-principal".to_owned(),
+            principal: "spiffe://terrascale.tech/benchmark".to_owned(),
             tenant: "benchmark-tenant".to_owned(),
+            project: "benchmark-project".to_owned(),
+            database: "benchmark-database".to_owned(),
             source_identity: DEFAULT_SOURCE_IDENTITY.to_owned(),
             transport_identity: DEFAULT_TRANSPORT_IDENTITY.to_owned(),
             openssl_executable: PathBuf::from("openssl"),
@@ -842,5 +865,87 @@ mod tests {
         assert!(
             matches!(fields.get("samples"), Some(lane_run::json::Value::Arr(samples)) if samples.is_empty())
         );
+    }
+
+    fn complete_document(config: &ServedRunnerConfig, endpoint: &str) -> String {
+        let side = SideFacts {
+            target: "terrabase".to_owned(),
+            workload: config.workload.as_str().to_owned(),
+            config: config.lane,
+            observed_identity: config.server_identity.clone(),
+            endpoint: endpoint.to_owned(),
+            client_transport: config.transport_identity.clone(),
+            samples: vec![
+                SampleFacts {
+                    operations: config.lane.operations as u64,
+                    wall_seconds: 1.0,
+                    throughput_ops_per_s: config.lane.operations as f64,
+                    p50_us: 1.0,
+                    p95_us: 2.0,
+                    p99_us: 3.0,
+                };
+                config.lane.samples
+            ],
+        };
+        lane_run::render_facts_json(
+            &side,
+            1,
+            "test-kernel",
+            1,
+            &[format!("source identity: {}", config.source_identity)],
+        )
+    }
+
+    fn temporary_result(config: &ServedRunnerConfig, text: &str) -> PathBuf {
+        let path = unique_output(&config.output_directory, "test").expect("unique result path");
+        write_exclusive(&path, text.as_bytes()).expect("write test result");
+        path
+    }
+
+    #[test]
+    fn malformed_output_is_rejected_without_parsing_partial_samples() {
+        let config = config(Workload::DocumentRead);
+        let path = temporary_result(&config, "{not json");
+        let error = validate_output(&path, UNIX_EPOCH, &config, "127.0.0.1:8421")
+            .expect_err("malformed output must fail");
+        assert!(error.contains("malformed"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn stale_output_is_rejected_before_boundary_validation() {
+        let config = config(Workload::DocumentRead);
+        let path = temporary_result(&config, &complete_document(&config, "127.0.0.1:8421"));
+        let error = validate_output(
+            &path,
+            SystemTime::now() + Duration::from_secs(1),
+            &config,
+            "127.0.0.1:8421",
+        )
+        .expect_err("stale output must fail");
+        assert!(error.contains("stale"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn boundary_endpoint_mismatch_is_rejected() {
+        let config = config(Workload::DocumentRead);
+        let path = temporary_result(&config, &complete_document(&config, "127.0.0.1:8421"));
+        let error = validate_output(&path, UNIX_EPOCH, &config, "127.0.0.1:8422")
+            .expect_err("wrong endpoint must fail");
+        assert!(error.contains("endpoint"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn exact_lane_configuration_is_required() {
+        let config = config(Workload::DocumentRead);
+        let path = temporary_result(&config, &complete_document(&config, "127.0.0.1:8421"));
+        let mut changed = config.clone();
+        changed.lane = changed.lane.with_operations(63);
+        let error = validate_output(&path, UNIX_EPOCH, &changed, "127.0.0.1:8421")
+            .expect_err("changed lane config must fail");
+        assert!(error.contains("LaneConfig"));
+        let _ = fs::remove_file(path);
     }
 }

@@ -1,5 +1,6 @@
-// Command terrabase-bench-adapter drives an already-running production
-// tbep-production-harness through the public terrabase-go client.
+// Command terrabase-bench-adapter drives an already-running TBEP endpoint
+// through the official terrabase-go client. The retained environment must say
+// whether that endpoint is a diagnostic host or a production Member.
 package main
 
 import (
@@ -89,6 +90,8 @@ type Config struct {
 	Authority         string
 	Principal         string
 	Tenant            string
+	Project           string
+	Database          string
 	ServerIdentity    string
 	SourceIdentity    string
 	TransportIdentity string
@@ -102,6 +105,7 @@ func (c Config) Validate() error {
 	for name, value := range map[string]string{
 		"endpoint": c.Endpoint, "root-cert": c.RootCertPath, "client-cert": c.ClientCertPath,
 		"client-key": c.ClientKeyPath, "principal": c.Principal, "tenant": c.Tenant,
+		"project": c.Project, "database": c.Database,
 		"server-identity": c.ServerIdentity, "source-identity": c.SourceIdentity,
 		"transport-identity": c.TransportIdentity, "workload": c.Workload, "output": c.OutputPath,
 	} {
@@ -167,6 +171,8 @@ func ParseConfig(args []string) (Config, error) {
 	authority := value("authority", "TERRABASE_BENCH_AUTHORITY")
 	principal := value("principal", "TERRABASE_BENCH_PRINCIPAL")
 	tenant := value("tenant", "TERRABASE_BENCH_TENANT")
+	project := value("project", "TERRABASE_BENCH_PROJECT")
+	database := value("database", "TERRABASE_BENCH_DATABASE")
 	server := value("server-identity", "TERRABASE_BENCH_SERVER_IDENTITY", "TERRABASE_BENCH_SERVER_ID")
 	source := value("source-identity", "TERRABASE_BENCH_SOURCE_IDENTITY", "TERRABASE_BENCH_SOURCE_ID")
 	transport := value("transport-identity", "TERRABASE_BENCH_TRANSPORT_IDENTITY", "TERRABASE_BENCH_TRANSPORT")
@@ -191,6 +197,7 @@ func ParseConfig(args []string) (Config, error) {
 	}
 	c.Endpoint, c.RootCertPath, c.ClientCertPath, c.ClientKeyPath = *endpoint, *root, *cert, *key
 	c.Authority, c.Principal, c.Tenant = *authority, *principal, *tenant
+	c.Project, c.Database = *project, *database
 	c.ServerIdentity, c.SourceIdentity, c.TransportIdentity = *server, *source, *transport
 	c.Workload, c.OutputPath = *workload, *output
 	return c, c.Validate()

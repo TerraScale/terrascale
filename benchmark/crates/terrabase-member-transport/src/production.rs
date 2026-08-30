@@ -15,9 +15,9 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -26,7 +26,7 @@ use tokio::sync::Notify;
 use x509_parser::extensions::{GeneralName, ParsedExtension};
 use x509_parser::prelude::{FromDer, X509Certificate};
 
-use crate::identity::{MemberId, validate_identifier};
+use crate::identity::MemberId;
 
 /// The application protocol negotiated for production Member links.
 pub const PRODUCTION_MEMBER_ALPN: &[u8] = b"terrabase-member/1";
@@ -126,15 +126,9 @@ impl MemberWorkloadIdentity {
         validate_path_segment(member)?;
         let member = MemberId::try_new(member)
             .map_err(|_| ProductionTransportError::InvalidWorkloadIdentity)?;
-        let uri = format!(
-            "spiffe://terrascale.tech/{environment}/terrabase-member/{cluster}/{member}"
-        );
-        Ok(Self {
-            environment: environment.to_owned(),
-            cluster: cluster.to_owned(),
-            member,
-            uri,
-        })
+        let uri =
+            format!("spiffe://terrascale.tech/{environment}/terrabase-member/{cluster}/{member}");
+        Ok(Self { environment: environment.to_owned(), cluster: cluster.to_owned(), member, uri })
     }
 
     /// Parses the exact Member SPIFFE namespace.
@@ -219,9 +213,9 @@ impl MemberWorkloadIdentity {
 fn validate_path_segment(value: &str) -> Result<(), ProductionTransportError> {
     if value.is_empty()
         || value.len() > 128
-        || value.bytes().any(|byte| {
-            !(byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_'))
-        })
+        || value
+            .bytes()
+            .any(|byte| !(byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_')))
     {
         return Err(ProductionTransportError::InvalidWorkloadIdentity);
     }
@@ -635,6 +629,8 @@ pub struct ProductionTransportFacts {
     pub configured_peers: usize,
     /// Currently authenticated application sessions.
     pub authenticated_connections: usize,
+    /// Distinct admitted peers with at least one authenticated session.
+    pub authenticated_peers: usize,
     /// Operations currently inside the bounded transport.
     pub inflight_operations: usize,
     /// The placement generation checked by every session hello.
@@ -675,10 +671,8 @@ impl ProductionQuicEndpoint {
         tls: ProductionTlsMaterial,
     ) -> Result<Self, ProductionTransportError> {
         aws_lc_rs::try_fips_mode().map_err(|_| ProductionTransportError::FipsUnavailable)?;
-        let leaf = tls
-            .certificate_chain
-            .first()
-            .ok_or(ProductionTransportError::InvalidTlsMaterial)?;
+        let leaf =
+            tls.certificate_chain.first().ok_or(ProductionTransportError::InvalidTlsMaterial)?;
         let local_identity = MemberWorkloadIdentity::from_leaf_certificate(leaf)?;
         if local_identity != config.local_identity {
             return Err(ProductionTransportError::IdentityMismatch);
@@ -687,9 +681,7 @@ impl ProductionQuicEndpoint {
         let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
         let mut roots = rustls::RootCertStore::empty();
         for root in &tls.member_ca_roots {
-            roots
-                .add(root.clone())
-                .map_err(|_| ProductionTransportError::InvalidTlsMaterial)?;
+            roots.add(root.clone()).map_err(|_| ProductionTransportError::InvalidTlsMaterial)?;
         }
         let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
             Arc::new(roots.clone()),
@@ -702,10 +694,7 @@ impl ProductionQuicEndpoint {
             .with_protocol_versions(&[&rustls::version::TLS13])
             .map_err(|_| ProductionTransportError::InvalidTlsMaterial)?
             .with_client_cert_verifier(verifier)
-            .with_single_cert(
-                tls.certificate_chain.clone(),
-                tls.private_key.clone_key(),
-            )
+            .with_single_cert(tls.certificate_chain.clone(), tls.private_key.clone_key())
             .map_err(|_| ProductionTransportError::InvalidTlsMaterial)?;
         rustls_server.alpn_protocols = vec![PRODUCTION_MEMBER_ALPN.to_vec()];
         rustls_server.max_early_data_size = 0;
@@ -782,11 +771,9 @@ impl ProductionQuicEndpoint {
                 u64::try_from(config.limits.max_queued_bytes.saturating_mul(peer_slots))
                     .map_err(|_| ProductionTransportError::InvalidLimits)?,
             );
-        let socket = std::net::UdpSocket::bind(config.bind)
-            .map_err(|_| ProductionTransportError::Bind)?;
-        socket
-            .set_nonblocking(true)
-            .map_err(|_| ProductionTransportError::Bind)?;
+        let socket =
+            std::net::UdpSocket::bind(config.bind).map_err(|_| ProductionTransportError::Bind)?;
+        socket.set_nonblocking(true).map_err(|_| ProductionTransportError::Bind)?;
         let mut endpoint = quinn::Endpoint::new(
             endpoint_config,
             Some(server_config),
@@ -796,11 +783,7 @@ impl ProductionQuicEndpoint {
         .map_err(|_| ProductionTransportError::Bind)?;
         endpoint.set_default_client_config(client_config);
 
-        Ok(Self {
-            config: Arc::new(config),
-            endpoint,
-            state: Arc::new(RuntimeState::new()),
-        })
+        Ok(Self { config: Arc::new(config), endpoint, state: Arc::new(RuntimeState::new()) })
     }
 
     /// Returns the actual bound socket address.
@@ -830,10 +813,8 @@ impl ProductionQuicEndpoint {
             zero_rtt_disabled: true,
             aws_lc_fips: aws_lc_rs::try_fips_mode().is_ok(),
             configured_peers: self.config.peers.len(),
-            authenticated_connections: self
-                .state
-                .authenticated_connections
-                .load(Ordering::Acquire),
+            authenticated_connections: self.state.authenticated_connections.load(Ordering::Acquire),
+            authenticated_peers: self.state.authenticated_peer_count(),
             inflight_operations: self.state.active_operations.load(Ordering::Acquire),
             placement_generation: self.config.placement_generation,
             replica_set_epoch: self.config.replica_set_epoch,
@@ -854,11 +835,8 @@ impl ProductionQuicEndpoint {
         member: &MemberId,
     ) -> Result<ProductionConnection, ProductionTransportError> {
         let _operation = self.state.begin_operation(self.config.limits.max_inflight)?;
-        let peer = self
-            .config
-            .peer(member)
-            .ok_or(ProductionTransportError::PeerNotAdmitted)?
-            .clone();
+        let peer =
+            self.config.peer(member).ok_or(ProductionTransportError::PeerNotAdmitted)?.clone();
         let connecting = self
             .endpoint
             .connect(peer.endpoint, &peer.server_name)
@@ -873,13 +851,11 @@ impl ProductionQuicEndpoint {
             return Err(ProductionTransportError::IdentityMismatch);
         }
 
-        let (mut send, mut receive) = tokio::time::timeout(
-            self.config.limits.handshake_timeout,
-            connection.open_bi(),
-        )
-        .await
-        .map_err(|_| ProductionTransportError::Timeout)?
-        .map_err(|_| ProductionTransportError::ConnectionFailed)?;
+        let (mut send, mut receive) =
+            tokio::time::timeout(self.config.limits.handshake_timeout, connection.open_bi())
+                .await
+                .map_err(|_| ProductionTransportError::Timeout)?
+                .map_err(|_| ProductionTransportError::ConnectionFailed)?;
         let local_hello = ConnectionHello::new(&self.config)?;
         tokio::time::timeout(
             self.config.limits.handshake_timeout,
@@ -888,12 +864,10 @@ impl ProductionQuicEndpoint {
         .await
         .map_err(|_| ProductionTransportError::Timeout)??;
         send.finish().map_err(|_| ProductionTransportError::ConnectionFailed)?;
-        let remote_hello = tokio::time::timeout(
-            self.config.limits.handshake_timeout,
-            read_hello(&mut receive),
-        )
-        .await
-        .map_err(|_| ProductionTransportError::Timeout)??;
+        let remote_hello =
+            tokio::time::timeout(self.config.limits.handshake_timeout, read_hello(&mut receive))
+                .await
+                .map_err(|_| ProductionTransportError::Timeout)??;
         self.validate_hello(&remote_hello, &certificate_identity, &peer)?;
         self.finish_connection(connection, certificate_identity, remote_hello)
     }
@@ -904,16 +878,12 @@ impl ProductionQuicEndpoint {
     ///
     /// Uses the same fail-closed classes as [`Self::connect`]. A closed
     /// endpoint returns `Ok(None)`.
-    pub async fn accept(
-        &self,
-    ) -> Result<Option<ProductionConnection>, ProductionTransportError> {
+    pub async fn accept(&self) -> Result<Option<ProductionConnection>, ProductionTransportError> {
         let _operation = self.state.begin_operation(self.config.limits.max_inflight)?;
-        let Some(incoming) = tokio::time::timeout(
-            self.config.limits.handshake_timeout,
-            self.endpoint.accept(),
-        )
-        .await
-        .map_err(|_| ProductionTransportError::Timeout)?
+        let Some(incoming) =
+            tokio::time::timeout(self.config.limits.handshake_timeout, self.endpoint.accept())
+                .await
+                .map_err(|_| ProductionTransportError::Timeout)?
         else {
             return Ok(None);
         };
@@ -931,19 +901,15 @@ impl ProductionQuicEndpoint {
             connection.close(CLOSE_AUTHORIZATION.into(), b"member identity mismatch");
             return Err(ProductionTransportError::IdentityMismatch);
         }
-        let (mut send, mut receive) = tokio::time::timeout(
-            self.config.limits.handshake_timeout,
-            connection.accept_bi(),
-        )
-        .await
-        .map_err(|_| ProductionTransportError::Timeout)?
-        .map_err(|_| ProductionTransportError::ConnectionFailed)?;
-        let remote_hello = tokio::time::timeout(
-            self.config.limits.handshake_timeout,
-            read_hello(&mut receive),
-        )
-        .await
-        .map_err(|_| ProductionTransportError::Timeout)??;
+        let (mut send, mut receive) =
+            tokio::time::timeout(self.config.limits.handshake_timeout, connection.accept_bi())
+                .await
+                .map_err(|_| ProductionTransportError::Timeout)?
+                .map_err(|_| ProductionTransportError::ConnectionFailed)?;
+        let remote_hello =
+            tokio::time::timeout(self.config.limits.handshake_timeout, read_hello(&mut receive))
+                .await
+                .map_err(|_| ProductionTransportError::Timeout)??;
         self.validate_hello(&remote_hello, &certificate_identity, &peer)?;
         let local_hello = ConnectionHello::new(&self.config)?;
         tokio::time::timeout(
@@ -1194,12 +1160,10 @@ impl ConnectionHello {
                 .to_be_bytes(),
         );
         bytes.push(
-            u8::try_from(cluster.len())
-                .map_err(|_| ProductionTransportError::ProtocolMismatch)?,
+            u8::try_from(cluster.len()).map_err(|_| ProductionTransportError::ProtocolMismatch)?,
         );
         bytes.push(
-            u8::try_from(member.len())
-                .map_err(|_| ProductionTransportError::ProtocolMismatch)?,
+            u8::try_from(member.len()).map_err(|_| ProductionTransportError::ProtocolMismatch)?,
         );
         bytes.extend_from_slice(cluster);
         bytes.extend_from_slice(member);
@@ -1265,15 +1229,9 @@ fn take<const N: usize>(
     bytes: &[u8],
     cursor: &mut usize,
 ) -> Result<[u8; N], ProductionTransportError> {
-    let end = cursor
-        .checked_add(N)
-        .ok_or(ProductionTransportError::ProtocolMismatch)?;
-    let slice = bytes
-        .get(*cursor..end)
-        .ok_or(ProductionTransportError::ProtocolMismatch)?;
-    let value = slice
-        .try_into()
-        .map_err(|_| ProductionTransportError::ProtocolMismatch)?;
+    let end = cursor.checked_add(N).ok_or(ProductionTransportError::ProtocolMismatch)?;
+    let slice = bytes.get(*cursor..end).ok_or(ProductionTransportError::ProtocolMismatch)?;
+    let value = slice.try_into().map_err(|_| ProductionTransportError::ProtocolMismatch)?;
     *cursor = end;
     Ok(value)
 }
@@ -1286,48 +1244,33 @@ async fn write_hello(
     let length = u16::try_from(bytes.len())
         .map_err(|_| ProductionTransportError::ProtocolMismatch)?
         .to_be_bytes();
-    stream
-        .write_all(&length)
-        .await
-        .map_err(|_| ProductionTransportError::ConnectionFailed)?;
-    stream
-        .write_all(&bytes)
-        .await
-        .map_err(|_| ProductionTransportError::ConnectionFailed)
+    stream.write_all(&length).await.map_err(|_| ProductionTransportError::ConnectionFailed)?;
+    stream.write_all(&bytes).await.map_err(|_| ProductionTransportError::ConnectionFailed)
 }
 
 async fn read_hello(
     stream: &mut quinn::RecvStream,
 ) -> Result<ConnectionHello, ProductionTransportError> {
     let mut length = [0_u8; 2];
-    stream
-        .read_exact(&mut length)
-        .await
-        .map_err(|_| ProductionTransportError::ConnectionFailed)?;
+    stream.read_exact(&mut length).await.map_err(|_| ProductionTransportError::ConnectionFailed)?;
     let length = usize::from(u16::from_be_bytes(length));
     if length == 0 || length > PRODUCTION_MAX_HELLO_BYTES {
         return Err(ProductionTransportError::ProtocolMismatch);
     }
     let mut bytes = vec![0_u8; length];
-    stream
-        .read_exact(&mut bytes)
-        .await
-        .map_err(|_| ProductionTransportError::ConnectionFailed)?;
+    stream.read_exact(&mut bytes).await.map_err(|_| ProductionTransportError::ConnectionFailed)?;
     ConnectionHello::decode(&bytes)
 }
 
 fn peer_identity(
     connection: &quinn::Connection,
 ) -> Result<MemberWorkloadIdentity, ProductionTransportError> {
-    let identity = connection
-        .peer_identity()
-        .ok_or(ProductionTransportError::InvalidPeerCertificate)?;
+    let identity =
+        connection.peer_identity().ok_or(ProductionTransportError::InvalidPeerCertificate)?;
     let certificates = identity
         .downcast::<Vec<CertificateDer<'static>>>()
         .map_err(|_| ProductionTransportError::InvalidPeerCertificate)?;
-    let leaf = certificates
-        .first()
-        .ok_or(ProductionTransportError::InvalidPeerCertificate)?;
+    let leaf = certificates.first().ok_or(ProductionTransportError::InvalidPeerCertificate)?;
     MemberWorkloadIdentity::from_leaf_certificate(leaf)
 }
 
@@ -1338,7 +1281,6 @@ struct RuntimeState {
     connections_by_peer: Mutex<BTreeMap<MemberId, usize>>,
     seen_nonces: Mutex<VecDeque<(MemberId, [u8; NONCE_BYTES])>>,
     changed: Notify,
-    authenticated_total: AtomicU64,
 }
 
 impl RuntimeState {
@@ -1350,7 +1292,6 @@ impl RuntimeState {
             connections_by_peer: Mutex::new(BTreeMap::new()),
             seen_nonces: Mutex::new(VecDeque::new()),
             changed: Notify::new(),
-            authenticated_total: AtomicU64::new(0),
         }
     }
 
@@ -1388,8 +1329,14 @@ impl RuntimeState {
         }
         *count += 1;
         self.authenticated_connections.fetch_add(1, Ordering::AcqRel);
-        self.authenticated_total.fetch_add(1, Ordering::Relaxed);
         Ok(ConnectionRegistration { state: Arc::clone(self), peer: peer.clone() })
+    }
+
+    fn authenticated_peer_count(&self) -> usize {
+        match self.connections_by_peer.lock() {
+            Ok(connections) => connections.values().filter(|count| **count > 0).count(),
+            Err(poisoned) => poisoned.into_inner().values().filter(|count| **count > 0).count(),
+        }
     }
 
     fn remember_nonce(
@@ -1398,13 +1345,12 @@ impl RuntimeState {
         nonce: [u8; NONCE_BYTES],
         peers: usize,
     ) -> Result<(), ProductionTransportError> {
-        let mut seen = self
-            .seen_nonces
-            .lock()
-            .map_err(|_| ProductionTransportError::StateUnavailable)?;
-        if seen.iter().any(|(known_member, known_nonce)| {
-            known_member == member && known_nonce == &nonce
-        }) {
+        let mut seen =
+            self.seen_nonces.lock().map_err(|_| ProductionTransportError::StateUnavailable)?;
+        if seen
+            .iter()
+            .any(|(known_member, known_nonce)| known_member == member && known_nonce == &nonce)
+        {
             return Err(ProductionTransportError::Replay);
         }
         let capacity = peers.saturating_mul(MAX_CONNECTIONS_PER_PEER).saturating_mul(4).max(16);
@@ -1579,10 +1525,8 @@ mod tests {
 
     #[test]
     fn hello_round_trip_keeps_membership_fencing_and_nonce() {
-        let hello = ConnectionHello {
-            nonce: [7; 32],
-            ..ConnectionHello::new(&config()).expect("hello")
-        };
+        let hello =
+            ConnectionHello { nonce: [7; 32], ..ConnectionHello::new(&config()).expect("hello") };
         assert_eq!(ConnectionHello::decode(&hello.encode().expect("encode")), Ok(hello));
     }
 

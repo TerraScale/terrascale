@@ -35,8 +35,10 @@ const CONFIRM_PHRASE_FIELD: &str = "confirm_phrase";
 
 /// The vendored Basecoat stylesheet, embedded so the binary is self-contained.
 const BASECOAT_CSS: &str = include_str!("../static/basecoat.css");
-/// The hand-written Datastar-protocol runtime.
-const STUDIO_JS: &str = include_str!("../static/studio.js");
+/// The vendored Datastar browser runtime.
+const DATASTAR_JS: &[u8] = include_bytes!("../static/datastar-1.0.3.js");
+/// The small Studio-owned Monaco loader and form bridge.
+const STUDIO_MONACO_JS: &[u8] = include_bytes!("../static/studio-monaco.js");
 /// CSP sources required by the hand-written runtime and pinned Monaco asset.
 const CONTENT_SECURITY_POLICY_VALUE: &str = "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self'; worker-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 /// Monaco 0.52.2 assets are vendored so the private Studio makes no CDN calls.
@@ -53,7 +55,8 @@ const MONACO_CODICON_FONT: &[u8] =
 pub fn router(state: Arc<StudioState>) -> Router {
     Router::new()
         .route("/static/basecoat.css", get(stylesheet))
-        .route("/static/studio.js", get(runtime))
+        .route("/static/datastar-1.0.3.js", get(datastar_runtime))
+        .route("/static/studio-monaco.js", get(studio_monaco_runtime))
         .route("/static/monaco/vs/loader.js", get(monaco_loader))
         .route("/static/monaco/vs/editor/editor.main.js", get(monaco_editor_js))
         .route("/static/monaco/vs/editor/editor.main.css", get(monaco_editor_css))
@@ -306,10 +309,6 @@ async fn stylesheet() -> Response {
     text(BASECOAT_CSS, "text/css; charset=utf-8")
 }
 
-async fn runtime() -> Response {
-    text(STUDIO_JS, "text/javascript; charset=utf-8")
-}
-
 fn asset(body: &'static [u8], kind: &'static str) -> Response {
     let mut response = Response::new(axum::body::Body::from(body));
     response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static(kind));
@@ -318,6 +317,14 @@ fn asset(body: &'static [u8], kind: &'static str) -> Response {
         HeaderValue::from_static("public, max-age=31536000, immutable"),
     );
     response
+}
+
+async fn datastar_runtime() -> Response {
+    asset(DATASTAR_JS, "text/javascript; charset=utf-8")
+}
+
+async fn studio_monaco_runtime() -> Response {
+    asset(STUDIO_MONACO_JS, "text/javascript; charset=utf-8")
 }
 
 async fn monaco_loader() -> Response {
@@ -646,18 +653,22 @@ async fn documents_delete(
         )
     })
     .await;
-    let rows = on_blocking(refresh_state, move |state| {
-        state.observe(&refresh_form.tenant, Some(&refresh_form.collection));
-        Ok(documents::rows_fragment(
-            state,
-            &documents::Selection {
-                tenant: refresh_form.tenant,
-                collection: refresh_form.collection,
-                page: 0,
-            },
-        ))
-    })
-    .await;
+    let rows = if outcome.is_ok() {
+        on_blocking(refresh_state, move |state| {
+            state.observe(&refresh_form.tenant, Some(&refresh_form.collection));
+            Ok(documents::rows_fragment(
+                state,
+                &documents::Selection {
+                    tenant: refresh_form.tenant,
+                    collection: refresh_form.collection,
+                    page: 0,
+                },
+            ))
+        })
+        .await
+    } else {
+        Ok(String::new())
+    };
     response_with_refresh(
         "delete-receipt",
         outcome,
@@ -695,6 +706,8 @@ struct IndexCreateForm {
     capabilities: String,
     priority: String,
     lock: String,
+    confirm_target: String,
+    confirm_phrase: String,
 }
 
 async fn indexes_create(
@@ -703,6 +716,12 @@ async fn indexes_create(
 ) -> Response {
     let refresh_state = Arc::clone(&state);
     let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            &format!("{}/{}", form.tenant, form.name),
+            "create or update index",
+        )?;
         let result = indexes::create_index(
             state,
             &form.tenant,
@@ -757,8 +776,20 @@ async fn index_surface_refresh(state: Arc<StudioState>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-async fn documents_sample(State(state): State<Arc<StudioState>>) -> Response {
-    let outcome = on_blocking(state, seed_sample).await;
+async fn documents_sample(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<ConfirmedActionForm>,
+) -> Response {
+    let outcome = on_blocking(state, move |state| {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            "sample documents",
+            "load sample documents",
+        )?;
+        seed_sample(state)
+    })
+    .await;
     receipt("sample-receipt", outcome)
 }
 
@@ -945,7 +976,6 @@ async fn regions_retire(
     Form(form): Form<RegionRetireForm>,
 ) -> Response {
     let outcome = on_blocking(state, move |state| {
-        let mut catalog = state.regions.lock().unwrap_or_else(|poison| poison.into_inner());
         let canonical = form.code.trim().to_uppercase();
         let code = terrabase::RegionCode::from_text(&canonical)
             .map_err(|error| format!("`{}` is not a region code: {error:?}", form.code))?;
@@ -955,6 +985,7 @@ async fn regions_retire(
             code.as_str(),
             "retire region",
         )?;
+        let mut catalog = state.regions.lock().unwrap_or_else(|poison| poison.into_inner());
         catalog
             .retire(code)
             .map_err(|error| format!("retirement refused: {error:?}"))
@@ -1498,8 +1529,6 @@ async fn backup_restore(
     Form(form): Form<BackupRestoreForm>,
 ) -> Response {
     let outcome: Result<String, String> = async {
-        let _job = state.backup_job.lock().await;
-        let repository = configured_backup_repository(state.as_ref())?;
         let target = backups::restore_target(&form.target)?;
         require_confirmation(
             &form.confirm_target,
@@ -1507,6 +1536,8 @@ async fn backup_restore(
             &target.display().to_string(),
             "restore recovery point",
         )?;
+        let _job = state.backup_job.lock().await;
+        let repository = configured_backup_repository(state.as_ref())?;
         let identity = form
             .identity
             .as_deref()
@@ -1951,6 +1982,78 @@ mod tests {
     }
 
     #[test]
+    fn confirmations_require_exact_normalized_values_without_echoing_input() {
+        assert!(require_confirmation(
+            "demo/users/42",
+            "delete document",
+            "demo/users/42",
+            "delete document",
+        )
+        .is_ok());
+        for (target, phrase) in [
+            (" demo/users/42", "delete document"),
+            ("demo/users/42\u{2003}", "delete document"),
+            ("demo/users/42", "delete document\n"),
+            ("demo/users/42", "wrong phrase"),
+        ] {
+            let error = require_confirmation(target, phrase, "demo/users/42", "delete document")
+                .expect_err("invalid confirmation");
+            assert!(!error.contains(target));
+            assert!(!error.contains(phrase));
+        }
+        let oversized = "x".repeat(MAX_CONFIRMATION_TARGET_BYTES + 1);
+        assert!(require_confirmation(&oversized, "delete document", "x", "delete document")
+            .is_err());
+    }
+
+    #[test]
+    fn duplicate_confirmation_detection_decodes_form_field_names() {
+        let body = b"confirm_target=one&%63onfirm_target=two&confirm_phrase=delete+document";
+        assert_eq!(form_field_count(body, CONFIRM_TARGET_FIELD), 2);
+        assert_eq!(form_field_count(body, CONFIRM_PHRASE_FIELD), 1);
+    }
+
+    #[tokio::test]
+    async fn duplicate_confirmations_are_rejected_before_the_action_extractor() {
+        let response = router(studio("duplicate-confirmation"))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tiers/pause")
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "confirm_target=tier%20mover&confirm_target=other&confirm_phrase=pause%20tier%20mover",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_security_headers(&response);
+    }
+
+    #[tokio::test]
+    async fn a_wrong_tier_confirmation_has_no_mutation_or_journal_entry() {
+        let state = studio("confirmation-no-side-effect");
+        let response = router(Arc::clone(&state))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/tiers/pause")
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .body(Body::from(
+                        "confirm_target=wrong&confirm_phrase=pause%20tier%20mover",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(!state.engine.tiers().inspect().paused());
+        assert!(state.journal().iter().all(|entry| entry.action != "tiers/pause"));
+    }
+
+    #[test]
     fn csp_allows_pinned_monaco_without_inline_script_execution() {
         assert!(CONTENT_SECURITY_POLICY_VALUE.contains("script-src 'self' 'unsafe-eval'"));
         assert!(!CONTENT_SECURITY_POLICY_VALUE.contains("https:"));
@@ -1989,6 +2092,24 @@ mod tests {
         assert!(!policy.contains("https:"));
         assert!(policy.contains("worker-src 'self' data: blob:"));
         assert!(policy.contains("object-src 'none'"));
+    }
+
+    #[tokio::test]
+    async fn referenced_browser_runtimes_are_embedded_and_served() {
+        let app = router(studio("browser-assets"));
+        for path in ["/static/datastar-1.0.3.js", "/static/studio-monaco.js"] {
+            let response = app
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            assert_eq!(
+                response.headers().get(header::CONTENT_TYPE).unwrap(),
+                "text/javascript; charset=utf-8",
+                "{path}",
+            );
+        }
     }
 
     #[tokio::test]

@@ -43,7 +43,7 @@ for the complete bucket policy, lifecycle, KMS, and restore procedure.
 | Overview             | `/`          | Engine identity and status marker, published sequence, on-disk size, document counts per tenant and collection, the index catalog, and tier state. Pushed over **one** SSE connection every 2 s. Also storage maintenance (both compaction policies, auto-index lifecycle) and the index lifecycle seam. |
 | Metrics              | `/metrics`   | The same live facts on their own page. `/metrics/prometheus` exposes the same counters in Prometheus text format for an operator's own scraper — it is loopback-only with the rest of the studio and is not an authenticated public endpoint.               |
 | Cluster              | `/cluster`   | Cluster identity and mode rules from `terrabase-cluster`.                                                                                                                                                                   |
-| Documents            | `/documents` | Paginated list, point read by id, create/replace through a JSON editor, delete with confirmation, and sample data.                                                                                                           |
+| Documents            | `/documents` | Paginated list, point read by id, create/replace through the vendored Monaco JSON editor, typed confirmation for delete and sample replacement, and sample data.                                                            |
 | Query                | `/query`     | Build the typed query — condition kinds, ordering, projection, paging — and read the rows next to the plan's index selection record. A TQL text box runs the same seam.                                                     |
 | Indexes              | `/indexes`   | Create explicit indexes, run lifecycle actions, inspect staleness and statistics.                                                                                                                                           |
 | Tiers                | `/tiers`     | Configure the Storage Tier Mover's policy, pause/resume, dry run (the explain control), and run one pass. Every receipt, including the ordered reasons the policy weighed, is shown.                                        |
@@ -78,10 +78,11 @@ removal is `data: mode remove`.
 
 Pages use official attributes such as `data-signals`, `data-on:submit`,
 `data-on:click`, `data-init`, and `data-text`. Each full page gets a fresh CSP
-nonce from the operating system. Datastar uses that nonce to compile attribute
-expressions without `unsafe-eval`. The Overview and Metrics pages each open one
-long-lived `/events/metrics` connection, and the server pushes a refreshed
-panel on its own cadence.
+nonce from the operating system. Datastar uses that nonce for attribute
+expressions. The CSP keeps `unsafe-eval` only because Monaco's vendored AMD
+loader requires it; scripts can load only from the Studio itself. The Overview
+and Metrics pages each open one long-lived `/events/metrics` connection, and
+the server pushes a refreshed panel on its own cadence.
 
 ## Styling
 

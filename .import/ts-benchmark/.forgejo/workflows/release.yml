@@ -37,12 +37,10 @@ jobs:
           test "$(uname -m)" = x86_64
           test "$(rustc -vV | sed -n 's/^host: //p')" = x86_64-unknown-linux-gnu
           command -v buildah
-          command -v cmake
-          command -v go
           command -v jq
           command -v openssl
-          command -v perl
           command -v skopeo
+          deploy/release/require-fips-toolchain.sh
       - name: Build byte-reproducible unsigned AMD64 packages
         run: |
           deploy/release/reproduce.sh server x86_64-unknown-linux-gnu artifacts/unsigned/terrabase-server-amd64
@@ -76,12 +74,10 @@ jobs:
           test "$(uname -m)" = aarch64
           test "$(rustc -vV | sed -n 's/^host: //p')" = aarch64-unknown-linux-gnu
           command -v buildah
-          command -v cmake
-          command -v go
           command -v jq
           command -v openssl
-          command -v perl
           command -v skopeo
+          deploy/release/require-fips-toolchain.sh
       - name: Build byte-reproducible unsigned ARM64 packages
         run: |
           deploy/release/reproduce.sh server aarch64-unknown-linux-gnu artifacts/unsigned/terrabase-server-arm64

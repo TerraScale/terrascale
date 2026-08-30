@@ -50,7 +50,7 @@ func dialBufconn(t *testing.T, listener *bufconn.Listener, options ...Option) *C
 
 func mustBind(t *testing.T, client *Client) Binding {
 	t.Helper()
-	binding, err := client.Bind(context.Background(), "orders-api", "tenant-a")
+	binding, err := client.Bind(context.Background(), testScope("spiffe://terrascale.test/gateway/orders", "tenant-a"))
 	if err != nil {
 		t.Fatalf("the channel could not be bound: %v", err)
 	}
@@ -65,43 +65,71 @@ func TestBindRequiresIdentity(t *testing.T) {
 		t.Fatalf("an unbound read must answer ErrUnboundChannel, got %v", err)
 	}
 	binding := mustBind(t, client)
+	wantScope := testScope("spiffe://terrascale.test/gateway/orders", "tenant-a")
 	ctx := context.Background()
-	if binding.Tenant != "tenant-a" || binding.ServingInstance != 7 {
+	if binding.Scope != wantScope || binding.ServingInstance != 7 {
 		t.Fatalf("the bind answer is wrong: %+v", binding)
 	}
 	if _, _, err := client.DocumentRead(ctx, "books", "ddia", ReadLevelDefault); err != nil {
 		t.Fatalf("the bound read failed: %v", err)
 	}
-	if fake.lastTenant() != "tenant-a" {
-		t.Fatalf("the engine did not see the tenant, got %q", fake.lastTenant())
+	if got := fake.lastScope(); got != wantScope {
+		t.Fatalf("the engine saw scope %+v, want %+v", got, wantScope)
 	}
-	spoofed := metadata.NewOutgoingContext(ctx, metadata.Pairs(tenantMetadata, "attacker"))
+	spoofed := metadata.NewOutgoingContext(ctx, metadata.Pairs(
+		principalMetadata, "spiffe://attacker.test/gateway",
+		tenantMetadata, "attacker",
+		projectMetadata, "attacker",
+		databaseMetadata, "attacker",
+	))
 	if _, _, err := client.DocumentRead(spoofed, "books", "ddia", ReadLevelDefault); err != nil {
 		t.Fatalf("a caller metadata value must not break a bound read: %v", err)
 	}
-	if fake.lastTenant() != "tenant-a" {
-		t.Fatalf("the caller must not override the bound tenant, got %q", fake.lastTenant())
+	if got := fake.lastScope(); got != wantScope {
+		t.Fatalf("caller metadata overrode the bound scope: got %+v, want %+v", got, wantScope)
 	}
 }
 
 // TestBindValidation checks the bind bounds.
 func TestBindValidation(t *testing.T) {
 	client, _ := startFake(t)
-	if _, err := client.Bind(context.Background(), "", "tenant-a"); !errors.Is(err, ErrInvalidRequest) {
+	valid := testScope("spiffe://terrascale.test/gateway/orders", "tenant-a")
+	invalid := valid
+	invalid.Principal = ""
+	if _, err := client.Bind(context.Background(), invalid); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("an empty principal must be refused locally, got %v", err)
 	}
-	if _, err := client.Bind(context.Background(), strings.Repeat("p", 129), "tenant-a"); !errors.Is(err, ErrInvalidRequest) {
+	invalid = valid
+	invalid.Principal = strings.Repeat("p", 129)
+	if _, err := client.Bind(context.Background(), invalid); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("an oversized principal must be refused locally, got %v", err)
 	}
-	if _, err := client.Bind(context.Background(), "orders-api", strings.Repeat("t", 65)); !errors.Is(err, ErrInvalidRequest) {
+	invalid = valid
+	invalid.Tenant = strings.Repeat("t", 65)
+	if _, err := client.Bind(context.Background(), invalid); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("an oversized tenant must be refused locally, got %v", err)
+	}
+	invalid = valid
+	invalid.Project = strings.Repeat("p", 256)
+	if _, err := client.Bind(context.Background(), invalid); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("an oversized project must be refused locally, got %v", err)
+	}
+	invalid = valid
+	invalid.Database = strings.Repeat("d", 256)
+	if _, err := client.Bind(context.Background(), invalid); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("an oversized database must be refused locally, got %v", err)
+	}
+	invalid = valid
+	invalid.Database = " database-a"
+	if _, err := client.Bind(context.Background(), invalid); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("a padded database must be refused locally, got %v", err)
 	}
 }
 
-func TestBindRejectsTenantChange(t *testing.T) {
+func TestBindRejectsScopeChange(t *testing.T) {
 	client, fake := startFake(t)
 	fake.bindTenant = "other-tenant"
-	if _, err := client.Bind(context.Background(), "orders-api", "tenant-a"); !errors.Is(err, ErrInvalidRequest) {
+	if _, err := client.Bind(context.Background(), testScope("spiffe://terrascale.test/gateway/orders", "tenant-a")); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("a bind response changing tenants must be refused, got %v", err)
 	}
 	if _, _, err := client.DocumentRead(context.Background(), "books", "doc", ReadLevelDefault); !errors.Is(err, ErrUnboundChannel) {
@@ -450,12 +478,12 @@ func TestHostileValuesAreRejectedOnBothBoundaries(t *testing.T) {
 	}
 	tooMany := make([]*v1.Value, maxListItems+1)
 	for index := range tooMany {
-		tooMany[index] = &v1.Value{Kind: &v1.Value_Null{Null: v1.NullValue_NULL}}
+		tooMany[index] = &v1.Value{Kind: &v1.Value_Null{Null: v1.NullValue_NULL_VALUE_NULL}}
 	}
 	if _, err := valueFromProto(&v1.Value{Kind: &v1.Value_List{List: &v1.ValueList{Items: tooMany}}}); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("oversized lists must be rejected, got %v", err)
 	}
-	nested := &v1.Value{Kind: &v1.Value_Null{Null: v1.NullValue_NULL}}
+	nested := &v1.Value{Kind: &v1.Value_Null{Null: v1.NullValue_NULL_VALUE_NULL}}
 	for index := 0; index <= maxDetailIndent; index++ {
 		nested = &v1.Value{Kind: &v1.Value_List{List: &v1.ValueList{Items: []*v1.Value{nested}}}}
 	}
@@ -653,7 +681,7 @@ func TestMutualTLSOverBufconn(t *testing.T) {
 		WithRootCerts(pki.caPEM),
 		WithClientCert(pki.clientPEM, pki.clientKey),
 	)
-	binding, err := client.Bind(context.Background(), "orders-api", "tenant-a")
+	binding, err := client.Bind(context.Background(), testScope("spiffe://terrascale.test/gateway/orders", "tenant-a"))
 	if err != nil {
 		t.Fatalf("the bound channel over mTLS failed: %v", err)
 	}

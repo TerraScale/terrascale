@@ -37,24 +37,24 @@ struct FixedHost {
 impl TbepHost for FixedHost {
     fn bind_channel(
         &self,
-        request: &registry::ChannelBindRequest,
-    ) -> Result<registry::ChannelBindResponse, HostingError> {
-        Ok(registry::ChannelBindResponse { tenant: request.tenant.clone(), serving_instance: 7 })
+        request: &registry::ChannelServiceBindRequest,
+    ) -> Result<registry::ChannelServiceBindResponse, HostingError> {
+        Ok(registry::ChannelServiceBindResponse { tenant: request.tenant.clone(), serving_instance: 7 })
     }
 
     fn document_read(
         &self,
         _tenant: &str,
-        request: &registry::DocumentReadRequest,
-    ) -> Result<registry::DocumentReadResponse, HostingError> {
+        request: &registry::EngineServiceDocumentReadRequest,
+    ) -> Result<registry::EngineServiceDocumentReadResponse, HostingError> {
         if request.collection != "orders" {
-            return Ok(registry::DocumentReadResponse {
+            return Ok(registry::EngineServiceDocumentReadResponse {
                 found: false,
                 document: None,
                 position: None,
             });
         }
-        Ok(registry::DocumentReadResponse {
+        Ok(registry::EngineServiceDocumentReadResponse {
             found: true,
             document: Some(registry::DocumentBody {
                 id: request.document.clone(),
@@ -69,11 +69,11 @@ impl TbepHost for FixedHost {
     fn document_write(
         &self,
         _tenant: &str,
-        request: &registry::DocumentWriteRequest,
+        request: &registry::EngineServiceDocumentWriteRequest,
         idempotency_key: &str,
-    ) -> Result<registry::DocumentWriteResponse, HostingError> {
+    ) -> Result<registry::EngineServiceDocumentWriteResponse, HostingError> {
         assert_eq!(idempotency_key, "op-1");
-        Ok(registry::DocumentWriteResponse {
+        Ok(registry::EngineServiceDocumentWriteResponse {
             outcome: registry::WriteOutcome::Committed(registry::CommitReceipt {
                 sequence: 4,
                 version: 1,
@@ -87,18 +87,18 @@ impl TbepHost for FixedHost {
     fn document_delete(
         &self,
         _tenant: &str,
-        _request: &registry::DocumentDeleteRequest,
+        _request: &registry::EngineServiceDocumentDeleteRequest,
         _idempotency_key: &str,
-    ) -> Result<registry::DocumentDeleteResponse, HostingError> {
-        Ok(registry::DocumentDeleteResponse { outcome: registry::WriteOutcome::Conflict })
+    ) -> Result<registry::EngineServiceDocumentDeleteResponse, HostingError> {
+        Ok(registry::EngineServiceDocumentDeleteResponse { outcome: registry::WriteOutcome::Conflict })
     }
 
     fn query_execute(
         &self,
         _tenant: &str,
-        _request: &registry::QueryExecuteRequest,
-    ) -> Result<registry::QueryExecuteResponse, HostingError> {
-        Ok(registry::QueryExecuteResponse {
+        _request: &registry::EngineServiceQueryExecuteRequest,
+    ) -> Result<registry::EngineServiceQueryExecuteResponse, HostingError> {
+        Ok(registry::EngineServiceQueryExecuteResponse {
             documents: vec![],
             count: 0,
             terminal: registry::QueryTerminal::Complete,
@@ -109,40 +109,40 @@ impl TbepHost for FixedHost {
     fn query_cancel(
         &self,
         _tenant: &str,
-        _request: &registry::QueryCancelRequest,
-    ) -> Result<registry::QueryCancelResponse, HostingError> {
-        Ok(registry::QueryCancelResponse { outcome: registry::CancelOutcome::Cancelled })
+        _request: &registry::EngineServiceQueryCancelRequest,
+    ) -> Result<registry::EngineServiceQueryCancelResponse, HostingError> {
+        Ok(registry::EngineServiceQueryCancelResponse { outcome: registry::CancelOutcome::Cancelled })
     }
 
     fn family_read(
         &self,
         _tenant: &str,
-        _request: &registry::FamilyReadRequest,
-    ) -> Result<registry::FamilyReadResponse, HostingError> {
+        _request: &registry::EngineServiceFamilyReadRequest,
+    ) -> Result<registry::EngineServiceFamilyReadResponse, HostingError> {
         Err(HostingError::Refused("families are not served by the fixture".into()))
     }
 
     fn family_write(
         &self,
         _tenant: &str,
-        _request: &registry::FamilyWriteRequest,
+        _request: &registry::EngineServiceFamilyWriteRequest,
         _idempotency_key: &str,
-    ) -> Result<registry::FamilyWriteResponse, HostingError> {
+    ) -> Result<registry::EngineServiceFamilyWriteResponse, HostingError> {
         Err(HostingError::Refused("families are not served by the fixture".into()))
     }
 
     fn backbone_subscribe(
         &self,
         _tenant: &str,
-        request: &registry::BackboneSubscribeRequest,
+        request: &registry::BackboneServiceSubscribeRequest,
     ) -> Result<
-        (registry::BackboneSubscribeResponse, std::sync::mpsc::Receiver<TbepNotification>),
+        (registry::BackboneServiceSubscribeResponse, std::sync::mpsc::Receiver<TbepNotification>),
         HostingError,
     > {
         let (sender, receiver) = std::sync::mpsc::channel();
         *self.feed.lock().expect("the fixture lock is sound") = Some(sender);
         Ok((
-            registry::BackboneSubscribeResponse {
+            registry::BackboneServiceSubscribeResponse {
                 subscription_id: request.subscription_id,
                 start_sequence: 5,
             },
@@ -153,9 +153,9 @@ impl TbepHost for FixedHost {
     fn backbone_acknowledge(
         &self,
         _tenant: &str,
-        request: &registry::BackboneAcknowledgeRequest,
-    ) -> Result<registry::BackboneAcknowledgeResponse, HostingError> {
-        Ok(registry::BackboneAcknowledgeResponse {
+        request: &registry::BackboneServiceAcknowledgeRequest,
+    ) -> Result<registry::BackboneServiceAcknowledgeResponse, HostingError> {
+        Ok(registry::BackboneServiceAcknowledgeResponse {
             subscription_id: request.subscription_id,
             acknowledged_through: request.through_sequence,
         })
@@ -164,62 +164,62 @@ impl TbepHost for FixedHost {
     fn backbone_unsubscribe(
         &self,
         _tenant: &str,
-        request: &registry::BackboneUnsubscribeRequest,
-    ) -> Result<registry::BackboneUnsubscribeResponse, HostingError> {
-        Ok(registry::BackboneUnsubscribeResponse { subscription_id: request.subscription_id })
+        request: &registry::BackboneServiceUnsubscribeRequest,
+    ) -> Result<registry::BackboneServiceUnsubscribeResponse, HostingError> {
+        Ok(registry::BackboneServiceUnsubscribeResponse { subscription_id: request.subscription_id })
     }
 
     fn sync_session_setup(
         &self,
         _tenant: &str,
-        _request: &registry::SyncSessionSetupRequest,
-    ) -> Result<registry::SyncSessionSetupResponse, HostingError> {
+        _request: &registry::SyncServiceSessionSetupRequest,
+    ) -> Result<registry::SyncServiceSessionSetupResponse, HostingError> {
         Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
     }
 
     fn sync_delta_pull(
         &self,
         _tenant: &str,
-        _request: &registry::SyncDeltaPullRequest,
-    ) -> Result<registry::SyncDeltaPullResponse, HostingError> {
+        _request: &registry::SyncServiceDeltaPullRequest,
+    ) -> Result<registry::SyncServiceDeltaPullResponse, HostingError> {
         Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
     }
 
     fn sync_snapshot_pull(
         &self,
         _tenant: &str,
-        _request: &registry::SyncSnapshotPullRequest,
-    ) -> Result<registry::SyncSnapshotPullResponse, HostingError> {
+        _request: &registry::SyncServiceSnapshotPullRequest,
+    ) -> Result<registry::SyncServiceSnapshotPullResponse, HostingError> {
         Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
     }
 
     fn sync_checkpoint_ack(
         &self,
         _tenant: &str,
-        _request: &registry::SyncCheckpointAckRequest,
-    ) -> Result<registry::SyncCheckpointAckResponse, HostingError> {
+        _request: &registry::SyncServiceCheckpointAckRequest,
+    ) -> Result<registry::SyncServiceCheckpointAckResponse, HostingError> {
         Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
     }
 
     fn sync_mutation_submit(
         &self,
         _tenant: &str,
-        _request: &registry::SyncMutationSubmitRequest,
+        _request: &registry::SyncServiceMutationSubmitRequest,
         _idempotency_key: &str,
-    ) -> Result<registry::SyncMutationSubmitResponse, HostingError> {
+    ) -> Result<registry::SyncServiceMutationSubmitResponse, HostingError> {
         Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
     }
 
     fn sync_session_close(
         &self,
         _tenant: &str,
-        _request: &registry::SyncSessionCloseRequest,
-    ) -> Result<registry::SyncSessionCloseResponse, HostingError> {
+        _request: &registry::SyncServiceSessionCloseRequest,
+    ) -> Result<registry::SyncServiceSessionCloseResponse, HostingError> {
         Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
     }
 
-    fn topology_read(&self, _tenant: &str) -> Result<registry::TopologyReadResponse, HostingError> {
-        Ok(registry::TopologyReadResponse {
+    fn topology_read(&self, _tenant: &str) -> Result<registry::MaintenanceServiceTopologyReadResponse, HostingError> {
+        Ok(registry::MaintenanceServiceTopologyReadResponse {
             binding: registry::BindingKind::LocalUds,
             subsystems: vec!["engine".into()],
             engine_topology_available: false,
@@ -227,8 +227,8 @@ impl TbepHost for FixedHost {
         })
     }
 
-    fn admin_status(&self) -> Result<registry::AdminStatusResponse, HostingError> {
-        Ok(registry::AdminStatusResponse {
+    fn admin_status(&self) -> Result<registry::MaintenanceServiceAdminStatusResponse, HostingError> {
+        Ok(registry::MaintenanceServiceAdminStatusResponse {
             registry_version: registry::REGISTRY_VERSION.to_string(),
             frames_served: 0,
             sessions: 0,
@@ -237,8 +237,8 @@ impl TbepHost for FixedHost {
         })
     }
 
-    fn health(&self) -> Result<registry::SupervisionHealthResponse, HostingError> {
-        Ok(registry::SupervisionHealthResponse {
+    fn health(&self) -> Result<registry::MaintenanceServiceSupervisionHealthResponse, HostingError> {
+        Ok(registry::MaintenanceServiceSupervisionHealthResponse {
             state: registry::HealthState::Serving,
             sessions: 0,
             subscriptions: 1,
@@ -248,9 +248,9 @@ impl TbepHost for FixedHost {
 
     fn begin_shutdown(
         &self,
-        _request: &registry::SupervisionShutdownRequest,
-    ) -> Result<registry::SupervisionShutdownResponse, HostingError> {
-        Ok(registry::SupervisionShutdownResponse {
+        _request: &registry::MaintenanceServiceSupervisionShutdownRequest,
+    ) -> Result<registry::MaintenanceServiceSupervisionShutdownResponse, HostingError> {
+        Ok(registry::MaintenanceServiceSupervisionShutdownResponse {
             state: registry::HealthState::Draining,
             in_flight: 2,
         })
@@ -311,7 +311,7 @@ async fn unbound_calls_fail_closed_with_the_channel_code() {
     let mut engine = EngineClient::new(channel);
 
     let status = engine
-        .document_read(Request::new(pb::DocumentReadRequest {
+        .document_read(Request::new(pb::EngineServiceDocumentReadRequest {
             collection: "orders".into(),
             document: "d-1".into(),
             level: 0,
@@ -335,7 +335,7 @@ async fn mutations_require_their_idempotency_key() {
     let mut engine = EngineClient::new(channel);
 
     let status = engine
-        .document_write(identified(pb::DocumentWriteRequest {
+        .document_write(identified(pb::EngineServiceDocumentWriteRequest {
             document: Some(pb::DocumentPut {
                 id: "d-1".into(),
                 collection: "orders".into(),
@@ -353,7 +353,7 @@ async fn mutations_require_their_idempotency_key() {
     assert_eq!(status.code(), tonic::Code::InvalidArgument);
     assert_eq!(tbep_code(&status), Some(pb::ErrorCode::IdempotencyPairing));
 
-    let mut duplicate = identified(pb::DocumentWriteRequest {
+    let mut duplicate = identified(pb::EngineServiceDocumentWriteRequest {
         document: Some(pb::DocumentPut {
             id: "d-1".into(),
             collection: "orders".into(),
@@ -397,7 +397,7 @@ async fn bind_write_read_and_delete_round_trip() {
 
     let mut channels = ChannelClient::new(channel.clone());
     let bound = channels
-        .bind(Request::new(pb::ChannelBindRequest {
+        .bind(Request::new(pb::ChannelServiceBindRequest {
             principal: "operator".into(),
             tenant: "tenant-a".into(),
         }))
@@ -407,7 +407,7 @@ async fn bind_write_read_and_delete_round_trip() {
 
     let mut engine = EngineClient::new(channel.clone());
     let written = engine
-        .document_write(mutation(pb::DocumentWriteRequest {
+        .document_write(mutation(pb::EngineServiceDocumentWriteRequest {
             document: Some(pb::DocumentPut {
                 id: "d-1".into(),
                 collection: "orders".into(),
@@ -432,7 +432,7 @@ async fn bind_write_read_and_delete_round_trip() {
     }
 
     let read = engine
-        .document_read(identified(pb::DocumentReadRequest {
+        .document_read(identified(pb::EngineServiceDocumentReadRequest {
             collection: "orders".into(),
             document: "d-1".into(),
             level: 0,
@@ -446,7 +446,7 @@ async fn bind_write_read_and_delete_round_trip() {
     assert_eq!(document.body.expect("the body rides").kind, value_pb().kind);
 
     let deleted = engine
-        .document_delete(mutation(pb::DocumentDeleteRequest {
+        .document_delete(mutation(pb::EngineServiceDocumentDeleteRequest {
             collection: "orders".into(),
             document: "d-1".into(),
             expected: Some(pb::ExpectedVersion {
@@ -477,7 +477,7 @@ async fn bounds_fail_closed_before_the_host_runs() {
     let mut engine = EngineClient::new(channel);
 
     let status = engine
-        .document_read(identified(pb::DocumentReadRequest {
+        .document_read(identified(pb::EngineServiceDocumentReadRequest {
             collection: "c".repeat(65),
             document: "d-1".into(),
             level: 0,
@@ -499,7 +499,7 @@ async fn identity_metadata_bounds_fail_closed() {
     let mut listener = server.serve_uds(&socket).expect("the server binds");
     let channel = connect(socket.clone()).await;
     let mut engine = EngineClient::new(channel);
-    let mut request = Request::new(pb::DocumentReadRequest {
+    let mut request = Request::new(pb::EngineServiceDocumentReadRequest {
         collection: "orders".into(),
         document: "d-1".into(),
         level: 0,
@@ -510,7 +510,7 @@ async fn identity_metadata_bounds_fail_closed() {
     assert_eq!(status.code(), tonic::Code::Unauthenticated);
     assert_eq!(tbep_code(&status), Some(pb::ErrorCode::UnboundChannel));
 
-    let mut duplicate = Request::new(pb::DocumentReadRequest {
+    let mut duplicate = Request::new(pb::EngineServiceDocumentReadRequest {
         collection: "orders".into(),
         document: "d-1".into(),
         level: 0,
@@ -539,7 +539,7 @@ async fn hostile_values_fail_closed_before_the_host_runs() {
         list.push(pb::Value { kind: Some(pb::value::Kind::Null(pb::NullValue::Null as i32)) });
     }
     let status = engine
-        .document_write(mutation(pb::DocumentWriteRequest {
+        .document_write(mutation(pb::EngineServiceDocumentWriteRequest {
             document: Some(pb::DocumentPut {
                 id: "d-1".into(),
                 collection: "orders".into(),
@@ -560,7 +560,7 @@ async fn hostile_values_fail_closed_before_the_host_runs() {
     assert_eq!(tbep_code(&status), Some(pb::ErrorCode::InvalidRequest));
 
     let status = engine
-        .document_write(mutation(pb::DocumentWriteRequest {
+        .document_write(mutation(pb::EngineServiceDocumentWriteRequest {
             document: Some(pb::DocumentPut {
                 id: "d-1".into(),
                 collection: "orders".into(),
@@ -591,7 +591,7 @@ async fn sync_tokens_are_bounded_before_the_host_runs() {
     let channel = connect(socket.clone()).await;
     let mut sync = SyncClient::new(channel);
     let status = sync
-        .session_setup(identified(pb::SyncSessionSetupRequest {
+        .session_setup(identified(pb::SyncServiceSessionSetupRequest {
             collection: "orders".into(),
             resume: vec![0; 1058],
         }))
@@ -680,7 +680,7 @@ async fn the_backbone_stream_delivers_confirmation_batches_and_close() {
     let mut backbone = BackboneClient::new(channel);
 
     let mut stream = backbone
-        .subscribe(identified(pb::BackboneSubscribeRequest {
+        .subscribe(identified(pb::BackboneServiceSubscribeRequest {
             subscription_id: 11,
             collections: vec!["orders".into()],
             from: Some(pb::SubscriptionStart {
@@ -788,7 +788,7 @@ async fn the_real_sync_delivery_core_serves_one_session_over_grpc() {
     let mut sync = SyncClient::new(channel);
 
     let setup = sync
-        .session_setup(identified(pb::SyncSessionSetupRequest {
+        .session_setup(identified(pb::SyncServiceSessionSetupRequest {
             collection: "orders".into(),
             resume: vec![],
         }))
@@ -799,7 +799,7 @@ async fn the_real_sync_delivery_core_serves_one_session_over_grpc() {
     assert!(!setup.checkpoint.is_empty());
 
     let mutation = sync
-        .mutation_submit(mutation(pb::SyncMutationSubmitRequest {
+        .mutation_submit(mutation(pb::SyncServiceMutationSubmitRequest {
             session_id,
             document: "d-1".into(),
             change: Some(pb::SyncChange {
@@ -823,7 +823,7 @@ async fn the_real_sync_delivery_core_serves_one_session_over_grpc() {
     }
 
     let delta = sync
-        .delta_pull(identified(pb::SyncDeltaPullRequest {
+        .delta_pull(identified(pb::SyncServiceDeltaPullRequest {
             session_id,
             from: setup.checkpoint.clone(),
         }))
@@ -833,19 +833,19 @@ async fn the_real_sync_delivery_core_serves_one_session_over_grpc() {
     assert_eq!(delta.commits, 1);
     assert!(!delta.next.is_empty());
 
-    sync.checkpoint_ack(identified(pb::SyncCheckpointAckRequest {
+    sync.checkpoint_ack(identified(pb::SyncServiceCheckpointAckRequest {
         session_id,
         checkpoint: delta.next.clone(),
     }))
     .await
     .expect("the checkpoint acknowledges");
 
-    sync.session_close(identified(pb::SyncSessionCloseRequest { session_id }))
+    sync.session_close(identified(pb::SyncServiceSessionCloseRequest { session_id }))
         .await
         .expect("the session closes");
 
     let status = sync
-        .delta_pull(identified(pb::SyncDeltaPullRequest { session_id, from: delta.next }))
+        .delta_pull(identified(pb::SyncServiceDeltaPullRequest { session_id, from: delta.next }))
         .await
         .expect_err("a closed session refuses");
     assert_eq!(tbep_code(&status), Some(pb::ErrorCode::SessionRefused));
@@ -864,21 +864,21 @@ async fn maintenance_answers_topology_health_and_shutdown() {
     let mut maintenance = MaintenanceClient::new(channel);
 
     let topology = maintenance
-        .topology_read(identified(pb::TopologyReadRequest {}))
+        .topology_read(identified(pb::MaintenanceServiceTopologyReadRequest {}))
         .await
         .expect("the topology answers")
         .into_inner();
     assert_eq!(topology.binding, pb::BindingKind::Local as i32);
 
     let health = maintenance
-        .supervision_health(identified(pb::SupervisionHealthRequest {}))
+        .supervision_health(identified(pb::MaintenanceServiceSupervisionHealthRequest {}))
         .await
         .expect("the health answers")
         .into_inner();
     assert_eq!(health.state, pb::HealthState::Serving as i32);
 
     let shutdown = maintenance
-        .supervision_shutdown(identified(pb::SupervisionShutdownRequest {
+        .supervision_shutdown(identified(pb::MaintenanceServiceSupervisionShutdownRequest {
             reason: pb::ShutdownReason::Operator as i32,
         }))
         .await

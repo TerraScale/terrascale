@@ -130,6 +130,7 @@ fn backup_card(state: &StudioState) -> String {
 }
 
 fn restore_card(state: &StudioState) -> String {
+    let restore_target = state.config.data_dir.join("studio").join("restored").display().to_string();
     let body = format!(
         "<p class=\"mb-4 text-sm text-muted-foreground\">Restore downloads only the selected point and its ancestors from S3, verifies every member, and writes a brand-new engine location. The target must not exist or must be empty.</p>\n\
 <form class=\"grid gap-4\" data-on:submit=\"if (!confirm('Restore writes a new engine location. Continue?')) return; @post('/backup/restore', {{contentType: 'form', retry: 'never'}})\">\n{destination}{target}{identity}\
@@ -145,16 +146,10 @@ fn restore_card(state: &StudioState) -> String {
             html::text_input(
                 "target",
                 "Restore target",
-                &state.config.data_dir.join("studio").join("restored").display().to_string(),
+                &restore_target,
                 "/path/to/new/location",
             ),
-            html::text_input(
-                "confirm_target",
-                "Type restore target exactly",
-                "",
-                "/path/to/new/location"
-            ),
-            html::text_input("confirm_phrase", "Type action phrase", "", "restore recovery point"),
+            html::confirmation_fields(&restore_target, "restore recovery point"),
         ),
         identity = html::text_input(
             "identity",

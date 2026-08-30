@@ -158,8 +158,8 @@ impl ServedBoundaryConfig {
             output_directory,
             timeout: env_duration("TERRABASE_BENCH_TIMEOUT", DEFAULT_TIMEOUT)?,
             server_identity,
-            principal: required_env("TERRABASE_BENCH_PRINCIPAL")?,
-            tenant: required_env("TERRABASE_BENCH_TENANT")?,
+            principal: required_string("TERRABASE_BENCH_PRINCIPAL")?,
+            tenant: required_string("TERRABASE_BENCH_TENANT")?,
             source_identity: optional_env("TERRABASE_BENCH_SOURCE_IDENTITY")
                 .unwrap_or_else(|| DEFAULT_SOURCE_IDENTITY.to_owned()),
             transport_identity: optional_env("TERRABASE_BENCH_TRANSPORT_IDENTITY")
@@ -240,14 +240,11 @@ pub(crate) fn run_served_boundary(
             Ok(result)
         }
         Err(reason) => {
-            let error = failed(config, Some(&run_directory), reason);
-            if let Err(cleanup_error) = cleanup
-                && let Ok(mut error) = error
-            {
+            let mut error = failed(config, Some(&run_directory), reason).unwrap_err();
+            if let Err(cleanup_error) = cleanup {
                 error.reason.push_str(&format!("; temporary cleanup failed: {cleanup_error}"));
-                return Err(error);
             }
-            error
+            Err(error)
         }
     }
 }
@@ -811,6 +808,13 @@ fn required_env(name: &str) -> Result<PathBuf, String> {
     std::env::var_os(name)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
+        .ok_or_else(|| format!("{name} is required"))
+}
+
+fn required_string(name: &str) -> Result<String, String> {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.is_empty())
         .ok_or_else(|| format!("{name} is required"))
 }
 

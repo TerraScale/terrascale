@@ -15,10 +15,16 @@ ci=.forgejo/workflows/ci.yml
 [[ $(grep -Fc 'run-id: ${{ inputs.candidate_run_id }}' "$promote") -eq 2 ]]
 [[ $(grep -Fc 'run-id: ${{ inputs.capability_run_id }}' "$promote") -eq 2 ]]
 [[ $(grep -Fc 'deploy/release/verify-source-binding.sh' "$promote") -eq 2 ]]
+[[ $(grep -Fc 'deploy/release/require-fips-toolchain.sh' "$release") -eq 2 ]]
+grep -Fq '"$script_dir/require-fips-toolchain.sh"' deploy/release/package.sh
+grep -Fq 'build_arguments+=(--no-default-features --features production-fips)' deploy/release/package.sh
+! grep -Fq -- '--all-features' deploy/release/package.sh
 
 grep -Fq 'GITHUB_BASE_REF' "$ci"
 grep -Fq 'git rev-parse --verify HEAD^' "$ci"
 grep -Fq 'buf breaking --against ".git#ref=$against_commit"' "$ci"
 ! grep -Fq '.git#branch=${GITHUB_REF_NAME}' "$ci"
+grep -Eq 'branches: \[develop, main\]' "$ci"
+grep -Fq 'go test -mod=readonly -race ./...' "$ci"
 
 echo "validated immutable promotion and protobuf baseline contracts"

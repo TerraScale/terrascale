@@ -14,9 +14,11 @@
 //! administration. Unsupported operations fail with typed errors.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use terrabase::engine::{CommitOutcome, Engine, EngineConfig};
+use terrabase::observability::MetricsRegistry;
 use terrabase::regions::RegionCode;
 use terrabase::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion as EngineVersion,
@@ -335,6 +337,13 @@ impl EngineHost {
         &self.location
     }
 
+    /// Returns the engine-owned metrics registry shared by storage and every
+    /// serving adapter for this location.
+    #[must_use]
+    pub fn metrics(&self) -> Arc<MetricsRegistry> {
+        self.engine.metrics()
+    }
+
     fn admit_scope(&self, scope: &BoundScope) -> Result<(), HostingError> {
         if scope.tenant != self.tenant
             || scope.project != self.project
@@ -566,20 +575,18 @@ impl TbepHost for EngineHost {
     ) -> Result<ChannelBindResponse, HostingError> {
         self.count_frame();
         self.ensure_serving()?;
-        // The tenant identifier validates now: an invalid bind never
-        // reaches an engine scope.
-        Self::tenant_of(&request.tenant)?;
-        Ok(ChannelBindResponse { tenant: request.tenant.clone(), serving_instance: self.instance })
+        self.tenant_of_scope(&request.scope)?;
+        Ok(ChannelBindResponse { scope: request.scope.clone(), serving_instance: self.instance })
     }
 
     fn document_read(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &DocumentReadRequest,
     ) -> Result<DocumentReadResponse, HostingError> {
         self.count_frame();
         self.ensure_serving()?;
-        let tenant = Self::tenant_of(tenant)?;
+        let tenant = self.tenant_of_scope(scope)?;
         CollectionName::try_new(request.collection.as_str())
             .map_err(|_| HostingError::Invalid("the collection identifier is not valid".into()))?;
         let document = DocumentId::try_new(request.document.as_str())
@@ -599,19 +606,20 @@ impl TbepHost for EngineHost {
 
     fn document_write(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &DocumentWriteRequest,
         idempotency_key: &str,
     ) -> Result<DocumentWriteResponse, HostingError> {
         self.count_frame();
         self.ensure_serving()?;
-        let tenant = Self::tenant_of(tenant)?;
+        let tenant = self.tenant_of_scope(scope)?;
         let DocumentPut { id, collection, body } = &request.document;
         let (document, collection) = Self::identifiers_of(id, collection)?;
         let expected = to_engine_expected(&request.expected);
         let value = to_engine_value(body);
         let outcome = self.commit(
             &tenant,
+            scope,
             &request.operation_id,
             |transaction| {
                 transaction
@@ -643,13 +651,13 @@ impl TbepHost for EngineHost {
 
     fn document_delete(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &DocumentDeleteRequest,
         idempotency_key: &str,
     ) -> Result<DocumentDeleteResponse, HostingError> {
         self.count_frame();
         self.ensure_serving()?;
-        let tenant = Self::tenant_of(tenant)?;
+        let tenant = self.tenant_of_scope(scope)?;
         let document = DocumentId::try_new(request.document.as_str())
             .map_err(|_| HostingError::Invalid("the document identifier is not valid".into()))?;
         CollectionName::try_new(request.collection.as_str())
@@ -662,6 +670,7 @@ impl TbepHost for EngineHost {
         let mut deleted_version = 0_u64;
         let outcome = self.commit(
             &tenant,
+            scope,
             &request.operation_id,
             |transaction| {
                 let found = transaction
@@ -693,13 +702,13 @@ impl TbepHost for EngineHost {
 
     fn document_batch(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &crate::registry::DocumentBatchRequest,
         idempotency_key: &str,
     ) -> Result<crate::registry::DocumentBatchResponse, HostingError> {
         self.count_frame();
         self.ensure_serving()?;
-        let tenant = Self::tenant_of(tenant)?;
+        let tenant = self.tenant_of_scope(scope)?;
         if request.items.is_empty() {
             return Err(HostingError::Invalid("the batch carries no items".into()));
         }
@@ -711,6 +720,7 @@ impl TbepHost for EngineHost {
         // rolls the whole frame back and nothing durable records.
         let outcome = self.commit(
             &tenant,
+            scope,
             idempotency_key,
             |transaction| {
                 for item in &request.items {
@@ -742,12 +752,12 @@ impl TbepHost for EngineHost {
 
     fn query_execute(
         &self,
-        tenant: &str,
+        bound_scope: &BoundScope,
         request: &crate::registry::QueryExecuteRequest,
     ) -> Result<crate::registry::QueryExecuteResponse, HostingError> {
         self.count_frame();
         self.ensure_serving()?;
-        let tenant = Self::tenant_of(tenant)?;
+        let tenant = self.tenant_of_scope(bound_scope)?;
         // The wire's text is bounded TQL input, capped at
         // 16 KiB by the registry's own validation. The query runs with
         // its own cancellation signal — registered under the caller's
@@ -823,21 +833,22 @@ impl TbepHost for EngineHost {
 
     fn query_cancel(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &crate::registry::QueryCancelRequest,
     ) -> Result<crate::registry::QueryCancelResponse, HostingError> {
         self.count_frame();
         self.ensure_serving()?;
+        self.admit_scope(scope)?;
         // A live query cancels at its next bounded checkpoint; a
         // finished one reports completion; anything else is unknown.
         let mut live = self.live_queries.lock().expect("the live set is not poisoned");
-        if let Some(cancellation) = live.remove(&(tenant.to_owned(), request.query_id)) {
+        if let Some(cancellation) = live.remove(&(scope.tenant.clone(), request.query_id)) {
             cancellation.cancel();
             return Ok(crate::registry::QueryCancelResponse {
                 outcome: crate::registry::CancelOutcome::Cancelled,
             });
         }
-        let outcome = if self.query_completed(tenant, request.query_id) {
+        let outcome = if self.query_completed(&scope.tenant, request.query_id) {
             crate::registry::CancelOutcome::AlreadyComplete
         } else {
             crate::registry::CancelOutcome::UnknownQuery
@@ -847,7 +858,7 @@ impl TbepHost for EngineHost {
 
     fn family_read(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &crate::registry::FamilyReadRequest,
     ) -> Result<crate::registry::FamilyReadResponse, HostingError> {
         Err(HostingError::Refused("family_read is served by the family-plane landing".into()))
@@ -855,7 +866,7 @@ impl TbepHost for EngineHost {
 
     fn family_write(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &crate::registry::FamilyWriteRequest,
         _idempotency_key: &str,
     ) -> Result<crate::registry::FamilyWriteResponse, HostingError> {
@@ -864,7 +875,7 @@ impl TbepHost for EngineHost {
 
     fn backbone_subscribe(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &crate::registry::BackboneSubscribeRequest,
     ) -> Result<
         (
@@ -880,7 +891,7 @@ impl TbepHost for EngineHost {
 
     fn backbone_acknowledge(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &crate::registry::BackboneAcknowledgeRequest,
     ) -> Result<crate::registry::BackboneAcknowledgeResponse, HostingError> {
         Err(HostingError::Refused(
@@ -890,7 +901,7 @@ impl TbepHost for EngineHost {
 
     fn backbone_unsubscribe(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &crate::registry::BackboneUnsubscribeRequest,
     ) -> Result<crate::registry::BackboneUnsubscribeResponse, HostingError> {
         Err(HostingError::Refused(
@@ -900,7 +911,7 @@ impl TbepHost for EngineHost {
 
     fn sync_session_setup(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &crate::registry::SyncSessionSetupRequest,
     ) -> Result<crate::registry::SyncSessionSetupResponse, HostingError> {
         Err(HostingError::Refused(
@@ -910,7 +921,7 @@ impl TbepHost for EngineHost {
 
     fn sync_delta_pull(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &crate::registry::SyncDeltaPullRequest,
     ) -> Result<crate::registry::SyncDeltaPullResponse, HostingError> {
         Err(HostingError::Refused(
@@ -920,7 +931,7 @@ impl TbepHost for EngineHost {
 
     fn sync_snapshot_pull(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &crate::registry::SyncSnapshotPullRequest,
     ) -> Result<crate::registry::SyncSnapshotPullResponse, HostingError> {
         Err(HostingError::Refused(
@@ -930,7 +941,7 @@ impl TbepHost for EngineHost {
 
     fn sync_checkpoint_ack(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &crate::registry::SyncCheckpointAckRequest,
     ) -> Result<crate::registry::SyncCheckpointAckResponse, HostingError> {
         Err(HostingError::Refused(
@@ -940,7 +951,7 @@ impl TbepHost for EngineHost {
 
     fn sync_mutation_submit(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &crate::registry::SyncMutationSubmitRequest,
         _idempotency_key: &str,
     ) -> Result<crate::registry::SyncMutationSubmitResponse, HostingError> {
@@ -951,7 +962,7 @@ impl TbepHost for EngineHost {
 
     fn sync_session_close(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &crate::registry::SyncSessionCloseRequest,
     ) -> Result<crate::registry::SyncSessionCloseResponse, HostingError> {
         Err(HostingError::Refused(
@@ -961,12 +972,13 @@ impl TbepHost for EngineHost {
 
     fn tier_configure(
         &self,
-        _tenant: &str,
+        scope: &BoundScope,
         request: &crate::registry::TierConfigureRequest,
         _idempotency_key: &str,
     ) -> Result<crate::registry::TierConfigureResponse, HostingError> {
         self.count_frame();
         self.ensure_serving()?;
+        self.admit_scope(scope)?;
         let policy = terrabase::tiers::TierPolicy::try_new(
             &request.policy_id,
             request.version,
@@ -990,10 +1002,11 @@ impl TbepHost for EngineHost {
 
     fn tier_inspect(
         &self,
-        _tenant: &str,
+        scope: &BoundScope,
     ) -> Result<crate::registry::TierInspectResponse, HostingError> {
         self.count_frame();
         self.ensure_serving()?;
+        self.admit_scope(scope)?;
         let view = self.engine.tiers().inspect();
         Ok(crate::registry::TierInspectResponse {
             configured: view.configured(),
@@ -1006,61 +1019,67 @@ impl TbepHost for EngineHost {
 
     fn tier_explain(
         &self,
-        _tenant: &str,
+        scope: &BoundScope,
     ) -> Result<crate::registry::TierExplainResponse, HostingError> {
         self.count_frame();
         self.ensure_serving()?;
+        self.admit_scope(scope)?;
         let receipt = self.engine.tiers().dry_run().map_err(tier_error)?;
         Ok(crate::registry::TierExplainResponse { receipt: wire_receipt(&receipt) })
     }
 
     fn tier_dry_run(
         &self,
-        _tenant: &str,
+        scope: &BoundScope,
     ) -> Result<crate::registry::TierDryRunResponse, HostingError> {
         self.count_frame();
         self.ensure_serving()?;
+        self.admit_scope(scope)?;
         let receipt = self.engine.tiers().dry_run().map_err(tier_error)?;
         Ok(crate::registry::TierDryRunResponse { receipt: wire_receipt(&receipt) })
     }
 
     fn tier_run(
         &self,
-        _tenant: &str,
+        scope: &BoundScope,
         _idempotency_key: &str,
     ) -> Result<crate::registry::TierRunResponse, HostingError> {
         self.count_frame();
         self.ensure_serving()?;
+        self.admit_scope(scope)?;
         let receipt = self.engine.tiers().run().map_err(tier_error)?;
         Ok(crate::registry::TierRunResponse { receipt: wire_receipt(&receipt) })
     }
 
     fn tier_pause(
         &self,
-        _tenant: &str,
+        scope: &BoundScope,
         _idempotency_key: &str,
     ) -> Result<crate::registry::TierPauseResponse, HostingError> {
         self.count_frame();
         self.ensure_serving()?;
+        self.admit_scope(scope)?;
         Ok(crate::registry::TierPauseResponse { paused: self.engine.tiers().pause() })
     }
 
     fn tier_resume(
         &self,
-        _tenant: &str,
+        scope: &BoundScope,
         _idempotency_key: &str,
     ) -> Result<crate::registry::TierResumeResponse, HostingError> {
         self.count_frame();
         self.ensure_serving()?;
+        self.admit_scope(scope)?;
         Ok(crate::registry::TierResumeResponse { paused: self.engine.tiers().resume() })
     }
 
     fn topology_read(
         &self,
-        _tenant: &str,
+        scope: &BoundScope,
     ) -> Result<crate::registry::TopologyReadResponse, HostingError> {
         self.count_frame();
         self.ensure_serving()?;
+        self.admit_scope(scope)?;
         // Honest standalone answer: this member serves every subsystem
         // it hosts over one local binding; no cluster topology exists
         // until the cluster-mode landing admits peers.
@@ -1080,7 +1099,7 @@ impl TbepHost for EngineHost {
 
     fn usage_record(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &crate::registry::UsageRecordRequest,
         idempotency_key: &str,
     ) -> Result<crate::registry::UsageRecordResponse, HostingError> {
@@ -1089,7 +1108,12 @@ impl TbepHost for EngineHost {
         request
             .validate_for_key(idempotency_key)
             .map_err(|_| HostingError::Invalid("the usage record is invalid".into()))?;
-        let tenant = Self::tenant_of(tenant)?;
+        let tenant = self.tenant_of_scope(scope)?;
+        if request.project != scope.project || request.database != scope.database {
+            return Err(HostingError::Invalid(
+                "the usage record does not match the bound Project and Database".into(),
+            ));
+        }
         let fact_id = UsageFactId::try_new(&request.fact_id)
             .map_err(|_| HostingError::Invalid("the usage fact identity is invalid".into()))?;
         let integer_units = request
@@ -1132,7 +1156,7 @@ impl TbepHost for EngineHost {
 
     fn usage_export(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &crate::registry::UsageExportRequest,
     ) -> Result<crate::registry::UsageExportResponse, HostingError> {
         self.count_frame();
@@ -1140,7 +1164,7 @@ impl TbepHost for EngineHost {
         request
             .validate()
             .map_err(|_| HostingError::Invalid("the usage export request is invalid".into()))?;
-        let tenant = Self::tenant_of(tenant)?;
+        let tenant = self.tenant_of_scope(scope)?;
         let window = match (request.window_start_millis, request.window_end_millis) {
             (None, None) => None,
             (Some(start), Some(end)) => Some(
@@ -1173,13 +1197,13 @@ impl TbepHost for EngineHost {
 
     fn schema_declare(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &crate::registry::SchemaDeclareRequest,
         idempotency_key: &str,
     ) -> Result<crate::registry::SchemaDeclareResponse, HostingError> {
         self.count_frame();
         self.ensure_serving()?;
-        let tenant = Self::tenant_of(tenant)?;
+        let tenant = self.tenant_of_scope(scope)?;
         let collection = CollectionName::try_new(request.collection.as_str())
             .map_err(|_| HostingError::Invalid("the collection identifier is not valid".into()))?;
         // The declared schema value adopts the collection's NEXT version:
@@ -1265,12 +1289,12 @@ impl TbepHost for EngineHost {
 
     fn schema_validate(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &crate::registry::SchemaValidateRequest,
     ) -> Result<crate::registry::SchemaValidateResponse, HostingError> {
         self.count_frame();
         self.ensure_serving()?;
-        let tenant = Self::tenant_of(tenant)?;
+        let tenant = self.tenant_of_scope(scope)?;
         let collection = CollectionName::try_new(request.collection.as_str())
             .map_err(|_| HostingError::Invalid("the collection identifier is not valid".into()))?;
         let Some(policy) = self.validation_policy(&tenant, &collection)? else {
@@ -1316,12 +1340,12 @@ impl TbepHost for EngineHost {
 
     fn schema_status(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &crate::registry::SchemaStatusRequest,
     ) -> Result<crate::registry::SchemaStatusResponse, HostingError> {
         self.count_frame();
         self.ensure_serving()?;
-        let tenant = Self::tenant_of(tenant)?;
+        let tenant = self.tenant_of_scope(scope)?;
         let collection = CollectionName::try_new(request.collection.as_str())
             .map_err(|_| HostingError::Invalid("the collection identifier is not valid".into()))?;
         let policy = self.validation_policy(&tenant, &collection)?;

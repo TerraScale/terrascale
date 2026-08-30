@@ -52,6 +52,10 @@ for tool in buildah cargo date file git gzip jq python3 readelf rustc sha256sum 
   }
 done
 
+if [[ $component == server ]]; then
+  "$script_dir/require-fips-toolchain.sh"
+fi
+
 rust_version=$(rustc --version)
 [[ "$rust_version" == 'rustc 1.97.1 '* ]] || {
   echo "release packaging requires rustc 1.97.1, observed: $rust_version" >&2

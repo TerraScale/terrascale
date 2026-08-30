@@ -17,6 +17,12 @@ const MAX_GATEWAY_PRINCIPALS: usize = 32;
 pub struct ServerConfig {
     /// Durable engine directory.
     pub engine_location: PathBuf,
+    /// Tenant pinned to the standalone engine location.
+    pub tenant: String,
+    /// Project pinned to the standalone engine location.
+    pub project: String,
+    /// Database pinned to the standalone engine location.
+    pub database: String,
     /// Stable serving instance identity.
     pub instance_id: u64,
     /// Bounded metrics Region label.
@@ -68,6 +74,9 @@ struct FileConfig {
 #[serde(deny_unknown_fields)]
 struct FileEngine {
     location: PathBuf,
+    tenant: String,
+    project: String,
+    database: String,
     instance_id: u64,
     region: String,
 }
@@ -170,6 +179,14 @@ impl ServerConfig {
             "FRA" => Region::Fra,
             _ => return Err(ConfigError::InvalidRegion),
         };
+        terrabase_tbep::registry::BoundScope {
+            principal: "spiffe://local/config-validation".into(),
+            tenant: file.engine.tenant.clone(),
+            project: file.engine.project.clone(),
+            database: file.engine.database.clone(),
+        }
+        .validate()
+        .map_err(|_| ConfigError::InvalidBound)?;
         if file.engine.instance_id == 0
             || !(1024..=terrabase_tbep::registry::MAX_FRAME_BYTES)
                 .contains(&file.tbep.max_message_bytes)
@@ -211,6 +228,9 @@ impl ServerConfig {
             .transpose()?;
         Ok(Self {
             engine_location: file.engine.location,
+            tenant: file.engine.tenant,
+            project: file.engine.project,
+            database: file.engine.database,
             instance_id: file.engine.instance_id,
             region,
             tbep_listen,
@@ -316,6 +336,9 @@ mod tests {
         r#"
 [engine]
 location = "/var/lib/terrabase"
+tenant = "tenant-a"
+project = "project-a"
+database = "database-a"
 instance_id = 7
 region = "GRU"
 
