@@ -7,5 +7,5 @@ AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 - When interacting with forgejo use the "fj" cli
 
 
-#
+# Go Client
 - terrabase-go must live in this repo and it is the go client to communicate with terrabase using grpc and it is the only client allowed to communicate with terrabase
