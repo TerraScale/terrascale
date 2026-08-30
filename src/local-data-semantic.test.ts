@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { createTerraScaleSqliteRuntime } from "./local/index.js";
+import { installLocalSqliteTestEnvironment } from "./local/test-environment.test.js";
 import type { TerraScaleResult } from "./result.js";
+
+installLocalSqliteTestEnvironment();
 
 function expectOk<T>(result: TerraScaleResult<T>): T {
   if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);

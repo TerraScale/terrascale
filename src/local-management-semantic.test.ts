@@ -11,6 +11,9 @@ import {
   type TerraScaleSqliteRuntime,
 } from "./local/index.js";
 import { TerraScaleSqliteStore } from "./local/store.js";
+import { installLocalSqliteTestEnvironment } from "./local/test-environment.test.js";
+
+installLocalSqliteTestEnvironment();
 
 const userId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV");
 const secondUserId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAW");

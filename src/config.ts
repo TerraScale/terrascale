@@ -1,4 +1,5 @@
 import type { ProjectId } from "./ids.js";
+import { isRegisteredLocalRuntimeFetch } from "./local-runtime-capability.js";
 
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -6,7 +7,7 @@ export type AccessTokenProvider = string | (() => Promise<string | undefined> | 
 
 export type TerraScaleSqliteRuntimeConfig = {
   readonly enabled: true;
-  readonly databasePath?: string | undefined;
+  readonly databasePath: string;
 };
 
 import type { TerraScaleRequestMetricRecorder } from "./http.js";
@@ -95,7 +96,8 @@ export function resolveRuntimeConfig(
 }
 
 function isLocalRuntimeConfig(config: TerraScaleRuntimeConfig): boolean {
-  return config.apiBaseUrl === "http://terrascale.local" && config.fetch !== undefined;
+  return config.apiBaseUrl === "http://terrascale.local"
+    && isRegisteredLocalRuntimeFetch(config.fetch);
 }
 
 export async function resolveAccessToken(

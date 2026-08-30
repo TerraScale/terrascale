@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { test } from "node:test";
 
+import { localSqliteTestChildEnvironment } from "./local/test-environment.test.js";
+
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const run = promisify(execFile);
 const forbiddenRoutePattern = /(?:\/api\/v\d+\/(?:auth|account|billing|pricing|queues|onboarding\/payment)(?:[\/"'`: ]|$)|\/api\/v\d+\/projects\/\{[^}]+\}\/(?:auth|security|queues)(?:[\/"'`: ]|$)|\b(?:auth|apiKeys|m2m|queues|billing|pricing|payment|security)\.[a-z])/iu;
@@ -287,9 +289,9 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
       [
         "--input-type=module",
         "--eval",
-        "import { createTerraScaleSqliteRuntime } from '@terrascale/sdk/local'; const local = createTerraScaleSqliteRuntime({ sqlite: { enabled: true } }); await local.close();",
+        "import path from 'node:path'; import { createTerraScaleSqliteRuntime } from '@terrascale/sdk/local'; const local = createTerraScaleSqliteRuntime({ sqlite: { enabled: true, databasePath: path.resolve('packed-local.sqlite') } }); await local.close();",
       ],
-      { cwd: consumer },
+      { cwd: consumer, env: localSqliteTestChildEnvironment() },
     );
     const cli = await run(
       path.join(consumer, "node_modules", ".bin", "terrascale-local"),

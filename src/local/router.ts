@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 
+import {
+  matchesLocalBearerAuthorization,
+  normalizeLocalBearerToken,
+} from "./authentication.js";
 import type { LocalHandler, LocalRequestContext } from "./context.js";
 import { emptyResponse, problemResponse } from "./context.js";
 import { handleLocalAdmin } from "./handlers/admin.js";
@@ -17,6 +21,7 @@ export type LocalAuthenticationMode = "permissive" | "required";
 
 export type TerraScaleLocalRouterOptions = {
   readonly authentication?: LocalAuthenticationMode;
+  readonly bearerToken?: string;
 };
 
 type ManifestRoute = {
@@ -50,12 +55,22 @@ const localHandlers: readonly LocalHandler[] = [
 
 export class TerraScaleLocalRouter {
   readonly #authentication: LocalAuthenticationMode;
+  readonly #bearerToken: string | undefined;
   readonly #routes: readonly CompiledManifestRoute[];
   readonly #store: TerraScaleSqliteStore;
 
   constructor(store: TerraScaleSqliteStore, options: TerraScaleLocalRouterOptions = {}) {
     this.#store = store;
     this.#authentication = options.authentication ?? "permissive";
+    if (this.#authentication !== "permissive" && this.#authentication !== "required") {
+      throw new TypeError('authentication must be either "permissive" or "required".');
+    }
+    this.#bearerToken = this.#authentication === "required"
+      ? normalizeLocalBearerToken(options.bearerToken)
+      : undefined;
+    if (this.#authentication === "permissive" && options.bearerToken !== undefined) {
+      throw new TypeError('bearerToken can only be set when authentication is "required".');
+    }
     this.#routes = loadManifestRoutes();
   }
 
@@ -77,10 +92,14 @@ export class TerraScaleLocalRouter {
       return withCors(request, Response.json({ status: "ready", storage: "sqlite" }));
     }
 
-    if (this.#authentication === "required" && !isAuthorized(request, method, pathname)) {
+    if (
+      this.#authentication === "required"
+      && (this.#bearerToken === undefined
+        || !isAuthorized(request, method, pathname, this.#bearerToken))
+    ) {
       return withCors(
         request,
-        problemResponse(401, "authentication_required", "Supply a bearer token or session cookie."),
+        problemResponse(401, "authentication_required", "Supply the configured bearer token."),
       );
     }
 
@@ -270,28 +289,24 @@ async function readBody(request: Request): Promise<unknown> {
   }
 }
 
-function isAuthorized(request: Request, method: string, pathname: string): boolean {
+function isAuthorized(
+  request: Request,
+  method: string,
+  pathname: string,
+  bearerToken: string,
+): boolean {
   if (isAnonymousRoute(method, pathname)) {
     return true;
   }
-  if (pathname.startsWith("/v1/sync/") || pathname === "/v1/streams") {
-    return hasHeaderValue(request, "x-tb-principal")
-      && hasHeaderValue(request, "x-tb-tenant");
-  }
-  const authorization = request.headers.get("authorization")?.trim();
-  const cookie = request.headers.get("cookie")?.trim();
-  return (authorization !== undefined && authorization.length > 0)
-    || (cookie !== undefined && cookie.length > 0);
+  return matchesLocalBearerAuthorization(
+    request.headers.get("authorization"),
+    bearerToken,
+  );
 }
 
 function isAnonymousRoute(method: string, pathname: string): boolean {
   return method === "GET"
     && (pathname === "/api/v1/regions" || pathname.startsWith("/api/v1/regions/"));
-}
-
-function hasHeaderValue(request: Request, name: string): boolean {
-  const value = request.headers.get(name)?.trim();
-  return value !== undefined && value.length > 0;
 }
 
 function idempotencyKey(context: LocalRequestContext): string | undefined {

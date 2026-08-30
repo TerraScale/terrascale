@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
-import { describe, test } from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, describe, test } from "node:test";
 
 import {
   createTerraScaleSqliteRuntime,
   type LocalServerAddress,
 } from "./local/index.js";
+import { installLocalSqliteTestEnvironment } from "./local/test-environment.test.js";
 import type { SyncV2Value } from "./sync/v2/frame.js";
+
+installLocalSqliteTestEnvironment();
 
 const v1Options = {
   DatabaseId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
@@ -17,6 +23,22 @@ const v1Options = {
 };
 
 type Runtime = ReturnType<typeof createTerraScaleSqliteRuntime>;
+
+const runtimeDirectories = new Set<string>();
+
+after(() => {
+  for (const directory of runtimeDirectories) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+function createLocalTestRuntime(): Runtime {
+  const directory = mkdtempSync(join(tmpdir(), "terrascale-local-sync-semantic-"));
+  runtimeDirectories.add(directory);
+  return createTerraScaleSqliteRuntime({
+    sqlite: { enabled: true, databasePath: join(directory, "sync.sqlite") },
+  });
+}
 
 async function started(runtime: Runtime): Promise<LocalServerAddress> {
   return runtime.start({ host: "127.0.0.1", port: 0 });
@@ -130,7 +152,7 @@ async function readSseUntil(
 
 describe("local Sync v1 semantic runtime", () => {
   test("authenticates, subscribes and unsubscribes query references, acknowledges transitions, and applies mutations", async () => {
-    const runtime = createTerraScaleSqliteRuntime({ sqlite: { enabled: true } });
+    const runtime = createLocalTestRuntime();
     try {
       const session = runtime.createSyncV1Session(v1Options);
       const query = {
@@ -208,7 +230,7 @@ describe("local Sync v1 semantic runtime", () => {
   });
 
   test("rejects failed authentication credentials before treating a socket as connected", async () => {
-    const runtime = createTerraScaleSqliteRuntime({ sqlite: { enabled: true } });
+    const runtime = createLocalTestRuntime();
     const session = runtime.createSyncV1Session({
       ...v1Options,
       BearerTokenProvider: async () => "",
@@ -224,7 +246,7 @@ describe("local Sync v1 semantic runtime", () => {
   });
 
   test("reconnects with the same session identity and resumes acknowledged query state", async () => {
-    const runtime = createTerraScaleSqliteRuntime({ sqlite: { enabled: true } });
+    const runtime = createLocalTestRuntime();
     try {
       const session = runtime.createSyncV1Session({ ...v1Options, SessionId: "01ARZ3NDEKTSV4RRFFQ69G5FB0" });
       const query = session.subscribeQuery({
@@ -250,7 +272,7 @@ describe("local Sync v1 semantic runtime", () => {
   });
 
   test("enforces query and mutation input bounds before sending frames", async () => {
-    const runtime = createTerraScaleSqliteRuntime({ sqlite: { enabled: true } });
+    const runtime = createLocalTestRuntime();
     try {
       const session = runtime.createSyncV1Session(v1Options);
       assert.throws(() => session.subscribeQuery({
@@ -275,7 +297,7 @@ describe("local Sync v1 semantic runtime", () => {
   });
 
   test("reset and close disconnect all registered v1 sessions", async () => {
-    const runtime = createTerraScaleSqliteRuntime({ sqlite: { enabled: true } });
+    const runtime = createLocalTestRuntime();
     const first = runtime.createSyncV1Session(v1Options);
     const second = runtime.createSyncV1Session({ ...v1Options, Tenant: "tenant-v1-second" });
     try {
@@ -297,7 +319,7 @@ describe("local Sync v1 semantic runtime", () => {
 
 describe("local Sync v2 semantic runtime", () => {
   test("runs setup, delta, snapshot, acknowledgement, mutation replay/conflict, and close over real HTTP", async () => {
-    const runtime = createTerraScaleSqliteRuntime({ sqlite: { enabled: true } });
+    const runtime = createLocalTestRuntime();
     try {
       const address = await started(runtime);
       const session = runtime.createSyncV2Session({
@@ -346,7 +368,7 @@ describe("local Sync v2 semantic runtime", () => {
   });
 
   test("resumes from a durable checkpoint without replaying already applied deltas", async () => {
-    const runtime = createTerraScaleSqliteRuntime({ sqlite: { enabled: true } });
+    const runtime = createLocalTestRuntime();
     try {
       const first = runtime.createSyncV2Session({
         Collection: "resume",
@@ -377,7 +399,7 @@ describe("local Sync v2 semantic runtime", () => {
   });
 
   test("delivers SSE triggers, and replays changes after Last-Event-ID", async () => {
-    const runtime = createTerraScaleSqliteRuntime({ sqlite: { enabled: true } });
+    const runtime = createLocalTestRuntime();
     try {
       const address = await started(runtime);
       const stream = await fetch(`${address.origin}/v1/streams?collections=${encodeURIComponent("events")}`, {
@@ -429,7 +451,7 @@ describe("local Sync v2 semantic runtime", () => {
   });
 
   test("enforces principal/tenant isolation and setup, stream, mutation, and checkpoint bounds", async () => {
-    const runtime = createTerraScaleSqliteRuntime({ sqlite: { enabled: true } });
+    const runtime = createLocalTestRuntime();
     try {
       const address = await started(runtime);
       const missingIdentity = await fetch(`${address.origin}/v1/streams?collections=tasks`, { headers: { accept: "text/event-stream", "last-event-id": "0" } });
@@ -474,7 +496,7 @@ describe("local Sync v2 semantic runtime", () => {
   });
 
   test("rejects invalid typed v2 inputs and closes the lifecycle cleanly", async () => {
-    const runtime = createTerraScaleSqliteRuntime({ sqlite: { enabled: true } });
+    const runtime = createLocalTestRuntime();
     try {
       assert.throws(() => runtime.createSyncV2Session({ Collection: "", Principal: "p", Tenant: "t" }), /Collection/iu);
       assert.throws(() => runtime.createSyncV2Session({ Collection: "tasks", Principal: "", Tenant: "t" }), /Principal/iu);

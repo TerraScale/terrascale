@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 import { createTerraScaleSqliteRuntime } from "./index.js";
@@ -26,15 +26,16 @@ if (values.help === true) {
 Run the opt-in SQLite-backed local TerraScale public API emulator.
 
 Options:
-  --database <path>  Absolute SQLite path, or :memory:
+  --database <path>  Absolute SQLite path
                      Default: .terrascale/local.sqlite under the current directory
   --host <host>      Listen host. Default: 127.0.0.1
   --port <port>      Listen port. Default: 0 (choose an available port)
   --seed             Create one local organization, project, database, repository,
                      and document before accepting requests
   --reset            Clear the selected database before optional seeding
-  --require-auth     Require a normal bearer token or session cookie on protected routes
-  --allow-remote     Allow a non-loopback listen host
+  --require-auth     Require TERRASCALE_LOCAL_BEARER_TOKEN on protected routes
+  --allow-remote     Allow a non-loopback host; requires --require-auth and a
+                     token of at least 32 bearer-token characters
   -h, --help         Show this help
 
 Stop the emulator with Ctrl-C. No production SDK defaults are changed.
@@ -42,31 +43,41 @@ Stop the emulator with Ctrl-C. No production SDK defaults are changed.
   process.exit(0);
 }
 
-const databasePath = localDatabasePath(values.database);
-const port = localPort(values.port);
-const runtime = createTerraScaleSqliteRuntime({
-  sqlite: { enabled: true, databasePath },
-  ...(values["require-auth"] === true ? { authentication: "required" as const } : {}),
-  ...(values["allow-remote"] === true ? { allowRemote: true } : {}),
-});
-
+let runtime: ReturnType<typeof createTerraScaleSqliteRuntime> | undefined;
 let closing = false;
 const close = async (): Promise<void> => {
   if (closing) {
     return;
   }
   closing = true;
-  await runtime.close();
+  await runtime?.close();
 };
 
-process.once("SIGINT", () => {
-  void close().finally(() => process.exit(0));
-});
-process.once("SIGTERM", () => {
-  void close().finally(() => process.exit(0));
-});
-
 try {
+  if (values["allow-remote"] === true && values["require-auth"] !== true) {
+    throw new TypeError("--allow-remote requires --require-auth.");
+  }
+  const bearerToken = values["require-auth"] === true
+    ? process.env.TERRASCALE_LOCAL_BEARER_TOKEN
+    : undefined;
+  if (values["require-auth"] === true && (bearerToken === undefined || bearerToken.length === 0)) {
+    throw new TypeError("--require-auth requires TERRASCALE_LOCAL_BEARER_TOKEN.");
+  }
+  const databasePath = localDatabasePath(values.database);
+  const port = localPort(values.port);
+  runtime = createTerraScaleSqliteRuntime({
+    sqlite: { enabled: true, databasePath },
+    ...(values["require-auth"] === true
+      ? { authentication: "required" as const, bearerToken: bearerToken! }
+      : {}),
+    ...(values["allow-remote"] === true ? { allowRemote: true } : {}),
+  });
+  process.once("SIGINT", () => {
+    void close().finally(() => process.exit(0));
+  });
+  process.once("SIGTERM", () => {
+    void close().finally(() => process.exit(0));
+  });
   if (values.reset === true) {
     await runtime.reset();
   }
@@ -92,10 +103,13 @@ try {
 }
 
 function localDatabasePath(value: string | undefined): string {
-  if (value === ":memory:") {
-    return value;
+  if (value === undefined) {
+    return resolve(".terrascale/local.sqlite");
   }
-  return resolve(value ?? ".terrascale/local.sqlite");
+  if (!isAbsolute(value)) {
+    throw new TypeError("--database must be an absolute SQLite path.");
+  }
+  return value;
 }
 
 function localPort(value: string | undefined): number {

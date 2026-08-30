@@ -1,3 +1,5 @@
+import { isAbsolute } from "node:path";
+
 import { createTerraScaleAdminClient, type AdminClient } from "../admin.js";
 import type {
   FetchLike,
@@ -5,6 +7,7 @@ import type {
   TerraScaleSqliteRuntimeConfig,
 } from "../config.js";
 import { createTerraScaleClient, type TerraScaleClient } from "../factory.js";
+import { registerLocalRuntimeFetch } from "../local-runtime-capability.js";
 import type {
   DatabaseId,
   DocumentId,
@@ -20,10 +23,12 @@ import {
   TerraScaleSyncV2Session,
   type TerraScaleSyncV2SessionOptions,
 } from "../sync/v2/session.js";
-import { TerraScaleLocalRouter, type LocalAuthenticationMode } from "./router.js";
+import { normalizeLocalBearerToken } from "./authentication.js";
+import { assertLocalSqliteEnvironment } from "./environment.js";
 import { clearLocalAdminState } from "./handlers/admin.js";
 import { clearLocalPlatformState } from "./handlers/platform.js";
 import { clearLocalSyncV2State } from "./handlers/sync-v2.js";
+import { TerraScaleLocalRouter, type LocalAuthenticationMode } from "./router.js";
 import {
   TerraScaleLocalHttpServer,
   type LocalServerAddress,
@@ -40,6 +45,7 @@ export type TerraScaleSqliteRuntimeOptions = {
   readonly sqlite: TerraScaleSqliteRuntimeConfig;
   readonly allowRemote?: boolean;
   readonly authentication?: LocalAuthenticationMode;
+  readonly bearerToken?: string;
 };
 
 export type TerraScaleLocalListenOptions = {
@@ -91,21 +97,46 @@ export class TerraScaleSqliteRuntime {
   readonly #server: TerraScaleLocalHttpServer;
   readonly #sqlite: TerraScaleSqliteRuntimeConfig;
   readonly #store: TerraScaleSqliteStore;
+  readonly #bearerToken: string | undefined;
   readonly #syncV1Sessions = new Set<TerraScaleSyncSession>();
   readonly #syncV2Sessions = new Set<TerraScaleSyncV2Session>();
   #closed = false;
   constructor(options: TerraScaleSqliteRuntimeOptions) {
     if (options === null || typeof options !== "object") throw new TypeError("SQLite runtime options are required.");
     if (options.sqlite === undefined || options.sqlite.enabled !== true) throw new TypeError("SQLite runtime requires sqlite: { enabled: true }.");
+    assertLocalSqliteEnvironment();
+    if (typeof options.sqlite.databasePath !== "string" || !isAbsolute(options.sqlite.databasePath)) {
+      throw new TypeError("SQLite runtime databasePath must be an absolute path.");
+    }
+    const authentication = options.authentication ?? "permissive";
+    if (authentication !== "permissive" && authentication !== "required") {
+      throw new TypeError('authentication must be either "permissive" or "required".');
+    }
+    const bearerToken = authentication === "required"
+      ? normalizeLocalBearerToken(options.bearerToken)
+      : undefined;
+    if (authentication === "permissive" && options.bearerToken !== undefined) {
+      throw new TypeError('bearerToken can only be set when authentication is "required".');
+    }
+    const allowRemote = options.allowRemote ?? false;
+    if (typeof allowRemote !== "boolean") {
+      throw new TypeError("allowRemote must be a boolean.");
+    }
+    if (allowRemote && authentication !== "required") {
+      throw new TypeError('allowRemote requires authentication: "required" and a strong bearerToken.');
+    }
     this.#sqlite = options.sqlite;
-    this.#store = new TerraScaleSqliteStore(options.sqlite.databasePath ?? ":memory:");
+    this.#bearerToken = bearerToken;
+    this.#store = new TerraScaleSqliteStore(options.sqlite.databasePath);
     this.#router = new TerraScaleLocalRouter(this.#store, {
-      ...(options.authentication === undefined ? {} : { authentication: options.authentication }),
+      authentication,
+      ...(bearerToken === undefined ? {} : { bearerToken }),
     });
     this.#server = new TerraScaleLocalHttpServer(
       (request) => this.#router.handle(request),
-      options.allowRemote === undefined ? {} : { allowRemote: options.allowRemote },
+      { allowRemote },
     );
+    registerLocalRuntimeFetch(this.#fetch);
   }
 
   get databasePath(): string {
@@ -125,6 +156,9 @@ export class TerraScaleSqliteRuntime {
     this.#assertOpen();
     return createTerraScaleClient({
       ...options,
+      ...(this.#bearerToken === undefined || options.accessToken !== undefined
+        ? {}
+        : { accessToken: this.#bearerToken }),
       apiBaseUrl: inProcessOrigin,
       sqlite: this.#sqlite,
       fetch: this.#fetch,
@@ -135,6 +169,9 @@ export class TerraScaleSqliteRuntime {
     this.#assertOpen();
     return createTerraScaleAdminClient({
       ...options,
+      ...(this.#bearerToken === undefined || options.accessToken !== undefined
+        ? {}
+        : { accessToken: this.#bearerToken }),
       apiBaseUrl: inProcessOrigin,
       sqlite: this.#sqlite,
       fetch: this.#fetch,
@@ -159,7 +196,12 @@ export class TerraScaleSqliteRuntime {
       Url: options.Url ?? inProcessOrigin,
       Fetch: (input, init) => this.#fetch(input, {
         ...(init?.method === undefined ? {} : { method: init.method }),
-        ...(init?.headers === undefined ? {} : { headers: init.headers }),
+        headers: {
+          ...(init?.headers ?? {}),
+          ...(this.#bearerToken === undefined
+            ? {}
+            : { authorization: `Bearer ${this.#bearerToken}` }),
+        },
         ...(init?.body === undefined ? {} : { body: init.body }),
         ...(init?.signal === undefined ? {} : { signal: init.signal }),
       }),

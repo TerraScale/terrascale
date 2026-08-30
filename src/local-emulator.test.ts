@@ -13,22 +13,33 @@ import {
   createTerraScaleSqliteRuntime,
   type LocalServerAddress,
   type TerraScaleLocalSeed,
+  type TerraScaleSqliteRuntimeOptions,
 } from "./local/index.js";
 import { localManifestRoutes } from "./local/route-manifest.generated.js";
 import { TerraScaleSqliteStore } from "./local/store.js";
+import { installLocalSqliteTestEnvironment } from "./local/test-environment.test.js";
 import type { TerraScaleResult } from "./result.js";
 
+installLocalSqliteTestEnvironment();
+
 const knownUserId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+const localBearerToken = "local-test-token-0123456789-abcdefghijk";
 
 function expectOk<T>(result: TerraScaleResult<T>): T {
   if (!result.ok) throw new Error(result.error.message);
   return result.value;
 }
 
-async function withTempRuntime<T>(work: (runtime: ReturnType<typeof createTerraScaleSqliteRuntime>, path: string) => Promise<T>): Promise<T> {
+async function withTempRuntime<T>(
+  work: (runtime: ReturnType<typeof createTerraScaleSqliteRuntime>, path: string) => Promise<T>,
+  options: Omit<TerraScaleSqliteRuntimeOptions, "sqlite"> = {},
+): Promise<T> {
   const directory = await mkdtemp(join(tmpdir(), "terrascale-local-emulator-"));
   const databasePath = join(directory, "local.sqlite");
-  const runtime = createTerraScaleSqliteRuntime({ sqlite: { enabled: true, databasePath } });
+  const runtime = createTerraScaleSqliteRuntime({
+    ...options,
+    sqlite: { enabled: true, databasePath },
+  });
   try {
     return await work(runtime, databasePath);
   } finally {
@@ -50,12 +61,12 @@ function localHttpFetch(origin: string): FetchLike {
   };
 }
 
-test("the runtime requires explicit SQLite enablement and offers typed clients", () => {
+test("the runtime requires explicit SQLite enablement and offers typed clients", async () => {
   assert.throws(() => createTerraScaleSqliteRuntime(undefined as never), /options are required/u);
-  const runtime = createTerraScaleSqliteRuntime({ sqlite: { enabled: true } });
-  assert.equal(runtime.databasePath, ":memory:");
-  assert.equal(runtime.createClient().config.sqlite?.enabled, true);
-  return runtime.close();
+  await withTempRuntime(async (runtime, databasePath) => {
+    assert.equal(runtime.databasePath, databasePath);
+    assert.equal(runtime.createClient().config.sqlite?.enabled, true);
+  });
 });
 
 test("all captured public client routes execute through the real loopback server", async () => {
@@ -158,40 +169,33 @@ test("backup plan/execute/replay uses typed clients over the real server", async
 });
 
 test("required bearer gate, health, unknown routes, reset/seed, binding, and remote rejection are real boundary behavior", async () => {
-  const seedRuntime = createTerraScaleSqliteRuntime({ sqlite: { enabled: true } });
-  try {
+  await withTempRuntime(async (seedRuntime) => {
     const seeded = await seedRuntime.reset({ seed: true });
     assert.notEqual(seeded, undefined);
     assert.equal((await seedRuntime.createClient().organizations.list()).ok, true);
-  } finally {
-    await seedRuntime.close();
-  }
-  const runtime = createTerraScaleSqliteRuntime({ sqlite: { enabled: true }, authentication: "required" });
-  const address = await started(runtime);
-  try {
+  });
+  await withTempRuntime(async (runtime) => {
+    const address = await started(runtime);
     const health = await fetch(`${address.origin}/health`);
     assert.equal(health.status, 200);
     assert.deepEqual(await health.json(), { status: "ready", storage: "sqlite" });
     const unauthorized = await fetch(`${address.origin}/api/v1/organizations`);
     assert.equal(unauthorized.status, 401);
-    const authorized = await fetch(`${address.origin}/api/v1/organizations`, { headers: { authorization: "Bearer local-test-token" } });
+    const authorized = await fetch(`${address.origin}/api/v1/organizations`, { headers: { authorization: `Bearer ${localBearerToken}` } });
     assert.equal(authorized.status, 200);
-    const authorizedWithTrailingSlash = await fetch(`${address.origin}/api/v1/organizations/`, { headers: { authorization: "Bearer local-test-token" } });
+    const authorizedWithTrailingSlash = await fetch(`${address.origin}/api/v1/organizations/`, { headers: { authorization: `Bearer ${localBearerToken}` } });
     assert.equal(authorizedWithTrailingSlash.status, 200);
     assert.deepEqual(await authorizedWithTrailingSlash.json(), []);
-    const unknown = await fetch(`${address.origin}/api/v1/not-a-route`, { headers: { authorization: "Bearer local-test-token" } });
+    const unknown = await fetch(`${address.origin}/api/v1/not-a-route`, { headers: { authorization: `Bearer ${localBearerToken}` } });
     assert.equal(unknown.status, 404);
-  } finally {
-    await runtime.close();
-  }
-  const permissive = createTerraScaleSqliteRuntime({ sqlite: { enabled: true }, allowRemote: false });
-  await assert.rejects(() => permissive.start({ host: "192.0.2.1", port: 0 }), /non-loopback host/);
-  await permissive.close();
+  }, { authentication: "required", bearerToken: localBearerToken });
+  await withTempRuntime(async (permissive) => {
+    await assert.rejects(() => permissive.start({ host: "192.0.2.1", port: 0 }), /non-loopback host/);
+  }, { allowRemote: false });
 });
 
 test("the registered local Sync v1 and v2 clients use the same runtime store", async () => {
-  const runtime = createTerraScaleSqliteRuntime({ sqlite: { enabled: true } });
-  try {
+  await withTempRuntime(async (runtime) => {
     const v1 = runtime.createSyncV1Session({
       DatabaseId: knownUserId,
       EnvironmentId: knownUserId,
@@ -214,9 +218,7 @@ test("the registered local Sync v1 and v2 clients use the same runtime store", a
       (error: unknown) => error instanceof Error && error.message.includes("idempotency_key_reused"),
     );
     await v2.disconnect();
-  } finally {
-    await runtime.close();
-  }
+  });
 });
 
 test("Sync v2 journals and idempotency replays stay isolated by principal and tenant", async () => {
@@ -268,15 +270,14 @@ test("Sync v2 journals and idempotency replays stay isolated by principal and te
 });
 
 test("reset and close disconnect every registered Sync session", async () => {
-  const runtime = createTerraScaleSqliteRuntime({ sqlite: { enabled: true } });
-  const createV1 = () => runtime.createSyncV1Session({
-    DatabaseId: knownUserId,
-    EnvironmentId: knownUserId,
-    Tenant: "tenant-lifecycle",
-    AuthorizationScope: "local",
-    BearerTokenProvider: async () => "local-token",
-  });
-  try {
+  await withTempRuntime(async (runtime) => {
+    const createV1 = () => runtime.createSyncV1Session({
+      DatabaseId: knownUserId,
+      EnvironmentId: knownUserId,
+      Tenant: "tenant-lifecycle",
+      AuthorizationScope: "local",
+      BearerTokenProvider: async () => "local-token",
+    });
     const resetV1 = createV1();
     const resetV2 = runtime.createSyncV2Session({ Collection: "tasks", Principal: "user-reset", Tenant: "tenant-lifecycle" });
     await resetV1.connect();
@@ -293,9 +294,7 @@ test("reset and close disconnect every registered Sync session", async () => {
     assert.equal(closeV1.getConnectionSnapshot().Status, "disconnected");
     assert.equal(closeV2.getStatus(), "closed");
     assert.throws(() => runtime.createClient(), /runtime is closed/u);
-  } finally {
-    await runtime.close();
-  }
+  });
 });
 
 test("project deletion cascades every project-scoped core resource", async () => {
