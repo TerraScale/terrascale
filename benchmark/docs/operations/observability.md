@@ -28,7 +28,9 @@ Prometheus target. Its path is `/internal/metrics` in the checked-in deployment
 template. Do not route it through the public Go gateway.
 
 The production registry reports request counters and latency histograms,
-storage usage and finite capacity by tier, replication lag, active Members,
+in-flight work, admission refusals, queue saturation, WAL and commit outcomes,
+storage usage and finite capacity, storage errors, replication lag and
+backlog, active Members, compaction, backup freshness, usage publication,
 component health, liveness, startup, and readiness. Prometheus derives these
 operator views:
 
@@ -37,9 +39,12 @@ operator views:
 | Requests per second | `rate(terrabase_requests_total[$__rate_interval])` |
 | Error and timeout percentage | Bad-outcome rate divided by total request rate. |
 | p50, p95, and p99 latency | `histogram_quantile` over request-duration bucket rates. |
+| Admission pressure | In-flight operations, rejection rate by reason, and queue utilization. |
+| Durability | Commit result rate plus successful commit and WAL fsync p99. |
 | Storage used | `terrabase_storage_bytes` by tier and summed across selected Members. |
 | Storage utilization | Storage bytes divided by `terrabase_storage_capacity_bytes`. |
-| Replication health | Maximum lag and active Members by Region. |
+| Replication health | Maximum lag and backlog, minimum frontier health, and active Members by Region. |
+| Background work | Compaction backlog and I/O, backup age and outcomes, and usage-export failures. |
 
 Import `deploy/observability/grafana-dashboard.json` with the production
 Prometheus data source. Set the dashboard's Region and operation filters as
@@ -48,9 +53,10 @@ combining unrelated deployments makes totals misleading.
 
 The starting alerts live in
 `deploy/observability/prometheus-rules.yml`. Review their error, latency,
-replication, Member, and storage thresholds against the admitted topology and
-ADR 0033 before production. A missing storage-capacity series is an
-instrumentation gap, not evidence of unlimited headroom.
+saturation, durability, replication, Member, storage, compaction, backup, and
+usage-export thresholds against the admitted topology and ADR 0033 before
+production. A missing storage-capacity series is an instrumentation gap, not
+evidence of unlimited headroom.
 
 Studio metrics are not production evidence. Production promotion requires the
 private-network checks, populated collectors, dashboard queries, alert tests,

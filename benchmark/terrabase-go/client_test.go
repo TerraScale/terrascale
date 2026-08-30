@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/test/bufconn"
 
 	v1 "terrascale.tech/terrabase-go/terrabase/v1"
@@ -618,11 +619,32 @@ func TestMutualTLSOverBufconn(t *testing.T) {
 	if !clientPool.AppendCertsFromPEM(pki.caPEM) {
 		t.Fatal("the CA does not parse")
 	}
+	type handshakeObservation struct {
+		state tls.ConnectionState
+		err   error
+	}
+	negotiated := make(chan handshakeObservation, 1)
 	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{
 		Certificates: []tls.Certificate{pair},
 		ClientCAs:    clientPool,
 		ClientAuth:   tls.RequireAndVerifyClientCert,
-	})))
+		MinVersion:   tls.VersionTLS13,
+	})), grpc.UnaryInterceptor(func(ctx context.Context, request any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		observation := handshakeObservation{}
+		remote, ok := peer.FromContext(ctx)
+		if !ok {
+			observation.err = errors.New("the mTLS RPC carries no peer information")
+		} else if tlsInfo, typed := remote.AuthInfo.(credentials.TLSInfo); !typed {
+			observation.err = fmt.Errorf("the mTLS RPC carries auth info %T", remote.AuthInfo)
+		} else {
+			observation.state = tlsInfo.State
+		}
+		select {
+		case negotiated <- observation:
+		default:
+		}
+		return handler(ctx, request)
+	}))
 	fake.register(server)
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(server.Stop)
@@ -637,6 +659,16 @@ func TestMutualTLSOverBufconn(t *testing.T) {
 	}
 	if binding.ServingInstance != 7 {
 		t.Fatalf("the bind answer is wrong: %+v", binding)
+	}
+	observation := <-negotiated
+	if observation.err != nil {
+		t.Fatal(observation.err)
+	}
+	if observation.state.Version != tls.VersionTLS13 {
+		t.Fatalf("the channel negotiated TLS version %#x, want TLS 1.3", observation.state.Version)
+	}
+	if len(observation.state.PeerCertificates) != 1 || observation.state.PeerCertificates[0].Subject.CommonName != "terrabase-test-client" {
+		t.Fatalf("the server did not authenticate the expected client certificate: %+v", observation.state.PeerCertificates)
 	}
 	if _, _, err := client.DocumentRead(context.Background(), "books", "ddia", ReadLevelDefault); err != nil {
 		t.Fatalf("the read over mTLS failed: %v", err)

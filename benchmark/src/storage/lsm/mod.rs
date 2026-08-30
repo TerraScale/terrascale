@@ -53,9 +53,9 @@ use crate::types::{
     StorageSequence, TenantId,
 };
 use crate::usage::{
-    DurableUsageFact, MeasurementWindow, MeterCatalog, MeterKind, MintingIdentity, MintingRule,
-    UsageAdmissionContext, UsageFact, UsageFactLedger, UsageScope,
-    MAX_ADMITTED_REQUEST_UNITS_PER_FACT, MAX_PUBLIC_EGRESS_BYTES_PER_FACT,
+    DurableUsageFact, MAX_ADMITTED_REQUEST_UNITS_PER_FACT, MAX_PUBLIC_EGRESS_BYTES_PER_FACT,
+    MeasurementWindow, MeterCatalog, MeterKind, MintingIdentity, MintingRule, UsageFact,
+    UsageFactLedger, UsageScope,
 };
 
 use super::frontier::{
@@ -597,10 +597,7 @@ impl LsmStorage {
             } else if label.starts_with(AUTHORITATIVE_USAGE_LABEL_PREFIX) {
                 if let Some((source, fact)) = decode_authoritative_usage_entry(entry) {
                     let key = (fact.fact().scope().clone(), fact.fact().identity().clone());
-                    if self
-                        .usage_sources
-                        .get(&key)
-                        .is_some_and(|existing| *existing != source)
+                    if self.usage_sources.get(&key).is_some_and(|existing| *existing != source)
                         || self.usage_index.insert(fact).is_err()
                     {
                         self.usage_corrupt = true;
@@ -1066,13 +1063,46 @@ impl LsmStorage {
         if intent.writes.is_empty() || has_duplicate_targets(&intent.writes) {
             return Err(CommitResult::Rejected(CommitRejection::Validation));
         }
+        let admitted_fact = if let Some(admission) = &intent.usage_admission {
+            if intent.durability != LocalDurability::Synced
+                || admission.request_id().as_str() != intent.operation.as_str()
+            {
+                return Err(CommitResult::Rejected(CommitRejection::Validation));
+            }
+            if self.legacy_usage_present || self.usage_corrupt {
+                return Err(CommitResult::Rejected(CommitRejection::Storage));
+            }
+            let Ok(fact) = admission.fact_for(intent.tenant.clone()) else {
+                return Err(CommitResult::Rejected(CommitRejection::Validation));
+            };
+            Some(fact)
+        } else {
+            None
+        };
         // Step 2: resolve a retried identity durably.
         let identity = (intent.tenant.as_str().to_owned(), intent.operation.as_str().to_owned());
         if let Some(entry) = self.ledger_index.get(&identity) {
             if entry.digest != intent.digest {
                 return Err(CommitResult::Rejected(CommitRejection::OperationIdReuse));
             }
+            if entry.committed
+                && let Some(fact) = &admitted_fact
+            {
+                let key = (fact.scope().clone(), fact.identity().clone());
+                let expected = DurableUsageFact::try_new(fact.clone(), entry.sequence, 1)
+                    .map_err(|_| CommitResult::Rejected(CommitRejection::Storage))?;
+                if self.usage_sources.get(&key) != Some(&UsageFactSource::Mutation)
+                    || self.usage_index.get_by_identity(&key.0, &key.1) != Some(&expected)
+                {
+                    return Err(CommitResult::Rejected(CommitRejection::Storage));
+                }
+            }
             return Err(replay(entry));
+        }
+        if let Some(fact) = &admitted_fact
+            && self.usage_index.get_by_identity(fact.scope(), fact.identity()).is_some()
+        {
+            return Err(CommitResult::Rejected(CommitRejection::OperationIdReuse));
         }
         if self.frontier_poisoned && self.activation.is_some() {
             return Err(CommitResult::Rejected(CommitRejection::Storage));
@@ -1230,13 +1260,15 @@ impl LsmStorage {
         // An admitted origin request records its trusted usage fact in the
         // same WAL batch as the mutation. Replication, repair, and internal
         // writes carry no admission and never mint billable origin usage.
-        if let Some(admission) = &intent.usage_admission {
-            let Ok(usage_fact) = accepted_mutation_usage(&intent.tenant, admission, sequence)
-            else {
+        if let Some(fact) = admitted_fact {
+            let Ok(usage_fact) = DurableUsageFact::try_new(fact, sequence, 1) else {
                 return Err(CommitResult::Rejected(CommitRejection::Storage));
             };
             entries.push(Entry {
-                key: InternalKey::meta(&usage_label(&usage_fact), sequence),
+                key: InternalKey::meta(
+                    &usage_label(UsageFactSource::Mutation, &usage_fact),
+                    sequence,
+                ),
                 value: usage_fact.encoded(),
             });
         }
@@ -1572,8 +1604,10 @@ fn persisted_entry_is_semantically_valid(entry: &Entry) -> bool {
         let label = meta_label(entry.key.user_key());
         if label == META_HISTORY_FLOOR {
             decode_meta_bound(&entry.value).is_some()
-        } else if label.starts_with(USAGE_LABEL_PREFIX) {
-            decode_usage_entry(entry).is_some()
+        } else if label.starts_with(LEGACY_USAGE_LABEL_PREFIX) {
+            true
+        } else if label.starts_with(AUTHORITATIVE_USAGE_LABEL_PREFIX) {
+            decode_authoritative_usage_entry(entry).is_some()
         } else {
             false
         }
@@ -1600,38 +1634,98 @@ fn meta_label(user_key: &[u8]) -> String {
     reader.read_string().unwrap_or_default()
 }
 
-const USAGE_LABEL_PREFIX: &str = "usage/";
+const LEGACY_USAGE_LABEL_PREFIX: &str = "usage/";
+const AUTHORITATIVE_USAGE_LABEL_PREFIX: &str = "usage-v2/";
 
-fn usage_label(fact: &DurableUsageFact) -> String {
-    format!("{USAGE_LABEL_PREFIX}{:020}:{}", fact.sequence(), fact.fact().identity().id())
+impl UsageFactSource {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Mutation => "mutation",
+            Self::Standalone => "standalone",
+        }
+    }
 }
 
-/// Builds the trusted origin usage fact for one accepted mutation.
-fn accepted_mutation_usage(
-    tenant: &TenantId,
-    admission: &UsageAdmissionContext,
-    sequence: u64,
-) -> Result<DurableUsageFact, ()> {
-    let fact = admission.fact_for(tenant.clone()).map_err(|_| ())?;
-    DurableUsageFact::try_new(fact, sequence, 1).map_err(|_| ())
+const fn usage_rule_label(rule: MintingRule) -> &'static str {
+    match rule {
+        MintingRule::AcceptedOriginCommit => "accepted-origin",
+        MintingRule::StableAdmittedRequest => "stable-request",
+        MintingRule::PublicResponseBytes => "public-response",
+        MintingRule::ActiveRegionHour => "active-region-hour",
+        MintingRule::BackupByteHour => "backup-byte-hour",
+        MintingRule::ExplicitRestoreWork => "explicit-restore",
+    }
 }
 
-fn decode_usage_entry(entry: &Entry) -> Option<DurableUsageFact> {
+fn hex_usage_component(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(value.len().saturating_mul(2));
+    for byte in value.bytes() {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+/// Builds a delimiter-safe, scope-complete user key. Sequence is deliberately
+/// absent: replay of one scoped minting identity must resolve the same record,
+/// and compaction must never keep two versions as separate logical facts.
+fn usage_label(source: UsageFactSource, fact: &DurableUsageFact) -> String {
+    let scope = fact.fact().scope();
+    format!(
+        "{AUTHORITATIVE_USAGE_LABEL_PREFIX}{}:{}:{}:{}:{}:{}:{}:{}",
+        source.label(),
+        usage_rule_label(fact.fact().identity().rule()),
+        hex_usage_component(scope.tenant_id().as_str()),
+        hex_usage_component(scope.project_id().as_str()),
+        hex_usage_component(scope.database_id().as_str()),
+        hex_usage_component(scope.partition_id().as_str()),
+        hex_usage_component(scope.region_id().as_str()),
+        hex_usage_component(fact.fact().identity().id().as_str()),
+    )
+}
+
+fn decode_authoritative_usage_entry(entry: &Entry) -> Option<(UsageFactSource, DurableUsageFact)> {
     let label = meta_label(entry.key.user_key());
-    let suffix = label.strip_prefix(USAGE_LABEL_PREFIX)?;
-    let (sequence, identity) = suffix.split_once(':')?;
-    let sequence = sequence.parse::<u64>().ok()?;
-    if sequence != entry.key.sequence() {
-        return None;
-    }
     let durable = DurableUsageFact::decode(&entry.value).ok()?;
-    if durable.sequence() != sequence
-        || durable.fact().identity().id().as_str() != identity
-        || durable.fact().identity().rule() != crate::usage::MintingRule::AcceptedOriginCommit
-    {
+    if durable.sequence() != entry.key.sequence() || durable.replica_epoch() != 1 {
         return None;
     }
-    Some(durable)
+    [UsageFactSource::Mutation, UsageFactSource::Standalone]
+        .into_iter()
+        .find(|source| {
+            authoritative_usage_fact_is_valid(*source, durable.fact())
+                && usage_label(*source, &durable) == label
+        })
+        .map(|source| (source, durable))
+}
+
+fn authoritative_usage_fact_is_valid(source: UsageFactSource, fact: &UsageFact) -> bool {
+    let known_version = MeterCatalog::initial().get(fact.meter(), fact.meter_version()).is_some();
+    let instant = fact.window().start_millis() != 0
+        && fact.window().start_millis() == fact.window().end_millis();
+    let admitted = fact.meter() == MeterKind::AdmittedRequestUnits
+        && matches!(fact.identity(), MintingIdentity::StableAdmittedRequest(_))
+        && fact.delta() > 0
+        && fact.delta() <= MAX_ADMITTED_REQUEST_UNITS_PER_FACT;
+    let public_egress = fact.meter() == MeterKind::PublicEgressBytes
+        && matches!(fact.identity(), MintingIdentity::PublicResponse(_))
+        && fact.delta() > 0
+        && fact.delta() <= MAX_PUBLIC_EGRESS_BYTES_PER_FACT;
+    known_version
+        && instant
+        && match source {
+            UsageFactSource::Mutation => admitted,
+            UsageFactSource::Standalone => admitted || public_egress,
+        }
+}
+
+fn usage_window_matches(fact: MeasurementWindow, filter: MeasurementWindow) -> bool {
+    if fact.start_millis() == fact.end_millis() {
+        fact.start_millis() >= filter.start_millis() && fact.start_millis() < filter.end_millis()
+    } else {
+        fact.start_millis() < filter.end_millis() && filter.start_millis() < fact.end_millis()
+    }
 }
 
 /// Reports whether one write set targets the same document twice.
@@ -2136,6 +2230,103 @@ impl StoragePort for LsmStorage {
             sequence: StorageSequence::new(entry.sequence),
             durability: super::file::min_level(entry.requested, proven),
         })
+    }
+
+    fn record_usage(
+        &mut self,
+        tenant: &TenantId,
+        fact: UsageFact,
+    ) -> Result<(DurableUsageFact, bool), UsageStorageError> {
+        if self.usage_corrupt {
+            return Err(UsageStorageError::Corrupt);
+        }
+        if self.legacy_usage_present {
+            return Err(UsageStorageError::UsageUnavailable);
+        }
+        if fact.scope().tenant_id() != tenant
+            || !authoritative_usage_fact_is_valid(UsageFactSource::Standalone, &fact)
+        {
+            return Err(UsageStorageError::Corrupt);
+        }
+        let key = (fact.scope().clone(), fact.identity().clone());
+        if let Some(existing) = self.usage_index.get_by_identity(&key.0, &key.1) {
+            if !self.usage_sources.contains_key(&key) {
+                return Err(UsageStorageError::Corrupt);
+            }
+            return if existing.fact() == &fact {
+                Ok((existing.clone(), true))
+            } else {
+                Err(UsageStorageError::IdentityConflict)
+            };
+        }
+        self.flush_pending_flips_inner().map_err(|()| UsageStorageError::Unavailable)?;
+        let sequence =
+            self.sequence_watermark.checked_add(1).ok_or(UsageStorageError::Unavailable)?;
+        self.sequence_watermark = sequence;
+        let durable =
+            DurableUsageFact::try_new(fact, sequence, 1).map_err(|_| UsageStorageError::Corrupt)?;
+        let entry = Entry {
+            key: InternalKey::meta(&usage_label(UsageFactSource::Standalone, &durable), sequence),
+            value: durable.encoded(),
+        };
+        if self.faults.fire(FaultPoint::WalAppend).is_err() {
+            return Err(UsageStorageError::Unavailable);
+        }
+        let append = self
+            .append_wal_batch(std::slice::from_ref(&entry))
+            .map_err(|()| UsageStorageError::Unavailable)?;
+        if self.witness_wal_append(&append, true, FaultPoint::ReadyFrontierSync).is_err() {
+            if self.wal.truncate(append.start).and_then(|()| self.wal.sync()).is_err() {
+                self.frontier_poisoned = true;
+            }
+            return Err(UsageStorageError::Unavailable);
+        }
+        self.apply_entry_to_memory(&entry);
+        if self.usage_corrupt {
+            return Err(UsageStorageError::Corrupt);
+        }
+        if !self.frontier_poisoned
+            && self
+                .memtable
+                .should_rotate(self.tuning.max_memtable_bytes, self.tuning.max_memtable_entries)
+        {
+            let replacement = std::mem::take(&mut self.memtable);
+            self.frozen.push(replacement);
+            if self.frozen.len() >= 2 {
+                compact::flush_frozen(self);
+            }
+        }
+        Ok((durable, false))
+    }
+
+    fn usage_facts_page(
+        &self,
+        tenant: &TenantId,
+        snapshot: StorageSequence,
+        after: Option<&UsageFactPosition>,
+        window: Option<MeasurementWindow>,
+        limit: u32,
+    ) -> Result<Vec<DurableUsageFact>, UsageStorageError> {
+        if self.usage_corrupt {
+            return Err(UsageStorageError::Corrupt);
+        }
+        if self.legacy_usage_present {
+            return Err(UsageStorageError::UsageUnavailable);
+        }
+        let mut facts: Vec<DurableUsageFact> = self
+            .usage_index
+            .facts()
+            .filter(|fact| fact.fact().scope().tenant_id() == tenant)
+            .filter(|fact| fact.sequence() <= snapshot.get())
+            .filter(|fact| {
+                window.is_none_or(|filter| usage_window_matches(fact.fact().window(), filter))
+            })
+            .filter(|fact| after.is_none_or(|position| UsageFactPosition::of(fact) > *position))
+            .cloned()
+            .collect();
+        facts.sort_by(|left, right| UsageFactPosition::of(left).cmp(&UsageFactPosition::of(right)));
+        facts.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+        Ok(facts)
     }
 
     fn read_document_at(

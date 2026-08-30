@@ -7,9 +7,9 @@ use std::num::NonZeroU64;
 use std::time::Duration;
 
 use terrabase::observability::{
-    AdmissionReason, BackupMode, CommitResult, Component, HealthStatus, MetricsRegistry,
-    Operation, Outcome, Queue, Region, ServiceState, StorageOperation, StorageTier, TaskOutcome,
-    PROMETHEUS_PATH, redact_diagnostic,
+    AdmissionReason, BackupMode, CommitResult, Component, HealthStatus, MetricsRegistry, Operation,
+    Outcome, PROMETHEUS_PATH, Queue, Region, ServiceState, StorageOperation, StorageTier,
+    TaskOutcome, redact_diagnostic,
 };
 
 #[test]
@@ -136,11 +136,7 @@ fn production_diagnostic_signals_are_typed_and_share_the_snapshot() {
     let metrics = MetricsRegistry::new();
     metrics.set_in_flight(Operation::Write, 3);
     metrics.record_admission_rejection(Operation::Write, AdmissionReason::QueueFull);
-    metrics.set_queue(
-        Queue::Commit,
-        7,
-        NonZeroU64::new(8).expect("test capacity is non-zero"),
-    );
+    metrics.set_queue(Queue::Commit, 7, NonZeroU64::new(8).expect("test capacity is non-zero"));
     metrics.record_wal_fsync(TaskOutcome::Error, Duration::from_millis(20));
     metrics.record_commit(CommitResult::Unknown, Duration::from_millis(30));
     metrics.set_replication_backlog_bytes(Region::Fra, 1_024);
@@ -165,23 +161,14 @@ fn production_diagnostic_signals_are_typed_and_share_the_snapshot() {
     assert_eq!(snapshot.wal_fsync()[0].2.count(), 1);
     assert_eq!(snapshot.commits()[0].0, CommitResult::Unknown);
     assert_eq!(snapshot.replication_backlog(), &[(Region::Fra, 1_024)]);
-    assert_eq!(
-        snapshot.replication_frontier_health(),
-        &[(Region::Fra, HealthStatus::Degraded)]
-    );
-    assert_eq!(
-        snapshot.storage_errors(),
-        &[(StorageTier::Tier2, StorageOperation::Flush, 1)]
-    );
+    assert_eq!(snapshot.replication_frontier_health(), &[(Region::Fra, HealthStatus::Degraded)]);
+    assert_eq!(snapshot.storage_errors(), &[(StorageTier::Tier2, StorageOperation::Flush, 1)]);
     assert_eq!(snapshot.compaction_backlog()[0].bytes(), 2_048);
     assert_eq!(snapshot.compaction_runs(), &[(TaskOutcome::Success, 1)]);
     assert_eq!(snapshot.compaction_input_bytes(), 4_096);
     assert_eq!(snapshot.compaction_output_bytes(), 3_072);
     assert_eq!(snapshot.backup_last_success_age(), &[(BackupMode::Continuous, 3_600.0)]);
-    assert_eq!(
-        snapshot.backup_runs(),
-        &[(BackupMode::Continuous, TaskOutcome::Error, 1)]
-    );
+    assert_eq!(snapshot.backup_runs(), &[(BackupMode::Continuous, TaskOutcome::Error, 1)]);
     assert_eq!(snapshot.usage_export_frontier(), Some(42));
     assert_eq!(snapshot.usage_export_failures(), 1);
 
@@ -209,11 +196,7 @@ fn every_exposed_label_name_belongs_to_its_closed_family() {
     metrics.set_active_members(Region::Gru, 2);
     metrics.set_in_flight(Operation::Read, 1);
     metrics.record_admission_rejection(Operation::Read, AdmissionReason::Capacity);
-    metrics.set_queue(
-        Queue::Foreground,
-        0,
-        NonZeroU64::new(1).expect("test capacity is non-zero"),
-    );
+    metrics.set_queue(Queue::Foreground, 0, NonZeroU64::new(1).expect("test capacity is non-zero"));
     metrics.record_wal_fsync(TaskOutcome::Success, Duration::ZERO);
     metrics.record_commit(CommitResult::Committed, Duration::ZERO);
     metrics.set_compaction_backlog_bytes(StorageTier::Tier1, 0);
@@ -340,27 +323,36 @@ fn admitted_data_plane_remains_ready_during_control_plane_loss() {
 }
 
 #[test]
+fn unconfigured_optional_components_are_unknown_not_unhealthy() {
+    let text = MetricsRegistry::new().render_prometheus();
+    assert!(text.contains("terrabase_component_health{component=\"backup\"} -1"));
+    assert!(text.contains("terrabase_component_health{component=\"metrics\"} -1"));
+}
+
+#[test]
 fn alert_rules_preserve_required_optional_and_selected_region_semantics() {
     let rules = include_str!("../../deploy/observability/prometheus-rules.yml");
     assert!(rules.contains(
         r#"terrabase_component_health{component=~"storage|replication|membership"} <= 0"#
     ));
-    assert!(rules.contains(
-        r#"terrabase_component_health{component=~"control_plane|backup|metrics"} == 0"#
-    ));
+    assert!(
+        rules.contains(
+            r#"terrabase_component_health{component=~"control_plane|backup|metrics"} == 0"#
+        )
+    );
     assert!(!rules.contains("expr: terrabase_component_health == 0\n"));
     assert!(rules.contains(r#"terrabase_active_members{region!="unknown"} < 2"#));
     assert!(rules.contains("0.000000001"));
     assert!(!rules.contains("clamp_min(sum(rate(terrabase_requests_total[5m])), 1)"));
 
     for alert in [
-        "TerraBaseQueueSaturated",
-        "TerraBaseWalFsyncFailures",
+        "TerraBaseQueueSaturationHigh",
+        "TerraBaseWalFsyncErrors",
         "TerraBaseCommitOutcomeUnknown",
         "TerraBaseStorageErrors",
-        "TerraBaseReplicationFrontierUnavailable",
+        "TerraBaseReplicationFrontierUnhealthy",
         "TerraBaseContinuousBackupStale",
-        "TerraBaseUsageExportFailures",
+        "TerraBaseUsageExportErrors",
     ] {
         assert_eq!(
             rules.matches(&format!("alert: {alert}")).count(),

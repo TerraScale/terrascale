@@ -32,6 +32,11 @@ Production gateway-to-engine traffic uses private network paths and TBEP mTLS.
 Members have no public ingress. Direct TBEP, plaintext TCP, trusted headers,
 test certificates, and UDS are unavailable in the public deployment.
 
+The gateway certificate chains to the dedicated Database-gateway CA and
+carries one admitted SPIFFE URI SAN. TerraBase derives the gateway principal
+from that URI and requires the channel binding to repeat the same value. A
+principal supplied only in protobuf or gRPC metadata has no authority.
+
 The private protobuf schema stays in the TerraBase repository. The generated
 Go bindings stay in `terrabase-go`. The gateway pins a released client module
 and records its schema digest in the deployment manifest. A copied or locally

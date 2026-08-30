@@ -1,9 +1,9 @@
 # Go stub generation for the TBEP gRPC contract (ADR 0025).
 #
 # CI pins buf v1.50.0, protoc-gen-go v1.36.12, and
-# protoc-gen-go-grpc v1.6.2. Both checked-in binding trees are generated
-# from the buf.yaml module's single engine.proto input with source-relative
-# paths.
+# protoc-gen-go-grpc v1.6.2. The sole checked-in client binding tree is
+# generated from the buf.yaml module's single engine.proto input with
+# source-relative paths.
 #
 # Regenerate after editing the proto with:
 #
@@ -14,12 +14,6 @@
 # through protox on every build.
 version: v2
 plugins:
-  - local: protoc-gen-go
-    out: go/tbep/gen
-    opt: paths=source_relative
-  - local: protoc-gen-go-grpc
-    out: go/tbep/gen
-    opt: paths=source_relative
   - local: protoc-gen-go
     out: terrabase-go
     opt: paths=source_relative

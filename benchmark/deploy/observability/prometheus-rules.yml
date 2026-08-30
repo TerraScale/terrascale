@@ -85,7 +85,7 @@ groups:
             /
             clamp_min(
               sum by (job, instance, region, operation) (rate(terrabase_requests_total[5m])),
-              0.001
+              0.000000001
             )
           ) > 0.01
           and on (job, instance, region, operation)
@@ -106,7 +106,7 @@ groups:
           severity: warning
         annotations:
           summary: A TerraBase work queue is above 80 percent
-          description: Queue {{ $labels.queue }} has remained above the starting saturation threshold for ten minutes.
+          description: Queue {{ $labels.queue }} has remained above the saturation threshold for ten minutes.
 
       - alert: TerraBaseAdmissionRejectionsHigh
         expr: sum by (operation, reason) (rate(terrabase_admission_rejections_total[5m])) > 1
@@ -136,7 +136,7 @@ groups:
           severity: warning
         annotations:
           summary: TerraBase successful read p99 is above 10 ms
-          description: Engine read latency in {{ $labels.region }} has exceeded the ADR 0033 starting threshold for ten minutes at sustained traffic.
+          description: Engine read latency in {{ $labels.region }} has exceeded the ADR 0033 threshold for ten minutes at sustained traffic.
 
       - alert: TerraBaseWriteLatencyP99High
         expr: |
@@ -156,7 +156,7 @@ groups:
           severity: warning
         annotations:
           summary: TerraBase successful write p99 is above 20 ms
-          description: Engine write latency in {{ $labels.region }} has exceeded the ADR 0033 starting threshold for ten minutes at sustained traffic.
+          description: Engine write latency in {{ $labels.region }} has exceeded the ADR 0033 threshold for ten minutes at sustained traffic.
 
   - name: terrabase-durability-and-replication
     interval: 30s
@@ -285,14 +285,14 @@ groups:
           description: At least one compaction run failed in the last fifteen minutes.
 
       - alert: TerraBaseContinuousBackupStale
-        expr: terrabase_backup_last_success_age_seconds{mode="continuous"} > 86400
+        expr: terrabase_backup_last_success_age_seconds{mode="continuous"} > 93600
         for: 15m
         labels:
           service: terrabase
           severity: critical
         annotations:
-          summary: TerraBase continuous backup is older than one day
-          description: No verified continuous backup success has been observed within the ADR 0033 daily recovery-point target.
+          summary: TerraBase continuous backup is older than 26 hours
+          description: No verified continuous backup success has been observed within the operating threshold for the ADR 0033 daily recovery-point target.
 
       - alert: TerraBaseBackupErrors
         expr: sum by (mode) (increase(terrabase_backup_runs_total{outcome="error"}[30m])) > 0

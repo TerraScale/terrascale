@@ -32,7 +32,10 @@ The form retains a plain hidden field as the submitted value. If Monaco cannot
 load, the page falls back to the plain JSON textarea and remains usable.
 
 Datastar actions stay typed and bounded. Destructive actions return their
-typed engine result. The Studio does not add a generic shell, arbitrary HTTP
+typed engine result. Delete, restore, topology, tier, and compaction actions
+require the operator to type the exact displayed target before the Studio
+submits them. The server validates the confirmation again and never relies on
+browser-only checks. The Studio does not add a generic shell, arbitrary HTTP
 request editor, raw TBEP frame editor, or direct storage-file mutation route.
 
 ## Deployment
@@ -41,9 +44,10 @@ The Studio runs separately from production Members. It may open a development
 or operator-designated engine location only when that location has one writer.
 The production gateway and public platform do not depend on the Studio.
 
-Monaco may load from an exact versioned asset URL because this is a private
-operator tool. Failure to load the asset cannot block other Studio operations.
-The selected version stays explicit in source and changes through review.
+Monaco and its workers load only from versioned assets vendored with the Studio.
+The Studio makes no CDN request. Failure to load Monaco cannot block other
+Studio operations. The selected version stays explicit in source and changes
+through review.
 
 ## Required evidence
 

@@ -938,7 +938,11 @@ impl SyncDeliveryHost {
         }
     }
 
-    fn can_add_scope(state: &HostState, tenant: &str, collection: &str) -> Result<(), HostingError> {
+    fn can_add_scope(
+        state: &HostState,
+        tenant: &str,
+        collection: &str,
+    ) -> Result<(), HostingError> {
         if state.scopes.contains_key(&(tenant.to_owned(), collection.to_owned())) {
             return Ok(());
         }
@@ -954,7 +958,9 @@ impl SyncDeliveryHost {
         }
         let count = state.sessions.values().filter(|session| session.tenant == tenant).count();
         if count >= MAX_SESSIONS_PER_TENANT {
-            return Err(HostingError::SessionRefused("the tenant session limit is exhausted".into()));
+            return Err(HostingError::SessionRefused(
+                "the tenant session limit is exhausted".into(),
+            ));
         }
         Ok(())
     }
@@ -1162,7 +1168,17 @@ impl TbepHost for SyncDeliveryHost {
     ) -> Result<(BackboneSubscribeResponse, Receiver<TbepNotification>), HostingError> {
         let mut state = self.lock();
         state.frames_served += 1;
-        let (sender, receiver) = channel();
+        Self::ensure_admission(&state)?;
+        if let Some(existing) = state.subscriptions.get(&request.subscription_id) {
+            if existing.tenant != tenant {
+                return Err(HostingError::SubscriptionRefused(
+                    "subscription id belongs to another channel".into(),
+                ));
+            }
+        } else {
+            Self::can_add_subscription(&state, tenant)?;
+        }
+        let (sender, receiver) = sync_channel(SUBSCRIPTION_QUEUE_BOUND);
         let from = match &request.from {
             SubscriptionStart::Live => 0,
             SubscriptionStart::Sequence(sequence) => *sequence,
@@ -1185,11 +1201,23 @@ impl TbepHost for SyncDeliveryHost {
         events.truncate(crate::registry::MAX_LIST_ITEMS);
         let next_sequence = events.last().map_or(from, |event| event.sequence + 1);
         if !events.is_empty() {
-            let _ = sender.send(TbepNotification::Batch(SubscriptionBatch {
+            sender
+                .try_send(TbepNotification::Batch(SubscriptionBatch {
+                    subscription_id: request.subscription_id,
+                    from_sequence: from,
+                    events,
+                    next_sequence,
+                }))
+                .map_err(|_| {
+                    HostingError::SubscriptionRefused(
+                        "subscription replay queue is unavailable".into(),
+                    )
+                })?;
+        }
+        if let Some(existing) = state.subscriptions.remove(&request.subscription_id) {
+            let _ = existing.feed.try_send(TbepNotification::Closed(SubscriptionClosed {
                 subscription_id: request.subscription_id,
-                from_sequence: from,
-                events,
-                next_sequence,
+                reason: SubscriptionCloseReason::Replaced,
             }));
         }
         state.subscriptions.insert(
@@ -1217,6 +1245,7 @@ impl TbepHost for SyncDeliveryHost {
     ) -> Result<BackboneAcknowledgeResponse, HostingError> {
         let mut state = self.lock();
         state.frames_served += 1;
+        Self::ensure_admission(&state)?;
         match state.subscriptions.get_mut(&request.subscription_id) {
             Some(subscription) if subscription.tenant == tenant => {
                 if request.through_sequence > subscription.next_sequence {
@@ -1243,12 +1272,13 @@ impl TbepHost for SyncDeliveryHost {
     ) -> Result<BackboneUnsubscribeResponse, HostingError> {
         let mut state = self.lock();
         state.frames_served += 1;
+        Self::ensure_admission(&state)?;
         // The unsubscribe removes only the owning tenant's subscription:
         // another channel's unsubscribe is refused and changes nothing.
         Self::subscription_of(&state, tenant, request.subscription_id)?;
         match state.subscriptions.remove(&request.subscription_id) {
             Some(subscription) => {
-                let _ = subscription.feed.send(TbepNotification::Closed(SubscriptionClosed {
+                let _ = subscription.feed.try_send(TbepNotification::Closed(SubscriptionClosed {
                     subscription_id: request.subscription_id,
                     reason: SubscriptionCloseReason::Replaced,
                 }));
@@ -1265,9 +1295,12 @@ impl TbepHost for SyncDeliveryHost {
     ) -> Result<SyncSessionSetupResponse, HostingError> {
         let mut state = self.lock();
         state.frames_served += 1;
+        Self::ensure_admission(&state)?;
         if request.collection.len() > 64 {
             return Err(HostingError::Invalid("collection exceeds the sync bound".into()));
         }
+        Self::can_add_scope(&state, tenant, &request.collection)?;
+        Self::can_add_session(&state, tenant)?;
         let resume = request.resume.as_deref().map(Self::decode_checkpoint).transpose()?;
         let (checkpoint, retained_floor) = {
             let scope = Self::scope(&mut state.scopes, tenant, &request.collection);
@@ -1318,6 +1351,7 @@ impl TbepHost for SyncDeliveryHost {
     ) -> Result<SyncDeltaPullResponse, HostingError> {
         let mut state = self.lock();
         state.frames_served += 1;
+        Self::ensure_admission(&state)?;
         let (collection, from) = {
             let session = Self::session_of(&state, tenant, request.session_id)?;
             let from = Self::decode_checkpoint(&request.from)?;
@@ -1390,6 +1424,7 @@ impl TbepHost for SyncDeliveryHost {
     ) -> Result<SyncSnapshotPullResponse, HostingError> {
         let mut state = self.lock();
         state.frames_served += 1;
+        Self::ensure_admission(&state)?;
         let collection = Self::session_collection(&state, tenant, request.session_id)?;
         let scope = Self::scope(&mut state.scopes, tenant, &collection);
         match scope.core.resync_snapshot() {
@@ -1426,6 +1461,7 @@ impl TbepHost for SyncDeliveryHost {
     ) -> Result<SyncCheckpointAckResponse, HostingError> {
         let mut state = self.lock();
         state.frames_served += 1;
+        Self::ensure_admission(&state)?;
         // The session must belong to this tenant's channel before the
         // checkpoint is even parsed: another tenant's ack is refused
         // with the typed session refusal and changes nothing.
@@ -1462,6 +1498,7 @@ impl TbepHost for SyncDeliveryHost {
     ) -> Result<SyncMutationSubmitResponse, HostingError> {
         let mut guard = self.lock();
         guard.frames_served += 1;
+        Self::ensure_admission(&guard)?;
         let collection = Self::session_collection(&guard, tenant, request.session_id)?;
         let state: &mut HostState = &mut guard;
         let scope = Self::scope(&mut state.scopes, tenant, &collection);
@@ -1541,6 +1578,7 @@ impl TbepHost for SyncDeliveryHost {
         // Push the hint (trigger) and the delta (batch) to every matching
         // subscription: push the hint, pull the delta (PD-2026-08-26-13).
         let subscriptions: Vec<u64> = state.subscriptions.keys().copied().collect();
+        let mut failed_subscriptions = Vec::new();
         for id in subscriptions {
             let Some(subscription) = state.subscriptions.get_mut(&id) else {
                 continue;
@@ -1553,17 +1591,32 @@ impl TbepHost for SyncDeliveryHost {
             let from = subscription.next_sequence;
             let events = scope.events_from(from, crate::registry::MAX_LIST_ITEMS);
             if let Some(last) = events.last() {
-                subscription.next_sequence = last.sequence + 1;
-                let _ = subscription.feed.send(TbepNotification::Batch(SubscriptionBatch {
+                let next_sequence = last.sequence + 1;
+                let batch = TbepNotification::Batch(SubscriptionBatch {
                     subscription_id: id,
                     from_sequence: from,
                     events,
-                    next_sequence: subscription.next_sequence,
-                }));
+                    next_sequence,
+                });
+                if subscription.feed.try_send(batch).is_err() {
+                    failed_subscriptions.push(id);
+                    continue;
+                }
+                subscription.next_sequence = next_sequence;
             }
-            let _ = subscription.feed.send(TbepNotification::Trigger(
-                crate::registry::TriggerNotification { subscription_id: id, ..trigger.clone() },
-            ));
+            if subscription
+                .feed
+                .try_send(TbepNotification::Trigger(crate::registry::TriggerNotification {
+                    subscription_id: id,
+                    ..trigger.clone()
+                }))
+                .is_err()
+            {
+                failed_subscriptions.push(id);
+            }
+        }
+        for id in failed_subscriptions {
+            state.subscriptions.remove(&id);
         }
         Ok(mutation_applied(request.session_id, receipt))
     }
@@ -1575,6 +1628,7 @@ impl TbepHost for SyncDeliveryHost {
     ) -> Result<SyncSessionCloseResponse, HostingError> {
         let mut state = self.lock();
         state.frames_served += 1;
+        Self::ensure_admission(&state)?;
         // The close removes only the owning tenant's session: another
         // channel's close is refused and changes nothing.
         Self::session_of(&state, tenant, request.session_id)?;
@@ -1625,12 +1679,13 @@ impl TbepHost for SyncDeliveryHost {
         let subscriptions: Vec<u64> = state.subscriptions.keys().copied().collect();
         for id in subscriptions {
             if let Some(subscription) = state.subscriptions.remove(&id) {
-                let _ = subscription.feed.send(TbepNotification::Closed(SubscriptionClosed {
+                let _ = subscription.feed.try_send(TbepNotification::Closed(SubscriptionClosed {
                     subscription_id: id,
                     reason: SubscriptionCloseReason::ShuttingDown,
                 }));
             }
         }
+        state.sessions.clear();
         Ok(SupervisionShutdownResponse { state: state.health, in_flight })
     }
 }

@@ -1,15 +1,14 @@
-name: TerraBase native release candidates
+name: TerraBase unsigned native release validation
 
 on:
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened]
+  push:
+    branches: [develop]
 
 permissions:
   contents: read
 
 concurrency:
-  group: terrabase-candidate-${{ forgejo.event.pull_request.head.sha }}
+  group: terrabase-unsigned-${{ forgejo.sha }}
   cancel-in-progress: true
 
 env:
@@ -18,16 +17,13 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  candidate-amd64:
-    name: candidate/amd64-native
-    if: ${{ forgejo.head_ref == 'develop' && forgejo.event.pull_request.head.repo.full_name == forgejo.repository }}
+  unsigned-amd64:
+    name: unsigned/amd64-native
     runs-on: [self-hosted, protected, terrabase-release-amd64]
     timeout-minutes: 360
-    environment: terrabase-release-signing
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ forgejo.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Install pinned Rust toolchain
@@ -36,7 +32,7 @@ jobs:
           toolchain: 1.97.1
           components: rustfmt, clippy
           targets: x86_64-unknown-linux-gnu
-      - name: Require the protected native AMD64 environment
+      - name: Require the native AMD64 package environment
         run: |
           test "$(uname -m)" = x86_64
           test "$(rustc -vV | sed -n 's/^host: //p')" = x86_64-unknown-linux-gnu
@@ -44,32 +40,26 @@ jobs:
           command -v jq
           command -v openssl
           command -v skopeo
-      - name: Build reproducible signed AMD64 candidates
-        env:
-          TERRABASE_RELEASE_SIGNING_KEY_PEM: ${{ secrets.TERRABASE_RELEASE_SIGNING_KEY_PEM }}
-          TERRABASE_RELEASE_VERIFY_KEY_PEM: ${{ secrets.TERRABASE_RELEASE_VERIFY_KEY_PEM }}
+      - name: Build byte-reproducible unsigned AMD64 packages
         run: |
-          deploy/release/candidate.sh server x86_64-unknown-linux-gnu artifacts/candidate/terrabase-server-amd64
-          deploy/release/candidate.sh studio x86_64-unknown-linux-gnu artifacts/candidate/terrabase-studio-amd64
+          deploy/release/reproduce.sh server x86_64-unknown-linux-gnu artifacts/unsigned/terrabase-server-amd64
+          deploy/release/reproduce.sh studio x86_64-unknown-linux-gnu artifacts/unsigned/terrabase-studio-amd64
       - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
-          name: terrabase-native-amd64-${{ forgejo.event.pull_request.head.sha }}
+          name: terrabase-unsigned-amd64-${{ forgejo.sha }}
           path: |
-            artifacts/candidate/terrabase-server-amd64
-            artifacts/candidate/terrabase-studio-amd64
+            artifacts/unsigned/terrabase-server-amd64
+            artifacts/unsigned/terrabase-studio-amd64
           if-no-files-found: error
           retention-days: 30
 
-  candidate-arm64:
-    name: candidate/arm64-native
-    if: ${{ forgejo.head_ref == 'develop' && forgejo.event.pull_request.head.repo.full_name == forgejo.repository }}
+  unsigned-arm64:
+    name: unsigned/arm64-native
     runs-on: [self-hosted, protected, terrabase-release-arm64]
     timeout-minutes: 360
-    environment: terrabase-release-signing
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ forgejo.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Install pinned Rust toolchain
@@ -78,7 +68,7 @@ jobs:
           toolchain: 1.97.1
           components: rustfmt, clippy
           targets: aarch64-unknown-linux-gnu
-      - name: Require the protected native ARM64 environment
+      - name: Require the native ARM64 package environment
         run: |
           test "$(uname -m)" = aarch64
           test "$(rustc -vV | sed -n 's/^host: //p')" = aarch64-unknown-linux-gnu
@@ -86,18 +76,15 @@ jobs:
           command -v jq
           command -v openssl
           command -v skopeo
-      - name: Build reproducible signed ARM64 candidates
-        env:
-          TERRABASE_RELEASE_SIGNING_KEY_PEM: ${{ secrets.TERRABASE_RELEASE_SIGNING_KEY_PEM }}
-          TERRABASE_RELEASE_VERIFY_KEY_PEM: ${{ secrets.TERRABASE_RELEASE_VERIFY_KEY_PEM }}
+      - name: Build byte-reproducible unsigned ARM64 packages
         run: |
-          deploy/release/candidate.sh server aarch64-unknown-linux-gnu artifacts/candidate/terrabase-server-arm64
-          deploy/release/candidate.sh studio aarch64-unknown-linux-gnu artifacts/candidate/terrabase-studio-arm64
+          deploy/release/reproduce.sh server aarch64-unknown-linux-gnu artifacts/unsigned/terrabase-server-arm64
+          deploy/release/reproduce.sh studio aarch64-unknown-linux-gnu artifacts/unsigned/terrabase-studio-arm64
       - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
-          name: terrabase-native-arm64-${{ forgejo.event.pull_request.head.sha }}
+          name: terrabase-unsigned-arm64-${{ forgejo.sha }}
           path: |
-            artifacts/candidate/terrabase-server-arm64
-            artifacts/candidate/terrabase-studio-arm64
+            artifacts/unsigned/terrabase-server-arm64
+            artifacts/unsigned/terrabase-studio-arm64
           if-no-files-found: error
           retention-days: 30

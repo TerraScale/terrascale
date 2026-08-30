@@ -1352,6 +1352,7 @@ dependencies = [
  "prost",
  "protox",
  "rcgen",
+ "ring",
  "terrabase",
  "terrabase-cluster",
  "terrabase-sync-core",

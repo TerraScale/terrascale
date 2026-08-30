@@ -110,6 +110,81 @@ func TestSharedTransportKeepsIdentityImmutable(t *testing.T) {
 	}
 }
 
+func TestSharedTransportReconnectsWithoutRebinding(t *testing.T) {
+	var active atomic.Pointer[bufconn.Listener]
+	serve := func() (*grpc.Server, *fakeTBEP, *bufconn.Listener) {
+		listener := bufconn.Listen(1 << 20)
+		fake := newFakeTBEP()
+		server := grpc.NewServer()
+		fake.register(server)
+		go func() { _ = server.Serve(listener) }()
+		return server, fake, listener
+	}
+
+	firstServer, firstFake, firstListener := serve()
+	active.Store(firstListener)
+	dialer := func(ctx context.Context, _ string) (net.Conn, error) {
+		listener := active.Load()
+		if listener == nil {
+			return nil, errors.New("the reconnect listener is unavailable")
+		}
+		return listener.DialContext(ctx)
+	}
+	transport, err := DialTransport("passthrough:///reconnect",
+		WithInsecure(), WithContextDialer(dialer), WithAuthority("localhost"))
+	if err != nil {
+		t.Fatalf("the reconnect transport could not be dialed: %v", err)
+	}
+	t.Cleanup(func() { _ = transport.Close() })
+	t.Cleanup(firstServer.Stop)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client, _, err := transport.Bind(ctx, "orders-api", "tenant-a")
+	if err != nil {
+		t.Fatalf("the initial transport bind failed: %v", err)
+	}
+	if _, _, err := client.DocumentRead(ctx, "books", "doc", ReadLevelDefault); err != nil {
+		t.Fatalf("the initial read failed: %v", err)
+	}
+	if tenant := firstFake.lastTenant(); tenant != "tenant-a" {
+		t.Fatalf("the first server observed tenant %q", tenant)
+	}
+
+	secondServer, secondFake, secondListener := serve()
+	t.Cleanup(secondServer.Stop)
+	active.Store(secondListener)
+	firstServer.Stop()
+
+	connection, ok := transport.conn.(*grpc.ClientConn)
+	if !ok {
+		t.Fatalf("the dialed transport connection has type %T", transport.conn)
+	}
+	connection.ResetConnectBackoff()
+	connection.Connect()
+	for {
+		callCtx, stop := context.WithTimeout(ctx, 500*time.Millisecond)
+		_, _, callErr := client.DocumentRead(callCtx, "books", "doc", ReadLevelDefault)
+		stop()
+		if callErr == nil {
+			break
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("the shared transport did not reconnect: last error: %v", callErr)
+		}
+		connection.ResetConnectBackoff()
+		connection.Connect()
+		select {
+		case <-ctx.Done():
+			t.Fatalf("the shared transport did not reconnect: %v", ctx.Err())
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+	if tenant := secondFake.lastTenant(); tenant != "tenant-a" {
+		t.Fatalf("the reconnected client lost its immutable tenant identity, got %q", tenant)
+	}
+}
+
 type closeCountingConn struct {
 	grpc.ClientConnInterface
 	closes atomic.Int32

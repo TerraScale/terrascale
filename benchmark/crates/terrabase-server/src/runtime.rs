@@ -24,6 +24,13 @@ const MAX_PEM_BYTES: u64 = 1024 * 1024;
 /// Opens the configured engine and runs every production listener until a
 /// termination signal begins bounded graceful drain.
 pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
+    // TBEP currently validates the client CA but does not expose the peer
+    // certificate/SAN to its application identity check. Metadata principal
+    // values therefore cannot safely satisfy gateway_principals. Refuse to
+    // start until the authenticated certificate-to-principal seam exists.
+    if !config.gateway_principals.is_empty() {
+        return Err(Box::new(DaemonError::GatewayPrincipalBindingUnavailable));
+    }
     let certificate = read_pem(&config.server_certificate, false)?;
     let private_key = read_pem(&config.server_private_key, true)?;
     let client_ca = read_pem(&config.client_ca, false)?;
@@ -78,14 +85,31 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
     wait_for_shutdown().await?;
     metrics.transition_service(ServiceState::Draining)?;
     let _ = host.begin_shutdown(&SupervisionShutdownRequest { reason: ShutdownReason::Supervisor });
-    network_handle.shutdown();
-    if let Some(handle) = &mut uds_handle {
-        handle.shutdown();
-    }
     let _ = http_stop.send(());
-    match tokio::time::timeout(config.shutdown_grace, http_task).await {
-        Ok(Ok(result)) => result?,
-        Ok(Err(error)) => return Err(Box::new(error)),
+    // Signal every listener together, then bound the total drain wait. The
+    // TBEP handle owns a bounded five-second listener drain; running both
+    // handles in one blocking task prevents sequential waits from exceeding
+    // shutdown_grace. If the lower handle outlives the deadline, its own
+    // bounded shutdown continues detached while the daemon reports failure.
+    let grpc_shutdown = tokio::task::spawn_blocking(move || {
+        network_handle.shutdown();
+        if let Some(handle) = &mut uds_handle {
+            handle.shutdown();
+        }
+    });
+    let drain = async {
+        grpc_shutdown.await.map_err(|error| -> Box<dyn Error + Send + Sync> { Box::new(error) })?;
+        match http_task.await {
+            Ok(result) => {
+                result.map_err(|error| -> Box<dyn Error + Send + Sync> { Box::new(error) })?
+            }
+            Err(error) => return Err(Box::new(error) as Box<dyn Error + Send + Sync>),
+        }
+        Ok::<(), Box<dyn Error + Send + Sync>>(())
+    };
+    match tokio::time::timeout(config.shutdown_grace, drain).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return Err(error),
         Err(_) => return Err(Box::new(DaemonError::ShutdownTimeout)),
     }
     metrics.transition_service(ServiceState::Stopped)?;
@@ -165,6 +189,7 @@ enum DaemonError {
     SecretFile,
     PrivateKeyPermissions,
     UnsafeUdsPath,
+    GatewayPrincipalBindingUnavailable,
     ShutdownTimeout,
 }
 
@@ -179,6 +204,9 @@ impl std::fmt::Display for DaemonError {
                 formatter.write_str("the TLS private key is accessible outside its owner")
             }
             Self::UnsafeUdsPath => formatter.write_str("the local UDS path is unsafe"),
+            Self::GatewayPrincipalBindingUnavailable => formatter.write_str(
+                "the serving API cannot bind an authenticated client certificate to gateway_principals",
+            ),
             Self::ShutdownTimeout => formatter.write_str("graceful shutdown exceeded its deadline"),
         }
     }

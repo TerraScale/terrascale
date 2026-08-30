@@ -145,8 +145,7 @@ pub struct EngineHost {
     instance: u64,
     reads: Mutex<u64>,
     frames_served: Mutex<u64>,
-    live_queries:
-        Mutex<std::collections::HashMap<(String, u64), terrabase::types::Cancellation>>,
+    live_queries: Mutex<std::collections::HashMap<(String, u64), terrabase::types::Cancellation>>,
     completed_queries: Mutex<std::collections::VecDeque<(String, u64)>>,
     health: Mutex<HealthState>,
 }

@@ -64,7 +64,7 @@
       "id": 3,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
       "pluginVersion": "11.0.0",
-      "targets": [{"expr": "100 * sum(rate(terrabase_requests_total{job=~\"$job\",region=~\"$region\",operation=~\"$operation\",outcome=~\"error|timeout\"}[$__rate_interval])) / clamp_min(sum(rate(terrabase_requests_total{job=~\"$job\",region=~\"$region\",operation=~\"$operation\"}[$__rate_interval])), 0.001)", "instant": true, "refId": "A"}],
+      "targets": [{"expr": "100 * sum(rate(terrabase_requests_total{job=~\"$job\",region=~\"$region\",operation=~\"$operation\",outcome=~\"error|timeout\"}[$__rate_interval])) / clamp_min(sum(rate(terrabase_requests_total{job=~\"$job\",region=~\"$region\",operation=~\"$operation\"}[$__rate_interval])), 0.000000001)", "instant": true, "refId": "A"}],
       "title": "Errors + timeouts",
       "type": "stat"
     },

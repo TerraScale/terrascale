@@ -58,3 +58,7 @@ defaults. This durability difference remains a stated limitation, not an
 unstated equivalence. The engine-side lane currently runs in-process, so its
 wall-clock output is not comparable to the loopback reference output until a
 common served boundary is measured.
+
+The separate 20-Region replication emulator is governed by
+`docs/evidence/benchmarks/replication-20-region-policy.md`. Its same-host
+timings are diagnostic and never fill a PostgreSQL or RavenDB comparison slot.

@@ -181,6 +181,13 @@ func TestProductionHarnessInterop(t *testing.T) {
 		t.Fatalf("the query returned the wrong document: %+v", result.Documents[0])
 	}
 
+	// The durable engine does not yet expose production accounting facts. A
+	// successful fake export proves conversion only; this live lane must retain
+	// the engine's closed usage_unavailable refusal until accounting is wired.
+	if _, err := client.UsageExport(ctx, UsageExportRequest{PageSize: 1}); !errors.Is(err, ErrUsageUnavailable) {
+		t.Fatalf("the live usage export must answer ErrUsageUnavailable, got %v", err)
+	}
+
 	// The harness's durable engine host does not serve backbone
 	// delivery — the sync-delivery host beside it does — so the stream
 	// opens and its first frame is refused with the closed

@@ -156,6 +156,12 @@ impl ServerConfig {
         {
             return Err(ConfigError::InvalidListenAddress);
         }
+        // The observability router has no authentication or TLS seam. Keep
+        // it on the host loopback boundary until the orchestrator-owned
+        // authenticated listener can be composed here.
+        if !observability_listen.ip().is_loopback() {
+            return Err(ConfigError::UnprotectedObservability);
+        }
         for path in [
             &file.engine.location,
             &file.tbep.server_certificate,
@@ -181,6 +187,16 @@ impl ServerConfig {
         let tls_handshake_timeout =
             bounded_duration(file.tbep.tls_handshake_timeout_millis, 100, 30_000)?;
         let shutdown_grace = bounded_duration(file.tbep.shutdown_grace_millis, 100, 300_000)?;
+        // These are currently fixed by the lower TBEP serving API. Accepting
+        // other values here would make configuration look effective while
+        // silently serving with different limits or no timeout at all.
+        if file.tbep.max_message_bytes != terrabase_tbep::registry::MAX_FRAME_BYTES
+            || file.tbep.max_inflight != terrabase_tbep::grpc::MAX_INFLIGHT_OPERATIONS
+            || file.tbep.request_timeout_millis != 30_000
+            || file.tbep.tls_handshake_timeout_millis != 5_000
+        {
+            return Err(ConfigError::UnsupportedRuntimeControl);
+        }
         if file.tbep.gateway_principals.is_empty()
             || file.tbep.gateway_principals.len() > MAX_GATEWAY_PRINCIPALS
         {
@@ -275,6 +291,10 @@ pub enum ConfigError {
     InvalidGatewayPrincipal,
     /// The UDS mode was broader than 0770 or omitted owner read/write.
     InvalidUdsMode,
+    /// The private observability listener has no secure/authenticated seam.
+    UnprotectedObservability,
+    /// A configured runtime control cannot be represented by the lower API.
+    UnsupportedRuntimeControl,
 }
 
 impl std::fmt::Display for ConfigError {
@@ -293,6 +313,12 @@ impl std::fmt::Display for ConfigError {
             Self::InvalidBound => "a production server bound is outside its accepted range",
             Self::InvalidGatewayPrincipal => "gateway_principals is invalid",
             Self::InvalidUdsMode => "the local UDS mode is unsafe",
+            Self::UnprotectedObservability => {
+                "observability must bind loopback until an authenticated boundary is composed"
+            }
+            Self::UnsupportedRuntimeControl => {
+                "a configured runtime control is not enforceable by the serving API"
+            }
         })
     }
 }
@@ -331,7 +357,7 @@ tls_handshake_timeout_millis = 5000
 shutdown_grace_millis = 30000
 
 [observability]
-listen = "0.0.0.0:9464"
+listen = "127.0.0.1:9464"
 "#
         .to_owned()
     }
@@ -350,6 +376,39 @@ listen = "0.0.0.0:9464"
         assert!(matches!(ServerConfig::parse(&unknown), Err(ConfigError::ParseConfiguration(_))));
         let relative = valid().replace("/var/lib/terrabase", "var/lib/terrabase");
         assert!(matches!(ServerConfig::parse(&relative), Err(ConfigError::RelativeProductionPath)));
+    }
+
+    #[test]
+    fn unsupported_runtime_controls_fail_closed() {
+        for (field, value) in [
+            ("max_message_bytes", "16384"),
+            ("max_inflight", "1"),
+            ("request_timeout_millis", "100"),
+            ("tls_handshake_timeout_millis", "100"),
+        ] {
+            let text = valid().replace(
+                &format!(
+                    "{field} = {}",
+                    match field {
+                        "max_message_bytes" => "16777216",
+                        "max_inflight" => "128",
+                        "request_timeout_millis" => "30000",
+                        _ => "5000",
+                    }
+                ),
+                &format!("{field} = {value}"),
+            );
+            assert!(matches!(
+                ServerConfig::parse(&text),
+                Err(ConfigError::UnsupportedRuntimeControl)
+            ));
+        }
+    }
+
+    #[test]
+    fn observability_must_remain_on_loopback() {
+        let public = valid().replace("127.0.0.1:9464", "0.0.0.0:9464");
+        assert!(matches!(ServerConfig::parse(&public), Err(ConfigError::UnprotectedObservability)));
     }
 
     #[test]

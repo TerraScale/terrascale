@@ -71,7 +71,7 @@ serde_json = "1"
 # S3 is the durable backup destination. The engine remains HTTP-free; Studio
 # owns credentials, SigV4, TLS, retries, and the temporary transfer staging
 # needed to drive the engine's verified archive seam.
-object_store = { version = "0.14.1", default-features = false, features = ["aws"] }
+object_store = { version = "=0.14.1", default-features = false, features = ["aws"] }
 futures-util = "0.3"
 
 [dev-dependencies]

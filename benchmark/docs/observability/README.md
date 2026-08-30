@@ -2,9 +2,9 @@
 
 This directory documents the in-process observability contract implemented in
 `src/observability/mod.rs`. The module renders Prometheus 0.0.4 text and keeps
-health, startup, and readiness as separate facts. `ts-orchestrator` owns the
-private production listener, workload authentication, target discovery, and
-network policy. TerraBase supplies the bounded registry and exposition body.
+health, startup, and readiness as separate facts. `terrabase-server` owns the
+private listener and routes. `ts-orchestrator` owns workload authentication,
+target discovery, and network policy.
 
 ## Metric families
 
@@ -48,9 +48,15 @@ enums in the Rust API. The values are `read`, `write`, `query`, `subscribe`,
 `backup`, `restore`, `repair`, `compaction`, `other` for operations;
 `success`, `error`, `rejected`, `timeout` for outcomes; `tier1`, `tier2`,
 `tier3` for storage; and `storage`, `replication`, `membership`,
-`control_plane`, `backup`, `metrics` for components.
+`control_plane`, `backup`, `metrics` for components. Admission reasons are
+`capacity`, `concurrency`, `queue_full`, `deadline`, `not_serving`, and `other`.
+Queues are `foreground`, `commit`, `replication`, `compaction`, `backup`, and
+`usage_export`. Background outcomes are `success` and `error`. Commit outcomes
+are `committed`, `refused`, `failed`, and `unknown`. Backup modes are `full`,
+`incremental`, and `continuous`. Storage operations are `read`, `write`,
+`flush`, `compaction`, and `other`.
 
-`Storage`, `replication`, and `membership` are the post-admission readiness
+`storage`, `replication`, and `membership` are the post-admission readiness
 requirements. Control-plane loss remains visible but does not evacuate an
 admitted data-plane Member: reads, convergence, and replication continue while
 new control mutations fail closed. Optional `backup` and `metrics` slots stay at
@@ -70,12 +76,18 @@ Prometheus calculates operator views from raw cumulative facts. A sampled
 | --- | --- |
 | Total requests per second | `sum(rate(terrabase_requests_total[5m]))` |
 | Requests per second by operation | `sum by (operation) (rate(terrabase_requests_total[5m]))` |
-| Error and timeout percentage | `100 * sum(rate(terrabase_requests_total{outcome=~"error\|timeout"}[5m])) / clamp_min(sum(rate(terrabase_requests_total[5m])), 0.001)` |
+| Error and timeout percentage | `100 * sum(rate(terrabase_requests_total{outcome=~"error\|timeout"}[5m])) / clamp_min(sum(rate(terrabase_requests_total[5m])), 0.000000001)` |
 | Successful request p99 | `histogram_quantile(0.99, sum by (le) (rate(terrabase_request_duration_seconds_bucket{outcome="success"}[5m])))` |
+| Admission rejections per second | `sum by (operation, reason) (rate(terrabase_admission_rejections_total[5m]))` |
+| Queue utilization | `100 * terrabase_queue_depth / clamp_min(terrabase_queue_capacity, 1)` |
+| Committed durability p99 | `histogram_quantile(0.99, sum by (le) (rate(terrabase_commit_duration_seconds_bucket{outcome="committed"}[5m])))` |
 | Total storage usage | `sum(terrabase_storage_bytes)` |
 | Storage utilization by tier | `100 * terrabase_storage_bytes / clamp_min(terrabase_storage_capacity_bytes, 1)` |
 | Storage change over 24 hours | `sum(terrabase_storage_bytes) - sum(terrabase_storage_bytes offset 24h)` |
 | Worst replication lag by Region | `max by (region) (terrabase_replication_lag_seconds)` |
+| Storage errors per second | `sum by (tier, operation) (rate(terrabase_storage_errors_total[5m]))` |
+| Compaction input rate | `rate(terrabase_compaction_input_bytes_total[5m])` |
+| Backup failures per second | `sum by (mode) (rate(terrabase_backup_runs_total{outcome="error"}[5m]))` |
 
 The checked-in Grafana dashboard uses `$__rate_interval` instead of a fixed
 five-minute rate window and provides `region` and `operation` filters. Scope its
@@ -112,8 +124,9 @@ defense, not permission to collect sensitive values.
 ## Qualification status
 
 Source unit tests and `tests/observability/contract.rs` cover deterministic
-exposition, histogram accounting, label bounds, storage capacity semantics,
-health and readiness separation, optional dependency degradation, and secret
-redaction. They are `implemented` evidence only. An integrated private
-authenticated scrape, populated collectors, dashboard queries, alerts, and
-probe boundary still need qualification on the production topology.
+exposition, histogram accounting, label and response-size bounds, storage
+capacity semantics, lifecycle and readiness separation, control-plane loss,
+optional unconfigured components, monotonic usage frontiers, alert structure,
+path agreement, and secret redaction. These tests are implementation evidence.
+The exact candidate still needs a private authenticated scrape and probe
+receipt from the production topology.

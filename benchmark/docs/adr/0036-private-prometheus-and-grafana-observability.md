@@ -9,10 +9,12 @@ authority: direct workspace-owner instruction
 ## Decision
 
 TerraBase exports Prometheus text exposition on a private listener. The
-listener has no public route and is reachable only from admitted monitoring
-workloads. `ts-orchestrator` owns production listener configuration, workload
-identity, network policy, scrape discovery, retention, alert delivery, and
-dashboard deployment.
+listener uses plaintext HTTP and has no application authentication or
+in-process allow-list. It exposes only bounded metrics and fixed health probes,
+with no customer values, configuration, diagnostics, or mutation routes.
+`ts-orchestrator` must bind it to the private network and owns network policy,
+scrape discovery, retention, alert delivery, and dashboard deployment. A
+public route to this listener is a deployment failure.
 
 The private Studio exposes `/metrics/prometheus` on its loopback-only listener
 for local inspection. That endpoint reports a Studio snapshot, not the

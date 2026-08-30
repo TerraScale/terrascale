@@ -1,6 +1,6 @@
 use terrabase::encryption::{
-    ArtifactCipher, Compression, DatabaseKey, EncryptionContext, EncryptionError, ProviderMode,
-    MAX_PLAINTEXT_BYTES,
+    ArtifactCipher, Compression, DatabaseKey, EncryptionContext, EncryptionError,
+    MAX_PLAINTEXT_BYTES, ProviderMode,
 };
 
 fn context(tenant: &str) -> EncryptionContext {
@@ -103,9 +103,10 @@ fn malformed_and_oversized_inputs_fail_before_crypto() {
 fn generated_database_keys_are_redacted() {
     let a = DatabaseKey::generate().unwrap();
     let b = DatabaseKey::generate().unwrap();
-    let mut first = ArtifactCipher::new(ProviderMode::LocalNonFips, a, context("01JTENANT")).unwrap();
-    let mut second = ArtifactCipher::new(ProviderMode::LocalNonFips, b, context("01JTENANT")).unwrap();
+    let mut first =
+        ArtifactCipher::new(ProviderMode::LocalNonFips, a, context("01JTENANT")).unwrap();
+    let mut second =
+        ArtifactCipher::new(ProviderMode::LocalNonFips, b, context("01JTENANT")).unwrap();
     assert_ne!(first.seal(b"random key").unwrap(), second.seal(b"random key").unwrap());
     assert_eq!(format!("{:?}", DatabaseKey::from_bytes([0; 32])), "DatabaseKey(REDACTED)");
 }
-

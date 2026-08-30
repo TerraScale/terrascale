@@ -57,6 +57,16 @@ client trust roots and the Go client validates its server trust roots and
 expected identity. Certificate rotation cannot silently disable peer
 verification.
 
+TerraBase trusts a dedicated Database-gateway CA for client certificates. One
+certificate must contain exactly one admitted SPIFFE URI SAN in the
+`spiffe://terrascale.tech/<environment>/database-gateway/<instance-ulid>`
+namespace. The complete URI is the gateway principal and must appear in the
+Member's `gateway_principals` allow-list. Common names, DNS SANs, IP SANs,
+caller metadata, and the protobuf channel principal cannot authenticate a
+gateway. The channel principal must equal the certificate-derived principal.
+Certificates with no matching URI SAN, multiple candidate URI SANs, a wrong
+trust root, or an unlisted principal fail before engine dispatch.
+
 Unix domain sockets are permitted for local development and process-isolated
 tests. They are not a public or cross-host binding. Tests may use plaintext
 loopback only when the test name and receipt identify it as a non-production
@@ -80,6 +90,10 @@ The first release has no customer compatibility obligation. Once released,
 CI compares the schema with the last release and rejects field removal, type
 changes, identifier reuse, service removal, or changed wire meaning inside the
 same major.
+
+Private protocol and storage compatibility supports release `N` and `N-1`
+only during the bounded rolling window in ADR 0031. No older private client or
+Member compatibility reader is retained.
 
 ## Required evidence
 

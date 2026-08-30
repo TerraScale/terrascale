@@ -1,10 +1,9 @@
 //! Dependency-free observability primitives for the `TerraBase` engine.
 //!
-//! This module owns the *contract* and the in-process state used by a future
-//! private metrics/health adapter.  It deliberately does not open a socket,
-//! choose an HTTP framework, or authenticate a caller.  Those choices are
-//! owned by `ts-orchestrator` at the private production service boundary that
-//! integrates this module.
+//! This module owns the metric model and immutable snapshot used by the private
+//! `terrabase-server` metrics and probe routes. It does not open a socket or
+//! authenticate a caller. The server owns HTTP routing; `ts-orchestrator` owns
+//! target discovery, workload authentication, and network policy.
 //!
 //! Metric labels are closed Rust enums rather than strings.  Consequently a
 //! tenant ID, document ID, request ID, provider OCID, or error text cannot
@@ -259,6 +258,16 @@ impl AdmissionReason {
     }
 }
 
+/// Every admitted admission-reason label in stable order.
+pub const ADMISSION_REASONS: [AdmissionReason; 6] = [
+    AdmissionReason::Capacity,
+    AdmissionReason::Concurrency,
+    AdmissionReason::QueueFull,
+    AdmissionReason::Deadline,
+    AdmissionReason::NotServing,
+    AdmissionReason::Other,
+];
+
 /// A bounded internal work queue.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Queue {
@@ -291,6 +300,16 @@ impl Queue {
     }
 }
 
+/// Every admitted queue label in stable order.
+pub const QUEUES: [Queue; 6] = [
+    Queue::Foreground,
+    Queue::Commit,
+    Queue::Replication,
+    Queue::Compaction,
+    Queue::Backup,
+    Queue::UsageExport,
+];
+
 /// The result of one bounded background or I/O task.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum TaskOutcome {
@@ -310,6 +329,9 @@ impl TaskOutcome {
         }
     }
 }
+
+/// Every admitted background-task outcome label in stable order.
+pub const TASK_OUTCOMES: [TaskOutcome; 2] = [TaskOutcome::Success, TaskOutcome::Error];
 
 /// The durability result of one commit attempt.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -337,6 +359,10 @@ impl CommitResult {
     }
 }
 
+/// Every admitted commit-result label in stable order.
+pub const COMMIT_RESULTS: [CommitResult; 4] =
+    [CommitResult::Committed, CommitResult::Refused, CommitResult::Failed, CommitResult::Unknown];
+
 /// A bounded backup mode.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum BackupMode {
@@ -359,6 +385,10 @@ impl BackupMode {
         }
     }
 }
+
+/// Every admitted backup-mode label in stable order.
+pub const BACKUP_MODES: [BackupMode; 3] =
+    [BackupMode::Full, BackupMode::Incremental, BackupMode::Continuous];
 
 /// A bounded storage operation used to classify storage errors.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -388,6 +418,15 @@ impl StorageOperation {
         }
     }
 }
+
+/// Every admitted storage-operation label in stable order.
+pub const STORAGE_OPERATIONS: [StorageOperation; 5] = [
+    StorageOperation::Read,
+    StorageOperation::Write,
+    StorageOperation::Flush,
+    StorageOperation::Compaction,
+    StorageOperation::Other,
+];
 
 /// A bounded engine component that can participate in health checks.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -518,6 +557,38 @@ impl std::fmt::Display for ServiceTransitionError {
 }
 
 impl std::error::Error for ServiceTransitionError {}
+
+/// A refusal to serve a Prometheus body beyond the contract limit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExpositionTooLarge {
+    bytes: usize,
+}
+
+impl ExpositionTooLarge {
+    /// Returns the rendered size that exceeded the limit.
+    #[must_use]
+    pub const fn bytes(&self) -> usize {
+        self.bytes
+    }
+
+    /// Returns the fixed response-size limit.
+    #[must_use]
+    pub const fn limit(&self) -> usize {
+        MAX_PROMETHEUS_BODY_BYTES
+    }
+}
+
+impl std::fmt::Display for ExpositionTooLarge {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "Prometheus body is {} bytes; limit is {} bytes",
+            self.bytes, MAX_PROMETHEUS_BODY_BYTES
+        )
+    }
+}
+
+impl std::error::Error for ExpositionTooLarge {}
 
 /// The state of one health check.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -1133,6 +1204,26 @@ impl MetricsSnapshot {
     /// Renders this immutable snapshot as Prometheus 0.0.4 text.
     #[must_use]
     pub fn render_prometheus(&self) -> String {
+        let output = self.render_prometheus_unchecked();
+        debug_assert!(output.len() <= MAX_PROMETHEUS_BODY_BYTES);
+        output
+    }
+
+    /// Renders a bounded Prometheus body for a private network adapter.
+    ///
+    /// The current closed registry is statically bounded below the limit. This
+    /// checked form keeps a future contract expansion from sending a partial or
+    /// oversized response.
+    pub fn try_render_prometheus(&self) -> Result<String, ExpositionTooLarge> {
+        let output = self.render_prometheus_unchecked();
+        if output.len() > MAX_PROMETHEUS_BODY_BYTES {
+            Err(ExpositionTooLarge { bytes: output.len() })
+        } else {
+            Ok(output)
+        }
+    }
+
+    fn render_prometheus_unchecked(&self) -> String {
         let mut output = String::new();
         write_process_metrics(&mut output, self.is_live(), self.started, self.ready);
         write_request_metrics(&mut output, self);
@@ -1141,7 +1232,6 @@ impl MetricsSnapshot {
         write_resource_metrics(&mut output, self);
         write_background_metrics(&mut output, self);
         write_health_metrics(&mut output, self);
-        debug_assert!(output.len() <= MAX_PROMETHEUS_BODY_BYTES);
         output
     }
 }
@@ -1198,8 +1288,8 @@ impl Default for MetricsRegistry {
 }
 
 impl MetricsRegistry {
-    /// Creates an empty registry.  Liveness is always emitted as one and
-    /// readiness starts false until the service has completed admission.
+    /// Creates a starting registry. Liveness begins true; startup and
+    /// readiness remain false until the service completes admission.
     #[must_use]
     pub fn new() -> Self {
         Self { state: Mutex::new(MetricsState::default()) }
@@ -2335,12 +2425,45 @@ mod tests {
                 }
             }
             metrics.set_replication_lag(region, Duration::MAX);
+            metrics.set_replication_backlog_bytes(region, u64::MAX);
+            metrics.set_replication_frontier_health(region, HealthStatus::Unknown);
             metrics.set_active_members(region, u64::MAX);
+        }
+        for operation in OPERATIONS {
+            metrics.set_in_flight(operation, u64::MAX);
+            for reason in ADMISSION_REASONS {
+                metrics.record_admission_rejection(operation, reason);
+            }
+        }
+        for queue in QUEUES {
+            metrics.set_queue(queue, u64::MAX, NonZeroU64::MAX);
+        }
+        for outcome in TASK_OUTCOMES {
+            metrics.record_wal_fsync(outcome, Duration::MAX);
+            metrics.record_compaction(outcome, u64::MAX, u64::MAX);
+        }
+        for result in COMMIT_RESULTS {
+            metrics.record_commit(result, Duration::MAX);
         }
         for tier in STORAGE_TIERS {
             metrics.set_storage_bytes(tier, u64::MAX);
             metrics.set_storage_capacity_bytes(tier, u64::MAX);
+            metrics.set_compaction_backlog_bytes(tier, u64::MAX);
+            for operation in STORAGE_OPERATIONS {
+                metrics.record_storage_error(tier, operation);
+            }
         }
+        for mode in BACKUP_MODES {
+            metrics.set_backup_last_success_age(mode, Duration::MAX);
+            for outcome in TASK_OUTCOMES {
+                metrics.record_backup(mode, outcome);
+            }
+        }
+        for component in COMPONENTS {
+            metrics.set_component_health(component, HealthStatus::Unknown);
+        }
+        assert!(metrics.advance_usage_export_frontier(u64::MAX));
+        metrics.record_usage_export_failure();
         let snapshot = metrics.snapshot();
         assert_eq!(snapshot.requests().len(), MAX_REQUEST_SERIES);
         assert_eq!(snapshot.replication_lag().len(), MAX_REGION_LABEL_VALUES);
@@ -2349,6 +2472,10 @@ mod tests {
         assert_eq!(snapshot.active_members().len(), MAX_REGION_LABEL_VALUES);
         assert_eq!(snapshot.component_health().len(), MAX_COMPONENT_LABEL_VALUES);
         let exposition = snapshot.render_prometheus();
+        assert_eq!(
+            snapshot.try_render_prometheus().expect("closed registry fits the body limit"),
+            exposition
+        );
         assert!(exposition.len() <= MAX_PROMETHEUS_BODY_BYTES);
         assert!(exposition.ends_with('\n'));
     }

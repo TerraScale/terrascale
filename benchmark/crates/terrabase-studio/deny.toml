@@ -36,6 +36,11 @@ wildcards = "deny"
 # every in-repository crate it consumes set `publish = false`; registry
 # wildcard dependencies remain denied.
 allow-wildcard-paths = true
+skip = [
+  { crate = "crypto-common@0.1.7", reason = "object_store's CRC checksum implementation still uses digest 0.10 while its S3 MD5 implementation uses digest 0.11" },
+  { crate = "digest@0.10.7", reason = "object_store's CRC checksum implementation still uses digest 0.10 while its S3 MD5 implementation uses digest 0.11" },
+  { crate = "syn@2.0.119", reason = "object_store's HTTP and ICU dependency closure still uses syn 2 while current derives use syn 3" },
+]
 
 [sources]
 unknown-registry = "deny"

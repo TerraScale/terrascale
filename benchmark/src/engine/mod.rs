@@ -66,9 +66,8 @@ use crate::{
         OperationId, ReadSnapshot, RetryDisposition, StorageSequence, TenantId, TenantScope,
     },
     usage::{
-        DurableUsageFact, MeasurementWindow, MintingRule, UsageAdmissionContext, UsageCommandError,
-        UsageContinuation, UsageFactId, UsagePage, UsagePageRequest, UsageRecordReceipt,
-        UsageRecordRequest,
+        MeasurementWindow, MintingRule, UsageAdmissionContext, UsageCommandError, UsageContinuation,
+        UsageFactId, UsagePage, UsagePageRequest, UsageRecordReceipt, UsageRecordRequest,
     },
 };
 
@@ -798,6 +797,11 @@ pub struct Engine {
 pub(crate) struct CommitMailbox {
     /// Waiting intents, in arrival order, each with its answer channel.
     queue: Vec<(storage::CommitIntent, std::sync::mpsc::SyncSender<storage::CommitResult>)>,
+    /// When a batch of two or more intents last committed: the engine's
+    /// evidence that it is serving a group and the next narrow batch is a
+    /// between-waves leader, not a serial caller. A batch of one may take
+    /// the pipelined shape only inside this window.
+    last_group_at: Option<std::time::Instant>,
     /// Whether a leader is currently driving batches.
     leader_active: bool,
 }
@@ -927,16 +931,22 @@ impl Engine {
         /// A gap of this length with no arrival ends coalescing: arrivals
         /// cluster within the writers' turnaround, and waiting past the gap
         /// would only add latency to the wave.
-        const GROUP_QUIET_GAP: std::time::Duration = std::time::Duration::from_micros(150);
+        const GROUP_QUIET_GAP: std::time::Duration = std::time::Duration::from_micros(500);
         /// The widest coalesce window: how long a narrow group keeps
-        /// collecting before it commits anyway.
-        const GROUP_HARVEST_WINDOW_MAX: std::time::Duration = std::time::Duration::from_micros(600);
+        /// collecting before it commits anyway. One full writer turnaround:
+        /// a wave's writers spread over their lock-contended snapshots, and
+        /// cutting the window inside that spread splits the wave — two syncs
+        /// where one would have answered everyone.
+        const GROUP_HARVEST_WINDOW_MAX: std::time::Duration = std::time::Duration::from_millis(3);
         /// How long an idle leader lingers for the next wave before it
-        /// flushes any deferred flip bytes and steps down. One turnaround
-        /// window: a saturated run always sees its next arrival inside it
-        /// (the arrivals carry the deferred flips in the next batch's
-        /// append), while a quiet engine pays at most one flush.
-        const GROUP_LINGER_WINDOW: std::time::Duration = std::time::Duration::from_micros(500);
+        /// flushes any deferred flip bytes and steps down. One full writer
+        /// turnaround: a saturated run sees its next arrival inside it (the
+        /// arrivals carry the deferred flips in the next batch's append),
+        /// while a quiet engine pays at most one flush.
+        const GROUP_LINGER_WINDOW: std::time::Duration = std::time::Duration::from_millis(2);
+        /// How long a recent group keeps qualifying a between-waves solo
+        /// batch for the pipelined shape.
+        const GROUP_ACTIVE_WINDOW: std::time::Duration = std::time::Duration::from_millis(100);
         // The wave width to gather toward. It starts at the harvest width
         // and grows with every committed wave, so a saturated run's next
         // wave coalesces to full width instead of splitting at the floor —
@@ -985,9 +995,15 @@ impl Engine {
             // Two or more concurrent committers is the pipelined signal:
             // the batch appends and publishes under the lock, and the
             // leader witnesses it outside the lock before answering. A
-            // solo batch — every serial commit — keeps the synchronous
-            // order, byte-identical to a direct storage commit.
-            let pipelined = intents.len() >= 2 && self.wal_sync.is_some();
+            // solo batch qualifies only while a group was served recently
+            // — a between-waves leader, not a serial caller. A serial
+            // caller on a quiescent engine keeps the synchronous order,
+            // byte-identical to a direct storage commit.
+            let group_active = batch.len() >= 2 || self.group_served_within(GROUP_ACTIVE_WINDOW);
+            let pipelined = group_active && self.wal_sync.is_some();
+            if batch.len() >= 2 {
+                self.note_group_served();
+            }
             carry_pending = pipelined;
             wave_width = wave_width.max(batch.len().saturating_add(1));
             let results = match self.lock_storage() {
@@ -1001,6 +1017,24 @@ impl Engine {
             for ((_, sender), result) in batch.into_iter().zip(results) {
                 let _ = sender.send(result);
             }
+        }
+    }
+
+    /// Records that a group of two or more intents just committed.
+    fn note_group_served(&self) {
+        if let Ok(mut mailbox) = self.commit_mailbox.lock() {
+            mailbox.last_group_at = Some(std::time::Instant::now());
+        }
+    }
+
+    /// Whether a group committed within `window`, so a narrow batch now is
+    /// a between-waves leader rather than a serial caller.
+    fn group_served_within(&self, window: std::time::Duration) -> bool {
+        match self.commit_mailbox.lock() {
+            Ok(mailbox) => mailbox
+                .last_group_at
+                .is_some_and(|served| served.elapsed() < window),
+            Err(_) => false,
         }
     }
 

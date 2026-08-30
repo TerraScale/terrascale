@@ -282,8 +282,9 @@ impl ArtifactCipher {
         let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, b"terrabase/database-key/v1");
         let prk = salt.extract(&database_key.bytes);
         let info = context.derivation_info();
+        let info_parts = [info.as_slice()];
         let okm = prk
-            .expand(&[info.as_slice()], &aead::AES_256_GCM)
+            .expand(&info_parts, &aead::AES_256_GCM)
             .map_err(|_| EncryptionError::CryptographicFailure)?;
         let unbound = aead::UnboundKey::from(okm);
         Ok(Self {
@@ -316,13 +317,9 @@ impl ArtifactCipher {
         if ordinal > MAX_ORDINAL {
             return Err(EncryptionError::OrdinalExhausted);
         }
-        let next = ordinal
-            .checked_add(1)
-            .ok_or(EncryptionError::OrdinalExhausted)?;
+        let next = ordinal.checked_add(1).ok_or(EncryptionError::OrdinalExhausted)?;
         let digest = sha256(plaintext);
-        let aad = self
-            .context
-            .canonical_aad(ordinal, plaintext.len() as u64, &digest);
+        let aad = self.context.canonical_aad(ordinal, plaintext.len() as u64, &digest);
         if aad.len() > MAX_AAD_BYTES {
             return Err(EncryptionError::SizeLimit);
         }
@@ -333,7 +330,8 @@ impl ArtifactCipher {
             .map_err(|_| EncryptionError::CryptographicFailure)?;
 
         let aad_len = u32::try_from(aad.len()).map_err(|_| EncryptionError::SizeLimit)?;
-        let ciphertext_len = u64::try_from(ciphertext.len()).map_err(|_| EncryptionError::SizeLimit)?;
+        let ciphertext_len =
+            u64::try_from(ciphertext.len()).map_err(|_| EncryptionError::SizeLimit)?;
         let mut envelope = Vec::with_capacity(29 + aad.len() + ciphertext.len());
         envelope.extend_from_slice(&ENVELOPE_MAGIC);
         envelope.push(ENVELOPE_VERSION);
@@ -349,10 +347,7 @@ impl ArtifactCipher {
     /// Authenticates and decrypts one envelope, refusing ordinal replays.
     pub fn open(&mut self, envelope: &[u8]) -> Result<Vec<u8>, EncryptionError> {
         let (ordinal, aad, mut ciphertext) = parse_envelope(envelope)?;
-        if self
-            .last_opened_ordinal
-            .is_some_and(|last| ordinal <= last)
-        {
+        if self.last_opened_ordinal.is_some_and(|last| ordinal <= last) {
             return Err(EncryptionError::Replay);
         }
         let parsed = parse_aad(&aad)?;
@@ -368,15 +363,15 @@ impl ArtifactCipher {
         {
             return Err(EncryptionError::AuthenticationFailed);
         }
-        let plaintext_len = usize::try_from(parsed.logical_length)
-            .map_err(|_| EncryptionError::SizeLimit)?;
+        let plaintext_len =
+            usize::try_from(parsed.logical_length).map_err(|_| EncryptionError::SizeLimit)?;
         if plaintext_len > MAX_PLAINTEXT_BYTES || ciphertext.len() != plaintext_len + AES_TAG_LEN {
             return Err(EncryptionError::MalformedEnvelope);
         }
         let nonce = nonce_for(ordinal);
         let plaintext = self
             .key
-            .open_in_place(nonce, aead::Aad::from(aad.as_slice()), &mut ciphertext)
+            .open_in_place(nonce, aead::Aad::from(aad), &mut ciphertext)
             .map_err(|_| EncryptionError::AuthenticationFailed)?;
         let digest = sha256(plaintext);
         if digest != parsed.digest {
@@ -427,7 +422,8 @@ struct ParsedAad<'a> {
 }
 
 fn parse_aad(aad: &[u8]) -> Result<ParsedAad<'_>, EncryptionError> {
-    if aad.len() > MAX_AAD_BYTES || aad.len() < 5 || aad[..4] != AAD_MAGIC || aad[4] != AAD_VERSION {
+    if aad.len() > MAX_AAD_BYTES || aad.len() < 5 || aad[..4] != AAD_MAGIC || aad[4] != AAD_VERSION
+    {
         return Err(EncryptionError::MalformedEnvelope);
     }
     let mut offset = 5;
@@ -443,7 +439,8 @@ fn parse_aad(aad: &[u8]) -> Result<ParsedAad<'_>, EncryptionError> {
     full_ordinal[4..].copy_from_slice(ordinal_bytes);
     let ordinal = u128::from_be_bytes(full_ordinal);
     let logical_length = read_u64(aad, &mut offset)?;
-    let compression = *read_bytes(aad, &mut offset, 1)?.first().ok_or(EncryptionError::MalformedEnvelope)?;
+    let compression =
+        *read_bytes(aad, &mut offset, 1)?.first().ok_or(EncryptionError::MalformedEnvelope)?;
     let digest_bytes = read_bytes(aad, &mut offset, 32)?;
     let mut digest = [0u8; 32];
     digest.copy_from_slice(digest_bytes);
@@ -484,7 +481,11 @@ fn read_u64(bytes: &[u8], offset: &mut usize) -> Result<u64, EncryptionError> {
     Ok(u64::from_be_bytes(value.try_into().map_err(|_| EncryptionError::MalformedEnvelope)?))
 }
 
-fn read_bytes<'a>(bytes: &'a [u8], offset: &mut usize, length: usize) -> Result<&'a [u8], EncryptionError> {
+fn read_bytes<'a>(
+    bytes: &'a [u8],
+    offset: &mut usize,
+    length: usize,
+) -> Result<&'a [u8], EncryptionError> {
     let end = offset.checked_add(length).ok_or(EncryptionError::MalformedEnvelope)?;
     let value = bytes.get(*offset..end).ok_or(EncryptionError::MalformedEnvelope)?;
     *offset = end;
@@ -493,20 +494,28 @@ fn read_bytes<'a>(bytes: &'a [u8], offset: &mut usize, length: usize) -> Result<
 
 fn parse_envelope(envelope: &[u8]) -> Result<(u128, &[u8], Vec<u8>), EncryptionError> {
     const HEADER_LEN: usize = 29;
-    if envelope.len() < HEADER_LEN || envelope[..4] != ENVELOPE_MAGIC || envelope[4] != ENVELOPE_VERSION {
+    if envelope.len() < HEADER_LEN
+        || envelope[..4] != ENVELOPE_MAGIC
+        || envelope[4] != ENVELOPE_VERSION
+    {
         return Err(EncryptionError::MalformedEnvelope);
     }
     let mut ordinal_bytes = [0u8; 16];
     ordinal_bytes[4..].copy_from_slice(&envelope[5..17]);
     let ordinal = u128::from_be_bytes(ordinal_bytes);
-    let aad_len = usize::try_from(u32::from_be_bytes(envelope[17..21].try_into().map_err(|_| EncryptionError::MalformedEnvelope)?))
-        .map_err(|_| EncryptionError::MalformedEnvelope)?;
-    let ciphertext_len = usize::try_from(u64::from_be_bytes(envelope[21..29].try_into().map_err(|_| EncryptionError::MalformedEnvelope)?))
-        .map_err(|_| EncryptionError::SizeLimit)?;
+    let aad_len = usize::try_from(u32::from_be_bytes(
+        envelope[17..21].try_into().map_err(|_| EncryptionError::MalformedEnvelope)?,
+    ))
+    .map_err(|_| EncryptionError::MalformedEnvelope)?;
+    let ciphertext_len = usize::try_from(u64::from_be_bytes(
+        envelope[21..29].try_into().map_err(|_| EncryptionError::MalformedEnvelope)?,
+    ))
+    .map_err(|_| EncryptionError::SizeLimit)?;
     if aad_len > MAX_AAD_BYTES
         || ciphertext_len < AES_TAG_LEN
         || ciphertext_len > MAX_PLAINTEXT_BYTES + AES_TAG_LEN
-        || HEADER_LEN.checked_add(aad_len).and_then(|n| n.checked_add(ciphertext_len)) != Some(envelope.len())
+        || HEADER_LEN.checked_add(aad_len).and_then(|n| n.checked_add(ciphertext_len))
+            != Some(envelope.len())
     {
         return Err(EncryptionError::MalformedEnvelope);
     }

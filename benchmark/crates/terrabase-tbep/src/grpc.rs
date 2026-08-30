@@ -30,6 +30,7 @@
 //! The sync host seam is synchronous, so every host call rides
 //! `spawn_blocking`; the tonic runtime never blocks on engine work.
 
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::pin::Pin;
@@ -38,6 +39,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::task::{Context, Poll};
+use std::time::Duration;
 use std::time::Instant;
 
 use prost::Message as _;
@@ -98,18 +100,113 @@ pub const MAX_PRINCIPAL_BYTES: usize = 128;
 /// The maximum UTF-8 byte length of the tenant metadata value.
 pub const MAX_TENANT_BYTES: usize = 64;
 
-/// Maximum in-flight host operations admitted by the overload gate.
+/// Default maximum in-flight host operations admitted by the overload gate.
 pub const MAX_INFLIGHT_OPERATIONS: usize = 128;
 
 /// The depth of one subscription's outbound queue: a bounded backlog
 /// that keeps a slow stream consumer from pinning engine memory.
 pub const OUTBOUND_DEPTH: usize = 64;
 
-/// The per-RPC message bound (decode and encode): the registry's frame
-/// ceiling, which the sync payload bound already fits.
-const MAX_MESSAGE_BYTES: usize = registry::MAX_FRAME_BYTES;
 const MAX_SYNC_TOKEN_BYTES: usize = 1057;
-const MAX_FAMILY_PAYLOAD_BYTES: usize = registry::MAX_FRAME_BYTES;
+
+/// Validated resource and authenticated-gateway policy for one serving
+/// instance. Certificate values are SHA-256 fingerprints of the leaf DER.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TbepGrpcConfig {
+    max_message_bytes: usize,
+    max_inflight: usize,
+    request_timeout: Duration,
+    tls_handshake_timeout: Duration,
+    shutdown_grace: Duration,
+    gateway_certificates: BTreeMap<String, [u8; 32]>,
+}
+
+impl TbepGrpcConfig {
+    /// Creates a validated serving policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidInput` when a bound is zero, outside the protocol
+    /// ceiling, or a gateway principal is outside its metadata bound.
+    pub fn try_new(
+        max_message_bytes: usize,
+        max_inflight: usize,
+        request_timeout: Duration,
+        tls_handshake_timeout: Duration,
+        shutdown_grace: Duration,
+        gateway_certificates: BTreeMap<String, [u8; 32]>,
+    ) -> std::io::Result<Self> {
+        let valid_principals = gateway_certificates.keys().all(|principal| {
+            !principal.is_empty()
+                && principal.len() <= MAX_PRINCIPAL_BYTES
+                && principal == principal.trim()
+                && !principal.chars().any(char::is_control)
+        });
+        if !(1024..=registry::MAX_FRAME_BYTES).contains(&max_message_bytes)
+            || !(1..=4096).contains(&max_inflight)
+            || request_timeout.is_zero()
+            || tls_handshake_timeout.is_zero()
+            || shutdown_grace.is_zero()
+            || !valid_principals
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "the TBEP serving policy is outside its bounds",
+            ));
+        }
+        Ok(Self {
+            max_message_bytes,
+            max_inflight,
+            request_timeout,
+            tls_handshake_timeout,
+            shutdown_grace,
+            gateway_certificates,
+        })
+    }
+
+    /// Returns the configured message bound in bytes.
+    #[must_use]
+    pub const fn max_message_bytes(&self) -> usize {
+        self.max_message_bytes
+    }
+
+    /// Returns the global and per-connection in-flight bound.
+    #[must_use]
+    pub const fn max_inflight(&self) -> usize {
+        self.max_inflight
+    }
+
+    /// Returns the host-call deadline.
+    #[must_use]
+    pub const fn request_timeout(&self) -> Duration {
+        self.request_timeout
+    }
+
+    /// Returns the TLS handshake deadline.
+    #[must_use]
+    pub const fn tls_handshake_timeout(&self) -> Duration {
+        self.tls_handshake_timeout
+    }
+
+    /// Returns the listener drain deadline.
+    #[must_use]
+    pub const fn shutdown_grace(&self) -> Duration {
+        self.shutdown_grace
+    }
+}
+
+impl Default for TbepGrpcConfig {
+    fn default() -> Self {
+        Self {
+            max_message_bytes: registry::MAX_FRAME_BYTES,
+            max_inflight: MAX_INFLIGHT_OPERATIONS,
+            request_timeout: Duration::from_secs(30),
+            tls_handshake_timeout: Duration::from_secs(5),
+            shutdown_grace: Duration::from_secs(5),
+            gateway_certificates: BTreeMap::new(),
+        }
+    }
+}
 
 /// The running gRPC listener handle.
 pub struct TbepGrpcHandle {
@@ -162,10 +259,11 @@ impl Drop for TbepGrpcHandle {
 pub struct TbepGrpcServer {
     host: Arc<dyn TbepHost>,
     binding: pb::BindingKind,
+    config: TbepGrpcConfig,
     metrics: Arc<MetricsRegistry>,
     region: MetricRegion,
     frames_served: AtomicU64,
-    inflight: AtomicUsize,
+    inflight: Arc<AtomicUsize>,
 }
 
 impl TbepGrpcServer {
@@ -186,13 +284,27 @@ impl TbepGrpcServer {
         region: MetricRegion,
         metrics: Arc<MetricsRegistry>,
     ) -> Self {
+        Self::with_config_and_metrics(host, binding, TbepGrpcConfig::default(), region, metrics)
+    }
+
+    /// Creates a server with an explicit validated serving and gateway
+    /// policy.
+    #[must_use]
+    pub fn with_config_and_metrics(
+        host: Arc<dyn TbepHost>,
+        binding: pb::BindingKind,
+        config: TbepGrpcConfig,
+        region: MetricRegion,
+        metrics: Arc<MetricsRegistry>,
+    ) -> Self {
         Self {
             host,
             binding,
+            config,
             metrics,
             region,
             frames_served: AtomicU64::new(0),
-            inflight: AtomicUsize::new(0),
+            inflight: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -213,6 +325,78 @@ impl TbepGrpcServer {
         self.frames_served.fetch_add(1, Ordering::Relaxed);
     }
 
+    fn identity<T>(&self, request: &Request<T>) -> Result<Identity, Status> {
+        let identity = Identity::of(request)?;
+        if self.binding == pb::BindingKind::NetworkMtls {
+            self.authenticate_gateway(request, &identity.principal)?;
+        }
+        Ok(identity)
+    }
+
+    fn authenticate_gateway<T>(&self, request: &Request<T>, principal: &str) -> Result<(), Status> {
+        let expected = self.config.gateway_certificates.get(principal).ok_or_else(|| {
+            tbep_status(
+                Code::PermissionDenied,
+                pb::ErrorCode::OperationRefused,
+                "the authenticated client is not an admitted gateway principal",
+            )
+        })?;
+        let certificates = request.peer_certs().ok_or_else(|| {
+            tbep_status(
+                Code::Unauthenticated,
+                pb::ErrorCode::UnboundChannel,
+                "the network RPC carries no authenticated client certificate",
+            )
+        })?;
+        let leaf = certificates.first().ok_or_else(|| {
+            tbep_status(
+                Code::Unauthenticated,
+                pb::ErrorCode::UnboundChannel,
+                "the network RPC carries no authenticated client certificate",
+            )
+        })?;
+        let observed = ring::digest::digest(&ring::digest::SHA256, leaf.as_ref());
+        ring::constant_time::verify_slices_are_equal(expected, observed.as_ref()).map_err(|_| {
+            tbep_status(
+                Code::PermissionDenied,
+                pb::ErrorCode::OperationRefused,
+                "the gateway principal does not match the authenticated client certificate",
+            )
+        })
+    }
+
+    fn require_mutation_usage(&self, present: bool) -> Result<(), Status> {
+        match (self.binding, present) {
+            (pb::BindingKind::NetworkMtls, true) | (pb::BindingKind::Local, false) => Ok(()),
+            (pb::BindingKind::NetworkMtls, false) => Err(tbep_status(
+                Code::FailedPrecondition,
+                pb::ErrorCode::UsageUnavailable,
+                "a production network mutation requires trusted usage admission",
+            )),
+            (pb::BindingKind::Local, true) => Err(tbep_status(
+                Code::FailedPrecondition,
+                pb::ErrorCode::OperationRefused,
+                "a local mutation cannot mint authoritative usage",
+            )),
+            _ => Err(tbep_status(
+                Code::FailedPrecondition,
+                pb::ErrorCode::OperationRefused,
+                "the serving binding is not configured",
+            )),
+        }
+    }
+
+    fn require_usage_rpc<T>(&self, request: &Request<T>) -> Result<Identity, Status> {
+        if self.binding != pb::BindingKind::NetworkMtls {
+            return Err(tbep_status(
+                Code::FailedPrecondition,
+                pb::ErrorCode::OperationRefused,
+                "authoritative usage RPCs require the production mTLS binding",
+            ));
+        }
+        self.identity(request)
+    }
+
     /// Serves the contract over a local Unix-domain socket.
     ///
     /// Every existing path at `path` is refused. This deliberately avoids
@@ -230,6 +414,12 @@ impl TbepGrpcServer {
     /// thread (an operator-level environment failure); bind failures are
     /// returned.
     pub fn serve_uds(self: &Arc<Self>, path: &Path) -> std::io::Result<TbepGrpcHandle> {
+        if self.binding != pb::BindingKind::Local {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "a UDS listener requires the local binding kind",
+            ));
+        }
         // Never unlink an arbitrary path supplied by the operator. Even a
         // socket-shaped entry may be active, and checking then unlinking is
         // inherently racy. Binding itself remains the final race-safe check.
@@ -304,6 +494,12 @@ impl TbepGrpcServer {
         key_pem: &str,
         client_ca_pem: Option<&str>,
     ) -> std::io::Result<TbepGrpcHandle> {
+        if self.binding != pb::BindingKind::NetworkMtls {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "a TLS listener requires the network mTLS binding kind",
+            ));
+        }
         let Some(client_ca_pem) = client_ca_pem.filter(|bundle| !bundle.trim().is_empty()) else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -311,7 +507,8 @@ impl TbepGrpcServer {
             ));
         };
         let identity = TransportIdentity::from_pem(server_pem, key_pem);
-        let mut tls = ServerTlsConfig::new().identity(identity);
+        let mut tls =
+            ServerTlsConfig::new().identity(identity).timeout(self.config.tls_handshake_timeout());
         tls = tls.client_ca_root(TransportCertificate::from_pem(client_ca_pem));
         let server = Arc::clone(self);
         let (shutdown, signal) = tokio::sync::oneshot::channel::<()>();
@@ -373,55 +570,63 @@ fn serve_routes(
     server: Arc<TbepGrpcServer>,
     tls: Option<ServerTlsConfig>,
 ) -> Result<tonic::transport::server::Router, tonic::transport::Error> {
-    let mut builder = tonic::transport::Server::builder();
+    let message_bytes = server.config.max_message_bytes();
+    let max_inflight = server.config.max_inflight();
+    let max_streams = u32::try_from(max_inflight).unwrap_or(u32::MAX);
+    let mut builder = tonic::transport::Server::builder()
+        .concurrency_limit_per_connection(max_inflight)
+        .max_concurrent_streams(max_streams)
+        .http2_max_pending_accept_reset_streams(Some(max_inflight))
+        .load_shed(true)
+        .timeout(server.config.request_timeout());
     if let Some(tls) = tls {
         builder = builder.tls_config(tls)?;
     }
     Ok(builder
         .add_service(
             ChannelServer::new(Arc::clone(&server))
-                .max_decoding_message_size(MAX_MESSAGE_BYTES)
-                .max_encoding_message_size(MAX_MESSAGE_BYTES),
+                .max_decoding_message_size(message_bytes)
+                .max_encoding_message_size(message_bytes),
         )
         .add_service(
             EngineServer::new(Arc::clone(&server))
-                .max_decoding_message_size(MAX_MESSAGE_BYTES)
-                .max_encoding_message_size(MAX_MESSAGE_BYTES),
+                .max_decoding_message_size(message_bytes)
+                .max_encoding_message_size(message_bytes),
         )
         .add_service(
             BackboneServer::new(Arc::clone(&server))
-                .max_decoding_message_size(MAX_MESSAGE_BYTES)
-                .max_encoding_message_size(MAX_MESSAGE_BYTES),
+                .max_decoding_message_size(message_bytes)
+                .max_encoding_message_size(message_bytes),
         )
         .add_service(
             SyncServer::new(Arc::clone(&server))
-                .max_decoding_message_size(MAX_MESSAGE_BYTES)
-                .max_encoding_message_size(MAX_MESSAGE_BYTES),
+                .max_decoding_message_size(message_bytes)
+                .max_encoding_message_size(message_bytes),
         )
         .add_service(
             SchemaServer::new(Arc::clone(&server))
-                .max_decoding_message_size(MAX_MESSAGE_BYTES)
-                .max_encoding_message_size(MAX_MESSAGE_BYTES),
+                .max_decoding_message_size(message_bytes)
+                .max_encoding_message_size(message_bytes),
         )
         .add_service(
             ReplicationServer::new(Arc::clone(&server))
-                .max_decoding_message_size(MAX_MESSAGE_BYTES)
-                .max_encoding_message_size(MAX_MESSAGE_BYTES),
+                .max_decoding_message_size(message_bytes)
+                .max_encoding_message_size(message_bytes),
         )
         .add_service(
             MaintenanceServer::new(Arc::clone(&server))
-                .max_decoding_message_size(MAX_MESSAGE_BYTES)
-                .max_encoding_message_size(MAX_MESSAGE_BYTES),
+                .max_decoding_message_size(message_bytes)
+                .max_encoding_message_size(message_bytes),
         )
         .add_service(
             UsageServer::new(Arc::clone(&server))
-                .max_decoding_message_size(MAX_MESSAGE_BYTES)
-                .max_encoding_message_size(MAX_MESSAGE_BYTES),
+                .max_decoding_message_size(message_bytes)
+                .max_encoding_message_size(message_bytes),
         )
         .add_service(
             TierServer::new(server)
-                .max_decoding_message_size(MAX_MESSAGE_BYTES)
-                .max_encoding_message_size(MAX_MESSAGE_BYTES),
+                .max_decoding_message_size(message_bytes)
+                .max_encoding_message_size(message_bytes),
         ))
 }
 
@@ -430,9 +635,9 @@ fn serve_routes(
 // ---------------------------------------------------------------------------
 
 /// Releases one overload-gate slot when dropped.
-struct Permit<'a>(&'a AtomicUsize);
+struct Permit(Arc<AtomicUsize>);
 
-impl Drop for Permit<'_> {
+impl Drop for Permit {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::AcqRel);
     }
@@ -440,7 +645,6 @@ impl Drop for Permit<'_> {
 
 /// The application identity one RPC carries.
 struct Identity {
-    #[allow(dead_code)]
     principal: String,
     tenant: String,
 }
@@ -598,7 +802,7 @@ where
     F: FnOnce() -> Result<T, HostingError> + Send + 'static,
 {
     let started = Instant::now();
-    if self_ref.inflight.fetch_add(1, Ordering::AcqRel) >= MAX_INFLIGHT_OPERATIONS {
+    if self_ref.inflight.fetch_add(1, Ordering::AcqRel) >= self_ref.config.max_inflight() {
         self_ref.inflight.fetch_sub(1, Ordering::AcqRel);
         self_ref.metrics.record_request(
             self_ref.region,
@@ -612,9 +816,26 @@ where
             "the engine is serving its in-flight bound; retry",
         ));
     }
-    let _permit = Permit(&self_ref.inflight);
-    match tokio::task::spawn_blocking(work).await {
-        Ok(Ok(value)) => {
+    let permit = Permit(Arc::clone(&self_ref.inflight));
+    let task = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        work()
+    });
+    match tokio::time::timeout(self_ref.config.request_timeout(), task).await {
+        Err(_) => {
+            self_ref.metrics.record_request(
+                self_ref.region,
+                operation,
+                MetricOutcome::Error,
+                started.elapsed(),
+            );
+            Err(tbep_status(
+                Code::DeadlineExceeded,
+                pb::ErrorCode::EngineFailure,
+                "the engine request exceeded its configured deadline",
+            ))
+        }
+        Ok(Ok(Ok(value))) => {
             self_ref.metrics.record_request(
                 self_ref.region,
                 operation,
@@ -623,7 +844,7 @@ where
             );
             Ok(value)
         }
-        Ok(Err(error)) => {
+        Ok(Ok(Err(error))) => {
             let outcome = match &error {
                 HostingError::EngineFailure(_) => MetricOutcome::Error,
                 HostingError::UsageCorrupt(_) => MetricOutcome::Error,
@@ -639,7 +860,7 @@ where
             self_ref.metrics.record_request(self_ref.region, operation, outcome, started.elapsed());
             Err(host_error(error))
         }
-        Err(_) => {
+        Ok(Err(_)) => {
             self_ref.metrics.record_request(
                 self_ref.region,
                 operation,
@@ -1389,6 +1610,9 @@ impl Channel for Arc<TbepGrpcServer> {
         request: Request<pb::ChannelBindRequest>,
     ) -> Result<Response<pb::ChannelBindResponse>, Status> {
         self.counted();
+        if self.binding == pb::BindingKind::NetworkMtls {
+            self.authenticate_gateway(&request, &request.get_ref().principal)?;
+        }
         let message = request.into_inner();
         let domain =
             registry::ChannelBindRequest { principal: message.principal, tenant: message.tenant };
@@ -1422,7 +1646,7 @@ impl Engine for Arc<TbepGrpcServer> {
         request: Request<pb::DocumentReadRequest>,
     ) -> Result<Response<pb::DocumentReadResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let message = request.into_inner();
         let domain = registry::DocumentReadRequest {
             collection: message.collection,
@@ -1448,7 +1672,7 @@ impl Engine for Arc<TbepGrpcServer> {
         request: Request<pb::DocumentWriteRequest>,
     ) -> Result<Response<pb::DocumentWriteResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
         let document =
@@ -1466,6 +1690,7 @@ impl Engine for Arc<TbepGrpcServer> {
             ack: acknowledgement(message.ack),
             usage: usage_admission(message.usage.as_ref(), &key)?,
         };
+        self.require_mutation_usage(domain.usage.is_some())?;
         domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
@@ -1483,7 +1708,7 @@ impl Engine for Arc<TbepGrpcServer> {
         request: Request<pb::DocumentDeleteRequest>,
     ) -> Result<Response<pb::DocumentDeleteResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
         let domain = registry::DocumentDeleteRequest {
@@ -1500,6 +1725,7 @@ impl Engine for Arc<TbepGrpcServer> {
             ack: acknowledgement(message.ack),
             usage: usage_admission(message.usage.as_ref(), &key)?,
         };
+        self.require_mutation_usage(domain.usage.is_some())?;
         domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
@@ -1517,7 +1743,7 @@ impl Engine for Arc<TbepGrpcServer> {
         request: Request<pb::DocumentBatchRequest>,
     ) -> Result<Response<pb::DocumentBatchResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
         let mut items = Vec::with_capacity(message.items.len());
@@ -1546,6 +1772,7 @@ impl Engine for Arc<TbepGrpcServer> {
             ack: acknowledgement(message.ack),
             usage: usage_admission(message.usage.as_ref(), &key)?,
         };
+        self.require_mutation_usage(domain.usage.is_some())?;
         domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
@@ -1563,7 +1790,7 @@ impl Engine for Arc<TbepGrpcServer> {
         request: Request<pb::QueryExecuteRequest>,
     ) -> Result<Response<pb::QueryExecuteResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let message = request.into_inner();
         let domain = registry::QueryExecuteRequest {
             query_id: message.query_id,
@@ -1594,7 +1821,7 @@ impl Engine for Arc<TbepGrpcServer> {
         request: Request<pb::QueryCancelRequest>,
     ) -> Result<Response<pb::QueryCancelResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let message = request.into_inner();
         let domain = registry::QueryCancelRequest { query_id: message.query_id };
         let host = Arc::clone(&self.host);
@@ -1619,9 +1846,9 @@ impl Engine for Arc<TbepGrpcServer> {
         request: Request<pb::FamilyReadRequest>,
     ) -> Result<Response<pb::FamilyReadResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let message = request.into_inner();
-        if message.request.len() > MAX_FAMILY_PAYLOAD_BYTES {
+        if message.request.len() > self.config.max_message_bytes() {
             return Err(conversion_error("a family request exceeds its byte bound"));
         }
         let domain = registry::FamilyReadRequest {
@@ -1648,10 +1875,10 @@ impl Engine for Arc<TbepGrpcServer> {
         request: Request<pb::FamilyWriteRequest>,
     ) -> Result<Response<pb::FamilyWriteResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
-        if message.request.len() > MAX_FAMILY_PAYLOAD_BYTES {
+        if message.request.len() > self.config.max_message_bytes() {
             return Err(conversion_error("a family request exceeds its byte bound"));
         }
         let domain = registry::FamilyWriteRequest {
@@ -1662,6 +1889,7 @@ impl Engine for Arc<TbepGrpcServer> {
             operation_id: message.operation_id,
             usage: usage_admission(message.usage.as_ref(), &key)?,
         };
+        self.require_mutation_usage(domain.usage.is_some())?;
         domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
@@ -1685,7 +1913,7 @@ impl Backbone for Arc<TbepGrpcServer> {
         request: Request<pb::BackboneSubscribeRequest>,
     ) -> Result<Response<Self::SubscribeStream>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let message = request.into_inner();
         let domain = registry::BackboneSubscribeRequest {
             subscription_id: message.subscription_id,
@@ -1784,7 +2012,7 @@ impl Backbone for Arc<TbepGrpcServer> {
         request: Request<pb::BackboneAcknowledgeRequest>,
     ) -> Result<Response<pb::BackboneAcknowledgeResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let message = request.into_inner();
         let domain = registry::BackboneAcknowledgeRequest {
             subscription_id: message.subscription_id,
@@ -1807,7 +2035,7 @@ impl Backbone for Arc<TbepGrpcServer> {
         request: Request<pb::BackboneUnsubscribeRequest>,
     ) -> Result<Response<pb::BackboneUnsubscribeResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let message = request.into_inner();
         let domain =
             registry::BackboneUnsubscribeRequest { subscription_id: message.subscription_id };
@@ -1830,7 +2058,7 @@ impl Sync for Arc<TbepGrpcServer> {
         request: Request<pb::SyncSessionSetupRequest>,
     ) -> Result<Response<pb::SyncSessionSetupResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let message = request.into_inner();
         if message.resume.len() > MAX_SYNC_TOKEN_BYTES {
             return Err(conversion_error("a sync resume token exceeds its byte bound"));
@@ -1858,7 +2086,7 @@ impl Sync for Arc<TbepGrpcServer> {
         request: Request<pb::SyncDeltaPullRequest>,
     ) -> Result<Response<pb::SyncDeltaPullResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let message = request.into_inner();
         if message.from.len() > MAX_SYNC_TOKEN_BYTES {
             return Err(conversion_error("a sync cursor exceeds its byte bound"));
@@ -1887,7 +2115,7 @@ impl Sync for Arc<TbepGrpcServer> {
         request: Request<pb::SyncSnapshotPullRequest>,
     ) -> Result<Response<pb::SyncSnapshotPullResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let message = request.into_inner();
         let domain = registry::SyncSnapshotPullRequest { session_id: message.session_id };
         let host = Arc::clone(&self.host);
@@ -1909,7 +2137,7 @@ impl Sync for Arc<TbepGrpcServer> {
         request: Request<pb::SyncCheckpointAckRequest>,
     ) -> Result<Response<pb::SyncCheckpointAckResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let message = request.into_inner();
         if message.checkpoint.len() > MAX_SYNC_TOKEN_BYTES {
             return Err(conversion_error("a sync checkpoint exceeds its byte bound"));
@@ -1933,7 +2161,7 @@ impl Sync for Arc<TbepGrpcServer> {
         request: Request<pb::SyncMutationSubmitRequest>,
     ) -> Result<Response<pb::SyncMutationSubmitResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
         let domain = registry::SyncMutationSubmitRequest {
@@ -1948,6 +2176,7 @@ impl Sync for Arc<TbepGrpcServer> {
                 .ok_or_else(|| conversion_error("a sync mutation carries no change"))?,
             usage: usage_admission(message.usage.as_ref(), &key)?,
         };
+        self.require_mutation_usage(domain.usage.is_some())?;
         domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
@@ -1966,7 +2195,7 @@ impl Sync for Arc<TbepGrpcServer> {
         request: Request<pb::SyncSessionCloseRequest>,
     ) -> Result<Response<pb::SyncSessionCloseResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let message = request.into_inner();
         let domain = registry::SyncSessionCloseRequest { session_id: message.session_id };
         let host = Arc::clone(&self.host);
@@ -1986,7 +2215,7 @@ impl Schema for Arc<TbepGrpcServer> {
         request: Request<pb::SchemaDeclareRequest>,
     ) -> Result<Response<pb::SchemaDeclareResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
         let domain = registry::SchemaDeclareRequest {
@@ -2012,7 +2241,7 @@ impl Schema for Arc<TbepGrpcServer> {
         request: Request<pb::SchemaStatusRequest>,
     ) -> Result<Response<pb::SchemaStatusResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let message = request.into_inner();
         let domain = registry::SchemaStatusRequest { collection: message.collection };
         let host = Arc::clone(&self.host);
@@ -2032,7 +2261,7 @@ impl Schema for Arc<TbepGrpcServer> {
         request: Request<pb::SchemaValidateRequest>,
     ) -> Result<Response<pb::SchemaValidateResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let message = request.into_inner();
         let domain = registry::SchemaValidateRequest {
             collection: message.collection,
@@ -2063,7 +2292,7 @@ impl Schema for Arc<TbepGrpcServer> {
         request: Request<pb::MigrationStatusRequest>,
     ) -> Result<Response<pb::MigrationStatusResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let message = request.into_inner();
         let domain = registry::MigrationStatusRequest { collection: message.collection };
         let host = Arc::clone(&self.host);
@@ -2082,7 +2311,7 @@ impl Schema for Arc<TbepGrpcServer> {
         request: Request<pb::MigrationDryRunRequest>,
     ) -> Result<Response<pb::MigrationDryRunResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let message = request.into_inner();
         let contract = message
             .contract
@@ -2109,7 +2338,7 @@ impl Schema for Arc<TbepGrpcServer> {
         request: Request<pb::MigrationApplyRequest>,
     ) -> Result<Response<pb::MigrationApplyResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
         let contract = message
@@ -2144,7 +2373,7 @@ impl Replication for Arc<TbepGrpcServer> {
         request: Request<pb::ReplicationConflictsRequest>,
     ) -> Result<Response<pb::ReplicationConflictsResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response = run_host(self.as_ref(), MetricOperation::Repair, move || {
@@ -2162,7 +2391,7 @@ impl Replication for Arc<TbepGrpcServer> {
         request: Request<pb::ReplicationFencedRequest>,
     ) -> Result<Response<pb::ReplicationFencedResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response = run_host(self.as_ref(), MetricOperation::Repair, move || {
@@ -2180,7 +2409,7 @@ impl Replication for Arc<TbepGrpcServer> {
         request: Request<pb::ReplicationDepositionsRequest>,
     ) -> Result<Response<pb::ReplicationDepositionsResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response = run_host(self.as_ref(), MetricOperation::Repair, move || {
@@ -2198,7 +2427,7 @@ impl Replication for Arc<TbepGrpcServer> {
         request: Request<pb::ReplicationCursorRequest>,
     ) -> Result<Response<pb::ReplicationCursorResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response = run_host(self.as_ref(), MetricOperation::Repair, move || {
@@ -2216,7 +2445,7 @@ impl Replication for Arc<TbepGrpcServer> {
         request: Request<pb::ReplicationHealthRequest>,
     ) -> Result<Response<pb::ReplicationHealthResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response = run_host(self.as_ref(), MetricOperation::Repair, move || {
@@ -2234,7 +2463,7 @@ impl Replication for Arc<TbepGrpcServer> {
         request: Request<pb::ReplicationDenialsRequest>,
     ) -> Result<Response<pb::ReplicationDenialsResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response = run_host(self.as_ref(), MetricOperation::Repair, move || {
@@ -2255,7 +2484,7 @@ impl Maintenance for Arc<TbepGrpcServer> {
         request: Request<pb::TopologyReadRequest>,
     ) -> Result<Response<pb::TopologyReadResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response =
@@ -2274,7 +2503,7 @@ impl Maintenance for Arc<TbepGrpcServer> {
         request: Request<pb::AdminStatusRequest>,
     ) -> Result<Response<pb::AdminStatusResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let _ = identity;
         let host = Arc::clone(&self.host);
         let served = self.frames_served();
@@ -2294,7 +2523,7 @@ impl Maintenance for Arc<TbepGrpcServer> {
         request: Request<pb::SupervisionHealthRequest>,
     ) -> Result<Response<pb::SupervisionHealthResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let _ = identity;
         let host = Arc::clone(&self.host);
         let served = self.frames_served();
@@ -2318,7 +2547,7 @@ impl Maintenance for Arc<TbepGrpcServer> {
         request: Request<pb::SupervisionShutdownRequest>,
     ) -> Result<Response<pb::SupervisionShutdownResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let _ = identity;
         let message = request.into_inner();
         let domain = registry::SupervisionShutdownRequest {
@@ -2353,7 +2582,7 @@ impl Usage for Arc<TbepGrpcServer> {
         request: Request<pb::UsageRecordRequest>,
     ) -> Result<Response<pb::UsageRecordResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.require_usage_rpc(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
         let meter = match pb::UsageRecordMeter::try_from(message.meter) {
@@ -2400,7 +2629,7 @@ impl Usage for Arc<TbepGrpcServer> {
         request: Request<pb::UsageExportRequest>,
     ) -> Result<Response<pb::UsageExportResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.require_usage_rpc(&request)?;
         let message = request.into_inner();
         let domain = registry::UsageExportRequest {
             window_start_millis: message.window_start_millis,
@@ -2441,7 +2670,7 @@ impl Tier for Arc<TbepGrpcServer> {
         request: Request<pb::TierConfigureRequest>,
     ) -> Result<Response<pb::TierConfigureResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
         let domain = registry::TierConfigureRequest {
@@ -2471,7 +2700,7 @@ impl Tier for Arc<TbepGrpcServer> {
         request: Request<pb::TierInspectRequest>,
     ) -> Result<Response<pb::TierInspectResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response =
@@ -2491,7 +2720,7 @@ impl Tier for Arc<TbepGrpcServer> {
         request: Request<pb::TierDryRunRequest>,
     ) -> Result<Response<pb::TierDryRunResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response =
@@ -2507,7 +2736,7 @@ impl Tier for Arc<TbepGrpcServer> {
         request: Request<pb::TierExplainRequest>,
     ) -> Result<Response<pb::TierExplainResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response =
@@ -2523,7 +2752,7 @@ impl Tier for Arc<TbepGrpcServer> {
         request: Request<pb::TierRunRequest>,
     ) -> Result<Response<pb::TierRunResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
@@ -2541,7 +2770,7 @@ impl Tier for Arc<TbepGrpcServer> {
         request: Request<pb::TierPauseRequest>,
     ) -> Result<Response<pb::TierPauseResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
@@ -2556,7 +2785,7 @@ impl Tier for Arc<TbepGrpcServer> {
         request: Request<pb::TierResumeRequest>,
     ) -> Result<Response<pb::TierResumeResponse>, Status> {
         self.counted();
-        let identity = Identity::of(&request)?;
+        let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;

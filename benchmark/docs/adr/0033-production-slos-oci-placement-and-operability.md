@@ -206,10 +206,17 @@ durability, encryption, isolation, observability, support, and recovery
 contracts in this goal. TerraScale does not sell a reduced-durability or free
 production tier. Promotional credits do not change service behavior.
 
-Production uses shared placement by default. The Orchestrator moves a database
-to dedicated Members when measured storage, throughput, latency, isolation,
-regulatory, or noisy-neighbor thresholds require it. Placement movement is a
-durable operation and does not change the public API.
+Production uses shared Member processes by default. Each database has an
+isolated engine location, WAL, publication journal, encryption key hierarchy,
+backup lifecycle, quotas, and resource-accounting identity inside that process.
+Databases do not share one storage directory or encryption key. The Member uses
+bounded fair scheduling and per-database admission so one database cannot own
+all memory, queue, compaction, or I/O capacity.
+
+The Orchestrator moves a database to dedicated Members when measured storage,
+throughput, latency, isolation, regulatory, or noisy-neighbor thresholds
+require it. Placement movement is a durable operation and does not change the
+database format or public API.
 
 The public meter catalog charges for stored byte-hours in each selected Region,
 request units, public egress, Region seats, immutable backup byte-hours, and

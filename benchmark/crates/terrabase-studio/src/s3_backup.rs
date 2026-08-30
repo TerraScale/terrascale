@@ -956,7 +956,7 @@ mod tests {
         let failure = verify_s3_chain(&repository, &root.join("scratch"), None).await.unwrap_err();
         assert!(failure.contains("ChecksumMismatch"));
 
-        store.put(&location, original).await.unwrap();
+        store.put(&location, original.into()).await.unwrap();
         verify_s3_chain(&repository, &root.join("scratch"), None).await.unwrap();
         store.delete(&location).await.unwrap();
         assert!(verify_s3_chain(&repository, &root.join("scratch"), None).await.is_err());

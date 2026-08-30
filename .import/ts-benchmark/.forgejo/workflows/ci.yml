@@ -2,7 +2,7 @@ name: terrabase checks
 
 on:
   push:
-    branches: [develop]
+    branches: [develop, main]
   pull_request:
     branches: [develop, main]
 
@@ -107,6 +107,14 @@ jobs:
           grep -q '@sha256:' deploy/release/Containerfile.studio
           ! grep -q 'target-cpu=native' .terrascale/deploy.json deploy/release/Containerfile.*
           ! grep -q 'tbep-production-harness' .terrascale/deploy.json deploy/release/Containerfile.*
+      - name: Install pinned yq
+        env:
+          GOBIN: ${{ github.workspace }}/.ci-bin
+        run: |
+          mkdir -p "$GOBIN"
+          go install github.com/mikefarah/yq/v4@v4.45.1
+          "$GOBIN/yq" --version | grep -F 'version v4.45.1'
+          echo "$GOBIN" >> "$GITHUB_PATH"
       - name: Observability assets
         run: |
           # Parse every committed JSON/YAML asset, including deployment,
@@ -150,16 +158,18 @@ jobs:
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
           export PATH="$GOBIN:$PATH"
+          schema_digest="$(bash scripts/tbep_schema_digest.sh)"
+          printf 'TBEP schema digest: %s\n' "$schema_digest"
           buf lint
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             buf breaking --against ".git#branch=${GITHUB_BASE_REF}"
           else
-            buf breaking --against '.git#branch=develop'
+            buf breaking --against ".git#branch=${GITHUB_REF_NAME}"
           fi
           # Generate the sole permitted network client into an isolated
           # directory and compare it with the checked-in Go bindings.
           active_dir="$(mktemp -d)"
-          active_template="$(mktemp)"
+          active_template="$(mktemp --suffix=.yaml)"
           sed "s#out: terrabase-go#out: ${active_dir}#" buf.gen.yaml > "$active_template"
           buf generate --template "$active_template"
           normalize_generated() {
@@ -167,6 +177,18 @@ jobs:
           }
           diff -u <(normalize_generated "$active_dir/terrabase/v1/engine.pb.go") <(normalize_generated terrabase-go/terrabase/v1/engine.pb.go)
           diff -u <(normalize_generated "$active_dir/terrabase/v1/engine_grpc.pb.go") <(normalize_generated terrabase-go/terrabase/v1/engine_grpc.pb.go)
+
+      # The checked-in Go client must interoperate with the real Rust server,
+      # not only with fake gRPC peers. The test owns its loopback PKI and
+      # storage directory and fails if the harness is absent or skips.
+      - name: Live Rust-Go integration
+        run: |
+          cargo build -p terrabase-tbep --bin tbep-production-harness --release --locked
+          (
+            cd terrabase-go
+            TERRABASE_HARNESS="$GITHUB_WORKSPACE/target/release/tbep-production-harness" \
+              go test -mod=readonly -tags integration ./...
+          )
 
   # The Go client (terrabase-go) is the only client allowed to communicate
   # with the engine (AGENTS.md). Its build and tests gate with the engine.

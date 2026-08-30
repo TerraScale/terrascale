@@ -48,8 +48,10 @@ keys. Keys for one database or artifact cannot decrypt another.
 
 ## Authenticated encryption
 
-The data cipher is AES-256-GCM through a pinned FIPS-capable cryptographic
-provider. TerraScale does not implement AES, GCM, HKDF, or random generation.
+The data cipher is AES-256-GCM through AWS-LC FIPS. Production builds enable
+the FIPS feature and exclude the non-FIPS provider feature. Startup fails
+closed unless the linked provider reports an operational FIPS module.
+TerraScale does not implement AES, GCM, HKDF, or random generation.
 
 Every encrypted unit has one unique derived key and a 96-bit nonce formed from
 its bounded chunk or record ordinal. A writer rotates the artifact before the
@@ -85,6 +87,20 @@ on eviction, and never written to crash dumps or swap. A Member renews the lease
 through regional Vault and current catalog authorization. After lease expiry,
 Vault unavailability fails closed for data requiring that key. Already durable
 encrypted bytes remain intact.
+
+## Local development keys
+
+Local development uses a separate provider that persists one generated
+256-bit database key in an owner-only regular file under the database engine
+location. The provider creates the file atomically, rejects symbolic links,
+rejects group or other permissions, preserves an existing key across restart,
+and never regenerates a key for existing encrypted data. Its provider identity
+is `local-file` and production configuration rejects it.
+
+Local key files, their contents, and derived keys never enter logs, Studio
+responses, backups, benchmark artifacts, or source control. Losing the file
+makes the matching local encrypted database unrecoverable. Local keys do not
+satisfy production encryption or FIPS evidence.
 
 ## Backup, restore, deletion, and disaster recovery
 

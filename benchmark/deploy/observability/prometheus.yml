@@ -11,7 +11,17 @@ scrape_configs:
   - job_name: terrabase
     scheme: https
     metrics_path: /internal/metrics
+    scrape_timeout: 10s
+    enable_http2: true
+    sample_limit: 10000
+    target_limit: 1000
+    tls_config:
+      ca_file: /etc/prometheus/terrabase/ca.pem
+      cert_file: /etc/prometheus/terrabase/client.pem
+      key_file: /etc/prometheus/terrabase/client-key.pem
+      min_version: TLS13
+      insecure_skip_verify: false
     # ts-orchestrator supplies private authenticated targets. An empty target
-    # list is intentional in this repository template.
+    # list is intentional. It also mounts the candidate-bound mTLS files above.
     static_configs:
       - targets: []

@@ -139,6 +139,11 @@ rebuild it from the canonical commit and the named before and after MVCC state.
 Realtime notification may be duplicated or lost. The durable publication log
 and causal position recover it.
 
+Only this engine publication journal may advance result revisions or issue
+reactive checkpoints. A separate in-memory delivery host may cache bounded
+derived state, but it cannot mint a checkpoint, claim a committed revision, or
+become a second source of publication order.
+
 Segmented posting indexes cover tenant, database, Partition, collection,
 document, index generation, key or range, relationship, routing tag, and
 authorization dependency. The engine intersects these indexes to find

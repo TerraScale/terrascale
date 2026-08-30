@@ -1147,6 +1147,9 @@ fn map_frontier_open_error(error: FrontierError) -> StorageOpenError {
 
 impl super::StoragePort for FileStorage {
     fn commit(&mut self, intent: CommitIntent) -> CommitResult {
+        if intent.usage_admission.is_some() {
+            return CommitResult::Rejected(CommitRejection::Storage);
+        }
         self.commit_intent(&intent)
     }
 

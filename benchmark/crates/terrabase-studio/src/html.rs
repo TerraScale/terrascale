@@ -422,9 +422,9 @@ mod tests {
         let row =
             format!("<tr class=\"x\">{}{}</tr>", cell("a"), cell_raw(&badge(Tone::Good, "ok")));
         let markup = table(&["one", "two"], &[row.clone()], "nothing");
-        assert_eq!(markup.matches("<tr").count(), 1, "exactly one <tr> per row");
+        assert_eq!(markup.matches("<tr class=\"x\"").count(), 1, "exactly one caller row");
         assert!(markup.contains(row.as_str()));
-        assert!(!markup.contains("<tr class=\"border-b transition-colors hover:bg-muted/50\"><tr"));
+        assert!(!markup.contains("><tr"), "no row is nested inside another");
     }
 
     #[test]
@@ -432,13 +432,14 @@ mod tests {
         let markup = table(&["a", "b", "c"], &[], "nothing here");
         assert!(markup.contains("colspan=\"3\""));
         assert!(markup.contains("nothing here"));
-        assert_eq!(markup.matches("<tr").count(), 1);
+        // one header row plus the spanning note row, and nothing else
+        assert_eq!(markup.matches("<tr").count(), 2);
     }
 
     #[test]
     fn js_string_literals_are_quoted_safely() {
         assert_eq!(js_string("demo"), "'demo'");
-        assert_eq!(js_string("a'b\\c"), "'a\'b\\\\c'");
+        assert_eq!(js_string("a'b\\c"), "'a\\'b\\\\c'");
         assert_eq!(js_string("line\nbreak"), "'line\\nbreak'");
     }
 

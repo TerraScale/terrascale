@@ -79,7 +79,7 @@ dashboard, and scrape path are deployed correctly.
   loss of a trustworthy frontier. Check backlog and lag, protect the healthy
   source, and follow the repair procedure. Never advance a retained frontier
   from elapsed time or a control-plane opinion.
-- A continuous backup age over 26 hours violates the daily verified recovery
+- A continuous backup age over 24 hours violates the daily verified recovery
   point operating threshold. Inspect the bounded mode and backup result,
   destination health, and verification receipt before retrying.
 - Usage-export frontier regression is refused in process. On export failures,

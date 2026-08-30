@@ -9,6 +9,11 @@ checked-in target list stays empty because repository configuration cannot
 name a production Member. Do not expose `/internal/metrics` through the public
 Go gateway.
 
+The scrape template requires TLS 1.3 and client authentication. The
+orchestrator mounts the private CA, Prometheus client certificate, and client
+key at the paths declared in `prometheus.yml`. Never replace those files with
+`insecure_skip_verify` or a public target during incident response.
+
 Import `grafana-dashboard.json` into the operator Grafana instance and select
 its Prometheus data source. The dashboard has Region and operation filters and
 shows:
@@ -18,7 +23,12 @@ shows:
 - traffic by operation and outcome;
 - p50, p95, and p99 request latency;
 - storage by tier and its 24-hour change;
-- replication lag, active Members, and component health.
+- replication lag, backlog, frontier health, active Members, and component
+  health;
+- in-flight work, queue utilization, admission rejections, commit and WAL
+  latency, and durability outcomes;
+- storage errors, compaction backlog and I/O, backup age and results, and usage
+  export failures.
 
 Scope the Prometheus job to one TerraBase deployment. Request rates and local
 storage bytes can be summed across its Member targets. Readiness and component
@@ -26,7 +36,5 @@ health use the minimum; replication lag uses the maximum. Do not merge
 unrelated clusters into one dashboard total.
 
 Load `prometheus-rules.yml` through the Prometheus rule path shown in
-`prometheus.yml`. Review every starting threshold against the selected
-topology, usable storage capacity, and ADR 0033 SLO before GA. Dashboard and
-rule edits enter production only through versioned deployment configuration
-and a new qualification receipt.
+`prometheus.yml`. Dashboard and rule edits enter production only through
+versioned deployment configuration and a new qualification receipt.

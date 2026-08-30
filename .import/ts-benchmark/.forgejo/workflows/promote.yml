@@ -1,0 +1,120 @@
+name: TerraBase protected candidate promotion
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Develop workflow run containing the exact unsigned native packages.
+        required: true
+        type: string
+      capability_run_id:
+        description: Protected qualification run containing signed production capability evidence.
+        required: true
+        type: string
+      confirm_release:
+        description: Confirm promotion of the exact main-branch packages without rebuilding.
+        required: true
+        type: boolean
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: terrabase-protected-promotion
+  cancel-in-progress: false
+
+jobs:
+  sign-amd64:
+    name: promote/amd64-native
+    if: ${{ inputs.confirm_release && forgejo.ref == 'refs/heads/main' }}
+    runs-on: [self-hosted, protected, terrabase-release-amd64]
+    timeout-minutes: 60
+    environment: terrabase-release-signing
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download the exact unsigned AMD64 packages
+        uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        with:
+          name: terrabase-unsigned-amd64-${{ forgejo.sha }}
+          path: artifacts/unsigned
+          github-token: ${{ secrets.TERRABASE_RELEASE_ARTIFACT_TOKEN }}
+          repository: ${{ forgejo.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+      - name: Download independently signed production capability evidence
+        uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        with:
+          name: terrabase-production-capability-${{ forgejo.sha }}
+          path: artifacts/capability
+          github-token: ${{ secrets.TERRABASE_RELEASE_ARTIFACT_TOKEN }}
+          repository: ${{ forgejo.repository }}
+          run-id: ${{ inputs.capability_run_id }}
+      - name: Admit, sign, and verify the exact AMD64 package bytes
+        env:
+          TERRABASE_RELEASE_SIGNING_KEY_PEM: ${{ secrets.TERRABASE_RELEASE_SIGNING_KEY_PEM }}
+          TERRABASE_RELEASE_VERIFY_KEY_PEM: ${{ secrets.TERRABASE_RELEASE_VERIFY_KEY_PEM }}
+          TERRABASE_PRODUCTION_CAPABILITY_VERIFY_KEY_PEM: ${{ secrets.TERRABASE_PRODUCTION_CAPABILITY_VERIFY_KEY_PEM }}
+          TERRABASE_PRODUCTION_CAPABILITY_STATEMENT: artifacts/capability/PRODUCTION-CAPABILITY.json
+          TERRABASE_PRODUCTION_CAPABILITY_SIGNATURE: artifacts/capability/PRODUCTION-CAPABILITY.sig
+          TERRABASE_PRODUCTION_CAPABILITY_EVIDENCE_DIRECTORY: artifacts/capability
+        run: |
+          deploy/release/sign.sh artifacts/unsigned/terrabase-server-amd64
+          deploy/release/sign.sh artifacts/unsigned/terrabase-studio-amd64
+      - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        with:
+          name: terrabase-signed-amd64-${{ forgejo.sha }}
+          path: |
+            artifacts/unsigned/terrabase-server-amd64
+            artifacts/unsigned/terrabase-studio-amd64
+          if-no-files-found: error
+          retention-days: 30
+
+  sign-arm64:
+    name: promote/arm64-native
+    if: ${{ inputs.confirm_release && forgejo.ref == 'refs/heads/main' }}
+    runs-on: [self-hosted, protected, terrabase-release-arm64]
+    timeout-minutes: 60
+    environment: terrabase-release-signing
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download the exact unsigned ARM64 packages
+        uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        with:
+          name: terrabase-unsigned-arm64-${{ forgejo.sha }}
+          path: artifacts/unsigned
+          github-token: ${{ secrets.TERRABASE_RELEASE_ARTIFACT_TOKEN }}
+          repository: ${{ forgejo.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+      - name: Download independently signed production capability evidence
+        uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        with:
+          name: terrabase-production-capability-${{ forgejo.sha }}
+          path: artifacts/capability
+          github-token: ${{ secrets.TERRABASE_RELEASE_ARTIFACT_TOKEN }}
+          repository: ${{ forgejo.repository }}
+          run-id: ${{ inputs.capability_run_id }}
+      - name: Admit, sign, and verify the exact ARM64 package bytes
+        env:
+          TERRABASE_RELEASE_SIGNING_KEY_PEM: ${{ secrets.TERRABASE_RELEASE_SIGNING_KEY_PEM }}
+          TERRABASE_RELEASE_VERIFY_KEY_PEM: ${{ secrets.TERRABASE_RELEASE_VERIFY_KEY_PEM }}
+          TERRABASE_PRODUCTION_CAPABILITY_VERIFY_KEY_PEM: ${{ secrets.TERRABASE_PRODUCTION_CAPABILITY_VERIFY_KEY_PEM }}
+          TERRABASE_PRODUCTION_CAPABILITY_STATEMENT: artifacts/capability/PRODUCTION-CAPABILITY.json
+          TERRABASE_PRODUCTION_CAPABILITY_SIGNATURE: artifacts/capability/PRODUCTION-CAPABILITY.sig
+          TERRABASE_PRODUCTION_CAPABILITY_EVIDENCE_DIRECTORY: artifacts/capability
+        run: |
+          deploy/release/sign.sh artifacts/unsigned/terrabase-server-arm64
+          deploy/release/sign.sh artifacts/unsigned/terrabase-studio-arm64
+      - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        with:
+          name: terrabase-signed-arm64-${{ forgejo.sha }}
+          path: |
+            artifacts/unsigned/terrabase-server-arm64
+            artifacts/unsigned/terrabase-studio-arm64
+          if-no-files-found: error
+          retention-days: 30
