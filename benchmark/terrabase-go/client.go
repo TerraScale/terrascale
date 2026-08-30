@@ -422,15 +422,15 @@ func newClient(conn grpc.ClientConnInterface, state *connectionState) *Client {
 		return client
 	}
 	bounded := boundedClientConn{ClientConnInterface: conn}
-	client.channel = v1.NewChannelClient(bounded)
-	client.engine = v1.NewEngineClient(bounded)
-	client.backbone = v1.NewBackboneClient(bounded)
-	client.sync = v1.NewSyncClient(bounded)
-	client.schema = v1.NewSchemaClient(bounded)
-	client.replication = v1.NewReplicationClient(bounded)
-	client.maintenance = v1.NewMaintenanceClient(bounded)
-	client.usage = v1.NewUsageClient(bounded)
-	client.tier = v1.NewTierClient(bounded)
+	client.channel = v1.NewChannelServiceClient(bounded)
+	client.engine = v1.NewEngineServiceClient(bounded)
+	client.backbone = v1.NewBackboneServiceClient(bounded)
+	client.sync = v1.NewSyncServiceClient(bounded)
+	client.schema = v1.NewSchemaServiceClient(bounded)
+	client.replication = v1.NewReplicationServiceClient(bounded)
+	client.maintenance = v1.NewMaintenanceServiceClient(bounded)
+	client.usage = v1.NewUsageServiceClient(bounded)
+	client.tier = v1.NewTierServiceClient(bounded)
 	return client
 }
 
@@ -1510,7 +1510,7 @@ func (c *Client) TopologyRead(ctx context.Context) (Topology, error) {
 	if err != nil {
 		return Topology{}, err
 	}
-	response, err := c.maintenance.TopologyRead(ctx, &v1.MaintenanceServiceMaintenanceServiceTopologyReadRequest{})
+	response, err := c.maintenance.TopologyRead(ctx, &v1.MaintenanceServiceTopologyReadRequest{})
 	if err != nil {
 		return Topology{}, interpret(err)
 	}
@@ -1528,7 +1528,7 @@ func (c *Client) AdminStatus(ctx context.Context) (AdminSnapshot, error) {
 	if err != nil {
 		return AdminSnapshot{}, err
 	}
-	response, err := c.maintenance.AdminStatus(ctx, &v1.MaintenanceServiceMaintenanceServiceAdminStatusRequest{})
+	response, err := c.maintenance.AdminStatus(ctx, &v1.MaintenanceServiceAdminStatusRequest{})
 	if err != nil {
 		return AdminSnapshot{}, interpret(err)
 	}
@@ -1547,7 +1547,7 @@ func (c *Client) SupervisionHealth(ctx context.Context) (SupervisionReport, erro
 	if err != nil {
 		return SupervisionReport{}, err
 	}
-	response, err := c.maintenance.SupervisionHealth(ctx, &v1.MaintenanceServiceMaintenanceServiceSupervisionHealthRequest{})
+	response, err := c.maintenance.SupervisionHealth(ctx, &v1.MaintenanceServiceSupervisionHealthRequest{})
 	if err != nil {
 		return SupervisionReport{}, interpret(err)
 	}
@@ -1584,7 +1584,7 @@ func (c *Client) SupervisionShutdown(ctx context.Context, reason ShutdownReason)
 	if err != nil {
 		return ShutdownReceipt{}, err
 	}
-	response, err := c.maintenance.SupervisionShutdown(ctx, &v1.MaintenanceServiceMaintenanceServiceSupervisionShutdownRequest{Reason: protoReason})
+	response, err := c.maintenance.SupervisionShutdown(ctx, &v1.MaintenanceServiceSupervisionShutdownRequest{Reason: protoReason})
 	if err != nil {
 		return ShutdownReceipt{}, interpret(err)
 	}

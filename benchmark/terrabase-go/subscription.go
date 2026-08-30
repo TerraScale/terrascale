@@ -142,7 +142,7 @@ func eventFrom(frame *v1.SubscribeResponse) (Event, error) {
 // Close may.
 type Subscription struct {
 	client    *Client
-	stream    v1.Backbone_SubscribeClient
+	stream    v1.BackboneService_SubscribeClient
 	ctx       context.Context
 	cancel    context.CancelFunc
 	id        atomic.Uint64

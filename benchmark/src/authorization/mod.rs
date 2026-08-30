@@ -9,6 +9,19 @@ use std::{
     fmt,
 };
 
+use crate::identity::{
+    AuthorizationPolicyUlid, DatabaseUlid, PrincipalGrantUlid, PrincipalSessionUlid, PrincipalUlid,
+    ProjectUlid, TenantUlid,
+};
+
+mod signed;
+
+pub use signed::{
+    AuthorizationCryptoMode, PrincipalContextEnvelope, PrincipalContextKey,
+    PrincipalContextKeySet, PrincipalContextPayload, PrincipalContextReplayGuard,
+    PrincipalContextVerifier, SigningKeyProvenance,
+};
+
 /// The canonical version of the engine authorization policy language.
 pub const AUTHORIZATION_FORMAT_VERSION: u16 = 1;
 /// The largest number of grants in one policy.
@@ -46,6 +59,30 @@ pub enum AuthorizationError {
     UnboundedRelationship,
     /// A policy contained two identical canonical grants.
     DuplicateRule,
+    /// The signed context envelope is malformed or exceeds a bound.
+    MalformedContextEnvelope,
+    /// The signed context payload is not canonical or contains an invalid value.
+    InvalidContextPayload,
+    /// The envelope names no trusted verification key.
+    UnknownContextKey,
+    /// Signature verification failed.
+    InvalidContextSignature,
+    /// The trusted key set contains a duplicate key identifier.
+    DuplicateContextKey,
+    /// The signed context is outside its validity interval.
+    ContextNotYetValid,
+    /// The signed context has expired.
+    ContextExpired,
+    /// The signed context does not match the verifier's binding.
+    ContextBindingMismatch,
+    /// The context grant was already accepted on this channel binding.
+    ContextReplay,
+    /// The bounded context replay state cannot track another grant.
+    ContextReplayGuardFull,
+    /// A local-development signing key was used for production verification.
+    DevelopmentSigningKey,
+    /// Signature creation failed.
+    ContextSigningFailed,
 }
 
 impl fmt::Display for AuthorizationError {
@@ -65,6 +102,18 @@ impl fmt::Display for AuthorizationError {
             Self::DuplicateRule => {
                 formatter.write_str("authorization policy contains a duplicate rule")
             }
+            Self::MalformedContextEnvelope => formatter.write_str("malformed principal context envelope"),
+            Self::InvalidContextPayload => formatter.write_str("invalid principal context payload"),
+            Self::UnknownContextKey => formatter.write_str("unknown principal context key"),
+            Self::InvalidContextSignature => formatter.write_str("invalid principal context signature"),
+            Self::DuplicateContextKey => formatter.write_str("duplicate principal context key"),
+            Self::ContextNotYetValid => formatter.write_str("principal context is not yet valid"),
+            Self::ContextExpired => formatter.write_str("principal context has expired"),
+            Self::ContextBindingMismatch => formatter.write_str("principal context binding mismatch"),
+            Self::ContextReplay => formatter.write_str("principal context replay refused"),
+            Self::ContextReplayGuardFull => formatter.write_str("principal context replay guard is full"),
+            Self::DevelopmentSigningKey => formatter.write_str("development signing key rejected in production"),
+            Self::ContextSigningFailed => formatter.write_str("principal context signing failed"),
         }
     }
 }
@@ -208,9 +257,9 @@ impl PrincipalClaims {
     reason = "scope fields intentionally mirror the three engine bindings"
 )]
 pub struct ResourceScope {
-    tenant_id: String,
-    project_id: String,
-    database_id: String,
+    tenant_id: TenantUlid,
+    project_id: ProjectUlid,
+    database_id: DatabaseUlid,
 }
 
 impl ResourceScope {
@@ -221,36 +270,29 @@ impl ResourceScope {
     /// Returns [`AuthorizationError::InvalidIdentifier`] when any scope
     /// component is empty, malformed, or exceeds the identifier bound.
     pub fn try_new(
-        tenant_id: &str,
-        project_id: &str,
-        database_id: &str,
+        tenant_id: TenantUlid,
+        project_id: ProjectUlid,
+        database_id: DatabaseUlid,
     ) -> Result<Self, AuthorizationError> {
-        if [tenant_id, project_id, database_id].iter().any(|value| !valid_scope_identifier(value)) {
-            return Err(AuthorizationError::InvalidIdentifier);
-        }
-        Ok(Self {
-            tenant_id: tenant_id.to_owned(),
-            project_id: project_id.to_owned(),
-            database_id: database_id.to_owned(),
-        })
+        Ok(Self { tenant_id, project_id, database_id })
     }
 
     /// Returns the tenant identity.
     #[must_use]
-    pub fn tenant_id(&self) -> &str {
-        &self.tenant_id
+    pub const fn tenant_id(&self) -> TenantUlid {
+        self.tenant_id
     }
 
     /// Returns the Project identity.
     #[must_use]
-    pub fn project_id(&self) -> &str {
-        &self.project_id
+    pub const fn project_id(&self) -> ProjectUlid {
+        self.project_id
     }
 
     /// Returns the database identity.
     #[must_use]
-    pub fn database_id(&self) -> &str {
-        &self.database_id
+    pub const fn database_id(&self) -> DatabaseUlid {
+        self.database_id
     }
 }
 

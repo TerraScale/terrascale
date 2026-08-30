@@ -25,6 +25,10 @@ initdb -D \$PGDATA --no-locale -E UTF8 -U bench >/dev/null
 pg_ctl -D \$PGDATA -l $ROOT/server.log \
   -o '-p $PORT -c listen_addresses=127.0.0.1 -c unix_socket_directories=$ROOT -c synchronous_commit=on -c fsync=on -c full_page_writes=on -c logging_collector=off' \
   -w start >/dev/null
+cleanup() {
+  pg_ctl -D \$PGDATA stop -m immediate >/dev/null 2>&1 || true
+}
+trap cleanup EXIT INT TERM
 psql -h $ROOT -p $PORT -U bench -d postgres \
   -c 'SELECT version();' \
   -c 'SHOW synchronous_commit;' \

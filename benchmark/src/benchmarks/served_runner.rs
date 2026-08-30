@@ -23,10 +23,8 @@ const MAX_RESULT_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const DEFAULT_AUTHORITY: &str = "terrabase-bench";
-pub(super) const QUALIFICATION_SERVER_IDENTITY: &str =
-    "tbep-qualification-harness/network-mtls/v1";
-pub(super) const QUALIFICATION_SOURCE_IDENTITY: &str =
-    "terrabase-rust-diagnostic-qualification/v1";
+pub(super) const QUALIFICATION_SERVER_IDENTITY: &str = "tbep-qualification-harness/network-mtls/v1";
+pub(super) const QUALIFICATION_SOURCE_IDENTITY: &str = "terrabase-rust-diagnostic-qualification/v1";
 pub(super) const ADAPTER_CONTRACT_IDENTITY: &str =
     "terrabase-go/network-mtls/per-slot-connection/v2";
 pub(super) const QUALIFICATION_TRANSPORT_IDENTITY: &str =
@@ -92,9 +90,14 @@ impl ServedRunnerConfig {
         if !self.go_workdir.is_dir() {
             return Err(format!("Go adapter directory is missing: {}", self.go_workdir.display()));
         }
-        if let Some(path) = &self.adapter_executable
-            && !path.is_file()
-        {
+        let Some(path) = &self.adapter_executable else {
+            return Err(
+                "a prebuilt Go adapter executable is required; `go run` is forbidden because \
+                 timeout cleanup cannot reliably reap its child process"
+                    .to_owned(),
+            );
+        };
+        if !path.is_file() {
             return Err(format!("adapter executable is missing: {}", path.display()));
         }
         if self.timeout.is_zero() || self.timeout > MAX_TIMEOUT {
@@ -492,18 +495,10 @@ fn run_adapter(
     endpoint: &str,
     deadline: Instant,
 ) -> Result<(), String> {
-    let mut command = match &config.adapter_executable {
-        Some(executable) => {
-            let mut command = Command::new(executable);
-            command.current_dir(&config.go_workdir);
-            command
-        }
-        None => {
-            let mut command = Command::new(&config.go_executable);
-            command.current_dir(&config.go_workdir).arg("run").arg("./cmd/terrabase-bench-adapter");
-            command
-        }
-    };
+    let executable =
+        config.adapter_executable.as_ref().ok_or("a prebuilt Go adapter executable is required")?;
+    let mut command = Command::new(executable);
+    command.current_dir(&config.go_workdir);
     let timeout = duration_argument(
         deadline.checked_duration_since(Instant::now()).ok_or("adapter deadline expired")?,
     );
@@ -805,11 +800,10 @@ mod tests {
         ServedRunnerConfig {
             lane: LaneConfig::COMMISSIONING_TRIAL,
             workload,
-            qualification_harness_executable: std::env::current_exe()
-                .expect("test executable"),
+            qualification_harness_executable: std::env::current_exe().expect("test executable"),
             go_executable: PathBuf::from("go"),
             go_workdir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("terrabase-go"),
-            adapter_executable: None,
+            adapter_executable: std::env::current_exe().ok(),
             output_directory: std::env::temp_dir().join("terrabase-served-runner-tests"),
             timeout: Duration::from_secs(1),
             server_identity: QUALIFICATION_SERVER_IDENTITY.to_owned(),
@@ -836,6 +830,15 @@ mod tests {
     fn runner_leaves_mutation_claim_admission_to_the_boundary() {
         config(Workload::DocumentWrite).validate().expect("runner mechanics support writes");
         config(Workload::Mixed).validate().expect("runner mechanics support mixed work");
+    }
+
+    #[test]
+    fn runner_rejects_go_run_fallback() {
+        let mut config = config(Workload::DocumentRead);
+        config.adapter_executable = None;
+        let error = config.validate().expect_err("go run cannot be reaped safely");
+        assert!(error.contains("prebuilt Go adapter executable"));
+        assert!(error.contains("go run"));
     }
 
     #[test]

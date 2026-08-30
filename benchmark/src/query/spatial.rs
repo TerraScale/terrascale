@@ -1382,17 +1382,17 @@ mod tests {
     }
 
     #[test]
-    fn units_carry_the_v1_nautical_mile_factors() {
-        // V1 SpatialUtils.cs:50-67 scales haversine nautical miles by
-        // 1.1515 for miles and 1.852 for kilometers.
+    fn units_carry_the_documented_nautical_mile_factors() {
+        // Haversine nautical miles scale by 1.1515 for miles and 1.852 for
+        // kilometers.
         assert!(approx(SpatialUnits::Miles.factor_from_nautical_miles(), 1.1515));
         assert!(approx(SpatialUnits::Kilometers.factor_from_nautical_miles(), 1.852));
     }
 
-    // ---- distance math (V1 constants, pinned by hand-computed parity) ---
+    // ---- distance math ---------------------------------------------------
 
     #[test]
-    fn one_equator_degree_is_sixty_nautical_miles_in_v1_units() {
+    fn one_equator_degree_is_sixty_nautical_miles() {
         let a = point(0.0, 0.0);
         let b = point(1.0, 0.0);
         let km = Wgs84Point::distance(&a, &b, SpatialUnits::Kilometers);
@@ -1439,9 +1439,8 @@ mod tests {
     }
 
     #[test]
-    fn rounding_floors_to_the_round_factor_like_v1() {
-        // V1 SpatialUtils.cs:63-67: distance - distance % round, only for
-        // round > 0.
+    fn rounding_floors_to_the_round_factor() {
+        // Apply distance - distance % round only when round is positive.
         assert!(approx(Wgs84Point::apply_rounding(100.7, 7.0), 98.0));
         assert!(approx(Wgs84Point::apply_rounding(6.4, 7.0), 0.0));
         assert!(approx(Wgs84Point::apply_rounding(100.7, 0.0), 100.7));
@@ -1450,8 +1449,7 @@ mod tests {
 
     #[test]
     fn circle_radius_translates_to_degrees_through_the_earth_mean_radius() {
-        // V1 ShapeStringReadWriter.cs:56-62: km / 6371.0087714 * (180/pi),
-        // with miles converted by 1.60934 first.
+        // Convert km through the mean Earth radius. Convert miles to km first.
         let km_degrees = SpatialShape::circle_radius_degrees(100.0, SpatialUnits::Kilometers);
         let expected = 100.0 / EARTH_MEAN_RADIUS_KM * (180.0 / std::f64::consts::PI);
         assert!(approx(km_degrees, expected));
@@ -1480,8 +1478,8 @@ mod tests {
     }
 
     #[test]
-    fn higher_ordinate_dimensions_are_discarded_like_the_v1_sanitizer() {
-        // V1 WktSanitizer.cs:10-37 reduces Z/M/ZM shapes to 2D.
+    fn higher_ordinate_dimensions_are_discarded() {
+        // Reduce Z, M, and ZM shapes to 2D.
         let flagged = SpatialShape::parse("POINT Z (1 2 3)", SpatialUnits::Kilometers)
             .expect("z flag is reduced, not rejected");
         assert_eq!(flagged, SpatialShape::Point(point(1.0, 2.0)));
@@ -1546,17 +1544,15 @@ mod tests {
     }
 
     #[test]
-    fn parses_the_v1_rectangle_shorthand_as_an_envelope() {
-        // V1's rectangle pattern is ^BOX(?:2D)?\s*\(...\)$ — the optional
-        // 2D is a tag suffix (ShapeStringConverter.cs:21-22) — and a match
-        // is lowered to the bare "x1 y1 x2 y2" rectangle string its reader
-        // accepts (ShapeStringConverter.cs:45-55).
+    fn parses_rectangle_shorthand_as_an_envelope() {
+        // BOX accepts an optional 2D suffix and lowers to the bare
+        // "x1 y1 x2 y2" rectangle form.
         let bare =
             SpatialShape::parse("0 0 10 10", SpatialUnits::Kilometers).expect("bare rectangle");
         let box2d = SpatialShape::parse("BOX2D(0 0, 10 10)", SpatialUnits::Kilometers)
             .expect("box form lowers to the same envelope");
         let untagged = SpatialShape::parse("BOX(0 0, 10 10)", SpatialUnits::Kilometers)
-            .expect("the 2D suffix is optional in v1's pattern");
+            .expect("the 2D suffix is optional");
         let spaced = SpatialShape::parse("BOX (0 0, 10 10)", SpatialUnits::Kilometers)
             .expect("whitespace before the parenthesis is free");
         let lowercased = SpatialShape::parse("box2d(0 0, 10 10)", SpatialUnits::Kilometers)
@@ -1930,9 +1926,7 @@ mod tests {
         .unwrap();
         assert!(equal.matches_point(&target));
         assert!(!equal.matches_point(&point(3.0, 4.000_1)));
-        // A point document cannot contain an extent: V1 Corax collapses
-        // Contains onto Within (SpatialMatch.cs:161-162); this foundation
-        // keeps the typed vocabulary honest and records the divergence.
+        // A point document cannot contain an extent.
         let inside_circle = SpatialPredicate::with_default_error_pct(
             encoding(),
             SpatialRelation::Contains,

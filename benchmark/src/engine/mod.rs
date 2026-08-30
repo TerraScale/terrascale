@@ -1003,15 +1003,19 @@ impl Engine {
         loop {
             let mut batch = self.take_queued_intents();
             if batch.is_empty() {
-                if carry_pending {
-                    // Nothing queued: the previous batch may have left
-                    // deferred flip bytes in storage, so linger one
-                    // turnaround window for the next wave — its append
-                    // carries them, which is the entire saving — and only a
-                    // quiet window flushes.
-                    self.wait_for_arrival(GROUP_LINGER_WINDOW);
-                    batch = self.take_queued_intents();
+                if carry_pending && self.wait_for_arrival(GROUP_LINGER_WINDOW) {
+                    // The next wave's first arrival landed. Hand off now,
+                    // while it is queued: the next arrival — or the
+                    // waiter-side leadership check — takes the whole forming
+                    // wave, and this leader returns to commit its own next
+                    // intent inside that wave like every other writer
+                    // instead of draining it alone at the tail.
+                    if let Ok(mut mailbox) = self.commit_mailbox.lock() {
+                        mailbox.leader_active = false;
+                    }
+                    return;
                 }
+                batch = self.take_queued_intents();
                 if batch.is_empty() {
                     // Flush while still holding leadership — arrivals
                     // during the flush join the next loop's batch instead
@@ -1059,6 +1063,58 @@ impl Engine {
             let results = if pipelined { self.witness_pipelined_batch(results) } else { results };
             for ((_, sender), result) in batch.into_iter().zip(results) {
                 let _ = sender.send(result);
+            }
+        }
+    }
+
+    /// Drives the mailbox as the elected leader.
+    ///
+    /// The [`LeaderGuard`] clears the flag when the drive returns or panics,
+    /// so a panicked driver cannot strand the flag; the waiters' senders
+    /// drop with the panicked batch, turning their waits into the honest
+    /// uncertain outcome.
+    fn drive_as_leader(&self) {
+        let _guard = LeaderGuard(Arc::clone(&self.commit_mailbox));
+        self.drive_commit_batches();
+    }
+
+    /// Waits for this commit's answer, taking leadership if the mailbox is
+    /// leaderless with queued work.
+    ///
+    /// The wait is bounded: a handed-off wave's first arrival sits briefly
+    /// leaderless by design (the retiring leader stepped down while it was
+    /// queued), and this check — or the next arrival — picks the wave up.
+    /// The election is one atomic mailbox transition, so two waiters cannot
+    /// both lead, and a leader mid-drive holds the flag, making the check a
+    /// no-op for every waiter it is about to answer.
+    fn await_commit_answer(
+        &self,
+        receiver: std::sync::mpsc::Receiver<storage::CommitResult>,
+    ) -> storage::CommitResult {
+        loop {
+            match receiver.recv_timeout(LEADER_STEAL_AFTER) {
+                Ok(result) => return result,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return storage::CommitResult::Unknown(
+                        storage::UnknownCause::ResponseInterrupted,
+                    );
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    let steal = match self.commit_mailbox.lock() {
+                        Ok(mut mailbox) => {
+                            if mailbox.leader_active || mailbox.queue.is_empty() {
+                                false
+                            } else {
+                                mailbox.leader_active = true;
+                                true
+                            }
+                        }
+                        Err(_) => false,
+                    };
+                    if steal {
+                        self.drive_as_leader();
+                    }
+                }
             }
         }
     }
@@ -1919,12 +1975,8 @@ impl Engine {
     /// The journal is bounded and in-process: the newest
     /// [`MAX_BULK_AUDIT_ENTRIES`](crate::query::bulk::MAX_BULK_AUDIT_ENTRIES)
     /// events of the engine are retained, each carrying only structural
-    /// identity and counts. V1 writes one audit line per operation at
-    /// scheduling time carrying the query text
-    /// (`AbstractDatabaseOperationQueriesHandlerProcessor.cs:55-66`, pinned
-    /// V1 tree); the engine journal's content-free shape is the
-    /// accepted-difference the decision record names, and durable audit
-    /// shipping belongs to the Platform side.
+    /// identity and counts. Durable audit shipping belongs to the Platform
+    /// side.
     #[must_use]
     pub fn bulk_operations_audit(&self) -> Vec<crate::query::bulk::BulkAuditEntry> {
         self.bulk_audit.entries()
@@ -2334,16 +2386,9 @@ impl Transaction<'_> {
         // notifications, not on sleep-slice polls.
         engine.commit_arrivals.notify_all();
         if become_leader {
-            // A panic inside the driver must not strand the flag or the
-            // waiters: the guard clears leadership on the way out, and the
-            // waiters' senders drop, turning their waits into the honest
-            // uncertain outcome.
-            let _guard = LeaderGuard(Arc::clone(&engine.commit_mailbox));
-            engine.drive_commit_batches();
+            engine.drive_as_leader();
         }
-        let result = receiver
-            .recv()
-            .unwrap_or(CommitResult::Unknown(storage::UnknownCause::ResponseInterrupted));
+        let result = engine.await_commit_answer(receiver);
         if let CommitResult::Committed(receipt) = &result {
             let event = CommitPublicationEvent::new(
                 operation.clone(),
@@ -2391,6 +2436,15 @@ impl Engine {
 fn reservation_key(scope: &TenantScope, operation: &OperationId) -> (String, String) {
     (scope.tenant().as_str().to_owned(), operation.as_str().to_owned())
 }
+
+/// How long a waiter waits for its answer before re-checking that a leader
+/// exists.
+///
+/// A handed-off wave's first arrival is briefly leaderless by design (the
+/// retiring leader cleared the flag while it was queued); the next arrival —
+/// or this check — takes the wave over. A leader mid-drive holds the flag,
+/// so the check costs one mailbox peek and no more.
+const LEADER_STEAL_AFTER: std::time::Duration = std::time::Duration::from_millis(2);
 
 /// The trusted in-process Engine seam used by the Platform Adapter.
 #[allow(dead_code)]

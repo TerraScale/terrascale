@@ -19,7 +19,22 @@ def complete(identity="new"):
         "status": "complete",
         "target": "postgresql",
         "workload": "read",
-        "environment": {"observed_identity": identity},
+        "config": {
+            "seed_documents": 1,
+            "operations": 1,
+            "samples": 1,
+            "concurrency": 1,
+            "warmup_operations": 0,
+            "noise_percent": 5.0,
+        },
+        "environment": {
+            "observed_identity": identity,
+            "endpoint": "postgres://127.0.0.1/bench",
+            "client_transport": "postgres TCP",
+            "unix_seconds": 1,
+            "kernel": "Linux test",
+            "logical_cpus": 1,
+        },
         "samples": [
             {
                 "operations": 1,
@@ -86,6 +101,30 @@ class RetainedAttemptTests(unittest.TestCase):
             self.assertEqual(render_history.load(root, "postgresql", "read")["environment"]["observed_identity"], "legacy")
             (root / "postgresql-read-100-1-0.json").write_text(json.dumps(complete("attempt")))
             self.assertEqual(render_history.load(root, "postgresql", "read")["environment"]["observed_identity"], "attempt")
+
+    def test_empty_samples_are_invalid_even_when_status_is_complete(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = complete()
+            document["samples"] = []
+            (root / "postgresql-read-100-1-0.json").write_text(json.dumps(document))
+            self.assertEqual(render_history.load(root, "postgresql", "read")["status"], "invalid")
+
+    def test_in_process_boundary_is_invalid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = complete()
+            document["environment"]["client_transport"] = "in-process engine"
+            (root / "postgresql-read-100-1-0.json").write_text(json.dumps(document))
+            self.assertEqual(render_history.load(root, "postgresql", "read")["status"], "invalid")
+
+    def test_throughput_mismatch_is_invalid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = complete()
+            document["samples"][0]["throughput_ops_per_s"] = 2.0
+            (root / "postgresql-read-100-1-0.json").write_text(json.dumps(document))
+            self.assertEqual(render_history.load(root, "postgresql", "read")["status"], "invalid")
 
 
 if __name__ == "__main__":

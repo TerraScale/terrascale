@@ -229,16 +229,17 @@ impl Deadline {
 
 /// A shareable cancellation signal for a typed operation.
 ///
-/// Cloning a cancellation creates an independent signal: cancelling one clone
-/// never cancels another. `PartialEq` and `Eq` compare signal identity, so two
-/// distinct signals are never equal even when both remain uncancelled.
+/// Cloning a cancellation shares its signal: cancelling one clone cancels every
+/// clone. Separately constructed signals remain independent. `PartialEq` and
+/// `Eq` compare signal identity, so clones compare equal while two independently
+/// constructed signals never compare equal.
 pub struct Cancellation {
     flag: Arc<AtomicBool>,
 }
 
 impl Clone for Cancellation {
     fn clone(&self) -> Self {
-        Self { flag: Arc::new(AtomicBool::new(self.is_cancelled())) }
+        Self { flag: Arc::clone(&self.flag) }
     }
 }
 
@@ -482,18 +483,63 @@ mod tests {
     }
 
     #[test]
-    fn cancellation_clone_is_independent_and_identity_compared() {
+    fn cancellation_clone_shares_signal_and_identity_is_compared() {
         let signal = Cancellation::new();
         assert!(!signal.is_cancelled());
         let clone = signal.clone();
-        assert_ne!(
-            signal, clone,
-            "equality compares signal identity, so a clone is a distinct signal"
-        );
+        assert_eq!(signal, clone, "equality compares signal identity, so clones share an identity");
         signal.cancel();
         assert!(signal.is_cancelled());
-        assert!(!clone.is_cancelled(), "clones must not share cancellation");
-        assert_ne!(signal, Cancellation::new());
+        assert!(clone.is_cancelled(), "clones must share cancellation");
+
+        let independent = Cancellation::new();
+        assert_ne!(signal, independent);
+        assert!(!independent.is_cancelled());
+    }
+
+    #[test]
+    fn cancellation_clone_and_cancel_race_preserves_visibility() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        for _ in 0..128 {
+            let signal = Cancellation::new();
+            let barrier = Arc::new(Barrier::new(2));
+            let worker_signal = signal.clone();
+            let worker_barrier = Arc::clone(&barrier);
+            let worker = thread::spawn(move || {
+                worker_barrier.wait();
+                let clone = worker_signal.clone();
+                while !clone.is_cancelled() {
+                    thread::yield_now();
+                }
+                assert!(clone.is_cancelled());
+            });
+
+            barrier.wait();
+            signal.cancel();
+            worker.join().expect("cancellation observer finishes");
+            assert!(signal.is_cancelled());
+        }
+    }
+
+    #[test]
+    fn cancellation_and_deadline_are_independent_controls() {
+        let deadline = Deadline::after(Duration::from_secs(30)).expect("valid deadline");
+        let signal = Cancellation::new();
+        let clone = signal.clone();
+
+        signal.cancel();
+
+        assert!(clone.is_cancelled());
+        assert!(!deadline.is_expired());
+
+        let short_deadline = Deadline::after(Duration::from_nanos(1)).expect("valid deadline");
+        while !short_deadline.is_expired() {
+            std::hint::spin_loop();
+        }
+        assert!(short_deadline.is_expired());
+        assert!(clone.is_cancelled());
     }
 
     #[test]

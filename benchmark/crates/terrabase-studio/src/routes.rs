@@ -2219,7 +2219,7 @@ mod tests {
 
     #[test]
     fn duplicate_confirmation_detection_decodes_form_field_names() {
-        let body = b"confirm_target=one&%63onfirm_target=two&confirm_phrase=delete+document";
+        let body = b"confirm_target=one&%63onfirm%5Ftarget=two&confirm_phrase=delete+document";
         assert_eq!(form_field_count(body, CONFIRM_TARGET_FIELD), 2);
         assert_eq!(form_field_count(body, CONFIRM_PHRASE_FIELD), 1);
     }
@@ -2241,6 +2241,67 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_security_headers(&response);
+    }
+
+    #[tokio::test]
+    async fn every_destructive_form_rejects_missing_typed_confirmation() {
+        let app = router(studio("missing-confirmations"));
+        let cases = [
+            ("/documents/put", "tenant=demo&collection=users&id=one&json=%7B%7D"),
+            ("/documents/delete", "tenant=demo&collection=users&id=one"),
+            ("/documents/sample", ""),
+            (
+                "/indexes/create",
+                "tenant=demo&name=Users%2FByName&collection=users&fields=name&capabilities=full&priority=normal&lock=unlock",
+            ),
+            ("/indexes/action", "tenant=demo&name=Users%2FByName&action=delete"),
+            ("/replication/regions/retire", "code=FRA"),
+            ("/replication/topology/add-region", "region=fra&first=fra-a&second=fra-b"),
+            ("/replication/topology/remove-region", "index=0"),
+            (
+                "/tiers/configure",
+                "policy_id=default&version=1&budget=1048576&residence=1&promotion=1",
+            ),
+            ("/tiers/pause", ""),
+            ("/tiers/resume", ""),
+            ("/tiers/run", ""),
+            (
+                "/backup/configure",
+                "bucket=backups&region=us-east-1&prefix=studio&incremental_interval_minutes=5&full_interval_hours=24",
+            ),
+            ("/backup/run", ""),
+            ("/backup/restore", "target=%2Ftmp%2Fstudio-restore"),
+            (
+                "/deletion/request",
+                "request_id=del-1&tenant=demo&subject=subject-1&regions=gru%2Csfo",
+            ),
+            ("/deletion/admit", "request_id=del-1"),
+            ("/deletion/receipt", "request_id=del-1"),
+            ("/deletion/end-hold", "request_id=del-1"),
+            ("/deletion/verify", "request_id=del-1"),
+            ("/deletion/complete", "request_id=del-1"),
+            ("/maintenance/compact", "policy=reclaim-history"),
+            ("/maintenance/maintain-indexes", ""),
+        ];
+        for (path, body) in cases {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{path} accepted a form without typed confirmation",
+            );
+        }
     }
 
     #[tokio::test]

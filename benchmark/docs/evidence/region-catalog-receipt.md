@@ -18,10 +18,10 @@ Implemented surface:
 
 - `RegionCode` — a newtype over `[u8; 3]` that can hold only three strict
   uppercase ASCII letters (`A`..=`Z`). Fixed-width, `Copy`, ordered,
-  hashable. The engine/private-TBEP wire form is
-  `RegionCode::as_bytes()`; the REST/public-`MessagePack` string form is
-  `as_str()`/`Display` (the same three characters). `FromStr` parses
-  against the production catalog.
+  hashable. The engine and private TBEP wire form is
+  `RegionCode::as_bytes()`. Operator display uses `as_str()`/`Display`
+  with the same three characters. `FromStr` parses against the production
+  catalog.
 - `RegionCode::GRU`, `SFO`, `FRA` and
   `RegionCatalog::INITIAL_ACTIVE` — the initial production catalog is
   exactly these three, in catalog order (`production()`, also `Default`).
@@ -108,9 +108,9 @@ to the SE-15 benchmark lane; CI owns the full gate.
   `r-alpha`-family `RegionId` values (gap row 6's note). Rewiring them to
   `RegionCode` is a later packet; this packet adds the type without
   touching those tests.
-- **TBEP/REST plumbing** — `from_wire_bytes`/`parse_wire_bytes`/
-  `as_str`/`Display` are the seams, but no TBEP frame, REST adapter, or
-  public `MessagePack` schema carries `RegionCode` yet.
+- **TBEP plumbing** — `from_wire_bytes`/`parse_wire_bytes` and the display
+  methods are the seams, but no private gRPC message carries `RegionCode`
+  yet. Public API mapping belongs to the Go gateway.
 - **Twenty-Region capacity/fault qualification** (gap row 7) — only the
   admission ceiling constant and its typed refusal exist; no capacity or
   fault gate was run.

@@ -131,14 +131,14 @@ const (
 	UsageRecordPublicEgressBytes
 )
 
-func (meter UsageRecordMeter) proto() (v1.UsageServiceRecordMeter, bool) {
+func (meter UsageRecordMeter) proto() (v1.UsageRecordMeter, bool) {
 	switch meter {
 	case UsageRecordAdmittedRequestUnits:
-		return v1.UsageServiceRecordMeter_USAGE_RECORD_METER_ADMITTED_REQUEST_UNITS, true
+		return v1.UsageRecordMeter_USAGE_RECORD_METER_ADMITTED_REQUEST_UNITS, true
 	case UsageRecordPublicEgressBytes:
-		return v1.UsageServiceRecordMeter_USAGE_RECORD_METER_PUBLIC_EGRESS_BYTES, true
+		return v1.UsageRecordMeter_USAGE_RECORD_METER_PUBLIC_EGRESS_BYTES, true
 	default:
-		return v1.UsageServiceRecordMeter_USAGE_RECORD_METER_UNSPECIFIED, false
+		return v1.UsageRecordMeter_USAGE_RECORD_METER_UNSPECIFIED, false
 	}
 }
 

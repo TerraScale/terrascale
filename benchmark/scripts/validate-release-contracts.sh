@@ -31,7 +31,12 @@ grep -Fq 'git rev-parse --verify HEAD^' "$ci"
 grep -Fq 'buf breaking --against ".git#ref=$against_commit"' "$ci"
 grep -Fq 'deploy/release/test-boundary.sh' "$ci"
 ! grep -Fq '.git#branch=${GITHUB_REF_NAME}' "$ci"
-grep -Eq 'branches: \[develop, main\]' "$ci"
+awk '
+  /^  push:$/ { in_push = 1; next }
+  /^  [[:alnum:]_]+:$/ { in_push = 0 }
+  in_push && /branches: \[develop, main\]/ { found = 1 }
+  END { exit(found ? 0 : 1) }
+' "$ci"
 grep -Fq 'go test -mod=readonly -race ./...' "$ci"
 
 echo "validated immutable promotion and protobuf baseline contracts"

@@ -21,15 +21,15 @@ import (
 // Channel/Bind, idempotency keys on mutations, engine-shaped errors —
 // and answers from a tiny document store plus canned state.
 type fakeTBEP struct {
-	v1.UnimplementedChannelServer
-	v1.UnimplementedEngineServer
-	v1.UnimplementedBackboneServer
-	v1.UnimplementedSyncServer
-	v1.UnimplementedSchemaServer
-	v1.UnimplementedReplicationServer
-	v1.UnimplementedMaintenanceServer
-	v1.UnimplementedUsageServer
-	v1.UnimplementedTierServer
+	v1.UnimplementedChannelServiceServer
+	v1.UnimplementedEngineServiceServer
+	v1.UnimplementedBackboneServiceServer
+	v1.UnimplementedSyncServiceServer
+	v1.UnimplementedSchemaServiceServer
+	v1.UnimplementedReplicationServiceServer
+	v1.UnimplementedMaintenanceServiceServer
+	v1.UnimplementedUsageServiceServer
+	v1.UnimplementedTierServiceServer
 
 	mu                  sync.Mutex
 	documents           map[string]*v1.DocumentBody
@@ -64,15 +64,15 @@ func newFakeTBEP() *fakeTBEP {
 
 // register wires every service of the contract onto one server.
 func (fake *fakeTBEP) register(server *grpc.Server) {
-	v1.RegisterChannelServer(server, fake)
-	v1.RegisterEngineServer(server, fake)
-	v1.RegisterBackboneServer(server, fake)
-	v1.RegisterSyncServer(server, fake)
-	v1.RegisterSchemaServer(server, fake)
-	v1.RegisterReplicationServer(server, fake)
-	v1.RegisterMaintenanceServer(server, fake)
-	v1.RegisterUsageServer(server, fake)
-	v1.RegisterTierServer(server, fake)
+	v1.RegisterChannelServiceServer(server, fake)
+	v1.RegisterEngineServiceServer(server, fake)
+	v1.RegisterBackboneServiceServer(server, fake)
+	v1.RegisterSyncServiceServer(server, fake)
+	v1.RegisterSchemaServiceServer(server, fake)
+	v1.RegisterReplicationServiceServer(server, fake)
+	v1.RegisterMaintenanceServiceServer(server, fake)
+	v1.RegisterUsageServiceServer(server, fake)
+	v1.RegisterTierServiceServer(server, fake)
 }
 
 // engineStatus builds the failure shape of the Rust server: the closed
@@ -294,7 +294,7 @@ func (fake *fakeTBEP) Bind(_ context.Context, request *v1.ChannelServiceBindRequ
 
 // --- Engine ---
 
-func (fake *fakeTBEP) DocumentRead(ctx context.Context, request *v1.EngineServiceEngineServiceDocumentReadRequest) (*v1.EngineServiceEngineServiceDocumentReadResponse, error) {
+func (fake *fakeTBEP) DocumentRead(ctx context.Context, request *v1.EngineServiceDocumentReadRequest) (*v1.EngineServiceDocumentReadResponse, error) {
 	if _, _, err := fake.identityOf(ctx); err != nil {
 		return nil, err
 	}
@@ -302,12 +302,12 @@ func (fake *fakeTBEP) DocumentRead(ctx context.Context, request *v1.EngineServic
 	defer fake.mu.Unlock()
 	body, held := fake.documents[documentKey(request.GetCollection(), request.GetDocument())]
 	if !held {
-		return &v1.EngineServiceEngineServiceDocumentReadResponse{Found: false}, nil
+		return &v1.EngineServiceDocumentReadResponse{Found: false}, nil
 	}
-	return &v1.EngineServiceEngineServiceDocumentReadResponse{Found: true, Document: body, Position: fake.sequence}, nil
+	return &v1.EngineServiceDocumentReadResponse{Found: true, Document: body, Position: fake.sequence}, nil
 }
 
-func (fake *fakeTBEP) DocumentWrite(ctx context.Context, request *v1.EngineServiceEngineServiceDocumentWriteRequest) (*v1.EngineServiceEngineServiceDocumentWriteResponse, error) {
+func (fake *fakeTBEP) DocumentWrite(ctx context.Context, request *v1.EngineServiceDocumentWriteRequest) (*v1.EngineServiceDocumentWriteResponse, error) {
 	if _, _, err := fake.identityOf(ctx); err != nil {
 		return nil, err
 	}
@@ -323,20 +323,20 @@ func (fake *fakeTBEP) DocumentWrite(ctx context.Context, request *v1.EngineServi
 	}
 	switch collection := request.GetDocument().GetCollection(); {
 	case collection == "race":
-		return &v1.EngineServiceEngineServiceDocumentWriteResponse{Outcome: &v1.WriteOutcome{
+		return &v1.EngineServiceDocumentWriteResponse{Outcome: &v1.WriteOutcome{
 			Outcome: &v1.WriteOutcome_Conflict{Conflict: &v1.WriteConflict{}}}}, nil
 	case collection == "refuse":
-		return &v1.EngineServiceEngineServiceDocumentWriteResponse{Outcome: &v1.WriteOutcome{
+		return &v1.EngineServiceDocumentWriteResponse{Outcome: &v1.WriteOutcome{
 			Outcome: &v1.WriteOutcome_Rejected{Rejected: &v1.WriteRejected{
 				Reason: v1.WriteReason_WRITE_REASON_SCHEMA_REFUSED}}}}, nil
 	}
 	receipt := fake.put(request.GetDocument().GetCollection(), request.GetDocument().GetId(), request.GetDocument().GetBody())
 	receipt.OperationId = request.GetOperationId()
-	return &v1.EngineServiceEngineServiceDocumentWriteResponse{Outcome: &v1.WriteOutcome{
+	return &v1.EngineServiceDocumentWriteResponse{Outcome: &v1.WriteOutcome{
 		Outcome: &v1.WriteOutcome_Committed{Committed: receipt}}}, nil
 }
 
-func (fake *fakeTBEP) DocumentDelete(ctx context.Context, request *v1.EngineServiceEngineServiceDocumentDeleteRequest) (*v1.EngineServiceEngineServiceDocumentDeleteResponse, error) {
+func (fake *fakeTBEP) DocumentDelete(ctx context.Context, request *v1.EngineServiceDocumentDeleteRequest) (*v1.EngineServiceDocumentDeleteResponse, error) {
 	if _, _, err := fake.identityOf(ctx); err != nil {
 		return nil, err
 	}
@@ -352,16 +352,16 @@ func (fake *fakeTBEP) DocumentDelete(ctx context.Context, request *v1.EngineServ
 	}
 	receipt := fake.remove(request.GetCollection(), request.GetDocument())
 	if receipt == nil {
-		return &v1.EngineServiceEngineServiceDocumentDeleteResponse{Outcome: &v1.WriteOutcome{
+		return &v1.EngineServiceDocumentDeleteResponse{Outcome: &v1.WriteOutcome{
 			Outcome: &v1.WriteOutcome_Rejected{Rejected: &v1.WriteRejected{
 				Reason: v1.WriteReason_WRITE_REASON_NOT_FOUND}}}}, nil
 	}
 	receipt.OperationId = request.GetOperationId()
-	return &v1.EngineServiceEngineServiceDocumentDeleteResponse{Outcome: &v1.WriteOutcome{
+	return &v1.EngineServiceDocumentDeleteResponse{Outcome: &v1.WriteOutcome{
 		Outcome: &v1.WriteOutcome_Committed{Committed: receipt}}}, nil
 }
 
-func (fake *fakeTBEP) DocumentBatch(ctx context.Context, request *v1.EngineServiceEngineServiceDocumentBatchRequest) (*v1.EngineServiceEngineServiceDocumentBatchResponse, error) {
+func (fake *fakeTBEP) DocumentBatch(ctx context.Context, request *v1.EngineServiceDocumentBatchRequest) (*v1.EngineServiceDocumentBatchResponse, error) {
 	if _, _, err := fake.identityOf(ctx); err != nil {
 		return nil, err
 	}
@@ -380,14 +380,14 @@ func (fake *fakeTBEP) DocumentBatch(ctx context.Context, request *v1.EngineServi
 		last = fake.put(item.GetDocument().GetCollection(), item.GetDocument().GetId(), item.GetDocument().GetBody())
 		last.OperationId = item.GetOperationId()
 	}
-	return &v1.EngineServiceEngineServiceDocumentBatchResponse{Outcome: &v1.WriteOutcome{
+	return &v1.EngineServiceDocumentBatchResponse{Outcome: &v1.WriteOutcome{
 		Outcome: &v1.WriteOutcome_Committed{Committed: last}}}, nil
 }
 
 // QueryExecute answers every document of the collection named by the
 // query text ("collection:<name>"), honoring maxItems as the item
 // bound.
-func (fake *fakeTBEP) QueryExecute(ctx context.Context, request *v1.EngineServiceEngineServiceQueryExecuteRequest) (*v1.EngineServiceEngineServiceQueryExecuteResponse, error) {
+func (fake *fakeTBEP) QueryExecute(ctx context.Context, request *v1.EngineServiceQueryExecuteRequest) (*v1.EngineServiceQueryExecuteResponse, error) {
 	if _, _, err := fake.identityOf(ctx); err != nil {
 		return nil, err
 	}
@@ -406,7 +406,7 @@ func (fake *fakeTBEP) QueryExecute(ctx context.Context, request *v1.EngineServic
 		documents = documents[:limit]
 		terminal = v1.QueryTerminal_QUERY_TERMINAL_TRUNCATED
 	}
-	return &v1.EngineServiceEngineServiceQueryExecuteResponse{
+	return &v1.EngineServiceQueryExecuteResponse{
 		Documents: documents,
 		Count:     uint32(len(documents)),
 		Terminal:  terminal,
@@ -414,27 +414,27 @@ func (fake *fakeTBEP) QueryExecute(ctx context.Context, request *v1.EngineServic
 	}, nil
 }
 
-func (fake *fakeTBEP) QueryCancel(ctx context.Context, request *v1.EngineServiceEngineServiceQueryCancelRequest) (*v1.EngineServiceEngineServiceQueryCancelResponse, error) {
+func (fake *fakeTBEP) QueryCancel(ctx context.Context, request *v1.EngineServiceQueryCancelRequest) (*v1.EngineServiceQueryCancelResponse, error) {
 	if _, _, err := fake.identityOf(ctx); err != nil {
 		return nil, err
 	}
 	if request.GetQueryId() == 404 {
-		return &v1.EngineServiceEngineServiceQueryCancelResponse{Outcome: v1.CancelOutcome_CANCEL_OUTCOME_UNKNOWN_QUERY}, nil
+		return &v1.EngineServiceQueryCancelResponse{Outcome: v1.CancelOutcome_CANCEL_OUTCOME_UNKNOWN_QUERY}, nil
 	}
-	return &v1.EngineServiceEngineServiceQueryCancelResponse{Outcome: v1.CancelOutcome_CANCEL_OUTCOME_CANCELLED}, nil
+	return &v1.EngineServiceQueryCancelResponse{Outcome: v1.CancelOutcome_CANCEL_OUTCOME_CANCELLED}, nil
 }
 
-func (fake *fakeTBEP) FamilyRead(ctx context.Context, request *v1.EngineServiceEngineServiceFamilyReadRequest) (*v1.EngineServiceEngineServiceFamilyReadResponse, error) {
+func (fake *fakeTBEP) FamilyRead(ctx context.Context, request *v1.EngineServiceFamilyReadRequest) (*v1.EngineServiceFamilyReadResponse, error) {
 	if _, _, err := fake.identityOf(ctx); err != nil {
 		return nil, err
 	}
-	return &v1.EngineServiceEngineServiceFamilyReadResponse{
+	return &v1.EngineServiceFamilyReadResponse{
 		ResponseCodec: "terrabase.family-response/1",
 		Response:      []byte(fmt.Sprintf("read:%s:%s", request.GetFamily(), request.GetName())),
 	}, nil
 }
 
-func (fake *fakeTBEP) FamilyWrite(ctx context.Context, request *v1.EngineServiceEngineServiceFamilyWriteRequest) (*v1.EngineServiceEngineServiceFamilyWriteResponse, error) {
+func (fake *fakeTBEP) FamilyWrite(ctx context.Context, request *v1.EngineServiceFamilyWriteRequest) (*v1.EngineServiceFamilyWriteResponse, error) {
 	if _, _, err := fake.identityOf(ctx); err != nil {
 		return nil, err
 	}
@@ -445,7 +445,7 @@ func (fake *fakeTBEP) FamilyWrite(ctx context.Context, request *v1.EngineService
 	if err := fake.admitUsage(request.GetUsage(), key); err != nil {
 		return nil, err
 	}
-	return &v1.EngineServiceEngineServiceFamilyWriteResponse{
+	return &v1.EngineServiceFamilyWriteResponse{
 		ResponseCodec: "terrabase.family-response/1",
 		Response:      append([]byte("written:"), request.GetRequest()...),
 	}, nil
@@ -746,11 +746,11 @@ func (fake *fakeTBEP) Denials(ctx context.Context, _ *v1.ReplicationServiceDenia
 
 // --- Maintenance ---
 
-func (fake *fakeTBEP) TopologyRead(ctx context.Context, _ *v1.MaintenanceServiceMaintenanceServiceTopologyReadRequest) (*v1.MaintenanceServiceMaintenanceServiceTopologyReadResponse, error) {
+func (fake *fakeTBEP) TopologyRead(ctx context.Context, _ *v1.MaintenanceServiceTopologyReadRequest) (*v1.MaintenanceServiceTopologyReadResponse, error) {
 	if _, _, err := fake.identityOf(ctx); err != nil {
 		return nil, err
 	}
-	return &v1.MaintenanceServiceMaintenanceServiceTopologyReadResponse{
+	return &v1.MaintenanceServiceTopologyReadResponse{
 		Binding:                 v1.BindingKind_BINDING_KIND_NETWORK_MTLS,
 		Subsystems:              []string{"engine", "backbone"},
 		EngineTopologyAvailable: true,
@@ -758,11 +758,11 @@ func (fake *fakeTBEP) TopologyRead(ctx context.Context, _ *v1.MaintenanceService
 	}, nil
 }
 
-func (fake *fakeTBEP) AdminStatus(ctx context.Context, _ *v1.MaintenanceServiceMaintenanceServiceAdminStatusRequest) (*v1.MaintenanceServiceMaintenanceServiceAdminStatusResponse, error) {
+func (fake *fakeTBEP) AdminStatus(ctx context.Context, _ *v1.MaintenanceServiceAdminStatusRequest) (*v1.MaintenanceServiceAdminStatusResponse, error) {
 	if _, _, err := fake.identityOf(ctx); err != nil {
 		return nil, err
 	}
-	return &v1.MaintenanceServiceMaintenanceServiceAdminStatusResponse{
+	return &v1.MaintenanceServiceAdminStatusResponse{
 		RegistryVersion: "1.3",
 		FramesServed:    42,
 		Sessions:        1,
@@ -771,11 +771,11 @@ func (fake *fakeTBEP) AdminStatus(ctx context.Context, _ *v1.MaintenanceServiceM
 	}, nil
 }
 
-func (fake *fakeTBEP) SupervisionHealth(ctx context.Context, _ *v1.MaintenanceServiceMaintenanceServiceSupervisionHealthRequest) (*v1.MaintenanceServiceMaintenanceServiceSupervisionHealthResponse, error) {
+func (fake *fakeTBEP) SupervisionHealth(ctx context.Context, _ *v1.MaintenanceServiceSupervisionHealthRequest) (*v1.MaintenanceServiceSupervisionHealthResponse, error) {
 	if _, _, err := fake.identityOf(ctx); err != nil {
 		return nil, err
 	}
-	return &v1.MaintenanceServiceMaintenanceServiceSupervisionHealthResponse{
+	return &v1.MaintenanceServiceSupervisionHealthResponse{
 		State:         v1.HealthState_HEALTH_STATE_SERVING,
 		Sessions:      1,
 		Subscriptions: 2,
@@ -783,14 +783,14 @@ func (fake *fakeTBEP) SupervisionHealth(ctx context.Context, _ *v1.MaintenanceSe
 	}, nil
 }
 
-func (fake *fakeTBEP) SupervisionShutdown(ctx context.Context, request *v1.MaintenanceServiceMaintenanceServiceSupervisionShutdownRequest) (*v1.MaintenanceServiceMaintenanceServiceSupervisionShutdownResponse, error) {
+func (fake *fakeTBEP) SupervisionShutdown(ctx context.Context, request *v1.MaintenanceServiceSupervisionShutdownRequest) (*v1.MaintenanceServiceSupervisionShutdownResponse, error) {
 	if _, _, err := fake.identityOf(ctx); err != nil {
 		return nil, err
 	}
 	if request.GetReason() == v1.ShutdownReason_SHUTDOWN_REASON_UNSPECIFIED {
 		return nil, engineStatus(codes.InvalidArgument, v1.ErrorCode_ERROR_CODE_INVALID_REQUEST, "a shutdown carries no reason")
 	}
-	return &v1.MaintenanceServiceMaintenanceServiceSupervisionShutdownResponse{
+	return &v1.MaintenanceServiceSupervisionShutdownResponse{
 		State:    v1.HealthState_HEALTH_STATE_DRAINING,
 		InFlight: 0,
 	}, nil

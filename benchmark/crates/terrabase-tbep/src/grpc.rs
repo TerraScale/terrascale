@@ -768,7 +768,17 @@ impl TbepGrpcServer {
                         }
                     };
                     let _ = addr_tx.send(Ok(local));
-                    let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener).then(
+                    // `then` would serialize handshakes: a client that sends
+                    // only a TCP preface could hold the accept loop until the
+                    // timeout and starve every well-behaved client behind it.
+                    // `buffer_unordered` keeps at most the configured number
+                    // of handshake futures alive while continuing to poll the
+                    // listener whenever a slot is available.  The bound is
+                    // deliberately the same admission ceiling used by host
+                    // work, so this path cannot become an unbounded task or
+                    // socket queue.
+                    let handshake_limit = server.config.max_inflight();
+                    let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener).map(
                         move |accepted| {
                             let acceptor = tls_acceptor.clone();
                             async move {
@@ -786,6 +796,8 @@ impl TbepGrpcServer {
                             }
                         },
                     );
+                    let incoming =
+                        futures_util::StreamExt::buffer_unordered(incoming, handshake_limit);
                     routes
                         .serve_with_incoming_shutdown(incoming, async {
                             let _ = signal.await;
@@ -822,7 +834,7 @@ impl TbepGrpcServer {
             ));
         }
         Ok(TbepGrpcHandle {
-            local_addr,
+            local_addr: Some(local_addr),
             socket_path: None,
             socket_identity: None,
             shutdown: Some(shutdown),
@@ -1350,7 +1362,7 @@ fn value_from_pb_depth(value: &pb::Value, depth: usize) -> Result<TbepValue, Hos
 fn value_to_pb(value: &TbepValue) -> pb::Value {
     pb::Value {
         kind: Some(match value {
-            TbepValue::Null => pb::value::Kind::Null(pb::NullValue::NullValueNullValueNull as i32),
+            TbepValue::Null => pb::value::Kind::Null(pb::NullValue::Null as i32),
             TbepValue::Boolean(flag) => pb::value::Kind::Boolean(*flag),
             TbepValue::Integer(number) => pb::value::Kind::Integer(*number),
             TbepValue::Number(number) => pb::value::Kind::Number(*number),
@@ -1375,39 +1387,38 @@ fn value_to_pb(value: &TbepValue) -> pb::Value {
 
 fn acknowledgement(v: i32) -> Option<registry::Acknowledgement> {
     match pb::Acknowledgement::try_from(v).ok()? {
-        pb::Acknowledgement::AcknowledgementUnspecified => None,
-        pb::Acknowledgement::AcknowledgementLocalSynced => {
+        pb::Acknowledgement::Unspecified => None,
+        pb::Acknowledgement::LocalSynced => {
             Some(registry::Acknowledgement::LocalSynced)
         }
-        pb::Acknowledgement::AcknowledgementRegionalQuorum => {
+        pb::Acknowledgement::RegionalQuorum => {
             Some(registry::Acknowledgement::RegionalQuorum)
         }
-        pb::Acknowledgement::AcknowledgementGlobalQuorum => {
+        pb::Acknowledgement::GlobalQuorum => {
             Some(registry::Acknowledgement::GlobalQuorum)
         }
-        pb::Acknowledgement::AcknowledgementBackup => Some(registry::Acknowledgement::BackupAck),
+        pb::Acknowledgement::Backup => Some(registry::Acknowledgement::BackupAck),
     }
 }
 
 fn acknowledgement_pb(value: Option<registry::Acknowledgement>) -> i32 {
     match value {
         None | Some(registry::Acknowledgement::RegionalQuorum) => {
-            pb::Acknowledgement::AcknowledgementRegionalQuorum as i32
+            pb::Acknowledgement::RegionalQuorum as i32
         }
         Some(registry::Acknowledgement::GlobalQuorum) => {
-            pb::Acknowledgement::AcknowledgementGlobalQuorum as i32
+            pb::Acknowledgement::GlobalQuorum as i32
         }
-        Some(registry::Acknowledgement::BackupAck) => {
-            pb::Acknowledgement::AcknowledgementBackup as i32
-        }
+        Some(registry::Acknowledgement::BackupAck) => pb::Acknowledgement::Backup as i32,
+        Some(registry::Acknowledgement::LocalSynced) => pb::Acknowledgement::LocalSynced as i32,
     }
 }
 
 fn backup_outcome_pb(value: Option<registry::BackupOutcome>) -> i32 {
     match value {
-        None | Some(registry::BackupOutcome::None) => pb::BackupOutcome::BackupOutcomeNone as i32,
-        Some(registry::BackupOutcome::Full) => pb::BackupOutcome::BackupOutcomeFull as i32,
-        Some(registry::BackupOutcome::Partial) => pb::BackupOutcome::BackupOutcomePartial as i32,
+        None | Some(registry::BackupOutcome::None) => pb::BackupOutcome::None as i32,
+        Some(registry::BackupOutcome::Full) => pb::BackupOutcome::Full as i32,
+        Some(registry::BackupOutcome::Partial) => pb::BackupOutcome::Partial as i32,
     }
 }
 
@@ -1901,7 +1912,7 @@ fn change_event(value: &registry::ChangeEvent) -> pb::ChangeEvent {
 fn notification_event(notification: TbepNotification) -> pb::SubscribeResponse {
     let event = match notification {
         TbepNotification::Batch(batch) => {
-            pb::backbone_stream_event::Event::Batch(pb::SubscriptionBatch {
+            pb::subscribe_response::Event::Batch(pb::SubscriptionBatch {
                 subscription_id: batch.subscription_id,
                 from_sequence: batch.from_sequence,
                 events: batch.events.iter().map(change_event).collect(),
@@ -1909,7 +1920,7 @@ fn notification_event(notification: TbepNotification) -> pb::SubscribeResponse {
             })
         }
         TbepNotification::Trigger(trigger) => {
-            pb::backbone_stream_event::Event::Trigger(pb::TriggerNotification {
+            pb::subscribe_response::Event::Trigger(pb::TriggerNotification {
                 subscription_id: trigger.subscription_id,
                 collection: trigger.collection.clone(),
                 sequence: trigger.sequence,
@@ -1917,7 +1928,7 @@ fn notification_event(notification: TbepNotification) -> pb::SubscribeResponse {
             })
         }
         TbepNotification::Closed(closed) => {
-            pb::backbone_stream_event::Event::Closed(pb::SubscriptionClosed {
+            pb::subscribe_response::Event::Closed(pb::SubscriptionClosed {
                 subscription_id: closed.subscription_id,
                 reason: match closed.reason {
                     registry::SubscriptionCloseReason::Replaced => {
@@ -1934,7 +1945,7 @@ fn notification_event(notification: TbepNotification) -> pb::SubscribeResponse {
 }
 
 fn is_closed(event: &pb::SubscribeResponse) -> bool {
-    matches!(event.event, Some(pb::backbone_stream_event::Event::Closed(_)))
+    matches!(event.event, Some(pb::subscribe_response::Event::Closed(_)))
 }
 
 /// The bounded response stream for one backbone subscription.
@@ -2306,7 +2317,7 @@ impl BackboneService for Arc<TbepGrpcServer> {
         let (sender, receiver) = mpsc::channel(OUTBOUND_DEPTH);
         let (stop, stop_signal) = std::sync::mpsc::channel::<()>();
         let subscribed = pb::SubscribeResponse {
-            event: Some(pb::backbone_stream_event::Event::Subscribed(
+            event: Some(pb::subscribe_response::Event::Subscribed(
                 pb::BackboneServiceSubscribeResponse {
                     subscription_id: response.subscription_id,
                     start_sequence: response.start_sequence,
@@ -2955,11 +2966,11 @@ impl UsageService for Arc<TbepGrpcServer> {
         let identity = self.require_usage_rpc(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
-        let meter = match pb::UsageServiceRecordMeter::try_from(message.meter) {
-            Ok(pb::UsageServiceRecordMeter::AdmittedRequestUnits) => {
+        let meter = match pb::UsageRecordMeter::try_from(message.meter) {
+            Ok(pb::UsageRecordMeter::AdmittedRequestUnits) => {
                 registry::UsageRecordMeter::AdmittedRequestUnits
             }
-            Ok(pb::UsageServiceRecordMeter::PublicEgressBytes) => {
+            Ok(pb::UsageRecordMeter::PublicEgressBytes) => {
                 registry::UsageRecordMeter::PublicEgressBytes
             }
             _ => return Err(conversion_error("a usage record carries no supported meter")),

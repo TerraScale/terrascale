@@ -19,14 +19,25 @@ podman run -d --name terrabase-bench-raven \
   -e RAVEN_DataDir=/tmp/ravendb-bench-data \
   docker.io/ravendb/ravendb:latest >/dev/null
 
+cleanup() {
+  podman rm -f terrabase-bench-raven >/dev/null 2>&1 || true
+}
+trap cleanup EXIT INT TERM
+
 # Wait for the server to answer; the loop is best-effort and the explicit
 # probes below report readiness honestly instead of hiding a failure.
+ready=false
 for _ in $(seq 1 120); do
   if curl -sf --max-time 2 "http://127.0.0.1:$PORT/health/ready" >/dev/null 2>&1; then
+    ready=true
     break
   fi
   sleep 1
 done
+if [[ "$ready" != true ]]; then
+  echo "RavenDB did not become ready on 127.0.0.1:$PORT" >&2
+  exit 1
+fi
 echo "RAVEN_BUILD_INFO:"
 curl -s --max-time 5 "http://127.0.0.1:$PORT/build/version" || true
 echo

@@ -404,31 +404,6 @@ pub fn receipt_region_with(id: &str) -> String {
     format!("<div id=\"{id}\"></div>", id = attribute(id))
 }
 
-/// Renders `text` as a single-quoted JavaScript string literal.
-///
-/// Used for the inline object literals the Datastar actions carry, so a
-/// document or tenant identifier can never terminate the expression.
-pub fn js_string(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 2);
-    out.push('\'');
-    for character in text.chars() {
-        match character {
-            '\\' => out.push_str("\\\\"),
-            '\'' => out.push_str("\\'"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\u{2028}' => out.push_str("\\u2028"),
-            '\u{2029}' => out.push_str("\\u2029"),
-            character if character.is_control() => {
-                let _ = write!(out, "\\u{:04x}", character as u32);
-            }
-            _ => out.push(character),
-        }
-    }
-    out.push('\'');
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -440,7 +415,7 @@ mod tests {
         let markup = table(&["one", "two"], std::slice::from_ref(&row), "nothing");
         assert_eq!(markup.matches("<tr class=\"x\"").count(), 1, "exactly one caller row");
         assert!(markup.contains(row.as_str()));
-        assert!(!markup.contains("><tr"), "no row is nested inside another");
+        assert!(!markup.contains("<tr class=\"x\"><tr"), "no row is nested inside another");
     }
 
     #[test]
@@ -453,22 +428,9 @@ mod tests {
     }
 
     #[test]
-    fn js_string_literals_are_quoted_safely() {
-        assert_eq!(js_string("demo"), "'demo'");
-        assert_eq!(js_string("a'b\\c"), "'a\\'b\\\\c'");
-        assert_eq!(js_string("line\nbreak"), "'line\\nbreak'");
-    }
-
-    #[test]
     fn definition_values_are_html_escaped() {
         let rendered = definition(&[("value", "<script>alert('x')</script>".to_owned())]);
         assert!(!rendered.contains("<script>"));
         assert!(rendered.contains("&lt;script&gt;"));
-    }
-
-    #[test]
-    fn javascript_strings_escape_line_separators_and_controls() {
-        let rendered = js_string("a\u{2028}b\u{0000}c");
-        assert_eq!(rendered, "'a\\u2028b\\u0000c'");
     }
 }

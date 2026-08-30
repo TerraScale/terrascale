@@ -1417,7 +1417,7 @@ mod tests {
         ] {
             let error = standalone_ack_refusal(ack).expect_err("standalone ack must refuse");
             assert!(
-                matches!(error, HostingError::Refused(detail) if detail.contains("unavailable on the standalone engine host")),
+                matches!(error, HostingError::Refused(ref detail) if detail.contains("unavailable on the standalone engine host")),
                 "{error:?}"
             );
         }

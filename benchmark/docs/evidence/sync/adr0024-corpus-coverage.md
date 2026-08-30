@@ -173,10 +173,9 @@ recorded here, not papered over:
    are deterministic-simulation or measurement lanes — a commit between
    dependency registration and snapshot completion, one hundred
    thousand subscriptions under measured tenant isolation, API process
-   loss, malformed MessagePack fuzzing (the ADR 0025 public
-   MessagePack envelope, a different surface from this SE-04 wire
-   envelope) — are outside a corpus of golden vectors by nature and
-   remain unclaimed.
+   loss, and malformed private gRPC input are outside a corpus of golden
+   vectors by nature and remain unclaimed. The retired public transports
+   are not qualification requirements.
 
 ## Non-claims
 

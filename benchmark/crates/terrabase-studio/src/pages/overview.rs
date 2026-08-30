@@ -76,7 +76,6 @@ fn maintenance_card() -> String {
 </div>\n\
 {receipt}\n\
 <p class=\"mt-4 text-xs text-muted-foreground\">Both compaction policies derive their bounds from the store's own durable facts; the public compaction request carries no caller-minted sequence.</p>",
-        primary = ButtonStyle::Primary.classes(),
         secondary = ButtonStyle::Secondary.classes(),
         reclaim = compact_form("reclaim", "Compact (reclaim WAL and roots)", ButtonStyle::Primary),
         history =

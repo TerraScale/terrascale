@@ -43,6 +43,7 @@ tonic = { version = "0.14", default-features = false, features = [
 ] }
 prost = "0.14"
 ring = "0.17"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 x509-parser = "0.18"
 tonic-prost = "0.14"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }

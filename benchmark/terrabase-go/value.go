@@ -56,7 +56,7 @@ func valueToProtoDepth(value Value, depth int) (*v1.Value, error) {
 	}
 	switch typed := value.(type) {
 	case nil:
-		return &v1.Value{Kind: &v1.Value_Null{Null: v1.NullValue_NULL}}, nil
+		return &v1.Value{Kind: &v1.Value_Null{Null: v1.NullValue_NULL_VALUE_NULL}}, nil
 	case bool:
 		return &v1.Value{Kind: &v1.Value_Boolean{Boolean: typed}}, nil
 	case int:

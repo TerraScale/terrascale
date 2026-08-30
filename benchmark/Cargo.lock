@@ -1599,6 +1599,7 @@ dependencies = [
 name = "terrabase-tbep"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "hyper-util",
  "prost",
  "protox",

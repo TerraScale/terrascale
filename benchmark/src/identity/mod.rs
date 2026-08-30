@@ -241,6 +241,22 @@ entity_ulid!(
 );
 entity_ulid!(DatabaseUlid, "The identity of one database inside its Project.");
 entity_ulid!(
+    PrincipalUlid,
+    "The identity of one authenticated end-user or service principal."
+);
+entity_ulid!(
+    AuthorizationPolicyUlid,
+    "The identity of one versioned authorization policy publication."
+);
+entity_ulid!(
+    PrincipalSessionUlid,
+    "The identity of one authenticated principal session binding."
+);
+entity_ulid!(
+    PrincipalGrantUlid,
+    "The identity of one signed principal grant."
+);
+entity_ulid!(
     CollectionInstanceUlid,
     "The identity of one collection instance. A collection *name* is a public route name, not an entity ID (ADR 0027)."
 );

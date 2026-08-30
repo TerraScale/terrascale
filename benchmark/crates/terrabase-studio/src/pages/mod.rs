@@ -146,6 +146,44 @@ mod tests {
     }
 
     #[test]
+    fn usage_page_renders_a_durable_idempotent_fact() {
+        let studio = studio("usage-durable");
+        let first = usage::record_fact(
+            &studio,
+            "demo",
+            "admitted-request-units",
+            "studio",
+            "studio",
+            "p0",
+            "GRU",
+            "usage-page-test",
+            "7",
+            1_700_000_000_000,
+        )
+        .expect("durable usage record");
+        assert!(first.contains("already recorded: false"));
+        let replay = usage::record_fact(
+            &studio,
+            "demo",
+            "admitted-request-units",
+            "studio",
+            "studio",
+            "p0",
+            "GRU",
+            "usage-page-test",
+            "7",
+            1_700_000_000_000,
+        )
+        .expect("idempotent durable replay");
+        assert!(replay.contains("already recorded: true"));
+
+        let page = usage::render(&studio, "demo", TEST_NONCE);
+        assert!(page.contains("StableAdmittedRequest:usage-page-test"));
+        assert!(page.contains("demo/studio/studio/p0/GRU"));
+        assert!(page.contains(">7</td>"));
+    }
+
+    #[test]
     fn backups_page_carries_backup_restore_and_the_deletion_workflow() {
         let studio = studio("backups");
         let page = backups::render(&studio, Ok(&[]), TEST_NONCE);

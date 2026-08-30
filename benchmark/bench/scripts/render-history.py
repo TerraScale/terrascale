@@ -80,26 +80,79 @@ def load(results: pathlib.Path, target: str, workload: str) -> dict | None:
     if not isinstance(status, str) or status not in {"complete", "failed"}:
         return {"status": "invalid", "error": f"{path.name} has invalid status"}
     if status == "complete":
-        if document.get("target") != target or document.get("workload") != workload:
-            return {"status": "invalid", "error": f"{path.name} identity does not match its lane"}
-        samples = document.get("samples")
-        required = {
-            "operations",
-            "wall_seconds",
-            "throughput_ops_per_s",
-            "p50_us",
-            "p95_us",
-            "p99_us",
-        }
-        if not isinstance(samples, list) or not samples:
-            return {"status": "invalid", "error": f"{path.name} has no complete samples"}
-        for sample in samples:
-            if not isinstance(sample, dict) or not required <= sample.keys():
-                return {"status": "invalid", "error": f"{path.name} has an invalid sample"}
-            numbers = [sample[key] for key in required]
-            if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) for value in numbers):
-                return {"status": "invalid", "error": f"{path.name} has non-finite sample values"}
+        try:
+            validate_complete(document, target, workload)
+        except ValueError as error:
+            return {"status": "invalid", "error": f"{path.name}: {error}"}
     return document
+
+
+def _number(value: object, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} is not a number")
+    value = float(value)
+    if not math.isfinite(value):
+        raise ValueError(f"{field} is not finite")
+    return value
+
+
+def _positive_integer(value: object, field: str) -> int:
+    number = _number(value, field)
+    if number <= 0 or number != math.floor(number):
+        raise ValueError(f"{field} is not a positive integer")
+    return int(number)
+
+
+def validate_complete(document: dict, target: str, workload: str) -> None:
+    """Apply the same admission checks as Rust's ``reference_side`` reader."""
+    if document.get("target") != target or document.get("workload") != workload:
+        raise ValueError("identity does not match its lane")
+
+    config = document.get("config")
+    if not isinstance(config, dict):
+        raise ValueError("config is not an object")
+    _positive_integer(config.get("seed_documents"), "config.seed_documents")
+    operations = _positive_integer(config.get("operations"), "config.operations")
+    samples_count = _positive_integer(config.get("samples"), "config.samples")
+    concurrency = _positive_integer(config.get("concurrency"), "config.concurrency")
+    warmup = _number(config.get("warmup_operations"), "config.warmup_operations")
+    if warmup < 0 or warmup != math.floor(warmup):
+        raise ValueError("config.warmup_operations is not a non-negative integer")
+    noise = _number(config.get("noise_percent"), "config.noise_percent")
+    if not 0 <= noise <= 100:
+        raise ValueError("config.noise_percent is not in 0..=100")
+    if operations % concurrency or int(warmup) % concurrency:
+        raise ValueError("config operation counts are not divisible by concurrency")
+
+    environment = document.get("environment")
+    if not isinstance(environment, dict):
+        raise ValueError("environment is not an object")
+    for field in ("observed_identity", "endpoint", "client_transport", "kernel"):
+        value = environment.get(field)
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"environment.{field} is not a non-empty string")
+    if "in-process" in environment["client_transport"].lower():
+        raise ValueError("in-process transport cannot be compared with served references")
+    _positive_integer(environment.get("unix_seconds"), "environment.unix_seconds")
+    _positive_integer(environment.get("logical_cpus"), "environment.logical_cpus")
+
+    samples = document.get("samples")
+    if not isinstance(samples, list) or len(samples) != samples_count:
+        raise ValueError(f"samples must contain exactly {samples_count} entries")
+    required = ("operations", "wall_seconds", "throughput_ops_per_s", "p50_us", "p95_us", "p99_us")
+    for index, sample in enumerate(samples):
+        if not isinstance(sample, dict):
+            raise ValueError(f"sample {index} is not an object")
+        values = {field: _number(sample.get(field), f"sample {index}.{field}") for field in required}
+        if values["operations"] != operations or values["operations"] != math.floor(values["operations"]):
+            raise ValueError(f"sample {index} has the wrong operation count")
+        if values["wall_seconds"] <= 0 or values["throughput_ops_per_s"] <= 0:
+            raise ValueError(f"sample {index} has non-positive timing")
+        if values["p95_us"] < values["p50_us"] or values["p99_us"] < values["p95_us"] or values["p50_us"] < 0:
+            raise ValueError(f"sample {index} percentiles are not ordered")
+        expected = values["operations"] / values["wall_seconds"]
+        if abs(values["throughput_ops_per_s"] - expected) / max(expected, 1e-300) > 1e-6:
+            raise ValueError(f"sample {index} throughput does not match wall_seconds")
 
 
 def med(values: list[float]) -> float:

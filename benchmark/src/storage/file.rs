@@ -384,6 +384,16 @@ impl FileStorage {
         let shared = Arc::new(table);
         self.history.insert(sequence, Arc::clone(&shared));
         self.published = StorageRoot { id, sequence, table: shared };
+        // The manifest names only the current root. Rehydrate every verified
+        // retained root so an earlier snapshot boundary remains readable
+        // after restart; compaction removes roots below its retained floor.
+        if let Ok(roots) = root::scan_verifying_roots(&self.dir) {
+            for (root_sequence, root_table, _) in roots {
+                if root_sequence <= sequence {
+                    self.history.entry(root_sequence).or_insert_with(|| Arc::new(root_table));
+                }
+            }
+        }
         Ok(())
     }
 

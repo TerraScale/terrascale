@@ -156,6 +156,9 @@ fn restore_card(state: &StudioState, points: Option<&[RemoteRecoveryPoint]>) -> 
             ));
         }
     }
+    let mut target_fields =
+        html::text_input("target", "Restore target", &restore_target, "/path/to/new/location");
+    target_fields.push_str(&html::confirmation_fields(&restore_target, "restore recovery point"));
     let body = format!(
         "<p class=\"mb-4 text-sm text-muted-foreground\">Restore downloads only the selected point and its ancestors from S3, verifies every member, and writes a brand-new engine location. The target must not exist or must be empty.</p>\n\
 <form class=\"grid gap-4\" data-on:submit=\"if (!confirm('Restore writes a new engine location. Continue?')) return; @post('/backup/restore', {{contentType: 'form', retry: 'never'}})\">\n{destination}{target}{identity}\
@@ -166,11 +169,7 @@ fn restore_card(state: &StudioState, points: Option<&[RemoteRecoveryPoint]>) -> 
             "Source",
             &configured_destination(&state.backup_settings()),
         ),
-        target = format!(
-            "{}{}",
-            html::text_input("target", "Restore target", &restore_target, "/path/to/new/location",),
-            html::confirmation_fields(&restore_target, "restore recovery point"),
-        ),
+        target = target_fields,
         identity = html::select("identity", "Recovery point", &recovery_points),
         primary = ButtonStyle::Primary.classes(),
         receipt = html::receipt_region_with("restore-receipt"),
@@ -321,7 +320,7 @@ fn deletion_card(state: &StudioState) -> String {
         ),
         subject = html::text_input("subject", "Subject id", "", "subject-7"),
         regions = html::text_input("regions", "Regions (comma-separated)", "gru, sfo", "gru, sfo"),
-        confirmation = html::confirmation_fields("del-1", "request deletion"),
+        confirmation = html::confirmation_fields("<request id entered above>", "request deletion"),
         primary = ButtonStyle::Primary.classes(),
         DELETION_ID = DELETION_ID,
         state_fragment = deletion_fragment(state),

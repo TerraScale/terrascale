@@ -507,6 +507,43 @@ pub(crate) fn scan_newest_verifying_root(
     Ok(newest)
 }
 
+/// Scans every immutable root file that verifies, ordered by publication
+/// sequence. Recovery uses this to restore point-in-time root reads after a
+/// restart; the manifest identifies only the current root, while older roots
+/// remain durable boundary views until compaction reclaims them.
+pub(crate) fn scan_verifying_roots(dir: &Path) -> Result<Vec<(u64, RootTable, StorageRootId)>, ()> {
+    let roots_dir = dir.join("roots");
+    let entries = match fs::read_dir(&roots_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(_) => return Err(()),
+    };
+    let mut roots = Vec::new();
+    for entry in entries {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let path = entry.path();
+        if path.extension().is_none_or(|extension| extension != "root") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        let Some(claimed) = StorageRootId::from_encoded(stem) else {
+            continue;
+        };
+        let Ok(Some((sequence, table, confirmed))) = load_root_file(&path) else {
+            continue;
+        };
+        if confirmed == claimed {
+            roots.push((sequence, table, confirmed));
+        }
+    }
+    roots.sort_by_key(|(sequence, _, _)| *sequence);
+    Ok(roots)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
