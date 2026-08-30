@@ -4,9 +4,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 
 const MAX_METADATA_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
@@ -150,18 +150,9 @@ fn read_bounded_regular(path: &Path, limit: u64, label: &str) -> Result<Vec<u8>,
     Ok(bytes)
 }
 
-fn regular_file(path: &Path, label: &str) -> Result<(), String> {
+fn open_regular(path: &Path, label: &str) -> Result<File, String> {
     let metadata =
         fs::symlink_metadata(path).map_err(|error| format!("cannot inspect {label}: {error}"))?;
-    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
-        return Err(format!("{label} is not a safe regular file"));
-    }
-    Ok(())
-}
-
-fn open_regular(path: &Path, label: &str) -> Result<File, String> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|error| format!("cannot inspect {label}: {error}"))?;
     if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
         return Err(format!("{label} is not a safe regular file"));
     }
@@ -292,6 +283,11 @@ fn validate_json(value: &Value, depth: usize, location: &str) -> Result<(), Stri
         }
         Value::Object(values) => {
             for (key, item) in values {
+                if key.len() > MAX_STRING_BYTES || key.chars().any(char::is_control) {
+                    return Err(format!(
+                        "{location} contains an oversized or control-character key"
+                    ));
+                }
                 validate_json(item, depth + 1, &format!("{location}.{key}"))?;
             }
         }
@@ -359,6 +355,7 @@ fn build_document(
     let included = reachable(root_id, &nodes, &package_by_id)?;
 
     let mut components = Vec::new();
+    let mut component_refs = HashSet::new();
     let mut included_ids: Vec<_> = included.iter().cloned().collect();
     included_ids.sort();
     for package_id in &included_ids {
@@ -368,6 +365,9 @@ fn build_document(
         let package =
             packages[package_by_id[package_id]].as_object().expect("validated package object");
         let reference = cargo_ref(package)?;
+        if !component_refs.insert(reference.clone()) {
+            return Err(format!("duplicate CycloneDX bom-ref: {reference}"));
+        }
         let mut component = Map::new();
         component.insert("bom-ref".to_owned(), Value::String(reference.clone()));
         component.insert("type".to_owned(), Value::String("library".to_owned()));
@@ -476,6 +476,9 @@ fn resolution_nodes(
         let object =
             node.as_object().ok_or_else(|| format!("resolved node {index} is not an object"))?;
         let id = required_string(object, "id", &format!("resolved node {index}"))?.to_owned();
+        if !package_by_id.contains_key(&id) {
+            return Err(format!("resolved node references unknown package: {id}"));
+        }
         if result.contains_key(&id) {
             return Err(format!("duplicate resolved node id: {id}"));
         }
@@ -521,7 +524,10 @@ fn reachable(
         if found.len() > MAX_PACKAGES {
             return Err("reachable dependency graph is too large".to_owned());
         }
-        pending.extend(nodes.get(&package_id).into_iter().flatten().cloned());
+        let dependencies = nodes
+            .get(&package_id)
+            .ok_or_else(|| format!("resolved graph omits reachable package: {package_id}"))?;
+        pending.extend(dependencies.iter().cloned());
     }
     Ok(found)
 }
@@ -793,6 +799,25 @@ mod tests {
         let mut unknown = metadata("MIT");
         unknown["resolve"]["nodes"][0]["deps"][0]["pkg"] = json!("missing");
         assert!(build_document(&unknown, "root", "target", "artifact", &"a".repeat(64)).is_err());
+        let mut missing_root = metadata("MIT");
+        missing_root["resolve"]["nodes"].as_array_mut().expect("array").remove(0);
+        assert!(
+            build_document(&missing_root, "root", "target", "artifact", &"a".repeat(64)).is_err()
+        );
+        let mut missing_dependency = metadata("MIT");
+        missing_dependency["resolve"]["nodes"].as_array_mut().expect("array").remove(1);
+        assert!(
+            build_document(&missing_dependency, "root", "target", "artifact", &"a".repeat(64))
+                .is_err()
+        );
+        let mut unknown_node = metadata("MIT");
+        unknown_node["resolve"]["nodes"]
+            .as_array_mut()
+            .expect("array")
+            .push(json!({"id":"unknown","deps":[]}));
+        assert!(
+            build_document(&unknown_node, "root", "target", "artifact", &"a".repeat(64)).is_err()
+        );
     }
 
     #[test]
@@ -817,6 +842,26 @@ mod tests {
         let mut hostile = metadata("MIT");
         hostile["packages"][1]["name"] = json!("bad\u{0000}value");
         assert!(build_document(&hostile, "root", "target", "artifact", &"a".repeat(64)).is_err());
+        let hostile_key: Value = serde_json::from_str(r#"{"bad\u0000key":1}"#).expect("JSON");
+        assert!(validate_json(&hostile_key, 0, "metadata").is_err());
+    }
+
+    #[test]
+    fn duplicate_purls_are_rejected() {
+        let mut duplicate = metadata("MIT");
+        let second_id = "dep 2.0.0 (registry+https://second.invalid)";
+        duplicate["packages"].as_array_mut().expect("array").push(json!({
+            "id":second_id,"name":"dep","version":"2.0.0","license":"MIT","source":"registry+https://second.invalid"
+        }));
+        duplicate["resolve"]["nodes"][0]["deps"]
+            .as_array_mut()
+            .expect("array")
+            .push(json!({"pkg":second_id}));
+        duplicate["resolve"]["nodes"]
+            .as_array_mut()
+            .expect("array")
+            .push(json!({"id":second_id,"deps":[]}));
+        assert!(build_document(&duplicate, "root", "target", "artifact", &"a".repeat(64)).is_err());
     }
 
     #[test]
@@ -843,7 +888,7 @@ mod tests {
         fs::write(&target, b"artifact").expect("artifact");
         let link = directory.join("link");
         std::os::unix::fs::symlink(&target, &link).expect("symlink");
-        assert!(regular_file(&link, "artifact").is_err());
+        assert!(open_regular(&link, "artifact").is_err());
         fs::remove_file(&link).expect("remove link");
         fs::remove_file(&target).expect("remove target");
         fs::remove_dir(&directory).expect("remove directory");
