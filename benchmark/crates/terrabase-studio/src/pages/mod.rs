@@ -12,6 +12,7 @@ pub mod metrics_page;
 pub mod overview;
 pub mod query;
 pub mod replication;
+pub mod surfaces;
 pub mod tiers;
 pub mod usage;
 
@@ -199,5 +200,17 @@ mod tests {
         assert!(page.contains("verify backup chain"));
         assert!(page.contains("Requested"), "the workflow states are explained");
         assert!(page.contains("Scheduler lifetime"), "the honest limit is stated");
+    }
+
+    #[test]
+    fn surfaces_page_exposes_real_local_family_stream_and_health_lanes() {
+        let page = surfaces::render(&studio("surfaces"), TEST_NONCE);
+        assert!(page.contains("Engine surfaces"));
+        assert!(page.contains("/families/validation"));
+        assert!(page.contains("/streams/documents"));
+        assert!(page.contains("healthz"));
+        assert!(page.contains("Relationships"));
+        assert!(page.contains("never fabricates"));
+        assert!(page.contains("data-monaco-fallback"), "JSON result remains editor-compatible");
     }
 }

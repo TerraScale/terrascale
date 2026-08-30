@@ -194,6 +194,22 @@ pub(crate) trait StoragePort: Send {
         collection: &CollectionName,
     ) -> Vec<Document>;
 
+    /// Returns one bounded window of a collection at a fixed snapshot,
+    /// resuming strictly after the optional identifier cursor.
+    ///
+    /// The result is ordered by the collection's canonical identifier order
+    /// and never contains documents from another collection.  Implementations
+    /// must bound the returned page by `limit`; callers enforce the public
+    /// page ceiling before reaching this seam.
+    fn documents_in_collection_at_from(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        after: Option<&DocumentId>,
+        limit: u32,
+    ) -> Result<Vec<Document>, SnapshotReadError>;
+
     /// Returns the documents the given read snapshot observed at the named
     /// exact keys of one tenant's collection, in canonical key order of the
     /// requested identifiers.

@@ -14,15 +14,15 @@ use crate::identity::{
     ProjectUlid, TenantUlid,
 };
 
-mod signed;
 mod policy_store;
+mod signed;
 
+pub use policy_store::{AuthorizationPolicyStore, PolicyStoreSnapshot};
 pub use signed::{
     AuthorizationCryptoMode, PrincipalContextEnvelope, PrincipalContextKey, PrincipalContextKeySet,
     PrincipalContextPayload, PrincipalContextReplayGuard, PrincipalContextSigner,
     PrincipalContextVerifier, SigningKeyProvenance,
 };
-pub use policy_store::{AuthorizationPolicyStore, PolicyStoreSnapshot};
 
 /// The canonical version of the engine authorization policy language.
 pub const AUTHORIZATION_FORMAT_VERSION: u16 = 1;
@@ -143,10 +143,16 @@ impl fmt::Display for AuthorizationError {
                 formatter.write_str("development signing key rejected in production")
             }
             Self::ContextSigningFailed => formatter.write_str("principal context signing failed"),
-            Self::PolicyStoreUnavailable => formatter.write_str("authorization policy store unavailable"),
+            Self::PolicyStoreUnavailable => {
+                formatter.write_str("authorization policy store unavailable")
+            }
             Self::PolicyStoreUnsafe => formatter.write_str("unsafe authorization policy store"),
-            Self::PolicyJournalCorrupt => formatter.write_str("corrupt authorization policy journal"),
-            Self::PolicyGenerationRollback => formatter.write_str("authorization policy generation rollback"),
+            Self::PolicyJournalCorrupt => {
+                formatter.write_str("corrupt authorization policy journal")
+            }
+            Self::PolicyGenerationRollback => {
+                formatter.write_str("authorization policy generation rollback")
+            }
             Self::PolicyGenerationEquivocation => {
                 formatter.write_str("authorization policy generation equivocation")
             }

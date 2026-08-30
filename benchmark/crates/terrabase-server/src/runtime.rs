@@ -511,7 +511,7 @@ mod tests {
         let socket = directory.join("operator.sock");
         assert!(validate_uds_parent(&socket).is_ok());
 
-        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o770))
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o752))
             .expect("temporary UDS directory permissions");
         assert!(matches!(validate_uds_parent(&socket), Err(DaemonError::UnsafeUdsPath)));
         std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o750))

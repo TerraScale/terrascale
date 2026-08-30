@@ -198,6 +198,7 @@ impl fmt::Debug for DatabaseKey {
 pub struct EncryptionContext {
     environment: String,
     tenant: String,
+    project: Option<String>,
     database: String,
     artifact_kind: String,
     artifact_id: String,
@@ -227,6 +228,7 @@ impl EncryptionContext {
         let context = Self {
             environment: environment.into(),
             tenant: tenant.into(),
+            project: None,
             database: database.into(),
             artifact_kind: artifact_kind.into(),
             artifact_id: artifact_id.into(),
@@ -234,6 +236,35 @@ impl EncryptionContext {
             format_major,
             compression,
         };
+        context.validate()?;
+        Ok(context)
+    }
+
+    /// Builds a context bound to a project as well as tenant and database.
+    /// The older [`Self::new`] form remains readable for compatibility data.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_project(
+        environment: impl Into<String>,
+        tenant: impl Into<String>,
+        project: impl Into<String>,
+        database: impl Into<String>,
+        artifact_kind: impl Into<String>,
+        artifact_id: impl Into<String>,
+        key_version: impl Into<String>,
+        format_major: u16,
+        compression: Compression,
+    ) -> Result<Self, EncryptionError> {
+        let mut context = Self::new(
+            environment,
+            tenant,
+            database,
+            artifact_kind,
+            artifact_id,
+            key_version,
+            format_major,
+            compression,
+        )?;
+        context.project = Some(project.into());
         context.validate()?;
         Ok(context)
     }
@@ -255,16 +286,29 @@ impl EncryptionContext {
         if scope.purpose() != artifact_kind.key_purpose() {
             return Err(EncryptionError::InvalidKeyMetadata);
         }
-        Self::new(
-            scope.environment(),
-            scope.tenant().to_text(),
-            scope.database().to_text(),
-            artifact_kind.as_str(),
-            artifact_id.to_text(),
-            key_version.to_text(),
-            format_major,
-            compression,
-        )
+        match scope.project() {
+            Some(project) => Self::new_with_project(
+                scope.environment(),
+                scope.tenant().to_text(),
+                project.to_text(),
+                scope.database().to_text(),
+                artifact_kind.as_str(),
+                artifact_id.to_text(),
+                key_version.to_text(),
+                format_major,
+                compression,
+            ),
+            None => Self::new(
+                scope.environment(),
+                scope.tenant().to_text(),
+                scope.database().to_text(),
+                artifact_kind.as_str(),
+                artifact_id.to_text(),
+                key_version.to_text(),
+                format_major,
+                compression,
+            ),
+        }
     }
 
     /// Returns the environment identity.
@@ -277,6 +321,12 @@ impl EncryptionContext {
     #[must_use]
     pub fn tenant(&self) -> &str {
         &self.tenant
+    }
+
+    /// Returns the optional project identity authenticated in AAD.
+    #[must_use]
+    pub fn project(&self) -> Option<&str> {
+        self.project.as_deref()
     }
 
     /// Returns the database identity authenticated in AAD.
@@ -319,6 +369,7 @@ impl EncryptionContext {
         if self.format_major == 0
             || !valid_identity(&self.environment)
             || !valid_identity(&self.tenant)
+            || self.project.as_deref().is_some_and(|project| !valid_identity(project))
             || !valid_identity(&self.database)
             || !valid_identity(&self.artifact_kind)
             || !valid_identity(&self.artifact_id)
@@ -334,6 +385,9 @@ impl EncryptionContext {
         info.extend_from_slice(b"terrabase/artifact-key/v1\0");
         append_string(&mut info, &self.environment);
         append_string(&mut info, &self.tenant);
+        if let Some(project) = &self.project {
+            append_string(&mut info, project);
+        }
         append_string(&mut info, &self.database);
         append_string(&mut info, &self.artifact_kind);
         append_string(&mut info, &self.artifact_id);
@@ -345,9 +399,12 @@ impl EncryptionContext {
     fn canonical_aad(&self, ordinal: u128, logical_length: u64, digest: &[u8; 32]) -> Vec<u8> {
         let mut aad = Vec::with_capacity(256);
         aad.extend_from_slice(&AAD_MAGIC);
-        aad.push(AAD_VERSION);
+        aad.push(if self.project.is_some() { 2 } else { AAD_VERSION });
         append_string(&mut aad, &self.environment);
         append_string(&mut aad, &self.tenant);
+        if let Some(project) = &self.project {
+            append_string(&mut aad, project);
+        }
         append_string(&mut aad, &self.database);
         append_string(&mut aad, &self.artifact_kind);
         append_string(&mut aad, &self.artifact_id);
@@ -459,6 +516,7 @@ impl ArtifactCipher {
         let scope = metadata.scope();
         if context.environment() != scope.environment()
             || context.tenant() != scope.tenant().to_text()
+            || context.project() != scope.project().map(|project| project.to_text()).as_deref()
             || context.database() != scope.database().to_text()
             || context.key_version() != metadata.version().to_text()
         {
@@ -669,6 +727,7 @@ impl ArtifactCipher {
         if parsed.ordinal != ordinal
             || parsed.environment != self.context.environment.as_bytes()
             || parsed.tenant != self.context.tenant.as_bytes()
+            || parsed.project != self.context.project.as_deref().map(str::as_bytes)
             || parsed.database != self.context.database.as_bytes()
             || parsed.artifact_kind != self.context.artifact_kind.as_bytes()
             || parsed.artifact_id != self.context.artifact_id.as_bytes()
@@ -764,6 +823,7 @@ fn sha256(bytes: &[u8]) -> [u8; 32] {
 struct ParsedAad<'a> {
     environment: &'a [u8],
     tenant: &'a [u8],
+    project: Option<&'a [u8]>,
     database: &'a [u8],
     artifact_kind: &'a [u8],
     artifact_id: &'a [u8],
@@ -776,13 +836,17 @@ struct ParsedAad<'a> {
 }
 
 fn parse_aad(aad: &[u8]) -> Result<ParsedAad<'_>, EncryptionError> {
-    if aad.len() > MAX_AAD_BYTES || aad.len() < 5 || aad[..4] != AAD_MAGIC || aad[4] != AAD_VERSION
+    if aad.len() > MAX_AAD_BYTES
+        || aad.len() < 5
+        || aad[..4] != AAD_MAGIC
+        || !matches!(aad[4], AAD_VERSION | 2)
     {
         return Err(EncryptionError::MalformedEnvelope);
     }
     let mut offset = 5;
     let environment = read_string(aad, &mut offset)?;
     let tenant = read_string(aad, &mut offset)?;
+    let project = (aad[4] == 2).then(|| read_string(aad, &mut offset)).transpose()?;
     let database = read_string(aad, &mut offset)?;
     let artifact_kind = read_string(aad, &mut offset)?;
     let artifact_id = read_string(aad, &mut offset)?;
@@ -804,6 +868,7 @@ fn parse_aad(aad: &[u8]) -> Result<ParsedAad<'_>, EncryptionError> {
     Ok(ParsedAad {
         environment,
         tenant,
+        project,
         database,
         artifact_kind,
         artifact_id,
@@ -874,4 +939,24 @@ fn parse_envelope(envelope: &[u8]) -> Result<(u128, &[u8], Vec<u8>), EncryptionE
     }
     let aad_end = HEADER_LEN + aad_len;
     Ok((ordinal, &envelope[HEADER_LEN..aad_end], envelope[aad_end..].to_vec()))
+}
+
+/// Returns the complete byte length of an envelope from its fixed prefix.
+/// Storage journals use this bounded parser to split concatenated envelopes;
+/// authentication remains the responsibility of [`ArtifactCipher::open`].
+pub(crate) fn envelope_length_prefix(bytes: &[u8]) -> Result<usize, EncryptionError> {
+    const HEADER_LEN: usize = 29;
+    if bytes.len() < HEADER_LEN || bytes[..4] != ENVELOPE_MAGIC || bytes[4] != ENVELOPE_VERSION {
+        return Err(EncryptionError::MalformedEnvelope);
+    }
+    let aad_len =
+        usize::try_from(u32::from_be_bytes(bytes[17..21].try_into().expect("aad length")))
+            .map_err(|_| EncryptionError::SizeLimit)?;
+    let ciphertext_len =
+        usize::try_from(u64::from_be_bytes(bytes[21..29].try_into().expect("ciphertext length")))
+            .map_err(|_| EncryptionError::SizeLimit)?;
+    HEADER_LEN
+        .checked_add(aad_len)
+        .and_then(|length| length.checked_add(ciphertext_len))
+        .ok_or(EncryptionError::SizeLimit)
 }

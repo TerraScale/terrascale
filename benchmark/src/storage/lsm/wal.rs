@@ -23,9 +23,17 @@ use std::{
 
 use super::super::codec;
 use super::internal::{Entry, InternalKey};
+use crate::encryption::{
+    ArtifactCipher, ArtifactKind, Compression, DatabaseKey, DatabaseKeyVersion, EncryptionContext,
+    KeyPurpose, KeyScope, envelope_length_prefix,
+};
+use crate::storage::DatabaseOwner;
 
 /// The fixed frame magic every verified frame starts with.
 const FRAME_MAGIC: u32 = 0x544C_534D;
+const ENCRYPTED_MAGIC: &[u8; 4] = b"TBE1";
+const ORDINAL_MAGIC: &[u8; 8] = b"TBWALOR1";
+const ORDINAL_BYTES: usize = 8 + 16 + 32;
 
 /// The result of scanning a WAL file: the verified entries, the byte
 /// length of the verified prefix, and whether damage sits mid-file.
@@ -58,6 +66,19 @@ impl WalScan {
 pub(super) struct WalAppend {
     pub(super) start: u64,
     pub(super) frame: Vec<u8>,
+}
+
+/// Encryption inputs for a WAL.  The database key is moved into the cipher
+/// and never retained by the storage owner after construction.
+pub(super) struct WalEncryptionConfig {
+    pub(super) owner: DatabaseOwner,
+    pub(super) key: DatabaseKey,
+    pub(super) key_version: DatabaseKeyVersion,
+}
+
+struct WalCipher {
+    cipher: ArtifactCipher,
+    ordinal_path: std::path::PathBuf,
 }
 
 /// Encodes one commit batch into a WAL frame payload.
@@ -125,6 +146,8 @@ fn decode_frame(payload: &[u8]) -> Option<Vec<Entry>> {
 pub(super) struct WalLog {
     file: File,
     path_len: u64,
+    encrypted: bool,
+    cipher: Option<WalCipher>,
 }
 
 impl WalLog {
@@ -155,7 +178,61 @@ impl WalLog {
     pub(super) fn open_unrepaired(path: &Path) -> io::Result<Self> {
         let file = OpenOptions::new().create(true).read(true).append(true).open(path)?;
         let path_len = file.metadata()?.len();
-        Ok(Self { file, path_len })
+        Ok(Self { file, path_len, encrypted: false, cipher: None })
+    }
+
+    /// Opens an encrypted WAL for a newly created or already encrypted
+    /// location. A legacy plaintext WAL remains readable for local
+    /// compatibility, but it is never selected for a fresh file.
+    pub(super) fn open_unrepaired_with_encryption(
+        path: &Path,
+        config: WalEncryptionConfig,
+    ) -> io::Result<Self> {
+        let file = OpenOptions::new().create(true).read(true).append(true).open(path)?;
+        let path_len = file.metadata()?.len();
+        let mut prefix = [0_u8; 4];
+        let mut probe = file.try_clone()?;
+        use std::io::Read as _;
+        let prefix_len = probe.read(&mut prefix)?;
+        let legacy = path_len != 0 && prefix_len >= 4 && prefix == FRAME_MAGIC.to_le_bytes();
+        if legacy {
+            return Ok(Self { file, path_len, encrypted: false, cipher: None });
+        }
+        if path_len != 0 && (prefix_len < 4 || prefix != *ENCRYPTED_MAGIC) {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "unknown WAL format"));
+        }
+        let scope = KeyScope::new_with_project(
+            config.owner.environment().as_str(),
+            config.owner.tenant(),
+            config.owner.project(),
+            config.owner.database(),
+            KeyPurpose::Data,
+        )
+        .map_err(encryption_io)?;
+        let context = EncryptionContext::for_artifact(
+            &scope,
+            ArtifactKind::Wal,
+            config.owner.database().value(),
+            config.key_version,
+            1,
+            Compression::None,
+        )
+        .map_err(encryption_io)?;
+        let ordinal_path = path.with_file_name("wal.ordinal");
+        let next_ordinal = load_or_create_ordinal(&ordinal_path, path_len != 0)?;
+        let cipher = ArtifactCipher::with_next_ordinal(
+            crate::encryption::ProviderMode::LocalFile,
+            config.key,
+            context,
+            next_ordinal,
+        )
+        .map_err(encryption_io)?;
+        Ok(Self {
+            file,
+            path_len,
+            encrypted: true,
+            cipher: Some(WalCipher { cipher, ordinal_path }),
+        })
     }
 
     /// Appends one commit batch as a single checksummed frame.
@@ -173,6 +250,16 @@ impl WalLog {
         let payload_len = payload.len() as u32;
         codec::push_u32(&mut frame, payload_len);
         frame.extend_from_slice(&payload);
+        let frame = if self.encrypted {
+            let wal_cipher = self.cipher.as_mut().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "encrypted WAL cipher missing")
+            })?;
+            let reservation = wal_cipher.cipher.reserve_ordinal().map_err(encryption_io)?;
+            persist_ordinal(&wal_cipher.ordinal_path, reservation.next_ordinal())?;
+            wal_cipher.cipher.seal_reserved(reservation, &frame).map_err(encryption_io)?
+        } else {
+            frame
+        };
         let start = self.path_len;
         self.file.write_all(&frame)?;
         let frame_len = u64::try_from(frame.len())
@@ -186,7 +273,16 @@ impl WalLog {
 
     /// Replays every verified entry. The caller applies them idempotently.
     pub(super) fn scan(&self) -> io::Result<WalScan> {
-        scan_file(&self.file)
+        if self.encrypted {
+            scan_encrypted_file(
+                &self.file,
+                self.cipher.as_ref().ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "encrypted WAL cipher missing")
+                })?,
+            )
+        } else {
+            scan_file(&self.file)
+        }
     }
 
     /// Fsncs the appended bytes to stable storage.
@@ -327,6 +423,155 @@ fn scan_file(file: &File) -> io::Result<WalScan> {
         mid_file_damage,
         frame_ends,
     })
+}
+
+fn scan_encrypted_file(file: &File, wal_cipher: &WalCipher) -> io::Result<WalScan> {
+    let mut file = file;
+    file.rewind()?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    let mut entries = Vec::new();
+    let mut offset = 0_usize;
+    let mut mid_file_damage = false;
+    let mut frame_ends = Vec::new();
+    let mut required_next = 0_u128;
+    while offset < bytes.len() {
+        let remaining = &bytes[offset..];
+        if remaining.len() < 29 {
+            mid_file_damage = remaining.len() < 4 || remaining[..4] != *ENCRYPTED_MAGIC;
+            break;
+        }
+        if remaining[..4] != *ENCRYPTED_MAGIC {
+            mid_file_damage = true;
+            break;
+        }
+        let envelope_len = match envelope_length_prefix(remaining) {
+            Ok(length) => length,
+            Err(_) => {
+                mid_file_damage = true;
+                break;
+            }
+        };
+        let Some(envelope) = remaining.get(..envelope_len) else {
+            // The append was interrupted after writing a strict envelope
+            // prefix; the authenticated unit is a torn trailing frame.
+            break;
+        };
+        let plaintext = match wal_cipher.cipher.open(envelope) {
+            Ok(plaintext) => plaintext,
+            Err(_) => {
+                mid_file_damage = true;
+                break;
+            }
+        };
+        if plaintext.len() < 16
+            || u32::from_le_bytes(plaintext[..4].try_into().expect("frame magic"))
+                != FRAME_MAGIC
+        {
+            mid_file_damage = true;
+            break;
+        }
+        let checksum = u64::from_le_bytes(plaintext[4..12].try_into().expect("frame checksum"));
+        let payload_len = usize::try_from(u32::from_le_bytes(
+            plaintext[12..16].try_into().expect("frame length"),
+        ))
+        .unwrap_or(usize::MAX);
+        let Some(payload_end) = 16_usize.checked_add(payload_len) else {
+            mid_file_damage = true;
+            break;
+        };
+        if payload_end != plaintext.len() {
+            mid_file_damage = true;
+            break;
+        }
+        let payload = &plaintext[16..];
+        let actual = (codec::fnv1a(payload) & 0xFFFF_FFFF) | (u64::from(FRAME_MAGIC) << 32);
+        let Some(mut decoded) = (actual == checksum).then(|| decode_frame(payload)).flatten() else {
+            mid_file_damage = true;
+            break;
+        };
+        let mut ordinal_bytes = [0_u8; 16];
+        ordinal_bytes[4..].copy_from_slice(&envelope[5..17]);
+        let ordinal = u128::from_be_bytes(ordinal_bytes);
+        required_next = required_next.max(ordinal.saturating_add(1));
+        entries.append(&mut decoded);
+        offset = offset.saturating_add(envelope_len);
+        frame_ends.push(u64::try_from(offset).expect("a file offset fits u64"));
+    }
+    if !mid_file_damage && wal_cipher.cipher.next_ordinal() < required_next {
+        mid_file_damage = true;
+    }
+    Ok(WalScan {
+        entries,
+        good_bytes: u64::try_from(offset).expect("a file offset fits u64"),
+        total_bytes: u64::try_from(bytes.len()).expect("a file length fits u64"),
+        mid_file_damage,
+        frame_ends,
+    })
+}
+
+fn encryption_io(error: crate::encryption::EncryptionError) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, error)
+}
+
+fn ordinal_checksum(body: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"terrabase.lsm.wal.ordinal.v1\0");
+    hasher.update(body);
+    *hasher.finalize().as_bytes()
+}
+
+fn load_or_create_ordinal(path: &Path, required: bool) -> io::Result<u128> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() != ORDINAL_BYTES as u64 {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "unsafe WAL ordinal state"));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                if metadata.permissions().mode() & 0o077 != 0 {
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, "unsafe WAL ordinal permissions"));
+                }
+            }
+            let bytes = std::fs::read(path)?;
+            if bytes[..8] != *ORDINAL_MAGIC || bytes[24..] != ordinal_checksum(&bytes[..24]) {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "corrupt WAL ordinal state"));
+            }
+            Ok(u128::from_be_bytes(bytes[8..24].try_into().expect("ordinal bytes")))
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound && !required => {
+            persist_ordinal(path, 0)?;
+            Ok(0)
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            Err(io::Error::new(io::ErrorKind::InvalidData, "missing WAL ordinal state"))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn persist_ordinal(path: &Path, ordinal: u128) -> io::Result<()> {
+    let mut body = Vec::with_capacity(ORDINAL_BYTES);
+    body.extend_from_slice(ORDINAL_MAGIC);
+    body.extend_from_slice(&ordinal.to_be_bytes());
+    body.extend_from_slice(&ordinal_checksum(&body));
+    let temp = path.with_file_name(format!("{}.tmp-{}", path.file_name().and_then(|n| n.to_str()).unwrap_or("wal.ordinal"), std::process::id()));
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temp)?;
+    file.write_all(&body)?;
+    file.sync_all()?;
+    std::fs::rename(&temp, path)?;
+    if let Some(parent) = path.parent() {
+        std::fs::File::open(parent)?.sync_data()?;
+    }
+    Ok(())
 }
 
 /// Reports whether a complete, self-verifying frame begins after a damaged

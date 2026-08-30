@@ -3,6 +3,7 @@
 use std::fmt::Write as _;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
@@ -19,7 +20,7 @@ use crate::engine_ops;
 use crate::html::{self, Tone};
 use crate::metrics;
 use crate::pages::{
-    backups, documents, indexes, metrics_page, overview, query, replication, tiers, usage,
+    backups, documents, indexes, metrics_page, overview, query, replication, surfaces, tiers, usage,
 };
 use crate::s3_backup::{
     BackupRunMode, S3BackupRepository, S3BackupSettings, backup_to_s3, restore_from_s3,
@@ -75,6 +76,7 @@ pub fn router(state: Arc<StudioState>) -> Router {
         .route("/readyz", get(readyz))
         .route("/metrics", get(metrics_page_handler))
         .route("/cluster", get(cluster_page))
+        .route("/surfaces", get(surfaces_page))
         .route("/documents", get(documents_page))
         .route("/documents/rows", post(documents_rows))
         .route("/documents/read", post(documents_read))
@@ -117,6 +119,8 @@ pub fn router(state: Arc<StudioState>) -> Router {
         .route("/deletion/complete", post(deletion_complete))
         .route("/maintenance/compact", post(maintenance_compact))
         .route("/maintenance/maintain-indexes", post(maintenance_maintain_indexes))
+        .route("/families/validation", post(family_validation))
+        .route("/streams/documents", post(stream_documents))
         .route("/metrics/prometheus", get(prometheus_metrics))
         .route("/events/metrics", get(metrics_stream))
         .layer(DefaultBodyLimit::max(MAX_ACTION_BODY_BYTES))
@@ -587,6 +591,13 @@ async fn replication_page(
     Extension(nonce): Extension<CspNonce>,
 ) -> Html<String> {
     full_page(state, nonce, replication::render).await
+}
+
+async fn surfaces_page(
+    State(state): State<Arc<StudioState>>,
+    Extension(nonce): Extension<CspNonce>,
+) -> Html<String> {
+    full_page(state, nonce, surfaces::render).await
 }
 
 async fn tiers_page(
@@ -2003,6 +2014,156 @@ async fn deletion_response(state: Arc<StudioState>, outcome: Result<String, Stri
     )
 }
 
+/* --------------------------------------------------------- engine surfaces */
+
+#[derive(Deserialize)]
+struct FamilyValidationForm {
+    tenant: String,
+    collection: String,
+    document: Option<String>,
+}
+
+/// Reads the public schema-validation family through a fresh engine snapshot.
+/// This is deliberately read-only: schema declaration needs a complete
+/// versioned contract and belongs in a dedicated migration/editor workflow.
+async fn family_validation(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<FamilyValidationForm>,
+) -> Response {
+    let outcome = on_blocking(state, move |state| {
+        state.observe(&form.tenant, Some(&form.collection));
+        let tenant = engine_ops::tenant(&form.tenant)?;
+        let collection = engine_ops::collection(&form.collection)?;
+        let document = form
+            .document
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(engine_ops::document_id)
+            .transpose()?;
+        let session = engine_ops::session(state.engine.as_ref(), &tenant)?;
+        let deadline = terrabase::Deadline::after(Duration::from_secs(10))
+            .map_err(|error| engine_ops::validation_error("family deadline", error))?;
+        let read = terrabase::ValidationRead::try_new(
+            collection,
+            document,
+            deadline,
+            terrabase::Cancellation::new(),
+        )
+        .map_err(|error| engine_ops::validation_error("family validation", error))?;
+        let context = terrabase::FamilyReadContext::try_new(session.scope, session.snapshot)
+            .map_err(|error| format!("family context refused: {error:?}"))?;
+        let result = state
+            .engine
+            .families()
+            .read(context, terrabase::FamilyReadRequest::validation(read))
+            .map_err(|error| format!("family read failed: {error:?}"))?;
+        let terrabase::FamilyReadResult::Validation(result) = result else {
+            return Err("family returned an unexpected result".to_owned());
+        };
+        let schema = result
+            .policy()
+            .map(|policy| crate::json::to_display(&policy.to_json_schema()))
+            .unwrap_or_else(|| "null".to_owned());
+        let violations = if result.violations().is_empty() {
+            html::alert(Tone::Good, "Validation", "No violation was reported for the requested document.")
+        } else {
+            let mut rows = String::new();
+            for violation in result.violations() {
+                rows.push_str("<tr class=\"border-b\"><td class=\"px-3 py-2\">");
+                rows.push_str(&html::esc(violation.field()));
+                rows.push_str("</td><td class=\"px-3 py-2\">");
+                rows.push_str(&html::esc(&format!("{:?}", violation.kind())));
+                rows.push_str("</td></tr>");
+            }
+            html::table(&["field", "kind"], &[rows], "No violations.")
+        };
+        Ok(format!(
+            "<div class=\"grid gap-4\"><div class=\"grid gap-4 md:grid-cols-2\"><div><p class=\"text-xs text-muted-foreground\">enforced version</p><p class=\"font-medium\">{}</p></div><div><p class=\"text-xs text-muted-foreground\">collection</p><p class=\"font-medium\">{}</p></div></div><label class=\"grid gap-1.5 text-sm\"><span class=\"font-medium\">JSON Schema projection</span><div data-monaco-json class=\"hidden min-h-48 overflow-hidden rounded-lg border bg-[#0b1020]\"></div><textarea data-monaco-fallback class=\"min-h-48 w-full rounded-lg border bg-[#0b1020] px-4 py-3 font-mono text-xs text-[#d8dee9]\" readonly>{}</textarea><span data-monaco-status class=\"text-xs text-muted-foreground\">Read-only JSON projection.</span></label>{}</div>",
+            result.enforced_version().map(|version| version.get().to_string()).unwrap_or_else(|| "schema-free".to_owned()),
+            html::esc(result.collection().as_str()),
+            html::esc(&schema),
+            violations,
+        ))
+    })
+    .await;
+    merge(surfaces::FAMILY_ID, Ok(surfaces::family_fragment(outcome)))
+}
+
+#[derive(Deserialize)]
+struct StreamDocumentsForm {
+    tenant: String,
+    collection: String,
+    prefix: Option<String>,
+    limit: Option<u32>,
+}
+
+/// Opens and serves one bounded document-stream batch. Cursors are intentionally
+/// consumed within this request; browser input can never forge a continuation.
+async fn stream_documents(
+    State(state): State<Arc<StudioState>>,
+    Form(form): Form<StreamDocumentsForm>,
+) -> Response {
+    let outcome = on_blocking(state, move |state| {
+        state.observe(&form.tenant, Some(&form.collection));
+        let tenant = engine_ops::tenant(&form.tenant)?;
+        let collection = engine_ops::collection(&form.collection)?;
+        let deadline = terrabase::Deadline::after(Duration::from_secs(10))
+            .map_err(|error| engine_ops::validation_error("stream deadline", error))?;
+        let cancellation = terrabase::Cancellation::new();
+        let mut selector = terrabase::DocumentStreamSelector::try_new(
+            collection,
+            deadline,
+            cancellation.clone(),
+        )
+        .map_err(|error| engine_ops::validation_error("stream selector", error))?;
+        if let Some(prefix) = form.prefix.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+            selector = selector
+                .with_prefix(prefix)
+                .map_err(|error| engine_ops::validation_error("stream prefix", error))?;
+        }
+        let session = engine_ops::session(state.engine.as_ref(), &tenant)?;
+        let source = terrabase::StreamSource::Documents(selector);
+        let streams = state.engine.streams();
+        let cursor = streams
+            .open(&session.scope, &session.snapshot, source.clone())
+            .map_err(|error| format!("stream open failed: {error:?}"))?;
+        let batch = streams
+            .next_batch(
+                &session.scope,
+                &session.snapshot,
+                &source,
+                cursor,
+                form.limit.unwrap_or(20).clamp(1, 100),
+                &cancellation,
+            )
+            .map_err(|error| format!("stream batch failed: {error:?}"))?;
+        let mut rows = String::new();
+        for item in batch.items() {
+            if let terrabase::StreamItem::Document(document) = item {
+                rows.push_str("<tr class=\"border-b\"><td class=\"px-3 py-2\">");
+                rows.push_str(&html::esc(document.id().as_str()));
+                rows.push_str("</td><td class=\"px-3 py-2\">");
+                rows.push_str(&html::esc(&crate::json::to_compact(document.value())));
+                rows.push_str("</td></tr>");
+            }
+        }
+        let completion = batch
+            .completion()
+            .map(|value| format!("{:?}", value))
+            .unwrap_or_else(|| "more available".to_owned());
+        Ok(format!(
+            "<div class=\"grid gap-3\"><p class=\"text-sm text-muted-foreground\">{} item(s); completion: <code>{}</code>; snapshot sequence: <code>{}</code></p>{}</div>",
+            batch.items().len(),
+            html::esc(&completion),
+            session.snapshot.sequence().get(),
+            html::table(&["document", "JSON"], &[rows], "The stream returned no documents."),
+        ))
+    })
+    .await;
+    merge(surfaces::STREAM_ID, Ok(surfaces::stream_fragment(outcome)))
+}
+
 /* ------------------------------------------------------------- maintenance */
 
 #[derive(Deserialize)]
@@ -2315,6 +2476,8 @@ mod tests {
             "/deletion/complete",
             "/maintenance/compact",
             "/maintenance/maintain-indexes",
+            "/families/validation",
+            "/streams/documents",
         ] {
             let response = app
                 .clone()

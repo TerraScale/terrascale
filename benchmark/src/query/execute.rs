@@ -29,6 +29,19 @@ use crate::{
 /// How many scanned documents pass between two bounded checkpoints.
 const CHECKPOINT_INTERVAL: usize = 64;
 
+/// The maximum number of documents one query scan asks the snapshot seam for.
+/// Keeping this below the engine's page ceiling makes the query bound
+/// independent of the backend's implementation details.
+pub(crate) const QUERY_SCAN_PAGE: u32 = 256;
+
+/// The maximum number of ordered candidates retained while a query scans.
+/// Requests whose offset and page cannot fit this window are refused before
+/// data access, and an unbounded request is refused once it exceeds it.
+pub(crate) const MAX_RETAINED_CANDIDATES: usize = 4096;
+
+/// The maximum estimated bytes retained by the ordered candidate window.
+pub(crate) const MAX_RETAINED_CANDIDATE_BYTES: usize = 16 * 1024 * 1024;
+
 /// Checks the execution bounds at one bounded checkpoint.
 ///
 /// The check is pure: it holds no lock, and callers reach it only between
@@ -229,10 +242,8 @@ fn execute_with_index(
     // Loads and includes resolve identifiers across every collection of the
     // tenant — a reference is an id, not a collection-qualified pointer — so
     // a query carrying either clause keeps the whole-tenant view below.
-    let tenant_view_needed = !query.loads().is_empty() || !query.includes().is_empty();
-    let documents = if tenant_view_needed {
-        engine.snapshot_documents(&scope, snapshot).map_err(|error| map_engine_error(&error))?
-    } else if let (Some(collection), Some(ids)) =
+    let retained_capacity = retained_capacity(query)?;
+    let (ordered, matched_count, scanned, skipped) = if let (Some(collection), Some(ids)) =
         (query.source().collection(), indexed_ids.as_ref())
         && ids.len() <= KEYED_CANDIDATE_READS
     {
@@ -241,9 +252,10 @@ fn execute_with_index(
         // storage key — one seek and one decode per candidate — so nothing
         // outside the candidate set is ever read.
         let candidates: Vec<DocumentId> = ids.iter().cloned().collect();
-        engine
+        let documents = engine
             .snapshot_documents_by_ids(&scope, snapshot, collection, &candidates)
-            .map_err(|error| map_engine_error(&error))?
+            .map_err(|error| map_engine_error(&error))?;
+        collect_matches(query, &documents, indexed_ids.as_ref(), retained_capacity)?
     } else if let Some(collection) = query.source().collection() {
         // The bounded source-collection scan: the fallback for an index read
         // that was not admitted (no segment, an unsupported predicate shape,
@@ -251,11 +263,17 @@ fn execute_with_index(
         // sets past the keyed bound, and the plain scan of a collection query
         // that selected no index at all. It stops at the collection's key
         // range instead of decoding the tenant's other collections.
-        engine
-            .snapshot_documents_in_collection(&scope, snapshot, collection)
-            .map_err(|error| map_engine_error(&error))?
+        scan_collection(
+            engine,
+            &scope,
+            snapshot,
+            query,
+            collection,
+            indexed_ids.as_ref(),
+            retained_capacity,
+        )?
     } else {
-        Vec::new()
+        (Vec::new(), 0, 0, 0)
     };
 
     // The document list is materialized, so no Engine or storage lock is held
@@ -264,7 +282,6 @@ fn execute_with_index(
     // otherwise this is the complete source-collection scan. The accounting
     // counts candidates — the FILTER accounting of V1's statistics — and
     // saturates, so no count ever wraps.
-    let (matched, scanned, skipped) = collect_matches(query, &documents, indexed_ids.as_ref())?;
     // Reference resolution for the loads clause: one bounded id lookup per
     // load, served from the same materialized snapshot view. The map spans
     // every collection of the tenant, because a reference is an id, not a
@@ -274,18 +291,17 @@ fn execute_with_index(
     // wins: the same first-match rule the engine's identifier-only point read
     // applies (`find_by_document_id` through `read_document_at`), so a load
     // and a point read never disagree about which document one bare id names.
-    let mut by_id: std::collections::BTreeMap<&str, &Document> = std::collections::BTreeMap::new();
-    if !query.loads().is_empty() {
-        for document in &documents {
-            by_id.entry(document.id().as_str()).or_insert(document);
-        }
-    }
     // Bounded checkpoint at the scan/sort boundary: a bound that expired
     // during the scan stops the query before the sort starts.
     check_bounds(query.deadline(), query.cancellation_signal())?;
-    let mut ordered: Vec<Document> = matched.into_iter().cloned().collect();
+    let mut ordered = ordered;
     ordered.sort_by(|left, right| model::compare_documents(query.ordering(), left, right));
-    let matched_count = u64::try_from(ordered.len()).unwrap_or(u64::MAX);
+    let page_documents = page_documents(query, &ordered);
+    let resolved_documents = resolve_references(engine, snapshot, query, &page_documents)?;
+    let mut by_id: BTreeMap<&str, &Document> = BTreeMap::new();
+    for document in &resolved_documents {
+        by_id.entry(document.id().as_str()).or_insert(document);
+    }
     let rows = materialize(query, &ordered, &by_id)?;
     // The include set is materialized from exactly the rows the page
     // carries, after ordering and paging, so a paged include-bearing query
@@ -293,7 +309,7 @@ fn execute_with_index(
     let includes = super::includes::materialize(
         engine,
         snapshot,
-        &documents,
+        &resolved_documents,
         &rows,
         query.includes(),
         query.deadline(),

@@ -191,6 +191,39 @@ impl RootTable {
         documents
     }
 
+    /// Returns up to `limit` documents in one collection, resuming strictly
+    /// after the identifier cursor.  The map is already in canonical full
+    /// key order, so the scan can stop as soon as the collection range ends.
+    pub(crate) fn collection_documents_from(
+        &self,
+        tenant: &TenantId,
+        collection: &str,
+        after: Option<&DocumentId>,
+        limit: u32,
+    ) -> Vec<Document> {
+        let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+        let mut documents = Vec::new();
+        for (key, document) in &self.documents {
+            if key.tenant() != tenant.as_str() {
+                continue;
+            }
+            if key.collection() < collection {
+                continue;
+            }
+            if key.collection() > collection {
+                break;
+            }
+            if after.is_some_and(|cursor| key.document() <= cursor.as_str()) {
+                continue;
+            }
+            if documents.len() == limit {
+                break;
+            }
+            documents.push(document.clone());
+        }
+        documents
+    }
+
     /// Returns the document stored at one exact canonical key, if present.
     ///
     /// The publication-history derivation uses this to serve the published

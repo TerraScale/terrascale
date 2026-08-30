@@ -1814,6 +1814,51 @@ impl Engine {
         Ok(documents)
     }
 
+    /// Returns one bounded window of a collection at the supplied read
+    /// snapshot, resuming strictly after the optional identifier cursor.
+    /// Collection-local paging keeps query memory proportional to one page,
+    /// even when the tenant owns many other collections.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::SnapshotPageLimitExceeded`] above the bounded
+    /// page ceiling, the same snapshot validation errors as
+    /// [`Engine::snapshot_documents`], or [`EngineError::StorageFailure`]
+    /// when a persisted candidate fails integrity checks.
+    #[allow(dead_code, reason = "consumed by collection query execution")]
+    #[allow(clippy::needless_pass_by_value)]
+    pub(crate) fn snapshot_documents_in_collection_from(
+        &self,
+        scope: &TenantScope,
+        snapshot: &ReadSnapshot,
+        collection: &CollectionName,
+        after: Option<DocumentId>,
+        limit: u32,
+    ) -> Result<Vec<Document>, EngineError> {
+        if limit > MAX_SNAPSHOT_RECORD_PAGE {
+            return Err(EngineError::SnapshotPageLimitExceeded);
+        }
+        if snapshot.engine_identity() != self.identity {
+            return Err(EngineError::SnapshotEngineMismatch);
+        }
+        self.validate_scope(scope)?;
+        if snapshot.tenant() != scope.tenant() {
+            return Err(EngineError::SnapshotTenantMismatch);
+        }
+        let documents = {
+            let storage = self.lock_storage()?;
+            storage.port.documents_in_collection_at_from(
+                snapshot.sequence(),
+                scope.tenant(),
+                collection,
+                after.as_ref(),
+                limit,
+            )
+        }
+        .map_err(|_| EngineError::StorageFailure)?;
+        Ok(documents)
+    }
+
     /// Returns one bounded page of final-state documents at an explicit
     /// durable boundary, in canonical `(collection, identifier)` order.
     /// Unlike the legacy identifier cursor, the full-key cursor is lossless

@@ -1,0 +1,21 @@
+[package]
+name = "terrabase-release-sbom"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "MIT"
+description = "Deterministic CycloneDX SBOM generator for TerraBase release artifacts"
+publish = false
+
+[workspace]
+
+[dependencies]
+serde_json = "1"
+sha2 = "0.10"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+panic = "abort"
+strip = "symbols"

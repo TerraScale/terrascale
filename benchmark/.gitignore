@@ -29,3 +29,4 @@ __pycache__/
 
 # Fleet builder worktrees (never tracked)
 /.worktrees/
+deploy/release/sbom/target/

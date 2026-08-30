@@ -114,11 +114,15 @@ fn probe(accepted: bool, name: &'static str) -> impl IntoResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
     use axum::body::to_bytes;
+    use axum::http::Request;
     use axum::response::IntoResponse as _;
     use terrabase::observability::Component;
     use terrabase::observability::HealthStatus;
+    use terrabase::observability::MAX_PROMETHEUS_BODY_BYTES;
     use terrabase::observability::ServiceState;
+    use tower::ServiceExt as _;
 
     #[test]
     fn lifecycle_snapshots_keep_probe_semantics_distinct() {
@@ -161,20 +165,45 @@ mod tests {
             metrics_response.headers().get(CONTENT_TYPE).and_then(|value| value.to_str().ok()),
             Some(PROMETHEUS_CONTENT_TYPE)
         );
-        let metrics_body = to_bytes(metrics_response.into_body(), MAX_HEADER_BYTES)
+        let metrics_body = to_bytes(metrics_response.into_body(), MAX_PROMETHEUS_BODY_BYTES)
             .await
             .expect("metrics body is bounded");
         assert!(metrics_body.windows(b"terrabase_".len()).any(|window| window == b"terrabase_"));
 
         let live_response = liveness(State(state.clone())).await.into_response();
         assert_eq!(live_response.status(), StatusCode::OK);
-        assert_eq!(to_bytes(live_response.into_body(), 64).await.expect("liveness body"), "live\n");
+        assert_eq!(
+            to_bytes(live_response.into_body(), 64).await.expect("liveness body").as_ref(),
+            b"live\n"
+        );
 
         let readiness_response = readiness(State(state)).await.into_response();
         assert_eq!(readiness_response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(
-            to_bytes(readiness_response.into_body(), 64).await.expect("readiness body"),
-            "ready\n"
+            to_bytes(readiness_response.into_body(), 64).await.expect("readiness body").as_ref(),
+            b"ready\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn operator_router_serves_metrics_and_liveness_end_to_end() {
+        let metrics = Arc::new(MetricsRegistry::new());
+        let app = router(metrics);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(PROMETHEUS_PATH)
+                    .body(Body::empty())
+                    .expect("metrics request builds"),
+            )
+            .await
+            .expect("metrics route responds");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            !to_bytes(response.into_body(), MAX_PROMETHEUS_BODY_BYTES)
+                .await
+                .expect("metrics body is bounded")
+                .is_empty()
         );
     }
 }

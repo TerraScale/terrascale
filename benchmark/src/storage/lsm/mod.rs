@@ -157,6 +157,11 @@ pub(crate) enum LsmOpenError {
     Unavailable,
 }
 
+/// Storage encryption configuration supplied by the Engine open boundary.
+pub(crate) struct LsmEncryptionConfig {
+    pub(crate) wal: wal::WalEncryptionConfig,
+}
+
 /// Tuning bounds of one LSM location.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct LsmTuning {
@@ -233,6 +238,9 @@ pub(crate) struct LsmStorage {
     /// the next batch or the idle flush (group commit).
     pending_flips: Vec<Entry>,
     faults: FaultPlan,
+    /// Prevents production callers from falling back to plaintext writes
+    /// while non-WAL artifact encryption is still unavailable.
+    writes_unavailable: bool,
 }
 
 impl LsmStorage {
@@ -262,7 +270,22 @@ impl LsmStorage {
         if format.created {
             super::root::sync_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
         }
-        Self::recover(dir, format.state, metrics)
+        Self::recover(dir, format.state, metrics, None, false)
+    }
+
+    /// Opens an Engine-owned local encrypted WAL. Other artifact kinds remain
+    /// on compatibility formats until their encrypted formats are available.
+    pub(crate) fn open_with_metrics_and_encryption(
+        dir: &Path,
+        metrics: Arc<MetricsRegistry>,
+        encryption: LsmEncryptionConfig,
+    ) -> Result<Self, LsmOpenError> {
+        fs::create_dir_all(dir).map_err(|_| LsmOpenError::Unavailable)?;
+        let format = verify_or_create_format(dir)?;
+        if format.created {
+            super::root::sync_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
+        }
+        Self::recover(dir, format.state, metrics, Some(encryption.wal), false)
     }
 
     /// Rebuilds engine state from the manifest anchor, the verifying
@@ -277,6 +300,8 @@ impl LsmStorage {
         dir: &Path,
         format: FormatState,
         metrics: Arc<MetricsRegistry>,
+        wal_encryption: Option<wal::WalEncryptionConfig>,
+        writes_unavailable: bool,
     ) -> Result<Self, LsmOpenError> {
         let retained_path = dir.join("retained");
         let wal_path = dir.join("wal");
@@ -332,7 +357,11 @@ impl LsmStorage {
             );
             readers.insert(meta.id, RefCell::new(reader));
         }
-        let mut wal = WalLog::open_unrepaired(&wal_path).map_err(|error| {
+        let mut wal = match wal_encryption {
+            Some(config) => WalLog::open_unrepaired_with_encryption(&wal_path, config),
+            None => WalLog::open_unrepaired(&wal_path),
+        }
+        .map_err(|error| {
             if error.kind() == std::io::ErrorKind::InvalidData {
                 // Mid-file damage: verified history sits behind it, so the
                 // location's bytes do not verify — a format failure, not an
@@ -436,6 +465,7 @@ impl LsmStorage {
             usage_corrupt: false,
             pending_flips: Vec::new(),
             faults: FaultPlan::empty(),
+            writes_unavailable,
         };
         engine.rebuild_indexes_from_segments()?;
         engine.rebuild_indexes_from_cold_tier()?;
@@ -838,6 +868,12 @@ impl LsmStorage {
         intents: &[CommitIntent],
         defer_flips: bool,
     ) -> Vec<CommitResult> {
+        if self.writes_unavailable {
+            return intents
+                .iter()
+                .map(|_| CommitResult::Rejected(CommitRejection::Storage))
+                .collect();
+        }
         let mut results: Vec<Option<CommitResult>> = intents.iter().map(|_| None).collect();
         let mut prepared: Vec<PreparedCommit> = Vec::with_capacity(intents.len());
         for (index, intent) in intents.iter().enumerate() {
@@ -2313,6 +2349,64 @@ fn tenant_documents_from_key_at(
     Ok(documents)
 }
 
+/// One bounded collection-local page over the LSM's canonical document-key
+/// index.  Point lookups resolve only the candidates in the page, avoiding a
+/// complete collection decode even when the collection is large.
+fn collection_documents_from_at(
+    storage: &LsmStorage,
+    tenant: &TenantId,
+    collection: &CollectionName,
+    after: Option<&DocumentId>,
+    limit: u32,
+    sequence: u64,
+) -> Result<Vec<Document>, SnapshotReadError> {
+    let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+    let mut documents = Vec::new();
+    let lower = (
+        tenant.as_str().to_owned(),
+        collection.as_str().to_owned(),
+        after.map_or_else(String::new, |cursor| cursor.as_str().to_owned()),
+    );
+    for (candidate_tenant, candidate_collection, identifier) in
+        storage.document_keys.range((std::ops::Bound::Included(lower), std::ops::Bound::Unbounded))
+    {
+        if candidate_tenant != tenant.as_str() {
+            break;
+        }
+        if candidate_collection != collection.as_str() {
+            if candidate_collection > collection.as_str() {
+                break;
+            }
+            continue;
+        }
+        if after.is_some_and(|cursor| identifier.as_str() <= cursor.as_str()) {
+            continue;
+        }
+        if documents.len() == limit {
+            break;
+        }
+        let identifier =
+            DocumentId::try_new(identifier).map_err(|_| SnapshotReadError::Integrity)?;
+        let key = InternalKey::document(tenant, collection, &identifier, 0);
+        let Some((deletion, value)) = storage.newest_document_entry(&key, sequence) else {
+            continue;
+        };
+        if deletion {
+            continue;
+        }
+        let mut reader = codec::Reader::new(&value);
+        let document = codec::decode_document(&mut reader).ok_or(SnapshotReadError::Integrity)?;
+        if reader.remaining() != 0
+            || document.collection() != collection
+            || document.id() != &identifier
+        {
+            return Err(SnapshotReadError::Integrity);
+        }
+        documents.push(document);
+    }
+    Ok(documents)
+}
+
 impl StoragePort for LsmStorage {
     fn commit(&mut self, intent: CommitIntent) -> CommitResult {
         self.commit_intent(&intent)
@@ -2488,6 +2582,17 @@ impl StoragePort for LsmStorage {
                 codec::decode_document(&mut reader)
             })
             .collect()
+    }
+
+    fn documents_in_collection_at_from(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        after: Option<&DocumentId>,
+        limit: u32,
+    ) -> Result<Vec<Document>, SnapshotReadError> {
+        collection_documents_from_at(self, tenant, collection, after, limit, sequence.get())
     }
 
     fn read_documents_in_collection_at(

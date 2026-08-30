@@ -172,6 +172,9 @@ pub enum QueryError {
     /// documents. Depth bounds the levels, not the width, so this is the
     /// bound that keeps one array field from materializing without limit.
     IncludeBoundExceeded,
+    /// The ordered candidate window cannot retain the requested offset/page,
+    /// or the query matched more candidates than its hard memory ceiling.
+    CandidateBoundExceeded,
     /// The Engine's snapshot view returned a typed failure.
     StorageFailure,
 }

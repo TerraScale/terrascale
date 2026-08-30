@@ -18,11 +18,13 @@ use terrabase::member::{
     DatabaseId, DatabaseLease, LifecycleState, Member, MemberError as StorageMemberError,
     StorageHealth,
 };
+use terrabase::types::TenantId;
 use terrabase::{Engine, RegionCode};
 use terrabase_member_transport::production::{
     ProductionDrainReport as TransportDrainReport, ProductionQuicEndpoint, ProductionRegion,
     ProductionTransportFacts,
 };
+use terrabase_replication_core::{DurableMember, DurableMemberError, DurableMemberProgress};
 
 /// The maximum selected Regions in the initial production topology.
 pub const INITIAL_PRODUCTION_REGION_COUNT: usize = 3;
@@ -372,11 +374,9 @@ pub struct ProductionDataPlaneFacts {
 }
 
 /// Adapter from authenticated Member frames to durable replication and the
-/// complete serving host.
-///
-/// No implementation ships in this module. The missing adapter is kept as a
-/// readiness blocker rather than replaced with the in-process qualification
-/// host.
+/// complete serving host. [`DurableProductionDataPlane`] is the lease-backed
+/// implementation for the durable replication portion. It reports false for
+/// host integrations whose required owner seam is not yet available.
 pub trait ProductionDataPlane: Send + Sync {
     /// Returns current durable integration facts.
     fn facts(&self) -> ProductionDataPlaneFacts;
@@ -400,6 +400,236 @@ pub enum ProductionDataPlaneError {
     Timeout,
     /// A required durable frontier could not be persisted.
     Persistence,
+}
+
+/// Failure while routing one operation through the durable data plane.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProductionDataPlaneOperationError {
+    /// The scope is not in the operator-provisioned catalog.
+    UnknownDatabaseScope,
+    /// The local RF=2 exchange has not completed for this database.
+    LocalRf2NotReconciled,
+    /// The bounded operation was refused by the durable member.
+    DurableMember,
+    /// The adapter has begun draining.
+    Draining,
+    /// The bounded reconciliation deadline elapsed.
+    Deadline,
+}
+
+/// A real production data-plane adapter over one lease per database.
+///
+/// The adapter deliberately reports the integration facts it can prove from
+/// live durable state. Publication-journal authority, the complete TBEP host,
+/// accepted encryption lifecycle, and the metrics listener remain false until
+/// their respective owners provide those primitives; they cannot be asserted
+/// by a constructor argument or a health boolean.
+pub struct DurableProductionDataPlane {
+    state: Mutex<DurableDataPlaneState>,
+}
+
+struct DurableDataPlaneState {
+    databases: BTreeMap<DatabaseRouteScope, DurableMember>,
+    rf2_reconciled: BTreeSet<DatabaseRouteScope>,
+    repaired: BTreeSet<DatabaseRouteScope>,
+    accepting: bool,
+}
+
+impl DurableProductionDataPlane {
+    /// Opens one lease-backed replica for every route in `routes`.
+    ///
+    /// The leases are held for the adapter lifetime, preventing the catalog
+    /// from closing an engine while replication work is still admitted.
+    pub fn open(
+        placement: &ProductionPlacement,
+        routes: &DatabaseRoutingCatalog,
+        member: &Member,
+    ) -> Result<Self, ProductionDataPlaneError> {
+        let member_identity = placement.local_member().to_text();
+        let mut databases = BTreeMap::new();
+        for (scope, database) in routes.routes() {
+            let lease =
+                member.acquire(database).map_err(|_| ProductionDataPlaneError::Persistence)?;
+            let tenant = TenantId::try_new(scope.tenant().to_text())
+                .map_err(|_| ProductionDataPlaneError::Persistence)?;
+            let replica = match DurableMember::open(lease, &member_identity, tenant) {
+                Ok(replica) => replica,
+                Err(_) => return Err(ProductionDataPlaneError::Persistence),
+            };
+            databases.insert(*scope, replica);
+        }
+        if databases.len() != routes.len() {
+            return Err(ProductionDataPlaneError::Persistence);
+        }
+        Ok(Self {
+            state: Mutex::new(DurableDataPlaneState {
+                databases,
+                rf2_reconciled: BTreeSet::new(),
+                repaired: BTreeSet::new(),
+                accepting: true,
+            }),
+        })
+    }
+
+    /// Routes a put to the exact database lease selected by `scope`.
+    pub fn put(
+        &self,
+        scope: &DatabaseRouteScope,
+        operation: &str,
+        document: &str,
+        body: &BTreeMap<String, terrabase::types::DocumentValue>,
+    ) -> Result<terrabase::CommitReceipt, ProductionDataPlaneOperationError> {
+        let mut state = lock_unpoisoned(&self.state);
+        if !state.accepting {
+            return Err(ProductionDataPlaneOperationError::Draining);
+        }
+        if !state.rf2_reconciled.contains(scope) {
+            return Err(ProductionDataPlaneOperationError::LocalRf2NotReconciled);
+        }
+        state
+            .databases
+            .get_mut(scope)
+            .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?
+            .put(operation, document, body)
+            .map_err(|_| ProductionDataPlaneOperationError::DurableMember)
+    }
+
+    /// Routes a delete to the exact database lease selected by `scope`.
+    pub fn delete(
+        &self,
+        scope: &DatabaseRouteScope,
+        operation: &str,
+        document: &str,
+    ) -> Result<terrabase::CommitReceipt, ProductionDataPlaneOperationError> {
+        let mut state = lock_unpoisoned(&self.state);
+        if !state.accepting {
+            return Err(ProductionDataPlaneOperationError::Draining);
+        }
+        if !state.rf2_reconciled.contains(scope) {
+            return Err(ProductionDataPlaneOperationError::LocalRf2NotReconciled);
+        }
+        state
+            .databases
+            .get_mut(scope)
+            .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?
+            .delete(operation, document)
+            .map_err(|_| ProductionDataPlaneOperationError::DurableMember)
+    }
+
+    /// Reads through the same isolated lease used for replication.
+    pub fn read(
+        &self,
+        scope: &DatabaseRouteScope,
+        document: &str,
+    ) -> Result<
+        Option<BTreeMap<String, terrabase::types::DocumentValue>>,
+        ProductionDataPlaneOperationError,
+    > {
+        let mut state = lock_unpoisoned(&self.state);
+        state
+            .databases
+            .get_mut(scope)
+            .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?
+            .read(document)
+            .map_err(|_| ProductionDataPlaneOperationError::DurableMember)
+    }
+
+    /// Exchanges one canonical database with a peer and marks RF=2 and repair
+    /// ready only after the durable exchange and engine reconciliation finish.
+    pub fn reconcile_with(
+        &self,
+        peer: &Self,
+        scope: &DatabaseRouteScope,
+    ) -> Result<(), ProductionDataPlaneOperationError> {
+        self.reconcile_with_timeout(peer, scope, Duration::from_secs(30))
+    }
+
+    /// As [`Self::reconcile_with`], with an explicit bounded deadline.
+    pub fn reconcile_with_timeout(
+        &self,
+        peer: &Self,
+        scope: &DatabaseRouteScope,
+        timeout: Duration,
+    ) -> Result<(), ProductionDataPlaneOperationError> {
+        if std::ptr::eq(self, peer) {
+            return Err(ProductionDataPlaneOperationError::DurableMember);
+        }
+        let mut left = lock_unpoisoned(&self.state);
+        let mut right = lock_unpoisoned(&peer.state);
+        if !left.accepting || !right.accepting {
+            return Err(ProductionDataPlaneOperationError::Draining);
+        }
+        let local = left
+            .databases
+            .get_mut(scope)
+            .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?;
+        let remote = right
+            .databases
+            .get_mut(scope)
+            .ok_or(ProductionDataPlaneOperationError::UnknownDatabaseScope)?;
+        local.reconcile_with_timeout(remote, timeout).map_err(|error| match error {
+            DurableMemberError::Timeout => ProductionDataPlaneOperationError::Deadline,
+            _ => ProductionDataPlaneOperationError::DurableMember,
+        })?;
+        left.rf2_reconciled.insert(*scope);
+        right.rf2_reconciled.insert(*scope);
+        left.repaired.insert(*scope);
+        right.repaired.insert(*scope);
+        Ok(())
+    }
+
+    /// Returns durable progress for one database.
+    pub fn progress(&self, scope: &DatabaseRouteScope) -> Option<DurableMemberProgress> {
+        lock_unpoisoned(&self.state).databases.get(scope).map(DurableMember::progress)
+    }
+}
+
+impl ProductionDataPlane for DurableProductionDataPlane {
+    fn facts(&self) -> ProductionDataPlaneFacts {
+        let state = lock_unpoisoned(&self.state);
+        let complete = !state.databases.is_empty();
+        let reconciled = complete && state.rf2_reconciled.len() == state.databases.len();
+        let repaired = complete && state.repaired.len() == state.databases.len();
+        let durable_progress = complete
+            && state.databases.values().all(|member| {
+                let progress = member.progress();
+                progress.stored() >= progress.applied()
+            });
+        ProductionDataPlaneFacts {
+            databases_admitted: complete,
+            local_rf2_reconciled: reconciled,
+            replication_serving: state.accepting && reconciled,
+            repair_serving: state.accepting && repaired,
+            durable_progress_available: durable_progress,
+            // Engine::subscribe_publications is crate-private in the current
+            // root crate. Keep this false until the owning journal seam is
+            // exported; no second reactive authority is invented here.
+            publication_journal_authoritative: false,
+            storage_encrypted: false,
+            complete_member_host: false,
+            metrics_serving: false,
+            shutdown_frontiers_persistable: complete,
+        }
+    }
+
+    fn begin_drain(&self) {
+        lock_unpoisoned(&self.state).accepting = false;
+    }
+
+    fn drain(&self, timeout: Duration) -> Result<(), ProductionDataPlaneError> {
+        if timeout.is_zero() {
+            return Err(ProductionDataPlaneError::Timeout);
+        }
+        let started = std::time::Instant::now();
+        let mut state = lock_unpoisoned(&self.state);
+        for member in state.databases.values_mut() {
+            if started.elapsed() >= timeout {
+                return Err(ProductionDataPlaneError::Timeout);
+            }
+            member.drain().map_err(|_| ProductionDataPlaneError::Persistence)?;
+        }
+        Ok(())
+    }
 }
 
 /// One bounded reason the Member cannot accept production traffic.
@@ -565,6 +795,15 @@ impl ProductionMemberRuntime {
         }
         *slot = Some(data_plane);
         Ok(())
+    }
+
+    /// Opens and attaches the lease-backed durable data plane for every
+    /// configured database. No caller-supplied readiness facts are involved.
+    pub fn attach_durable_data_plane(&self) -> Result<(), ProductionMemberError> {
+        let data_plane =
+            DurableProductionDataPlane::open(&self.placement, &self.routes, &self.member)
+                .map_err(ProductionMemberError::DataPlaneOpen)?;
+        self.attach_data_plane(Arc::new(data_plane))
     }
 
     /// Returns the authenticated transport for its accept/dial driver.
@@ -750,6 +989,9 @@ pub enum ProductionMemberError {
     MembershipMismatch,
     /// A second data-plane authority was offered.
     DataPlaneAlreadyAttached,
+    /// A lease-backed durable data plane could not open all configured
+    /// databases.
+    DataPlaneOpen(ProductionDataPlaneError),
 }
 
 fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {

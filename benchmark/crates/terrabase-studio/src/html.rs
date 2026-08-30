@@ -46,6 +46,7 @@ pub const NAV: &[NavEntry] = &[
     NavEntry { path: "/", label: "Overview" },
     NavEntry { path: "/metrics", label: "Metrics" },
     NavEntry { path: "/cluster", label: "Cluster" },
+    NavEntry { path: "/surfaces", label: "Engine surfaces" },
     NavEntry { path: "/documents", label: "Documents" },
     NavEntry { path: "/query", label: "Query" },
     NavEntry { path: "/indexes", label: "Indexes" },

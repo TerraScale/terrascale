@@ -7,7 +7,7 @@
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use crate::identity::{DatabaseUlid, TenantUlid, Ulid, UlidError, process_generator};
+use crate::identity::{DatabaseUlid, ProjectUlid, TenantUlid, Ulid, UlidError, process_generator};
 use crate::regions::RegionCode;
 
 use super::{DatabaseKey, EncryptionError, valid_identity};
@@ -144,6 +144,7 @@ impl ArtifactKind {
 pub struct KeyScope {
     environment: String,
     tenant: TenantUlid,
+    project: Option<ProjectUlid>,
     database: DatabaseUlid,
     purpose: KeyPurpose,
 }
@@ -165,7 +166,20 @@ impl KeyScope {
         if !valid_identity(&environment) {
             return Err(EncryptionError::InvalidKeyMetadata);
         }
-        Ok(Self { environment, tenant, database, purpose })
+        Ok(Self { environment, tenant, project: None, database, purpose })
+    }
+
+    /// Creates a scope bound to the complete durable owner tuple.
+    pub fn new_with_project(
+        environment: impl Into<String>,
+        tenant: TenantUlid,
+        project: ProjectUlid,
+        database: DatabaseUlid,
+        purpose: KeyPurpose,
+    ) -> Result<Self, EncryptionError> {
+        let mut scope = Self::new(environment, tenant, database, purpose)?;
+        scope.project = Some(project);
+        Ok(scope)
     }
 
     /// Returns the environment identity.
@@ -184,6 +198,12 @@ impl KeyScope {
     #[must_use]
     pub const fn database(&self) -> DatabaseUlid {
         self.database
+    }
+
+    /// Returns the optional project identity. Legacy scopes omit it.
+    #[must_use]
+    pub const fn project(&self) -> Option<ProjectUlid> {
+        self.project
     }
 
     /// Returns the isolated key purpose.

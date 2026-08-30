@@ -56,7 +56,7 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
       - name: Build (debug)
-        run: cargo check --workspace --locked
+        run: cargo check --workspace --all-targets --locked
       - name: Build (release)
         run: cargo build --workspace --locked --release
       - name: Build production server with AWS-LC FIPS
@@ -75,6 +75,11 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Clippy production server with AWS-LC FIPS
         run: cargo clippy -p terrabase-server --all-targets --locked --no-default-features --features production-fips -- -D warnings
+      - name: Served benchmark binary feature gate
+        run: |
+          cargo check --locked --features bench-tools --bin terrabase-bench-served
+          cargo test --locked --features bench-tools --bin terrabase-bench-served
+          cargo clippy --locked --features bench-tools --bin terrabase-bench-served -- -D warnings
       - name: Documentation
         run: cargo doc --workspace --no-deps --locked
       # The benchmark-lane driver is a standalone workspace so the engine
@@ -163,7 +168,9 @@ jobs:
           mkdir -p "$GOBIN"
           go install github.com/bufbuild/buf/cmd/buf@v1.50.0
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
-          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+          grpc_generator_version="$(sed -n 's|^// - protoc-gen-go-grpc ||p' terrabase-go/terrabase/v1/engine_grpc.pb.go)"
+          [[ "$grpc_generator_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@"$grpc_generator_version"
           protoc_version=34.1
           protoc_archive="$(mktemp --suffix=.zip)"
           protoc_sha256=af27ea66cd26938fe48587804ca7d4817457a08350021a1c6e23a27ccc8c6904

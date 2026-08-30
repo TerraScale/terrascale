@@ -1223,6 +1223,22 @@ impl super::StoragePort for FileStorage {
             .collect()
     }
 
+    fn documents_in_collection_at_from(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        after: Option<&DocumentId>,
+        limit: u32,
+    ) -> Result<Vec<Document>, super::SnapshotReadError> {
+        Ok(self.table_at(sequence).collection_documents_from(
+            tenant,
+            collection.as_str(),
+            after,
+            limit,
+        ))
+    }
+
     fn read_documents_in_collection_at(
         &self,
         sequence: StorageSequence,
