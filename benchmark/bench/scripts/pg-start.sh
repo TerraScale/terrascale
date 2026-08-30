@@ -28,7 +28,8 @@ pg_ctl -D \$PGDATA -l $ROOT/server.log \
 cleanup() {
   pg_ctl -D \$PGDATA stop -m immediate >/dev/null 2>&1 || true
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 143' INT TERM
 psql -h $ROOT -p $PORT -U bench -d postgres \
   -c 'SELECT version();' \
   -c 'SHOW synchronous_commit;' \

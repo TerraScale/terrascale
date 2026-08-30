@@ -1,9 +1,18 @@
 use super::*;
 
+use crate::identity::{
+    AuthorizationPolicyUlid, DatabaseUlid, PrincipalGrantUlid, PrincipalSessionUlid, PrincipalUlid,
+    ProjectUlid, TenantUlid,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 fn scope() -> ResourceScope {
-    ResourceScope::try_new("tenant-a", "project-a", "database-a").expect("scope")
+    ResourceScope::try_new(
+        TenantUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB1").unwrap(),
+        ProjectUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB2").unwrap(),
+        DatabaseUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB3").unwrap(),
+    )
+    .expect("scope")
 }
 
 fn context(generation: u64) -> PrincipalContext {
@@ -14,7 +23,13 @@ fn context(generation: u64) -> PrincipalContext {
     .expect("claims");
     PrincipalContext::from_verified(VerifiedPrincipalInput {
         scope: scope(),
-        principal_id: "principal-a".to_owned(),
+        environment: "production".to_owned(),
+        gateway_spiffe_principal: "spiffe://terrascale/gateway".to_owned(),
+        issuer: "terrascale-go".to_owned(),
+        principal_id: PrincipalUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB4").unwrap(),
+        session_id: PrincipalSessionUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB5").unwrap(),
+        grant_id: PrincipalGrantUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB6").unwrap(),
+        policy_id: AuthorizationPolicyUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB7").unwrap(),
         actions: [Action::Read, Action::Query].into_iter().collect(),
         claims,
         audience: "terrascale.database".to_owned(),
@@ -109,8 +124,12 @@ fn scope_audience_action_expiry_and_generation_are_all_fail_closed() {
     );
 
     let mut wrong_scope = request(Action::Read, 150);
-    wrong_scope.scope =
-        ResourceScope::try_new("other-tenant", "project-a", "database-a").expect("scope");
+    wrong_scope.scope = ResourceScope::try_new(
+        TenantUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FC1").unwrap(),
+        ProjectUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB2").unwrap(),
+        DatabaseUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB3").unwrap(),
+    )
+    .expect("scope");
     assert_eq!(
         evaluate(&context(1), &policy, &wrong_scope),
         AuthorizationDecision::Deny(DenialReason::ScopeMismatch)

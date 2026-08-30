@@ -51,6 +51,10 @@
 //!   (evaluate orders expiry before generation) — still a denial.
 
 use super::*;
+use crate::identity::{
+    AuthorizationPolicyUlid, DatabaseUlid, PrincipalGrantUlid, PrincipalSessionUlid, PrincipalUlid,
+    ProjectUlid, TenantUlid,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The two granted collections in the model policy.
@@ -140,8 +144,14 @@ fn real_policy(state: &AuthState, generation: u64) -> Policy {
 /// `generation` (the crate-private seam this in-crate model drives).
 fn real_context(principal: &str, generation: u64) -> PrincipalContext {
     PrincipalContext::from_verified(VerifiedPrincipalInput {
-        scope: ResourceScope::try_new("tenant-a", "project-a", "database-a").expect("scope"),
-        principal_id: principal.to_owned(),
+        scope: model_scope(),
+        environment: "production".to_owned(),
+        gateway_spiffe_principal: "spiffe://terrascale/gateway".to_owned(),
+        issuer: "terrascale-go".to_owned(),
+        principal_id: model_principal(principal),
+        session_id: PrincipalSessionUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB5").unwrap(),
+        grant_id: PrincipalGrantUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB6").unwrap(),
+        policy_id: AuthorizationPolicyUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB7").unwrap(),
         actions: BTreeSet::from([Action::Read]),
         claims: PrincipalClaims::try_new(Vec::<(String, AttributeValue)>::new()).expect("claims"),
         audience: "terrascale.database".to_owned(),
@@ -155,7 +165,7 @@ fn real_context(principal: &str, generation: u64) -> PrincipalContext {
 /// Builds the REAL read request for a collection at `now`.
 fn real_request(collection: &str, now: u64) -> AuthorizationRequest {
     AuthorizationRequest::try_new(
-        ResourceScope::try_new("tenant-a", "project-a", "database-a").expect("scope"),
+        model_scope(),
         "terrascale.database",
         Action::Read,
         collection,
@@ -164,6 +174,24 @@ fn real_request(collection: &str, now: u64) -> AuthorizationRequest {
         now,
     )
     .expect("request")
+}
+
+fn model_scope() -> ResourceScope {
+    ResourceScope::try_new(
+        TenantUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB1").unwrap(),
+        ProjectUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB2").unwrap(),
+        DatabaseUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB3").unwrap(),
+    )
+    .expect("scope")
+}
+
+fn model_principal(name: &str) -> PrincipalUlid {
+    let text = match name {
+        "alice" => "01ARZ3NDEKTSV4RRFFQ69G5FB8",
+        "bob" => "01ARZ3NDEKTSV4RRFFQ69G5FB9",
+        _ => panic!("unknown model principal"),
+    };
+    PrincipalUlid::from_text(text).unwrap()
 }
 
 /// The transition relation: which steps are offered in `state`.

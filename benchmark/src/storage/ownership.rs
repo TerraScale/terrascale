@@ -1,0 +1,324 @@
+//! Durable ownership identity for one engine location.
+//!
+//! The record is deliberately separate from the storage format bytes. It is
+//! an additive, owner-controlled metadata file used to bind a location to one
+//! environment and typed database scope. Existing locations may acquire the
+//! record once through the explicitly local-development open path; a scoped
+//! production open can never adopt a local record or a foreign location.
+
+use std::{
+    fs::{self, File, OpenOptions},
+    io::{self, Read, Write},
+    path::{Path, PathBuf},
+};
+
+use crate::{identity::{DatabaseUlid, ProjectUlid, TenantUlid}, regions::RegionCode};
+
+const MAGIC: &[u8; 8] = b"TBOwner1";
+const VERSION: u8 = 1;
+const MODE_LOCAL: u8 = 0;
+const MODE_PRODUCTION: u8 = 1;
+const MAX_RECORD_BYTES: usize = 512;
+const MAX_ENVIRONMENT_BYTES: usize = 96;
+const FILE_NAME: &str = "owner.tbv1";
+
+/// A bounded environment identity used in the durable owner tuple.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct EnvironmentName(String);
+
+impl EnvironmentName {
+    /// Creates a strict environment identity. It is metadata, never a path.
+    pub fn try_new(value: impl AsRef<str>) -> Result<Self, OwnershipError> {
+        let value = value.as_ref();
+        if value.is_empty() || value.len() > MAX_ENVIRONMENT_BYTES {
+            return Err(OwnershipError::InvalidEnvironment);
+        }
+        if !value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
+        }) {
+            return Err(OwnershipError::InvalidEnvironment);
+        }
+        Ok(Self(value.to_owned()))
+    }
+
+    /// Returns the canonical environment text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for EnvironmentName {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+/// The canonical durable owner tuple for an engine location.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct DatabaseOwner {
+    environment: EnvironmentName,
+    tenant: TenantUlid,
+    project: ProjectUlid,
+    database: DatabaseUlid,
+    region: RegionCode,
+}
+
+impl DatabaseOwner {
+    /// Builds a typed owner tuple.
+    #[must_use]
+    pub const fn new(
+        environment: EnvironmentName,
+        tenant: TenantUlid,
+        project: ProjectUlid,
+        database: DatabaseUlid,
+        region: RegionCode,
+    ) -> Self {
+        Self { environment, tenant, project, database, region }
+    }
+
+    /// Mints the explicit non-production owner used by compatibility opens.
+    #[must_use]
+    pub fn local_development() -> Self {
+        Self::new(
+            EnvironmentName::try_new("local-development").expect("constant environment"),
+            TenantUlid::generate(),
+            ProjectUlid::generate(),
+            DatabaseUlid::generate(),
+            RegionCode::GRU,
+        )
+    }
+
+    /// Returns the environment identity.
+    #[must_use]
+    pub fn environment(&self) -> &EnvironmentName {
+        &self.environment
+    }
+
+    /// Returns the owning tenant identity.
+    #[must_use]
+    pub const fn tenant(&self) -> TenantUlid {
+        self.tenant
+    }
+
+    /// Returns the owning Project identity.
+    #[must_use]
+    pub const fn project(&self) -> ProjectUlid {
+        self.project
+    }
+
+    /// Returns the owning database identity.
+    #[must_use]
+    pub const fn database(&self) -> DatabaseUlid {
+        self.database
+    }
+
+    /// Returns the canonical home Region.
+    #[must_use]
+    pub const fn region(&self) -> RegionCode {
+        self.region
+    }
+}
+
+/// Whether an engine open is local-development or scoped production.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OwnershipMode {
+    LocalDevelopment,
+    Production,
+}
+
+/// Why durable owner metadata could not be opened or validated.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OwnershipError {
+    InvalidEnvironment,
+    InvalidLocation,
+    ForeignLocation,
+    Corrupt,
+    Mismatch,
+    ModeMismatch,
+    Unavailable,
+}
+
+/// Loads the location owner, creating it exactly once for a local open.
+pub(crate) fn load_or_create(
+    location: &Path,
+    expected: Option<&DatabaseOwner>,
+    mode: OwnershipMode,
+) -> Result<DatabaseOwner, OwnershipError> {
+    validate_location(location)?;
+    let path = location.join(FILE_NAME);
+    if path.symlink_metadata().map_or(false, |metadata| metadata.file_type().is_symlink()) {
+        return Err(OwnershipError::InvalidLocation);
+    }
+    if path.exists() {
+        let (owner, stored_mode) = read_record(&path)?;
+        if stored_mode != mode {
+            return Err(OwnershipError::ModeMismatch);
+        }
+        if expected.is_some_and(|wanted| wanted != &owner) {
+            return Err(OwnershipError::Mismatch);
+        }
+        return Ok(owner);
+    }
+
+    let owner = expected.cloned().unwrap_or_else(DatabaseOwner::local_development);
+    let temp = unique_temp_path(location);
+    let mut file = create_private(&temp)?;
+    let record = encode_record(&owner, mode);
+    file.write_all(&record).map_err(|_| OwnershipError::Unavailable)?;
+    file.sync_data().map_err(|_| OwnershipError::Unavailable)?;
+    drop(file);
+    match fs::rename(&temp, &path) {
+        Ok(()) => {
+            fs::File::open(location)
+                .and_then(|directory| directory.sync_data())
+                .map_err(|_| OwnershipError::Unavailable)?;
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            let _ = fs::remove_file(&temp);
+            let (actual, stored_mode) = read_record(&path)?;
+            if stored_mode != mode {
+                return Err(OwnershipError::ModeMismatch);
+            }
+            if actual != owner {
+                return Err(OwnershipError::Mismatch);
+            }
+            return Ok(actual);
+        }
+        Err(_) => {
+            let _ = fs::remove_file(&temp);
+            return Err(OwnershipError::Unavailable);
+        }
+    }
+    Ok(owner)
+}
+
+fn validate_location(location: &Path) -> Result<(), OwnershipError> {
+    let metadata = fs::symlink_metadata(location).map_err(|_| OwnershipError::InvalidLocation)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(OwnershipError::InvalidLocation);
+    }
+    // A non-empty directory without a recognized TerraBase marker is never
+    // silently adopted as a database location. The owner file itself is the
+    // only permitted exception while a first open is being completed.
+    let mut entries = fs::read_dir(location).map_err(|_| OwnershipError::Unavailable)?;
+    while let Some(entry) = entries.next() {
+        let entry = entry.map_err(|_| OwnershipError::Unavailable)?;
+        let name = entry.file_name();
+        if name == FILE_NAME || name == "format.tmp" || name == "manifest.tmp" {
+            continue;
+        }
+        if name == "format" {
+            let bytes = fs::read(entry.path()).map_err(|_| OwnershipError::ForeignLocation)?;
+            if bytes.starts_with(b"TBV2LSM1") || bytes.starts_with(b"TBV2FORMAT") {
+                continue;
+            }
+            return Err(OwnershipError::ForeignLocation);
+        }
+        // Existing known engine artifacts imply a recognized location only
+        // when the format marker is present; reject everything else.
+        return Err(OwnershipError::ForeignLocation);
+    }
+    Ok(())
+}
+
+fn unique_temp_path(location: &Path) -> PathBuf {
+    location.join(format!("{FILE_NAME}.tmp-{}-{}", std::process::id(), std::thread::current().name().unwrap_or("main")))
+}
+
+fn create_private(path: &Path) -> Result<File, OwnershipError> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(path).map_err(|error| {
+        if error.kind() == io::ErrorKind::AlreadyExists {
+            OwnershipError::Unavailable
+        } else {
+            OwnershipError::Unavailable
+        }
+    })
+}
+
+fn encode_record(owner: &DatabaseOwner, mode: OwnershipMode) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(128);
+    bytes.extend_from_slice(MAGIC);
+    bytes.push(VERSION);
+    bytes.push(match mode {
+        OwnershipMode::LocalDevelopment => MODE_LOCAL,
+        OwnershipMode::Production => MODE_PRODUCTION,
+    });
+    push_string(&mut bytes, owner.environment.as_str());
+    bytes.extend_from_slice(&owner.tenant.as_bytes());
+    bytes.extend_from_slice(&owner.project.as_bytes());
+    bytes.extend_from_slice(&owner.database.as_bytes());
+    bytes.extend_from_slice(&owner.region.as_bytes());
+    bytes
+}
+
+fn push_string(bytes: &mut Vec<u8>, value: &str) {
+    bytes.push(u8::try_from(value.len()).expect("environment bound fits u8"));
+    bytes.extend_from_slice(value.as_bytes());
+}
+
+fn read_record(path: &Path) -> Result<(DatabaseOwner, OwnershipMode), OwnershipError> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| OwnershipError::Unavailable)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() as usize > MAX_RECORD_BYTES {
+        return Err(OwnershipError::Corrupt);
+    }
+    let mut file = OpenOptions::new().read(true).open(path).map_err(|_| OwnershipError::Unavailable)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|_| OwnershipError::Unavailable)?;
+    if bytes.len() > MAX_RECORD_BYTES {
+        return Err(OwnershipError::Corrupt);
+    }
+    let mut reader = RecordReader { bytes: &bytes, offset: 0 };
+    if reader.take(MAGIC.len()) != MAGIC || reader.byte() != Some(VERSION) {
+        return Err(OwnershipError::Corrupt);
+    }
+    let mode = match reader.byte() {
+        Some(MODE_LOCAL) => OwnershipMode::LocalDevelopment,
+        Some(MODE_PRODUCTION) => OwnershipMode::Production,
+        _ => return Err(OwnershipError::Corrupt),
+    };
+    let environment = EnvironmentName::try_new(reader.string()?) .map_err(|_| OwnershipError::Corrupt)?;
+    let tenant = TenantUlid::from_binary(reader.take(16).ok_or(OwnershipError::Corrupt)?).map_err(|_| OwnershipError::Corrupt)?;
+    let project = ProjectUlid::from_binary(reader.take(16).ok_or(OwnershipError::Corrupt)?).map_err(|_| OwnershipError::Corrupt)?;
+    let database = DatabaseUlid::from_binary(reader.take(16).ok_or(OwnershipError::Corrupt)?).map_err(|_| OwnershipError::Corrupt)?;
+    let region = RegionCode::from_wire_bytes(reader.take(3).ok_or(OwnershipError::Corrupt)?.try_into().expect("fixed width"))
+        .map_err(|_| OwnershipError::Corrupt)?;
+    if reader.remaining() != 0 {
+        return Err(OwnershipError::Corrupt);
+    }
+    Ok((DatabaseOwner::new(environment, tenant, project, database, region), mode))
+}
+
+struct RecordReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> RecordReader<'a> {
+    fn byte(&mut self) -> Option<u8> {
+        let byte = *self.bytes.get(self.offset)?;
+        self.offset += 1;
+        Some(byte)
+    }
+
+    fn take(&mut self, length: usize) -> Option<&'a [u8]> {
+        let end = self.offset.checked_add(length)?;
+        let value = self.bytes.get(self.offset..end)?;
+        self.offset = end;
+        Some(value)
+    }
+
+    fn string(&mut self) -> Result<&'a str, OwnershipError> {
+        let length = usize::from(self.byte().ok_or(OwnershipError::Corrupt)?);
+        std::str::from_utf8(self.take(length).ok_or(OwnershipError::Corrupt)?)
+            .map_err(|_| OwnershipError::Corrupt)
+    }
+
+    fn remaining(&self) -> usize {
+        self.bytes.len().saturating_sub(self.offset)
+    }
+}

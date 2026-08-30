@@ -1,8 +1,12 @@
 name: TerraBase unsigned native release validation
 
 on:
-  push:
-    branches: [develop]
+  workflow_dispatch:
+    inputs:
+      confirm_candidate:
+        description: Confirm a trusted main-branch candidate build on protected native runners.
+        required: true
+        type: boolean
 
 permissions:
   contents: read
@@ -19,8 +23,10 @@ env:
 jobs:
   unsigned-amd64:
     name: unsigned/amd64-native
+    if: ${{ inputs.confirm_candidate && forgejo.ref == 'refs/heads/main' }}
     runs-on: [self-hosted, protected, terrabase-release-amd64]
     timeout-minutes: 360
+    environment: terrabase-release-build
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -56,8 +62,10 @@ jobs:
 
   unsigned-arm64:
     name: unsigned/arm64-native
+    if: ${{ inputs.confirm_candidate && forgejo.ref == 'refs/heads/main' }}
     runs-on: [self-hosted, protected, terrabase-release-arm64]
     timeout-minutes: 360
+    environment: terrabase-release-build
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:

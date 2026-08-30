@@ -78,6 +78,7 @@ sbom_name=$artifact_stem.cdx.json
 provenance_name=$artifact_stem.intoto.json
 manifest_name=$artifact_stem.release.json
 oci_tag=$package-$version-$expected_arch
+base_reference='gcr.io/distroless/cc-debian12@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f'
 fips_feature_graph_name=
 fips_feature_graph_digest=
 
@@ -157,6 +158,8 @@ jq -e \
   --arg oci "$oci_name" \
   --arg oci_digest "$oci_digest" \
   --arg target "$target" \
+  --arg repository 'https://git.terrascale.tech/TerraScale/TerraBase' \
+  --arg base "$base_reference" \
   --arg revision "$(jq -er '.source.revision' "$manifest")" \
   --arg tree "$(jq -er '.source.tree' "$manifest")" \
   --argjson dirty "$(jq -er '.source.dirty' "$manifest")" \
@@ -177,8 +180,10 @@ jq -e \
     else
       (.predicate.buildDefinition.internalParameters | has("fipsFeatureGraph") | not)
     end) and
+    (.predicate.buildDefinition.resolvedDependencies | length) == 2 and
     ([.predicate.buildDefinition.resolvedDependencies[] |
-      select(.digest.gitCommit == $revision and .digest.gitTree == $tree)] | length) == 1
+      select(.uri == $repository and .digest.gitCommit == $revision and .digest.gitTree == $tree)] | length) == 1 and
+    ([.predicate.buildDefinition.resolvedDependencies[] | select(.uri == $base)] | length) == 1
   ' "$output/$provenance_name" >/dev/null
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/terrabase-verify.XXXXXXXX")
@@ -207,6 +212,8 @@ archive_binary=$work/archive/$artifact_stem/bin/$binary
 [[ -f "$archive_binary" && ! -L "$archive_binary" ]]
 [[ $(stat -c '%a' "$archive_binary") == 755 ]]
 [[ $(sha256sum "$archive_binary" | awk '{print $1}') == "$binary_digest" ]]
+"$(dirname -- "${BASH_SOURCE[0]}")/verify-oci.sh" \
+  "$output/$oci_name" "$archive_binary" "$binary_digest" "$oci_tag" "$base_reference"
 
 image=$(skopeo inspect "oci-archive:$output/$oci_name:$oci_tag")
 [[ $(jq -er '.Architecture' <<<"$image") == "$expected_arch" ]]

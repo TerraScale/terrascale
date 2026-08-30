@@ -499,27 +499,39 @@ mod tests {
 
     #[test]
     fn cancellation_clone_and_cancel_race_preserves_visibility() {
-        use std::sync::{Arc, Barrier};
+        use std::sync::{
+            Arc, Barrier,
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        };
         use std::thread;
 
         for _ in 0..128 {
             let signal = Cancellation::new();
             let barrier = Arc::new(Barrier::new(2));
+            let stop = Arc::new(AtomicBool::new(false));
+            let (observed_tx, observed_rx) = mpsc::channel();
             let worker_signal = signal.clone();
             let worker_barrier = Arc::clone(&barrier);
+            let worker_stop = Arc::clone(&stop);
             let worker = thread::spawn(move || {
                 worker_barrier.wait();
                 let clone = worker_signal.clone();
-                while !clone.is_cancelled() {
+                while !clone.is_cancelled() && !worker_stop.load(Ordering::Acquire) {
                     thread::yield_now();
                 }
-                assert!(clone.is_cancelled());
+                observed_tx.send(clone.is_cancelled()).expect("observer remains connected");
             });
 
             barrier.wait();
             signal.cancel();
+            let observed = observed_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("cancellation becomes visible to a concurrent clone");
+            stop.store(true, Ordering::Release);
             worker.join().expect("cancellation observer finishes");
             assert!(signal.is_cancelled());
+            assert!(observed);
         }
     }
 

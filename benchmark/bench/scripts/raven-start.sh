@@ -22,7 +22,8 @@ podman run -d --name terrabase-bench-raven \
 cleanup() {
   podman rm -f terrabase-bench-raven >/dev/null 2>&1 || true
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 143' INT TERM
 
 # Wait for the server to answer; the loop is best-effort and the explicit
 # probes below report readiness honestly instead of hiding a failure.

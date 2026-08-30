@@ -17,9 +17,9 @@ use crate::identity::{
 mod signed;
 
 pub use signed::{
-    AuthorizationCryptoMode, PrincipalContextEnvelope, PrincipalContextKey,
-    PrincipalContextKeySet, PrincipalContextPayload, PrincipalContextReplayGuard,
-    PrincipalContextVerifier, SigningKeyProvenance,
+    AuthorizationCryptoMode, PrincipalContextEnvelope, PrincipalContextKey, PrincipalContextKeySet,
+    PrincipalContextPayload, PrincipalContextReplayGuard, PrincipalContextVerifier,
+    SigningKeyProvenance,
 };
 
 /// The canonical version of the engine authorization policy language.
@@ -102,17 +102,27 @@ impl fmt::Display for AuthorizationError {
             Self::DuplicateRule => {
                 formatter.write_str("authorization policy contains a duplicate rule")
             }
-            Self::MalformedContextEnvelope => formatter.write_str("malformed principal context envelope"),
+            Self::MalformedContextEnvelope => {
+                formatter.write_str("malformed principal context envelope")
+            }
             Self::InvalidContextPayload => formatter.write_str("invalid principal context payload"),
             Self::UnknownContextKey => formatter.write_str("unknown principal context key"),
-            Self::InvalidContextSignature => formatter.write_str("invalid principal context signature"),
+            Self::InvalidContextSignature => {
+                formatter.write_str("invalid principal context signature")
+            }
             Self::DuplicateContextKey => formatter.write_str("duplicate principal context key"),
             Self::ContextNotYetValid => formatter.write_str("principal context is not yet valid"),
             Self::ContextExpired => formatter.write_str("principal context has expired"),
-            Self::ContextBindingMismatch => formatter.write_str("principal context binding mismatch"),
+            Self::ContextBindingMismatch => {
+                formatter.write_str("principal context binding mismatch")
+            }
             Self::ContextReplay => formatter.write_str("principal context replay refused"),
-            Self::ContextReplayGuardFull => formatter.write_str("principal context replay guard is full"),
-            Self::DevelopmentSigningKey => formatter.write_str("development signing key rejected in production"),
+            Self::ContextReplayGuardFull => {
+                formatter.write_str("principal context replay guard is full")
+            }
+            Self::DevelopmentSigningKey => {
+                formatter.write_str("development signing key rejected in production")
+            }
             Self::ContextSigningFailed => formatter.write_str("principal context signing failed"),
         }
     }
@@ -311,7 +321,13 @@ impl ResourceScope {
 )]
 pub(crate) struct VerifiedPrincipalInput {
     pub(crate) scope: ResourceScope,
-    pub(crate) principal_id: String,
+    pub(crate) environment: String,
+    pub(crate) gateway_spiffe_principal: String,
+    pub(crate) issuer: String,
+    pub(crate) principal_id: PrincipalUlid,
+    pub(crate) session_id: PrincipalSessionUlid,
+    pub(crate) grant_id: PrincipalGrantUlid,
+    pub(crate) policy_id: AuthorizationPolicyUlid,
     pub(crate) actions: BTreeSet<Action>,
     pub(crate) claims: PrincipalClaims,
     pub(crate) audience: String,
@@ -324,7 +340,13 @@ pub(crate) struct VerifiedPrincipalInput {
 #[derive(Clone)]
 pub struct PrincipalContext {
     scope: ResourceScope,
-    principal_id: String,
+    environment: String,
+    gateway_spiffe_principal: String,
+    issuer: String,
+    principal_id: PrincipalUlid,
+    session_id: PrincipalSessionUlid,
+    grant_id: PrincipalGrantUlid,
+    policy_id: AuthorizationPolicyUlid,
     actions: BTreeSet<Action>,
     claims: PrincipalClaims,
     audience: String,
@@ -349,7 +371,10 @@ impl PrincipalContext {
         )
     )]
     pub(crate) fn from_verified(input: VerifiedPrincipalInput) -> Result<Self, AuthorizationError> {
-        if !valid_scope_identifier(&input.principal_id) || !valid_scope_identifier(&input.audience)
+        if !valid_identifier(&input.environment)
+            || !valid_identifier(&input.gateway_spiffe_principal)
+            || !valid_identifier(&input.issuer)
+            || !valid_identifier(&input.audience)
         {
             return Err(AuthorizationError::InvalidIdentifier);
         }
@@ -364,7 +389,13 @@ impl PrincipalContext {
         }
         Ok(Self {
             scope: input.scope,
+            environment: input.environment,
+            gateway_spiffe_principal: input.gateway_spiffe_principal,
+            issuer: input.issuer,
             principal_id: input.principal_id,
+            session_id: input.session_id,
+            grant_id: input.grant_id,
+            policy_id: input.policy_id,
             actions: input.actions,
             claims: input.claims,
             audience: input.audience,
@@ -376,26 +407,62 @@ impl PrincipalContext {
 
     /// Returns the tenant binding without exposing claim material.
     #[must_use]
-    pub fn tenant_id(&self) -> &str {
+    pub const fn tenant_id(&self) -> TenantUlid {
         self.scope.tenant_id()
     }
 
     /// Returns the Project binding without exposing claim material.
     #[must_use]
-    pub fn project_id(&self) -> &str {
+    pub const fn project_id(&self) -> ProjectUlid {
         self.scope.project_id()
     }
 
     /// Returns the database binding without exposing claim material.
     #[must_use]
-    pub fn database_id(&self) -> &str {
+    pub const fn database_id(&self) -> DatabaseUlid {
         self.scope.database_id()
     }
 
     /// Returns the opaque principal identity.
     #[must_use]
-    pub fn principal_id(&self) -> &str {
-        &self.principal_id
+    pub const fn principal_id(&self) -> PrincipalUlid {
+        self.principal_id
+    }
+
+    /// Returns the environment binding.
+    #[must_use]
+    pub fn environment(&self) -> &str {
+        &self.environment
+    }
+
+    /// Returns the exact gateway SPIFFE principal binding.
+    #[must_use]
+    pub fn gateway_spiffe_principal(&self) -> &str {
+        &self.gateway_spiffe_principal
+    }
+
+    /// Returns the issuing service identity.
+    #[must_use]
+    pub fn issuer(&self) -> &str {
+        &self.issuer
+    }
+
+    /// Returns the immutable principal session identity.
+    #[must_use]
+    pub const fn session_id(&self) -> PrincipalSessionUlid {
+        self.session_id
+    }
+
+    /// Returns the unique grant identity.
+    #[must_use]
+    pub const fn grant_id(&self) -> PrincipalGrantUlid {
+        self.grant_id
+    }
+
+    /// Returns the policy identity bound to this grant.
+    #[must_use]
+    pub const fn policy_id(&self) -> AuthorizationPolicyUlid {
+        self.policy_id
     }
 
     /// Returns the audience binding.
@@ -641,6 +708,7 @@ impl FieldProjection {
 /// One deterministic operation and collection grant.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PolicyRule {
+    grant_id: PrincipalGrantUlid,
     operation: Operation,
     collection: String,
     claim_predicates: Vec<ClaimPredicate>,
@@ -657,10 +725,20 @@ impl PolicyRule {
     /// Returns [`AuthorizationError::InvalidIdentifier`] when the collection
     /// selector is malformed.
     pub fn try_new(operation: Operation, collection: &str) -> Result<Self, AuthorizationError> {
+        Self::try_new_with_id(PrincipalGrantUlid::generate(), operation, collection)
+    }
+
+    /// Creates a grant with its durable typed identity.
+    pub fn try_new_with_id(
+        grant_id: PrincipalGrantUlid,
+        operation: Operation,
+        collection: &str,
+    ) -> Result<Self, AuthorizationError> {
         if collection != "*" && !valid_identifier(collection) {
             return Err(AuthorizationError::InvalidIdentifier);
         }
         Ok(Self {
+            grant_id,
             operation,
             collection: collection.to_owned(),
             claim_predicates: Vec::new(),
@@ -696,6 +774,12 @@ impl PolicyRule {
         self.operation
     }
 
+    /// Returns the grant identity.
+    #[must_use]
+    pub const fn grant_id(&self) -> PrincipalGrantUlid {
+        self.grant_id
+    }
+
     /// Returns the collection selector.
     #[must_use]
     pub fn collection(&self) -> &str {
@@ -728,6 +812,7 @@ impl PolicyRule {
 /// A validated, versioned, deterministic authorization policy AST.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Policy {
+    policy_id: AuthorizationPolicyUlid,
     version: u16,
     generation: u64,
     indexed_fields: BTreeSet<String>,
@@ -743,6 +828,25 @@ impl Policy {
     /// a cardinality bound is exceeded, a predicate is unindexed, a
     /// relationship is unbounded, or a duplicate grant is present.
     pub fn try_new<I, S>(
+        generation: u64,
+        indexed_fields: I,
+        rules: impl IntoIterator<Item = PolicyRule>,
+    ) -> Result<Self, AuthorizationError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self::try_new_with_id(
+            AuthorizationPolicyUlid::generate(),
+            generation,
+            indexed_fields,
+            rules,
+        )
+    }
+
+    /// Publishes a policy with its durable typed identity.
+    pub fn try_new_with_id<I, S>(
+        policy_id: AuthorizationPolicyUlid,
         generation: u64,
         indexed_fields: I,
         rules: impl IntoIterator<Item = PolicyRule>,
@@ -793,13 +897,25 @@ impl Policy {
         if rules.windows(2).any(|pair| pair[0].canonical_key() == pair[1].canonical_key()) {
             return Err(AuthorizationError::DuplicateRule);
         }
-        Ok(Self { version: AUTHORIZATION_FORMAT_VERSION, generation, indexed_fields, rules })
+        Ok(Self {
+            policy_id,
+            version: AUTHORIZATION_FORMAT_VERSION,
+            generation,
+            indexed_fields,
+            rules,
+        })
     }
 
     /// Returns the policy language version.
     #[must_use]
     pub const fn version(&self) -> u16 {
         self.version
+    }
+
+    /// Returns the policy identity.
+    #[must_use]
+    pub const fn policy_id(&self) -> AuthorizationPolicyUlid {
+        self.policy_id
     }
 
     /// Returns the policy generation.

@@ -141,7 +141,7 @@ mod tests {
         assert!(page.contains("stored byte hours"));
         assert!(page.contains("id=\"usage-ledger\""));
         assert!(page.contains("Authoritative durable facts"));
-        assert!(page.contains("No durable usage fact has been recorded"));
+        assert!(page.contains("The engine is authoritative"));
         assert!(!page.contains("studio-local and in-memory"));
     }
 

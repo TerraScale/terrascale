@@ -57,8 +57,11 @@ type FailureResults struct {
 
 const (
 	collectionName = "users"
-	acknowledged   = terrabase.AckRegionalQuorum
-	readLevel      = terrabase.ReadLevelRegionalQuorum
+	// The standalone benchmark endpoint can honestly attest only that its
+	// local durable write completed; regional quorum requires peers that the
+	// benchmark process does not own.
+	acknowledged = terrabase.AckLocalSynced
+	readLevel    = terrabase.ReadLevelRegionalQuorum
 )
 
 type slot interface {

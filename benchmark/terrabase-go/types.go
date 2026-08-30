@@ -42,6 +42,7 @@ type Acknowledgement uint8
 // The acknowledgement disciplines.
 const (
 	AckDefault Acknowledgement = iota // the engine's default discipline
+	AckLocalSynced
 	AckRegionalQuorum
 	AckGlobalQuorum
 	AckBackup
@@ -51,6 +52,8 @@ func (ack Acknowledgement) valid() bool { return ack <= AckBackup }
 
 func (ack Acknowledgement) proto() v1.Acknowledgement {
 	switch ack {
+	case AckLocalSynced:
+		return v1.Acknowledgement_ACKNOWLEDGEMENT_LOCAL_SYNCED
 	case AckGlobalQuorum:
 		return v1.Acknowledgement_ACKNOWLEDGEMENT_GLOBAL_QUORUM
 	case AckBackup:
@@ -62,6 +65,8 @@ func (ack Acknowledgement) proto() v1.Acknowledgement {
 
 func acknowledgementFrom(ack v1.Acknowledgement) (Acknowledgement, bool) {
 	switch ack {
+	case v1.Acknowledgement_ACKNOWLEDGEMENT_LOCAL_SYNCED:
+		return AckLocalSynced, true
 	case v1.Acknowledgement_ACKNOWLEDGEMENT_REGIONAL_QUORUM:
 		return AckRegionalQuorum, true
 	case v1.Acknowledgement_ACKNOWLEDGEMENT_GLOBAL_QUORUM:

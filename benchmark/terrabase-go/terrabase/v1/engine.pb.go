@@ -105,6 +105,7 @@ const (
 	Acknowledgement_ACKNOWLEDGEMENT_REGIONAL_QUORUM Acknowledgement = 1
 	Acknowledgement_ACKNOWLEDGEMENT_GLOBAL_QUORUM   Acknowledgement = 2
 	Acknowledgement_ACKNOWLEDGEMENT_BACKUP          Acknowledgement = 3
+	Acknowledgement_ACKNOWLEDGEMENT_LOCAL_SYNCED    Acknowledgement = 4
 )
 
 // Enum value maps for Acknowledgement.
@@ -114,12 +115,14 @@ var (
 		1: "ACKNOWLEDGEMENT_REGIONAL_QUORUM",
 		2: "ACKNOWLEDGEMENT_GLOBAL_QUORUM",
 		3: "ACKNOWLEDGEMENT_BACKUP",
+		4: "ACKNOWLEDGEMENT_LOCAL_SYNCED",
 	}
 	Acknowledgement_value = map[string]int32{
 		"ACKNOWLEDGEMENT_UNSPECIFIED":     0,
 		"ACKNOWLEDGEMENT_REGIONAL_QUORUM": 1,
 		"ACKNOWLEDGEMENT_GLOBAL_QUORUM":   2,
 		"ACKNOWLEDGEMENT_BACKUP":          3,
+		"ACKNOWLEDGEMENT_LOCAL_SYNCED":    4,
 	}
 )
 
@@ -10589,12 +10592,13 @@ const file_terrabase_v1_engine_proto_rawDesc = "" +
 	"\adetails\x18\x03 \x03(\v2\x11.terrabase.v1.AnyR\adetails*<\n" +
 	"\tNullValue\x12\x1a\n" +
 	"\x16NULL_VALUE_UNSPECIFIED\x10\x00\x12\x13\n" +
-	"\x0fNULL_VALUE_NULL\x10\x01*\x96\x01\n" +
+	"\x0fNULL_VALUE_NULL\x10\x01*\xb8\x01\n" +
 	"\x0fAcknowledgement\x12\x1f\n" +
 	"\x1bACKNOWLEDGEMENT_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fACKNOWLEDGEMENT_REGIONAL_QUORUM\x10\x01\x12!\n" +
 	"\x1dACKNOWLEDGEMENT_GLOBAL_QUORUM\x10\x02\x12\x1a\n" +
-	"\x16ACKNOWLEDGEMENT_BACKUP\x10\x03*}\n" +
+	"\x16ACKNOWLEDGEMENT_BACKUP\x10\x03\x12 \n" +
+	"\x1cACKNOWLEDGEMENT_LOCAL_SYNCED\x10\x04*}\n" +
 	"\rBackupOutcome\x12\x1e\n" +
 	"\x1aBACKUP_OUTCOME_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13BACKUP_OUTCOME_NONE\x10\x01\x12\x17\n" +

@@ -1093,6 +1093,8 @@ async fn query_tql(State(state): State<Arc<StudioState>>, Form(form): Form<TqlFo
 #[derive(Deserialize)]
 struct RegionForm {
     code: String,
+    confirm_target: String,
+    confirm_phrase: String,
 }
 
 #[derive(Deserialize)]
@@ -1107,9 +1109,15 @@ async fn regions_admit(
     Form(form): Form<RegionForm>,
 ) -> Response {
     let outcome = on_blocking(state, move |state| {
-        let mut catalog = state.regions.lock().unwrap_or_else(|poison| poison.into_inner());
         let code = terrabase::RegionCode::from_text(form.code.trim().to_uppercase().as_str())
             .map_err(|error| format!("`{}` is not a region code: {error:?}", form.code))?;
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            code.as_str(),
+            "admit region",
+        )?;
+        let mut catalog = state.regions.lock().unwrap_or_else(|poison| poison.into_inner());
         catalog
             .admit(code)
             .map_err(|error| format!("admission refused: {error:?}"))
@@ -2255,6 +2263,7 @@ mod tests {
                 "tenant=demo&name=Users%2FByName&collection=users&fields=name&capabilities=full&priority=normal&lock=unlock",
             ),
             ("/indexes/action", "tenant=demo&name=Users%2FByName&action=delete"),
+            ("/replication/regions/admit", "code=AMS"),
             ("/replication/regions/retire", "code=FRA"),
             ("/replication/topology/add-region", "region=fra&first=fra-a&second=fra-b"),
             ("/replication/topology/remove-region", "index=0"),

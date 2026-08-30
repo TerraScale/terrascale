@@ -112,6 +112,7 @@ fn regions_card(state: &StudioState) -> String {
 <input type=\"hidden\" name=\"active\" value=\"{active}\">\
 <input type=\"hidden\" name=\"reserved\" value=\"{reserved}\">\
 <input type=\"hidden\" name=\"code\" value=\"AMS\">\
+{admit_confirmation}\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\">Admit AMS</button>\
 </form>\n\
 <form data-on:submit=\"if (!confirm('Retire FRA from this Studio-local region catalog?')) return; @post('/replication/regions/retire', {{contentType: 'form', retry: 'never'}})\">\
@@ -134,6 +135,7 @@ fn regions_card(state: &StudioState) -> String {
         active = html::attribute(&codes),
         reserved = html::attribute(&reserved),
         receipt = html::receipt_region_with("region-receipt"),
+        admit_confirmation = html::confirmation_fields("AMS", "admit region"),
         retire_confirmation = html::confirmation_fields("FRA", "retire region"),
         ceiling = terrabase::REGION_CEILING,
     );

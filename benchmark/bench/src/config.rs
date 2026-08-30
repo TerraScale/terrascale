@@ -148,9 +148,11 @@ impl Workload {
     }
 }
 
-/// The reference target this driver can drive.
+/// A lane target this driver can drive.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Target {
+    /// The served TerraBase boundary runner.
+    TerraBase,
     /// The pinned PostgreSQL 18 reference.
     PostgreSql,
     /// The pinned RavenDB stable reference.
@@ -165,6 +167,7 @@ impl Target {
     /// Returns the token back in the error for the usage message.
     pub fn parse(token: &str) -> Result<Self, String> {
         match token {
+            "terrabase" | "tb" => Ok(Self::TerraBase),
             "pg" | "postgres" | "postgresql" => Ok(Self::PostgreSql),
             "raven" | "ravendb" => Ok(Self::RavenDb),
             other => Err(other.to_owned()),
@@ -174,6 +177,7 @@ impl Target {
     /// The exact target name recorded in results JSON.
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::TerraBase => "terrabase",
             Self::PostgreSql => "postgresql",
             Self::RavenDb => "ravendb",
         }
@@ -182,7 +186,14 @@ impl Target {
 
 #[cfg(test)]
 mod tests {
-    use super::{ConfigError, LaneConfig};
+    use super::{ConfigError, LaneConfig, Target};
+
+    #[test]
+    fn parses_the_served_terrabase_target_explicitly() {
+        assert_eq!(Target::parse("terrabase"), Ok(Target::TerraBase));
+        assert_eq!(Target::parse("tb"), Ok(Target::TerraBase));
+        assert_eq!(Target::TerraBase.as_str(), "terrabase");
+    }
 
     #[test]
     fn rejects_zero_counts_and_non_divisible_windows() {

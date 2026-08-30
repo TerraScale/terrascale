@@ -4,11 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       candidate_run_id:
-        description: Develop workflow run containing the exact unsigned native packages.
+        description: Trusted main-branch release workflow run containing the exact unsigned native packages.
         required: true
         type: string
       capability_run_id:
         description: Protected qualification run containing signed production capability evidence.
+        required: true
+        type: string
+      capability_workflow_id:
+        description: Exact protected qualification workflow file name, for example qualification.yml.
         required: true
         type: string
       confirm_release:
@@ -36,6 +40,20 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Authenticate selected Forgejo workflow runs
+        env:
+          FORGEJO_API_URL: ${{ forgejo.server_url }}/api/v1
+          FORGEJO_API_TOKEN: ${{ secrets.TERRABASE_RELEASE_ARTIFACT_TOKEN }}
+          FORGEJO_REPOSITORY: ${{ forgejo.repository }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CAPABILITY_RUN_ID: ${{ inputs.capability_run_id }}
+          EXPECTED_REVISION: ${{ forgejo.sha }}
+          EXPECTED_REPOSITORY: ${{ forgejo.repository }}
+          CAPABILITY_WORKFLOW_ID: ${{ inputs.capability_workflow_id }}
+        run: >-
+          deploy/release/verify-workflow-runs.sh
+          "$CANDIDATE_RUN_ID" "$CAPABILITY_RUN_ID" "$EXPECTED_REVISION"
+          "$EXPECTED_REPOSITORY" refs/heads/main "$CAPABILITY_WORKFLOW_ID"
       - name: Download the exact unsigned AMD64 packages
         uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with:
@@ -104,6 +122,20 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Authenticate selected Forgejo workflow runs
+        env:
+          FORGEJO_API_URL: ${{ forgejo.server_url }}/api/v1
+          FORGEJO_API_TOKEN: ${{ secrets.TERRABASE_RELEASE_ARTIFACT_TOKEN }}
+          FORGEJO_REPOSITORY: ${{ forgejo.repository }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CAPABILITY_RUN_ID: ${{ inputs.capability_run_id }}
+          EXPECTED_REVISION: ${{ forgejo.sha }}
+          EXPECTED_REPOSITORY: ${{ forgejo.repository }}
+          CAPABILITY_WORKFLOW_ID: ${{ inputs.capability_workflow_id }}
+        run: >-
+          deploy/release/verify-workflow-runs.sh
+          "$CANDIDATE_RUN_ID" "$CAPABILITY_RUN_ID" "$EXPECTED_REVISION"
+          "$EXPECTED_REPOSITORY" refs/heads/main "$CAPABILITY_WORKFLOW_ID"
       - name: Download the exact unsigned ARM64 packages
         uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with:

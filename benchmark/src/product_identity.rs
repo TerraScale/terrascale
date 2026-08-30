@@ -26,10 +26,8 @@ pub const LEGACY_PERSISTED_IDENTIFIERS: &[&str] = &[
     "TBV2ROOT root-file magic",
     "TBV2MANI root manifest magic",
     "TBV2LSM1 LSM format marker",
-    "TBV2EB1 encrypted backup-bundle magic",
     "TBV2MLJ1 member-lane journal magic",
     "manifest.tbv2m backup manifest filename",
-    ".tbv2b backup bundle extension",
 ];
 
 /// Returns whether the canonical product name is active while legacy persisted
@@ -53,11 +51,10 @@ mod tests {
         assert_eq!(PACKAGE_NAME, "terrabase");
         assert_eq!(LIBRARY_NAME, "terrabase");
         assert_eq!(RENAME_CUTOVER_COMPLETED, "2026-08-30");
-        assert!(
-            LEGACY_PERSISTED_IDENTIFIERS
-                .iter()
-                .all(|id| id.contains("TBV2") || id.contains("tbv2") || id.contains("TerraBaseV2"))
-        );
+        assert!(LEGACY_PERSISTED_IDENTIFIERS.iter().all(|id| {
+            id.contains("TBV2") || id.contains("tbv2") || id.contains("TerraBaseV2")
+        }));
+        assert!(!LEGACY_PERSISTED_IDENTIFIERS.iter().any(|id| id.contains("EB1")));
     }
 
     #[test]

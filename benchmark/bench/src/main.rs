@@ -20,6 +20,7 @@ mod lane;
 mod metrics;
 mod pg;
 mod raven;
+mod served;
 
 use std::path::PathBuf;
 
@@ -31,6 +32,7 @@ fn main() {
     let mut workload = None;
     let mut out = PathBuf::from("bench/results");
     let mut lane_config = LaneConfig::RECORD_MINIMUM;
+    let mut boundary = served::DIAGNOSTIC_BOUNDARY.to_owned();
 
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
@@ -64,6 +66,11 @@ fn main() {
                     out = PathBuf::from(value);
                 }
             }
+            "--boundary-class" => {
+                if let Some(value) = arguments.next() {
+                    boundary = value;
+                }
+            }
             "--seed" => {
                 if let Some(value) = arguments.next() {
                     lane_config.seed_documents = parse_count("--seed", &value);
@@ -89,6 +96,18 @@ fn main() {
                     lane_config.warmup_operations = parse_count("--warmup", &value);
                 }
             }
+            "--noise-percent" => {
+                if let Some(value) = arguments.next() {
+                    lane_config.noise_percent = match value.parse() {
+                        Ok(value) => value,
+                        Err(error) => {
+                            eprintln!("invalid --noise-percent value {value:?}: {error}");
+                            usage();
+                            std::process::exit(2);
+                        }
+                    };
+                }
+            }
             other => {
                 eprintln!("unknown argument: {other}");
                 usage();
@@ -110,8 +129,41 @@ fn main() {
         std::process::exit(2);
     }
     std::fs::create_dir_all(&out).expect("results directory");
+    if target == Target::TerraBase {
+        match served::run(workload, lane_config, &out, &boundary) {
+            Ok(()) => println!("served TerraBase runner completed"),
+            Err(error) => {
+                eprintln!("the served TerraBase run failed: {error}");
+                let failure = metrics::FailureResults {
+                    status: "failed",
+                    target: target.as_str(),
+                    workload: workload.as_str().to_owned(),
+                    config: lane_config,
+                    error: error.to_string(),
+                    environment: metrics::host_environment(
+                        "not captured: served run failed before identity observation".to_owned(),
+                        endpoint_for(target),
+                        transport_for(target),
+                    ),
+                    samples: Vec::new(),
+                    limits: vec![
+                        "failed or invalid attempts are retained for audit and cannot be compared"
+                            .to_owned(),
+                    ],
+                };
+                let json =
+                    serde_json::to_string_pretty(&failure).expect("serialize failure results");
+                let path = write_retained(&out, target, workload, json.as_bytes())
+                    .expect("write failure JSON");
+                eprintln!("failed result retained: {}", path.display());
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     let started = std::time::Instant::now();
     let result = match target {
+        Target::TerraBase => unreachable!("served target returned before reference dispatch"),
         Target::PostgreSql => execute::<pg::PostgreSqlBackend>(workload, lane_config),
         Target::RavenDb => execute::<raven::RavenDbBackend>(workload, lane_config),
     };
@@ -177,6 +229,7 @@ fn execute<B: Backend>(
 
 fn endpoint_for(target: Target) -> String {
     let variable = match target {
+        Target::TerraBase => "TERRABASE_BENCH_ENDPOINT",
         Target::PostgreSql => "TERRABASE_PG_REFERENCE_ENDPOINT",
         Target::RavenDb => "TERRABASE_RAVEN_REFERENCE_ENDPOINT",
     };
@@ -185,6 +238,7 @@ fn endpoint_for(target: Target) -> String {
 
 fn transport_for(target: Target) -> &'static str {
     match target {
+        Target::TerraBase => "Rust-owned served runner; network mTLS contract",
         Target::PostgreSql => "postgres reference client; identity unavailable",
         Target::RavenDb => "RavenDB HTTP reference client; identity unavailable",
     }
@@ -227,12 +281,17 @@ fn write_retained<T: AsRef<[u8]>>(
 }
 
 fn target_of(name: &str) -> Target {
-    if name == "postgresql" { Target::PostgreSql } else { Target::RavenDb }
+    match name {
+        "terrabase" => Target::TerraBase,
+        "postgresql" => Target::PostgreSql,
+        _ => Target::RavenDb,
+    }
 }
 
 fn usage() {
     eprintln!(
-        "usage: terrabase-bench-lane --target <pg|raven> --workload <read|write|query|mixed> \
-         [--out DIR] [--seed N] [--ops N] [--samples N] [--concurrency N] [--warmup N]"
+        "usage: terrabase-bench-lane --target <terrabase|pg|raven> --workload <read|write|query|mixed> \
+         [--boundary-class diagnostic-qualification|production-candidate] [--out DIR] [--seed N] \
+         [--ops N] [--samples N] [--concurrency N] [--warmup N] [--noise-percent N]"
     );
 }

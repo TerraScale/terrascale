@@ -23,10 +23,14 @@ assert_rejected() {
 }
 
 test -x "$script_dir/verify.sh"
+test -x "$script_dir/verify-workflow-runs.sh"
+test -x "$script_dir/test-workflow-runs.sh"
 assert_rejected verify-empty "$script_dir/verify.sh" --unsigned "$work/empty"
 mkdir "$work/release"
 assert_rejected verify-no-manifest "$script_dir/verify.sh" --unsigned "$work/release"
 assert_rejected sign-no-checksums "$script_dir/sign.sh" "$work/release"
 assert_rejected capability-no-manifest "$script_dir/require-production-capability.sh" "$work/release"
+
+"$script_dir/test-workflow-runs.sh"
 
 echo "release boundary negative checks passed"
