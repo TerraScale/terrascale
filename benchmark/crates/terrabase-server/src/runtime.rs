@@ -239,7 +239,10 @@ mod tests {
             server_certificate: "/missing/server.crt".into(),
             server_private_key: "/missing/server.key".into(),
             client_ca: "/missing/client-ca.crt".into(),
-            gateway_principals: BTreeSet::from(["spiffe://terrabase.example/gateway".to_owned()]),
+            gateway_principals: BTreeSet::from([
+                "spiffe://terrascale.tech/prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV"
+                    .to_owned(),
+            ]),
             uds: None,
             observability_listen: SocketAddr::from(([127, 0, 0, 1], 9464)),
             max_message_bytes: terrabase_tbep::registry::MAX_FRAME_BYTES,

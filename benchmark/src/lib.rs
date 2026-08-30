@@ -29,6 +29,7 @@ pub mod engine;
 pub mod families;
 pub mod identity;
 pub mod index;
+pub mod member;
 pub mod observability;
 pub mod operations;
 pub mod query;
@@ -57,7 +58,7 @@ pub use backup::{
 };
 pub use engine::{
     BulkIngestRequest, CommitError, CommitOutcome, CommitReceipt, DurableResolution, Engine,
-    EngineClosed, EngineConfig, EngineError, EngineOpenError, EngineShutdownError,
+    EngineClosed, EngineConfig, EngineConfigError, EngineError, EngineOpenError, EngineShutdownError,
     IngestBatchReceipt, IngestConflictMode, IngestReceipt, IngestRefusal, IngestRefusalReason,
     IngestStream, IngestTermination, MAX_INGEST_BATCH_DOCUMENTS, MAX_INGEST_REFUSAL_DETAILS,
     Transaction, UnknownCommit, UnknownReason,

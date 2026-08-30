@@ -67,7 +67,7 @@ fn state_card(state: &StudioState) -> String {
 fn configure_card() -> String {
     let body = format!(
         "<form class=\"grid gap-4\" data-on:submit=\"@post('/tiers/configure', {{contentType: 'form', retry: 'never'}})\">\n\
-{policy_id}{version}{budget}{residence}{promotion}{pinned}\
+{policy_id}{version}{budget}{residence}{promotion}{pinned}{confirm_target}{confirm_phrase}\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary} w-fit\">Configure policy</button>\n\
 </form>\n\
 <p class=\"mt-3 text-xs text-muted-foreground\">Configuring replaces any prior policy and clears the pause flag: a fresh policy is fresh control. Two of the policy's knobs (minimum residence moves and promotion threshold) have no read accessor on the public type, so they are shown here as configured values rather than read back from the engine.</p>",
@@ -77,6 +77,10 @@ fn configure_card() -> String {
         residence = html::number_input("residence", "Minimum residence moves", "1"),
         promotion = html::number_input("promotion", "Promotion threshold", "1"),
         pinned = html::text_input("pinned", "Pinned segment ids (comma-separated)", "", "1, 2"),
+        confirm_target =
+            html::text_input("confirm_target", "Type policy id exactly", "", "default"),
+        confirm_phrase =
+            html::text_input("confirm_phrase", "Type action phrase", "", "configure tier policy"),
         primary = ButtonStyle::Primary.classes(),
     );
     html::card("Configure", &body)
@@ -84,17 +88,30 @@ fn configure_card() -> String {
 
 fn control_card() -> String {
     let body = format!(
-        "<div class=\"flex flex-wrap gap-2\">\n\
-<button type=\"button\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\" data-on:click=\"@post('/tiers/pause', {{payload: {{}}, retry: 'never'}})\">Pause</button>\n\
-<button type=\"button\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\" data-on:click=\"@post('/tiers/resume', {{payload: {{}}, retry: 'never'}})\">Resume</button>\n\
+        "<div class=\"grid gap-4\"><div class=\"flex flex-wrap gap-2\">\n\
+{pause}{resume}\
 <button type=\"button\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\" data-on:click=\"@post('/tiers/dry-run', {{payload: {{}}, retry: 'never'}})\">Explain (dry run)</button>\n\
-<button type=\"button\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\" data-on:click=\"@post('/tiers/run', {{payload: {{}}, retry: 'never'}})\">Run one pass</button>\n\
-</div>\n\
+{run}\
+</div></div>\n\
 <p class=\"mt-3 text-xs text-muted-foreground\">Pause and resume return the new paused state, not whether a transition happened — both are idempotent. A dry run explains the next pass and still answers while paused; a run refuses while paused.</p>",
-        primary = ButtonStyle::Primary.classes(),
+        pause = action_form("pause", "Pause", ButtonStyle::Primary),
+        resume = action_form("resume", "Resume", ButtonStyle::Primary),
+        run = action_form("run", "Run one pass", ButtonStyle::Secondary),
         secondary = ButtonStyle::Secondary.classes(),
     );
     html::card("Control", &body)
+}
+
+fn action_form(action: &str, label: &str, style: ButtonStyle) -> String {
+    let phrase = format!("{action} tier mover");
+    format!(
+        "<form class=\"flex flex-wrap items-end gap-2\" data-on:submit=\"@post('/tiers/{action}', {{contentType: 'form', retry: 'never'}})\">{target}{phrase_input}<button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {classes}\">{label}</button></form>",
+        action = html::attribute(action),
+        target = html::text_input("confirm_target", "Type target exactly", "", "tier mover"),
+        phrase_input = html::text_input("confirm_phrase", "Type action phrase", "", &phrase),
+        classes = style.classes(),
+        label = html::esc(label),
+    )
 }
 
 fn limits_card() -> String {

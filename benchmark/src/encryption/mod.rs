@@ -6,6 +6,11 @@
 //! OCI Vault wrapping and storage-format integration remain separate
 //! production responsibilities.
 
+#[cfg(all(feature = "local-crypto", feature = "production-fips"))]
+compile_error!("local-crypto and production-fips are mutually exclusive");
+#[cfg(not(any(feature = "local-crypto", feature = "production-fips")))]
+compile_error!("select exactly one of local-crypto or production-fips");
+
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -13,8 +18,17 @@ use aws_lc_rs::{aead, digest, hkdf, rand};
 use zeroize::Zeroize;
 
 mod local_file;
+mod oci_vault;
+mod provider;
 
 pub use local_file::LocalFileKeyProvider;
+pub use oci_vault::UnconfiguredOciVaultProvider;
+pub use provider::{
+    ArtifactKind, DatabaseKeyLease, DatabaseKeyVersion, KeyProviderIdentity, KeyPurpose,
+    KeyRotation, KeyScope, KeyVersionMetadata, KeyWrappingProvider, MAX_DATABASE_KEY_LEASE,
+    MAX_WRAPPED_KEY_BYTES, ProductionCapabilityStatus, ProviderCapability, WrappedDatabaseKey,
+    production_capability_status,
+};
 
 const AES_TAG_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
@@ -94,6 +108,18 @@ pub enum EncryptionError {
     DigestMismatch,
     /// The caller's bounded replay guard cannot track another ordinal.
     ReplayGuardFull,
+    /// Key metadata is malformed or names the wrong hierarchy.
+    InvalidKeyMetadata,
+    /// Opaque provider wrapper bytes are empty or exceed their bound.
+    InvalidWrappedKey,
+    /// A database-key authorization lease is empty or exceeds thirty minutes.
+    InvalidKeyLease,
+    /// A database-key authorization lease expired.
+    KeyLeaseExpired,
+    /// A rotation changes scope or reuses the current version.
+    InvalidKeyRotation,
+    /// No OCI Vault adapter or workload authorization is configured.
+    KeyProviderUnconfigured,
 }
 
 impl fmt::Display for EncryptionError {
@@ -111,6 +137,12 @@ impl fmt::Display for EncryptionError {
             Self::Replay => "encryption envelope replay refused",
             Self::DigestMismatch => "plaintext digest mismatch",
             Self::ReplayGuardFull => "encryption replay guard is full",
+            Self::InvalidKeyMetadata => "invalid database-key metadata",
+            Self::InvalidWrappedKey => "invalid wrapped database key",
+            Self::InvalidKeyLease => "invalid database-key authorization lease",
+            Self::KeyLeaseExpired => "database-key authorization lease expired",
+            Self::InvalidKeyRotation => "invalid database-key rotation",
+            Self::KeyProviderUnconfigured => "key provider is not configured",
         };
         f.write_str(message)
     }
@@ -125,6 +157,11 @@ pub struct DatabaseKey {
 
 impl DatabaseKey {
     /// Generates a local database key with the provider's OS CSPRNG.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncryptionError::CryptographicFailure`] if the provider's
+    /// system random source cannot fill the key.
     pub fn generate() -> Result<Self, EncryptionError> {
         let mut bytes = [0u8; 32];
         rand::fill(&mut bytes).map_err(|_| EncryptionError::CryptographicFailure)?;
@@ -167,6 +204,12 @@ pub struct EncryptionContext {
 
 impl EncryptionContext {
     /// Builds a bounded context from canonical textual identities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncryptionError::InvalidContext`] when an identity is empty,
+    /// contains a NUL byte, exceeds its bound, or the format major is zero.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         environment: impl Into<String>,
         tenant: impl Into<String>,
@@ -191,10 +234,69 @@ impl EncryptionContext {
         Ok(context)
     }
 
+    /// Builds a context from typed key and artifact identities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncryptionError::InvalidKeyMetadata`] if the artifact uses
+    /// the wrong data, backup, or checkpoint hierarchy.
+    pub fn for_artifact(
+        scope: &KeyScope,
+        artifact_kind: ArtifactKind,
+        artifact_id: crate::identity::Ulid,
+        key_version: DatabaseKeyVersion,
+        format_major: u16,
+        compression: Compression,
+    ) -> Result<Self, EncryptionError> {
+        if scope.purpose() != artifact_kind.key_purpose() {
+            return Err(EncryptionError::InvalidKeyMetadata);
+        }
+        Self::new(
+            scope.environment(),
+            scope.tenant().to_text(),
+            scope.database().to_text(),
+            artifact_kind.as_str(),
+            artifact_id.to_text(),
+            key_version.to_text(),
+            format_major,
+            compression,
+        )
+    }
+
     /// Returns the environment identity.
     #[must_use]
     pub fn environment(&self) -> &str {
         &self.environment
+    }
+
+    /// Returns the tenant identity authenticated in AAD.
+    #[must_use]
+    pub fn tenant(&self) -> &str {
+        &self.tenant
+    }
+
+    /// Returns the database identity authenticated in AAD.
+    #[must_use]
+    pub fn database(&self) -> &str {
+        &self.database
+    }
+
+    /// Returns the artifact-kind domain.
+    #[must_use]
+    pub fn artifact_kind(&self) -> &str {
+        &self.artifact_kind
+    }
+
+    /// Returns the artifact identity.
+    #[must_use]
+    pub fn artifact_id(&self) -> &str {
+        &self.artifact_id
+    }
+
+    /// Returns the database-key version.
+    #[must_use]
+    pub fn key_version(&self) -> &str {
+        &self.key_version
     }
 
     /// Returns the format major version.
@@ -271,6 +373,11 @@ impl fmt::Debug for ArtifactCipher {
 
 impl ArtifactCipher {
     /// Creates a local non-FIPS artifact cipher starting at ordinal zero.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid context, unavailable production
+    /// provider, or cryptographic provider failure.
     pub fn new(
         mode: ProviderMode,
         database_key: DatabaseKey,
@@ -280,6 +387,11 @@ impl ArtifactCipher {
     }
 
     /// Creates an artifact cipher with a recovered next ordinal.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid context, unavailable production
+    /// provider, an exhausted ordinal, or cryptographic provider failure.
     pub fn with_next_ordinal(
         mode: ProviderMode,
         database_key: DatabaseKey,
@@ -299,6 +411,7 @@ impl ArtifactCipher {
 
         let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, b"terrabase/database-key/v1");
         let prk = salt.extract(&database_key.bytes);
+        drop(database_key);
         let info = context.derivation_info();
         let info_parts = [info.as_slice()];
         let okm = prk
@@ -321,6 +434,11 @@ impl ArtifactCipher {
     }
 
     /// Encrypts one bounded plaintext into a versioned envelope.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the plaintext is too large, the ordinal is
+    /// exhausted, or the cryptographic provider rejects the operation.
     pub fn seal(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, EncryptionError> {
         if plaintext.len() > MAX_PLAINTEXT_BYTES {
             return Err(EncryptionError::SizeLimit);
@@ -361,6 +479,11 @@ impl ArtifactCipher {
     /// Random-access reads of immutable artifacts are valid. Use
     /// [`Self::open_with_replay_guard`] at a journal or session boundary when
     /// that owner requires replay refusal.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed metadata, bounds violations,
+    /// authentication failure, or digest mismatch.
     pub fn open(&self, envelope: &[u8]) -> Result<Vec<u8>, EncryptionError> {
         let (ordinal, aad, mut ciphertext) = parse_envelope(envelope)?;
         self.open_parsed(ordinal, aad, &mut ciphertext)
@@ -370,6 +493,11 @@ impl ArtifactCipher {
     ///
     /// The guard is updated only after authentication and digest verification,
     /// so malformed or forged envelopes do not consume replay state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for replay, malformed metadata, bounds violations,
+    /// authentication failure, digest mismatch, or a full replay guard.
     pub fn open_with_replay_guard(
         &self,
         envelope: &[u8],

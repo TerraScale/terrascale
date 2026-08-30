@@ -31,8 +31,8 @@ use terrabase::usage::{
 
 use crate::host::{HostingError, TbepHost};
 use crate::registry::{
-    AdminStatusResponse, ChannelBindRequest, ChannelBindResponse, CommitReceipt, DocumentBody,
-    DocumentDeleteRequest, DocumentDeleteResponse, DocumentPut, DocumentReadRequest,
+    AdminStatusResponse, BoundScope, ChannelBindRequest, ChannelBindResponse, CommitReceipt,
+    DocumentBody, DocumentDeleteRequest, DocumentDeleteResponse, DocumentPut, DocumentReadRequest,
     DocumentReadResponse, DocumentWriteRequest, DocumentWriteResponse, ExpectedVersion,
     HealthState, REGISTRY_VERSION, SupervisionHealthResponse, SupervisionShutdownRequest,
     SupervisionShutdownResponse, WriteOutcome,
@@ -274,6 +274,9 @@ fn wire_receipt(
 pub struct EngineHost {
     engine: Engine,
     location: PathBuf,
+    tenant: String,
+    project: String,
+    database: String,
     instance: u64,
     reads: Mutex<u64>,
     frames_served: Mutex<u64>,
@@ -290,7 +293,22 @@ impl EngineHost {
     ///
     /// Returns [`HostingError::EngineFailure`] when the location or
     /// engine cannot open.
-    pub fn open(location: &Path, instance: u64) -> Result<Self, HostingError> {
+    pub fn open(
+        location: &Path,
+        instance: u64,
+        tenant: &str,
+        project: &str,
+        database: &str,
+    ) -> Result<Self, HostingError> {
+        let bound = BoundScope {
+            principal: "spiffe://local/engine-host".into(),
+            tenant: tenant.to_owned(),
+            project: project.to_owned(),
+            database: database.to_owned(),
+        };
+        bound
+            .validate()
+            .map_err(|_| HostingError::Invalid("the engine database scope is invalid".into()))?;
         let engine = Engine::open(
             EngineConfig::durable(location)
                 .map_err(|_| HostingError::EngineFailure("location refused".into()))?,
@@ -299,6 +317,9 @@ impl EngineHost {
         Ok(Self {
             engine,
             location: location.to_path_buf(),
+            tenant: tenant.to_owned(),
+            project: project.to_owned(),
+            database: database.to_owned(),
             instance,
             reads: Mutex::new(0),
             frames_served: Mutex::new(0),
@@ -312,6 +333,23 @@ impl EngineHost {
     #[must_use]
     pub fn location(&self) -> &Path {
         &self.location
+    }
+
+    fn admit_scope(&self, scope: &BoundScope) -> Result<(), HostingError> {
+        if scope.tenant != self.tenant
+            || scope.project != self.project
+            || scope.database != self.database
+        {
+            return Err(HostingError::Refused(
+                "the engine location serves another tenant, Project, or Database".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn tenant_of_scope(&self, scope: &BoundScope) -> Result<TenantId, HostingError> {
+        self.admit_scope(scope)?;
+        Self::tenant_of(&scope.tenant)
     }
 
     fn next_read_operation(&self) -> Result<OperationId, HostingError> {
@@ -457,6 +495,7 @@ impl EngineHost {
     fn commit(
         &self,
         tenant: &TenantId,
+        bound_scope: &BoundScope,
         operation: &str,
         stage: impl FnOnce(&mut terrabase::engine::Transaction<'_>) -> Result<(), HostingError>,
         ack: crate::registry::Acknowledgement,
@@ -489,6 +528,11 @@ impl EngineHost {
             return Err(error);
         }
         if let Some(usage) = usage {
+            if usage.project != bound_scope.project || usage.database != bound_scope.database {
+                return Err(HostingError::Invalid(
+                    "the usage admission does not match the bound Project and Database".into(),
+                ));
+            }
             transaction
                 .attach_usage_admission(engine_usage_admission(usage)?)
                 .map_err(usage_error)?;

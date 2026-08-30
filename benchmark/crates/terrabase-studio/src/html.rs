@@ -321,18 +321,8 @@ pub fn confirmation_fields(target: &str, phrase: &str) -> String {
 </div>",
         target = esc(target),
         phrase = esc(phrase),
-        target_input = text_input(
-            "confirm_target",
-            "Confirmation target",
-            "",
-            target,
-        ),
-        phrase_input = text_input(
-            "confirm_phrase",
-            "Confirmation action phrase",
-            "",
-            phrase,
-        ),
+        target_input = text_input("confirm_target", "Confirmation target", "", target,),
+        phrase_input = text_input("confirm_phrase", "Confirmation action phrase", "", phrase,),
     )
 }
 

@@ -13,7 +13,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 mod ingest;
@@ -49,6 +49,7 @@ pub use patch::{
 
 use crate::{
     families::FamilyStore,
+    observability::{CommitResult as MetricCommitResult, MetricsRegistry, TaskOutcome},
     operations::{EngineRequest, EngineResponse},
     query::QueryStore,
     replication::{
@@ -86,6 +87,13 @@ pub(crate) type CommitPublicationSink = Arc<dyn Fn(&CommitPublicationEvent) + Se
 /// bound is not registered, and the returned guard's
 /// [`SubscriptionGuard::is_attached`] reports `false`.
 pub(crate) const MAX_PUBLICATION_SINKS: usize = 64;
+
+/// Maximum rows in one boundary-pinned final-state snapshot page.
+pub(crate) const MAX_SNAPSHOT_RECORD_PAGE: u32 = 256;
+
+/// The history window used to resolve winning-write durability for one
+/// bounded snapshot page.
+const SNAPSHOT_HISTORY_PAGE: u32 = 256;
 
 /// The clock stamp durable retained evidence carries (GAP-S1 D3).
 ///
@@ -554,6 +562,11 @@ pub enum EngineError {
     Cancelled,
     /// Durable storage returned a typed failure.
     StorageFailure,
+    /// A snapshot page requested more rows than the bounded seam permits.
+    SnapshotPageLimitExceeded,
+    /// The requested snapshot boundary is newer than the published view or
+    /// older than the durable history still available to prove its winners.
+    SnapshotBoundaryUnavailable,
 }
 
 /// Errors encountered while shutting down an Engine.
@@ -576,6 +589,27 @@ pub struct CommitReceipt {
     operation_id: OperationId,
     storage_sequence: StorageSequence,
     durability: LocalDurability,
+}
+
+/// One final-state document and the durability achieved by its winning write.
+/// This remains crate-private so archive and streaming consumers share the
+/// typed fact without exposing storage internals publicly.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SnapshotRecord {
+    document: Document,
+    durability: LocalDurability,
+}
+
+impl SnapshotRecord {
+    /// Returns the final-state document.
+    pub(crate) fn document(&self) -> &Document {
+        &self.document
+    }
+
+    /// Returns the durability of the write that won at the snapshot boundary.
+    pub(crate) fn durability(&self) -> LocalDurability {
+        self.durability
+    }
 }
 
 impl CommitReceipt {
@@ -754,6 +788,9 @@ pub(crate) struct StorageState {
 pub struct Engine {
     identity: u128,
     pub(crate) storage: Arc<Mutex<StorageState>>,
+    /// One bounded registry shared by the engine, storage, TBEP, probes, and
+    /// Prometheus adapter for this process-local engine instance.
+    metrics: Arc<MetricsRegistry>,
     /// Live operation reservations, keyed by (tenant, operation). Keying by
     /// tenant keeps the reservation scoped: two tenants may run the same
     /// operation identity concurrently.
@@ -837,17 +874,19 @@ impl Engine {
             return Err(EngineOpenError::InvalidConfig);
         }
         let backend = backend_of_location(&location, config.storage_backend);
+        let metrics = Arc::new(MetricsRegistry::new());
         let storage: Box<dyn storage::StoragePort> = match backend {
             StorageBackend::Lsm => {
                 let engine =
-                    storage::lsm::LsmStorage::open(&location).map_err(|error| match error {
-                        storage::lsm::LsmOpenError::FormatMismatch => {
-                            EngineOpenError::FormatMismatch
-                        }
-                        storage::lsm::LsmOpenError::Unavailable => {
-                            EngineOpenError::StorageUnavailable
-                        }
-                    })?;
+                    storage::lsm::LsmStorage::open_with_metrics(&location, Arc::clone(&metrics))
+                        .map_err(|error| match error {
+                            storage::lsm::LsmOpenError::FormatMismatch => {
+                                EngineOpenError::FormatMismatch
+                            }
+                            storage::lsm::LsmOpenError::Unavailable => {
+                                EngineOpenError::StorageUnavailable
+                            }
+                        })?;
                 Box::new(engine)
             }
             StorageBackend::RootFiles => {
@@ -882,6 +921,7 @@ impl Engine {
         Ok(Self {
             identity: EngineIdentity::next().0,
             storage: Arc::new(Mutex::new(StorageState { port: storage })),
+            metrics,
             in_flight: Mutex::new(BTreeSet::new()),
             subscriptions,
             indexes,
@@ -892,6 +932,12 @@ impl Engine {
             commit_arrivals: std::sync::Condvar::new(),
             wal_sync,
         })
+    }
+
+    /// Returns the bounded registry shared with this Engine's storage path.
+    #[must_use]
+    pub fn metrics(&self) -> Arc<MetricsRegistry> {
+        Arc::clone(&self.metrics)
     }
 
     /// Drains the group-commit mailbox until empty: one storage batch per
@@ -1137,7 +1183,11 @@ impl Engine {
         // and this leader is the only appender — it appends nothing else
         // before this sync returns — so the sync that starts here covers
         // exactly the wave's bytes and everything appended before them.
-        if handle.sync().is_ok() {
+        let started = Instant::now();
+        let sync = handle.sync();
+        let outcome = if sync.is_ok() { TaskOutcome::Success } else { TaskOutcome::Error };
+        self.metrics.record_wal_fsync(outcome, started.elapsed());
+        if sync.is_ok() {
             return results;
         }
         if let Ok(mut storage) = self.lock_storage() {
@@ -1286,44 +1336,53 @@ impl Engine {
         scope: &TenantScope,
         request: UsagePageRequest,
     ) -> Result<UsagePage, UsageCommandError> {
-        self.validate_scope(scope).map_err(|_| UsageCommandError::ScopeMismatch)?;
-        let decoded = request.continuation().map(decode_usage_continuation).transpose()?;
-        if let Some(state) = &decoded
-            && (&state.tenant != scope.tenant()
-                || state.window != request.window()
-                || state.page_size != request.page_size())
-        {
-            return Err(UsageCommandError::InvalidRequest);
-        }
-        let storage = self.storage.lock().map_err(|_| UsageCommandError::StorageUnavailable)?;
-        let current = storage.port.published_state().0;
-        let snapshot = decoded.as_ref().map_or(current, |state| state.snapshot);
-        if snapshot > current {
-            return Err(UsageCommandError::InvalidRequest);
-        }
-        let after = decoded.as_ref().map(|state| &state.after);
-        let fetch = request.page_size().saturating_add(1);
-        let mut facts = storage
-            .port
-            .usage_facts_page(scope.tenant(), snapshot, after, request.window(), fetch)
-            .map_err(map_usage_storage_error)?;
-        drop(storage);
-        let has_more = facts.len() > request.page_size() as usize;
-        if has_more {
-            facts.truncate(request.page_size() as usize);
-        }
-        let continuation = if has_more {
-            let last = facts.last().ok_or(UsageCommandError::CorruptStorage)?;
-            Some(encode_usage_continuation(
-                scope.tenant(),
-                snapshot,
-                &request,
-                &UsageFactPosition::of(last),
-            ))
-        } else {
-            None
+        let result: Result<UsagePage, UsageCommandError> = (|| {
+            self.validate_scope(scope).map_err(|_| UsageCommandError::ScopeMismatch)?;
+            let decoded = request.continuation().map(decode_usage_continuation).transpose()?;
+            if let Some(state) = &decoded
+                && (&state.tenant != scope.tenant()
+                    || state.window != request.window()
+                    || state.page_size != request.page_size())
+            {
+                return Err(UsageCommandError::InvalidRequest);
+            }
+            let storage = self.storage.lock().map_err(|_| UsageCommandError::StorageUnavailable)?;
+            let current = storage.port.published_state().0;
+            let snapshot = decoded.as_ref().map_or(current, |state| state.snapshot);
+            if snapshot > current {
+                return Err(UsageCommandError::InvalidRequest);
+            }
+            let after = decoded.as_ref().map(|state| &state.after);
+            let fetch = request.page_size().saturating_add(1);
+            let mut facts = storage
+                .port
+                .usage_facts_page(scope.tenant(), snapshot, after, request.window(), fetch)
+                .map_err(map_usage_storage_error)?;
+            drop(storage);
+            let has_more = facts.len() > request.page_size() as usize;
+            if has_more {
+                facts.truncate(request.page_size() as usize);
+            }
+            let continuation = if has_more {
+                let last = facts.last().ok_or(UsageCommandError::CorruptStorage)?;
+                Some(encode_usage_continuation(
+                    scope.tenant(),
+                    snapshot,
+                    &request,
+                    &UsageFactPosition::of(last),
+                ))
+            } else {
+                None
+            };
+            Ok(UsagePage::new(facts, snapshot, continuation))
+        })();
+        match &result {
+            Ok(page) => {
+                let _ = self.metrics.advance_usage_export_frontier(page.snapshot_sequence().get());
+            }
+            Err(_) => self.metrics.record_usage_export_failure(),
         };
-        Ok(UsagePage::new(facts, snapshot, continuation))
+        result
     }
 
     /// Begins an Engine-borrowing transaction.
@@ -1640,6 +1699,111 @@ impl Engine {
             )
         };
         Ok(documents)
+    }
+
+    /// Returns one bounded page of final-state documents at an explicit
+    /// durable boundary, in canonical `(collection, identifier)` order.
+    /// Unlike the legacy identifier cursor, the full-key cursor is lossless
+    /// when an identifier is reused across collections. Each returned record
+    /// carries the durability of the write that won at `boundary`.
+    ///
+    /// The page is served from the immutable boundary view, so commits that
+    /// arrive while callers request later pages cannot enter the result. The
+    /// history scan resolves durability only for this page, keeping working
+    /// memory proportional to the page rather than the tenant.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::SnapshotPageLimitExceeded`] when `limit` is
+    /// above [`MAX_SNAPSHOT_RECORD_PAGE`],
+    /// [`EngineError::SnapshotBoundaryUnavailable`] when the boundary cannot
+    /// be served or proved by retained history, and
+    /// [`EngineError::StorageFailure`] when storage cannot be reached.
+    #[allow(clippy::needless_pass_by_value)]
+    pub(crate) fn snapshot_records_from(
+        &self,
+        tenant: TenantId,
+        boundary: StorageSequence,
+        after: Option<(CollectionName, DocumentId)>,
+        limit: u32,
+    ) -> Result<Vec<SnapshotRecord>, EngineError> {
+        if limit > MAX_SNAPSHOT_RECORD_PAGE {
+            return Err(EngineError::SnapshotPageLimitExceeded);
+        }
+        let storage = self.lock_storage()?;
+        let current = storage.port.published_state().0;
+        if boundary > current {
+            return Err(EngineError::SnapshotBoundaryUnavailable);
+        }
+        if storage.port.servable_history_start().is_some_and(|start| boundary < start) {
+            return Err(EngineError::SnapshotBoundaryUnavailable);
+        }
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let documents = storage.port.documents_at_from_key(
+            boundary,
+            &tenant,
+            after.as_ref().map(|(collection, identifier)| (collection, identifier)),
+            limit,
+        );
+        if documents.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut winners: Vec<Option<LocalDurability>> = vec![None; documents.len()];
+        let mut history_after = StorageSequence::default();
+        loop {
+            let page = storage.port.tenant_commits(&tenant, history_after, SNAPSHOT_HISTORY_PAGE);
+            if page.is_empty() {
+                break;
+            }
+            let mut reached_boundary = false;
+            for commit in &page {
+                if commit.sequence().get() > boundary.get() {
+                    reached_boundary = true;
+                    break;
+                }
+                for write in commit.writes() {
+                    let (collection, identifier) = match write {
+                        storage::PublishedWrite::Put { document } => {
+                            (document.collection().as_str(), document.id().as_str())
+                        }
+                        storage::PublishedWrite::Delete {
+                            collection: Some(collection),
+                            id,
+                            ..
+                        } => (collection.as_str(), id.as_str()),
+                        storage::PublishedWrite::Delete { collection: None, .. } => continue,
+                    };
+                    for (index, document) in documents.iter().enumerate() {
+                        if document.collection().as_str() == collection
+                            && document.id().as_str() == identifier
+                        {
+                            winners[index] = match write {
+                                storage::PublishedWrite::Put { .. } => Some(commit.durability()),
+                                storage::PublishedWrite::Delete { .. } => None,
+                            };
+                        }
+                    }
+                }
+            }
+            let last = page.last().map(storage::PublishedCommit::sequence);
+            if reached_boundary || last.is_none_or(|sequence| sequence.get() >= boundary.get()) {
+                break;
+            }
+            history_after = last.expect("non-empty history page has a last sequence");
+        }
+        if winners.iter().any(Option::is_none) {
+            return Err(EngineError::SnapshotBoundaryUnavailable);
+        }
+        Ok(documents
+            .into_iter()
+            .zip(winners)
+            .map(|(document, durability)| SnapshotRecord {
+                document,
+                durability: durability.expect("checked above"),
+            })
+            .collect())
     }
 
     /// Returns one tenant's published commits after `after`, in global
@@ -2151,7 +2315,21 @@ impl Transaction<'_> {
     /// a wave's sync is in flight. A solo caller is a batch of one and
     /// behaves exactly as a serial commit.
     #[must_use]
-    pub fn commit(mut self, durability: LocalDurability) -> CommitOutcome {
+    pub fn commit(self, durability: LocalDurability) -> CommitOutcome {
+        let started = Instant::now();
+        let metrics = Arc::clone(&self.engine.metrics);
+        let outcome = self.commit_unobserved(durability);
+        let metric_result = match &outcome {
+            CommitOutcome::Committed(_) => MetricCommitResult::Committed,
+            CommitOutcome::Rejected(CommitError::StorageFailure) => MetricCommitResult::Failed,
+            CommitOutcome::Rejected(_) => MetricCommitResult::Refused,
+            CommitOutcome::Unknown(_) => MetricCommitResult::Unknown,
+        };
+        metrics.record_commit(metric_result, started.elapsed());
+        outcome
+    }
+
+    fn commit_unobserved(mut self, durability: LocalDurability) -> CommitOutcome {
         let writes = std::mem::take(&mut self.writes);
         let usage_admission = self.usage_admission.take();
         if usage_admission.is_some() && durability != LocalDurability::Synced {

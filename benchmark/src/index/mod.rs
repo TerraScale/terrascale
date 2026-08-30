@@ -436,7 +436,11 @@ fn check_row(
 #[derive(Debug, Default)]
 struct EpochState {
     next_generation: u64,
-    published: Option<IndexSegment>,
+    /// The published segment behind one shared handle. A publication replaces
+    /// the handle, never the segment, so every reader — the executor's
+    /// per-query narrowing read among them — borrows the immutable segment
+    /// instead of copying it.
+    published: Option<Arc<IndexSegment>>,
     /// A bounded suffix of (generation, covered sequence) publications, in
     /// publish order. Older entries cannot answer a retained snapshot after
     /// storage has moved past the corresponding coverage window, so dropping
@@ -543,7 +547,8 @@ impl NamespaceState {
         let epoch = self.published_epoch()?;
         self.epochs
             .get(&epoch)
-            .and_then(|state| state.published.as_ref().map(IndexSegment::covered_sequence))
+            .and_then(|state| state.published.as_ref())
+            .map(|published| published.covered_sequence())
     }
 }
 

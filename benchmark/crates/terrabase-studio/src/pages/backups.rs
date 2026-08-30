@@ -109,7 +109,7 @@ fn backup_card(state: &StudioState) -> String {
     let tenants = state.tenants().join(", ");
     let body = format!(
         "<p class=\"mb-4 text-sm text-muted-foreground\">Back up now creates incrementals until the configured full interval expires. A full point is self-contained. Local files exist only in disposable transfer scratch space and are removed after S3 commits the manifest. Leave the tenant list blank to include every tenant.</p>\n\
-<form class=\"grid gap-4\" data-on:submit=\"if (!confirm('Upload a recovery point to the configured S3 prefix now?')) return; @post('/backup/run', {{contentType: 'form', retry: 'never'}})\">\n{destination}{tenants}\
+<form class=\"grid gap-4\" data-on:submit=\"@post('/backup/run', {{contentType: 'form', retry: 'never'}})\">\n{destination}{tenants}{confirmation}\
 <div class=\"flex flex-wrap gap-2\">\n\
 <button type=\"submit\" name=\"mode\" value=\"automatic\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary} w-fit\">Back up now</button>\n\
 <button type=\"submit\" name=\"mode\" value=\"full\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary} w-fit\">Create full point</button>\n\
@@ -121,6 +121,7 @@ fn backup_card(state: &StudioState) -> String {
             &configured_destination(&state.backup_settings()),
         ),
         tenants = html::text_input("tenants", "Tenants (comma-separated)", &tenants, "demo"),
+        confirmation = html::confirmation_fields("backup repository", "run backup"),
         primary = ButtonStyle::Primary.classes(),
         secondary = ButtonStyle::Secondary.classes(),
         receipt = html::receipt_region_with("backup-receipt"),
@@ -147,7 +148,12 @@ fn restore_card(state: &StudioState) -> String {
                 &state.config.data_dir.join("studio").join("restored").display().to_string(),
                 "/path/to/new/location",
             ),
-            html::text_input("confirm_target", "Type restore target exactly", "", "/path/to/new/location"),
+            html::text_input(
+                "confirm_target",
+                "Type restore target exactly",
+                "",
+                "/path/to/new/location"
+            ),
             html::text_input("confirm_phrase", "Type action phrase", "", "restore recovery point"),
         ),
         identity = html::text_input(
@@ -392,17 +398,21 @@ fn render_workflow(workflow: &DeletionWorkflow) -> String {
 
 fn action_button(id: &str, label: &str, path: &str, style: ButtonStyle) -> String {
     let confirmation = match path {
-        "/deletion/complete" => {
-            "if (!confirm('Mark this deletion workflow complete? This is its terminal state.')) return; "
-        }
+        "/deletion/complete" => "",
         "/deletion/end-hold" => {
             "if (!confirm('End the legal hold on this deletion workflow?')) return; "
         }
         _ => "",
     };
+    let typed_confirmation = if path == "/deletion/complete" {
+        html::confirmation_fields(id, "complete deletion")
+    } else {
+        String::new()
+    };
     format!(
         "<form data-on:submit=\"{confirmation}@post('{path}', {{contentType: 'form', retry: 'never'}})\">\
 <input type=\"hidden\" name=\"request_id\" value=\"{id}\">\
+{typed_confirmation}\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {classes}\">{label}</button>\
 </form>",
         confirmation = confirmation,
@@ -410,6 +420,7 @@ fn action_button(id: &str, label: &str, path: &str, style: ButtonStyle) -> Strin
         id = html::attribute(id),
         classes = style.classes(),
         label = html::esc(label),
+        typed_confirmation = typed_confirmation,
     )
 }
 

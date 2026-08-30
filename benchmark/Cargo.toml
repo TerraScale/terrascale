@@ -40,6 +40,10 @@ path = "tests/observability/main.rs"
 name = "encryption"
 path = "tests/encryption/main.rs"
 
+[[test]]
+name = "member"
+path = "tests/member/main.rs"
+
 [dependencies]
 aws-lc-rs = { version = "1.18.0", default-features = false }
 blake3 = "1.8.2"

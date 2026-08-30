@@ -857,7 +857,7 @@ async fn maintenance_answers_topology_health_and_shutdown() {
     let socket = socket_path("maintenance");
     let server = Arc::new(TbepGrpcServer::new(
         Arc::new(FixedHost { feed: Mutex::new(None) }) as Arc<dyn TbepHost>,
-        pb::BindingKind::NetworkMtls,
+        pb::BindingKind::Local,
     ));
     let mut listener = server.serve_uds(&socket).expect("the server binds");
     let channel = connect(socket.clone()).await;
@@ -868,7 +868,7 @@ async fn maintenance_answers_topology_health_and_shutdown() {
         .await
         .expect("the topology answers")
         .into_inner();
-    assert_eq!(topology.binding, pb::BindingKind::NetworkMtls as i32);
+    assert_eq!(topology.binding, pb::BindingKind::Local as i32);
 
     let health = maintenance
         .supervision_health(identified(pb::SupervisionHealthRequest {}))

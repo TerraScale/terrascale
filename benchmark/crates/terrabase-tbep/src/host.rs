@@ -57,6 +57,7 @@ use crate::registry::BackboneSubscribeRequest;
 use crate::registry::BackboneSubscribeResponse;
 use crate::registry::BackboneUnsubscribeRequest;
 use crate::registry::BackboneUnsubscribeResponse;
+use crate::registry::BoundScope;
 use crate::registry::ChangeKind;
 use crate::registry::ChannelBindRequest;
 use crate::registry::ChannelBindResponse;
@@ -233,10 +234,10 @@ pub enum TbepNotification {
 /// The hosting seam the engine process wires behind TBEP.
 ///
 /// One method per typed operation; the server enforces the channel
-/// binding (PD-2026-08-26-11 D1) before any tenant-scoped method runs,
-/// so no method receives a tenant the backend did not supply.
+/// binding before any database-scoped method runs, so every operation receives
+/// the same validated gateway, tenant, Project, and Database identity.
 pub trait TbepHost: Send + Sync {
-    /// Binds one channel to the backend-supplied principal and tenant.
+    /// Binds one channel to the backend-supplied database scope.
     ///
     /// # Errors
     ///
@@ -254,7 +255,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns the host's typed refusal.
     fn document_read(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &DocumentReadRequest,
     ) -> Result<DocumentReadResponse, HostingError>;
 
@@ -266,7 +267,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns the host's typed refusal.
     fn document_write(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &DocumentWriteRequest,
         idempotency_key: &str,
     ) -> Result<DocumentWriteResponse, HostingError>;
@@ -278,7 +279,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns the host's typed refusal.
     fn document_delete(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &DocumentDeleteRequest,
         idempotency_key: &str,
     ) -> Result<DocumentDeleteResponse, HostingError>;
@@ -290,7 +291,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns the host's typed refusal.
     fn query_execute(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &QueryExecuteRequest,
     ) -> Result<QueryExecuteResponse, HostingError>;
 
@@ -302,7 +303,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns the host's typed refusal.
     fn query_cancel(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &QueryCancelRequest,
     ) -> Result<QueryCancelResponse, HostingError>;
 
@@ -313,7 +314,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns the host's typed refusal.
     fn family_read(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &FamilyReadRequest,
     ) -> Result<FamilyReadResponse, HostingError>;
 
@@ -324,7 +325,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns the host's typed refusal.
     fn family_write(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &FamilyWriteRequest,
         idempotency_key: &str,
     ) -> Result<FamilyWriteResponse, HostingError>;
@@ -337,11 +338,11 @@ pub trait TbepHost: Send + Sync {
     /// Returns [`HostingError::Refused`] unless a host serves batches.
     fn document_batch(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &crate::registry::DocumentBatchRequest,
         idempotency_key: &str,
     ) -> Result<crate::registry::DocumentBatchResponse, HostingError> {
-        let _ = (tenant, request, idempotency_key);
+        let _ = (scope, request, idempotency_key);
         Err(HostingError::Refused(
             "document.batch is served by the engine-backed host's transaction path".into(),
         ))
@@ -359,7 +360,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns [`HostingError::Refused`] unless a host serves the seam.
     fn schema_declare(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &SchemaDeclareRequest,
         _idempotency_key: &str,
     ) -> Result<SchemaDeclareResponse, HostingError> {
@@ -373,7 +374,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns [`HostingError::Refused`] unless a host serves the seam.
     fn schema_status(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &SchemaStatusRequest,
     ) -> Result<SchemaStatusResponse, HostingError> {
         Err(HostingError::Refused("schema status is not served by this host".into()))
@@ -386,7 +387,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns [`HostingError::Refused`] unless a host serves the seam.
     fn schema_validate(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &SchemaValidateRequest,
     ) -> Result<SchemaValidateResponse, HostingError> {
         Err(HostingError::Refused("schema validation is not served by this host".into()))
@@ -399,7 +400,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns [`HostingError::Refused`] unless a host serves the seam.
     fn migration_status(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &MigrationStatusRequest,
     ) -> Result<MigrationStatusResponse, HostingError> {
         Err(HostingError::Refused("migration status is not served by this host".into()))
@@ -412,7 +413,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns [`HostingError::Refused`] unless a host serves the seam.
     fn migration_dry_run(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &MigrationDryRunRequest,
     ) -> Result<MigrationDryRunResponse, HostingError> {
         Err(HostingError::Refused("migration dry runs are not served by this host".into()))
@@ -425,7 +426,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns [`HostingError::Refused`] unless a host serves the seam.
     fn migration_apply(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &MigrationApplyRequest,
         _idempotency_key: &str,
     ) -> Result<MigrationApplyResponse, HostingError> {
@@ -440,7 +441,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns the host's typed refusal.
     fn backbone_subscribe(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &BackboneSubscribeRequest,
     ) -> Result<(BackboneSubscribeResponse, Receiver<TbepNotification>), HostingError>;
 
@@ -451,7 +452,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns the host's typed refusal.
     fn backbone_acknowledge(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &BackboneAcknowledgeRequest,
     ) -> Result<BackboneAcknowledgeResponse, HostingError>;
 
@@ -462,7 +463,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns the host's typed refusal.
     fn backbone_unsubscribe(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &BackboneUnsubscribeRequest,
     ) -> Result<BackboneUnsubscribeResponse, HostingError>;
 
@@ -473,7 +474,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns the host's typed refusal.
     fn sync_session_setup(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &SyncSessionSetupRequest,
     ) -> Result<SyncSessionSetupResponse, HostingError>;
 
@@ -487,7 +488,7 @@ pub trait TbepHost: Send + Sync {
     /// snapshot).
     fn sync_delta_pull(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &SyncDeltaPullRequest,
     ) -> Result<SyncDeltaPullResponse, HostingError>;
 
@@ -498,7 +499,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns the host's typed refusal.
     fn sync_snapshot_pull(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &SyncSnapshotPullRequest,
     ) -> Result<SyncSnapshotPullResponse, HostingError>;
 
@@ -509,7 +510,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns the host's typed refusal.
     fn sync_checkpoint_ack(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &SyncCheckpointAckRequest,
     ) -> Result<SyncCheckpointAckResponse, HostingError>;
 
@@ -521,7 +522,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns the host's typed refusal.
     fn sync_mutation_submit(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &SyncMutationSubmitRequest,
         idempotency_key: &str,
     ) -> Result<SyncMutationSubmitResponse, HostingError>;
@@ -533,7 +534,7 @@ pub trait TbepHost: Send + Sync {
     /// Returns the host's typed refusal.
     fn sync_session_close(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &SyncSessionCloseRequest,
     ) -> Result<SyncSessionCloseResponse, HostingError>;
 
@@ -542,7 +543,7 @@ pub trait TbepHost: Send + Sync {
     /// # Errors
     ///
     /// Returns the host's typed refusal.
-    fn topology_read(&self, tenant: &str) -> Result<TopologyReadResponse, HostingError>;
+    fn topology_read(&self, scope: &BoundScope) -> Result<TopologyReadResponse, HostingError>;
 
     /// Records one trusted, tenant-bound usage fact idempotently.
     ///
@@ -552,11 +553,11 @@ pub trait TbepHost: Send + Sync {
     /// authoritative durable usage port.
     fn usage_record(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &crate::registry::UsageRecordRequest,
         idempotency_key: &str,
     ) -> Result<crate::registry::UsageRecordResponse, HostingError> {
-        let _ = (tenant, request, idempotency_key);
+        let _ = (scope, request, idempotency_key);
         Err(HostingError::UsageUnavailable(
             "authoritative usage recording is unavailable on this host".into(),
         ))
@@ -570,10 +571,10 @@ pub trait TbepHost: Send + Sync {
     /// authoritative durable usage port.
     fn usage_export(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &crate::registry::UsageExportRequest,
     ) -> Result<crate::registry::UsageExportResponse, HostingError> {
-        let _ = (tenant, request);
+        let _ = (scope, request);
         Err(HostingError::UsageUnavailable(
             "authoritative usage export is unavailable on this host".into(),
         ))
@@ -587,7 +588,7 @@ pub trait TbepHost: Send + Sync {
     /// replication observation.
     fn replication_conflicts(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
     ) -> Result<crate::registry::ReplicationConflictsResponse, HostingError> {
         Err(HostingError::Refused("replication.conflicts is not served by this host".into()))
     }
@@ -600,7 +601,7 @@ pub trait TbepHost: Send + Sync {
     /// replication observation.
     fn replication_fenced(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
     ) -> Result<crate::registry::ReplicationFencedResponse, HostingError> {
         Err(HostingError::Refused("replication.fenced is not served by this host".into()))
     }
@@ -613,7 +614,7 @@ pub trait TbepHost: Send + Sync {
     /// replication observation.
     fn replication_depositions(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
     ) -> Result<crate::registry::ReplicationDepositionsResponse, HostingError> {
         Err(HostingError::Refused("replication.depositions is not served by this host".into()))
     }
@@ -626,7 +627,7 @@ pub trait TbepHost: Send + Sync {
     /// replication observation.
     fn replication_cursor(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
     ) -> Result<crate::registry::ReplicationCursorResponse, HostingError> {
         Err(HostingError::Refused("replication.cursor is not served by this host".into()))
     }
@@ -639,7 +640,7 @@ pub trait TbepHost: Send + Sync {
     /// replication observation.
     fn replication_health(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
     ) -> Result<crate::registry::ReplicationHealthResponse, HostingError> {
         Err(HostingError::Refused("replication.health is not served by this host".into()))
     }
@@ -652,7 +653,7 @@ pub trait TbepHost: Send + Sync {
     /// replication observation.
     fn replication_denials(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
     ) -> Result<crate::registry::ReplicationDenialsResponse, HostingError> {
         Err(HostingError::Refused("replication.denials is not served by this host".into()))
     }
@@ -664,11 +665,11 @@ pub trait TbepHost: Send + Sync {
     /// Returns [`HostingError::Refused`] unless a host serves tiers.
     fn tier_configure(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &crate::registry::TierConfigureRequest,
         idempotency_key: &str,
     ) -> Result<crate::registry::TierConfigureResponse, HostingError> {
-        let _ = (tenant, request, idempotency_key);
+        let _ = (scope, request, idempotency_key);
         Err(HostingError::Refused(
             "tier.configure is served by the engine-backed host's tier administration".into(),
         ))
@@ -681,9 +682,9 @@ pub trait TbepHost: Send + Sync {
     /// Returns [`HostingError::Refused`] unless a host serves tiers.
     fn tier_inspect(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
     ) -> Result<crate::registry::TierInspectResponse, HostingError> {
-        let _ = tenant;
+        let _ = scope;
         Err(HostingError::Refused(
             "tier.inspect is served by the engine-backed host's tier administration".into(),
         ))
@@ -696,9 +697,9 @@ pub trait TbepHost: Send + Sync {
     /// Returns [`HostingError::Refused`] unless a host serves tiers.
     fn tier_explain(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
     ) -> Result<crate::registry::TierExplainResponse, HostingError> {
-        let _ = tenant;
+        let _ = scope;
         Err(HostingError::Refused(
             "tier.explain is served by the engine-backed host's tier administration".into(),
         ))
@@ -711,9 +712,9 @@ pub trait TbepHost: Send + Sync {
     /// Returns [`HostingError::Refused`] unless a host serves tiers.
     fn tier_dry_run(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
     ) -> Result<crate::registry::TierDryRunResponse, HostingError> {
-        let _ = tenant;
+        let _ = scope;
         Err(HostingError::Refused(
             "tier.dry_run is served by the engine-backed host's tier administration".into(),
         ))
@@ -726,10 +727,10 @@ pub trait TbepHost: Send + Sync {
     /// Returns [`HostingError::Refused`] unless a host serves tiers.
     fn tier_run(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         idempotency_key: &str,
     ) -> Result<crate::registry::TierRunResponse, HostingError> {
-        let _ = (tenant, idempotency_key);
+        let _ = (scope, idempotency_key);
         Err(HostingError::Refused(
             "tier.run is served by the engine-backed host's tier administration".into(),
         ))
@@ -742,10 +743,10 @@ pub trait TbepHost: Send + Sync {
     /// Returns [`HostingError::Refused`] unless a host serves tiers.
     fn tier_pause(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         idempotency_key: &str,
     ) -> Result<crate::registry::TierPauseResponse, HostingError> {
-        let _ = (tenant, idempotency_key);
+        let _ = (scope, idempotency_key);
         Err(HostingError::Refused(
             "tier.pause is served by the engine-backed host's tier administration".into(),
         ))
@@ -758,10 +759,10 @@ pub trait TbepHost: Send + Sync {
     /// Returns [`HostingError::Refused`] unless a host serves tiers.
     fn tier_resume(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         idempotency_key: &str,
     ) -> Result<crate::registry::TierResumeResponse, HostingError> {
-        let _ = (tenant, idempotency_key);
+        let _ = (scope, idempotency_key);
         Err(HostingError::Refused(
             "tier.resume is served by the engine-backed host's tier administration".into(),
         ))
@@ -862,10 +863,8 @@ impl ScopeState {
 /// One sync session served by the host.
 struct SessionState {
     collection: String,
-    /// The tenant whose channel opened the session: lifecycle frames
-    /// from any other tenant's channel are refused (the engine-enforced
-    /// isolation of PD-2026-08-26-11 D1).
-    tenant: String,
+    /// The complete channel scope that opened the session.
+    scope: BoundScope,
     /// The latest checkpoint issued to this session. This is delivery state,
     /// not a replication frontier or an authorization grant.
     checkpoint: SyncCheckpoint,
@@ -881,13 +880,12 @@ struct SubscriptionState {
     collections: Option<Vec<String>>,
     next_sequence: u64,
     feed: SyncSender<TbepNotification>,
-    /// The tenant whose channel subscribed; every lifecycle frame of the
-    /// subscription must arrive on that tenant's channel.
-    tenant: String,
+    /// The complete channel scope that subscribed.
+    scope: BoundScope,
 }
 
 struct HostState {
-    scopes: BTreeMap<(String, String), ScopeState>,
+    scopes: BTreeMap<(BoundScope, String), ScopeState>,
     sessions: BTreeMap<u64, SessionState>,
     subscriptions: BTreeMap<u64, SubscriptionState>,
     next_session: u64,
@@ -940,10 +938,10 @@ impl SyncDeliveryHost {
 
     fn can_add_scope(
         state: &HostState,
-        tenant: &str,
+        scope: &BoundScope,
         collection: &str,
     ) -> Result<(), HostingError> {
-        if state.scopes.contains_key(&(tenant.to_owned(), collection.to_owned())) {
+        if state.scopes.contains_key(&(scope.clone(), collection.to_owned())) {
             return Ok(());
         }
         if state.scopes.len() >= MAX_SCOPES {
@@ -952,11 +950,11 @@ impl SyncDeliveryHost {
         Ok(())
     }
 
-    fn can_add_session(state: &HostState, tenant: &str) -> Result<(), HostingError> {
+    fn can_add_session(state: &HostState, scope: &BoundScope) -> Result<(), HostingError> {
         if state.sessions.len() >= MAX_SESSIONS {
             return Err(HostingError::SessionRefused("the host session limit is exhausted".into()));
         }
-        let count = state.sessions.values().filter(|session| session.tenant == tenant).count();
+        let count = state.sessions.values().filter(|session| &session.scope == scope).count();
         if count >= MAX_SESSIONS_PER_TENANT {
             return Err(HostingError::SessionRefused(
                 "the tenant session limit is exhausted".into(),
@@ -965,7 +963,7 @@ impl SyncDeliveryHost {
         Ok(())
     }
 
-    fn can_add_subscription(state: &HostState, tenant: &str) -> Result<(), HostingError> {
+    fn can_add_subscription(state: &HostState, scope: &BoundScope) -> Result<(), HostingError> {
         if state.subscriptions.len() >= MAX_SUBSCRIPTIONS {
             return Err(HostingError::SubscriptionRefused(
                 "the host subscription limit is exhausted".into(),
@@ -974,7 +972,7 @@ impl SyncDeliveryHost {
         let count = state
             .subscriptions
             .values()
-            .filter(|subscription| subscription.tenant == tenant)
+            .filter(|subscription| &subscription.scope == scope)
             .count();
         if count >= MAX_SUBSCRIPTIONS_PER_TENANT {
             return Err(HostingError::SubscriptionRefused(
@@ -985,13 +983,13 @@ impl SyncDeliveryHost {
     }
 
     fn scope<'a>(
-        scopes: &'a mut BTreeMap<(String, String), ScopeState>,
-        tenant: &str,
+        scopes: &'a mut BTreeMap<(BoundScope, String), ScopeState>,
+        bound_scope: &BoundScope,
         collection: &str,
     ) -> &'a mut ScopeState {
-        scopes.entry((tenant.to_string(), collection.to_string())).or_insert_with(|| ScopeState {
+        scopes.entry((bound_scope.clone(), collection.to_string())).or_insert_with(|| ScopeState {
             core: SyncCore::new(
-                SyncScope::new(tenant, collection),
+                SyncScope::new(&bound_scope.tenant, collection),
                 SyncCoreConfig {
                     batch_byte_budget: BATCH_BYTE_BUDGET,
                     checkpoint_window: CHECKPOINT_WINDOW,
@@ -1011,11 +1009,11 @@ impl SyncDeliveryHost {
     /// enforces isolation between bound channels).
     fn session_of<'a>(
         state: &'a HostState,
-        tenant: &str,
+        scope: &BoundScope,
         session_id: u64,
     ) -> Result<&'a SessionState, HostingError> {
         match state.sessions.get(&session_id) {
-            Some(session) if session.tenant == tenant => Ok(session),
+            Some(session) if &session.scope == scope => Ok(session),
             Some(_) => Err(HostingError::SessionRefused("session bound to another channel".into())),
             None => Err(HostingError::SessionRefused("unknown session".into())),
         }
@@ -1025,11 +1023,11 @@ impl SyncDeliveryHost {
     /// isolation rule as [`Self::session_of`].
     fn subscription_of<'a>(
         state: &'a HostState,
-        tenant: &str,
+        scope: &BoundScope,
         subscription_id: u64,
     ) -> Result<&'a SubscriptionState, HostingError> {
         match state.subscriptions.get(&subscription_id) {
-            Some(subscription) if subscription.tenant == tenant => Ok(subscription),
+            Some(subscription) if &subscription.scope == scope => Ok(subscription),
             Some(_) => Err(HostingError::SubscriptionRefused(
                 "subscription bound to another channel".into(),
             )),
@@ -1039,10 +1037,10 @@ impl SyncDeliveryHost {
 
     fn session_collection(
         state: &HostState,
-        tenant: &str,
+        scope: &BoundScope,
         session_id: u64,
     ) -> Result<String, HostingError> {
-        Ok(Self::session_of(state, tenant, session_id)?.collection.clone())
+        Ok(Self::session_of(state, scope, session_id)?.collection.clone())
     }
 
     fn decode_checkpoint(bytes: &[u8]) -> Result<SyncCheckpoint, HostingError> {
@@ -1099,12 +1097,12 @@ impl TbepHost for SyncDeliveryHost {
             return Err(HostingError::Refused("the host is draining".into()));
         }
         state.health = HealthState::Serving;
-        Ok(ChannelBindResponse { tenant: request.tenant.clone(), serving_instance: self.instance })
+        Ok(ChannelBindResponse { scope: request.scope.clone(), serving_instance: self.instance })
     }
 
     fn document_read(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &DocumentReadRequest,
     ) -> Result<DocumentReadResponse, HostingError> {
         Err(engine_ops_refusal("document.read"))
@@ -1112,7 +1110,7 @@ impl TbepHost for SyncDeliveryHost {
 
     fn document_write(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &DocumentWriteRequest,
         _idempotency_key: &str,
     ) -> Result<DocumentWriteResponse, HostingError> {
@@ -1121,7 +1119,7 @@ impl TbepHost for SyncDeliveryHost {
 
     fn document_delete(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &DocumentDeleteRequest,
         _idempotency_key: &str,
     ) -> Result<DocumentDeleteResponse, HostingError> {
@@ -1130,7 +1128,7 @@ impl TbepHost for SyncDeliveryHost {
 
     fn query_execute(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &QueryExecuteRequest,
     ) -> Result<QueryExecuteResponse, HostingError> {
         Err(engine_ops_refusal("query.execute"))
@@ -1138,7 +1136,7 @@ impl TbepHost for SyncDeliveryHost {
 
     fn query_cancel(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &QueryCancelRequest,
     ) -> Result<QueryCancelResponse, HostingError> {
         Err(engine_ops_refusal("query.cancel"))
@@ -1146,7 +1144,7 @@ impl TbepHost for SyncDeliveryHost {
 
     fn family_read(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &FamilyReadRequest,
     ) -> Result<FamilyReadResponse, HostingError> {
         Err(engine_ops_refusal("family.read"))
@@ -1154,7 +1152,7 @@ impl TbepHost for SyncDeliveryHost {
 
     fn family_write(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &FamilyWriteRequest,
         _idempotency_key: &str,
     ) -> Result<FamilyWriteResponse, HostingError> {
@@ -1163,20 +1161,20 @@ impl TbepHost for SyncDeliveryHost {
 
     fn backbone_subscribe(
         &self,
-        tenant: &str,
+        bound_scope: &BoundScope,
         request: &BackboneSubscribeRequest,
     ) -> Result<(BackboneSubscribeResponse, Receiver<TbepNotification>), HostingError> {
         let mut state = self.lock();
         state.frames_served += 1;
         Self::ensure_admission(&state)?;
         if let Some(existing) = state.subscriptions.get(&request.subscription_id) {
-            if existing.tenant != tenant {
+            if &existing.scope != bound_scope {
                 return Err(HostingError::SubscriptionRefused(
                     "subscription id belongs to another channel".into(),
                 ));
             }
         } else {
-            Self::can_add_subscription(&state, tenant)?;
+            Self::can_add_subscription(&state, bound_scope)?;
         }
         let (sender, receiver) = sync_channel(SUBSCRIPTION_QUEUE_BOUND);
         let from = match &request.from {
@@ -1186,8 +1184,8 @@ impl TbepHost for SyncDeliveryHost {
         // Replay the retained windows of every matching scope of this
         // tenant, in sequence order, up to the list bound.
         let mut events: Vec<crate::registry::ChangeEvent> = Vec::new();
-        for ((scope_tenant, scope_collection), scope) in &state.scopes {
-            if scope_tenant != tenant {
+        for ((event_scope, scope_collection), scope) in &state.scopes {
+            if event_scope != bound_scope {
                 continue;
             }
             if let Some(collections) = &request.collections
@@ -1226,7 +1224,7 @@ impl TbepHost for SyncDeliveryHost {
                 collections: request.collections.clone(),
                 next_sequence,
                 feed: sender,
-                tenant: tenant.to_string(),
+                scope: bound_scope.clone(),
             },
         );
         Ok((
@@ -1240,14 +1238,14 @@ impl TbepHost for SyncDeliveryHost {
 
     fn backbone_acknowledge(
         &self,
-        tenant: &str,
+        bound_scope: &BoundScope,
         request: &BackboneAcknowledgeRequest,
     ) -> Result<BackboneAcknowledgeResponse, HostingError> {
         let mut state = self.lock();
         state.frames_served += 1;
         Self::ensure_admission(&state)?;
         match state.subscriptions.get_mut(&request.subscription_id) {
-            Some(subscription) if subscription.tenant == tenant => {
+            Some(subscription) if &subscription.scope == bound_scope => {
                 if request.through_sequence > subscription.next_sequence {
                     return Err(HostingError::SubscriptionRefused(
                         "acknowledges a sequence never served".into(),
@@ -1267,7 +1265,7 @@ impl TbepHost for SyncDeliveryHost {
 
     fn backbone_unsubscribe(
         &self,
-        tenant: &str,
+        bound_scope: &BoundScope,
         request: &BackboneUnsubscribeRequest,
     ) -> Result<BackboneUnsubscribeResponse, HostingError> {
         let mut state = self.lock();
@@ -1275,7 +1273,7 @@ impl TbepHost for SyncDeliveryHost {
         Self::ensure_admission(&state)?;
         // The unsubscribe removes only the owning tenant's subscription:
         // another channel's unsubscribe is refused and changes nothing.
-        Self::subscription_of(&state, tenant, request.subscription_id)?;
+        Self::subscription_of(&state, bound_scope, request.subscription_id)?;
         match state.subscriptions.remove(&request.subscription_id) {
             Some(subscription) => {
                 let _ = subscription.feed.try_send(TbepNotification::Closed(SubscriptionClosed {
@@ -1290,7 +1288,7 @@ impl TbepHost for SyncDeliveryHost {
 
     fn sync_session_setup(
         &self,
-        tenant: &str,
+        bound_scope: &BoundScope,
         request: &SyncSessionSetupRequest,
     ) -> Result<SyncSessionSetupResponse, HostingError> {
         let mut state = self.lock();
@@ -1299,11 +1297,11 @@ impl TbepHost for SyncDeliveryHost {
         if request.collection.len() > 64 {
             return Err(HostingError::Invalid("collection exceeds the sync bound".into()));
         }
-        Self::can_add_scope(&state, tenant, &request.collection)?;
-        Self::can_add_session(&state, tenant)?;
+        Self::can_add_scope(&state, bound_scope, &request.collection)?;
+        Self::can_add_session(&state, bound_scope)?;
         let resume = request.resume.as_deref().map(Self::decode_checkpoint).transpose()?;
         let (checkpoint, retained_floor) = {
-            let scope = Self::scope(&mut state.scopes, tenant, &request.collection);
+            let scope = Self::scope(&mut state.scopes, bound_scope, &request.collection);
             // Validate the native peer and server position before accepting
             // a resume. The generated schema still carries a causal
             // checkpoint rather than the opaque, scope-bound view token
@@ -1331,7 +1329,7 @@ impl TbepHost for SyncDeliveryHost {
             session_id,
             SessionState {
                 collection: request.collection.clone(),
-                tenant: tenant.to_string(),
+                scope: bound_scope.clone(),
                 checkpoint: checkpoint.clone(),
                 acknowledged: SyncCheckpoint::initial(),
                 issued_checkpoints,
@@ -1346,14 +1344,14 @@ impl TbepHost for SyncDeliveryHost {
 
     fn sync_delta_pull(
         &self,
-        tenant: &str,
+        bound_scope: &BoundScope,
         request: &SyncDeltaPullRequest,
     ) -> Result<SyncDeltaPullResponse, HostingError> {
         let mut state = self.lock();
         state.frames_served += 1;
         Self::ensure_admission(&state)?;
         let (collection, from) = {
-            let session = Self::session_of(&state, tenant, request.session_id)?;
+            let session = Self::session_of(&state, bound_scope, request.session_id)?;
             let from = Self::decode_checkpoint(&request.from)?;
             if !Self::checkpoint_is_issued(session, &from) {
                 return Err(HostingError::CheckpointRefused(
@@ -1363,7 +1361,7 @@ impl TbepHost for SyncDeliveryHost {
             (session.collection.clone(), from)
         };
         let response = {
-            let scope = Self::scope(&mut state.scopes, tenant, &collection);
+            let scope = Self::scope(&mut state.scopes, bound_scope, &collection);
             match scope.core.delta_since(&from) {
                 Ok(SyncBatch::UpToDate) => {
                     let next = scope.core.checkpoint();
@@ -1419,14 +1417,14 @@ impl TbepHost for SyncDeliveryHost {
 
     fn sync_snapshot_pull(
         &self,
-        tenant: &str,
+        bound_scope: &BoundScope,
         request: &SyncSnapshotPullRequest,
     ) -> Result<SyncSnapshotPullResponse, HostingError> {
         let mut state = self.lock();
         state.frames_served += 1;
         Self::ensure_admission(&state)?;
-        let collection = Self::session_collection(&state, tenant, request.session_id)?;
-        let scope = Self::scope(&mut state.scopes, tenant, &collection);
+        let collection = Self::session_collection(&state, bound_scope, request.session_id)?;
+        let scope = Self::scope(&mut state.scopes, bound_scope, &collection);
         match scope.core.resync_snapshot() {
             Ok(snapshot) => {
                 if snapshot.bytes.len() > MAX_SYNC_PAYLOAD_BYTES
@@ -1456,7 +1454,7 @@ impl TbepHost for SyncDeliveryHost {
 
     fn sync_checkpoint_ack(
         &self,
-        tenant: &str,
+        bound_scope: &BoundScope,
         request: &SyncCheckpointAckRequest,
     ) -> Result<SyncCheckpointAckResponse, HostingError> {
         let mut state = self.lock();
@@ -1466,7 +1464,7 @@ impl TbepHost for SyncDeliveryHost {
         // checkpoint is even parsed: another tenant's ack is refused
         // with the typed session refusal and changes nothing.
         let (collection, checkpoint) = {
-            let session = Self::session_of(&state, tenant, request.session_id)?;
+            let session = Self::session_of(&state, bound_scope, request.session_id)?;
             let checkpoint = Self::decode_checkpoint(&request.checkpoint)?;
             if !Self::checkpoint_is_issued(session, &checkpoint) {
                 return Err(HostingError::CheckpointRefused(
@@ -1480,7 +1478,7 @@ impl TbepHost for SyncDeliveryHost {
             }
             (session.collection.clone(), checkpoint)
         };
-        let scope = Self::scope(&mut state.scopes, tenant, &collection);
+        let scope = Self::scope(&mut state.scopes, bound_scope, &collection);
         if let Err(error) = scope.core.delta_since(&checkpoint) {
             return Err(HostingError::CheckpointRefused(error.to_string()));
         }
@@ -1492,16 +1490,16 @@ impl TbepHost for SyncDeliveryHost {
 
     fn sync_mutation_submit(
         &self,
-        tenant: &str,
+        bound_scope: &BoundScope,
         request: &SyncMutationSubmitRequest,
         idempotency_key: &str,
     ) -> Result<SyncMutationSubmitResponse, HostingError> {
         let mut guard = self.lock();
         guard.frames_served += 1;
         Self::ensure_admission(&guard)?;
-        let collection = Self::session_collection(&guard, tenant, request.session_id)?;
+        let collection = Self::session_collection(&guard, bound_scope, request.session_id)?;
         let state: &mut HostState = &mut guard;
-        let scope = Self::scope(&mut state.scopes, tenant, &collection);
+        let scope = Self::scope(&mut state.scopes, bound_scope, &collection);
         // At-least-once: a retried key answers the recorded receipt.
         if let Some(receipt) = scope.applied_keys.get(idempotency_key) {
             let receipt = receipt.clone();
@@ -1583,7 +1581,7 @@ impl TbepHost for SyncDeliveryHost {
             let Some(subscription) = state.subscriptions.get_mut(&id) else {
                 continue;
             };
-            if subscription.tenant != tenant {
+            if &subscription.scope != bound_scope {
                 continue;
             }
             if let Some(collections) = &subscription.collections
@@ -1626,7 +1624,7 @@ impl TbepHost for SyncDeliveryHost {
 
     fn sync_session_close(
         &self,
-        tenant: &str,
+        bound_scope: &BoundScope,
         request: &SyncSessionCloseRequest,
     ) -> Result<SyncSessionCloseResponse, HostingError> {
         let mut state = self.lock();
@@ -1634,14 +1632,14 @@ impl TbepHost for SyncDeliveryHost {
         Self::ensure_admission(&state)?;
         // The close removes only the owning tenant's session: another
         // channel's close is refused and changes nothing.
-        Self::session_of(&state, tenant, request.session_id)?;
+        Self::session_of(&state, bound_scope, request.session_id)?;
         match state.sessions.remove(&request.session_id) {
             Some(_) => Ok(SyncSessionCloseResponse { session_id: request.session_id }),
             None => Err(HostingError::SessionRefused("unknown session".into())),
         }
     }
 
-    fn topology_read(&self, _tenant: &str) -> Result<TopologyReadResponse, HostingError> {
+    fn topology_read(&self, _scope: &BoundScope) -> Result<TopologyReadResponse, HostingError> {
         Ok(TopologyReadResponse {
             binding: crate::registry::BindingKind::LocalUds,
             subsystems: vec!["sync-delivery".into(), "backbone".into(), "supervision".into()],
@@ -1767,7 +1765,7 @@ impl TbepHost for ScriptedHost {
 
     fn document_read(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &DocumentReadRequest,
     ) -> Result<DocumentReadResponse, HostingError> {
         match self.next() {
@@ -1779,7 +1777,7 @@ impl TbepHost for ScriptedHost {
 
     fn document_write(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &DocumentWriteRequest,
         _idempotency_key: &str,
     ) -> Result<DocumentWriteResponse, HostingError> {
@@ -1792,7 +1790,7 @@ impl TbepHost for ScriptedHost {
 
     fn document_delete(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &DocumentDeleteRequest,
         _idempotency_key: &str,
     ) -> Result<DocumentDeleteResponse, HostingError> {
@@ -1807,7 +1805,7 @@ impl TbepHost for ScriptedHost {
 
     fn query_execute(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &QueryExecuteRequest,
     ) -> Result<QueryExecuteResponse, HostingError> {
         match self.next() {
@@ -1819,7 +1817,7 @@ impl TbepHost for ScriptedHost {
 
     fn query_cancel(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &QueryCancelRequest,
     ) -> Result<QueryCancelResponse, HostingError> {
         match self.next() {
@@ -1831,7 +1829,7 @@ impl TbepHost for ScriptedHost {
 
     fn family_read(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &FamilyReadRequest,
     ) -> Result<FamilyReadResponse, HostingError> {
         match self.next() {
@@ -1843,7 +1841,7 @@ impl TbepHost for ScriptedHost {
 
     fn family_write(
         &self,
-        _tenant: &str,
+        _scope: &BoundScope,
         _request: &FamilyWriteRequest,
         _idempotency_key: &str,
     ) -> Result<FamilyWriteResponse, HostingError> {
@@ -1859,79 +1857,79 @@ impl TbepHost for ScriptedHost {
 
     fn backbone_subscribe(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &BackboneSubscribeRequest,
     ) -> Result<(BackboneSubscribeResponse, Receiver<TbepNotification>), HostingError> {
-        self.real.backbone_subscribe(tenant, request)
+        self.real.backbone_subscribe(scope, request)
     }
 
     fn backbone_acknowledge(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &BackboneAcknowledgeRequest,
     ) -> Result<BackboneAcknowledgeResponse, HostingError> {
-        self.real.backbone_acknowledge(tenant, request)
+        self.real.backbone_acknowledge(scope, request)
     }
 
     fn backbone_unsubscribe(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &BackboneUnsubscribeRequest,
     ) -> Result<BackboneUnsubscribeResponse, HostingError> {
-        self.real.backbone_unsubscribe(tenant, request)
+        self.real.backbone_unsubscribe(scope, request)
     }
 
     fn sync_session_setup(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &SyncSessionSetupRequest,
     ) -> Result<SyncSessionSetupResponse, HostingError> {
-        self.real.sync_session_setup(tenant, request)
+        self.real.sync_session_setup(scope, request)
     }
 
     fn sync_delta_pull(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &SyncDeltaPullRequest,
     ) -> Result<SyncDeltaPullResponse, HostingError> {
-        self.real.sync_delta_pull(tenant, request)
+        self.real.sync_delta_pull(scope, request)
     }
 
     fn sync_snapshot_pull(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &SyncSnapshotPullRequest,
     ) -> Result<SyncSnapshotPullResponse, HostingError> {
-        self.real.sync_snapshot_pull(tenant, request)
+        self.real.sync_snapshot_pull(scope, request)
     }
 
     fn sync_checkpoint_ack(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &SyncCheckpointAckRequest,
     ) -> Result<SyncCheckpointAckResponse, HostingError> {
-        self.real.sync_checkpoint_ack(tenant, request)
+        self.real.sync_checkpoint_ack(scope, request)
     }
 
     fn sync_mutation_submit(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &SyncMutationSubmitRequest,
         idempotency_key: &str,
     ) -> Result<SyncMutationSubmitResponse, HostingError> {
-        self.real.sync_mutation_submit(tenant, request, idempotency_key)
+        self.real.sync_mutation_submit(scope, request, idempotency_key)
     }
 
     fn sync_session_close(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         request: &SyncSessionCloseRequest,
     ) -> Result<SyncSessionCloseResponse, HostingError> {
-        self.real.sync_session_close(tenant, request)
+        self.real.sync_session_close(scope, request)
     }
 
-    fn topology_read(&self, tenant: &str) -> Result<TopologyReadResponse, HostingError> {
-        self.real.topology_read(tenant)
+    fn topology_read(&self, scope: &BoundScope) -> Result<TopologyReadResponse, HostingError> {
+        self.real.topology_read(scope)
     }
 
     fn admin_status(&self) -> Result<AdminStatusResponse, HostingError> {

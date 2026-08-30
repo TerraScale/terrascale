@@ -200,18 +200,10 @@ fn action_form(tenant: &str, name: &str) -> String {
         tenant = html::attribute(tenant),
         name = html::attribute(name),
         action = html::select("action", "Action", &action_options()),
-        confirm_target = html::text_input(
-            "confirm_target",
-            "Type target exactly",
-            "",
-            &confirmation_target,
-        ),
-        confirm_phrase = html::text_input(
-            "confirm_phrase",
-            "Type action phrase",
-            "",
-            "index <selected action>",
-        ),
+        confirm_target =
+            html::text_input("confirm_target", "Type target exactly", "", &confirmation_target,),
+        confirm_phrase =
+            html::text_input("confirm_phrase", "Type action phrase", "", "run index action",),
         secondary = ButtonStyle::Secondary.classes(),
     )
 }

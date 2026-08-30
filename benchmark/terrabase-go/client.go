@@ -23,12 +23,14 @@ import (
 	v1 "terrascale.tech/terrabase-go/terrabase/v1"
 )
 
-// The metadata keys of the engine's cross-cutting conventions: tenant
-// identity rides metadata, not fields, and mutations carry their retry
-// identity the same way.
+// The metadata keys of the engine's cross-cutting conventions. The immutable
+// database binding rides metadata, not request fields, and mutations carry
+// their retry identity the same way.
 const (
 	principalMetadata   = "x-tb-principal"
 	tenantMetadata      = "x-tb-tenant"
+	projectMetadata     = "x-tb-project"
+	databaseMetadata    = "x-tb-database"
 	idempotencyMetadata = "x-tb-idempotency-key"
 
 	// MaxIdempotencyBytes is the idempotency-key bound (1..=128 bytes,
@@ -41,6 +43,8 @@ const (
 const (
 	maxIdentityBytes    = 128 // principal
 	maxTenantBytes      = 64
+	maxProjectBytes     = 255
+	maxDatabaseBytes    = 255
 	maxCollectionBytes  = 64
 	maxDocumentBytes    = 64
 	maxOperationBytes   = 128
@@ -56,17 +60,45 @@ const (
 	maxFrameBytes       = 16 << 20 // the engine's per-RPC message bound
 )
 
-// Binding is the answer of one channel bind: the engine accepted the
-// application identity and names its serving instance.
+// BindingScope is the immutable gateway and database scope carried by one
+// logical client. Principal is the authenticated gateway workload's SPIFFE
+// URI, not an end-user identity.
+type BindingScope struct {
+	Principal string
+	Tenant    string
+	Project   string
+	Database  string
+}
+
+// validate mirrors the engine's fail-closed binding bounds.
+func (scope BindingScope) validate() error {
+	for _, field := range []struct {
+		name  string
+		value string
+		limit int
+	}{
+		{name: "principal", value: scope.Principal, limit: maxIdentityBytes},
+		{name: "tenant", value: scope.Tenant, limit: maxTenantBytes},
+		{name: "project", value: scope.Project, limit: maxProjectBytes},
+		{name: "database", value: scope.Database, limit: maxDatabaseBytes},
+	} {
+		if err := boundName(field.name, field.value, field.limit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Binding is the answer of one channel bind. The engine echoes the exact
+// admitted scope and names its serving instance.
 type Binding struct {
-	Tenant          string
+	Scope           BindingScope
 	ServingInstance uint64
 }
 
-// identity is the application identity one bound channel carries.
+// identity is the immutable scope one bound logical client carries.
 type identity struct {
-	principal string
-	tenant    string
+	scope BindingScope
 }
 
 // Client is one connection to the TerraBase engine: every service of
@@ -449,8 +481,10 @@ func (c *Client) outgoing(ctx context.Context, mutation bool, key string) (conte
 	// Replace caller-provided identity values. Appending would leave a
 	// duplicate that either creates an ambiguous server identity or lets a
 	// permissive test double observe the caller's spoofed first value.
-	md.Set(principalMetadata, bound.principal)
-	md.Set(tenantMetadata, bound.tenant)
+	md.Set(principalMetadata, bound.scope.Principal)
+	md.Set(tenantMetadata, bound.scope.Tenant)
+	md.Set(projectMetadata, bound.scope.Project)
+	md.Set(databaseMetadata, bound.scope.Database)
 	if mutation {
 		if key == "" || strings.TrimSpace(key) == "" {
 			return nil, &Error{
@@ -551,7 +585,7 @@ func boundName(field, value string, limit int) error {
 	if len(value) > limit {
 		return localError("the %s exceeds %d bytes", field, limit)
 	}
-	if !utf8.ValidString(value) || hasControl(value) {
+	if value != strings.TrimSpace(value) || !utf8.ValidString(value) || hasControl(value) {
 		return localError("the %s carries invalid metadata characters", field)
 	}
 	return nil
@@ -589,21 +623,17 @@ func (c *Client) levelOf(level ReadLevel) ReadLevel {
 // Channel
 // ---------------------------------------------------------------------------
 
-// Bind establishes the channel identity every later RPC carries: the
-// application identity within the mutually authenticated transport.
-// The transport is expected to be mTLS in production; the metadata
-// names the identity, it does not authenticate it.
-func (c *Client) Bind(ctx context.Context, principal, tenant string) (Binding, error) {
+// Bind establishes the immutable gateway and database scope every later RPC
+// carries. Production verifies Scope.Principal against the client
+// certificate's sole admitted SPIFFE URI SAN.
+func (c *Client) Bind(ctx context.Context, scope BindingScope) (Binding, error) {
 	if err := c.available(); err != nil {
 		return Binding{}, err
 	}
 	if ctx == nil {
 		return Binding{}, localError("the context is nil")
 	}
-	if err := boundName("principal", principal, maxIdentityBytes); err != nil {
-		return Binding{}, err
-	}
-	if err := boundName("tenant", tenant, maxTenantBytes); err != nil {
+	if err := scope.validate(); err != nil {
 		return Binding{}, err
 	}
 	if !c.binding.CompareAndSwap(0, 1) {
@@ -618,23 +648,33 @@ func (c *Client) Bind(ctx context.Context, principal, tenant string) (Binding, e
 			c.binding.Store(0)
 		}
 	}()
-	response, err := c.channel.Bind(ctx, &v1.ChannelBindRequest{Principal: principal, Tenant: tenant})
+	response, err := c.channel.Bind(ctx, &v1.ChannelBindRequest{
+		Principal: scope.Principal,
+		Tenant:    scope.Tenant,
+		Project:   scope.Project,
+		Database:  scope.Database,
+	})
 	if err != nil {
 		return Binding{}, interpret(err)
 	}
 	if response == nil {
 		return Binding{}, contractError("the engine returned no channel binding")
 	}
-	// A server must return the tenant that was bound. Storing a different
-	// tenant would silently redirect every later metadata-bearing request.
-	boundTenant := response.GetTenant()
-	if boundTenant != tenant || boundName("bound tenant", boundTenant, maxTenantBytes) != nil {
-		return Binding{}, localError("the engine returned a tenant different from the requested binding")
+	boundScope := BindingScope{
+		Principal: response.GetPrincipal(),
+		Tenant:    response.GetTenant(),
+		Project:   response.GetProject(),
+		Database:  response.GetDatabase(),
 	}
-	c.bound.Store(&identity{principal: principal, tenant: boundTenant})
+	// A server must echo every field. Accepting a changed value would silently
+	// redirect all later metadata-bearing requests.
+	if boundScope != scope || boundScope.validate() != nil {
+		return Binding{}, localError("the engine returned a scope different from the requested binding")
+	}
+	c.bound.Store(&identity{scope: boundScope})
 	c.binding.Store(2)
 	boundSuccessfully = true
-	return Binding{Tenant: boundTenant, ServingInstance: response.GetServingInstance()}, nil
+	return Binding{Scope: boundScope, ServingInstance: response.GetServingInstance()}, nil
 }
 
 // ---------------------------------------------------------------------------

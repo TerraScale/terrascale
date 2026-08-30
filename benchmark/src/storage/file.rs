@@ -1230,6 +1230,20 @@ impl super::StoragePort for FileStorage {
         self.table_at(sequence).tenant_documents_from(tenant, after, limit)
     }
 
+    fn documents_at_from_key(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        after: Option<(&CollectionName, &DocumentId)>,
+        limit: u32,
+    ) -> Vec<Document> {
+        self.table_at(sequence).tenant_documents_from_key(
+            tenant,
+            after.map(|(collection, identifier)| (collection.as_str(), identifier.as_str())),
+            limit,
+        )
+    }
+
     fn tenant_commits(
         &self,
         tenant: &TenantId,

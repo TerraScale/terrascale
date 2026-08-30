@@ -156,12 +156,6 @@ impl ServerConfig {
         {
             return Err(ConfigError::InvalidListenAddress);
         }
-        // The observability router has no authentication or TLS seam. Keep
-        // it on the host loopback boundary until the orchestrator-owned
-        // authenticated listener can be composed here.
-        if !observability_listen.ip().is_loopback() {
-            return Err(ConfigError::UnprotectedObservability);
-        }
         for path in [
             &file.engine.location,
             &file.tbep.server_certificate,
@@ -198,7 +192,7 @@ impl ServerConfig {
                 || principal.len() > terrabase_tbep::grpc::MAX_PRINCIPAL_BYTES
                 || principal != principal.trim()
                 || principal.chars().any(char::is_control)
-                || !valid_spiffe_uri(&principal)
+                || !terrabase_tbep::grpc::valid_gateway_spiffe_uri(&principal)
                 || !gateway_principals.insert(principal)
             {
                 return Err(ConfigError::InvalidGatewayPrincipal);
@@ -242,16 +236,6 @@ fn absolute(path: &Path) -> Result<(), ConfigError> {
     Ok(())
 }
 
-fn valid_spiffe_uri(value: &str) -> bool {
-    let authority = value.strip_prefix("spiffe://").unwrap_or_default();
-    !authority.is_empty()
-        && !authority.starts_with('/')
-        && value.len() <= terrabase_tbep::grpc::MAX_PRINCIPAL_BYTES
-        && value == value.trim()
-        && !value.chars().any(char::is_control)
-        && !value.chars().any(char::is_whitespace)
-}
-
 fn socket(value: &str, _field: &'static str) -> Result<SocketAddr, ConfigError> {
     value.parse().map_err(|_| ConfigError::InvalidListenAddress)
 }
@@ -292,8 +276,6 @@ pub enum ConfigError {
     InvalidGatewayPrincipal,
     /// The UDS mode was broader than 0770 or omitted owner read/write.
     InvalidUdsMode,
-    /// The private observability listener has no secure/authenticated seam.
-    UnprotectedObservability,
 }
 
 impl std::fmt::Display for ConfigError {
@@ -312,9 +294,6 @@ impl std::fmt::Display for ConfigError {
             Self::InvalidBound => "a production server bound is outside its accepted range",
             Self::InvalidGatewayPrincipal => "gateway_principals is invalid",
             Self::InvalidUdsMode => "the local UDS mode is unsafe",
-            Self::UnprotectedObservability => {
-                "observability must bind loopback until an authenticated boundary is composed"
-            }
         })
     }
 }
@@ -345,7 +324,7 @@ listen = "0.0.0.0:8421"
 server_certificate = "/run/secrets/terrabase.crt"
 server_private_key = "/run/secrets/terrabase.key"
 client_ca = "/run/secrets/gateway-ca.crt"
-gateway_principals = ["spiffe://terrabase.example/gateway/ts-internals"]
+gateway_principals = ["spiffe://terrascale.tech/prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV"]
 max_message_bytes = 16777216
 max_inflight = 128
 request_timeout_millis = 30000
@@ -364,7 +343,9 @@ listen = "127.0.0.1:9464"
         assert_eq!(config.region, Region::Gru);
         assert_eq!(config.max_inflight, 128);
         assert!(
-            config.gateway_principals.contains("spiffe://terrabase.example/gateway/ts-internals")
+            config.gateway_principals.contains(
+                "spiffe://terrascale.tech/prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV"
+            )
         );
     }
 
@@ -410,9 +391,20 @@ listen = "127.0.0.1:9464"
 
     #[test]
     fn gateway_principals_require_exact_spiffe_uris() {
-        for principal in ["gateway", "https://example/gateway", "spiffe://\u{0001}"] {
-            let text =
-                valid().replace("spiffe://terrabase.example/gateway/ts-internals", principal);
+        for principal in [
+            "gateway",
+            "https://example/gateway",
+            "spiffe://\u{0001}",
+            "spiffe://other.example/prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "spiffe://terrascale.tech/Prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "spiffe://terrascale.tech/prod/database-gateway/01arz3ndektsv4rrffq69g5fav",
+            "spiffe://terrascale.tech/prod/database-gateway/not-a-ulid",
+            "spiffe://terrascale.tech/prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV/extra",
+        ] {
+            let text = valid().replace(
+                "spiffe://terrascale.tech/prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                principal,
+            );
             assert!(matches!(
                 ServerConfig::parse(&text),
                 Err(ConfigError::InvalidGatewayPrincipal)
@@ -421,9 +413,13 @@ listen = "127.0.0.1:9464"
     }
 
     #[test]
-    fn observability_must_remain_on_loopback() {
-        let public = valid().replace("127.0.0.1:9464", "0.0.0.0:9464");
-        assert!(matches!(ServerConfig::parse(&public), Err(ConfigError::UnprotectedObservability)));
+    fn observability_can_bind_the_orchestrator_private_network() {
+        let private_network = valid().replace("127.0.0.1:9464", "0.0.0.0:9464");
+        let config = ServerConfig::parse(&private_network).expect("private-network metrics bind");
+        assert_eq!(
+            config.observability_listen,
+            "0.0.0.0:9464".parse().expect("socket")
+        );
     }
 
     #[test]

@@ -368,7 +368,7 @@ func (c *Client) usagePageFrom(response *v1.UsageExportResponse, pageSize uint32
 	}
 	var previous *UsageFact
 	for _, wire := range response.GetFacts() {
-		fact, err := usageFactFrom(wire, bound.tenant)
+		fact, err := usageFactFrom(wire, bound.scope.Tenant)
 		if err != nil {
 			return UsagePage{}, err
 		}

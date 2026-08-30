@@ -141,7 +141,9 @@ impl TbepGrpcConfig {
         shutdown_grace: Duration,
         gateway_principals: BTreeSet<String>,
     ) -> std::io::Result<Self> {
-        let valid_principals = gateway_principals.iter().all(|principal| valid_spiffe_uri(principal));
+        let valid_principals = gateway_principals
+            .iter()
+            .all(|principal| valid_gateway_spiffe_uri(principal));
         if !(1024..=registry::MAX_FRAME_BYTES).contains(&max_message_bytes)
             || !(1..=4096).contains(&max_inflight)
             || request_timeout.is_zero()
@@ -195,14 +197,35 @@ impl TbepGrpcConfig {
     }
 }
 
-fn valid_spiffe_uri(value: &str) -> bool {
-    let authority = value.strip_prefix("spiffe://").unwrap_or_default();
-    !authority.is_empty()
-        && !authority.starts_with('/')
-        && value.len() <= MAX_PRINCIPAL_BYTES
-        && value == value.trim()
-        && !value.chars().any(char::is_control)
-        && !value.chars().any(char::is_whitespace)
+/// Returns whether `value` is one canonical Database-gateway workload
+/// identity admitted by ADR 0025.
+#[must_use]
+pub fn valid_gateway_spiffe_uri(value: &str) -> bool {
+    const PREFIX: &str = "spiffe://terrascale.tech/";
+    const GATEWAY_SEGMENT: &str = "/database-gateway/";
+
+    if value.len() > MAX_PRINCIPAL_BYTES || value != value.trim() {
+        return false;
+    }
+    let Some(remainder) = value.strip_prefix(PREFIX) else {
+        return false;
+    };
+    let Some((environment, instance)) = remainder.split_once(GATEWAY_SEGMENT) else {
+        return false;
+    };
+    valid_environment(environment)
+        && !instance.contains('/')
+        && terrabase::identity::Ulid::from_text(instance).is_ok()
+}
+
+fn valid_environment(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 32
+        && !value.starts_with('-')
+        && !value.ends_with('-')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
 impl Default for TbepGrpcConfig {

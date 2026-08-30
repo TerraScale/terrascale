@@ -164,6 +164,33 @@ impl RootTable {
         documents
     }
 
+    /// Returns up to `limit` documents in canonical `(collection,
+    /// identifier)` order, resuming strictly after the complete key.
+    pub(crate) fn tenant_documents_from_key(
+        &self,
+        tenant: &TenantId,
+        after: Option<(&str, &str)>,
+        limit: u32,
+    ) -> Vec<Document> {
+        let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+        let mut documents = Vec::new();
+        for (key, document) in &self.documents {
+            if key.tenant() != tenant.as_str() {
+                continue;
+            }
+            if after.is_some_and(|(collection, identifier)| {
+                (key.collection(), key.document()) <= (collection, identifier)
+            }) {
+                continue;
+            }
+            if documents.len() == limit {
+                break;
+            }
+            documents.push(document.clone());
+        }
+        documents
+    }
+
     /// Returns the document stored at one exact canonical key, if present.
     ///
     /// The publication-history derivation uses this to serve the published

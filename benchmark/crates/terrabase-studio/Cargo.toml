@@ -18,16 +18,21 @@ publish = false
 
 [workspace]
 
+[features]
+default = ["local-crypto"]
+local-crypto = ["terrabase/local-crypto", "terrabase-cluster/local-crypto"]
+production-fips = ["terrabase/production-fips", "terrabase-cluster/production-fips"]
+
 [dependencies]
 # The engine itself, driven only through its public library surface.
-terrabase = { path = "../.." }
+terrabase = { path = "../..", default-features = false }
 
 # The cluster lifecycle crate, for the surfaces it genuinely exposes
 # in-process: the standalone durability acknowledgement model and the cluster
 # identity rules. The studio does not drive `ClusterHost`/`ClusterMember`
 # from a page — those need real member locations on disk, which the
 # Replication page states plainly.
-terrabase-cluster = { path = "../terrabase-cluster" }
+terrabase-cluster = { path = "../terrabase-cluster", default-features = false }
 
 # HTTP choice: axum rather than a hand-rolled or lower-level HTTP crate.
 # The studio needs three things a raw hyper or tiny_http server would make us

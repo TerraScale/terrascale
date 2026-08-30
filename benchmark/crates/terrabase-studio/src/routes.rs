@@ -38,7 +38,7 @@ const BASECOAT_CSS: &str = include_str!("../static/basecoat.css");
 /// The hand-written Datastar-protocol runtime.
 const STUDIO_JS: &str = include_str!("../static/studio.js");
 /// CSP sources required by the hand-written runtime and pinned Monaco asset.
-const CONTENT_SECURITY_POLICY_VALUE: &str = "default-src 'self'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self'; worker-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+const CONTENT_SECURITY_POLICY_VALUE: &str = "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self'; worker-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 /// Monaco 0.52.2 assets are vendored so the private Studio makes no CDN calls.
 const MONACO_LOADER: &[u8] = include_bytes!("../static/monaco/vs/loader.js");
 const MONACO_EDITOR_JS: &[u8] = include_bytes!("../static/monaco/vs/editor/editor.main.js");
@@ -153,19 +153,34 @@ async fn reject_duplicate_confirmations(request: Request<Body>) -> Result<Reques
             .headers()
             .get(header::CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
-            .is_some_and(|value| value.split(';').next().is_some_and(|kind| kind.trim() == "application/x-www-form-urlencoded"))
+            .is_some_and(|value| {
+                value
+                    .split(';')
+                    .next()
+                    .is_some_and(|kind| kind.trim() == "application/x-www-form-urlencoded")
+            })
     {
         return Ok(request);
     }
     let (parts, body) = request.into_parts();
     let body = match axum::body::to_bytes(body, MAX_ACTION_BODY_BYTES + 1).await {
         Ok(body) if body.len() <= MAX_ACTION_BODY_BYTES => body,
-        Ok(_) => return Err(status_text(StatusCode::PAYLOAD_TOO_LARGE, "request body exceeds the Studio action limit\n")),
-        Err(_) => return Err(status_text(StatusCode::BAD_REQUEST, "request body could not be read\n")),
+        Ok(_) => {
+            return Err(status_text(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "request body exceeds the Studio action limit\n",
+            ));
+        }
+        Err(_) => {
+            return Err(status_text(StatusCode::BAD_REQUEST, "request body could not be read\n"));
+        }
     };
     for field in [CONFIRM_TARGET_FIELD, CONFIRM_PHRASE_FIELD] {
         if form_field_count(&body, field) > 1 {
-            return Err(status_text(StatusCode::BAD_REQUEST, "duplicate confirmation fields refused\n"));
+            return Err(status_text(
+                StatusCode::BAD_REQUEST,
+                "duplicate confirmation fields refused\n",
+            ));
         }
     }
     Ok(Request::from_parts(parts, Body::from(body)))
@@ -174,9 +189,9 @@ async fn reject_duplicate_confirmations(request: Request<Body>) -> Result<Reques
 fn form_field_count(body: &[u8], field: &str) -> usize {
     body.split(|byte| *byte == b'&')
         .filter(|pair| {
-            pair.split(|byte| *byte == b'=').next().is_some_and(|name| {
-                decode_form_component(name).is_some_and(|name| name == field)
-            })
+            pair.split(|byte| *byte == b'=')
+                .next()
+                .is_some_and(|name| decode_form_component(name).is_some_and(|name| name == field))
         })
         .count()
 }
@@ -717,7 +732,7 @@ async fn indexes_action(
             &form.confirm_target,
             &form.confirm_phrase,
             &format!("{}/{}", form.tenant, form.name),
-            &format!("index {}", form.action),
+            "run index action",
         )?;
         let result = indexes::run_action(state, &form.tenant, &form.name, &form.action);
         let rendered = result.as_ref().map_or_else(Clone::clone, Clone::clone);
@@ -1042,8 +1057,13 @@ fn topology_fragment_of(state: &StudioState) -> Vec<String> {
         rows.push_str(&html::cell(&region.name));
         rows.push_str(&html::cell(&region.members.join(", ")));
         rows.push_str(&html::cell_raw(&format!(
-            "<button class=\"text-sm text-muted-foreground hover:text-foreground underline\" data-on-click=\"{}\">remove</button>",
-            html::attribute(&format!("$$post('/replication/topology/remove-region', {{ index: {index} }})"))
+            "<form data-on:submit=\"@post('/replication/topology/remove-region', {{contentType: 'form', retry: 'never'}})\">\
+<input type=\"hidden\" name=\"index\" value=\"{index}\">\
+{}{}\
+<button type=\"submit\" class=\"text-sm text-muted-foreground hover:text-foreground underline\">remove</button>\
+</form>",
+            html::text_input("confirm_target", "Type region exactly", "", &region.name),
+            html::text_input("confirm_phrase", "Type action phrase", "", "remove region"),
         )));
         rows.push_str("</tr>");
     }
@@ -1307,6 +1327,8 @@ fn ledger_summary(state: &StudioState) -> String {
 struct BackupRunForm {
     tenants: Option<String>,
     mode: Option<String>,
+    confirm_target: String,
+    confirm_phrase: String,
 }
 
 #[derive(Deserialize)]
@@ -1369,6 +1391,12 @@ async fn backup_run(
     Form(form): Form<BackupRunForm>,
 ) -> Response {
     let outcome = async {
+        require_confirmation(
+            &form.confirm_target,
+            &form.confirm_phrase,
+            "backup repository",
+            "run backup",
+        )?;
         let _job = state.backup_job.lock().await;
         let settings = state.backup_settings();
         let repository = S3BackupRepository::from_settings(&settings)?;
@@ -1713,10 +1741,13 @@ async fn maintenance_compact(
     let policy = form.policy.unwrap_or_else(|| "reclaim".to_owned());
     let refresh_state = Arc::clone(&state);
     let outcome = on_blocking(state, move |state| {
-        let phrase = if policy == "reclaim-history" {
-            "compact reclaim history"
-        } else {
-            "compact reclaim"
+        let (compaction_policy, phrase) = match policy.as_str() {
+            "reclaim" => (terrabase::CompactionPolicy::Reclaim, "compact reclaim"),
+            "reclaim-history" => (
+                terrabase::CompactionPolicy::ReclaimHistory,
+                "compact reclaim history",
+            ),
+            _ => return Err("the compaction policy is invalid".to_owned()),
         };
         require_confirmation(
             &form.confirm_target,
@@ -1724,10 +1755,7 @@ async fn maintenance_compact(
             "local engine",
             phrase,
         )?;
-        let request = terrabase::CompactionRequest::new(match policy.as_str() {
-            "reclaim-history" => terrabase::CompactionPolicy::ReclaimHistory,
-            _ => terrabase::CompactionPolicy::Reclaim,
-        });
+        let request = terrabase::CompactionRequest::new(compaction_policy);
         let receipt = engine_ops::compact(state.engine.as_ref(), request)?;
         let text = format!(
             "WAL {} → {}, journal {} → {}, {} root(s) removed, {} phase(s)",
@@ -1924,10 +1952,8 @@ mod tests {
 
     #[test]
     fn csp_allows_pinned_monaco_without_inline_script_execution() {
-        assert!(
-            CONTENT_SECURITY_POLICY_VALUE
-                .contains("script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net")
-        );
+        assert!(CONTENT_SECURITY_POLICY_VALUE.contains("script-src 'self' 'unsafe-eval'"));
+        assert!(!CONTENT_SECURITY_POLICY_VALUE.contains("https:"));
         assert!(CONTENT_SECURITY_POLICY_VALUE.contains("worker-src 'self' data: blob:"));
         assert!(!CONTENT_SECURITY_POLICY_VALUE.contains("script-src 'self' 'unsafe-inline'"));
         assert!(CONTENT_SECURITY_POLICY_VALUE.contains("object-src 'none'"));
@@ -1959,7 +1985,8 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let policy =
             response.headers().get(header::CONTENT_SECURITY_POLICY).unwrap().to_str().unwrap();
-        assert!(policy.contains("script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net"));
+        assert!(policy.contains("script-src 'self' 'unsafe-eval'"));
+        assert!(!policy.contains("https:"));
         assert!(policy.contains("worker-src 'self' data: blob:"));
         assert!(policy.contains("object-src 'none'"));
     }

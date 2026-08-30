@@ -14,7 +14,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{Engine, EngineConfig, EngineConfigError, EngineOpenError, EngineShutdownError};
+use crate::engine::EngineConfigError;
+use crate::{Engine, EngineConfig, EngineOpenError, EngineShutdownError};
 
 /// The maximum UTF-8 byte length of a database identity.
 pub const MAX_DATABASE_ID_BYTES: usize = 128;
@@ -486,8 +487,8 @@ fn validate_location(root: &Path, relative: &Path) -> Result<PathBuf, CatalogVal
     if !existing.is_dir() {
         return Err(CatalogValidationError::InvalidDatabaseLocation);
     }
-    let mut canonical = fs::canonicalize(existing)
-        .map_err(|_| CatalogValidationError::InvalidDatabaseLocation)?;
+    let mut canonical =
+        fs::canonicalize(existing).map_err(|_| CatalogValidationError::InvalidDatabaseLocation)?;
     for component in missing.iter().rev() {
         canonical.push(component);
     }
@@ -550,13 +551,16 @@ impl AdmissionCounter {
         *lock_unpoisoned(&self.state)
     }
 
-    fn try_acquire(&self, scope: AdmissionScope) -> Result<AdmissionPermit, MemberError> {
+    fn try_acquire(
+        self: &Arc<Self>,
+        scope: AdmissionScope,
+    ) -> Result<AdmissionPermit, MemberError> {
         let mut active = lock_unpoisoned(&self.state);
         if *active >= self.limit {
             return Err(MemberError::Overloaded(scope));
         }
         *active += 1;
-        Ok(AdmissionPermit { counter: self })
+        Ok(AdmissionPermit { counter: Arc::clone(self) })
     }
 
     fn wait_for_zero(&self, timeout: Duration) -> bool {
@@ -570,7 +574,10 @@ impl AdmissionCounter {
             let result = self.changed.wait_timeout(active, remaining);
             let (next, timed_out) = match result {
                 Ok((guard, result)) => (guard, result.timed_out()),
-                Err(poisoned) => poisoned.into_inner(),
+                Err(poisoned) => {
+                    let (guard, result) = poisoned.into_inner();
+                    (guard, result.timed_out())
+                }
             };
             active = next;
             if timed_out && *active != 0 {

@@ -82,6 +82,7 @@ mod optimizer;
 mod record;
 mod reference;
 mod served_boundary;
+mod served_runner;
 mod vocabulary;
 
 #[cfg(test)]

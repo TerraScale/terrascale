@@ -46,8 +46,11 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
+    sync::Arc,
+    time::Instant,
 };
 
+use crate::observability::{MetricsRegistry, TaskOutcome};
 use crate::types::{
     CollectionName, Document, DocumentId, ExpectedVersion, LocalDurability, OperationId,
     StorageSequence, TenantId,
@@ -177,6 +180,7 @@ impl Default for LsmTuning {
 /// The LSM storage engine state behind the [`StoragePort`] seam.
 pub(crate) struct LsmStorage {
     dir: PathBuf,
+    metrics: Arc<MetricsRegistry>,
     wal: WalLog,
     wal_frontier: Option<WalFrontier>,
     memtable: MemTable,
@@ -201,6 +205,10 @@ pub(crate) struct LsmStorage {
     /// harmless — their probe finds nothing and the scan they would replace
     /// would have found nothing either.
     identifier_index: BTreeMap<(String, String), BTreeSet<String>>,
+    /// Canonical full document keys observed in the documents keyspace. The
+    /// index lets bounded snapshot pages walk `(tenant, collection,
+    /// identifier)` without collecting the tenant's entire decoded state.
+    document_keys: BTreeSet<(String, String, String)>,
     history_index: BTreeMap<u64, PublishedCommit>,
     /// The oldest sequence the history keyspace still serves, once a
     /// compaction declared a bound.
@@ -229,12 +237,20 @@ pub(crate) struct LsmStorage {
 impl LsmStorage {
     /// Opens or creates an LSM location, recovering it.
     pub(crate) fn open(dir: &Path) -> Result<Self, LsmOpenError> {
+        Self::open_with_metrics(dir, Arc::new(MetricsRegistry::new()))
+    }
+
+    /// Opens an LSM location with the Engine-owned metrics registry.
+    pub(crate) fn open_with_metrics(
+        dir: &Path,
+        metrics: Arc<MetricsRegistry>,
+    ) -> Result<Self, LsmOpenError> {
         fs::create_dir_all(dir).map_err(|_| LsmOpenError::Unavailable)?;
         let format = verify_or_create_format(dir)?;
         if format.created {
             super::root::sync_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
         }
-        Self::recover(dir, format.state)
+        Self::recover(dir, format.state, metrics)
     }
 
     /// Rebuilds engine state from the manifest anchor, the verifying
@@ -245,7 +261,11 @@ impl LsmStorage {
         clippy::too_many_lines,
         reason = "recovery consumes one format decision and preserves ordered fail-closed stages"
     )]
-    fn recover(dir: &Path, format: FormatState) -> Result<Self, LsmOpenError> {
+    fn recover(
+        dir: &Path,
+        format: FormatState,
+        metrics: Arc<MetricsRegistry>,
+    ) -> Result<Self, LsmOpenError> {
         let retained_path = dir.join("retained");
         let wal_path = dir.join("wal");
         let active_format = match &format {
@@ -376,6 +396,7 @@ impl LsmStorage {
             };
         let mut engine = Self {
             dir: dir.to_path_buf(),
+            metrics,
             wal,
             wal_frontier,
             memtable: MemTable::default(),
@@ -387,6 +408,7 @@ impl LsmStorage {
             root_head: chain_root(&StorageRootId::from_recorded(String::new()), 0, 0),
             ledger_index: BTreeMap::new(),
             identifier_index: BTreeMap::new(),
+            document_keys: BTreeSet::new(),
             history_index: BTreeMap::new(),
             history_floor: None,
             retained,
@@ -519,7 +541,11 @@ impl LsmStorage {
             return;
         }
         if let Some((tenant, collection, document)) = decode_document_key(entry.key.user_key()) {
-            self.identifier_index.entry((tenant, document)).or_default().insert(collection);
+            self.identifier_index
+                .entry((tenant.clone(), document.clone()))
+                .or_default()
+                .insert(collection.clone());
+            self.document_keys.insert((tenant, collection, document));
         }
     }
 
@@ -1323,6 +1349,14 @@ impl LsmStorage {
         }
     }
 
+    fn sync_wal_observed(&mut self) -> std::io::Result<()> {
+        let started = Instant::now();
+        let result = self.wal.sync();
+        let outcome = if result.is_ok() { TaskOutcome::Success } else { TaskOutcome::Error };
+        self.metrics.record_wal_fsync(outcome, started.elapsed());
+        result
+    }
+
     /// Syncs an append as required and advances the independent frontier
     /// before any in-memory state can expose the batch.
     fn witness_wal_append(
@@ -1332,11 +1366,13 @@ impl LsmStorage {
         specific_fault: FaultPoint,
     ) -> Result<(), ()> {
         let active = self.activation.is_some();
-        if (active || legacy_sync_required) && self.wal.sync().is_err() {
-            if active {
-                self.frontier_poisoned = true;
+        if active || legacy_sync_required {
+            if self.sync_wal_observed().is_err() {
+                if active {
+                    self.frontier_poisoned = true;
+                }
+                return Err(());
             }
-            return Err(());
         }
         if active {
             if self.faults.fire(FaultPoint::StorageFrontierSync).is_err()
@@ -2198,6 +2234,52 @@ fn tenant_documents_from_at(
     }
 }
 
+/// One bounded full-key page over the LSM's canonical document-key index.
+/// Each candidate performs a point-version lookup, so no complete tenant
+/// document vector is built for a page.
+fn tenant_documents_from_key_at(
+    storage: &LsmStorage,
+    tenant: &TenantId,
+    after: Option<(&CollectionName, &DocumentId)>,
+    limit: u32,
+    sequence: u64,
+) -> Vec<Document> {
+    let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+    let mut documents = Vec::new();
+    for (candidate_tenant, collection, identifier) in &storage.document_keys {
+        if candidate_tenant != tenant.as_str() {
+            continue;
+        }
+        if after.is_some_and(|(after_collection, after_identifier)| {
+            (collection.as_str(), identifier.as_str())
+                <= (after_collection.as_str(), after_identifier.as_str())
+        }) {
+            continue;
+        }
+        if documents.len() == limit {
+            break;
+        }
+        let Ok(collection) = CollectionName::try_new(collection) else {
+            continue;
+        };
+        let Ok(identifier) = DocumentId::try_new(identifier) else {
+            continue;
+        };
+        let key = InternalKey::document(tenant, &collection, &identifier, 0);
+        let Some((deletion, value)) = storage.newest_document_entry(&key, sequence) else {
+            continue;
+        };
+        if deletion {
+            continue;
+        }
+        let mut reader = codec::Reader::new(&value);
+        if let Some(document) = codec::decode_document(&mut reader) {
+            documents.push(document);
+        }
+    }
+    documents
+}
+
 impl StoragePort for LsmStorage {
     fn commit(&mut self, intent: CommitIntent) -> CommitResult {
         self.commit_intent(&intent)
@@ -2276,7 +2358,7 @@ impl StoragePort for LsmStorage {
             .append_wal_batch(std::slice::from_ref(&entry))
             .map_err(|()| UsageStorageError::Unavailable)?;
         if self.witness_wal_append(&append, true, FaultPoint::ReadyFrontierSync).is_err() {
-            if self.wal.truncate(append.start).and_then(|()| self.wal.sync()).is_err() {
+            if self.wal.truncate(append.start).is_err() || self.sync_wal_observed().is_err() {
                 self.frontier_poisoned = true;
             }
             return Err(UsageStorageError::Unavailable);
@@ -2414,6 +2496,16 @@ impl StoragePort for LsmStorage {
         limit: u32,
     ) -> Vec<Document> {
         tenant_documents_from_at(self, tenant, after, limit, sequence.get())
+    }
+
+    fn documents_at_from_key(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        after: Option<(&CollectionName, &DocumentId)>,
+        limit: u32,
+    ) -> Vec<Document> {
+        tenant_documents_from_key_at(self, tenant, after, limit, sequence.get())
     }
 
     fn tenant_commits(
@@ -2641,7 +2733,7 @@ impl StoragePort for LsmStorage {
             self.frontier_poisoned = true;
             return Err(());
         }
-        self.wal.sync().map_err(|_| ())
+        self.sync_wal_observed().map_err(|_| ())
     }
 
     #[cfg(test)]

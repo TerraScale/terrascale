@@ -4,6 +4,9 @@
 //! contract visible and prevents a refactor from silently changing it.
 
 use std::num::NonZeroU64;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use terrabase::observability::{
@@ -11,6 +14,19 @@ use terrabase::observability::{
     Outcome, PROMETHEUS_PATH, Queue, Region, ServiceState, StorageOperation, StorageTier,
     TaskOutcome, redact_diagnostic,
 };
+use terrabase::types::CollectionName;
+use terrabase::usage::UsagePageRequest;
+use terrabase::{
+    CommitOutcome, Document, DocumentId, DocumentValue, Engine, EngineConfig, ExpectedVersion,
+    LocalDurability, OperationId, TenantId,
+};
+
+fn engine_location(tag: &str) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let index = COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir()
+        .join(format!("terrabase-observability-{tag}-{}-{index}", std::process::id()))
+}
 
 #[test]
 fn exposition_has_one_type_declaration_per_family() {
@@ -176,6 +192,68 @@ fn production_diagnostic_signals_are_typed_and_share_the_snapshot() {
     assert!(text.contains("terrabase_wal_fsync_total{outcome=\"error\"} 1"));
     assert!(text.contains("terrabase_commits_total{outcome=\"unknown\"} 1"));
     assert!(text.contains("terrabase_usage_export_frontier 42"));
+}
+
+#[test]
+fn real_engine_commit_wal_and_usage_export_share_one_registry() {
+    let location = engine_location("real-hooks");
+    let engine = Engine::open(EngineConfig::durable(&location).expect("durable configuration"))
+        .expect("engine opens");
+    let metrics = engine.metrics();
+    assert!(Arc::ptr_eq(&metrics, &engine.metrics()));
+
+    let tenant = TenantId::try_new("tenant-a").expect("valid tenant");
+    let scope = engine.scope_for(&tenant);
+    let snapshot = engine.read_snapshot(&scope).expect("read snapshot");
+    let operation = OperationId::try_new("obs-commit-1").expect("valid operation identity");
+    let mut transaction = engine.begin(&scope, snapshot, operation).expect("transaction begins");
+    transaction
+        .put(
+            Document::new(
+                DocumentId::try_new("doc-1").expect("valid document identity"),
+                CollectionName::try_new("users").expect("valid collection"),
+                DocumentValue::String("observed".to_owned()),
+            ),
+            ExpectedVersion::New,
+        )
+        .expect("write stages");
+    assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+
+    let committed = metrics.snapshot();
+    assert!(committed.commits().iter().any(|(result, total, histogram)| {
+        *result == CommitResult::Committed && *total == 1 && histogram.count() == 1
+    }));
+    assert!(committed.wal_fsync().iter().any(|(outcome, total, histogram)| {
+        *outcome == TaskOutcome::Success && *total >= 1 && histogram.count() >= 1
+    }));
+
+    let page = engine
+        .usage_page(
+            &scope,
+            UsagePageRequest::try_new(None, 16, None).expect("valid usage page request"),
+        )
+        .expect("usage page exports");
+    assert_eq!(metrics.snapshot().usage_export_frontier(), Some(page.snapshot_sequence().get()));
+
+    let other_location = engine_location("foreign-scope");
+    let other =
+        Engine::open(EngineConfig::durable(&other_location).expect("other durable configuration"))
+            .expect("other engine opens");
+    let foreign_scope = other.scope_for(&tenant);
+    assert!(
+        engine
+            .usage_page(
+                &foreign_scope,
+                UsagePageRequest::try_new(None, 16, None).expect("valid usage page request"),
+            )
+            .is_err()
+    );
+    assert_eq!(metrics.snapshot().usage_export_failures(), 1);
+
+    drop(other);
+    drop(engine);
+    let _ = std::fs::remove_dir_all(other_location);
+    let _ = std::fs::remove_dir_all(location);
 }
 
 #[test]

@@ -118,6 +118,7 @@ fn regions_card(state: &StudioState) -> String {
 <input type=\"hidden\" name=\"active\" value=\"{active}\">\
 <input type=\"hidden\" name=\"reserved\" value=\"{reserved}\">\
 <input type=\"hidden\" name=\"code\" value=\"FRA\">\
+{retire_confirmation}\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\">Retire FRA</button>\
 </form>\n\
 </div>\n{receipt}\n\
@@ -133,6 +134,7 @@ fn regions_card(state: &StudioState) -> String {
         active = html::attribute(&codes),
         reserved = html::attribute(&reserved),
         receipt = html::receipt_region_with("region-receipt"),
+        retire_confirmation = html::confirmation_fields("FRA", "retire region"),
         ceiling = terrabase::REGION_CEILING,
     );
     html::card("Region catalog", &body)
@@ -162,10 +164,12 @@ fn topology_card(state: &StudioState) -> String {
     let mut rows = String::new();
     for (index, region) in spec.regions.iter().enumerate() {
         let remove = format!(
-            "<form data-on:submit=\"if (!confirm('Remove this region from the Studio topology?')) return; @post('/replication/topology/remove-region', {{contentType: 'form', retry: 'never'}})\">\
+            "<form data-on:submit=\"@post('/replication/topology/remove-region', {{contentType: 'form', retry: 'never'}})\">\
 <input type=\"hidden\" name=\"index\" value=\"{index}\">\
+{confirmation}\
 <button type=\"submit\" class=\"text-sm text-muted-foreground hover:text-foreground underline\">remove</button>\
-</form>"
+</form>",
+            confirmation = html::confirmation_fields(&region.name, "remove region"),
         );
         rows.push_str("<tr class=\"border-b transition-colors hover:bg-muted/50\">");
         rows.push_str(&html::cell(&region.name));
@@ -191,6 +195,7 @@ fn topology_card(state: &StudioState) -> String {
         "<div id=\"{TOPOLOGY_ID}\">{table}</div>\n{verdict}\n\
 <form class=\"mt-4 grid gap-4 sm:grid-cols-3 items-end\" data-on:submit=\"@post('/replication/topology/add-region', {{contentType: 'form', retry: 'never'}})\">\n\
 {region}{first}{second}\n\
+{confirmation}\n\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\">Add region</button>\n\
 </form>",
         TOPOLOGY_ID = TOPOLOGY_ID,
@@ -199,6 +204,7 @@ fn topology_card(state: &StudioState) -> String {
         region = html::text_input("region", "Region id", "", "ams"),
         first = html::text_input("first", "First member", "", "ams-a"),
         second = html::text_input("second", "Second member", "", "ams-b"),
+        confirmation = html::confirmation_fields("<region id entered above>", "add region"),
         primary = ButtonStyle::Primary.classes(),
     );
     html::card("Topology view", &body)

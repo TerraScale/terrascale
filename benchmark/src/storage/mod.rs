@@ -215,6 +215,18 @@ pub(crate) trait StoragePort: Send {
         limit: u32,
     ) -> Vec<Document>;
 
+    /// Returns one bounded window of a tenant's documents in canonical full
+    /// key order, resuming strictly after `(collection, identifier)`.
+    /// Unlike the identifier-only compatibility seam above, this cursor is
+    /// lossless when an identifier is reused across collections.
+    fn documents_at_from_key(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        after: Option<(&CollectionName, &DocumentId)>,
+        limit: u32,
+    ) -> Vec<Document>;
+
     /// Returns one tenant's published commits after `after`, in global
     /// storage-sequence order, up to `limit` entries (W4-CA-4).
     fn tenant_commits(

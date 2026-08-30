@@ -13,8 +13,8 @@ import (
 )
 
 // Transport owns one multiplexed gRPC connection. Create one Client per
-// principal and tenant with Bind. Those logical clients share reconnects and
-// HTTP/2 connection capacity without sharing mutable identity.
+// immutable BindingScope with Bind. Those logical clients share reconnects
+// and HTTP/2 connection capacity without sharing mutable scope.
 type Transport struct {
 	conn         grpc.ClientConnInterface
 	state        *connectionState
@@ -82,13 +82,13 @@ func (t *Transport) Client() *Client {
 	return client
 }
 
-// Bind returns a new immutable per-identity client on this shared transport.
-func (t *Transport) Bind(ctx context.Context, principal, tenant string) (*Client, Binding, error) {
+// Bind returns a new immutable scoped client on this shared transport.
+func (t *Transport) Bind(ctx context.Context, scope BindingScope) (*Client, Binding, error) {
 	client := t.Client()
 	if err := client.available(); err != nil {
 		return nil, Binding{}, err
 	}
-	binding, err := client.Bind(ctx, principal, tenant)
+	binding, err := client.Bind(ctx, scope)
 	if err != nil {
 		_ = client.Close()
 		return nil, Binding{}, err

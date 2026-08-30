@@ -269,10 +269,7 @@ fn delete_card(state: &StudioState, selection: &Selection) -> String {
         collection = html::select("collection", "Collection", &collection_options),
         id = html::text_input("id", "Document id", "", "the document identifier"),
         confirmation = html::confirmation_fields(
-            &format!(
-                "{}/{}/<document id entered above>",
-                selection.tenant, selection.collection
-            ),
+            &format!("{}/{}/<document id entered above>", selection.tenant, selection.collection),
             "delete document",
         ),
         destructive = ButtonStyle::Destructive.classes(),
