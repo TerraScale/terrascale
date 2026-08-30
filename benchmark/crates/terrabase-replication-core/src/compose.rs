@@ -882,22 +882,42 @@ pub fn coordinate_composed_write(
             return Err(ComposedCoordinationError::InsufficientRegions { selected, minimum: 2 });
         }
     }
-    let mut contributors: Vec<ComposedAck> = Vec::new();
+    // Direct fanout is concurrent across every eligible Member. A serial loop
+    // adds every Region's durability wait to the acknowledgement path and is
+    // especially damaging at the twenty-Region ceiling. Scoped workers keep
+    // each exclusive Member borrow bounded by this call; the sorted receipt
+    // below preserves the same deterministic external order.
+    let accepted = std::thread::scope(|scope| {
+        let mut workers = Vec::new();
+        for member in members {
+            // A seat in the set is eligibility: unseated Members are not
+            // fanned out to.
+            let Some(region) = set.region_of(member.member_id()) else {
+                continue;
+            };
+            let member_id = member.member_id().clone();
+            workers.push((member_id, region, scope.spawn(move || accept_on(member, write))));
+        }
+
+        let mut accepted = Vec::with_capacity(workers.len());
+        for (member, region, worker) in workers {
+            let receipt = worker
+                .join()
+                .map_err(|_| ComposedCoordinationError::ApplyFailed { member: member.clone() })?
+                .map_err(|_| ComposedCoordinationError::ApplyFailed { member: member.clone() })?;
+            accepted.push((member, region, receipt));
+        }
+        Ok::<_, ComposedCoordinationError>(accepted)
+    })?;
+
+    let mut contributors: Vec<ComposedAck> = Vec::with_capacity(accepted.len());
     let mut local: Option<CommitReceipt> = None;
-    for member in members {
-        // A seat in the set is eligibility: unseated Members are not
-        // fanned out to.
-        let Some(region) = set.region_of(member.member_id()) else {
-            continue;
-        };
-        let receipt = accept_on(member, write).map_err(|_| {
-            ComposedCoordinationError::ApplyFailed { member: member.member_id().clone() }
-        })?;
-        if member.member_id() == accepting {
+    for (member, region, receipt) in accepted {
+        if member == *accepting {
             local = Some(receipt.clone());
         }
         contributors.push(ComposedAck {
-            member: member.member_id().clone(),
+            member,
             region,
             epoch: set.epoch(),
             sequence: receipt.sequence().get(),

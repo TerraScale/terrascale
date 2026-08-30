@@ -130,9 +130,8 @@
     if (!container.isConnected || container.getAttribute('data-monaco-ready') === 'mounted') return;
     var parent = container.parentElement;
     var field = parent.querySelector('[data-monaco-fallback]');
-    var submitted = parent.querySelector('[data-monaco-value]');
     var status = parent.querySelector('[data-monaco-status]');
-    if (!field || !submitted) {
+    if (!field) {
       container.setAttribute('data-monaco-ready', 'failed');
       return;
     }
@@ -159,13 +158,11 @@
 
     container.classList.remove('hidden');
     field.classList.add('hidden');
-    field.removeAttribute('name');
-    submitted.disabled = false;
-    submitted.value = model.getValue();
     container.setAttribute('data-monaco-ready', 'mounted');
 
     var contentSubscription = model.onDidChangeContent(function () {
-      submitted.value = model.getValue();
+      field.value = model.getValue();
+      field.dispatchEvent(new Event('input', { bubbles: true }));
     });
     var markerSubscription = monaco.editor.onDidChangeMarkers(function (resources) {
       if (!resources.some(function (resource) {

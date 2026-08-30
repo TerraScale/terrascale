@@ -11,6 +11,7 @@ use terrabase::observability::ServiceState;
 use terrabase_tbep::TbepHost;
 use terrabase_tbep::engine_host::EngineHost;
 use terrabase_tbep::grpc::TbepGrpcHandle;
+use terrabase_tbep::grpc::TbepGrpcConfig;
 use terrabase_tbep::grpc::TbepGrpcServer;
 use terrabase_tbep::proto::terrabase::v1 as pb;
 use terrabase_tbep::registry::ShutdownReason;
@@ -24,13 +25,14 @@ const MAX_PEM_BYTES: u64 = 1024 * 1024;
 /// Opens the configured engine and runs every production listener until a
 /// termination signal begins bounded graceful drain.
 pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
-    // TBEP currently validates the client CA but does not expose the peer
-    // certificate/SAN to its application identity check. Metadata principal
-    // values therefore cannot safely satisfy gateway_principals. Refuse to
-    // start until the authenticated certificate-to-principal seam exists.
-    if !config.gateway_principals.is_empty() {
-        return Err(Box::new(DaemonError::GatewayPrincipalBindingUnavailable));
-    }
+    let grpc_config = TbepGrpcConfig::try_new(
+        config.max_message_bytes,
+        config.max_inflight,
+        config.request_timeout,
+        config.tls_handshake_timeout,
+        config.shutdown_grace,
+        config.gateway_principals.clone(),
+    )?;
     let certificate = read_pem(&config.server_certificate, false)?;
     let private_key = read_pem(&config.server_private_key, true)?;
     let client_ca = read_pem(&config.client_ca, false)?;
@@ -43,9 +45,10 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
     );
     metrics.set_component_health(Component::Storage, HealthStatus::Healthy);
 
-    let network = Arc::new(TbepGrpcServer::with_metrics(
+    let network = Arc::new(TbepGrpcServer::with_config_and_metrics(
         Arc::clone(&host) as Arc<dyn TbepHost>,
         pb::BindingKind::NetworkMtls,
+        grpc_config.clone(),
         config.region,
         Arc::clone(&metrics),
     ));
@@ -54,9 +57,10 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
 
     let mut uds_handle = if let Some(uds) = &config.uds {
         validate_uds_parent(&uds.path)?;
-        let local = Arc::new(TbepGrpcServer::with_metrics(
+        let local = Arc::new(TbepGrpcServer::with_config_and_metrics(
             Arc::clone(&host) as Arc<dyn TbepHost>,
             pb::BindingKind::Local,
+            grpc_config,
             config.region,
             Arc::clone(&metrics),
         ));
@@ -86,19 +90,18 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
     metrics.transition_service(ServiceState::Draining)?;
     let _ = host.begin_shutdown(&SupervisionShutdownRequest { reason: ShutdownReason::Supervisor });
     let _ = http_stop.send(());
-    // Signal every listener together, then bound the total drain wait. The
-    // TBEP handle owns a bounded five-second listener drain; running both
-    // handles in one blocking task prevents sequential waits from exceeding
-    // shutdown_grace. If the lower handle outlives the deadline, its own
-    // bounded shutdown continues detached while the daemon reports failure.
-    let grpc_shutdown = tokio::task::spawn_blocking(move || {
-        network_handle.shutdown();
+    let grpc_shutdown = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+        network_handle.shutdown_and_wait()?;
         if let Some(handle) = &mut uds_handle {
-            handle.shutdown();
+            handle.shutdown_and_wait()?;
         }
+        Ok(())
     });
     let drain = async {
-        grpc_shutdown.await.map_err(|error| -> Box<dyn Error + Send + Sync> { Box::new(error) })?;
+        grpc_shutdown
+            .await
+            .map_err(|error| -> Box<dyn Error + Send + Sync> { Box::new(error) })?
+            .map_err(|error| -> Box<dyn Error + Send + Sync> { Box::new(error) })?;
         match http_task.await {
             Ok(result) => {
                 result.map_err(|error| -> Box<dyn Error + Send + Sync> { Box::new(error) })?
@@ -189,7 +192,6 @@ enum DaemonError {
     SecretFile,
     PrivateKeyPermissions,
     UnsafeUdsPath,
-    GatewayPrincipalBindingUnavailable,
     ShutdownTimeout,
 }
 
@@ -204,9 +206,6 @@ impl std::fmt::Display for DaemonError {
                 formatter.write_str("the TLS private key is accessible outside its owner")
             }
             Self::UnsafeUdsPath => formatter.write_str("the local UDS path is unsafe"),
-            Self::GatewayPrincipalBindingUnavailable => formatter.write_str(
-                "the serving API cannot bind an authenticated client certificate to gateway_principals",
-            ),
             Self::ShutdownTimeout => formatter.write_str("graceful shutdown exceeded its deadline"),
         }
     }
@@ -216,3 +215,34 @@ impl Error for DaemonError {}
 
 #[allow(dead_code)]
 fn _handle_type_is_send(_: &TbepGrpcHandle) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::net::SocketAddr;
+    use terrabase::observability::Region;
+
+    #[tokio::test]
+    async fn configured_gateway_identity_reaches_secret_validation() {
+        let config = ServerConfig {
+            engine_location: "/var/lib/terrabase".into(),
+            instance_id: 1,
+            region: Region::Gru,
+            tbep_listen: SocketAddr::from(([127, 0, 0, 1], 8421)),
+            server_certificate: "/missing/server.crt".into(),
+            server_private_key: "/missing/server.key".into(),
+            client_ca: "/missing/client-ca.crt".into(),
+            gateway_principals: BTreeMap::from([("gateway".to_owned(), [7_u8; 32])]),
+            uds: None,
+            observability_listen: SocketAddr::from(([127, 0, 0, 1], 9464)),
+            max_message_bytes: terrabase_tbep::registry::MAX_FRAME_BYTES,
+            max_inflight: terrabase_tbep::grpc::MAX_INFLIGHT_OPERATIONS,
+            request_timeout: std::time::Duration::from_secs(30),
+            tls_handshake_timeout: std::time::Duration::from_secs(5),
+            shutdown_grace: std::time::Duration::from_secs(30),
+        };
+        let error = run(config).await.expect_err("missing TLS material must fail closed");
+        assert!(error.to_string().contains("TLS material file is unsafe or invalid"));
+    }
+}

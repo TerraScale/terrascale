@@ -1,14 +1,17 @@
-//! A small, non-production encryption-at-rest foundation.
+//! Bounded encryption-at-rest primitives and key-provider seams.
 //!
-//! The module deliberately owns only the cryptographic format primitives. It
-//! does not persist keys, select Vault configuration, or claim production or
-//! OCI/FIPS qualification. Production mode fails closed until the approved
-//! FIPS provider is wired into this crate.
+//! AWS-LC FIPS supplies AES-256-GCM, HKDF-SHA-256, SHA-256, and randomness.
+//! The local-file provider persists development keys. OCI Vault wrapping and
+//! storage-format integration remain separate production responsibilities.
 
 use std::fmt;
 
 use aws_lc_rs::{aead, digest, hkdf, rand};
 use zeroize::Zeroize;
+
+mod local_file;
+
+pub use local_file::LocalFileKeyProvider;
 
 const AES_TAG_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
@@ -37,9 +40,9 @@ pub enum Compression {
 /// Selects the cryptographic provider mode.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProviderMode {
-    /// Local development mode backed by the non-FIPS AWS-LC build.
-    LocalNonFips,
-    /// Production mode, which requires a separately selected FIPS provider.
+    /// Local development with a key persisted beside the engine location.
+    LocalFile,
+    /// Production with an OCI Vault-authorized database key.
     ProductionFips,
 }
 
@@ -48,8 +51,8 @@ impl ProviderMode {
     #[must_use]
     pub const fn identity(self) -> &'static str {
         match self {
-            Self::LocalNonFips => "aws-lc-rs:local-non-fips",
-            Self::ProductionFips => "aws-lc-rs:production-fips",
+            Self::LocalFile => "aws-lc-fips:local-file",
+            Self::ProductionFips => "aws-lc-fips:oci-vault",
         }
     }
 
@@ -65,6 +68,10 @@ impl ProviderMode {
 pub enum EncryptionError {
     /// The requested production provider is not compiled and selected.
     ProductionProviderUnavailable,
+    /// The local key file could not be created, read, or synchronized.
+    LocalKeyUnavailable,
+    /// The local key path, type, length, permissions, or identity is unsafe.
+    UnsafeLocalKeyFile,
     /// An identity or context field is empty, too long, or otherwise invalid.
     InvalidContext,
     /// The plaintext or envelope exceeds a configured bound.
@@ -87,6 +94,8 @@ impl fmt::Display for EncryptionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let message = match self {
             Self::ProductionProviderUnavailable => "production FIPS provider unavailable",
+            Self::LocalKeyUnavailable => "local encryption key unavailable",
+            Self::UnsafeLocalKeyFile => "unsafe local encryption key file",
             Self::InvalidContext => "invalid encryption context",
             Self::SizeLimit => "encryption input exceeds size limit",
             Self::OrdinalExhausted => "96-bit encryption ordinal exhausted",
@@ -272,7 +281,7 @@ impl ArtifactCipher {
         next_ordinal: u128,
     ) -> Result<Self, EncryptionError> {
         context.validate()?;
-        if mode.is_production() {
+        if mode.is_production() && aws_lc_rs::try_fips_mode().is_err() {
             return Err(EncryptionError::ProductionProviderUnavailable);
         }
         if next_ordinal > MAX_ORDINAL {

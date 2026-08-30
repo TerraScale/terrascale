@@ -1,14 +1,12 @@
-//! The Datastar server-sent-event wire format, written by hand.
+//! The Datastar server-sent-event wire format.
 //!
-//! The studio implements the Datastar protocol semantics directly rather than
-//! vendoring a runtime: the browser side is `static/studio.js` and the server
-//! side is this module. An action handler answers with `text/event-stream` and
-//! zero or more events, each of which the runtime applies to the DOM.
+//! The browser runs the vendored official Datastar module. This server-side
+//! module emits its documented SSE event format without adding a second browser
+//! runtime. An action handler answers with `text/event-stream` and zero or more
+//! events, each of which Datastar applies to the DOM.
 //!
 //! Event names follow the current Datastar wire protocol
-//! (`datastar-patch-elements` and `datastar-patch-signals`). The older
-//! `datastar-merge-*` names are accepted by the browser runtime for fixtures,
-//! but are not emitted by the Studio.
+//! (`datastar-patch-elements` and `datastar-patch-signals`).
 //!
 //! Every frame ends with the two newlines the SSE grammar requires to
 //! terminate an event.
@@ -45,23 +43,21 @@ impl MergeMode {
 /// The runtime joins them back with newlines, which is what the Datastar SDKs
 /// do as well.
 fn data_lines(key: &str, payload: &str) -> String {
+    let normalized = payload.replace("\r\n", "\n").replace('\r', "\n");
     let mut out = String::new();
-    if payload.is_empty() {
+    let mut emitted = false;
+    for line in normalized.split_terminator('\n') {
+        emitted = true;
         out.push_str("data: ");
         out.push_str(key);
+        out.push(' ');
+        out.push_str(line);
         out.push('\n');
-        return out;
     }
-    for line in payload.split('\n') {
+    if !emitted {
         out.push_str("data: ");
         out.push_str(key);
-        if line.is_empty() {
-            out.push('\n');
-        } else {
-            out.push(' ');
-            out.push_str(line.trim_end_matches('\r'));
-            out.push('\n');
-        }
+        out.push_str(" \n");
     }
     out
 }
@@ -217,6 +213,21 @@ mod tests {
         let frame = merge_fragments("<p>a</p>\n", None, MergeMode::Outer);
         assert!(frame.contains("data: elements <p>a</p>\n"));
         assert!(!frame.contains("data: elements \n"));
+    }
+
+    #[test]
+    fn blank_lines_and_all_carriage_returns_round_trip_for_official_datastar() {
+        let frame =
+            merge_fragments("<pre>first\n\nsecond\rthird\r\n</pre>", None, MergeMode::Outer);
+        assert_eq!(
+            frame,
+            "event: datastar-patch-elements\n\
+data: elements <pre>first\n\
+data: elements \n\
+data: elements second\n\
+data: elements third\n\
+data: elements </pre>\n\n"
+        );
     }
 
     #[tokio::test]

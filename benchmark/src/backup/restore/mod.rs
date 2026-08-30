@@ -99,6 +99,7 @@ mod decode;
 mod tests;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use decode::decode_member;
@@ -106,8 +107,8 @@ use decode::decode_member;
 use crate::backup::manifest::point_directory;
 use crate::backup::records::Record;
 use crate::backup::{
-    BackupError, BackupKind, BackupManifest, RestorePlan, discover_points, validate_chain_frontier,
-    verify_latest_chain, verify_members,
+    BackupError, BackupKind, BackupManifest, RestorePlan, discover_points, select_latest_chain,
+    validate_chain_frontier,
 };
 use crate::storage::{
     CommitIntent, CommitResult, FileStorage, StagedWrite, StoragePort, write_set_digest,
@@ -165,10 +166,10 @@ fn resolve_chain(
     selection: &Selection,
 ) -> Result<Vec<BackupManifest>, BackupError> {
     let chain = match selection {
-        // `verify_latest_chain` selects the head with the same deterministic
-        // rule restore uses and re-digests every member of the whole chain
-        // on the way, so the latest path needs no second verification pass.
-        Selection::Latest => verify_latest_chain(destination)?,
+        // Select from sealed manifest metadata only. Member bytes are opened
+        // and authenticated once by replay, avoiding a verify-then-reopen
+        // pathname race.
+        Selection::Latest => select_latest_chain(destination)?,
         Selection::Point { identity } => {
             let head = crate::backup::load_recovery_point(destination, identity)?;
             // A point directory's name is its identity: a manifest that
@@ -178,9 +179,6 @@ fn resolve_chain(
                 return Err(BackupError::ManifestInvalid);
             }
             let chain = chain_of_head(destination, &head)?;
-            for link in &chain {
-                verify_members(destination, link.identity(), link.members())?;
-            }
             chain
         }
     };
@@ -217,6 +215,27 @@ fn chain_of_head(
     }
     chain.reverse();
     Ok(chain)
+}
+
+/// Opens one manifest member for replay after checking the pathname without
+/// following a symlink. The returned handle is the only handle used for both
+/// decoding and digesting, so replay never verifies one pathname and then
+/// reopens it later.
+fn open_member(path: &Path, expected_len: u64) -> Result<File, BackupError> {
+    let path_metadata =
+        std::fs::symlink_metadata(path).map_err(|_| BackupError::ChainIncomplete)?;
+    if !path_metadata.file_type().is_file() {
+        return Err(BackupError::ChainIncomplete);
+    }
+    let file = File::open(path).map_err(|_| BackupError::ChainIncomplete)?;
+    let file_metadata = file.metadata().map_err(|_| BackupError::ChainIncomplete)?;
+    if !file_metadata.file_type().is_file() {
+        return Err(BackupError::ChainIncomplete);
+    }
+    if file_metadata.len() != expected_len {
+        return Err(BackupError::ChecksumMismatch);
+    }
+    Ok(file)
 }
 
 // ---------------------------------------------------------------------------
@@ -914,15 +933,23 @@ impl Replay {
                 // Manifest validation admits only canonical member names,
                 // so the joined path stays inside the point's directory.
                 let path = destination.join(point_directory(link.identity())).join(member.name());
-                decode_member(&path, member.length(), &mut |record, frame_bytes| {
-                    let tenant = match record {
-                        Record::Document { tenant, .. } | Record::Delete { tenant, .. } => tenant,
-                    };
-                    if !link.tenants().iter().any(|bound| bound.tenant() == tenant) {
-                        return Err(BackupError::ChecksumMismatch);
-                    }
-                    self.apply(storage, record, frame_bytes, &mut counts)
-                })?;
+                let file = open_member(&path, member.length())?;
+                decode_member(
+                    file,
+                    member.length(),
+                    member.digest(),
+                    &mut |record, frame_bytes| {
+                        let tenant = match record {
+                            Record::Document { tenant, .. } | Record::Delete { tenant, .. } => {
+                                tenant
+                            }
+                        };
+                        if !link.tenants().iter().any(|bound| bound.tenant() == tenant) {
+                            return Err(BackupError::ChecksumMismatch);
+                        }
+                        self.apply(storage, record, frame_bytes, &mut counts)
+                    },
+                )?;
             }
             // The decoded frames must reproduce the manifest's bound facts
             // exactly; a divergence is a content failure, never a success.

@@ -52,6 +52,26 @@ jobs:
           github-token: ${{ secrets.TERRABASE_RELEASE_ARTIFACT_TOKEN }}
           repository: ${{ forgejo.repository }}
           run-id: ${{ inputs.capability_run_id }}
+      - name: Bind downloaded bytes and capability evidence to this commit
+        env:
+          EXPECTED_REVISION: ${{ forgejo.sha }}
+        run: |
+          set -euo pipefail
+          expected_tree=$(git rev-parse "${EXPECTED_REVISION}^{tree}")
+          for package_dir in artifacts/unsigned/terrabase-server-amd64 artifacts/unsigned/terrabase-studio-amd64; do
+            manifests=("$package_dir"/*.release.json)
+            test "${#manifests[@]}" -eq 1
+            test "$(jq -er '.source.revision' "${manifests[0]}")" = "$EXPECTED_REVISION"
+            test "$(jq -er '.source.tree' "${manifests[0]}")" = "$expected_tree"
+            test "$(jq -er '.source.dirty' "${manifests[0]}")" = false
+          done
+          statement=artifacts/capability/PRODUCTION-CAPABILITY.json
+          test "$(jq -er '.subject.revision' "$statement")" = "$EXPECTED_REVISION"
+          test "$(jq -er '.subject.tree' "$statement")" = "$expected_tree"
+          for evidence in cluster-composition.encryption-at-rest; do
+            test "$(jq -er '.source.revision' "artifacts/capability/$evidence.evidence.json")" = "$EXPECTED_REVISION"
+            test "$(jq -er '.source.tree' "artifacts/capability/$evidence.evidence.json")" = "$expected_tree"
+          done
       - name: Admit, sign, and verify the exact AMD64 package bytes
         env:
           TERRABASE_RELEASE_SIGNING_KEY_PEM: ${{ secrets.TERRABASE_RELEASE_SIGNING_KEY_PEM }}
@@ -99,6 +119,26 @@ jobs:
           github-token: ${{ secrets.TERRABASE_RELEASE_ARTIFACT_TOKEN }}
           repository: ${{ forgejo.repository }}
           run-id: ${{ inputs.capability_run_id }}
+      - name: Bind downloaded bytes and capability evidence to this commit
+        env:
+          EXPECTED_REVISION: ${{ forgejo.sha }}
+        run: |
+          set -euo pipefail
+          expected_tree=$(git rev-parse "${EXPECTED_REVISION}^{tree}")
+          for package_dir in artifacts/unsigned/terrabase-server-arm64 artifacts/unsigned/terrabase-studio-arm64; do
+            manifests=("$package_dir"/*.release.json)
+            test "${#manifests[@]}" -eq 1
+            test "$(jq -er '.source.revision' "${manifests[0]}")" = "$EXPECTED_REVISION"
+            test "$(jq -er '.source.tree' "${manifests[0]}")" = "$expected_tree"
+            test "$(jq -er '.source.dirty' "${manifests[0]}")" = false
+          done
+          statement=artifacts/capability/PRODUCTION-CAPABILITY.json
+          test "$(jq -er '.subject.revision' "$statement")" = "$EXPECTED_REVISION"
+          test "$(jq -er '.subject.tree' "$statement")" = "$expected_tree"
+          for evidence in cluster-composition.encryption-at-rest; do
+            test "$(jq -er '.source.revision' "artifacts/capability/$evidence.evidence.json")" = "$EXPECTED_REVISION"
+            test "$(jq -er '.source.tree' "artifacts/capability/$evidence.evidence.json")" = "$expected_tree"
+          done
       - name: Admit, sign, and verify the exact ARM64 package bytes
         env:
           TERRABASE_RELEASE_SIGNING_KEY_PEM: ${{ secrets.TERRABASE_RELEASE_SIGNING_KEY_PEM }}

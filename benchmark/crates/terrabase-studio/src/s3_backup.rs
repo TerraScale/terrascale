@@ -410,24 +410,55 @@ pub async fn backup_to_s3(
     tenants: Vec<terrabase::TenantId>,
 ) -> Result<BackupUploadReceipt, String> {
     let points = repository.list_recovery_points().await?;
-    let scratch = ScratchDirectory::create(scratch_root, "upload")?;
-    stage_manifests(scratch.path(), &points).await?;
+    backup_to_s3_with_points(repository, engine, scratch_root, settings, mode, tenants, &points)
+        .await
+}
 
-    let plan = select_backup_plan(settings, mode, &points, tenants);
+async fn backup_to_s3_with_points(
+    repository: &S3BackupRepository,
+    engine: Arc<terrabase::Engine>,
+    scratch_root: &Path,
+    settings: &S3BackupSettings,
+    mode: BackupRunMode,
+    tenants: Vec<terrabase::TenantId>,
+    points: &[RemoteRecoveryPoint],
+) -> Result<BackupUploadReceipt, String> {
+    let scratch = ScratchDirectory::create(scratch_root, "upload")?;
+    let fallback_tenants = tenants.clone();
+    let (plan, anchor) = select_backup_plan(settings, mode, points, tenants);
+    if let Some(anchor) = anchor {
+        stage_manifests(scratch.path(), std::slice::from_ref(anchor)).await?;
+    }
     let destination = scratch.path().to_path_buf();
-    let run_destination = destination.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        terrabase::backup::run_backup(engine.as_ref(), plan, &run_destination)
-    })
-    .await
-    .map_err(|error| format!("the backup worker stopped unexpectedly: {error}"))?
-    .map_err(|error| format!("the engine refused the backup: {error:?}"))?;
+    let mut result = run_engine_backup(Arc::clone(&engine), plan, destination.clone()).await?;
+    if let Some(anchor) = anchor
+        && incremental_expands_root_scope(points, anchor, result.manifest())?
+    {
+        let mut full = terrabase::BackupPlan::full();
+        if !fallback_tenants.is_empty() {
+            full = full.with_tenants(fallback_tenants);
+        }
+        result = run_engine_backup(engine, full, destination.clone()).await?;
+    }
     let uploaded_objects = repository.upload_point(&destination, &result).await?;
     Ok(BackupUploadReceipt {
         result,
         uploaded_objects,
         destination: repository.destination.clone(),
     })
+}
+
+async fn run_engine_backup(
+    engine: Arc<terrabase::Engine>,
+    plan: terrabase::BackupPlan,
+    destination: PathBuf,
+) -> Result<BackupResult, String> {
+    tokio::task::spawn_blocking(move || {
+        terrabase::backup::run_backup(engine.as_ref(), plan, &destination)
+    })
+    .await
+    .map_err(|error| format!("the backup worker stopped unexpectedly: {error}"))?
+    .map_err(|error| format!("the engine refused the backup: {error:?}"))
 }
 
 /// Downloads and verifies one selected S3 chain, then restores it into a new
@@ -478,12 +509,7 @@ pub fn scheduled_run_due(
     points: &[RemoteRecoveryPoint],
     now: SystemTime,
 ) -> bool {
-    if !settings.enabled || points.is_empty() {
-        return settings.enabled && points.is_empty();
-    }
-    let newest = points.iter().map(RemoteRecoveryPoint::modified_millis).max().unwrap_or(0);
-    let now_millis = unix_millis(now);
-    now_millis.saturating_sub(newest) >= duration_millis(settings.incremental_interval())
+    settings.enabled && scheduled_run_delay(settings, points, now).is_zero()
 }
 
 /// Runs Studio's background S3 schedule until the process stops.
@@ -491,17 +517,28 @@ pub async fn run_scheduler(state: Arc<crate::state::StudioState>) {
     let mut interval = tokio::time::interval(Duration::from_secs(30));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut last_failure = None;
+    let mut observed_settings = None;
+    let mut next_repository_check = tokio::time::Instant::now();
     loop {
         interval.tick().await;
         let settings = state.backup_settings();
         if !settings.enabled {
             last_failure = None;
+            observed_settings = None;
+            continue;
+        }
+        if observed_settings.as_ref() != Some(&settings) {
+            observed_settings = Some(settings.clone());
+            next_repository_check = tokio::time::Instant::now();
+        }
+        if tokio::time::Instant::now() < next_repository_check {
             continue;
         }
         let repository = match S3BackupRepository::from_settings(&settings) {
             Ok(repository) => repository,
             Err(failure) => {
                 record_scheduler_failure(&state, &mut last_failure, failure);
+                next_repository_check = tokio::time::Instant::now() + Duration::from_secs(30);
                 continue;
             }
         };
@@ -509,27 +546,34 @@ pub async fn run_scheduler(state: Arc<crate::state::StudioState>) {
             Ok(points) => points,
             Err(failure) => {
                 record_scheduler_failure(&state, &mut last_failure, failure);
+                next_repository_check = tokio::time::Instant::now() + Duration::from_secs(30);
                 continue;
             }
         };
-        if !scheduled_run_due(&settings, &points, SystemTime::now()) {
+        let now = SystemTime::now();
+        if !scheduled_run_due(&settings, &points, now) {
+            let delay = scheduled_run_delay(&settings, &points, now);
+            next_repository_check = tokio::time::Instant::now() + delay;
             continue;
         }
         let Ok(_job) = state.backup_job.try_lock() else {
             continue;
         };
-        match backup_to_s3(
+        match backup_to_s3_with_points(
             &repository,
             Arc::clone(&state.engine),
             &state.config.backup_scratch_dir(),
             &settings,
             BackupRunMode::Automatic,
             Vec::new(),
+            &points,
         )
         .await
         {
             Ok(upload) => {
                 last_failure = None;
+                next_repository_check =
+                    tokio::time::Instant::now() + settings.incremental_interval();
                 state.record_backup_run(true);
                 state.record(
                     "backup/scheduled",
@@ -542,7 +586,10 @@ pub async fn run_scheduler(state: Arc<crate::state::StudioState>) {
                     true,
                 );
             }
-            Err(failure) => record_scheduler_failure(&state, &mut last_failure, failure),
+            Err(failure) => {
+                record_scheduler_failure(&state, &mut last_failure, failure);
+                next_repository_check = tokio::time::Instant::now() + Duration::from_secs(30);
+            }
         }
     }
 }
@@ -560,12 +607,12 @@ fn record_scheduler_failure(
     *last_failure = Some(failure);
 }
 
-fn select_backup_plan(
+fn select_backup_plan<'points>(
     settings: &S3BackupSettings,
     mode: BackupRunMode,
-    points: &[RemoteRecoveryPoint],
+    points: &'points [RemoteRecoveryPoint],
     tenants: Vec<terrabase::TenantId>,
-) -> terrabase::BackupPlan {
+) -> (terrabase::BackupPlan, Option<&'points RemoteRecoveryPoint>) {
     let newest =
         points.iter().max_by(|left, right| manifest_order(&left.manifest, &right.manifest));
     let newest_full = points
@@ -577,16 +624,32 @@ fn select_backup_plan(
         unix_millis(SystemTime::now()).saturating_sub(last)
             >= duration_millis(settings.full_interval())
     });
-    let mut plan = match (mode, newest, full_is_due) {
-        (BackupRunMode::Full, _, _) | (_, None, _) | (_, _, true) => terrabase::BackupPlan::full(),
-        (BackupRunMode::Automatic, Some(point), false) => {
-            terrabase::BackupPlan::incremental_since(point.manifest.boundary_sequence())
+    let (mut plan, anchor) = match (mode, newest, full_is_due) {
+        (BackupRunMode::Full, _, _) | (_, None, _) | (_, _, true) => {
+            (terrabase::BackupPlan::full(), None)
         }
+        (BackupRunMode::Automatic, Some(point), false) => (
+            terrabase::BackupPlan::incremental_since(point.manifest.boundary_sequence()),
+            Some(point),
+        ),
     };
     if !tenants.is_empty() {
         plan = plan.with_tenants(tenants);
     }
-    plan
+    (plan, anchor)
+}
+
+fn scheduled_run_delay(
+    settings: &S3BackupSettings,
+    points: &[RemoteRecoveryPoint],
+    now: SystemTime,
+) -> Duration {
+    let Some(newest) = points.iter().map(RemoteRecoveryPoint::modified_millis).max() else {
+        return Duration::ZERO;
+    };
+    let elapsed_millis = unix_millis(now).saturating_sub(newest).max(0);
+    let elapsed = Duration::from_millis(u64::try_from(elapsed_millis).unwrap_or(u64::MAX));
+    settings.incremental_interval().saturating_sub(elapsed)
 }
 
 async fn stage_manifests(destination: &Path, points: &[RemoteRecoveryPoint]) -> Result<(), String> {
@@ -707,6 +770,8 @@ fn validate_chain(chain: &[RemoteRecoveryPoint]) -> Result<(), String> {
     if root.manifest.base_sequence().is_some() {
         return Err("the selected S3 recovery chain has no full root".to_owned());
     }
+    let root_tenants: BTreeSet<_> =
+        root.manifest.tenants().iter().map(|entry| entry.tenant()).collect();
     for pair in chain.windows(2) {
         let previous = &pair[0].manifest;
         let current = &pair[1].manifest;
@@ -714,11 +779,24 @@ fn validate_chain(chain: &[RemoteRecoveryPoint]) -> Result<(), String> {
             || current.partition_id() != root.manifest.partition_id()
             || current.base_sequence() != Some(previous.boundary_sequence())
             || current.boundary_sequence().get() < previous.boundary_sequence().get()
+            || current.tenants().iter().any(|entry| !root_tenants.contains(entry.tenant()))
         {
             return Err("the selected S3 recovery chain is reordered or crosses a scope".to_owned());
         }
     }
     Ok(())
+}
+
+fn incremental_expands_root_scope(
+    points: &[RemoteRecoveryPoint],
+    anchor: &RemoteRecoveryPoint,
+    candidate: &BackupManifest,
+) -> Result<bool, String> {
+    let chain = select_chain(points, Some(anchor.manifest.identity()))?;
+    let root = chain.first().ok_or_else(|| "the selected S3 recovery chain is empty".to_owned())?;
+    let root_tenants: BTreeSet<_> =
+        root.manifest.tenants().iter().map(|entry| entry.tenant()).collect();
+    Ok(candidate.tenants().iter().any(|entry| !root_tenants.contains(entry.tenant())))
 }
 
 fn manifest_order(left: &BackupManifest, right: &BackupManifest) -> std::cmp::Ordering {
@@ -903,6 +981,54 @@ mod tests {
                 .unwrap();
         assert_eq!(latest.selected_identity(), incremental.result.manifest().identity());
         assert!(latest.restored_documents() > 0);
+    }
+
+    #[tokio::test]
+    async fn a_new_tenant_forces_a_new_full_root() {
+        let root = test_root("tenant-expansion");
+        let state = sample_state(&root);
+        let repository = memory_repository(Arc::new(InMemory::new()));
+        let settings = test_settings();
+        backup_to_s3(
+            &repository,
+            Arc::clone(&state.engine),
+            &root.join("scratch"),
+            &settings,
+            BackupRunMode::Full,
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+
+        let tenant = crate::engine_ops::tenant("later-tenant").unwrap();
+        let collection = crate::engine_ops::collection("users").unwrap();
+        let document = crate::engine_ops::document_id("later-document").unwrap();
+        let outcome = crate::engine_ops::put_document(
+            state.engine.as_ref(),
+            state.next_operation().unwrap(),
+            &tenant,
+            &collection,
+            &document,
+            crate::json::from_json(serde_json::json!({"new": true})),
+            terrabase::ExpectedVersion::Any,
+        )
+        .unwrap();
+        assert!(matches!(outcome, terrabase::CommitOutcome::Committed(_)));
+
+        let next = backup_to_s3(
+            &repository,
+            Arc::clone(&state.engine),
+            &root.join("scratch"),
+            &settings,
+            BackupRunMode::Automatic,
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(next.result.manifest().kind(), BackupKind::Full);
+        restore_from_s3(&repository, &root.join("scratch"), root.join("restored"), None)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

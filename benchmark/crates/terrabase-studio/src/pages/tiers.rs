@@ -66,7 +66,7 @@ fn state_card(state: &StudioState) -> String {
 
 fn configure_card() -> String {
     let body = format!(
-        "<form class=\"grid gap-4\" data-on-submit=\"$$submit('/tiers/configure')\">\n\
+        "<form class=\"grid gap-4\" data-on:submit=\"@post('/tiers/configure', {{contentType: 'form', retry: 'never'}})\">\n\
 {policy_id}{version}{budget}{residence}{promotion}{pinned}\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary} w-fit\">Configure policy</button>\n\
 </form>\n\
@@ -85,10 +85,10 @@ fn configure_card() -> String {
 fn control_card() -> String {
     let body = format!(
         "<div class=\"flex flex-wrap gap-2\">\n\
-<button class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\" data-on-click=\"$$post('/tiers/pause')\">Pause</button>\n\
-<button class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\" data-on-click=\"$$post('/tiers/resume')\">Resume</button>\n\
-<button class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\" data-on-click=\"$$post('/tiers/dry-run')\">Explain (dry run)</button>\n\
-<button class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\" data-on-click=\"$$post('/tiers/run')\">Run one pass</button>\n\
+<button type=\"button\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\" data-on:click=\"@post('/tiers/pause', {{payload: {{}}, retry: 'never'}})\">Pause</button>\n\
+<button type=\"button\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\" data-on:click=\"@post('/tiers/resume', {{payload: {{}}, retry: 'never'}})\">Resume</button>\n\
+<button type=\"button\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\" data-on:click=\"@post('/tiers/dry-run', {{payload: {{}}, retry: 'never'}})\">Explain (dry run)</button>\n\
+<button type=\"button\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\" data-on:click=\"@post('/tiers/run', {{payload: {{}}, retry: 'never'}})\">Run one pass</button>\n\
 </div>\n\
 <p class=\"mt-3 text-xs text-muted-foreground\">Pause and resume return the new paused state, not whether a transition happened — both are idempotent. A dry run explains the next pass and still answers while paused; a run refuses while paused.</p>",
         primary = ButtonStyle::Primary.classes(),

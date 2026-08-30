@@ -57,7 +57,7 @@ fn create_card(state: &StudioState) -> String {
     let collection =
         state.collections_of(&tenant).first().cloned().unwrap_or_else(|| "users".to_owned());
     let body = format!(
-        "<form class=\"grid gap-4\" data-on-submit=\"$$submit('/indexes/create')\">\n\
+        "<form class=\"grid gap-4\" data-on:submit=\"@post('/indexes/create', {{contentType: 'form', retry: 'never'}})\">\n\
 <div class=\"grid gap-4 md:grid-cols-2\">{tenant}{name}{collection}{fields}</div>\n\
 <div class=\"grid gap-4 md:grid-cols-3\">{capabilities}{priority}{lock}</div>\n\
 <button type=\"submit\" class=\"inline-flex w-fit items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\">Create or update index</button>\n\
@@ -189,7 +189,7 @@ fn known_tenants(state: &StudioState) -> BTreeSet<String> {
 
 fn action_form(tenant: &str, name: &str) -> String {
     format!(
-        "<form class=\"flex min-w-64 items-end gap-2\" data-on-submit=\"$$submit('/indexes/action')\">\
+        "<form class=\"flex min-w-64 items-end gap-2\" data-on:submit=\"@post('/indexes/action', {{contentType: 'form', retry: 'never'}})\">\
 <input type=\"hidden\" name=\"tenant\" value=\"{tenant}\">\
 <input type=\"hidden\" name=\"name\" value=\"{name}\">\
 {action}\

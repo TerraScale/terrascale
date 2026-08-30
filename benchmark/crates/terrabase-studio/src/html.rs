@@ -57,7 +57,7 @@ pub const NAV: &[NavEntry] = &[
 /// Renders the full HTML document shell around one page body.
 ///
 /// `active` names the nav entry to highlight; `extra_head` lets a page add its
-/// own signals declaration before the runtime scans the tree.
+/// own signals declaration before Datastar scans the tree.
 pub fn page(title: &str, active: &str, extra_head: &str, body: &str) -> String {
     let mut nav = String::new();
     for entry in NAV {
@@ -79,7 +79,8 @@ pub fn page(title: &str, active: &str, extra_head: &str, body: &str) -> String {
 <title>{title} · TerraBase Studio</title>\n\
 <link rel=\"stylesheet\" href=\"/static/basecoat.css\">\n\
 {extra_head}\
-<script src=\"/static/studio.js\" defer></script>\n\
+<script type=\"module\" src=\"/static/datastar-1.0.3.js\"></script>\n\
+<script src=\"/static/studio-monaco.js\" defer></script>\n\
 </head>\n\
 <body class=\"min-h-screen bg-background text-foreground antialiased\">\n\
 <div data-signals=\"{{ }}\" class=\"flex min-h-screen\">\n\
@@ -91,7 +92,7 @@ pub fn page(title: &str, active: &str, extra_head: &str, body: &str) -> String {
 <nav class=\"flex flex-col gap-1 p-3\">{nav}</nav>\n\
 <div class=\"mt-auto p-4 text-xs text-muted-foreground border-t\">\n\
 <div>loopback · no authentication</div>\n\
-<div><span data-text=\"engine_sequence\"></span></div>\n\
+<div><span data-text=\"$engine_sequence\"></span></div>\n\
 </div>\n\
 </aside>\n\
 <main class=\"flex-1 min-w-0\">\n\
@@ -309,16 +310,13 @@ pub fn option(value: &str, label: &str, chosen: bool) -> String {
 
 /// Renders a progressively enhanced Monaco JSON editor.
 ///
-/// The textarea remains the submitted form field and the no-network fallback.
-/// After Monaco mounts, the runtime enables the hidden submitted field,
-/// removes the textarea's name, and mirrors every model change into the
-/// hidden value.
+/// The textarea remains both the submitted form field and the no-network
+/// fallback. Monaco mirrors every model change into that same field.
 pub fn json_editor(name: &str, label: &str, value: &str) -> String {
     format!(
         "<label class=\"grid gap-1.5 text-sm\">\n\
 <span class=\"font-medium\">{label}</span>\n\
 <div data-monaco-json class=\"hidden h-80 overflow-hidden rounded-lg border border-input bg-[#0b1020] shadow-sm\"></div>\n\
-<input data-monaco-value type=\"hidden\" name=\"{name}\" value=\"{value}\" disabled>\n\
 <textarea data-monaco-fallback class=\"flex min-h-80 w-full rounded-lg border border-input bg-[#0b1020] px-4 py-3 font-mono text-sm text-[#d8dee9] shadow-sm\" name=\"{name}\" rows=\"16\" spellcheck=\"false\">{value}</textarea>\n\
 <span data-monaco-status class=\"text-xs text-muted-foreground\">JSON syntax is checked in the browser.</span>\n\
 </label>\n",
@@ -421,7 +419,7 @@ mod tests {
     fn table_rows_are_never_nested() {
         let row =
             format!("<tr class=\"x\">{}{}</tr>", cell("a"), cell_raw(&badge(Tone::Good, "ok")));
-        let markup = table(&["one", "two"], &[row.clone()], "nothing");
+        let markup = table(&["one", "two"], std::slice::from_ref(&row), "nothing");
         assert_eq!(markup.matches("<tr class=\"x\"").count(), 1, "exactly one caller row");
         assert!(markup.contains(row.as_str()));
         assert!(!markup.contains("><tr"), "no row is nested inside another");

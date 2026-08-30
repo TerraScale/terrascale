@@ -60,7 +60,7 @@ fn list_card(state: &StudioState, selection: &Selection) -> String {
     let tenant_options = options_for(state, &selection.tenant);
     let collection_options = collection_options(state, &selection.tenant, &selection.collection);
     let body = format!(
-        "<form class=\"grid gap-4\" data-on-submit=\"$$submit('/documents/rows')\">\n\
+        "<form class=\"grid gap-4\" data-on:submit=\"@post('/documents/rows', {{contentType: 'form', retry: 'never'}})\">\n\
 <div class=\"grid gap-4 sm:grid-cols-2\">\n{tenant}{collection}</div>\n\
 <input type=\"hidden\" name=\"page\" value=\"0\">\n\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary} w-fit\">List documents</button>\n\
@@ -145,12 +145,19 @@ fn rows_table(selection: &Selection, page: &DocumentPage) -> String {
     )
 }
 
-fn pager_post(selection: &Selection, page: u64) -> String {
+fn pager_form(selection: &Selection, page: u64, label: &str) -> String {
     format!(
-        "$$post('/documents/rows', {{tenant: {tenant}, collection: {collection}, page: {page}}})",
-        tenant = html::js_string(&selection.tenant),
-        collection = html::js_string(&selection.collection),
+        "<form data-on:submit=\"@post('/documents/rows', {{contentType: 'form', retry: 'never'}})\">\
+<input type=\"hidden\" name=\"tenant\" value=\"{tenant}\">\
+<input type=\"hidden\" name=\"collection\" value=\"{collection}\">\
+<input type=\"hidden\" name=\"page\" value=\"{page}\">\
+<button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {classes}\">{label}</button>\
+</form>",
+        tenant = html::attribute(&selection.tenant),
+        collection = html::attribute(&selection.collection),
         page = page,
+        classes = ButtonStyle::Secondary.classes(),
+        label = html::esc(label),
     )
 }
 
@@ -163,11 +170,7 @@ fn render_pager(selection: &Selection, page: &DocumentPage) -> String {
             disabled = disabled
         )
     } else {
-        format!(
-            "<button class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {classes}\" data-on-click=\"{action}\">Previous</button>",
-            classes = ButtonStyle::Secondary.classes(),
-            action = html::attribute(&pager_post(selection, page.number() - 1))
-        )
+        pager_form(selection, page.number() - 1, "Previous")
     };
     let last_page = page.number() + 1 >= page.pages();
     let next = if last_page {
@@ -177,11 +180,7 @@ fn render_pager(selection: &Selection, page: &DocumentPage) -> String {
             disabled = disabled
         )
     } else {
-        format!(
-            "<button class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {classes}\" data-on-click=\"{action}\">Next</button>",
-            classes = ButtonStyle::Secondary.classes(),
-            action = html::attribute(&pager_post(selection, page.number() + 1))
-        )
+        pager_form(selection, page.number() + 1, "Next")
     };
     format!(
         "<div class=\"mt-4 flex items-center gap-2\">{previous}{next}</div>",
@@ -194,9 +193,9 @@ fn read_card(state: &StudioState, selection: &Selection) -> String {
     let tenant_options = options_for(state, &selection.tenant);
     let collection_options = collection_options(state, &selection.tenant, &selection.collection);
     let body = format!(
-        "<form class=\"grid gap-4\" data-on-submit=\"$$submit('/documents/read')\">\n{tenant}{collection}{id}\
+        "<form class=\"grid gap-4\" data-on:submit=\"@post('/documents/read', {{contentType: 'form', retry: 'never'}})\">\n{tenant}{collection}{id}\
 <div class=\"flex gap-2\"><button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\">Read document</button>\n\
-<button type=\"button\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\" data-on-click=\"$$post('/documents/clear-view')\">Clear</button></div>\n\
+<button type=\"button\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\" data-on:click=\"@post('/documents/clear-view', {{payload: {{}}, retry: 'never'}})\">Clear</button></div>\n\
 </form>\n<div id=\"{VIEW_ID}\" class=\"mt-4\"></div>",
         tenant = html::select("tenant", "Tenant", &tenant_options),
         collection = html::select("collection", "Collection", &collection_options),
@@ -218,7 +217,7 @@ fn editor_card(state: &StudioState, selection: &Selection) -> String {
     }))
     .unwrap_or_else(|_| "{\n}".to_owned());
     let body = format!(
-        "<form class=\"grid gap-4\" data-on-submit=\"$$submit('/documents/put')\">\n{tenant}{collection}{id}\
+        "<form class=\"grid gap-4\" data-on:submit=\"@post('/documents/put', {{contentType: 'form', retry: 'never'}})\">\n{tenant}{collection}{id}\
 {json}\
 <div class=\"grid gap-4 sm:grid-cols-2\">{expected}{version}</div>\n\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary} w-fit\">Create or replace</button>\n\
@@ -248,12 +247,11 @@ fn delete_card(state: &StudioState, selection: &Selection) -> String {
     let tenant_options = options_for(state, &selection.tenant);
     let collection_options = collection_options(state, &selection.tenant, &selection.collection);
     let sample = format!(
-        "<div class=\"mt-4 border-t pt-4\"><button class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {classes}\" data-on-click=\"{action}\">Load sample documents</button>\n<div id=\"sample-receipt\" class=\"mt-3\"></div></div>",
+        "<div class=\"mt-4 border-t pt-4\"><form data-on:submit=\"@post('/documents/sample', {{contentType: 'form', retry: 'never'}})\"><button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {classes}\">Load sample documents</button></form>\n<div id=\"sample-receipt\" class=\"mt-3\"></div></div>",
         classes = ButtonStyle::Secondary.classes(),
-        action = html::attribute("$$post('/documents/sample')"),
     );
     let body = format!(
-        "<form class=\"grid gap-4\" data-on-submit=\"if (!confirm('Delete this document? The engine stages a collection-scoped tombstone and commits it at Synced durability.')) return; $$submit('/documents/delete')\">\n\
+        "<form class=\"grid gap-4\" data-on:submit=\"if (!confirm('Delete this document? The engine stages a collection-scoped tombstone and commits it at Synced durability.')) return; @post('/documents/delete', {{contentType: 'form', retry: 'never'}})\">\n\
 <div class=\"grid gap-4 sm:grid-cols-3\">{tenant}{collection}{id}</div>\n\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {destructive} w-fit\">Delete document</button>\n\
 </form>\n{receipt}\n{sample}",

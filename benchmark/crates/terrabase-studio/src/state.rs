@@ -596,7 +596,7 @@ mod tests {
         assert!(!sidecar.collections.contains_key(&long));
 
         record_observation(&mut sidecar, "tenant-0", Some(&long));
-        assert!(sidecar.collections.get("tenant-0").is_none());
+        assert!(!sidecar.collections.contains_key("tenant-0"));
     }
 
     #[test]

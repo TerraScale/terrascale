@@ -178,7 +178,7 @@ fn record_card(state: &StudioState) -> String {
         tenant_names.iter().map(|name| html::option(name, name, true)).collect::<Vec<_>>().concat();
     let body = format!(
         "<p class=\"mb-4 text-sm text-muted-foreground\">Record one stored-byte-hour segment for the selected tenant, measured from the engine's own published facts: the studio counts the tenant's documents across its registered collections and uses the engine location's byte count as the measured quantity. The segment is built with the engine's own validators and inserted into the studio's ledger, so a malformed window or a zero delta reports the typed usage error.</p>\n\
-<form class=\"grid gap-4\" data-on-submit=\"$$submit('/usage/record')\">\n{tenant}{project}{partition}\
+<form class=\"grid gap-4\" data-on:submit=\"@post('/usage/record', {{contentType: 'form', retry: 'never'}})\">\n{tenant}{project}{partition}\
 <button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary} w-fit\">Record a stored-byte-hour segment</button>\n\
 </form>\n{receipt}",
         tenant = html::select("tenant", "Tenant", &options),

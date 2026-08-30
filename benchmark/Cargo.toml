@@ -36,7 +36,7 @@ name = "encryption"
 path = "tests/encryption/main.rs"
 
 [dependencies]
-aws-lc-rs = { version = "1.18.0", default-features = false, features = ["non-fips"] }
+aws-lc-rs = { version = "1.18.0", default-features = false, features = ["fips"] }
 blake3 = "1.8.2"
 zeroize = "1.9.0"
 # ADR 0027 'Libraries and evidence': Rust uses the `ulid` crate behind a

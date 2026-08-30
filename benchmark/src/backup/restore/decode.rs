@@ -20,10 +20,10 @@
 
 use std::fs::File;
 use std::io::{BufReader, Read};
-use std::path::Path;
 
 use crate::backup::BackupError;
 use crate::backup::records::Record;
+use crate::backup::sha256::{Sha256, to_hex};
 use crate::types::{
     CollectionName, Document, DocumentId, DocumentValue, LocalDurability, TenantId,
 };
@@ -77,17 +77,17 @@ const MAX_VALUE_DEPTH: usize = 64;
 ///
 /// # Errors
 ///
-/// Returns [`BackupError::ChainIncomplete`] when the member file cannot be
-/// opened (it was verified moments before, so absence is an incomplete
-/// point), [`BackupError::ChecksumMismatch`] when the bytes are not canonical
-/// archive records, and the callback's own typed failure unchanged.
+/// Returns [`BackupError::ChecksumMismatch`] when the bytes are not canonical
+/// archive records or do not match `expected_digest`, and the callback's own
+/// typed failure unchanged.
 pub(crate) fn decode_member(
-    path: &Path,
+    file: File,
     expected_len: u64,
+    expected_digest: &str,
     on_record: &mut dyn FnMut(&Record, u64) -> Result<(), BackupError>,
 ) -> Result<(), BackupError> {
-    let file = File::open(path).map_err(|_| BackupError::ChainIncomplete)?;
-    let mut reader = BufReader::with_capacity(READ_CHUNK_BYTES, file);
+    let digest_reader = DigestReader { file, hasher: Sha256::new(), remaining: expected_len };
+    let mut reader = BufReader::with_capacity(READ_CHUNK_BYTES, digest_reader);
     let mut cursor = FrameCursor { reader: &mut reader, remaining: expected_len };
     while cursor.remaining > 0 {
         let before = cursor.remaining;
@@ -95,19 +95,55 @@ pub(crate) fn decode_member(
         let frame_bytes = before - cursor.remaining;
         on_record(&record, frame_bytes)?;
     }
+    drop(cursor);
+    let digest = reader.into_inner().finish();
+    if digest != expected_digest {
+        return Err(BackupError::ChecksumMismatch);
+    }
     Ok(())
 }
 
+/// A bounded reader that hashes exactly the manifest-sized prefix consumed by
+/// the decoder. Limiting the underlying reads prevents `BufReader` from
+/// absorbing bytes beyond the member length into the digest.
+struct DigestReader {
+    file: File,
+    hasher: Sha256,
+    remaining: u64,
+}
+
+impl DigestReader {
+    fn finish(self) -> String {
+        to_hex(&self.hasher.finish())
+    }
+}
+
+impl Read for DigestReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if self.remaining == 0 || buffer.is_empty() {
+            return Ok(0);
+        }
+        let limit = usize::try_from(self.remaining).unwrap_or(usize::MAX);
+        let read_limit = buffer.len().min(limit);
+        let read = self.file.read(&mut buffer[..read_limit])?;
+        if read > 0 {
+            self.hasher.update(&buffer[..read]);
+            self.remaining -= read as u64;
+        }
+        Ok(read)
+    }
+}
+
 /// A bounded cursor over one member's digest-bound bytes.
-struct FrameCursor<'a> {
-    reader: &'a mut BufReader<File>,
+struct FrameCursor<'a, R: Read> {
+    reader: &'a mut BufReader<R>,
     remaining: u64,
 }
 
 /// The internal decode failure: the bytes are not canonical archive records.
 type FrameResult<T> = Result<T, BackupError>;
 
-impl FrameCursor<'_> {
+impl<R: Read> FrameCursor<'_, R> {
     /// Decodes one complete record frame.
     fn decode_record(&mut self) -> FrameResult<Record> {
         let tag = self.read_u8()?;
@@ -187,6 +223,9 @@ impl FrameCursor<'_> {
             }
             VALUE_ARRAY => {
                 let length = self.read_u64()?;
+                if length > self.remaining {
+                    return Err(BackupError::ChecksumMismatch);
+                }
                 let mut items = Vec::new();
                 for _ in 0..length {
                     items.push(self.read_value(depth + 1)?);
@@ -195,6 +234,9 @@ impl FrameCursor<'_> {
             }
             VALUE_OBJECT => {
                 let length = self.read_u64()?;
+                if length > self.remaining / 5 {
+                    return Err(BackupError::ChecksumMismatch);
+                }
                 let mut fields = std::collections::BTreeMap::new();
                 for _ in 0..length {
                     let key_bytes = self.read_length_prefixed(4)?;

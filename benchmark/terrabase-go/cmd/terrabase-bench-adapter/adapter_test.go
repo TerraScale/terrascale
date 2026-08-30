@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -17,7 +19,7 @@ func testConfig() Config {
 		Principal: "bench", Tenant: "benchmark-tenant", ServerIdentity: "server-1",
 		SourceIdentity: "source-1", TransportIdentity: "Go terrabase-go mTLS",
 		Workload: "read", OutputPath: "/tmp/result.json", Timeout: time.Minute,
-		Lane: LaneConfig{SeedDocuments: 8, Operations: 8, Samples: 2, Concurrency: 2, WarmupOperations: 3, NoisePercent: 5},
+		Lane: LaneConfig{SeedDocuments: 8, Operations: 8, Samples: 2, Concurrency: 2, WarmupOperations: 4, NoisePercent: 5},
 	}
 }
 
@@ -76,6 +78,20 @@ func TestSamplePercentilesAndResultJSON(t *testing.T) {
 	}
 }
 
+func TestWriteResultIsExclusive(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "result.json")
+	if err := WriteResultExclusive(path, map[string]string{"status": "complete"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteResultExclusive(path, map[string]string{"status": "failed"}); !os.IsExist(err) {
+		t.Fatalf("second write did not fail immutably: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), `"status": "complete"`) {
+		t.Fatalf("first result was not retained: %s (%v)", data, err)
+	}
+}
+
 type fakeSlot struct {
 	mu         sync.Mutex
 	failedAt   int
@@ -110,6 +126,22 @@ func TestRunSlotsDropsAllSamplesOnFailure(t *testing.T) {
 	}
 	if len(result.Samples) != 0 {
 		t.Fatalf("failed run returned partial samples: %+v", result.Samples)
+	}
+}
+
+func TestRunSlotsStopsAfterWarmupFailure(t *testing.T) {
+	config := testConfig()
+	config.Lane.WarmupOperations = 2
+	config.Lane.Operations = 4
+	config.Lane.Samples = 2
+	config.Lane.Concurrency = 2
+	slots := []slot{&fakeSlot{failedAt: 0}, &fakeSlot{failedAt: -1}}
+	result, err := runSlots(context.Background(), config, slots)
+	if err == nil || !strings.Contains(err.Error(), "synthetic operation failure") {
+		t.Fatalf("warm-up failure was not returned: result=%+v err=%v", result, err)
+	}
+	if len(result.Samples) != 0 {
+		t.Fatalf("failed warm-up returned samples: %+v", result.Samples)
 	}
 }
 

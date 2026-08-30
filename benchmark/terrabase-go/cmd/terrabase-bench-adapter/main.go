@@ -9,6 +9,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -103,7 +105,7 @@ func (c Config) Validate() error {
 		"server-identity": c.ServerIdentity, "source-identity": c.SourceIdentity,
 		"transport-identity": c.TransportIdentity, "workload": c.Workload, "output": c.OutputPath,
 	} {
-		if value == "" {
+		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("%s is required", name)
 		}
 		if len(value) > 4096 {
@@ -139,6 +141,9 @@ func (c Config) Validate() error {
 	if c.Lane.WarmupOperations < 0 || c.Lane.WarmupOperations > maxCount {
 		return fmt.Errorf("warmup must be in 0..%d", maxCount)
 	}
+	if c.Lane.WarmupOperations%c.Lane.Concurrency != 0 {
+		return fmt.Errorf("warmup must be divisible by concurrency")
+	}
 	if !finite(c.Lane.NoisePercent) || c.Lane.NoisePercent < 0 || c.Lane.NoisePercent > 100 {
 		return fmt.Errorf("noise-percent must be finite and in 0..100")
 	}
@@ -151,22 +156,29 @@ func (c Config) Validate() error {
 func ParseConfig(args []string) (Config, error) {
 	fs := flag.NewFlagSet("terrabase-bench-adapter", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	value := func(flagName, envName string) *string {
-		return fs.String(flagName, os.Getenv(envName), "")
+	value := func(flagName string, envNames ...string) *string {
+		return fs.String(flagName, envDefault(envNames...), "")
 	}
 	c := Config{Lane: defaultLaneConfig, Timeout: 30 * time.Second}
 	endpoint := value("endpoint", "TERRABASE_BENCH_ENDPOINT")
-	root := value("root-cert", "TERRABASE_BENCH_ROOT_CERT")
-	cert := value("client-cert", "TERRABASE_BENCH_CLIENT_CERT")
-	key := value("client-key", "TERRABASE_BENCH_CLIENT_KEY")
+	root := value("root-cert", "TERRABASE_BENCH_ROOT_CERT", "TERRABASE_BENCH_ROOT_CERT_PATH")
+	cert := value("client-cert", "TERRABASE_BENCH_CLIENT_CERT", "TERRABASE_BENCH_CLIENT_CERT_PATH")
+	key := value("client-key", "TERRABASE_BENCH_CLIENT_KEY", "TERRABASE_BENCH_CLIENT_KEY_PATH")
 	authority := value("authority", "TERRABASE_BENCH_AUTHORITY")
 	principal := value("principal", "TERRABASE_BENCH_PRINCIPAL")
 	tenant := value("tenant", "TERRABASE_BENCH_TENANT")
-	server := value("server-identity", "TERRABASE_BENCH_SERVER_IDENTITY")
-	source := value("source-identity", "TERRABASE_BENCH_SOURCE_IDENTITY")
-	transport := value("transport-identity", "TERRABASE_BENCH_TRANSPORT_IDENTITY")
+	server := value("server-identity", "TERRABASE_BENCH_SERVER_IDENTITY", "TERRABASE_BENCH_SERVER_ID")
+	source := value("source-identity", "TERRABASE_BENCH_SOURCE_IDENTITY", "TERRABASE_BENCH_SOURCE_ID")
+	transport := value("transport-identity", "TERRABASE_BENCH_TRANSPORT_IDENTITY", "TERRABASE_BENCH_TRANSPORT")
 	workload := value("workload", "TERRABASE_BENCH_WORKLOAD")
-	output := value("output", "TERRABASE_BENCH_OUTPUT")
+	output := value("output", "TERRABASE_BENCH_OUTPUT", "TERRABASE_BENCH_OUTPUT_PATH")
+	fs.StringVar(root, "root-cert-path", *root, "")
+	fs.StringVar(cert, "client-cert-path", *cert, "")
+	fs.StringVar(key, "client-key-path", *key, "")
+	fs.StringVar(server, "server-id", *server, "")
+	fs.StringVar(source, "source-id", *source, "")
+	fs.StringVar(transport, "transport", *transport, "")
+	fs.StringVar(output, "out", *output, "")
 	fs.DurationVar(&c.Timeout, "timeout", c.Timeout, "")
 	fs.IntVar(&c.Lane.SeedDocuments, "seed-documents", c.Lane.SeedDocuments, "")
 	fs.IntVar(&c.Lane.Operations, "operations", c.Lane.Operations, "")
@@ -184,6 +196,15 @@ func ParseConfig(args []string) (Config, error) {
 	return c, c.Validate()
 }
 
+func envDefault(names ...string) string {
+	for _, name := range names {
+		if value, ok := os.LookupEnv(name); ok && value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 // WriteResultExclusive retains exactly one immutable JSON attempt.
 func WriteResultExclusive(path string, result any) error {
 	if path == "" {
@@ -194,13 +215,32 @@ func WriteResultExclusive(path string, result any) error {
 		return err
 	}
 	data = append(data, '\n')
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".terrabase-bench-result-*")
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-	if _, err := file.Write(data); err != nil {
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o644); err != nil {
+		temporary.Close()
 		return err
 	}
-	return file.Close()
+	if _, err := temporary.Write(data); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Link(temporaryPath, path); err != nil {
+		return err
+	}
+	return nil
 }

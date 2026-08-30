@@ -2,7 +2,7 @@ name: terrabase checks
 
 on:
   push:
-    branches: [develop, main]
+    branches: [develop]
   pull_request:
     branches: [develop, main]
 
@@ -99,8 +99,8 @@ jobs:
           cargo doc --manifest-path crates/terrabase-studio/Cargo.toml --no-deps --locked
       - name: Release packaging definitions
         run: |
-          jq --exit-status empty .terrascale/deploy.json
-          bash -n deploy/release/candidate.sh deploy/release/package.sh deploy/release/sign.sh deploy/release/verify.sh
+          jq --exit-status . .terrascale/deploy.json >/dev/null
+          bash -n deploy/release/candidate.sh deploy/release/package.sh deploy/release/reproduce.sh deploy/release/require-production-capability.sh deploy/release/sign.sh deploy/release/verify.sh
           python3 -m py_compile deploy/release/generate_sbom.py
           python3 deploy/release/generate_sbom.py --help >/dev/null
           grep -q '@sha256:' deploy/release/Containerfile.server
@@ -117,19 +117,13 @@ jobs:
           echo "$GOBIN" >> "$GITHUB_PATH"
       - name: Observability assets
         run: |
-          # Parse every committed JSON/YAML asset, including deployment,
-          # protocol, vector, dashboard, and workflow files. This keeps the
-          # gate independent of a path that may later be renamed.
-          while IFS= read -r path; do
-            [ -f "$path" ] || continue
-            case "$path" in
-              *.json) jq --exit-status . "$path" >/dev/null ;;
-              *.yml|*.yaml) yq eval '.' "$path" >/dev/null ;;
-            esac
-          done < <(git ls-files '*.json' '*.yml' '*.yaml')
+          scripts/validate-structured-assets.sh
           jq -e '
             ([.panels[].title] | index("Requests / second")) != null and
             ([.panels[].title] | index("Storage utilization by tier")) != null and
+            ([.panels[].title] | index("Queue utilization")) != null and
+            ([.panels[].title] | index("Committed durability p99")) != null and
+            ([.panels[].title] | index("Backup age")) != null and
             ([.. | strings | select(contains("terrabase_requests_total"))] | length) > 0 and
             ([.. | strings | select(contains("terrabase_storage_capacity_bytes"))] | length) > 0
           ' deploy/observability/grafana-dashboard.json >/dev/null
@@ -157,26 +151,52 @@ jobs:
           go install github.com/bufbuild/buf/cmd/buf@v1.50.0
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
-          export PATH="$GOBIN:$PATH"
+          protoc_version=34.1
+          protoc_archive="$(mktemp --suffix=.zip)"
+          protoc_sha256=af27ea66cd26938fe48587804ca7d4817457a08350021a1c6e23a27ccc8c6904
+          curl --fail --silent --show-error --location \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${protoc_version}/protoc-${protoc_version}-linux-x86_64.zip" \
+            --output "$protoc_archive"
+          printf '%s  %s\n' "$protoc_sha256" "$protoc_archive" | sha256sum --check --strict
+          protoc_root="$GITHUB_WORKSPACE/.ci-protoc"
+          mkdir -p "$protoc_root"
+          unzip -q "$protoc_archive" -d "$protoc_root"
+          export PATH="$protoc_root/bin:$GOBIN:$PATH"
+          protoc --version | grep -F 'libprotoc 34.1'
           schema_digest="$(bash scripts/tbep_schema_digest.sh)"
           printf 'TBEP schema digest: %s\n' "$schema_digest"
+          expected_schema_digest="$(tr -d '[:space:]' < scripts/tbep_schema.sha256)"
+          [[ "$expected_schema_digest" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$schema_digest" == "$expected_schema_digest" ]]
           buf lint
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            buf breaking --against ".git#branch=${GITHUB_BASE_REF}"
+            base_ref="${GITHUB_BASE_REF:-}"
+            against_commit="$(git rev-parse --verify "refs/remotes/origin/${base_ref}" 2>/dev/null || true)"
+            if [ -z "$against_commit" ]; then
+              against_commit="$(git rev-parse --verify "$base_ref" 2>/dev/null || true)"
+            fi
+            if [ -z "$against_commit" ]; then
+              printf 'cannot resolve fetched pull-request base %s\n' "$base_ref" >&2
+              exit 1
+            fi
           else
-            buf breaking --against ".git#branch=${GITHUB_REF_NAME}"
+            against_commit="$(git rev-parse --verify HEAD^ 2>/dev/null || true)"
+            if [ -z "$against_commit" ]; then
+              printf 'cannot resolve the previous commit for breaking-change comparison\n' >&2
+              exit 1
+            fi
           fi
+          buf breaking --against ".git#ref=$against_commit"
           # Generate the sole permitted network client into an isolated
           # directory and compare it with the checked-in Go bindings.
           active_dir="$(mktemp -d)"
-          active_template="$(mktemp --suffix=.yaml)"
-          sed "s#out: terrabase-go#out: ${active_dir}#" buf.gen.yaml > "$active_template"
-          buf generate --template "$active_template"
-          normalize_generated() {
-            sed -E '/^\/\/ (versions:|[-[:space:]]*protoc|source:)/d' "$1"
-          }
-          diff -u <(normalize_generated "$active_dir/terrabase/v1/engine.pb.go") <(normalize_generated terrabase-go/terrabase/v1/engine.pb.go)
-          diff -u <(normalize_generated "$active_dir/terrabase/v1/engine_grpc.pb.go") <(normalize_generated terrabase-go/terrabase/v1/engine_grpc.pb.go)
+          protoc \
+            --proto_path=crates/terrabase-tbep/proto \
+            --go_out=paths=source_relative:"$active_dir" \
+            --go-grpc_out=paths=source_relative:"$active_dir" \
+            crates/terrabase-tbep/proto/terrabase/v1/engine.proto
+          diff -u "$active_dir/terrabase/v1/engine.pb.go" terrabase-go/terrabase/v1/engine.pb.go
+          diff -u "$active_dir/terrabase/v1/engine_grpc.pb.go" terrabase-go/terrabase/v1/engine_grpc.pb.go
 
       # The checked-in Go client must interoperate with the real Rust server,
       # not only with fake gRPC peers. The test owns its loopback PKI and

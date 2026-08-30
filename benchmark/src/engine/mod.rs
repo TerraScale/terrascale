@@ -66,8 +66,9 @@ use crate::{
         OperationId, ReadSnapshot, RetryDisposition, StorageSequence, TenantId, TenantScope,
     },
     usage::{
-        MeasurementWindow, MintingRule, UsageAdmissionContext, UsageCommandError, UsageContinuation,
-        UsageFactId, UsagePage, UsagePageRequest, UsageRecordReceipt, UsageRecordRequest,
+        MeasurementWindow, MintingRule, UsageAdmissionContext, UsageCommandError,
+        UsageContinuation, UsageFactId, UsagePage, UsagePageRequest, UsageRecordReceipt,
+        UsageRecordRequest,
     },
 };
 
@@ -1031,9 +1032,7 @@ impl Engine {
     /// a between-waves leader rather than a serial caller.
     fn group_served_within(&self, window: std::time::Duration) -> bool {
         match self.commit_mailbox.lock() {
-            Ok(mailbox) => mailbox
-                .last_group_at
-                .is_some_and(|served| served.elapsed() < window),
+            Ok(mailbox) => mailbox.last_group_at.is_some_and(|served| served.elapsed() < window),
             Err(_) => false,
         }
     }

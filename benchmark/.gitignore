@@ -1,6 +1,7 @@
 /target/
 **/target/
 /artifacts/
+/rust_out
 *.swp
 *.swo
 .DS_Store

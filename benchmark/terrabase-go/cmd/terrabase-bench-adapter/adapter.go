@@ -68,7 +68,10 @@ type slot interface {
 	close() error
 }
 
-type clientSlot struct{ client *terrabase.Client }
+type clientSlot struct {
+	client    *terrabase.Client
+	slotIndex int
+}
 
 func (s *clientSlot) read(ctx context.Context, index int) error {
 	_, found, err := s.client.DocumentRead(ctx, collectionName, seededID(index), readLevel)
@@ -82,11 +85,12 @@ func (s *clientSlot) read(ctx context.Context, index int) error {
 }
 
 func (s *clientSlot) write(ctx context.Context, index uint64) error {
+	writeIndex := uint64(s.slotIndex)*3*maxCount + index
 	outcome, err := s.client.DocumentWrite(ctx, terrabase.DocumentPut{
 		Collection: collectionName,
-		ID:         measuredID(index),
+		ID:         measuredID(writeIndex),
 		Body:       benchmarkBody("measured", 42),
-	}, terrabase.ExpectAny(), acknowledged, fmt.Sprintf("bench-write-%d", index))
+	}, terrabase.ExpectAny(), acknowledged, fmt.Sprintf("bench-write-%d", writeIndex))
 	if err != nil {
 		return err
 	}
@@ -103,7 +107,7 @@ func (s *clientSlot) write(ctx context.Context, index uint64) error {
 }
 
 func (s *clientSlot) query(ctx context.Context, index int) error {
-	result, err := s.client.QueryExecute(ctx, uint64(index+1),
+	result, err := s.client.QueryExecute(ctx, uint64(s.slotIndex)*maxCount+uint64(index+1),
 		fmt.Sprintf("from %s where name = '%s'", collectionName, seededName(index)), 1, readLevel)
 	if err != nil {
 		return err
@@ -171,7 +175,7 @@ func Run(ctx context.Context, config Config) (RunResults, error) {
 			}
 			return RunResults{}, fmt.Errorf("bind concurrency slot %d: %w", index, bindErr)
 		}
-		slots = append(slots, &clientSlot{client: client})
+		slots = append(slots, &clientSlot{client: client, slotIndex: index})
 	}
 	result, err := runSlots(ctx, config, slots)
 	for _, opened := range slots {
@@ -241,6 +245,9 @@ func (b *barrier) wait() {
 }
 
 func runSlots(ctx context.Context, config Config, slots []slot) (RunResults, error) {
+	if err := config.Validate(); err != nil {
+		return RunResults{}, err
+	}
 	if len(slots) != config.Lane.Concurrency {
 		return RunResults{}, fmt.Errorf("got %d slots, expected %d", len(slots), config.Lane.Concurrency)
 	}
@@ -283,12 +290,15 @@ func runSlots(ctx context.Context, config Config, slots []slot) (RunResults, err
 				if failed.Load() {
 					break
 				}
-				if opErr := doOperation(ctx, workerSlot, workload.SelectMixed(index), index, config.Lane.SeedDocuments); opErr != nil {
+				if opErr := doOperation(ctx, workerSlot, workload.SelectMixed(index), index+maxCount, config.Lane.SeedDocuments); opErr != nil {
 					recordFailure(fmt.Errorf("warm-up operation %d: %w", index, opErr))
 					break
 				}
 			}
 			warmup.wait()
+			if failed.Load() {
+				return
+			}
 			local := make([][]float64, 0, config.Lane.Samples)
 			for sample := 0; sample < config.Lane.Samples; sample++ {
 				start.wait()

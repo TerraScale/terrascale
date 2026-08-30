@@ -30,7 +30,7 @@
 //! The sync host seam is synchronous, so every host call rides
 //! `spawn_blocking`; the tonic runtime never blocks on engine work.
 
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::pin::Pin;
@@ -54,6 +54,10 @@ use tonic::Status;
 use tonic::transport::Certificate as TransportCertificate;
 use tonic::transport::Identity as TransportIdentity;
 use tonic::transport::ServerTlsConfig;
+use x509_parser::extensions::GeneralName;
+use x509_parser::extensions::ParsedExtension;
+use x509_parser::prelude::FromDer;
+use x509_parser::prelude::X509Certificate;
 
 use terrabase::observability::{
     MetricsRegistry, Operation as MetricOperation, Outcome as MetricOutcome, Region as MetricRegion,
@@ -108,9 +112,10 @@ pub const MAX_INFLIGHT_OPERATIONS: usize = 128;
 pub const OUTBOUND_DEPTH: usize = 64;
 
 const MAX_SYNC_TOKEN_BYTES: usize = 1057;
+const MAX_PEER_CERT_BYTES: usize = 1 << 20;
 
 /// Validated resource and authenticated-gateway policy for one serving
-/// instance. Certificate values are SHA-256 fingerprints of the leaf DER.
+/// instance. Gateway names are exact SPIFFE URI SAN values.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TbepGrpcConfig {
     max_message_bytes: usize,
@@ -118,7 +123,7 @@ pub struct TbepGrpcConfig {
     request_timeout: Duration,
     tls_handshake_timeout: Duration,
     shutdown_grace: Duration,
-    gateway_certificates: BTreeMap<String, [u8; 32]>,
+    gateway_principals: BTreeSet<String>,
 }
 
 impl TbepGrpcConfig {
@@ -134,10 +139,11 @@ impl TbepGrpcConfig {
         request_timeout: Duration,
         tls_handshake_timeout: Duration,
         shutdown_grace: Duration,
-        gateway_certificates: BTreeMap<String, [u8; 32]>,
+        gateway_principals: BTreeSet<String>,
     ) -> std::io::Result<Self> {
-        let valid_principals = gateway_certificates.keys().all(|principal| {
-            !principal.is_empty()
+        let valid_principals = gateway_principals.iter().all(|principal| {
+            principal.starts_with("spiffe://")
+                && !principal.is_empty()
                 && principal.len() <= MAX_PRINCIPAL_BYTES
                 && principal == principal.trim()
                 && !principal.chars().any(char::is_control)
@@ -160,7 +166,7 @@ impl TbepGrpcConfig {
             request_timeout,
             tls_handshake_timeout,
             shutdown_grace,
-            gateway_certificates,
+            gateway_principals,
         })
     }
 
@@ -203,7 +209,33 @@ impl Default for TbepGrpcConfig {
             request_timeout: Duration::from_secs(30),
             tls_handshake_timeout: Duration::from_secs(5),
             shutdown_grace: Duration::from_secs(5),
-            gateway_certificates: BTreeMap::new(),
+            gateway_principals: BTreeSet::new(),
+        }
+    }
+}
+
+#[cfg(unix)]
+struct SameUidUnixIncoming {
+    inner: tokio_stream::wrappers::UnixListenerStream,
+    owner_uid: u32,
+}
+
+#[cfg(unix)]
+impl Stream for SameUidUnixIncoming {
+    type Item = std::io::Result<tokio::net::UnixStream>;
+
+    fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        loop {
+            match Pin::new(&mut self.inner).poll_next(context) {
+                Poll::Ready(Some(Ok(stream))) => match stream.peer_cred() {
+                    Ok(credentials) if credentials.uid() == self.owner_uid => {
+                        return Poll::Ready(Some(Ok(stream)));
+                    }
+                    Ok(_) => continue,
+                    Err(error) => return Poll::Ready(Some(Err(error))),
+                },
+                other => return other,
+            }
         }
     }
 }
@@ -212,8 +244,10 @@ impl Default for TbepGrpcConfig {
 pub struct TbepGrpcHandle {
     local_addr: Option<SocketAddr>,
     socket_path: Option<std::path::PathBuf>,
+    socket_identity: Option<(u64, u64)>,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
-    completion: Option<std::sync::mpsc::Receiver<()>>,
+    completion: Option<std::sync::mpsc::Receiver<std::io::Result<()>>>,
+    shutdown_grace: Duration,
 }
 
 impl TbepGrpcHandle {
@@ -229,22 +263,87 @@ impl TbepGrpcHandle {
         self.socket_path.as_deref()
     }
 
-    /// Signals the serving loop to finish and waits, bounded, for its
-    /// graceful drain. A client that stays connected past the bound
-    /// cannot pin an operator shutdown; the serving thread then ends on
-    /// its own once the connection closes.
-    pub fn shutdown(&mut self) {
+    /// Reports a listener failure without blocking. Returns `true` after the
+    /// serving task has completed.
+    ///
+    /// # Errors
+    ///
+    /// Returns the listener task's serving failure.
+    pub fn try_wait(&mut self) -> std::io::Result<bool> {
+        let Some(completion) = self.completion.as_ref() else {
+            return Ok(true);
+        };
+        match completion.try_recv() {
+            Ok(result) => {
+                self.completion = None;
+                self.cleanup_socket();
+                result.map(|()| true)
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => Ok(false),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.completion = None;
+                self.cleanup_socket();
+                Err(std::io::Error::other("the TBEP serving task stopped without a result"))
+            }
+        }
+    }
+
+    /// Signals the serving loop and waits for the configured graceful-drain
+    /// deadline.
+    ///
+    /// # Errors
+    ///
+    /// Returns the serving failure or `TimedOut` when drain exceeds the bound.
+    pub fn shutdown_and_wait(&mut self) -> std::io::Result<()> {
         if let Some(sender) = self.shutdown.take() {
             let _ = sender.send(());
         }
-        if let Some(completion) = self.completion.take() {
-            let _ = completion.recv_timeout(std::time::Duration::from_secs(5));
+        let Some(completion) = self.completion.as_ref() else {
+            self.cleanup_socket();
+            return Ok(());
+        };
+        match completion.recv_timeout(self.shutdown_grace) {
+            Ok(result) => {
+                self.completion = None;
+                self.cleanup_socket();
+                result
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "the TBEP listener exceeded its graceful shutdown deadline",
+            )),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                self.completion = None;
+                self.cleanup_socket();
+                Err(std::io::Error::other("the TBEP serving task stopped without a result"))
+            }
         }
-        // Do not unlink the path here.  A pathname can have been replaced
-        // after bind, and removing it would race with the owner of the
-        // replacement (including a newly active socket).  Operators can
-        // remove the now-stale socket entry explicitly; serve_uds refuses
-        // every existing path, so it never guesses ownership.
+    }
+
+    /// Signals shutdown and discards the listener result. Production callers
+    /// should use [`Self::shutdown_and_wait`].
+    pub fn shutdown(&mut self) {
+        let _ = self.shutdown_and_wait();
+    }
+
+    fn cleanup_socket(&mut self) {
+        let (Some(path), Some((device, inode))) = (&self.socket_path, self.socket_identity) else {
+            return;
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileTypeExt as _;
+            use std::os::unix::fs::MetadataExt as _;
+
+            if let Ok(metadata) = std::fs::symlink_metadata(path)
+                && metadata.file_type().is_socket()
+                && metadata.dev() == device
+                && metadata.ino() == inode
+            {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        self.socket_identity = None;
     }
 }
 
@@ -334,13 +433,13 @@ impl TbepGrpcServer {
     }
 
     fn authenticate_gateway<T>(&self, request: &Request<T>, principal: &str) -> Result<(), Status> {
-        let expected = self.config.gateway_certificates.get(principal).ok_or_else(|| {
-            tbep_status(
+        if !self.config.gateway_principals.contains(principal) {
+            return Err(tbep_status(
                 Code::PermissionDenied,
                 pb::ErrorCode::OperationRefused,
                 "the authenticated client is not an admitted gateway principal",
-            )
-        })?;
+            ));
+        };
         let certificates = request.peer_certs().ok_or_else(|| {
             tbep_status(
                 Code::Unauthenticated,
@@ -355,14 +454,47 @@ impl TbepGrpcServer {
                 "the network RPC carries no authenticated client certificate",
             )
         })?;
-        let observed = ring::digest::digest(&ring::digest::SHA256, leaf.as_ref());
-        ring::constant_time::verify_slices_are_equal(expected, observed.as_ref()).map_err(|_| {
+        if leaf.len() > MAX_PEER_CERT_BYTES {
+            return Err(tbep_status(
+                Code::Unauthenticated,
+                pb::ErrorCode::UnboundChannel,
+                "the authenticated client certificate exceeds its bound",
+            ));
+        }
+        let (_, certificate) = X509Certificate::from_der(leaf.as_ref()).map_err(|_| {
             tbep_status(
+                Code::Unauthenticated,
+                pb::ErrorCode::UnboundChannel,
+                "the authenticated client certificate is not parseable",
+            )
+        })?;
+        let mut uri_sans = Vec::new();
+        for extension in certificate.extensions() {
+            let ParsedExtension::SubjectAlternativeName(names) = extension.parsed_extension()
+            else {
+                continue;
+            };
+            for name in &names.general_names {
+                if let GeneralName::URI(uri) = name {
+                    if uri.len() > MAX_PRINCIPAL_BYTES {
+                        return Err(tbep_status(
+                            Code::PermissionDenied,
+                            pb::ErrorCode::OperationRefused,
+                            "the client certificate URI SAN exceeds its bound",
+                        ));
+                    }
+                    uri_sans.push(*uri);
+                }
+            }
+        }
+        if uri_sans.len() != 1 || uri_sans[0] != principal {
+            return Err(tbep_status(
                 Code::PermissionDenied,
                 pb::ErrorCode::OperationRefused,
-                "the gateway principal does not match the authenticated client certificate",
-            )
-        })
+                "the request principal does not match exactly one authenticated SPIFFE URI SAN",
+            ));
+        }
+        Ok(())
     }
 
     fn require_mutation_usage(&self, present: bool) -> Result<(), Status> {
@@ -444,30 +576,45 @@ impl TbepGrpcServer {
         // The listener binds before the handle returns, so a client that
         // connects immediately after serving starts cannot race the socket.
         let listener = tokio::net::UnixListener::bind(path)?;
-        let (done, completion) = std::sync::mpsc::channel::<()>();
+        #[cfg(unix)]
+        let (owner_uid, socket_identity) = {
+            use std::os::unix::fs::FileTypeExt as _;
+            use std::os::unix::fs::MetadataExt as _;
+
+            let metadata = std::fs::symlink_metadata(path)?;
+            if !metadata.file_type().is_socket() {
+                return Err(std::io::Error::other("the bound UDS path is not a socket"));
+            }
+            (metadata.uid(), (metadata.dev(), metadata.ino()))
+        };
+        #[cfg(unix)]
+        let incoming = SameUidUnixIncoming {
+            inner: tokio_stream::wrappers::UnixListenerStream::new(listener),
+            owner_uid,
+        };
+        let (done, completion) = std::sync::mpsc::channel::<std::io::Result<()>>();
         std::thread::Builder::new()
             .name("tbep-grpc-uds".into())
             .spawn(move || {
-                let _ = runtime.block_on(async move {
+                let result = runtime.block_on(async move {
                     let routes = serve_routes(Arc::clone(&server), None)
                         .expect("the unencrypted route table builds");
                     routes
-                        .serve_with_incoming_shutdown(
-                            tokio_stream::wrappers::UnixListenerStream::new(listener),
-                            async {
-                                let _ = signal.await;
-                            },
-                        )
+                        .serve_with_incoming_shutdown(incoming, async {
+                            let _ = signal.await;
+                        })
                         .await
                 });
-                let _ = done.send(());
+                let _ = done.send(result.map_err(std::io::Error::other));
             })
             .map_err(std::io::Error::other)?;
         Ok(TbepGrpcHandle {
             local_addr: None,
             socket_path: Some(path.to_path_buf()),
+            socket_identity: Some(socket_identity),
             shutdown: Some(shutdown),
             completion: Some(completion),
+            shutdown_grace: self.config.shutdown_grace(),
         })
     }
 
@@ -500,6 +647,12 @@ impl TbepGrpcServer {
                 "a TLS listener requires the network mTLS binding kind",
             ));
         }
+        if self.config.gateway_certificates.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "a production TLS listener requires an authenticated gateway mapping",
+            ));
+        }
         let Some(client_ca_pem) = client_ca_pem.filter(|bundle| !bundle.trim().is_empty()) else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -511,9 +664,10 @@ impl TbepGrpcServer {
             ServerTlsConfig::new().identity(identity).timeout(self.config.tls_handshake_timeout());
         tls = tls.client_ca_root(TransportCertificate::from_pem(client_ca_pem));
         let server = Arc::clone(self);
+        let startup_timeout = self.config.tls_handshake_timeout();
         let (shutdown, signal) = tokio::sync::oneshot::channel::<()>();
         let (addr_tx, addr_rx) = std::sync::mpsc::channel();
-        let (done, completion) = std::sync::mpsc::channel::<()>();
+        let (done, completion) = std::sync::mpsc::channel::<std::io::Result<()>>();
         std::thread::Builder::new()
             .name("tbep-grpc-tls".into())
             .spawn(move || {
@@ -523,33 +677,35 @@ impl TbepGrpcServer {
                     .build()
                     .expect("the TBEP serving runtime starts");
                 let _context = runtime.enter();
-                runtime.block_on(async move {
-                    let Ok(listener) = tokio::net::TcpListener::bind(address).await else {
+                let result = runtime.block_on(async move {
+                    let listener =
+                        tokio::net::TcpListener::bind(address).await.map_err(|error| {
+                            let _ = addr_tx.send(None);
+                            error
+                        })?;
+                    let local = listener.local_addr().map_err(|error| {
                         let _ = addr_tx.send(None);
-                        return;
-                    };
-                    let Ok(local) = listener.local_addr() else {
+                        error
+                    })?;
+                    let routes = serve_routes(Arc::clone(&server), Some(tls)).map_err(|error| {
                         let _ = addr_tx.send(None);
-                        return;
-                    };
-                    let Ok(routes) = serve_routes(Arc::clone(&server), Some(tls)) else {
-                        let _ = addr_tx.send(None);
-                        return;
-                    };
+                        std::io::Error::other(error)
+                    })?;
                     let _ = addr_tx.send(Some(local));
-                    let _ = routes
+                    routes
                         .serve_with_incoming_shutdown(
                             tokio_stream::wrappers::TcpListenerStream::new(listener),
                             async {
                                 let _ = signal.await;
                             },
                         )
-                        .await;
+                        .await
+                        .map_err(std::io::Error::other)
                 });
-                let _ = done.send(());
+                let _ = done.send(result);
             })
             .map_err(std::io::Error::other)?;
-        let local_addr = addr_rx.recv().ok().flatten();
+        let local_addr = addr_rx.recv_timeout(startup_timeout).ok().flatten();
         if local_addr.is_none() {
             let _ = completion.recv_timeout(std::time::Duration::from_secs(5));
             return Err(std::io::Error::new(
@@ -560,8 +716,10 @@ impl TbepGrpcServer {
         Ok(TbepGrpcHandle {
             local_addr,
             socket_path: None,
+            socket_identity: None,
             shutdown: Some(shutdown),
             completion: Some(completion),
+            shutdown_grace: self.config.shutdown_grace(),
         })
     }
 }

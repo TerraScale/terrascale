@@ -8,8 +8,9 @@
 
 use crate::{
     engine::{Engine, EngineConfig},
+    regions::RegionCode,
     storage::{
-        self, StoragePort,
+        self, StoragePort, UsageFactPosition, UsageStorageError,
         compaction::{CompactionPolicy, CompactionRequest},
         faults::FaultPoint,
         frontier::{
@@ -25,6 +26,9 @@ use crate::{
     types::{
         CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
         OperationId, TenantId,
+    },
+    usage::{
+        MeasurementWindow, UsageAdmissionContext, UsageFactId, UsageRecordMeter, UsageRecordRequest,
     },
 };
 
@@ -51,6 +55,42 @@ fn document(collection: &str, id: &str, text: &str) -> Document {
         CollectionName::try_new(collection).expect("valid identifier"),
         DocumentValue::String(text.to_owned()),
     )
+}
+
+fn usage_admission(operation: &str, accepted_at_millis: u64) -> UsageAdmissionContext {
+    UsageAdmissionContext::try_new(
+        "project-a",
+        "database-a",
+        "partition-a",
+        RegionCode::GRU,
+        UsageFactId::try_new(operation).expect("valid usage identity"),
+        accepted_at_millis,
+        1,
+        1,
+    )
+    .expect("valid usage admission")
+}
+
+fn usage_record_fact(
+    scope_tenant: &TenantId,
+    fact_id: &str,
+    recorded_at_millis: u64,
+    integer_units: i128,
+) -> crate::usage::UsageFact {
+    UsageRecordRequest::try_new(
+        UsageRecordMeter::PublicEgressBytes,
+        "project-a",
+        "database-a",
+        "partition-a",
+        RegionCode::GRU,
+        UsageFactId::try_new(fact_id).expect("valid fact identity"),
+        recorded_at_millis,
+        1,
+        integer_units,
+    )
+    .expect("valid usage record")
+    .fact_for(scope_tenant.clone())
+    .expect("tenant-bound fact")
 }
 
 fn put_intent(
@@ -1169,6 +1209,7 @@ fn commit_reads_back_and_survives_reopen() {
     let result =
         engine.commit(put_intent(&scope_tenant, "op-1", 0, document("orders", "order-1", "first")));
     assert!(matches!(result, CommitResult::Committed(_)));
+    assert!(engine.usage_facts_impl().is_empty(), "ordinary mutations mint no billing fact");
     drop(engine);
     let reopened = LsmStorage::open(&dir).unwrap();
     let found = reopened.read_document_in_collection_at(
@@ -1188,7 +1229,9 @@ fn accepted_mutation_usage_is_atomic_idempotent_and_recoverable() {
     let dir = location("usage-atomic");
     let scope_tenant = tenant("acme");
     let mut engine = LsmStorage::open(&dir).unwrap();
-    let intent = put_intent(&scope_tenant, "op-usage", 0, document("orders", "order-1", "payload"));
+    let mut intent =
+        put_intent(&scope_tenant, "op-usage", 0, document("orders", "order-1", "payload"));
+    intent.usage_admission = Some(usage_admission("op-usage", 1_700_000_000_000));
     let first = engine.commit(intent.clone());
     assert!(matches!(first, CommitResult::Committed(_)));
     assert_eq!(engine.usage_facts_impl().len(), 1);
@@ -1203,6 +1246,111 @@ fn accepted_mutation_usage_is_atomic_idempotent_and_recoverable() {
     let reopened = LsmStorage::open(&dir).unwrap();
     assert_eq!(reopened.usage_facts_impl().len(), 1, "the fact is WAL durable with the mutation");
     assert_eq!(reopened.usage_facts_impl()[0], fact);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn mutation_usage_rejects_untrusted_identity_durability_and_context_reuse() {
+    let dir = location("usage-mutation-validation");
+    let scope_tenant = tenant("acme");
+    let mut engine = LsmStorage::open(&dir).unwrap();
+
+    let mut mismatched =
+        put_intent(&scope_tenant, "op-mismatch", 0, document("orders", "order-1", "payload"));
+    mismatched.usage_admission = Some(usage_admission("another-request", 1_700_000_000_010));
+    assert_eq!(engine.commit(mismatched), CommitResult::Rejected(CommitRejection::Validation));
+
+    let mut unsynced =
+        put_intent(&scope_tenant, "op-unsynced", 0, document("orders", "order-2", "payload"));
+    unsynced.durability = LocalDurability::Written;
+    unsynced.usage_admission = Some(usage_admission("op-unsynced", 1_700_000_000_011));
+    assert_eq!(engine.commit(unsynced), CommitResult::Rejected(CommitRejection::Validation));
+
+    let mut accepted =
+        put_intent(&scope_tenant, "op-bound", 0, document("orders", "order-3", "payload"));
+    accepted.usage_admission = Some(usage_admission("op-bound", 1_700_000_000_012));
+    assert!(matches!(engine.commit(accepted.clone()), CommitResult::Committed(_)));
+    let mut changed = accepted;
+    changed.digest ^= 1;
+    changed.usage_admission = Some(usage_admission("op-bound", 1_700_000_000_013));
+    assert_eq!(engine.commit(changed), CommitResult::Rejected(CommitRejection::OperationIdReuse));
+    assert_eq!(engine.usage_facts_impl().len(), 1);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn standalone_usage_is_synced_idempotent_scoped_and_pageable_after_reopen() {
+    let dir = location("usage-standalone");
+    let tenant_a = tenant("tenant-a");
+    let tenant_b = tenant("tenant-b");
+    let mut engine = LsmStorage::open(&dir).unwrap();
+
+    let first_fact = usage_record_fact(&tenant_a, "shared-fact", 1_000, 10);
+    let (first, replayed) = engine.record_usage(&tenant_a, first_fact.clone()).unwrap();
+    assert!(!replayed);
+    assert_eq!(first.sequence(), 1);
+    let (replay, replayed) = engine.record_usage(&tenant_a, first_fact).unwrap();
+    assert!(replayed);
+    assert_eq!(replay, first);
+    assert_eq!(
+        engine.record_usage(&tenant_a, usage_record_fact(&tenant_a, "shared-fact", 1_000, 11)),
+        Err(UsageStorageError::IdentityConflict)
+    );
+
+    let second = engine
+        .record_usage(&tenant_a, usage_record_fact(&tenant_a, "later-fact", 2_000, 20))
+        .unwrap()
+        .0;
+    let other_tenant = engine
+        .record_usage(&tenant_b, usage_record_fact(&tenant_b, "shared-fact", 1_000, 10))
+        .unwrap()
+        .0;
+    assert_ne!(other_tenant.sequence(), first.sequence());
+
+    let snapshot = engine.published_state().0;
+    let page_one = engine.usage_facts_page(&tenant_a, snapshot, None, None, 1).expect("first page");
+    assert_eq!(page_one, vec![first.clone()]);
+    let after = UsageFactPosition::of(&page_one[0]);
+    let page_two =
+        engine.usage_facts_page(&tenant_a, snapshot, Some(&after), None, 2).expect("second page");
+    assert_eq!(page_two, vec![second.clone()]);
+    let window = MeasurementWindow::interval(1_500, 2_500).unwrap();
+    assert_eq!(
+        engine.usage_facts_page(&tenant_a, snapshot, None, Some(window), 10).unwrap(),
+        vec![second.clone()]
+    );
+    drop(engine);
+
+    let reopened = LsmStorage::open(&dir).unwrap();
+    assert_eq!(
+        reopened.usage_facts_page(&tenant_a, snapshot, None, None, 10).unwrap(),
+        vec![first, second]
+    );
+    assert_eq!(
+        reopened.usage_facts_page(&tenant_b, snapshot, None, None, 10).unwrap(),
+        vec![other_tenant]
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn legacy_usage_entries_disable_billing_without_blocking_location_open() {
+    let dir = location("usage-legacy-unavailable");
+    let scope_tenant = tenant("acme");
+    let mut engine = LsmStorage::open(&dir).unwrap();
+    let entry = super::internal::Entry {
+        key: super::internal::InternalKey::meta("usage/00000000000000000001:old", 1),
+        value: b"obsolete-nonauthoritative-fact".to_vec(),
+    };
+    let append = engine.append_wal_batch(std::slice::from_ref(&entry)).unwrap();
+    engine.witness_wal_append(&append, true, FaultPoint::ReadyFrontierSync).unwrap();
+    drop(engine);
+
+    let reopened = LsmStorage::open(&dir).expect("legacy usage does not hide documents");
+    assert_eq!(
+        reopened.usage_facts_page(&scope_tenant, reopened.published_state().0, None, None, 10,),
+        Err(UsageStorageError::UsageUnavailable)
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -1224,8 +1372,9 @@ fn refused_or_partial_mutation_mints_no_usage_fact() {
     assert!(engine.usage_facts_impl().is_empty());
 
     engine.arm_test_fault(crate::storage::FaultPoint::WalAppend);
-    let partial =
+    let mut partial =
         put_intent(&scope_tenant, "op-partial", 0, document("orders", "order-2", "payload"));
+    partial.usage_admission = Some(usage_admission("op-partial", 1_700_000_000_001));
     assert!(matches!(engine.commit(partial), CommitResult::Rejected(_)));
     assert!(engine.usage_facts_impl().is_empty());
     drop(engine);
@@ -1240,12 +1389,13 @@ fn sequence_overflow_refuses_without_minting_or_advancing() {
     let scope_tenant = tenant("acme");
     let mut engine = LsmStorage::open(&dir).unwrap();
     engine.sequence_watermark = u64::MAX;
-    let intent = put_intent(
+    let mut intent = put_intent(
         &scope_tenant,
         "op-overflow",
         u64::MAX,
         document("orders", "order-1", "payload"),
     );
+    intent.usage_admission = Some(usage_admission("op-overflow", 1_700_000_000_002));
     assert!(matches!(engine.commit(intent), CommitResult::Rejected(_)));
     assert_eq!(engine.sequence_watermark, u64::MAX);
     assert!(engine.usage_facts_impl().is_empty());

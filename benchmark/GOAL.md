@@ -34,13 +34,16 @@ the workspace owner's 2026-08-30 direction.
 | --- | --- |
 | Implementation language | The engine, Studio, benchmark driver, and repository-owned runtime services use Rust. The repository-local `terrabase-go` client and its generated Go gRPC bindings are the explicit exception. The production Database gateway is implemented in Go and uses this client. |
 | Engine | TerraBase owns storage, WAL, compaction, indexing, query execution, causality, CRDT merge, replication, repair, membership acceptance, backup, restore, deletion, reactive view semantics, and authoritative usage facts. |
-| Private protocol | Private TBEP is protobuf/gRPC over HTTP/2. Production TCP requires TLS 1.3 and mutual workload authentication. `terrabase-go` is the only network client. UDS is local-only. ADR 0025 owns the contract. |
-| Reactive semantics | TerraBase owns the transport-independent reactive result-view state machine and exposes it only to the Go gateway through private TBEP gRPC. It has no public transport or codec. |
+| Member composition | One Rust Member process owns every engine and TBEP plane. A shared DBaaS Member multiplexes separate per-database engine locations, journals, keys, backups, quotas, and recovery state. `ts-orchestrator` may move a database to dedicated Members without changing its format or API. ADR 0038 owns the composition. |
+| Private protocol | Private TBEP is protobuf/gRPC over HTTP/2. Production TCP requires TLS 1.3 and mutual workload authentication. A dedicated gateway CA and exact SPIFFE URI SAN allow-list bind gateway identity. `terrabase-go` is the only network client. UDS is local-only. ADR 0025 owns the contract. |
+| Reactive semantics | TerraBase owns the transport-independent reactive result-view state machine and exposes it only to the Go gateway through private TBEP gRPC. Reactive revisions and checkpoints derive only from the durable engine publication journal. It has no public transport or codec. |
 | Durability | `GlobalDurable` fails closed for fewer than two active Regions. No local or single-Region acknowledgement may be presented as Region-loss RPO 0. |
+| GA feature scope | Every currently modeled Data Family and advanced vector and spatial query mode is required for first GA. A placeholder, reserved type, or partial implementation does not satisfy this scope. |
+| Upgrade support | Private protocol and storage compatibility supports release `N` and `N-1` only during the bounded rolling-upgrade window in ADR 0031. |
 | Performance evidence | The Rust `bench/` driver and `docs/evidence/benchmarks/benchmark-history.md` are the sole authority in this repository. Raw artifacts remain attached to their exact runs. Performance evidence never authorizes deployment and cannot turn an invalid, failed, safe, or synthetic run into a performance claim. |
-| Operations Studio | The private Studio is a Rust/Axum application under `crates/terrabase-studio/` using Datastar, Basecoat, and Monaco for JSON. It binds to loopback, has no authentication, opens one designated engine location in process, and is never a customer boundary. |
-| Observability | Prometheus exposition is private. Metrics use stable bounded labels and never expose tenant, document, query, path, credential, or other unbounded values. The repository owns the Grafana dashboard and alert definitions. |
-| Encryption | Production uses OCI Vault and ADR 0030. Local development uses generated local keys with an explicit non-production provider identity. Local keys cannot satisfy production evidence. |
+| Operations Studio | The private Studio is a Rust/Axum application under `crates/terrabase-studio/` using Datastar, Basecoat, and vendored Monaco for JSON. It binds to loopback, has no authentication, requires typed target confirmation for destructive operations, opens one designated engine location in process, and is never a customer boundary. |
+| Observability | Prometheus exposition is unauthenticated plaintext HTTP on a private listener protected by `ts-orchestrator` network policy. Metrics use stable bounded labels and never expose tenant, document, query, path, credential, or other unbounded values. The repository owns the Grafana dashboard and alert definitions. |
+| Encryption | Production uses OCI Vault, AWS-LC FIPS, and ADR 0030. Local development persists generated keys in owner-only files beside their engine locations with an explicit `local-file` provider identity. Production rejects that provider. |
 | License | TerraBase and every repository-owned Rust crate use the MIT License. |
 | Readiness target | This repository delivers a code-complete candidate that the platform can accept users on. `ts-orchestrator` owns the external OCI, architecture, topology, soak, and promotion runs against the exact candidate. |
 
@@ -91,9 +94,10 @@ The executable audit also found release-blocking composition gaps:
 - `ClusterTbepHost` serves clustered document operations and topology while
   refusing most other engine planes. The production mTLS harness currently
   hosts `EngineHost`, not a complete clustered Member.
-- ADR 0030 defines encryption, but the engine has no at-rest encryption or key
-  provider implementation. Local generated-key persistence and the production
-  FIPS cryptographic module are not selected in code.
+- ADR 0030 now selects AWS-LC FIPS. The working candidate has a bounded
+  non-production envelope foundation, but it still rejects production mode,
+  has no local-file or OCI Vault key provider, and does not encrypt WAL,
+  segments, manifests, snapshots, backups, or checkpoints.
 - TBEP requests now feed the bounded metric registry, but the full ADR 0036
   signal catalog and the private production listener still need completion.
   `ts-orchestrator` owns listener configuration and deployment qualification.
@@ -101,7 +105,9 @@ The executable audit also found release-blocking composition gaps:
   uses `EngineHost`, cannot become ready without cluster health, and does not
   enforce its configured gateway-principal allow-list, message bound,
   in-flight bound, request timeout, or TLS-handshake timeout. TLS 1.3 and the
-  authenticated monitoring boundary also need explicit runtime tests.
+  SPIFFE gateway binding also needs explicit runtime tests. The monitoring
+  listener intentionally relies on private-network policy instead of
+  in-process authentication.
 - The checkout is changing under several concurrent implementation and test
   processes. No clean full-gate result is recorded for the resulting candidate.
 
@@ -110,7 +116,7 @@ The latest local gate probe on 2026-08-30 reached these concrete results:
 | Gate | Result | Meaning |
 | --- | --- | --- |
 | `cargo check --workspace --locked` | Passed in an isolated target directory | The current Rust workspace type-checks, with two warnings that still fail a warning-denying release gate. |
-| Root, benchmark, and Studio formatting | Benchmark and Studio passed; root failed | Root formatting is blocked because `Cargo.toml` declares `tests/encryption/main.rs` but that file does not exist. The observability contract also has unformatted concurrent edits. |
+| Root, benchmark, and Studio formatting | Benchmark and Studio passed; root failed | At probe time `Cargo.toml` declared a missing `tests/encryption/main.rs`, and the observability contract had unformatted concurrent edits. Later concurrent work added the encryption test. The full formatting gate must rerun on a stable revision. |
 | `buf lint` | Failed | New TBEP enum values and service names violate the configured protobuf style rules. The schema and lint policy must agree before bindings are frozen. |
 | `node --check crates/terrabase-studio/static/studio.js` | Passed | The current Studio entry script parses. This does not qualify the browser behavior or vendored Monaco routes. |
 | `git diff --check` | Passed | The probed working diff had no whitespace errors. |
@@ -133,44 +139,20 @@ continues to change.
 | PRG-P1-03 | P1 | Qualify the GRU, SFO, and FRA engine topology. | RF=2 TerraBase placement, independent failure domains, Member and Region loss, and recovery receipts. |
 | PRG-P1-05 | P1 | Establish decision-grade performance and isolation evidence. | Approved benchmark policy and baseline, noisy-tenant budgets, workload-family coverage, architecture results, capacity, cost, and regression reports. |
 
-## Owner decisions still required
+## Owner decisions resolved on 2026-08-30
 
-These choices change implementation or GA scope and cannot be inferred from a
-local test:
-
-1. Does one production Member process own the clustered engine, sync delivery,
-   family plane, usage, and metrics, or may these be separate Rust processes?
-   One process is the current recommendation because one durable journal must
-   order writes and reactive delivery.
-2. Which in-process FIPS cryptographic module is approved for AES-256-GCM and
-   HKDF on both x86_64 and ARM64: AWS-LC FIPS, OpenSSL 3 FIPS, or another named
-   provider? OCI Vault protects wrappers but does not encrypt every local WAL
-   record for TerraBase.
-3. Is a production Member a shared multi-tenant engine location, one location
-   per database, or one process with several isolated locations? This fixes
-   key-cache, noisy-tenant, backup, and failure boundaries.
-4. Must GA rolling upgrades support only the immediately previous released
-   format and protocol minor, or a longer window? Greenfield removes legacy
-   compatibility, but a live N/N-1 rollout still needs a precise rule.
-5. Should reactive checkpoints derive only from the durable engine publication
-   journal? The current separate in-memory `SyncDeliveryHost` cannot recover
-   sessions or prove that delivered state follows committed storage.
-6. Are every currently modeled Data Family and the advanced vector/spatial
-   query modes in first-GA scope? Several types reserve later implementations.
-   If not, the GA feature manifest must reject them as unsupported instead of
-   presenting them as partially available.
-7. Should local generated keys persist in an owner-only file beside each engine
-   location, or come from a developer keyring? Regenerating them on every start
-   would make local durable data unrecoverable.
-8. Does Studio require typed confirmation for delete, restore, topology, tier,
-   and compaction actions even though it is loopback-only and owner-only?
-9. Will the private metrics listener use the same workload CA as TBEP mTLS, a
-   separate monitoring CA, or OCI workload identity at a sidecar boundary?
-10. How does production bind an authenticated client certificate to one entry
-    in `gateway_principals`: a SPIFFE URI SAN, a dedicated gateway CA, an exact
-    SAN allow-list, or a certificate fingerprint? mTLS proves that a trusted CA
-    issued the certificate; it does not define the application principal by
-    itself.
+| Decision | Accepted answer |
+| --- | --- |
+| Member process | One Rust process contains every production engine and TBEP plane. |
+| DBaaS isolation | Shared Members multiplex isolated per-database engine locations. Dedicated placement remains available for measured or policy-driven isolation. |
+| FIPS provider | AWS-LC FIPS for AES-256-GCM, HKDF-SHA-256, and provider randomness on x86_64 and ARM64. |
+| Upgrade window | Release `N` and `N-1` only during the bounded rolling window. |
+| Reactive authority | Only the durable engine publication journal may advance reactive revisions and checkpoints. |
+| GA features | Every modeled Data Family and advanced vector and spatial mode ships in first GA. |
+| Local keys | Generated keys persist in owner-only local files beside their engine locations. |
+| Studio safety | Destructive actions require typed target confirmation. |
+| Metrics listener | No in-process authentication. `ts-orchestrator` private-network policy is the trust boundary. |
+| Gateway identity | A dedicated gateway CA plus an exact SPIFFE URI SAN allow-list binds certificate identity to `gateway_principals`. |
 
 The owner has already fixed the readiness boundary: this repository must hand
 `ts-orchestrator` a code-complete candidate that can accept platform users.

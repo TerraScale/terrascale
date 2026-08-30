@@ -1583,6 +1583,9 @@ impl TbepHost for SyncDeliveryHost {
             let Some(subscription) = state.subscriptions.get_mut(&id) else {
                 continue;
             };
+            if subscription.tenant != tenant {
+                continue;
+            }
             if let Some(collections) = &subscription.collections
                 && !collections.contains(&collection)
             {
@@ -2045,6 +2048,16 @@ mod tests {
             )
             .expect("subscribes");
         assert_eq!(subscribe.subscription_id, 42);
+        let (_, tenant_b_feed) = host
+            .backbone_subscribe(
+                "tenant-b",
+                &BackboneSubscribeRequest {
+                    subscription_id: 43,
+                    collections: Some(vec!["orders".into()]),
+                    from: SubscriptionStart::Live,
+                },
+            )
+            .expect("tenant-b subscribes");
 
         let receipt = submit(&host, setup.session_id, "d-01", "op-01");
         let batch = feed.recv_timeout(std::time::Duration::from_secs(5)).expect("batch");
@@ -2065,6 +2078,7 @@ mod tests {
             }
             other => panic!("expected a trigger, got {other:?}"),
         }
+        assert!(tenant_b_feed.recv_timeout(std::time::Duration::from_millis(20)).is_err());
     }
 
     #[test]
@@ -2324,5 +2338,113 @@ mod tests {
             .expect("unsubscribes");
         host.sync_session_close("tenant-a", &SyncSessionCloseRequest { session_id: session })
             .expect("closes");
+    }
+
+    #[test]
+    fn duplicate_subscription_ids_are_tenant_owned_and_same_tenant_replaces() {
+        let host = SyncDeliveryHost::new(1);
+        let request = BackboneSubscribeRequest {
+            subscription_id: 9,
+            collections: None,
+            from: SubscriptionStart::Live,
+        };
+        let (_, old_feed) = host.backbone_subscribe("tenant-a", &request).expect("subscribes");
+
+        let error = host.backbone_subscribe("tenant-b", &request).unwrap_err();
+        assert!(matches!(error, HostingError::SubscriptionRefused(_)), "{error:?}");
+        assert_eq!(host.admin_status().expect("status").subscriptions, 1);
+
+        let (_, new_feed) = host.backbone_subscribe("tenant-a", &request).expect("replaces");
+        assert_eq!(
+            old_feed.recv().expect("replacement notice"),
+            TbepNotification::Closed(SubscriptionClosed {
+                subscription_id: 9,
+                reason: SubscriptionCloseReason::Replaced,
+            })
+        );
+        assert_eq!(host.admin_status().expect("status").subscriptions, 1);
+        drop(new_feed);
+    }
+
+    #[test]
+    fn dropped_or_slow_subscription_is_removed_without_blocking_mutations() {
+        let host = SyncDeliveryHost::new(1);
+        let setup = host
+            .sync_session_setup(
+                "tenant-a",
+                &SyncSessionSetupRequest { collection: "orders".into(), resume: None },
+            )
+            .expect("setup");
+        let (_, feed) = host
+            .backbone_subscribe(
+                "tenant-a",
+                &BackboneSubscribeRequest {
+                    subscription_id: 1,
+                    collections: Some(vec!["orders".into()]),
+                    from: SubscriptionStart::Live,
+                },
+            )
+            .expect("subscribes");
+        drop(feed);
+        submit(&host, setup.session_id, "dropped", "dropped");
+        assert_eq!(host.admin_status().expect("status").subscriptions, 0);
+
+        let (_, _slow_feed) = host
+            .backbone_subscribe(
+                "tenant-a",
+                &BackboneSubscribeRequest {
+                    subscription_id: 2,
+                    collections: Some(vec!["orders".into()]),
+                    from: SubscriptionStart::Live,
+                },
+            )
+            .expect("subscribes");
+        for index in 0..(SUBSCRIPTION_QUEUE_BOUND / 2 + 2) {
+            submit(&host, setup.session_id, &format!("slow-{index}"), &format!("slow-{index}"));
+        }
+        assert_eq!(host.admin_status().expect("status").subscriptions, 0);
+    }
+
+    #[test]
+    fn shutdown_drains_resources_and_rejects_data_operations() {
+        let host = SyncDeliveryHost::new(1);
+        let setup = host
+            .sync_session_setup(
+                "tenant-a",
+                &SyncSessionSetupRequest { collection: "orders".into(), resume: None },
+            )
+            .expect("setup");
+        let _ = host
+            .backbone_subscribe(
+                "tenant-a",
+                &BackboneSubscribeRequest {
+                    subscription_id: 3,
+                    collections: None,
+                    from: SubscriptionStart::Live,
+                },
+            )
+            .expect("subscribes");
+        let shutdown = host
+            .begin_shutdown(&SupervisionShutdownRequest {
+                reason: crate::registry::ShutdownReason::Operator,
+            })
+            .expect("shutdown");
+        assert_eq!(shutdown.state, HealthState::Draining);
+        assert_eq!(host.health().expect("health").state, HealthState::Draining);
+        assert_eq!(host.admin_status().expect("status").sessions, 0);
+        assert_eq!(host.admin_status().expect("status").subscriptions, 0);
+        let error = host
+            .sync_mutation_submit(
+                "tenant-a",
+                &SyncMutationSubmitRequest {
+                    session_id: setup.session_id,
+                    document: "d".into(),
+                    change: SyncChange::Delete,
+                    usage: None,
+                },
+                "after-shutdown",
+            )
+            .unwrap_err();
+        assert!(matches!(error, HostingError::Refused(_)), "{error:?}");
     }
 }

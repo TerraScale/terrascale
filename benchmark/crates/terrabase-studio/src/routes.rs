@@ -1604,6 +1604,7 @@ where
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use tower::ServiceExt;
@@ -1720,7 +1721,7 @@ mod tests {
         let policy =
             response.headers().get(header::CONTENT_SECURITY_POLICY).unwrap().to_str().unwrap();
         assert!(policy.contains("script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net"));
-        assert!(policy.contains("worker-src data: blob:"));
+        assert!(policy.contains("worker-src 'self' data: blob:"));
         assert!(policy.contains("object-src 'none'"));
     }
 

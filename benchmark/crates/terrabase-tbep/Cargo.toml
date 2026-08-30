@@ -38,6 +38,7 @@ tonic = { version = "0.14", default-features = false, features = [
 ] }
 prost = "0.14"
 ring = "0.17"
+x509-parser = "0.18"
 tonic-prost = "0.14"
 tokio = { version = "1", default-features = false, features = [
   "rt-multi-thread",

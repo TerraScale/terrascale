@@ -59,7 +59,7 @@ pub fn render(state: &StudioState, selection: &Option<(String, String)>) -> Stri
 
 fn tql_card(tenant: &str) -> String {
     let body = format!(
-        "<form class=\"grid gap-4\" data-on-submit=\"$$submit('/query/tql')\">\n\
+        "<form class=\"grid gap-4\" data-on:submit=\"@post('/query/tql', {{contentType: 'form', retry: 'never'}})\">\n\
 {tenant}{text}\
 <button type=\"submit\" class=\"inline-flex w-fit items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary}\">Run TQL</button>\n\
 </form>\n\
@@ -128,7 +128,7 @@ fn builder_card(state: &StudioState, tenant: &str, collection: &str) -> String {
     }
 
     let body = format!(
-        "<form class=\"grid gap-4\" data-on-submit=\"$$submit('/query/run')\">\n\
+        "<form class=\"grid gap-4\" data-on:submit=\"@post('/query/run', {{contentType: 'form', retry: 'never'}})\">\n\
 <div class=\"grid gap-4 sm:grid-cols-2\">{tenant}{collection}</div>\n\
 <details class=\"rounded-lg border px-4 py-3\" open><summary class=\"cursor-pointer text-sm font-medium\">Conditions</summary>\n\
 <p class=\"mt-2 text-xs text-muted-foreground\">Values are JSON, so <code>\"abc\"</code> is a string, <code>42</code> an integer, <code>1.5</code> a number, <code>true</code> a boolean. A row with an empty field is skipped. A condition the engine's validators refuse reports the typed validation failure rather than running.</p>\n\

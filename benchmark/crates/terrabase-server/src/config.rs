@@ -1,6 +1,6 @@
 //! Fail-closed daemon configuration.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -29,8 +29,9 @@ pub struct ServerConfig {
     pub server_private_key: PathBuf,
     /// Client trust bundle file. Client certificates are mandatory.
     pub client_ca: PathBuf,
-    /// Gateway principals admitted to usage-bearing calls.
-    pub gateway_principals: BTreeSet<String>,
+    /// Gateway principals mapped to the SHA-256 fingerprint of their leaf
+    /// client certificate.
+    pub gateway_principals: BTreeMap<String, [u8; 32]>,
     /// Optional local UDS configuration.
     pub uds: Option<UdsConfig>,
     /// Private Prometheus and probe listen address.
@@ -79,7 +80,7 @@ struct FileTbep {
     server_certificate: PathBuf,
     server_private_key: PathBuf,
     client_ca: PathBuf,
-    gateway_principals: Vec<String>,
+    gateway_principals: BTreeMap<String, String>,
     uds: Option<FileUds>,
     max_message_bytes: usize,
     max_inflight: usize,
@@ -187,31 +188,22 @@ impl ServerConfig {
         let tls_handshake_timeout =
             bounded_duration(file.tbep.tls_handshake_timeout_millis, 100, 30_000)?;
         let shutdown_grace = bounded_duration(file.tbep.shutdown_grace_millis, 100, 300_000)?;
-        // These are currently fixed by the lower TBEP serving API. Accepting
-        // other values here would make configuration look effective while
-        // silently serving with different limits or no timeout at all.
-        if file.tbep.max_message_bytes != terrabase_tbep::registry::MAX_FRAME_BYTES
-            || file.tbep.max_inflight != terrabase_tbep::grpc::MAX_INFLIGHT_OPERATIONS
-            || file.tbep.request_timeout_millis != 30_000
-            || file.tbep.tls_handshake_timeout_millis != 5_000
-        {
-            return Err(ConfigError::UnsupportedRuntimeControl);
-        }
         if file.tbep.gateway_principals.is_empty()
             || file.tbep.gateway_principals.len() > MAX_GATEWAY_PRINCIPALS
         {
             return Err(ConfigError::InvalidGatewayPrincipal);
         }
-        let mut gateway_principals = BTreeSet::new();
-        for principal in file.tbep.gateway_principals {
+        let mut gateway_principals = BTreeMap::new();
+        for (principal, fingerprint) in file.tbep.gateway_principals {
             if principal.is_empty()
                 || principal.len() > terrabase_tbep::grpc::MAX_PRINCIPAL_BYTES
                 || principal != principal.trim()
                 || principal.chars().any(char::is_control)
-                || !gateway_principals.insert(principal)
             {
                 return Err(ConfigError::InvalidGatewayPrincipal);
             }
+            let fingerprint = certificate_fingerprint(&fingerprint)?;
+            gateway_principals.insert(principal, fingerprint);
         }
         let uds = file
             .tbep
@@ -262,6 +254,29 @@ fn bounded_duration(value: u64, minimum: u64, maximum: u64) -> Result<Duration, 
     Ok(Duration::from_millis(value))
 }
 
+fn certificate_fingerprint(value: &str) -> Result<[u8; 32], ConfigError> {
+    if value.len() != 64
+        || !value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(ConfigError::InvalidGatewayPrincipal);
+    }
+    let mut decoded = [0_u8; 32];
+    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+        let high = hex_nibble(pair[0]);
+        let low = hex_nibble(pair[1]);
+        decoded[index] = (high << 4) | low;
+    }
+    Ok(decoded)
+}
+
+const fn hex_nibble(value: u8) -> u8 {
+    match value {
+        b'0'..=b'9' => value - b'0',
+        b'a'..=b'f' => value - b'a' + 10,
+        _ => 0,
+    }
+}
+
 /// A fail-closed configuration error. Variants never contain secret material.
 #[derive(Debug)]
 pub enum ConfigError {
@@ -293,8 +308,6 @@ pub enum ConfigError {
     InvalidUdsMode,
     /// The private observability listener has no secure/authenticated seam.
     UnprotectedObservability,
-    /// A configured runtime control cannot be represented by the lower API.
-    UnsupportedRuntimeControl,
 }
 
 impl std::fmt::Display for ConfigError {
@@ -315,9 +328,6 @@ impl std::fmt::Display for ConfigError {
             Self::InvalidUdsMode => "the local UDS mode is unsafe",
             Self::UnprotectedObservability => {
                 "observability must bind loopback until an authenticated boundary is composed"
-            }
-            Self::UnsupportedRuntimeControl => {
-                "a configured runtime control is not enforceable by the serving API"
             }
         })
     }
@@ -349,7 +359,7 @@ listen = "0.0.0.0:8421"
 server_certificate = "/run/secrets/terrabase.crt"
 server_private_key = "/run/secrets/terrabase.key"
 client_ca = "/run/secrets/gateway-ca.crt"
-gateway_principals = ["ts-internals"]
+gateway_principals = { ts-internals = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" }
 max_message_bytes = 16777216
 max_inflight = 128
 request_timeout_millis = 30000
@@ -367,7 +377,7 @@ listen = "127.0.0.1:9464"
         let config = ServerConfig::parse(&valid()).expect("valid config");
         assert_eq!(config.region, Region::Gru);
         assert_eq!(config.max_inflight, 128);
-        assert!(config.gateway_principals.contains("ts-internals"));
+        assert!(config.gateway_principals.contains_key("ts-internals"));
     }
 
     #[test]
@@ -379,7 +389,7 @@ listen = "127.0.0.1:9464"
     }
 
     #[test]
-    fn unsupported_runtime_controls_fail_closed() {
+    fn bounded_runtime_controls_are_preserved() {
         for (field, value) in [
             ("max_message_bytes", "16384"),
             ("max_inflight", "1"),
@@ -398,9 +408,28 @@ listen = "127.0.0.1:9464"
                 ),
                 &format!("{field} = {value}"),
             );
+            let parsed = ServerConfig::parse(&text).expect("the bounded control is supported");
+            match field {
+                "max_message_bytes" => assert_eq!(parsed.max_message_bytes, 16_384),
+                "max_inflight" => assert_eq!(parsed.max_inflight, 1),
+                "request_timeout_millis" => {
+                    assert_eq!(parsed.request_timeout, Duration::from_millis(100));
+                }
+                _ => assert_eq!(parsed.tls_handshake_timeout, Duration::from_millis(100)),
+            }
+        }
+    }
+
+    #[test]
+    fn gateway_certificate_fingerprints_are_canonical() {
+        for fingerprint in ["ab", &"A".repeat(64), &"g".repeat(64)] {
+            let text = valid().replace(
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                fingerprint,
+            );
             assert!(matches!(
                 ServerConfig::parse(&text),
-                Err(ConfigError::UnsupportedRuntimeControl)
+                Err(ConfigError::InvalidGatewayPrincipal)
             ));
         }
     }

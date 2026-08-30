@@ -1436,6 +1436,18 @@ pub fn load_recovery_point(
 /// validation, and [`BackupError::ChecksumMismatch`] when any bound member
 /// fails its length or digest check.
 pub fn verify_latest_chain(destination: &Path) -> Result<Vec<BackupManifest>, BackupError> {
+    let chain = select_latest_chain(destination)?;
+    for point in &chain {
+        verify_members(destination, point.identity(), point.members())?;
+    }
+    Ok(chain)
+}
+
+/// Selects the newest complete chain using only sealed manifests and their
+/// metadata. Restore uses this seam so that member bytes are opened and
+/// authenticated exactly once, at replay time, rather than verified and then
+/// reopened through a pathname.
+pub(crate) fn select_latest_chain(destination: &Path) -> Result<Vec<BackupManifest>, BackupError> {
     let points = discover_points(destination)?;
     if points.is_empty() {
         return Err(BackupError::ChainIncomplete);
@@ -1478,9 +1490,6 @@ pub fn verify_latest_chain(destination: &Path) -> Result<Vec<BackupManifest>, Ba
     }
     chain.reverse();
     validate_chain_frontier(&chain)?;
-    for point in &chain {
-        verify_members(destination, point.identity(), point.members())?;
-    }
     Ok(chain)
 }
 

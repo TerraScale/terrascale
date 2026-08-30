@@ -1,6 +1,6 @@
 use terrabase::encryption::{
     ArtifactCipher, Compression, DatabaseKey, EncryptionContext, EncryptionError,
-    MAX_PLAINTEXT_BYTES, ProviderMode,
+    LocalFileKeyProvider, MAX_PLAINTEXT_BYTES, ProviderMode,
 };
 
 fn context(tenant: &str) -> EncryptionContext {
@@ -18,23 +18,21 @@ fn context(tenant: &str) -> EncryptionContext {
 }
 
 fn cipher(key: [u8; 32]) -> ArtifactCipher {
-    ArtifactCipher::new(
-        ProviderMode::LocalNonFips,
-        DatabaseKey::from_bytes(key),
-        context("01JTENANT"),
-    )
-    .unwrap()
+    ArtifactCipher::new(ProviderMode::LocalFile, DatabaseKey::from_bytes(key), context("01JTENANT"))
+        .unwrap()
 }
 
 #[test]
-fn local_provider_is_explicit_and_production_fails_closed() {
-    assert_eq!(ProviderMode::LocalNonFips.identity(), "aws-lc-rs:local-non-fips");
-    let result = ArtifactCipher::new(
+fn selected_provider_is_fips_and_provider_identities_are_explicit() {
+    assert_eq!(ProviderMode::LocalFile.identity(), "aws-lc-fips:local-file");
+    assert_eq!(ProviderMode::ProductionFips.identity(), "aws-lc-fips:oci-vault");
+    aws_lc_rs::try_fips_mode().expect("the selected AWS-LC provider is in FIPS mode");
+    ArtifactCipher::new(
         ProviderMode::ProductionFips,
         DatabaseKey::from_bytes([7; 32]),
         context("01JTENANT"),
-    );
-    assert_eq!(result, Err(EncryptionError::ProductionProviderUnavailable));
+    )
+    .expect("production mode accepts the linked FIPS provider");
 }
 
 #[test]
@@ -57,7 +55,7 @@ fn wrong_key_aad_tag_and_truncation_are_rejected() {
     assert_eq!(wrong_key.open(&envelope), Err(EncryptionError::AuthenticationFailed));
 
     let mut wrong_aad = ArtifactCipher::new(
-        ProviderMode::LocalNonFips,
+        ProviderMode::LocalFile,
         DatabaseKey::from_bytes([4; 32]),
         context("01JOTHER TENANT"),
     )
@@ -77,7 +75,7 @@ fn wrong_key_aad_tag_and_truncation_are_rejected() {
 #[test]
 fn replay_and_ordinal_exhaustion_are_refused() {
     let mut writer = ArtifactCipher::with_next_ordinal(
-        ProviderMode::LocalNonFips,
+        ProviderMode::LocalFile,
         DatabaseKey::from_bytes([9; 32]),
         context("01JTENANT"),
         (1u128 << 96) - 1,
@@ -103,10 +101,54 @@ fn malformed_and_oversized_inputs_fail_before_crypto() {
 fn generated_database_keys_are_redacted() {
     let a = DatabaseKey::generate().unwrap();
     let b = DatabaseKey::generate().unwrap();
-    let mut first =
-        ArtifactCipher::new(ProviderMode::LocalNonFips, a, context("01JTENANT")).unwrap();
-    let mut second =
-        ArtifactCipher::new(ProviderMode::LocalNonFips, b, context("01JTENANT")).unwrap();
+    let mut first = ArtifactCipher::new(ProviderMode::LocalFile, a, context("01JTENANT")).unwrap();
+    let mut second = ArtifactCipher::new(ProviderMode::LocalFile, b, context("01JTENANT")).unwrap();
     assert_ne!(first.seal(b"random key").unwrap(), second.seal(b"random key").unwrap());
     assert_eq!(format!("{:?}", DatabaseKey::from_bytes([0; 32])), "DatabaseKey(REDACTED)");
+}
+
+#[test]
+fn local_file_key_persists_without_exposing_material() {
+    let directory = unique_directory("persistence");
+    let provider = LocalFileKeyProvider::at_engine_location(&directory);
+    assert_eq!(provider.identity(), "local-file");
+
+    let first = provider.load_or_create().unwrap();
+    let second = provider.load_or_create().unwrap();
+    let mut first_cipher =
+        ArtifactCipher::new(ProviderMode::LocalFile, first, context("01JTENANT")).unwrap();
+    let mut second_cipher =
+        ArtifactCipher::new(ProviderMode::LocalFile, second, context("01JTENANT")).unwrap();
+    assert_eq!(
+        first_cipher.seal(b"stable local key").unwrap(),
+        second_cipher.seal(b"stable local key").unwrap()
+    );
+    assert_eq!(std::fs::metadata(provider.path()).unwrap().len(), 32);
+
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn local_file_key_rejects_broad_permissions() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let directory = unique_directory("permissions");
+    let provider = LocalFileKeyProvider::at_engine_location(&directory);
+    drop(provider.load_or_create().unwrap());
+    std::fs::set_permissions(provider.path(), std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(matches!(provider.load_or_create(), Err(EncryptionError::UnsafeLocalKeyFile)));
+
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+fn unique_directory(label: &str) -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    std::env::temp_dir().join(format!(
+        "terrabase-encryption-{label}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
 }
