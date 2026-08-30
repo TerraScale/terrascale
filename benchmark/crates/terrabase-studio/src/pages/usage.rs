@@ -1,35 +1,33 @@
-//! The Usage page: the meter catalog, and the segment ledger's summary.
+//! The Usage page: the engine's meter catalog and authoritative durable facts.
 
-use std::collections::BTreeMap;
-
-use terrabase::{MeterCatalog, MeterKind, SegmentId, SequenceInterval, UsageScope, UsageSegment};
+use terrabase::usage::{
+    UsageFactId, UsagePageRequest, UsageRecordMeter, UsageRecordRequest,
+};
+use terrabase::{MeterCatalog, MeterKind, RegionCode};
 
 use crate::html::{self, ButtonStyle, Tone};
 use crate::state::StudioState;
 
-/// The identifier the ledger summary is merged into.
+/// The authoritative fact table replaced after a record command.
 pub const LEDGER_ID: &str = "usage-ledger";
+const PAGE_SIZE: u32 = 256;
 
-/// Renders the Usage page.
-pub fn render(state: &StudioState, nonce: &str) -> String {
+/// Renders the Usage page for one tenant.
+pub fn render(state: &StudioState, tenant_name: &str, nonce: &str) -> String {
     let body = format!(
-        "{heading}\n\
-{honest}\n\
-{catalog}\n\
-{ledger}\n\
-{record}",
+        "{heading}\n{truth}\n{catalog}\n{facts}\n{record}",
         heading = html::heading(
             "Usage",
-            "The engine's meter vocabulary, and the folded summary of the segments the studio has recorded.",
+            "Record standalone event meters and inspect the engine's authoritative durable usage facts.",
         ),
-        honest = html::alert(
-            Tone::Warn,
-            "There is no durable usage ledger bound to this engine location",
-            "The engine's usage domain is a pure value domain: UsageSegmentLedger is constructed with `default()`, holds its segments in memory, has no open path, and no aggregate read. Nothing in the engine's public API attaches a usage ledger to a location. The ledger below is therefore studio-local and in-memory — it is lost when the studio stops, and the page says so rather than presenting it as engine state.",
+        truth = html::alert(
+            Tone::Neutral,
+            "The engine is authoritative",
+            "The table below comes from Engine::usage_page at a stable storage snapshot. Studio does not estimate usage, walk the data directory, or substitute an in-memory ledger when the backend refuses the read.",
         ),
         catalog = catalog_card(),
-        ledger = ledger_card(state),
-        record = record_card(state),
+        facts = authoritative_fragment(state, tenant_name),
+        record = record_card(state, tenant_name),
     );
     html::page(nonce, "Usage", "/usage", "", &body)
 }
@@ -58,246 +56,220 @@ fn catalog_card() -> String {
         rows.push_str(&html::cell(&format!("{:?}", definition.cadence())));
         rows.push_str("</tr>");
     }
-    let body = format!(
-        "{}\n{}",
-        html::table(
+    html::card(
+        "Meter catalog",
+        &html::table(
             &["meter", "version", "unit", "charge scope", "minting rule", "cadence"],
             &[rows],
             "No meter defined.",
         ),
+    )
+}
+
+/// Renders the first stable page of authoritative facts for one tenant.
+pub fn authoritative_fragment(state: &StudioState, tenant_name: &str) -> String {
+    let content = authoritative_table(state, tenant_name).unwrap_or_else(|failure| {
+        html::alert(Tone::Bad, "Authoritative usage is unavailable", &failure)
+    });
+    format!(
+        "<div id=\"{LEDGER_ID}\">{card}</div>",
+        card = html::card("Authoritative durable facts", &content),
+    )
+}
+
+fn authoritative_table(state: &StudioState, tenant_name: &str) -> Result<String, String> {
+    let tenant = terrabase::TenantId::try_new(tenant_name.trim())
+        .map_err(|error| format!("TenantId validation failed: {error:?}"))?;
+    let scope = state.engine.scope_for(&tenant);
+    let request = UsagePageRequest::try_new(None, PAGE_SIZE, None)
+        .map_err(|error| format!("UsagePageRequest validation failed: {error:?}"))?;
+    let page = state
+        .engine
+        .usage_page(&scope, request)
+        .map_err(|error| format!("UsageCommandError::{error:?}: {error}"))?;
+
+    let mut rows = String::new();
+    for durable in page.facts() {
+        let fact = durable.fact();
+        let scope = fact.scope();
+        let identity = fact.identity();
+        let window = fact.window();
+        rows.push_str("<tr class=\"border-b transition-colors hover:bg-muted/50\">");
+        rows.push_str(&html::cell(&durable.sequence().to_string()));
+        rows.push_str(&html::cell(&durable.replica_epoch().to_string()));
+        rows.push_str(&html::cell(meter_name(fact.meter())));
+        rows.push_str(&html::cell(&format!(
+            "{}/{}/{}/{}/{}",
+            scope.tenant_id().as_str(),
+            scope.project_id().as_str(),
+            scope.database_id().as_str(),
+            scope.partition_id().as_str(),
+            scope.region_id().as_str(),
+        )));
+        rows.push_str(&html::cell(&format!("{:?}:{}", identity.rule(), identity.id())));
+        rows.push_str(&html::cell(&format!(
+            "{}..{}",
+            window.start_millis(),
+            window.end_millis(),
+        )));
+        rows.push_str(&html::cell(&fact.delta().to_string()));
+        rows.push_str("</tr>");
+    }
+
+    let page_note = if page.continuation().is_some() {
+        html::alert(
+            Tone::Warn,
+            "More facts exist",
+            &format!(
+                "This view stops at {PAGE_SIZE} facts from snapshot sequence {}. The engine returned a continuation, so this is not the complete tenant history.",
+                page.snapshot_sequence().get(),
+            ),
+        )
+    } else {
         html::alert(
             Tone::Neutral,
-            "The meter table is closed",
+            "Stable snapshot",
             &format!(
-                "A meter definition is only valid when its unit, charge scope, minting rule, cadence, and correction procedure match the engine's fixed table for that kind, so there is no custom meter. The format version is {} and a segment may not exceed {} bytes or span more than {} sequences.",
-                terrabase::USAGE_FORMAT_VERSION,
-                terrabase::usage::MAX_SEGMENT_BYTES,
-                terrabase::usage::MAX_SEQUENCE_SPAN,
+                "The page is complete through storage sequence {} for tenant `{}`.",
+                page.snapshot_sequence().get(),
+                tenant.as_str(),
             ),
+        )
+    };
+
+    Ok(format!(
+        "{selector}{table}{note}",
+        selector = tenant_selector(state, tenant.as_str()),
+        table = html::table(
+            &[
+                "sequence",
+                "replica epoch",
+                "meter",
+                "scope",
+                "identity",
+                "window millis",
+                "delta",
+            ],
+            &[rows],
+            "No durable usage fact has been recorded for this tenant.",
         ),
-    );
-    html::card("Meter catalog", &body)
+        note = page_note,
+    ))
 }
 
-/// One folded meter total.
-pub struct MeterTotal {
-    /// The meter kind.
-    pub kind: MeterKind,
-    /// The net total, corrections included.
-    pub total: i128,
-    /// How many segments contributed, and how many were corrections.
-    pub segments: usize,
-    pub corrections: usize,
-}
-
-/// Folds the ledger into per-meter net totals.
-///
-/// Corrections are sign-bearing, so a naive sum is the corrected net; the
-/// counts beside it make that visible instead of hiding it.
-pub fn fold(ledger: &terrabase::UsageSegmentLedger) -> Vec<MeterTotal> {
-    let mut folded: BTreeMap<MeterKind, (i128, usize, usize)> = BTreeMap::new();
-    for segment in ledger.segments() {
-        let entry = folded.entry(segment.meter()).or_insert((0, 0, 0));
-        entry.0 += segment.integer_total();
-        entry.1 += 1;
-        if segment.correction_of().is_some() {
-            entry.2 += 1;
-        }
+fn tenant_selector(state: &StudioState, selected: &str) -> String {
+    let mut tenants = state.tenants();
+    if !tenants.iter().any(|tenant| tenant == selected) {
+        tenants.push(selected.to_owned());
+        tenants.sort();
     }
-    folded
-        .into_iter()
-        .map(|(kind, (total, segments, corrections))| MeterTotal {
-            kind,
-            total,
-            segments,
-            corrections,
-        })
-        .collect()
-}
-
-fn ledger_card(state: &StudioState) -> String {
-    let ledger = state.usage.lock().unwrap_or_else(|poison| poison.into_inner());
-    let mut summary = String::new();
-    let totals = fold(&ledger);
-    for total in &totals {
-        summary.push_str("<tr class=\"border-b transition-colors hover:bg-muted/50\">");
-        summary.push_str(&html::cell(meter_name(total.kind)));
-        summary.push_str(&html::cell(&total.total.to_string()));
-        summary.push_str(&html::cell(&total.segments.to_string()));
-        summary.push_str(&html::cell(&total.corrections.to_string()));
-        summary.push_str("</tr>");
-    }
-    let mut segments = String::new();
-    for segment in ledger.segments() {
-        segments.push_str("<tr class=\"border-b transition-colors hover:bg-muted/50\">");
-        segments.push_str(&html::cell(segment.segment_id().as_str()));
-        segments.push_str(&html::cell(meter_name(segment.meter())));
-        segments.push_str(&html::cell(&segment.integer_total().to_string()));
-        segments.push_str(&html::cell(&format!(
-            "{}–{}",
-            segment.interval().first(),
-            segment.interval().last()
-        )));
-        segments.push_str(&html::cell(
-            &segment
-                .correction_of()
-                .map(|id| id.as_str().to_owned())
-                .unwrap_or_else(|| "—".to_owned()),
-        ));
-        segments.push_str("</tr>");
-    }
-    let body = format!(
-        "<div id=\"{LEDGER_ID}\" class=\"grid gap-6\">{summary_card}{segments_card}</div>",
-        LEDGER_ID = LEDGER_ID,
-        summary_card = html::card(
-            "Folded totals",
-            &html::table(
-                &["meter", "net total", "segments", "of which corrections"],
-                &[summary],
-                "No segment recorded yet."
-            )
-        ),
-        segments_card = html::card(
-            "Segments",
-            &html::table(
-                &["segment", "meter", "total", "sequences", "corrects"],
-                &[segments],
-                "No segment recorded yet."
-            )
-        ),
-    );
-    html::card("Studio-local segment ledger", &body)
-}
-
-fn record_card(state: &StudioState) -> String {
-    let mut tenant_names = state.tenants();
-    if tenant_names.is_empty() {
-        tenant_names.push("demo".to_owned());
-    }
-    let options =
-        tenant_names.iter().map(|name| html::option(name, name, true)).collect::<Vec<_>>().concat();
-    let body = format!(
-        "<p class=\"mb-4 text-sm text-muted-foreground\">Record one stored-byte-hour segment for the selected tenant, measured from the engine's own published facts: the studio counts the tenant's documents across its registered collections and uses the engine location's byte count as the measured quantity. The segment is built with the engine's own validators and inserted into the studio's ledger, so a malformed window or a zero delta reports the typed usage error.</p>\n\
-<form class=\"grid gap-4\" data-on:submit=\"@post('/usage/record', {{contentType: 'form', retry: 'never'}})\">\n{tenant}{project}{partition}\
-<button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary} w-fit\">Record a stored-byte-hour segment</button>\n\
-</form>\n{receipt}",
+    let options = tenants
+        .iter()
+        .map(|tenant| html::option(tenant, tenant, tenant == selected))
+        .collect::<Vec<_>>()
+        .concat();
+    format!(
+        "<form class=\"mb-4 flex items-end gap-2\" method=\"get\" action=\"/usage\">{tenant}<button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md border px-3 h-9 text-sm font-medium transition-colors {secondary}\">Read tenant facts</button></form>",
         tenant = html::select("tenant", "Tenant", &options),
-        project = html::text_input("project", "Project id", "studio", "studio"),
-        partition = html::text_input("partition", "Partition id", "p0", "p0"),
+        secondary = ButtonStyle::Secondary.classes(),
+    )
+}
+
+fn record_card(state: &StudioState, selected_tenant: &str) -> String {
+    let mut tenant_names = state.tenants();
+    if !tenant_names.iter().any(|tenant| tenant == selected_tenant) {
+        tenant_names.push(selected_tenant.to_owned());
+        tenant_names.sort();
+    }
+    let tenants = tenant_names
+        .iter()
+        .map(|name| html::option(name, name, name == selected_tenant))
+        .collect::<Vec<_>>()
+        .concat();
+    let meters = format!(
+        "{}{}",
+        html::option("admitted-request-units", "admitted request units", true),
+        html::option("public-egress-bytes", "public egress bytes", false),
+    );
+    let regions = [RegionCode::GRU, RegionCode::SFO, RegionCode::FRA]
+        .iter()
+        .map(|region| html::option(region.as_str(), region.as_str(), *region == RegionCode::GRU))
+        .collect::<Vec<_>>()
+        .concat();
+    let body = format!(
+        "<p class=\"mb-4 text-sm text-muted-foreground\">Record one positive, idempotent event fact. Reusing a fact id with the same content returns the original receipt; reusing it for different content fails closed.</p>\n\
+<form class=\"grid gap-4\" data-on:submit=\"@post('/usage/record', {{contentType: 'form', retry: 'never'}})\">\n\
+<div class=\"grid gap-4 md:grid-cols-3\">{tenant}{meter}{region}</div>\n\
+<div class=\"grid gap-4 md:grid-cols-3\">{project}{database}{partition}</div>\n\
+<div class=\"grid gap-4 md:grid-cols-2\">{fact_id}{units}</div>\n\
+<button type=\"submit\" class=\"inline-flex items-center justify-center rounded-md px-3 h-9 text-sm font-medium transition-colors {primary} w-fit\">Record durable usage fact</button>\n\
+</form>\n{receipt}",
+        tenant = html::select("tenant", "Tenant", &tenants),
+        meter = html::select("meter", "Meter", &meters),
+        region = html::select("region", "Origin region", &regions),
+        project = html::text_input("project", "Project id", "studio", "project identifier"),
+        database = html::text_input("database", "Database id", "studio", "database identifier"),
+        partition = html::text_input("partition", "Partition id", "p0", "partition identifier"),
+        fact_id = html::text_input("fact_id", "Stable fact id", "", "operator-event-0001"),
+        units = html::number_input("integer_units", "Positive integer units", "1"),
         primary = ButtonStyle::Primary.classes(),
         receipt = html::receipt_region_with("usage-receipt"),
     );
-    html::card("Record a measurement", &body)
+    html::card("Record a durable event fact", &body)
 }
 
-/// Builds and inserts one stored-byte-hour segment from the engine's facts.
-///
-/// The measurement window is the hour that just closed, the sequence interval
-/// spans the committed sequences the studio can observe, and the region is the
-/// first region of the operator's topology — every input is read from a real
-/// surface, never invented.
-pub fn record_segment(
+/// Validates and durably records one standalone usage event.
+#[allow(clippy::too_many_arguments)]
+pub fn record_fact(
     state: &StudioState,
     tenant_name: &str,
+    meter_name: &str,
     project: &str,
+    database: &str,
     partition: &str,
+    region: &str,
+    fact_id: &str,
+    integer_units: &str,
     now_millis: u64,
 ) -> Result<String, String> {
     let tenant = terrabase::TenantId::try_new(tenant_name.trim())
         .map_err(|error| format!("tenant: {error:?}"))?;
-    let region = state
-        .topology()
-        .regions
-        .first()
-        .map(|region| region.name.clone())
-        .ok_or_else(|| "the topology has no region to attribute the segment to".to_owned())?;
-    let region_id = terrabase::RegionCode::from_text(&region.to_uppercase())
-        .map_err(|error| format!("region: {error:?}"))?;
-
-    let published = crate::engine_ops::published_sequence(state.engine.as_ref())
-        .map_err(|error| error.to_string())?
-        .get();
-    let documents = count_documents(state, tenant_name);
-
-    let scope = UsageScope::try_new(tenant, project.trim(), "studio", partition.trim(), region_id)
-        .map_err(|error| format!("usage scope: {error:?}"))?;
-    let definition = MeterCatalog::initial()
-        .get(MeterKind::StoredByteHours, 1)
-        .copied()
-        .ok_or_else(|| "the stored-byte-hour meter is not in the catalog".to_owned())?;
-    let hour_start = now_millis.saturating_sub(3_600_000);
-    let segment = UsageSegment::try_new(
-        SegmentId::try_new(&format!("seg-{now_millis}-{published}"))
-            .map_err(|error| format!("segment id: {error:?}"))?,
-        definition,
-        scope,
-        1,
-        SequenceInterval::try_new(published.max(1), published.max(1))
-            .map_err(|error| format!("sequence interval: {error:?}"))?,
-        terrabase::MeasurementWindow::interval(hour_start, now_millis)
-            .map_err(|error| format!("measurement window: {error:?}"))?,
-        measured_total(state),
-        None,
-    )
-    .map_err(|error| format!("the segment is invalid: {error:?}"))?;
-    let mut ledger = state.usage.lock().unwrap_or_else(|poison| poison.into_inner());
-    let outcome = ledger
-        .insert(segment)
-        .map_err(|error| format!("the ledger refused the segment: {error:?}"))?;
-    Ok(format!(
-        "segment inserted ({outcome:?}) at generation 1: {documents} document(s) attributed to region {region}",
-        outcome = outcome,
-    ))
-}
-
-/// The measured quantity.
-///
-/// The meter's unit is the byte-hour and the window above is exactly one
-/// hour, so the integer total is the byte count itself. The byte count is the
-/// studio's own directory walk: the engine's public in-process surface
-/// exposes no byte metric.
-fn measured_total(state: &StudioState) -> i128 {
-    i128::from(location_bytes(state))
-}
-
-fn location_bytes(state: &StudioState) -> u64 {
-    let mut bytes = 0;
-    let mut stack = vec![state.config.data_dir.clone()];
-    while let Some(directory) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&directory) else { continue };
-        for entry in entries.flatten() {
-            if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
-                stack.push(entry.path());
-            } else {
-                bytes += entry.metadata().map(|meta| meta.len()).unwrap_or_default();
-            }
-        }
-    }
-    bytes
-}
-
-fn count_documents(state: &StudioState, tenant_name: &str) -> u64 {
-    let tenant = match terrabase::TenantId::try_new(tenant_name) {
-        Ok(tenant) => tenant,
-        Err(_) => return 0,
+    let meter = match meter_name {
+        "admitted-request-units" => UsageRecordMeter::AdmittedRequestUnits,
+        "public-egress-bytes" => UsageRecordMeter::PublicEgressBytes,
+        _ => return Err("meter: expected admitted-request-units or public-egress-bytes".to_owned()),
     };
-    state
-        .collections_of(tenant_name)
-        .iter()
-        .filter_map(|collection| {
-            terrabase::types::CollectionName::try_new(collection)
-                .ok()
-                .and_then(|collection| {
-                    crate::engine_ops::list_documents(
-                        state.engine.as_ref(),
-                        &tenant,
-                        &collection,
-                        0,
-                        1,
-                    )
-                    .ok()
-                })
-                .map(|page| page.matched)
-        })
-        .sum()
+    let region = RegionCode::from_text(region.trim().to_uppercase().as_str())
+        .map_err(|error| format!("origin region: {error:?}"))?;
+    let fact_id = UsageFactId::try_new(fact_id.trim())
+        .map_err(|error| format!("fact id: {error:?}"))?;
+    let integer_units = integer_units
+        .trim()
+        .parse::<i128>()
+        .map_err(|_| "integer units must be a positive whole number".to_owned())?;
+    let request = UsageRecordRequest::try_new(
+        meter,
+        project.trim(),
+        database.trim(),
+        partition.trim(),
+        region,
+        fact_id,
+        now_millis,
+        1,
+        integer_units,
+    )
+    .map_err(|error| format!("UsageRecordRequest validation failed: {error:?}"))?;
+    let scope = state.engine.scope_for(&tenant);
+    let receipt = state
+        .engine
+        .record_usage(&scope, request)
+        .map_err(|error| format!("UsageCommandError::{error:?}: {error}"))?;
+    state.observe(tenant.as_str(), None);
+    Ok(format!(
+        "fact `{}` is durable at sequence {} in replica epoch {} (already recorded: {})",
+        receipt.fact_id(),
+        receipt.sequence().get(),
+        receipt.replica_epoch(),
+        receipt.already_recorded(),
+    ))
 }

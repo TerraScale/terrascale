@@ -121,6 +121,50 @@ cargo metadata \
   --format-version 1 >"$metadata"
 version=$(jq -er --arg package "$package" '[.packages[] | select(.name == $package) | .version] | if length == 1 then .[0] else error("package identity is not unique") end' "$metadata")
 
+fips_feature_graph=
+if [[ $component == server ]]; then
+  feature_tree_arguments=(
+    --manifest-path "$manifest"
+    --locked
+    --package "$package"
+    --target "$target"
+    --no-default-features
+    --features production-fips
+    --edges features
+    --charset ascii
+  )
+  feature_tree_raw=$work/production-fips.features.raw
+  fips_feature_graph=$work/production-fips.features.txt
+  {
+    printf 'target: %s\n' "$target"
+    printf 'selected features: production-fips\n'
+    printf '\n[terrabase]\n'
+    cargo tree "${feature_tree_arguments[@]}" --invert terrabase
+    printf '\n[aws-lc-rs]\n'
+    cargo tree "${feature_tree_arguments[@]}" --invert aws-lc-rs
+    printf '\n[aws-lc-fips-sys]\n'
+    cargo tree "${feature_tree_arguments[@]}" --invert aws-lc-fips-sys
+  } >"$feature_tree_raw"
+  sed "s|$repository_root|/usr/src/terrabase|g" "$feature_tree_raw" >"$fips_feature_graph"
+  grep -Fq 'terrabase feature "production-fips"' "$fips_feature_graph" || {
+    echo "production server feature graph does not select terrabase/production-fips" >&2
+    exit 1
+  }
+  grep -Fq 'aws-lc-rs feature "fips"' "$fips_feature_graph" || {
+    echo "production server feature graph does not select aws-lc-rs/fips" >&2
+    exit 1
+  }
+  grep -Fq 'aws-lc-fips-sys v' "$fips_feature_graph" || {
+    echo "production server feature graph does not contain aws-lc-fips-sys" >&2
+    exit 1
+  }
+  if grep -Fq 'terrabase feature "local-crypto"' "$fips_feature_graph" \
+    || grep -Fq 'aws-lc-rs feature "non-fips"' "$fips_feature_graph"; then
+    echo "production server feature graph contains a local or non-FIPS crypto feature" >&2
+    exit 1
+  fi
+fi
+
 target_directory=$work/cargo-target
 build_arguments=(
   --manifest-path "$manifest"
@@ -153,6 +197,13 @@ oci_name=$artifact_stem.oci.tar
 sbom_name=$artifact_stem.cdx.json
 provenance_name=$artifact_stem.intoto.json
 manifest_name=$artifact_stem.release.json
+fips_feature_graph_name=
+fips_feature_graph_digest=
+if [[ $component == server ]]; then
+  fips_feature_graph_name=$artifact_stem.fips-features.txt
+  install -m 0644 "$fips_feature_graph" "$output/$fips_feature_graph_name"
+  fips_feature_graph_digest=$(sha256sum "$output/$fips_feature_graph_name" | awk '{print $1}')
+fi
 
 archive_root=$work/archive/$artifact_stem
 install -D -m 0755 "$built_binary" "$archive_root/bin/$binary"
@@ -218,8 +269,11 @@ jq -n \
   --arg revision "$source_revision" \
   --arg tree "$source_tree" \
   --arg target "$target" \
+  --arg component "$component" \
   --arg rust "$rust_version" \
   --arg lock_digest "$lock_digest" \
+  --arg fips_feature_graph "$fips_feature_graph_name" \
+  --arg fips_feature_graph_digest "$fips_feature_graph_digest" \
   --arg base 'gcr.io/distroless/cc-debian12@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f' \
   --arg archive_name "$archive_name" \
   --arg archive_digest "$archive_digest" \
@@ -235,7 +289,15 @@ jq -n \
       "buildDefinition": {
         "buildType": "https://terrascale.tech/build/terrabase-native-oci/v1",
         "externalParameters": {"target": $target, "profile": "release", "sourceDirty": $source_dirty},
-        "internalParameters": {"rustc": $rust, "cargoLockSha256": $lock_digest},
+        "internalParameters": (
+          {"rustc": $rust, "cargoLockSha256": $lock_digest} +
+          if $component == "server" then {
+            "fipsFeatureGraph": {
+              "name": $fips_feature_graph,
+              "sha256": $fips_feature_graph_digest
+            }
+          } else {} end
+        ),
         "resolvedDependencies": [
           {"uri": $repository, "digest": {"gitCommit": $revision, "gitTree": $tree}},
           {"uri": $base}
@@ -261,6 +323,8 @@ jq -n \
   --arg oci_digest "$oci_digest" \
   --arg sbom "$sbom_name" \
   --arg provenance "$provenance_name" \
+  --arg fips_feature_graph "$fips_feature_graph_name" \
+  --arg fips_feature_graph_digest "$fips_feature_graph_digest" \
   --argjson source_dirty "$source_dirty" \
   '{
     schemaVersion: 1,
@@ -277,6 +341,10 @@ jq -n \
     evidence: (
       {sbom: $sbom, provenance: $provenance, checksums: "SHA256SUMS"} +
       if $component == "server" then {
+        fipsFeatureGraph: {
+          name: $fips_feature_graph,
+          sha256: $fips_feature_graph_digest
+        },
         productionCapability: {
           statement: "PRODUCTION-CAPABILITY.json",
           signature: "PRODUCTION-CAPABILITY.sig",
@@ -290,12 +358,11 @@ jq -n \
 
 (
   cd "$output"
-  LC_ALL=C sha256sum \
-    "$archive_name" \
-    "$manifest_name" \
-    "$oci_name" \
-    "$provenance_name" \
-    "$sbom_name" >SHA256SUMS
+  checksum_files=("$archive_name" "$manifest_name" "$oci_name" "$provenance_name" "$sbom_name")
+  if [[ $component == server ]]; then
+    checksum_files+=("$fips_feature_graph_name")
+  fi
+  LC_ALL=C sha256sum "${checksum_files[@]}" >SHA256SUMS
   sha256sum --check --strict SHA256SUMS
 )
 

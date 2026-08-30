@@ -478,12 +478,12 @@ func TestHostileValuesAreRejectedOnBothBoundaries(t *testing.T) {
 	}
 	tooMany := make([]*v1.Value, maxListItems+1)
 	for index := range tooMany {
-		tooMany[index] = &v1.Value{Kind: &v1.Value_Null{Null: v1.NullValue_NULL_VALUE_NULL}}
+		tooMany[index] = &v1.Value{Kind: &v1.Value_Null{Null: v1.NullValue_NULL}}
 	}
 	if _, err := valueFromProto(&v1.Value{Kind: &v1.Value_List{List: &v1.ValueList{Items: tooMany}}}); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("oversized lists must be rejected, got %v", err)
 	}
-	nested := &v1.Value{Kind: &v1.Value_Null{Null: v1.NullValue_NULL_VALUE_NULL}}
+	nested := &v1.Value{Kind: &v1.Value_Null{Null: v1.NullValue_NULL}}
 	for index := 0; index <= maxDetailIndent; index++ {
 		nested = &v1.Value{Kind: &v1.Value_List{List: &v1.ValueList{Items: []*v1.Value{nested}}}}
 	}

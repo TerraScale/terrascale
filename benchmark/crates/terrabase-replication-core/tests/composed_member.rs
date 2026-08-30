@@ -348,7 +348,7 @@ fn quorum_writes_during_a_partition_converge_after_the_heal() {
 #[test]
 fn every_member_coordinates_in_rotation_at_full_reach() {
     use terrabase::replication::{LeaderlessLevel, MemberId};
-    use terrabase_replication_core::coordinate_composed_write;
+    use terrabase_replication_core::{ComposedCoordinationError, coordinate_composed_write};
 
     let (set, mut members, dirs) = three_region_members("rotate");
     for accepting in ["a1", "a2", "b1", "b2", "g1", "g2"] {
@@ -363,6 +363,36 @@ fn every_member_coordinates_in_rotation_at_full_reach() {
         assert_eq!(receipt.contributors().len(), 6, "the fan-out reaches every voter");
         assert_eq!(*receipt.accepting_member(), MemberId::try_new(accepting).expect("valid"));
     }
+
+    members.reverse();
+    let reversed = coordinate_composed_write(
+        &set,
+        &MemberId::try_new("a1").expect("valid member"),
+        &mut members,
+        &put_write("op-reversed", "order-2", "reversed"),
+        LeaderlessLevel::RegionalQuorum,
+    )
+    .expect("reversed input still coordinates");
+    let contributor_ids: Vec<_> =
+        reversed.contributors().iter().map(|ack| ack.member().as_str()).collect();
+    assert_eq!(contributor_ids, ["a1", "a2", "b1", "b2", "g1", "g2"]);
+
+    let failed = coordinate_composed_write(
+        &set,
+        &MemberId::try_new("a1").expect("valid member"),
+        &mut members,
+        &put_write("", "order-3", "invalid operation identity"),
+        LeaderlessLevel::RegionalQuorum,
+    )
+    .expect_err("every Member refuses the invalid operation identity");
+    assert_eq!(
+        failed,
+        ComposedCoordinationError::ApplyFailed {
+            member: MemberId::try_new("a1").expect("valid member")
+        },
+        "failure selection is canonical even when the input slice is reversed"
+    );
+
     heal_all(&mut members);
     let views: Vec<_> =
         members.iter_mut().map(|member| member.visible("order-1").expect("serves")).collect();

@@ -59,6 +59,17 @@ and a database-specific prefix. For AWS S3, leave the endpoint blank. For an
 S3-compatible provider, enter its HTTPS endpoint and choose the request style
 it requires.
 
+The default Studio build installs the ring TLS provider before it creates the
+S3 client. Build the production FIPS profile explicitly:
+
+```sh
+cargo run --manifest-path crates/terrabase-studio/Cargo.toml --release --no-default-features --features production-fips
+```
+
+That profile installs AWS-LC FIPS and refuses S3 setup if another process
+component installed a non-FIPS TLS provider first. Do not enable both crypto
+profiles.
+
 Choose the incremental interval and the full-point interval. Five minutes and
 twenty-four hours are the defaults. Select "Save and test S3". Studio lists the
 prefix and validates every manifest before it saves the settings.
@@ -115,9 +126,9 @@ uses the private engine registry described by ADR 0036.
 
 ## Restore
 
-On `/backups`, leave the identity blank for the newest point or paste a full
-recovery-point identity. Choose a new, empty target directory. Restore performs
-these steps:
+On `/backups`, choose the latest point or select an older recovery point from
+the list. Choose a new, empty target directory. Studio suggests a sibling of
+the live engine directory. Restore performs these steps:
 
 1. List and validate the manifests under the configured prefix.
 2. Resolve the selected full-plus-incremental chain.

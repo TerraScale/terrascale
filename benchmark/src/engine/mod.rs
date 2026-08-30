@@ -91,10 +91,6 @@ pub(crate) const MAX_PUBLICATION_SINKS: usize = 64;
 /// Maximum rows in one boundary-pinned final-state snapshot page.
 pub(crate) const MAX_SNAPSHOT_RECORD_PAGE: u32 = 256;
 
-/// The history window used to resolve winning-write durability for one
-/// bounded snapshot page.
-const SNAPSHOT_HISTORY_PAGE: u32 = 256;
-
 /// The clock stamp durable retained evidence carries (GAP-S1 D3).
 ///
 /// D-3 stamps are process-local lane state; the retained-evidence store
@@ -1741,65 +1737,36 @@ impl Engine {
         if boundary > current {
             return Err(EngineError::SnapshotBoundaryUnavailable);
         }
+        if !storage.port.snapshot_boundary_available(boundary) {
+            return Err(EngineError::SnapshotBoundaryUnavailable);
+        }
         if storage.port.servable_history_start().is_some_and(|start| boundary < start) {
             return Err(EngineError::SnapshotBoundaryUnavailable);
         }
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let documents = storage.port.documents_at_from_key(
-            boundary,
-            &tenant,
-            after.as_ref().map(|(collection, identifier)| (collection, identifier)),
-            limit,
-        );
+        let documents = storage
+            .port
+            .documents_at_from_key(
+                boundary,
+                &tenant,
+                after.as_ref().map(|(collection, identifier)| (collection, identifier)),
+                limit,
+            )
+            .map_err(|_| EngineError::StorageFailure)?;
         if documents.is_empty() {
             return Ok(Vec::new());
         }
-        let mut winners: Vec<Option<LocalDurability>> = vec![None; documents.len()];
-        let mut history_after = StorageSequence::default();
-        loop {
-            let page = storage.port.tenant_commits(&tenant, history_after, SNAPSHOT_HISTORY_PAGE);
-            if page.is_empty() {
-                break;
-            }
-            let mut reached_boundary = false;
-            for commit in &page {
-                if commit.sequence().get() > boundary.get() {
-                    reached_boundary = true;
-                    break;
-                }
-                for write in commit.writes() {
-                    let (collection, identifier) = match write {
-                        storage::PublishedWrite::Put { document } => {
-                            (document.collection().as_str(), document.id().as_str())
-                        }
-                        storage::PublishedWrite::Delete {
-                            collection: Some(collection),
-                            id,
-                            ..
-                        } => (collection.as_str(), id.as_str()),
-                        storage::PublishedWrite::Delete { collection: None, .. } => continue,
-                    };
-                    for (index, document) in documents.iter().enumerate() {
-                        if document.collection().as_str() == collection
-                            && document.id().as_str() == identifier
-                        {
-                            winners[index] = match write {
-                                storage::PublishedWrite::Put { .. } => Some(commit.durability()),
-                                storage::PublishedWrite::Delete { .. } => None,
-                            };
-                        }
-                    }
-                }
-            }
-            let last = page.last().map(storage::PublishedCommit::sequence);
-            if reached_boundary || last.is_none_or(|sequence| sequence.get() >= boundary.get()) {
-                break;
-            }
-            history_after = last.expect("non-empty history page has a last sequence");
-        }
-        if winners.iter().any(Option::is_none) {
+        let keys: Vec<_> = documents
+            .iter()
+            .map(|document| (document.collection().as_str(), document.id().as_str()))
+            .collect();
+        let winners = storage
+            .port
+            .winning_durabilities_at(&tenant, boundary, &keys)
+            .ok_or(EngineError::SnapshotBoundaryUnavailable)?;
+        if winners.len() != documents.len() {
             return Err(EngineError::SnapshotBoundaryUnavailable);
         }
         Ok(documents
@@ -1807,7 +1774,7 @@ impl Engine {
             .zip(winners)
             .map(|(document, durability)| SnapshotRecord {
                 document,
-                durability: durability.expect("checked above"),
+                durability,
             })
             .collect())
     }

@@ -57,13 +57,13 @@ func newTestPKI(t testing.TB) testPKI {
 		Subject:      pkix.Name{CommonName: "localhost"},
 		DNSNames:     []string{"localhost"},
 		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServiceServerAuth},
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	})
 	clientPEM, clientKey := issueCertificate(t, caCertificate, caKey, &x509.Certificate{
 		SerialNumber: big.NewInt(3),
 		Subject:      pkix.Name{CommonName: "terrabase-test-client"},
 		URIs:         []*url.URL{mustTestURL(t, testGatewayPrincipal)},
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServiceClientAuth},
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	})
 	return testPKI{
 		caPEM:     pemEncode(t, "CERTIFICATE", caDER),

@@ -117,9 +117,8 @@ loops over every hold kind, every copy class, and every resume prefix:
   is physically gone; it proves a coherent, plan-bound, deadline-checked,
   idempotent record of claims. Real enforcement needs per-tier execution
   lanes (storage compaction, index drops, cache eviction, view
-  invalidation, and the backup scheduler's retention sweep in
-  `src/backup/schedule/retention.rs`, which today has no hook that
-  receipts a deletion's backup-rotation copy).
+  invalidation, and the S3 lifecycle policy selected under ADR 0037, which
+  today has no hook that receipts a deletion's backup-rotation copy).
 - **"Block ordinary access" is a domain predicate**
   (`ordinary_access_blocked`), not an authorization-plane change; no
   policy generation, field projection, or read path consults it.

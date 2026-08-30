@@ -899,15 +899,7 @@ pub fn coordinate_composed_write(
             workers.push((member_id, region, scope.spawn(move || accept_on(member, write))));
         }
 
-        let mut accepted = Vec::with_capacity(workers.len());
-        for (member, region, worker) in workers {
-            let receipt = worker
-                .join()
-                .map_err(|_| ComposedCoordinationError::ApplyFailed { member: member.clone() })?
-                .map_err(|_| ComposedCoordinationError::ApplyFailed { member: member.clone() })?;
-            accepted.push((member, region, receipt));
-        }
-        Ok::<_, ComposedCoordinationError>(accepted)
+        collect_fanout_workers(workers)
     })?;
 
     let mut contributors: Vec<ComposedAck> = Vec::with_capacity(accepted.len());
@@ -955,6 +947,37 @@ pub fn coordinate_composed_write(
         contributors,
         local,
     })
+}
+
+/// Joins every fanout worker before selecting an error. Leaving a panicked
+/// worker unjoined makes `thread::scope` resume its panic, which would escape
+/// the coordinator's typed failure contract. Sorting first also makes the
+/// selected failing Member independent of the caller's slice order.
+fn collect_fanout_workers<'scope, T>(
+    mut workers: Vec<(
+        MemberId,
+        RegionId,
+        std::thread::ScopedJoinHandle<'scope, Result<T, ComposeError>>,
+    )>,
+) -> Result<Vec<(MemberId, RegionId, T)>, ComposedCoordinationError> {
+    workers.sort_by(|left, right| left.0.as_str().cmp(right.0.as_str()));
+    let mut accepted = Vec::with_capacity(workers.len());
+    let mut failed = None;
+    for (member, region, worker) in workers {
+        match worker.join() {
+            Ok(Ok(receipt)) => accepted.push((member, region, receipt)),
+            Ok(Err(_)) | Err(_) => {
+                if failed.is_none() {
+                    failed = Some(member);
+                }
+            }
+        }
+    }
+    if let Some(member) = failed {
+        Err(ComposedCoordinationError::ApplyFailed { member })
+    } else {
+        Ok(accepted)
+    }
 }
 
 /// Applies one write on one Member's both planes.
@@ -1471,4 +1494,43 @@ pub fn migrate_collection(
     }
     let documents = transformed.into_iter().map(|(document, _)| document).collect();
     Ok(MigrationOutcome::Migrated { documents })
+}
+
+#[cfg(test)]
+mod fanout_tests {
+    use super::*;
+
+    fn member(value: &str) -> MemberId {
+        MemberId::try_new(value).expect("valid Member")
+    }
+
+    fn region(value: &str) -> RegionId {
+        RegionId::try_new(value).expect("valid Region")
+    }
+
+    #[test]
+    fn fanout_joins_panics_and_selects_the_lowest_failed_member() {
+        let error = std::thread::scope(|scope| {
+            let workers = vec![
+                (
+                    member("z-member"),
+                    region("r-zulu"),
+                    scope.spawn(|| -> Result<(), ComposeError> { panic!("injected worker panic") }),
+                ),
+                (
+                    member("a-member"),
+                    region("r-alpha"),
+                    scope.spawn(|| Err(ComposeError::EngineRefused)),
+                ),
+            ];
+            collect_fanout_workers(workers)
+        })
+        .expect_err("worker failures map to the typed coordination error");
+
+        assert_eq!(
+            error,
+            ComposedCoordinationError::ApplyFailed { member: member("a-member") },
+            "input order and panic timing do not change the selected failure"
+        );
+    }
 }

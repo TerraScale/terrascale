@@ -8,11 +8,11 @@ use std::{
 };
 
 use super::{
-    PublishedCommit,
+    PublishedCommit, PublishedWrite,
     codec::{self, Reader},
     intent::CommitRejection,
 };
-use crate::types::{OperationId, StorageSequence, TenantId};
+use crate::types::{LocalDurability, OperationId, StorageSequence, TenantId};
 
 /// Record kind: intent to publish, durably synced before pointer replacement.
 const RECORD_READY: u8 = 1;
@@ -980,6 +980,40 @@ impl HistoryIndex {
             .take(usize::try_from(limit).unwrap_or(usize::MAX))
             .map(|(_, commit)| commit.clone())
             .collect()
+    }
+
+    /// Resolves winning-write durability for a bounded key page without
+    /// cloning the commits' potentially large write sets.
+    pub(crate) fn winning_durabilities_at(
+        &self,
+        tenant: &TenantId,
+        sequence: StorageSequence,
+        keys: &[(&str, &str)],
+    ) -> Option<Vec<LocalDurability>> {
+        let entries = self.tenants.get(tenant.as_str())?;
+        let mut winners = vec![None; keys.len()];
+        for commit in entries.values() {
+            if commit.sequence().get() > sequence.get() {
+                break;
+            }
+            for write in commit.writes() {
+                let (collection, identifier, put) = match write {
+                    PublishedWrite::Put { document } => {
+                        (document.collection().as_str(), document.id().as_str(), true)
+                    }
+                    PublishedWrite::Delete { collection: Some(collection), id, .. } => {
+                        (collection.as_str(), id.as_str(), false)
+                    }
+                    PublishedWrite::Delete { collection: None, .. } => continue,
+                };
+                for (index, (key_collection, key_identifier)) in keys.iter().enumerate() {
+                    if *key_collection == collection && *key_identifier == identifier {
+                        winners[index] = put.then_some(commit.durability());
+                    }
+                }
+            }
+        }
+        winners.into_iter().collect()
     }
 
     /// Returns every tenant with recorded commits, in canonical order.

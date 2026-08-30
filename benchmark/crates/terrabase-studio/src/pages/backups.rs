@@ -42,7 +42,7 @@ pub fn render(
         ),
         configuration = configuration_card(state),
         run_backup = backup_card(state),
-        restore = restore_card(state),
+        restore = restore_card(state, points.as_ref().ok().copied()),
         chain = chain_card(points),
         deletion = deletion_card(state),
         limits = limits_card(),
@@ -54,7 +54,7 @@ fn configuration_card(state: &StudioState) -> String {
     let settings = state.backup_settings();
     let checked = |selected: bool| if selected { " checked" } else { "" };
     let body = format!(
-        "<p class=\"mb-4 text-sm text-muted-foreground\">Use a bucket prefix dedicated to this database. Studio uploads archive members first and the signed manifest last. Credentials come from workload identity, an ECS or EC2 role, or standard <code>AWS_*</code> environment variables. Studio never writes access keys to disk.</p>\n\
+        "<p class=\"mb-4 text-sm text-muted-foreground\">Use a bucket prefix dedicated to this database. Studio uploads archive members first and the content-bound manifest last. Credentials come from workload identity, an ECS or EC2 role, or standard <code>AWS_*</code> environment variables. Studio never writes access keys to disk.</p>\n\
 <form class=\"grid gap-4\" data-on:submit=\"@post('/backup/configure', {{contentType: 'form', retry: 'never'}})\">\n\
 <div class=\"grid gap-4 md:grid-cols-3\">{bucket}{region}{prefix}</div>\n\
 <div class=\"grid gap-4 md:grid-cols-2\">{endpoint}{kms}</div>\n\
@@ -129,8 +129,31 @@ fn backup_card(state: &StudioState) -> String {
     html::card("Run a recovery point", &body)
 }
 
-fn restore_card(state: &StudioState) -> String {
-    let restore_target = state.config.data_dir.join("studio").join("restored").display().to_string();
+fn restore_card(state: &StudioState, points: Option<&[RemoteRecoveryPoint]>) -> String {
+    let mut restore_target = state.config.data_dir.clone();
+    let mut restored_name = restore_target
+        .file_name()
+        .map(std::ffi::OsStr::to_os_string)
+        .unwrap_or_else(|| std::ffi::OsString::from("terrabase"));
+    restored_name.push("-restored");
+    restore_target.set_file_name(restored_name);
+    let restore_target = restore_target.display().to_string();
+    let mut recovery_points = html::option("", "Latest committed recovery point", true);
+    if let Some(points) = points {
+        for point in points.iter().rev() {
+            let manifest = point.manifest();
+            recovery_points.push_str(&html::option(
+                manifest.identity(),
+                &format!(
+                    "{} · {} · sequence {}",
+                    short_identity(manifest.identity()),
+                    kind_name(&manifest.kind()),
+                    manifest.boundary_sequence().get(),
+                ),
+                false,
+            ));
+        }
+    }
     let body = format!(
         "<p class=\"mb-4 text-sm text-muted-foreground\">Restore downloads only the selected point and its ancestors from S3, verifies every member, and writes a brand-new engine location. The target must not exist or must be empty.</p>\n\
 <form class=\"grid gap-4\" data-on:submit=\"if (!confirm('Restore writes a new engine location. Continue?')) return; @post('/backup/restore', {{contentType: 'form', retry: 'never'}})\">\n{destination}{target}{identity}\
@@ -142,21 +165,11 @@ fn restore_card(state: &StudioState) -> String {
             &configured_destination(&state.backup_settings()),
         ),
         target = format!(
-            "{}{}{}",
-            html::text_input(
-                "target",
-                "Restore target",
-                &restore_target,
-                "/path/to/new/location",
-            ),
+            "{}{}",
+            html::text_input("target", "Restore target", &restore_target, "/path/to/new/location",),
             html::confirmation_fields(&restore_target, "restore recovery point"),
         ),
-        identity = html::text_input(
-            "identity",
-            "Recovery point identity (blank = latest)",
-            "",
-            "64 hex characters"
-        ),
+        identity = html::select("identity", "Recovery point", &recovery_points),
         primary = ButtonStyle::Primary.classes(),
         receipt = html::receipt_region_with("restore-receipt"),
         note = html::alert(

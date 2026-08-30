@@ -2,7 +2,7 @@
 
 Status: accepted direction recorded; code completion and qualification are incomplete.
 
-Last audited: 2026-08-30 against `develop` revision `9c3a491` and the current
+Last audited: 2026-08-30 against `develop` revision `7f2b6f7` and the current
 dirty working candidate. Uncommitted code, running commands, and local receipts
 are not release evidence. This file covers TerraBase only.
 
@@ -80,10 +80,13 @@ features.
 
 The working candidate now has the private protobuf/gRPC contract, generated Go
 bindings, a cross-process mTLS harness, typed ULIDs, one-Region
-`GlobalDurable` refusal, authoritative usage RPC work, strict release jobs for
-the standalone Studio, bounded Prometheus primitives, alert rules, a Grafana
-dashboard, and an offline Monaco JSON editor. These are implementation facts
-until the final gates pass on one stable revision.
+`GlobalDurable` refusal, authoritative usage RPC work, strict release jobs,
+bounded Prometheus primitives, alert rules, a Grafana dashboard, and a
+vendored Monaco JSON editor with syntax diagnostics. The Studio now serves its
+vendored Datastar and Monaco assets from the binary, permits no external script
+origin, and requires typed confirmations on its destructive replacement and
+deletion paths. These are implementation facts until the final gates pass on
+one stable revision.
 
 The executable audit also found release-blocking composition gaps:
 
@@ -94,20 +97,24 @@ The executable audit also found release-blocking composition gaps:
 - `ClusterTbepHost` serves clustered document operations and topology while
   refusing most other engine planes. The production mTLS harness currently
   hosts `EngineHost`, not a complete clustered Member.
-- ADR 0030 now selects AWS-LC FIPS. The working candidate has a bounded
-  non-production envelope foundation, but it still rejects production mode,
-  has no local-file or OCI Vault key provider, and does not encrypt WAL,
-  segments, manifests, snapshots, backups, or checkpoints.
-- TBEP requests now feed the bounded metric registry, but the full ADR 0036
-  signal catalog and the private production listener still need completion.
-  `ts-orchestrator` owns listener configuration and deployment qualification.
-- `terrabase-server` now exists as the daemon composition, but its first draft
-  uses `EngineHost`, cannot become ready without cluster health, and does not
-  enforce its configured gateway-principal allow-list, message bound,
-  in-flight bound, request timeout, or TLS-handshake timeout. TLS 1.3 and the
-  SPIFFE gateway binding also needs explicit runtime tests. The monitoring
-  listener intentionally relies on private-network policy instead of
-  in-process authentication.
+- ADR 0030 now selects AWS-LC FIPS. The working candidate has mutually
+  exclusive local and production feature profiles, an owner-only persistent
+  local-file provider, a provider-neutral OCI Vault lifecycle seam, and a
+  bounded encryption envelope. The Orchestrator-owned OCI adapter is external
+  by decision. WAL, segments, indexes, manifests, snapshots, backups,
+  large-value chunks, and checkpoints still do not use that envelope.
+- TBEP requests feed the process metric registry and `terrabase-server` serves
+  the bounded Prometheus and lifecycle routes on an unauthenticated private
+  listener. `ts-orchestrator` owns its network policy, discovery, retention,
+  and deployment qualification. Collector wiring still needs a stable full
+  contract pass.
+- `terrabase-server` wires the configured message, in-flight, RPC, handshake,
+  and shutdown bounds. It checks an exact allow-list of
+  `spiffe://terrascale.tech/<environment>/database-gateway/<instance-ulid>`
+  URI SAN principals and binds metadata identity back to the certificate. It
+  still hosts a single standalone `EngineHost`, cannot become ready without
+  the complete clustered data plane, and needs live TLS 1.3 refusal and SPIFFE
+  certificate tests on the stable candidate.
 - The checkout is changing under several concurrent implementation and test
   processes. No clean full-gate result is recorded for the resulting candidate.
 
@@ -115,10 +122,10 @@ The latest local gate probe on 2026-08-30 reached these concrete results:
 
 | Gate | Result | Meaning |
 | --- | --- | --- |
-| `cargo check --workspace --locked` | Passed in an isolated target directory | The current Rust workspace type-checks, with two warnings that still fail a warning-denying release gate. |
+| `cargo check --workspace --locked` | The last isolated probe passed; the current integration probe fails | Concurrent snapshot-boundary and index ownership edits currently leave non-exhaustive error mappings and `IndexSegment`/`Arc<IndexSegment>` mismatches. Rerun after those edits converge. |
 | Root, benchmark, and Studio formatting | Benchmark and Studio passed; root failed | At probe time `Cargo.toml` declared a missing `tests/encryption/main.rs`, and the observability contract had unformatted concurrent edits. Later concurrent work added the encryption test. The full formatting gate must rerun on a stable revision. |
-| `buf lint` | Failed | New TBEP enum values and service names violate the configured protobuf style rules. The schema and lint policy must agree before bindings are frozen. |
-| `node --check crates/terrabase-studio/static/studio.js` | Passed | The current Studio entry script parses. This does not qualify the browser behavior or vendored Monaco routes. |
+| `buf lint` | Failed | The current schema has enum-prefix, service-suffix, and streaming-response naming violations while the protobuf rename is in progress. The schema, Rust serving code, and generated Go bindings must converge before freeze. |
+| `node --check crates/terrabase-studio/static/datastar-1.0.3.js` and `node --check crates/terrabase-studio/static/studio-monaco.js` | Passed | Both browser assets parse. Rust route tests still need to pass with the final Studio tree. |
 | `git diff --check` | Passed | The probed working diff had no whitespace errors. |
 | `go vet -mod=readonly ./...` and `go test -mod=readonly ./...` | Environment-blocked on the repeat run | The installed Go 1.27 tree is missing standard-library packages. An earlier run also caught a transient usage-schema/binding mismatch while concurrent generation was in progress. A healthy pinned Go toolchain must rerun both commands against a stable revision. |
 
@@ -136,8 +143,10 @@ continues to change.
 | PRG-P0-07 | P0 | Complete TerraBase durable operations and release invariants. | ULID operation identities, resumable journals, storage/recovery, deletion, backup/restore, membership, replication, repair, and model-check receipts. |
 | PRG-P0-08 | P0 | Make every repository-owned deliverable part of the strict release gate. | Clean formatting, warning-free Clippy, tests and docs for the root workspace, Studio, benchmark driver, and `terrabase-go`, plus schema/binding drift and dependency checks. |
 | PRG-P0-09 | P0 | Implement production observability. | Prometheus exposition contract, stable bounded labels, redaction tests, health/readiness separation, Grafana dashboard and alerts, failure tests, and an operator runbook. |
+| PRG-P0-10 | P0 | Close the private Studio release boundary. | Vendored Datastar, Basecoat, and Monaco assets resolve without network access; JSON diagnostics work; every destructive or replacement action has exactly one target and phrase confirmation enforced by the server; CSP, same-origin, body-bound, and browser tests pass. |
 | PRG-P1-03 | P1 | Qualify the GRU, SFO, and FRA engine topology. | RF=2 TerraBase placement, independent failure domains, Member and Region loss, and recovery receipts. |
 | PRG-P1-05 | P1 | Establish decision-grade performance and isolation evidence. | Approved benchmark policy and baseline, noisy-tenant budgets, workload-family coverage, architecture results, capacity, cost, and regression reports. |
+| PRG-P1-06 | P1 | Complete the external GA assurance gates. | `ts-orchestrator` supplies native x86_64 and ARM64 topology, private-network, OCI Vault, recovery, rollback, incident-drill, thirty-day soak, and promotion receipts; the scoped SOC 2 Type I report is complete and the Type II observation period is active. |
 
 ## Owner decisions resolved on 2026-08-30
 
@@ -153,6 +162,10 @@ continues to change.
 | Studio safety | Destructive actions require typed target confirmation. |
 | Metrics listener | No in-process authentication. `ts-orchestrator` private-network policy is the trust boundary. |
 | Gateway identity | A dedicated gateway CA plus an exact SPIFFE URI SAN allow-list binds certificate identity to `gateway_principals`. |
+| Gateway SPIFFE form | The only admitted form is `spiffe://terrascale.tech/<environment>/database-gateway/<instance-ulid>`, with a lowercase environment segment and canonical uppercase ULID. |
+| Studio JSON tooling | Monaco, its JSON worker, Datastar, and Basecoat are vendored and served from the Studio binary. Monaco uses the `terrabase-midnight` theme, JSON diagnostics, formatting, folding, and bracket guides. |
+| Studio confirmations | Delete, replacement, restore, compaction, topology, tier, index, maintenance, and deletion-completion actions require one exact target and one exact action phrase. Duplicate confirmation fields fail before form decoding. |
+| External qualification | Native architecture, OCI topology, fault-domain, private network, SOC 2, thirty-day soak, and promotion work belongs to `ts-orchestrator`; TerraBase must first hand it a stable code-complete candidate. |
 
 The owner has already fixed the readiness boundary: this repository must hand
 `ts-orchestrator` a code-complete candidate that can accept platform users.
@@ -229,3 +242,6 @@ Promotion does not rebuild the candidate.
    capacity, cost, and regression evidence meets the accepted SLOs.
 8. **Soak and release.** The exact GA candidate completes the required
    thirty-day soak and the final owner review.
+9. **Compliance and response.** The scoped SOC 2 Type I report, active Type II
+   observation period, on-call coverage, incident drills, support targets, and
+   customer communication procedures satisfy ADR 0033.

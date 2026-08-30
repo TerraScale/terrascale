@@ -45,6 +45,28 @@ impl DatabaseRouteScope {
         Self { tenant, project, database }
     }
 
+    /// Strictly parses the canonical ULIDs supplied by a bound protocol
+    /// scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns the component-specific [`DatabaseRouteScopeError`] before any
+    /// routing-catalog lookup. Lowercase, ambiguous, truncated, overflowing,
+    /// and non-ULID local names are never normalized at the production seam.
+    pub fn try_new(
+        tenant: &str,
+        project: &str,
+        database: &str,
+    ) -> Result<Self, DatabaseRouteScopeError> {
+        let tenant =
+            TenantUlid::from_text(tenant).map_err(|_| DatabaseRouteScopeError::InvalidTenant)?;
+        let project =
+            ProjectUlid::from_text(project).map_err(|_| DatabaseRouteScopeError::InvalidProject)?;
+        let database = DatabaseUlid::from_text(database)
+            .map_err(|_| DatabaseRouteScopeError::InvalidDatabase)?;
+        Ok(Self::new(tenant, project, database))
+    }
+
     /// Returns the tenant identity.
     #[must_use]
     pub const fn tenant(&self) -> TenantUlid {
@@ -67,6 +89,17 @@ impl DatabaseRouteScope {
         DatabaseId::try_new(self.database.to_text())
             .map_err(|_| ProductionMemberError::InvalidRoutingCatalog)
     }
+}
+
+/// Refusal to construct a production database route from protocol scope.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DatabaseRouteScopeError {
+    /// The tenant is not a canonical tenant ULID.
+    InvalidTenant,
+    /// The Project is not a canonical Project ULID.
+    InvalidProject,
+    /// The database is not a canonical database ULID.
+    InvalidDatabase,
 }
 
 /// Immutable routing from bound database scopes to operator-provisioned
@@ -728,8 +761,8 @@ fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use terrabase::identity::{DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid, Ulid};
     use terrabase::RegionCode;
+    use terrabase::identity::{DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid, Ulid};
 
     use super::{
         DatabaseRouteScope, DatabaseRoutingCatalog, ProductionMemberError, ProductionPlacement,

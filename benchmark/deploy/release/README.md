@@ -17,6 +17,9 @@ cross-compilation and `target-cpu=native`, builds from locked dependencies,
 creates a deterministic binary archive, and creates an OCI archive from the
 same binary. The OCI base is pinned by digest. Each output also contains a
 CycloneDX SBOM, in-toto provenance, a release manifest, and `SHA256SUMS`.
+Server outputs retain a normalized Cargo feature graph. Packaging and
+verification require `terrabase/production-fips`, `aws-lc-rs/fips`, and
+`aws-lc-fips-sys`, and reject the local and non-FIPS feature paths.
 
 `reproduce.sh` builds twice and compares the complete unsigned output.
 `sign.sh` signs `SHA256SUMS` with an ECDSA key supplied by the protected

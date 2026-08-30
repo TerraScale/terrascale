@@ -293,9 +293,17 @@ impl QuicLane {
                 })
                 .with_client_auth_cert(vec![cert_der], key_der)
                 .map_err(|_| QuicLaneError::Certificates)?;
-            let mut endpoint = quinn::Endpoint::server(
-                quinn::ServerConfig::with_crypto(Arc::new(server_config)),
-                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            let socket = std::net::UdpSocket::bind(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                0,
+            ))
+            .map_err(|_| QuicLaneError::Bind)?;
+            socket.set_nonblocking(true).map_err(|_| QuicLaneError::Bind)?;
+            let mut endpoint = quinn::Endpoint::new(
+                quinn::EndpointConfig::default(),
+                Some(quinn::ServerConfig::with_crypto(Arc::new(server_config))),
+                socket,
+                Arc::new(quinn::TokioRuntime),
             )
             .map_err(|_| QuicLaneError::Bind)?;
             let quic_client_config =

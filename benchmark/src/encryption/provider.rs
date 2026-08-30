@@ -2,7 +2,7 @@
 //!
 //! These types contain no OCI resource names or credentials. The
 //! Orchestrator-owned adapter resolves a canonical [`RegionCode`] to provider
-//! configuration outside TerraBase.
+//! configuration outside `TerraBase`.
 
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -13,7 +13,7 @@ use crate::regions::RegionCode;
 use super::{DatabaseKey, EncryptionError, valid_identity};
 
 /// Maximum authorization lease for an unwrapped database key.
-pub const MAX_DATABASE_KEY_LEASE: Duration = Duration::from_secs(30 * 60);
+pub const MAX_DATABASE_KEY_LEASE: Duration = Duration::from_mins(30);
 /// Maximum opaque wrapped-key bytes accepted from a provider adapter.
 pub const MAX_WRAPPED_KEY_BYTES: usize = 64 * 1024;
 
@@ -22,7 +22,7 @@ pub const MAX_WRAPPED_KEY_BYTES: usize = 64 * 1024;
 pub struct DatabaseKeyVersion(Ulid);
 
 impl DatabaseKeyVersion {
-    /// Mints a new version through TerraBase's process-wide monotonic ULID
+    /// Mints a new version through `TerraBase`'s process-wide monotonic ULID
     /// generator.
     #[must_use]
     pub fn generate() -> Self {
@@ -30,6 +30,10 @@ impl DatabaseKeyVersion {
     }
 
     /// Parses the canonical 26-character uppercase ULID form.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying ULID parse error for malformed text.
     pub fn from_text(text: &str) -> Result<Self, UlidError> {
         Ok(Self(Ulid::from_text(text)?))
     }
@@ -366,11 +370,15 @@ impl fmt::Debug for WrappedDatabaseKey {
 pub struct DatabaseKeyLease {
     metadata: KeyVersionMetadata,
     key: DatabaseKey,
+    provider: KeyProviderIdentity,
     expires_at: Instant,
 }
 
 impl DatabaseKeyLease {
-    /// Creates a provider-authorized lease bounded to thirty minutes.
+    /// Creates a local lease for non-production tests and development only.
+    ///
+    /// Production cipher construction rejects leases created by this method;
+    /// an adapter must use [`Self::from_adapter`] after external authorization.
     pub fn new(
         metadata: KeyVersionMetadata,
         key: DatabaseKey,
@@ -381,7 +389,32 @@ impl DatabaseKeyLease {
         }
         let expires_at =
             Instant::now().checked_add(duration).ok_or(EncryptionError::InvalidKeyLease)?;
-        Ok(Self { metadata, key, expires_at })
+        Ok(Self { metadata, key, provider: KeyProviderIdentity::LocalFile, expires_at })
+    }
+
+    /// Creates a lease on behalf of an authorized key-provider adapter.
+    ///
+    /// The adapter is responsible for establishing authorization and regional
+    /// wrapper provenance before calling this constructor.
+    #[allow(
+        dead_code,
+        reason = "reserved for the in-crate OCI adapter; the current provider is fail-closed"
+    )]
+    pub(in crate::encryption) fn from_adapter(
+        metadata: KeyVersionMetadata,
+        key: DatabaseKey,
+        duration: Duration,
+        provider: KeyProviderIdentity,
+    ) -> Result<Self, EncryptionError> {
+        if provider != KeyProviderIdentity::OciVault {
+            return Err(EncryptionError::InvalidKeyMetadata);
+        }
+        if duration.is_zero() || duration > MAX_DATABASE_KEY_LEASE {
+            return Err(EncryptionError::InvalidKeyLease);
+        }
+        let expires_at =
+            Instant::now().checked_add(duration).ok_or(EncryptionError::InvalidKeyLease)?;
+        Ok(Self { metadata, key, provider, expires_at })
     }
 
     /// Returns the authorized key-version metadata.
@@ -390,10 +423,20 @@ impl DatabaseKeyLease {
         &self.metadata
     }
 
+    /// Returns the provider identity that issued this lease.
+    #[must_use]
+    pub const fn provider(&self) -> KeyProviderIdentity {
+        self.provider
+    }
+
     /// Returns whether the authorization lease has expired.
     #[must_use]
     pub fn is_expired(&self) -> bool {
         Instant::now() >= self.expires_at
+    }
+
+    pub(super) const fn expires_at(&self) -> Instant {
+        self.expires_at
     }
 
     /// Runs one provider or cipher operation while the lease remains valid.

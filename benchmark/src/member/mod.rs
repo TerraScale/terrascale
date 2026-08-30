@@ -14,8 +14,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::identity::DatabaseUlid;
 use crate::engine::EngineConfigError;
+use crate::identity::DatabaseUlid;
 use crate::{Engine, EngineConfig, EngineOpenError, EngineShutdownError};
 
 /// The maximum UTF-8 byte length of a database identity.
@@ -38,8 +38,9 @@ pub struct DatabaseId(DatabaseUlid);
 impl DatabaseId {
     /// Creates a database identity accepted by the Member catalog.
     ///
-    /// Identities are intentionally restricted to filesystem-neutral ASCII
-    /// characters.  They are never used directly as a filesystem path.
+    /// Only the exact 26-character uppercase Crockford form accepted by
+    /// [`DatabaseUlid`] is valid.  The identity is never used directly as a
+    /// filesystem path.
     pub fn try_new(value: impl AsRef<str>) -> Result<Self, CatalogValidationError> {
         DatabaseUlid::from_text(value.as_ref())
             .map(Self)
@@ -56,6 +57,12 @@ impl DatabaseId {
     #[must_use]
     pub const fn value(self) -> DatabaseUlid {
         self.0
+    }
+}
+
+impl From<DatabaseUlid> for DatabaseId {
+    fn from(value: DatabaseUlid) -> Self {
+        Self(value)
     }
 }
 
@@ -255,6 +262,12 @@ impl Member {
     /// Engines are opened into a temporary collection first.  If any open or
     /// final validation fails, already-opened engines are synchronously
     /// flushed and no partially populated Member is published.
+    ///
+    /// The post-creation recheck closes the ordinary symlink/escape gap.  The
+    /// standard library does not expose descriptor-relative no-follow
+    /// directory creation, so an untrusted process racing this code can still
+    /// create a TOCTOU window; the configured root must therefore be writable
+    /// only by the trusted Member process.
     pub fn open(
         root: impl AsRef<Path>,
         specifications: impl IntoIterator<Item = DatabaseSpec>,
@@ -276,6 +289,10 @@ impl Member {
                     return Err(error);
                 }
             };
+            if let Err(error) = revalidate_created_location(&root, &location) {
+                close_opened(opened);
+                return Err(MemberOpenError::Validation(error));
+            }
             let engine = match Engine::open(config) {
                 Ok(engine) => Arc::new(engine),
                 Err(error) => {
@@ -388,17 +405,27 @@ impl Member {
         if !self.inner.global_admissions.wait_for_zero(timeout) {
             return Err(MemberError::DrainTimeout);
         }
+        let mut first_error = None;
         for entry in self.inner.databases.values() {
             let engine = lock_unpoisoned(&entry.engine).take();
             let Some(engine) = engine else { continue };
-            let engine = Arc::try_unwrap(engine).map_err(|_| MemberError::DrainTimeout)?;
-            if let Err(error) = engine.shutdown() {
-                *lock_unpoisoned(&self.inner.lifecycle) = LifecycleState::Stopped;
-                return Err(MemberError::Shutdown { database: entry.id.clone(), error });
+            match Arc::try_unwrap(engine) {
+                Ok(engine) => {
+                    if let Err(error) = engine.shutdown() {
+                        if first_error.is_none() {
+                            first_error = Some(MemberError::Shutdown { database: entry.id, error });
+                        }
+                    }
+                }
+                Err(_) => {
+                    if first_error.is_none() {
+                        first_error = Some(MemberError::DrainTimeout);
+                    }
+                }
             }
         }
         *lock_unpoisoned(&self.inner.lifecycle) = LifecycleState::Stopped;
-        Ok(())
+        first_error.map_or(Ok(()), Err)
     }
 
     fn begin_draining(&self) -> Result<(), MemberError> {
@@ -492,6 +519,9 @@ fn collect_and_validate_specs(
         }
         validated.push((id, location));
     }
+    if validated.is_empty() {
+        return Err(CatalogValidationError::EmptyCatalog);
+    }
     Ok(validated)
 }
 
@@ -524,6 +554,16 @@ fn validate_location(root: &Path, relative: &Path) -> Result<PathBuf, CatalogVal
         return Err(CatalogValidationError::InvalidDatabaseLocation);
     }
     Ok(canonical)
+}
+
+fn revalidate_created_location(root: &Path, location: &Path) -> Result<(), CatalogValidationError> {
+    reject_symlink_components(location)?;
+    let canonical =
+        fs::canonicalize(location).map_err(|_| CatalogValidationError::InvalidDatabaseLocation)?;
+    if !canonical.starts_with(root) || canonical != location || !canonical.is_dir() {
+        return Err(CatalogValidationError::InvalidDatabaseLocation);
+    }
+    Ok(())
 }
 
 fn split_existing_prefix(path: &Path) -> (PathBuf, Vec<std::ffi::OsString>) {

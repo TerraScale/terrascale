@@ -16,6 +16,15 @@ use terrabase::{
 
 static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
 
+const DB_ALPHA: &str = "00000000000000000000000000";
+const DB_BETA: &str = "00000000000000000000000001";
+const DB_BROKEN: &str = "00000000000000000000000002";
+const DB_GOOD: &str = "00000000000000000000000003";
+const DB_ONE: &str = "00000000000000000000000004";
+const DB_TWO: &str = "00000000000000000000000005";
+const DB_SAME: &str = "00000000000000000000000006";
+const DB_GENERIC: &str = "00000000000000000000000007";
+
 struct TestRoot(PathBuf);
 
 impl TestRoot {
@@ -39,6 +48,17 @@ impl Drop for TestRoot {
 }
 
 fn spec(id: &str, location: &str) -> DatabaseSpec {
+    let id = match id {
+        "alpha" => DB_ALPHA,
+        "beta" => DB_BETA,
+        "broken" => DB_BROKEN,
+        "good" => DB_GOOD,
+        "one" => DB_ONE,
+        "two" => DB_TWO,
+        "same" => DB_SAME,
+        "db" => DB_GENERIC,
+        id => id,
+    };
     DatabaseSpec::new(id, location)
 }
 
@@ -47,6 +67,17 @@ fn limits(global: usize, per_database: usize) -> AdmissionLimits {
 }
 
 fn database_id(id: &str) -> DatabaseId {
+    let id = match id {
+        "alpha" => DB_ALPHA,
+        "beta" => DB_BETA,
+        "broken" => DB_BROKEN,
+        "good" => DB_GOOD,
+        "one" => DB_ONE,
+        "two" => DB_TWO,
+        "same" => DB_SAME,
+        "db" => DB_GENERIC,
+        id => id,
+    };
     DatabaseId::try_new(id).expect("valid database id")
 }
 
@@ -115,8 +146,12 @@ fn catalog_rejects_path_attacks_and_duplicate_locations() {
     let root = TestRoot::new("paths");
     let absolute = root.path().join("absolute");
     assert!(matches!(
-        Member::open(root.path(), [DatabaseSpec::new("db", absolute)], limits(1, 1)),
+        Member::open(root.path(), [DatabaseSpec::new(DB_GENERIC, absolute)], limits(1, 1)),
         Err(MemberOpenError::Validation(CatalogValidationError::InvalidDatabaseLocation))
+    ));
+    assert!(matches!(
+        Member::open(root.path(), [], limits(1, 1)),
+        Err(MemberOpenError::Validation(CatalogValidationError::EmptyCatalog))
     ));
     assert!(matches!(
         Member::open(root.path(), [spec("db", "../outside")], limits(1, 1)),
@@ -131,7 +166,7 @@ fn catalog_rejects_path_attacks_and_duplicate_locations() {
         Err(MemberOpenError::Validation(CatalogValidationError::DuplicateDatabaseIdentity))
     ));
     let oversized = (0..=MAX_DATABASES)
-        .map(|index| DatabaseSpec::new(format!("db-{index}"), format!("db-{index}")))
+        .map(|index| DatabaseSpec::new(format!("{index:026X}"), format!("location-{index}")))
         .collect::<Vec<_>>();
     assert!(matches!(
         Member::open(root.path(), oversized, limits(1, 1)),
@@ -165,7 +200,7 @@ fn validation_precedes_open_and_does_not_publish_partial_catalog() {
         Member::open(root.path(), [spec("good", "good"), spec("broken", "broken")], limits(2, 1));
     assert!(matches!(
         result,
-        Err(MemberOpenError::EngineOpen { database, .. }) if database.as_str() == "broken"
+        Err(MemberOpenError::EngineOpen { database, .. }) if database == database_id(DB_BROKEN)
     ));
     assert!(root.path().join("good").is_dir());
 }
@@ -203,6 +238,22 @@ fn draining_refuses_new_work_and_closes_after_existing_work_drops() {
     drop(lease);
     member.close(Duration::from_secs(1)).expect("closes");
     assert_eq!(member.status().lifecycle, LifecycleState::Stopped);
+}
+
+#[test]
+fn multi_database_close_flushes_every_engine_before_restart() {
+    let root = TestRoot::new("multi-close");
+    let member = Member::open(root.path(), [spec("one", "one"), spec("two", "two")], limits(2, 1))
+        .expect("opens");
+    member.close(Duration::from_secs(1)).expect("closes every engine");
+    assert_eq!(member.status().lifecycle, LifecycleState::Stopped);
+
+    let restarted =
+        Member::open(root.path(), [spec("one", "one"), spec("two", "two")], limits(2, 1))
+            .expect("reopens every engine");
+    assert!(restarted.acquire(&database_id("one")).is_ok());
+    assert!(restarted.acquire(&database_id("two")).is_ok());
+    restarted.close(Duration::from_secs(1)).expect("closes after restart");
 }
 
 #[test]

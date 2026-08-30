@@ -135,15 +135,14 @@ mod tests {
     }
 
     #[test]
-    fn usage_page_states_that_no_durable_ledger_exists() {
-        let page = usage::render(&studio("usage"), TEST_NONCE);
+    fn usage_page_reads_the_authoritative_durable_ledger() {
+        let page = usage::render(&studio("usage"), "demo", TEST_NONCE);
         assert!(page.contains("Meter catalog"));
         assert!(page.contains("stored byte hours"));
         assert!(page.contains("id=\"usage-ledger\""));
-        assert!(
-            page.contains("no durable usage ledger bound to this engine location"),
-            "the honest limit is stated"
-        );
+        assert!(page.contains("Authoritative durable facts"));
+        assert!(page.contains("No durable usage fact has been recorded"));
+        assert!(!page.contains("studio-local and in-memory"));
     }
 
     #[test]

@@ -157,10 +157,9 @@ async fn reject_duplicate_confirmations(request: Request<Body>) -> Result<Reques
             .get(header::CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| {
-                value
-                    .split(';')
-                    .next()
-                    .is_some_and(|kind| kind.trim() == "application/x-www-form-urlencoded")
+                value.split(';').next().is_some_and(|kind| {
+                    kind.trim().eq_ignore_ascii_case("application/x-www-form-urlencoded")
+                })
             })
     {
         return Ok(request);
@@ -1421,13 +1420,15 @@ async fn backup_run(
     State(state): State<Arc<StudioState>>,
     Form(form): Form<BackupRunForm>,
 ) -> Response {
+    if let Err(failure) = require_confirmation(
+        &form.confirm_target,
+        &form.confirm_phrase,
+        "backup repository",
+        "run backup",
+    ) {
+        return receipt("backup-receipt", Err(failure));
+    }
     let outcome = async {
-        require_confirmation(
-            &form.confirm_target,
-            &form.confirm_phrase,
-            "backup repository",
-            "run backup",
-        )?;
         let _job = state.backup_job.lock().await;
         let settings = state.backup_settings();
         let repository = S3BackupRepository::from_settings(&settings)?;
@@ -1528,14 +1529,19 @@ async fn backup_restore(
     State(state): State<Arc<StudioState>>,
     Form(form): Form<BackupRestoreForm>,
 ) -> Response {
+    let target = match backups::restore_target(&form.target) {
+        Ok(target) => target,
+        Err(failure) => return receipt("restore-receipt", Err(failure)),
+    };
+    if let Err(failure) = require_confirmation(
+        &form.confirm_target,
+        &form.confirm_phrase,
+        &target.display().to_string(),
+        "restore recovery point",
+    ) {
+        return receipt("restore-receipt", Err(failure));
+    }
     let outcome: Result<String, String> = async {
-        let target = backups::restore_target(&form.target)?;
-        require_confirmation(
-            &form.confirm_target,
-            &form.confirm_phrase,
-            &target.display().to_string(),
-            "restore recovery point",
-        )?;
         let _job = state.backup_job.lock().await;
         let repository = configured_backup_repository(state.as_ref())?;
         let identity = form
@@ -1983,13 +1989,15 @@ mod tests {
 
     #[test]
     fn confirmations_require_exact_normalized_values_without_echoing_input() {
-        assert!(require_confirmation(
-            "demo/users/42",
-            "delete document",
-            "demo/users/42",
-            "delete document",
-        )
-        .is_ok());
+        assert!(
+            require_confirmation(
+                "demo/users/42",
+                "delete document",
+                "demo/users/42",
+                "delete document",
+            )
+            .is_ok()
+        );
         for (target, phrase) in [
             (" demo/users/42", "delete document"),
             ("demo/users/42\u{2003}", "delete document"),
@@ -2002,8 +2010,9 @@ mod tests {
             assert!(!error.contains(phrase));
         }
         let oversized = "x".repeat(MAX_CONFIRMATION_TARGET_BYTES + 1);
-        assert!(require_confirmation(&oversized, "delete document", "x", "delete document")
-            .is_err());
+        assert!(
+            require_confirmation(&oversized, "delete document", "x", "delete document").is_err()
+        );
     }
 
     #[test]
@@ -2041,9 +2050,7 @@ mod tests {
                     .method("POST")
                     .uri("/tiers/pause")
                     .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-                    .body(Body::from(
-                        "confirm_target=wrong&confirm_phrase=pause%20tier%20mover",
-                    ))
+                    .body(Body::from("confirm_target=wrong&confirm_phrase=pause%20tier%20mover"))
                     .unwrap(),
             )
             .await

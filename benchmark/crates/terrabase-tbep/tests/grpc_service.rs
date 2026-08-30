@@ -37,24 +37,24 @@ struct FixedHost {
 impl TbepHost for FixedHost {
     fn bind_channel(
         &self,
-        request: &registry::ChannelServiceBindRequest,
-    ) -> Result<registry::ChannelServiceBindResponse, HostingError> {
-        Ok(registry::ChannelServiceBindResponse { tenant: request.tenant.clone(), serving_instance: 7 })
+        request: &registry::ChannelBindRequest,
+    ) -> Result<registry::ChannelBindResponse, HostingError> {
+        Ok(registry::ChannelBindResponse { tenant: request.tenant.clone(), serving_instance: 7 })
     }
 
     fn document_read(
         &self,
-        _tenant: &str,
-        request: &registry::EngineServiceDocumentReadRequest,
-    ) -> Result<registry::EngineServiceDocumentReadResponse, HostingError> {
+        _scope: &registry::BoundScope,
+        request: &registry::DocumentReadRequest,
+    ) -> Result<registry::DocumentReadResponse, HostingError> {
         if request.collection != "orders" {
-            return Ok(registry::EngineServiceDocumentReadResponse {
+            return Ok(registry::DocumentReadResponse {
                 found: false,
                 document: None,
                 position: None,
             });
         }
-        Ok(registry::EngineServiceDocumentReadResponse {
+        Ok(registry::DocumentReadResponse {
             found: true,
             document: Some(registry::DocumentBody {
                 id: request.document.clone(),
@@ -68,12 +68,12 @@ impl TbepHost for FixedHost {
 
     fn document_write(
         &self,
-        _tenant: &str,
-        request: &registry::EngineServiceDocumentWriteRequest,
+        _scope: &registry::BoundScope,
+        request: &registry::DocumentWriteRequest,
         idempotency_key: &str,
-    ) -> Result<registry::EngineServiceDocumentWriteResponse, HostingError> {
+    ) -> Result<registry::DocumentWriteResponse, HostingError> {
         assert_eq!(idempotency_key, "op-1");
-        Ok(registry::EngineServiceDocumentWriteResponse {
+        Ok(registry::DocumentWriteResponse {
             outcome: registry::WriteOutcome::Committed(registry::CommitReceipt {
                 sequence: 4,
                 version: 1,
@@ -86,19 +86,19 @@ impl TbepHost for FixedHost {
 
     fn document_delete(
         &self,
-        _tenant: &str,
-        _request: &registry::EngineServiceDocumentDeleteRequest,
+        _scope: &registry::BoundScope,
+        _request: &registry::DocumentDeleteRequest,
         _idempotency_key: &str,
-    ) -> Result<registry::EngineServiceDocumentDeleteResponse, HostingError> {
-        Ok(registry::EngineServiceDocumentDeleteResponse { outcome: registry::WriteOutcome::Conflict })
+    ) -> Result<registry::DocumentDeleteResponse, HostingError> {
+        Ok(registry::DocumentDeleteResponse { outcome: registry::WriteOutcome::Conflict })
     }
 
     fn query_execute(
         &self,
-        _tenant: &str,
-        _request: &registry::EngineServiceQueryExecuteRequest,
-    ) -> Result<registry::EngineServiceQueryExecuteResponse, HostingError> {
-        Ok(registry::EngineServiceQueryExecuteResponse {
+        _scope: &registry::BoundScope,
+        _request: &registry::QueryExecuteRequest,
+    ) -> Result<registry::QueryExecuteResponse, HostingError> {
+        Ok(registry::QueryExecuteResponse {
             documents: vec![],
             count: 0,
             terminal: registry::QueryTerminal::Complete,
@@ -108,41 +108,41 @@ impl TbepHost for FixedHost {
 
     fn query_cancel(
         &self,
-        _tenant: &str,
-        _request: &registry::EngineServiceQueryCancelRequest,
-    ) -> Result<registry::EngineServiceQueryCancelResponse, HostingError> {
-        Ok(registry::EngineServiceQueryCancelResponse { outcome: registry::CancelOutcome::Cancelled })
+        _scope: &registry::BoundScope,
+        _request: &registry::QueryCancelRequest,
+    ) -> Result<registry::QueryCancelResponse, HostingError> {
+        Ok(registry::QueryCancelResponse { outcome: registry::CancelOutcome::Cancelled })
     }
 
     fn family_read(
         &self,
-        _tenant: &str,
-        _request: &registry::EngineServiceFamilyReadRequest,
-    ) -> Result<registry::EngineServiceFamilyReadResponse, HostingError> {
+        _scope: &registry::BoundScope,
+        _request: &registry::FamilyReadRequest,
+    ) -> Result<registry::FamilyReadResponse, HostingError> {
         Err(HostingError::Refused("families are not served by the fixture".into()))
     }
 
     fn family_write(
         &self,
-        _tenant: &str,
-        _request: &registry::EngineServiceFamilyWriteRequest,
+        _scope: &registry::BoundScope,
+        _request: &registry::FamilyWriteRequest,
         _idempotency_key: &str,
-    ) -> Result<registry::EngineServiceFamilyWriteResponse, HostingError> {
+    ) -> Result<registry::FamilyWriteResponse, HostingError> {
         Err(HostingError::Refused("families are not served by the fixture".into()))
     }
 
     fn backbone_subscribe(
         &self,
-        _tenant: &str,
-        request: &registry::BackboneServiceSubscribeRequest,
+        _scope: &registry::BoundScope,
+        request: &registry::BackboneSubscribeRequest,
     ) -> Result<
-        (registry::BackboneServiceSubscribeResponse, std::sync::mpsc::Receiver<TbepNotification>),
+        (registry::BackboneSubscribeResponse, std::sync::mpsc::Receiver<TbepNotification>),
         HostingError,
     > {
         let (sender, receiver) = std::sync::mpsc::channel();
         *self.feed.lock().expect("the fixture lock is sound") = Some(sender);
         Ok((
-            registry::BackboneServiceSubscribeResponse {
+            registry::BackboneSubscribeResponse {
                 subscription_id: request.subscription_id,
                 start_sequence: 5,
             },
@@ -152,10 +152,10 @@ impl TbepHost for FixedHost {
 
     fn backbone_acknowledge(
         &self,
-        _tenant: &str,
-        request: &registry::BackboneServiceAcknowledgeRequest,
-    ) -> Result<registry::BackboneServiceAcknowledgeResponse, HostingError> {
-        Ok(registry::BackboneServiceAcknowledgeResponse {
+        _scope: &registry::BoundScope,
+        request: &registry::BackboneAcknowledgeRequest,
+    ) -> Result<registry::BackboneAcknowledgeResponse, HostingError> {
+        Ok(registry::BackboneAcknowledgeResponse {
             subscription_id: request.subscription_id,
             acknowledged_through: request.through_sequence,
         })
@@ -163,63 +163,63 @@ impl TbepHost for FixedHost {
 
     fn backbone_unsubscribe(
         &self,
-        _tenant: &str,
-        request: &registry::BackboneServiceUnsubscribeRequest,
-    ) -> Result<registry::BackboneServiceUnsubscribeResponse, HostingError> {
-        Ok(registry::BackboneServiceUnsubscribeResponse { subscription_id: request.subscription_id })
+        _scope: &registry::BoundScope,
+        request: &registry::BackboneUnsubscribeRequest,
+    ) -> Result<registry::BackboneUnsubscribeResponse, HostingError> {
+        Ok(registry::BackboneUnsubscribeResponse { subscription_id: request.subscription_id })
     }
 
     fn sync_session_setup(
         &self,
-        _tenant: &str,
-        _request: &registry::SyncServiceSessionSetupRequest,
-    ) -> Result<registry::SyncServiceSessionSetupResponse, HostingError> {
+        _scope: &registry::BoundScope,
+        _request: &registry::SyncSessionSetupRequest,
+    ) -> Result<registry::SyncSessionSetupResponse, HostingError> {
         Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
     }
 
     fn sync_delta_pull(
         &self,
-        _tenant: &str,
-        _request: &registry::SyncServiceDeltaPullRequest,
-    ) -> Result<registry::SyncServiceDeltaPullResponse, HostingError> {
+        _scope: &registry::BoundScope,
+        _request: &registry::SyncDeltaPullRequest,
+    ) -> Result<registry::SyncDeltaPullResponse, HostingError> {
         Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
     }
 
     fn sync_snapshot_pull(
         &self,
-        _tenant: &str,
-        _request: &registry::SyncServiceSnapshotPullRequest,
-    ) -> Result<registry::SyncServiceSnapshotPullResponse, HostingError> {
+        _scope: &registry::BoundScope,
+        _request: &registry::SyncSnapshotPullRequest,
+    ) -> Result<registry::SyncSnapshotPullResponse, HostingError> {
         Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
     }
 
     fn sync_checkpoint_ack(
         &self,
-        _tenant: &str,
-        _request: &registry::SyncServiceCheckpointAckRequest,
-    ) -> Result<registry::SyncServiceCheckpointAckResponse, HostingError> {
+        _scope: &registry::BoundScope,
+        _request: &registry::SyncCheckpointAckRequest,
+    ) -> Result<registry::SyncCheckpointAckResponse, HostingError> {
         Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
     }
 
     fn sync_mutation_submit(
         &self,
-        _tenant: &str,
-        _request: &registry::SyncServiceMutationSubmitRequest,
+        _scope: &registry::BoundScope,
+        _request: &registry::SyncMutationSubmitRequest,
         _idempotency_key: &str,
-    ) -> Result<registry::SyncServiceMutationSubmitResponse, HostingError> {
+    ) -> Result<registry::SyncMutationSubmitResponse, HostingError> {
         Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
     }
 
     fn sync_session_close(
         &self,
-        _tenant: &str,
-        _request: &registry::SyncServiceSessionCloseRequest,
-    ) -> Result<registry::SyncServiceSessionCloseResponse, HostingError> {
+        _scope: &registry::BoundScope,
+        _request: &registry::SyncSessionCloseRequest,
+    ) -> Result<registry::SyncSessionCloseResponse, HostingError> {
         Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
     }
 
-    fn topology_read(&self, _tenant: &str) -> Result<registry::MaintenanceServiceTopologyReadResponse, HostingError> {
-        Ok(registry::MaintenanceServiceTopologyReadResponse {
+    fn topology_read(&self, _scope: &registry::BoundScope) -> Result<registry::TopologyReadResponse, HostingError> {
+        Ok(registry::TopologyReadResponse {
             binding: registry::BindingKind::LocalUds,
             subsystems: vec!["engine".into()],
             engine_topology_available: false,
@@ -227,8 +227,8 @@ impl TbepHost for FixedHost {
         })
     }
 
-    fn admin_status(&self) -> Result<registry::MaintenanceServiceAdminStatusResponse, HostingError> {
-        Ok(registry::MaintenanceServiceAdminStatusResponse {
+    fn admin_status(&self) -> Result<registry::AdminStatusResponse, HostingError> {
+        Ok(registry::AdminStatusResponse {
             registry_version: registry::REGISTRY_VERSION.to_string(),
             frames_served: 0,
             sessions: 0,
@@ -237,8 +237,8 @@ impl TbepHost for FixedHost {
         })
     }
 
-    fn health(&self) -> Result<registry::MaintenanceServiceSupervisionHealthResponse, HostingError> {
-        Ok(registry::MaintenanceServiceSupervisionHealthResponse {
+    fn health(&self) -> Result<registry::SupervisionHealthResponse, HostingError> {
+        Ok(registry::SupervisionHealthResponse {
             state: registry::HealthState::Serving,
             sessions: 0,
             subscriptions: 1,
@@ -248,9 +248,9 @@ impl TbepHost for FixedHost {
 
     fn begin_shutdown(
         &self,
-        _request: &registry::MaintenanceServiceSupervisionShutdownRequest,
-    ) -> Result<registry::MaintenanceServiceSupervisionShutdownResponse, HostingError> {
-        Ok(registry::MaintenanceServiceSupervisionShutdownResponse {
+        _request: &registry::SupervisionShutdownRequest,
+    ) -> Result<registry::SupervisionShutdownResponse, HostingError> {
+        Ok(registry::SupervisionShutdownResponse {
             state: registry::HealthState::Draining,
             in_flight: 2,
         })
@@ -425,8 +425,8 @@ async fn bind_write_read_and_delete_round_trip() {
     match written.into_inner().outcome.expect("the outcome rides").outcome {
         Some(pb::write_outcome::Outcome::Committed(receipt)) => {
             assert_eq!(receipt.sequence, 4);
-            assert_eq!(receipt.acknowledgement, pb::Acknowledgement::AckRegionalQuorum as i32);
-            assert_eq!(receipt.backup, pb::BackupOutcome::BackupFull as i32);
+            assert_eq!(receipt.acknowledgement, pb::Acknowledgement::AcknowledgementRegionalQuorum as i32);
+            assert_eq!(receipt.backup, pb::BackupOutcome::BackupOutcomeFull as i32);
         }
         other => panic!("unexpected write outcome {other:?}"),
     }
@@ -536,7 +536,7 @@ async fn hostile_values_fail_closed_before_the_host_runs() {
     let mut engine = EngineClient::new(channel);
     let mut list = Vec::with_capacity(4097);
     for _ in 0..=4096 {
-        list.push(pb::Value { kind: Some(pb::value::Kind::Null(pb::NullValue::Null as i32)) });
+        list.push(pb::Value { kind: Some(pb::value::Kind::Null(pb::NullValue::NullValueNull as i32)) });
     }
     let status = engine
         .document_write(mutation(pb::EngineServiceDocumentWriteRequest {

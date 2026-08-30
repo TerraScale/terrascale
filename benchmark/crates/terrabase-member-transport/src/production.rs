@@ -21,7 +21,6 @@ use std::time::Duration;
 
 use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
 use x509_parser::extensions::{GeneralName, ParsedExtension};
 use x509_parser::prelude::{FromDer, X509Certificate};
@@ -754,28 +753,27 @@ impl ProductionQuicEndpoint {
             .datagram_send_buffer_size(0);
         let transport = Arc::new(transport);
 
+        let peer_slots = config.peers.len().saturating_mul(MAX_CONNECTIONS_PER_PEER).max(1);
+        let incoming_buffer_size = u64::try_from(config.limits.max_queued_bytes)
+            .map_err(|_| ProductionTransportError::InvalidLimits)?;
+        let incoming_buffer_size_total = u64::try_from(
+            config.limits.max_queued_bytes.saturating_mul(peer_slots),
+        )
+        .map_err(|_| ProductionTransportError::InvalidLimits)?;
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_crypto));
+        server_config
+            .max_incoming(peer_slots)
+            .incoming_buffer_size(incoming_buffer_size)
+            .incoming_buffer_size_total(incoming_buffer_size_total);
         server_config.transport_config(Arc::clone(&transport));
         let mut client_config = quinn::ClientConfig::new(Arc::new(client_crypto));
         client_config.transport_config(transport);
 
-        let peer_slots = config.peers.len().saturating_mul(MAX_CONNECTIONS_PER_PEER).max(1);
-        let mut endpoint_config = quinn::EndpointConfig::default();
-        endpoint_config
-            .max_incoming(peer_slots)
-            .incoming_buffer_size(
-                u64::try_from(config.limits.max_queued_bytes)
-                    .map_err(|_| ProductionTransportError::InvalidLimits)?,
-            )
-            .incoming_buffer_size_total(
-                u64::try_from(config.limits.max_queued_bytes.saturating_mul(peer_slots))
-                    .map_err(|_| ProductionTransportError::InvalidLimits)?,
-            );
         let socket =
             std::net::UdpSocket::bind(config.bind).map_err(|_| ProductionTransportError::Bind)?;
         socket.set_nonblocking(true).map_err(|_| ProductionTransportError::Bind)?;
         let mut endpoint = quinn::Endpoint::new(
-            endpoint_config,
+            quinn::EndpointConfig::default(),
             Some(server_config),
             socket,
             Arc::new(quinn::TokioRuntime),

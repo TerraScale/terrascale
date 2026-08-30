@@ -120,10 +120,10 @@ use manifest::{MANIFEST_FILE, ManifestFacts, point_directory};
 use records::{MemberWriter, Record};
 use sha256::digest_file;
 
-use crate::engine::Engine;
+use crate::engine::{Engine, MAX_SNAPSHOT_RECORD_PAGE};
 use crate::replication::SharedTombstoneRetention;
 use crate::storage::{PublishedCommit, PublishedWrite};
-use crate::types::{Cancellation, Document, LocalDurability, StorageSequence, TenantId};
+use crate::types::{Cancellation, LocalDurability, StorageSequence, TenantId};
 
 /// The reserved family collection, mirrored from the W3 family contract.
 ///
@@ -1067,18 +1067,14 @@ fn effective_history_start(
     })
 }
 
-/// Archives the reconstructed source state at `boundary` for a full or
-/// snapshot run, paging each tenant's commits and replaying them.
+/// Archives the source state at `boundary` for a full or snapshot run by
+/// paging final-state records directly into the staged member writer.
 ///
 /// # Memory bound
 ///
-/// The current history-only seam requires materializing one tenant's complete
-/// live state in memory — a `(collection, document id) -> (document,
-/// durability)` map — before the first record of that tenant is written, so
-/// the run's peak memory is the largest selected tenant's live byte weight.
-/// No bound in this module caps it. A bounded implementation is blocked until
-/// the exact final-state paging seam documented in the module memory-bound
-/// section is available; a member-byte bound is not a tenant-state bound.
+/// The Engine page seam bounds backup's working set to one page plus the
+/// storage indexes; no complete tenant state or second archive bundle is
+/// materialized here.
 fn archive_state_at(
     engine: &Engine,
     state: &mut RunState,
@@ -1087,42 +1083,50 @@ fn archive_state_at(
     tenants: &[TenantId],
     boundary: StorageSequence,
 ) -> Result<(), BackupError> {
-    let unavailable = |_| BackupError::SourceUnavailable;
     for tenant in tenants {
-        let mut after = StorageSequence::default();
-        let mut live: BTreeMap<(String, String), (Document, LocalDurability)> = BTreeMap::new();
+        let mut after = None;
         loop {
             state.spend_read()?;
-            let page =
-                engine.tenant_commits(tenant, after, JOURNAL_PAGE_LIMIT).map_err(unavailable)?;
+            let page = engine
+                .snapshot_records_from(
+                    tenant.clone(),
+                    boundary,
+                    after.clone(),
+                    MAX_SNAPSHOT_RECORD_PAGE,
+                )
+                .map_err(|_| BackupError::SourceUnavailable)?;
             if page.is_empty() {
                 break;
             }
-            let reached_boundary =
-                page.last().is_none_or(|commit| commit.sequence().get() >= boundary.get());
-            for commit in &page {
-                if commit.sequence().get() > boundary.get() {
-                    continue;
+            for record in &page {
+                let document = record.document().clone();
+                let entry = tenant_counts.entry(tenant.clone()).or_default();
+                if is_family_record(document.collection().as_str()) {
+                    entry.1 = entry.1.checked_add(1).ok_or(BackupError::DestinationUnavailable)?;
+                    state.family_records = state
+                        .family_records
+                        .checked_add(1)
+                        .ok_or(BackupError::DestinationUnavailable)?;
+                } else {
+                    entry.0 = entry.0.checked_add(1).ok_or(BackupError::DestinationUnavailable)?;
+                    state.documents = state
+                        .documents
+                        .checked_add(1)
+                        .ok_or(BackupError::DestinationUnavailable)?;
                 }
-                replay_commit(&mut live, commit);
+                writer
+                    .write(&Record::Document {
+                        tenant: tenant.clone(),
+                        document,
+                        durability: record.durability(),
+                    })
+                    .map_err(|_| BackupError::DestinationUnavailable)?;
             }
-            after = page.last().map_or(after, PublishedCommit::sequence);
-            if reached_boundary {
+            let last = page.last().expect("non-empty snapshot page").document();
+            after = Some((last.collection().clone(), last.id().clone()));
+            if page.len() < MAX_SNAPSHOT_RECORD_PAGE as usize {
                 break;
             }
-        }
-        let entry = tenant_counts.entry(tenant.clone()).or_default();
-        for (document, durability) in live.into_values() {
-            if is_family_record(document.collection().as_str()) {
-                entry.1 += 1;
-                state.family_records += 1;
-            } else {
-                entry.0 += 1;
-                state.documents += 1;
-            }
-            writer
-                .write(&Record::Document { tenant: tenant.clone(), document, durability })
-                .map_err(|_| BackupError::DestinationUnavailable)?;
         }
         state.observe(BackupStep::ReadingJournal)?;
     }
@@ -1179,32 +1183,6 @@ fn seal_run(
 /// Classifies whether a collection name is the reserved family collection.
 fn is_family_record(collection: &str) -> bool {
     collection == RESERVED_FAMILY_COLLECTION
-}
-
-/// Applies one journal commit's writes to the reconstructed live state.
-///
-/// The last write of a key wins, and the durability kept with it is the
-/// durability that last write's commit achieved — the fact the archived frame
-/// must disclose for a state archive too, not only for a journal archive.
-fn replay_commit(
-    live: &mut BTreeMap<(String, String), (Document, LocalDurability)>,
-    commit: &PublishedCommit,
-) {
-    for write in commit.writes() {
-        match write {
-            PublishedWrite::Put { document } => {
-                live.insert(
-                    (document.collection().as_str().to_owned(), document.id().as_str().to_owned()),
-                    (document.clone(), commit.durability()),
-                );
-            }
-            PublishedWrite::Delete { collection, id, .. } => {
-                if let Some(collection) = collection {
-                    live.remove(&(collection.as_str().to_owned(), id.as_str().to_owned()));
-                }
-            }
-        }
-    }
 }
 
 /// Archives one journal commit's writes for an incremental run, recording

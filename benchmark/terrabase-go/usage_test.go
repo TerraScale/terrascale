@@ -120,7 +120,7 @@ func TestUsageExportPagesStableSnapshot(t *testing.T) {
 	client, _ := startFake(t)
 	mustBind(t, client)
 	ctx := context.Background()
-	request := UsageServiceExportRequest{
+	request := UsageExportRequest{
 		Window:   &UsageWindow{StartMillis: 1_000, EndMillis: 2_000},
 		PageSize: 1,
 	}
@@ -190,18 +190,18 @@ func TestUsageValidationAndTenantIsolation(t *testing.T) {
 			t.Fatalf("invalid usage record %d must fail locally, got %v", index, err)
 		}
 	}
-	if _, err := client.UsageExport(ctx, UsageServiceExportRequest{PageSize: 0}); !errors.Is(err, ErrInvalidRequest) {
+	if _, err := client.UsageExport(ctx, UsageExportRequest{PageSize: 0}); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("a zero usage page size must fail locally, got %v", err)
 	}
-	if _, err := client.UsageExport(ctx, UsageServiceExportRequest{PageSize: 1, Window: &UsageWindow{StartMillis: 5, EndMillis: 5}}); !errors.Is(err, ErrInvalidRequest) {
+	if _, err := client.UsageExport(ctx, UsageExportRequest{PageSize: 1, Window: &UsageWindow{StartMillis: 5, EndMillis: 5}}); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("an empty usage window must fail locally, got %v", err)
 	}
-	if _, err := client.UsageExport(ctx, UsageServiceExportRequest{PageSize: 1, Continuation: make([]byte, maxUsageContinuationBytes+1)}); !errors.Is(err, ErrInvalidRequest) {
+	if _, err := client.UsageExport(ctx, UsageExportRequest{PageSize: 1, Continuation: make([]byte, maxUsageContinuationBytes+1)}); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("an oversized usage continuation must fail locally, got %v", err)
 	}
 
 	fake.usageTenantOverride = "tenant-b"
-	if _, err := client.UsageExport(ctx, UsageServiceExportRequest{PageSize: 1}); !errors.Is(err, ErrEngineFailure) {
+	if _, err := client.UsageExport(ctx, UsageExportRequest{PageSize: 1}); !errors.Is(err, ErrEngineFailure) {
 		t.Fatalf("a cross-tenant usage fact must fail closed, got %v", err)
 	}
 }
@@ -259,7 +259,7 @@ func TestUsageExportRejectsReservedAndUnknownVocabulary(t *testing.T) {
 			mustBind(t, client)
 			fake.usageRegionOverride = test.region
 			fake.usageMeterOverride = test.meter
-			if _, err := client.UsageExport(context.Background(), UsageServiceExportRequest{PageSize: 1}); !errors.Is(err, ErrEngineFailure) {
+			if _, err := client.UsageExport(context.Background(), UsageExportRequest{PageSize: 1}); !errors.Is(err, ErrEngineFailure) {
 				t.Fatalf("a hostile usage vocabulary must fail closed, got %v", err)
 			}
 		})
@@ -281,7 +281,7 @@ func TestUsageErrorsMapToClosedSentinels(t *testing.T) {
 
 	unavailable := v1.ErrorCode_ERROR_CODE_USAGE_UNAVAILABLE
 	fake.failCode = &unavailable
-	if _, err := client.UsageExport(ctx, UsageServiceExportRequest{PageSize: 1}); !errors.Is(err, ErrUsageUnavailable) {
+	if _, err := client.UsageExport(ctx, UsageExportRequest{PageSize: 1}); !errors.Is(err, ErrUsageUnavailable) {
 		t.Fatalf("usage unavailable did not map to its sentinel: %v", err)
 	}
 

@@ -70,6 +70,13 @@ pub(crate) enum UsageStorageError {
     Unavailable,
 }
 
+/// Failures while serving a bounded snapshot page.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SnapshotReadError {
+    /// A persisted document value or key failed semantic decoding.
+    Integrity,
+}
+
 /// The total order used by usage export and its continuation cursor.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct UsageFactPosition {
@@ -225,7 +232,22 @@ pub(crate) trait StoragePort: Send {
         tenant: &TenantId,
         after: Option<(&CollectionName, &DocumentId)>,
         limit: u32,
-    ) -> Vec<Document>;
+    ) -> Result<Vec<Document>, SnapshotReadError>;
+
+    /// Reports whether the immutable state needed for a historical boundary
+    /// is still retained. A false result must fail closed instead of letting
+    /// a backend fall back to its current published state.
+    fn snapshot_boundary_available(&self, sequence: StorageSequence) -> bool;
+
+    /// Resolves the durability of each requested final-state key without
+    /// cloning complete publication write sets. `None` means at least one
+    /// winner is no longer provable from retained history.
+    fn winning_durabilities_at(
+        &self,
+        tenant: &TenantId,
+        sequence: StorageSequence,
+        keys: &[(&str, &str)],
+    ) -> Option<Vec<LocalDurability>>;
 
     /// Returns one tenant's published commits after `after`, in global
     /// storage-sequence order, up to `limit` entries (W4-CA-4).

@@ -20,8 +20,16 @@ publish = false
 
 [features]
 default = ["local-crypto"]
-local-crypto = ["terrabase/local-crypto", "terrabase-cluster/local-crypto"]
-production-fips = ["terrabase/production-fips", "terrabase-cluster/production-fips"]
+local-crypto = [
+  "rustls/ring",
+  "terrabase/local-crypto",
+  "terrabase-cluster/local-crypto",
+]
+production-fips = [
+  "rustls/fips",
+  "terrabase/production-fips",
+  "terrabase-cluster/production-fips",
+]
 
 [dependencies]
 # The engine itself, driven only through its public library surface.
@@ -89,7 +97,13 @@ object_store = { version = "=0.14.1", default-features = false, features = [
 reqwest = { version = "0.13.4", default-features = false, features = [
   "rustls-no-provider",
 ] }
+# `rustls-no-provider` makes the deployment profile explicit: local Studio
+# installs ring, while the production profile installs and verifies AWS-LC
+# FIPS before constructing an HTTPS S3 client.
+rustls = { version = "0.23.43", default-features = false, features = ["std"] }
 futures-util = "0.3"
+# Per-response CSP nonces come directly from the operating system CSPRNG.
+getrandom = "0.4"
 
 [dev-dependencies]
 tower = { version = "0.5", default-features = false, features = ["util"] }

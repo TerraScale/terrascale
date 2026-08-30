@@ -45,7 +45,9 @@ provenance_name=$(jq -er '.evidence.provenance' "$manifest")
 manifest_name=$(basename -- "$manifest")
 checksum_files=("$archive_name" "$manifest_name" "$oci_name" "$provenance_name" "$sbom_name")
 if [[ "$component" == server ]]; then
+  fips_feature_graph_name=$(jq -er '.evidence.fipsFeatureGraph.name' "$manifest")
   checksum_files+=(
+    "$fips_feature_graph_name"
     PRODUCTION-CAPABILITY.json
     PRODUCTION-CAPABILITY.sig
     cluster-composition.evidence.json

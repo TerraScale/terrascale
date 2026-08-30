@@ -28,6 +28,10 @@ const DEFAULT_SOURCE_IDENTITY: &str = "terrabase-rust-served-boundary-benchmark/
 const ADAPTER_CONTRACT_IDENTITY: &str = "terrabase-go/network-mtls/per-slot-connection/v2";
 const DEFAULT_TRANSPORT_IDENTITY: &str =
     "terrabase-go/network-mtls/per-slot-connection/v2 (network mTLS over loopback TCP)";
+const MAX_PRINCIPAL_BYTES: usize = 128;
+const MAX_TENANT_BYTES: usize = 64;
+const MAX_PROJECT_BYTES: usize = 255;
+const MAX_DATABASE_BYTES: usize = 255;
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Configuration for one served-boundary workload.
@@ -117,6 +121,13 @@ impl ServedRunnerConfig {
             return Err(
                 "principal must be a SPIFFE URI for the mTLS client certificate SAN".to_owned()
             );
+        }
+        if self.principal.len() > MAX_PRINCIPAL_BYTES
+            || self.tenant.len() > MAX_TENANT_BYTES
+            || self.project.len() > MAX_PROJECT_BYTES
+            || self.database.len() > MAX_DATABASE_BYTES
+        {
+            return Err("binding scope exceeds the TBEP identity or scope bounds".to_owned());
         }
         if self.transport_identity.contains("in-process")
             || !self.transport_identity.contains(ADAPTER_CONTRACT_IDENTITY)

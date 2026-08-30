@@ -1913,8 +1913,10 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "futures-util",
+ "getrandom 0.4.3",
  "object_store",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "terrabase",

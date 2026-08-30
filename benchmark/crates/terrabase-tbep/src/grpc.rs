@@ -66,23 +66,23 @@ use crate::host::HostingError;
 use crate::host::TbepHost;
 use crate::host::TbepNotification;
 use crate::proto::terrabase::v1 as pb;
-use crate::proto::terrabase::v1::backbone_server::Backbone;
+use crate::proto::terrabase::v1::backbone_service_server::BackboneService;
 use crate::proto::terrabase::v1::backbone_service_server::BackboneServiceServer;
-use crate::proto::terrabase::v1::channel_server::Channel;
+use crate::proto::terrabase::v1::channel_service_server::ChannelService;
 use crate::proto::terrabase::v1::channel_service_server::ChannelServiceServer;
-use crate::proto::terrabase::v1::engine_server::Engine;
+use crate::proto::terrabase::v1::engine_service_server::EngineService;
 use crate::proto::terrabase::v1::engine_service_server::EngineServiceServer;
-use crate::proto::terrabase::v1::maintenance_server::Maintenance;
+use crate::proto::terrabase::v1::maintenance_service_server::MaintenanceService;
 use crate::proto::terrabase::v1::maintenance_service_server::MaintenanceServiceServer;
-use crate::proto::terrabase::v1::replication_server::Replication;
+use crate::proto::terrabase::v1::replication_service_server::ReplicationService;
 use crate::proto::terrabase::v1::replication_service_server::ReplicationServiceServer;
-use crate::proto::terrabase::v1::schema_server::Schema;
+use crate::proto::terrabase::v1::schema_service_server::SchemaService;
 use crate::proto::terrabase::v1::schema_service_server::SchemaServiceServer;
-use crate::proto::terrabase::v1::sync_server::Sync;
+use crate::proto::terrabase::v1::sync_service_server::SyncService;
 use crate::proto::terrabase::v1::sync_service_server::SyncServiceServer;
-use crate::proto::terrabase::v1::tier_server::Tier;
+use crate::proto::terrabase::v1::tier_service_server::TierService;
 use crate::proto::terrabase::v1::tier_service_server::TierServiceServer;
-use crate::proto::terrabase::v1::usage_server::Usage;
+use crate::proto::terrabase::v1::usage_service_server::UsageService;
 use crate::proto::terrabase::v1::usage_service_server::UsageServiceServer;
 use crate::registry;
 use crate::value::TbepValue;
@@ -1282,7 +1282,7 @@ fn value_from_pb_depth(value: &pb::Value, depth: usize) -> Result<TbepValue, Hos
 fn value_to_pb(value: &TbepValue) -> pb::Value {
     pb::Value {
         kind: Some(match value {
-            TbepValue::Null => pb::value::Kind::Null(pb::NullValue::Null as i32),
+            TbepValue::Null => pb::value::Kind::Null(pb::NullValue::NullValueNullValueNull as i32),
             TbepValue::Boolean(flag) => pb::value::Kind::Boolean(*flag),
             TbepValue::Integer(number) => pb::value::Kind::Integer(*number),
             TbepValue::Number(number) => pb::value::Kind::Number(*number),
@@ -1307,30 +1307,30 @@ fn value_to_pb(value: &TbepValue) -> pb::Value {
 
 fn acknowledgement(v: i32) -> Option<registry::Acknowledgement> {
     match pb::Acknowledgement::try_from(v).ok()? {
-        pb::Acknowledgement::AckUnspecified => None,
-        pb::Acknowledgement::AckRegionalQuorum => Some(registry::Acknowledgement::RegionalQuorum),
-        pb::Acknowledgement::AckGlobalQuorum => Some(registry::Acknowledgement::GlobalQuorum),
-        pb::Acknowledgement::AckBackup => Some(registry::Acknowledgement::BackupAck),
+        pb::Acknowledgement::AcknowledgementUnspecified => None,
+        pb::Acknowledgement::AcknowledgementRegionalQuorum => Some(registry::Acknowledgement::RegionalQuorum),
+        pb::Acknowledgement::AcknowledgementGlobalQuorum => Some(registry::Acknowledgement::GlobalQuorum),
+        pb::Acknowledgement::AcknowledgementBackup => Some(registry::Acknowledgement::BackupAck),
     }
 }
 
 fn acknowledgement_pb(value: Option<registry::Acknowledgement>) -> i32 {
     match value {
         None | Some(registry::Acknowledgement::RegionalQuorum) => {
-            pb::Acknowledgement::AckRegionalQuorum as i32
+            pb::Acknowledgement::AcknowledgementRegionalQuorum as i32
         }
         Some(registry::Acknowledgement::GlobalQuorum) => {
-            pb::Acknowledgement::AckGlobalQuorum as i32
+            pb::Acknowledgement::AcknowledgementGlobalQuorum as i32
         }
-        Some(registry::Acknowledgement::BackupAck) => pb::Acknowledgement::AckBackup as i32,
+        Some(registry::Acknowledgement::BackupAck) => pb::Acknowledgement::AcknowledgementBackup as i32,
     }
 }
 
 fn backup_outcome_pb(value: Option<registry::BackupOutcome>) -> i32 {
     match value {
-        None | Some(registry::BackupOutcome::None) => pb::BackupOutcome::BackupNone as i32,
-        Some(registry::BackupOutcome::Full) => pb::BackupOutcome::BackupFull as i32,
-        Some(registry::BackupOutcome::Partial) => pb::BackupOutcome::BackupPartial as i32,
+        None | Some(registry::BackupOutcome::None) => pb::BackupOutcome::BackupOutcomeNone as i32,
+        Some(registry::BackupOutcome::Full) => pb::BackupOutcome::BackupOutcomeFull as i32,
+        Some(registry::BackupOutcome::Partial) => pb::BackupOutcome::BackupOutcomePartial as i32,
     }
 }
 
@@ -1901,7 +1901,7 @@ impl ChannelService for Arc<TbepGrpcServer> {
             self.authenticate_gateway(&request, &request.get_ref().principal)?;
         }
         let message = request.into_inner();
-        let domain = registry::ChannelServiceBindRequest {
+        let domain = registry::ChannelBindRequest {
             scope: registry::BoundScope {
                 principal: message.principal,
                 tenant: message.tenant,
@@ -1941,7 +1941,7 @@ impl EngineService for Arc<TbepGrpcServer> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
-        let domain = registry::EngineServiceDocumentReadRequest {
+        let domain = registry::DocumentReadRequest {
             collection: message.collection,
             document: message.document,
             level: read_level(message.level),
@@ -1970,7 +1970,7 @@ impl EngineService for Arc<TbepGrpcServer> {
         let message = request.into_inner();
         let document =
             message.document.as_ref().map(document_put).transpose().map_err(host_error)?;
-        let domain = registry::EngineServiceDocumentWriteRequest {
+        let domain = registry::DocumentWriteRequest {
             document: document.ok_or_else(|| conversion_error("a write carries no document"))?,
             expected: message
                 .expected
@@ -2004,7 +2004,7 @@ impl EngineService for Arc<TbepGrpcServer> {
         let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
-        let domain = registry::EngineServiceDocumentDeleteRequest {
+        let domain = registry::DocumentDeleteRequest {
             collection: message.collection,
             document: message.document,
             expected: message
@@ -2060,7 +2060,7 @@ impl EngineService for Arc<TbepGrpcServer> {
                 operation_id: item.operation_id.clone(),
             });
         }
-        let domain = registry::EngineServiceDocumentBatchRequest {
+        let domain = registry::DocumentBatchRequest {
             items,
             ack: acknowledgement(message.ack),
             usage: usage_admission(message.usage.as_ref(), &key, &identity.tenant)?,
@@ -2085,7 +2085,7 @@ impl EngineService for Arc<TbepGrpcServer> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
-        let domain = registry::EngineServiceQueryExecuteRequest {
+        let domain = registry::QueryExecuteRequest {
             query_id: message.query_id,
             text: message.text,
             max_items: message.max_items,
@@ -2116,7 +2116,7 @@ impl EngineService for Arc<TbepGrpcServer> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
-        let domain = registry::EngineServiceQueryCancelRequest { query_id: message.query_id };
+        let domain = registry::QueryCancelRequest { query_id: message.query_id };
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response = run_host(self.as_ref(), MetricOperation::Query, move || {
@@ -2144,7 +2144,7 @@ impl EngineService for Arc<TbepGrpcServer> {
         if message.request.len() > self.config.max_message_bytes() {
             return Err(conversion_error("a family request exceeds its byte bound"));
         }
-        let domain = registry::EngineServiceFamilyReadRequest {
+        let domain = registry::FamilyReadRequest {
             family: message.family,
             name: message.name,
             request_codec: message.request_codec,
@@ -2174,7 +2174,7 @@ impl EngineService for Arc<TbepGrpcServer> {
         if message.request.len() > self.config.max_message_bytes() {
             return Err(conversion_error("a family request exceeds its byte bound"));
         }
-        let domain = registry::EngineServiceFamilyWriteRequest {
+        let domain = registry::FamilyWriteRequest {
             family: message.family,
             name: message.name,
             request_codec: message.request_codec,
@@ -2208,7 +2208,7 @@ impl BackboneService for Arc<TbepGrpcServer> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
-        let domain = registry::BackboneServiceSubscribeRequest {
+        let domain = registry::BackboneSubscribeRequest {
             subscription_id: message.subscription_id,
             collections: (!message.collections.is_empty()).then_some(message.collections),
             from: message
@@ -2307,7 +2307,7 @@ impl BackboneService for Arc<TbepGrpcServer> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
-        let domain = registry::BackboneServiceAcknowledgeRequest {
+        let domain = registry::BackboneAcknowledgeRequest {
             subscription_id: message.subscription_id,
             through_sequence: message.through_sequence,
         };
@@ -2331,7 +2331,7 @@ impl BackboneService for Arc<TbepGrpcServer> {
         let identity = self.identity(&request)?;
         let message = request.into_inner();
         let domain =
-            registry::BackboneServiceUnsubscribeRequest { subscription_id: message.subscription_id };
+            registry::BackboneUnsubscribeRequest { subscription_id: message.subscription_id };
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response = run_host(self.as_ref(), MetricOperation::Subscribe, move || {
@@ -2356,7 +2356,7 @@ impl SyncService for Arc<TbepGrpcServer> {
         if message.resume.len() > MAX_SYNC_TOKEN_BYTES {
             return Err(conversion_error("a sync resume token exceeds its byte bound"));
         }
-        let domain = registry::SyncServiceSessionSetupRequest {
+        let domain = registry::SyncSessionSetupRequest {
             collection: message.collection,
             resume: (!message.resume.is_empty()).then_some(message.resume),
         };
@@ -2385,7 +2385,7 @@ impl SyncService for Arc<TbepGrpcServer> {
             return Err(conversion_error("a sync cursor exceeds its byte bound"));
         }
         let domain =
-            registry::SyncServiceDeltaPullRequest { session_id: message.session_id, from: message.from };
+            registry::SyncDeltaPullRequest { session_id: message.session_id, from: message.from };
         domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
@@ -2410,7 +2410,7 @@ impl SyncService for Arc<TbepGrpcServer> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
-        let domain = registry::SyncServiceSnapshotPullRequest { session_id: message.session_id };
+        let domain = registry::SyncSnapshotPullRequest { session_id: message.session_id };
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response = run_host(self.as_ref(), MetricOperation::Subscribe, move || {
@@ -2435,7 +2435,7 @@ impl SyncService for Arc<TbepGrpcServer> {
         if message.checkpoint.len() > MAX_SYNC_TOKEN_BYTES {
             return Err(conversion_error("a sync checkpoint exceeds its byte bound"));
         }
-        let domain = registry::SyncServiceCheckpointAckRequest {
+        let domain = registry::SyncCheckpointAckRequest {
             session_id: message.session_id,
             checkpoint: message.checkpoint,
         };
@@ -2457,7 +2457,7 @@ impl SyncService for Arc<TbepGrpcServer> {
         let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
-        let domain = registry::SyncServiceMutationSubmitRequest {
+        let domain = registry::SyncMutationSubmitRequest {
             session_id: message.session_id,
             document: message.document,
             change: message
@@ -2490,7 +2490,7 @@ impl SyncService for Arc<TbepGrpcServer> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
-        let domain = registry::SyncServiceSessionCloseRequest { session_id: message.session_id };
+        let domain = registry::SyncSessionCloseRequest { session_id: message.session_id };
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response = run_host(self.as_ref(), MetricOperation::Subscribe, move || {
@@ -2511,7 +2511,7 @@ impl SchemaService for Arc<TbepGrpcServer> {
         let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
-        let domain = registry::SchemaServiceDeclareRequest {
+        let domain = registry::SchemaDeclareRequest {
             collection: message.collection,
             schema: message.schema.as_ref().map(value_from_pb).transpose().map_err(host_error)?,
             operation_id: message.operation_id,
@@ -2536,7 +2536,7 @@ impl SchemaService for Arc<TbepGrpcServer> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
-        let domain = registry::SchemaServiceStatusRequest { collection: message.collection };
+        let domain = registry::SchemaStatusRequest { collection: message.collection };
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response = run_host(self.as_ref(), MetricOperation::Read, move || {
@@ -2556,7 +2556,7 @@ impl SchemaService for Arc<TbepGrpcServer> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
-        let domain = registry::SchemaServiceValidateRequest {
+        let domain = registry::SchemaValidateRequest {
             collection: message.collection,
             document: message
                 .document
@@ -2843,7 +2843,7 @@ impl MaintenanceService for Arc<TbepGrpcServer> {
         let identity = self.identity(&request)?;
         let _ = identity;
         let message = request.into_inner();
-        let domain = registry::MaintenanceServiceSupervisionShutdownRequest {
+        let domain = registry::SupervisionShutdownRequest {
             reason: match pb::ShutdownReason::try_from(message.reason) {
                 Ok(pb::ShutdownReason::Operator) => registry::ShutdownReason::Operator,
                 Ok(pb::ShutdownReason::Supervisor) => registry::ShutdownReason::Supervisor,
@@ -2878,16 +2878,16 @@ impl UsageService for Arc<TbepGrpcServer> {
         let identity = self.require_usage_rpc(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
-        let meter = match pb::UsageRecordMeter::try_from(message.meter) {
-            Ok(pb::UsageRecordMeter::AdmittedRequestUnits) => {
+        let meter = match pb::UsageServiceRecordMeter::try_from(message.meter) {
+            Ok(pb::UsageServiceRecordMeter::AdmittedRequestUnits) => {
                 registry::UsageRecordMeter::AdmittedRequestUnits
             }
-            Ok(pb::UsageRecordMeter::PublicEgressBytes) => {
+            Ok(pb::UsageServiceRecordMeter::PublicEgressBytes) => {
                 registry::UsageRecordMeter::PublicEgressBytes
             }
             _ => return Err(conversion_error("a usage record carries no supported meter")),
         };
-        let domain = registry::UsageServiceRecordRequest {
+        let domain = registry::UsageRecordRequest {
             meter,
             project: message.project,
             database: message.database,
@@ -2931,7 +2931,7 @@ impl UsageService for Arc<TbepGrpcServer> {
         self.counted();
         let identity = self.require_usage_rpc(&request)?;
         let message = request.into_inner();
-        let domain = registry::UsageServiceExportRequest {
+        let domain = registry::UsageExportRequest {
             window_start_millis: message.window_start_millis,
             window_end_millis: message.window_end_millis,
             page_size: message.page_size,
@@ -2973,7 +2973,7 @@ impl TierService for Arc<TbepGrpcServer> {
         let identity = self.identity(&request)?;
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
-        let domain = registry::TierServiceConfigureRequest {
+        let domain = registry::TierConfigureRequest {
             policy_id: message.policy_id,
             version: message.version,
             nvme_budget_bytes: message.nvme_budget_bytes,

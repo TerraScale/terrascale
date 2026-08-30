@@ -160,12 +160,6 @@ pub struct StudioState {
     /// Admission control for long-lived browser metrics streams.
     pub metrics_slots: Arc<tokio::sync::Semaphore>,
     shutdown: tokio::sync::watch::Sender<bool>,
-    /// The studio-local usage segment ledger.
-    ///
-    /// The engine's usage domain is a pure value domain: `UsageSegmentLedger`
-    /// has no durable store bound to an engine location. This instance is
-    /// studio-local and in-memory, and the Usage page says so.
-    pub usage: Mutex<terrabase::UsageSegmentLedger>,
     /// The deletion workflows the studio is driving.
     pub deletions: Mutex<terrabase::deletion::DeletionLedger>,
     /// The operator's topology specification, edited on the Replication page.
@@ -219,7 +213,6 @@ impl StudioState {
             blocking_slots: Arc::new(tokio::sync::Semaphore::new(MAX_BLOCKING_OPERATIONS)),
             metrics_slots: Arc::new(tokio::sync::Semaphore::new(MAX_METRICS_STREAMS)),
             shutdown,
-            usage: Mutex::new(terrabase::UsageSegmentLedger::default()),
             deletions: Mutex::new(terrabase::deletion::DeletionLedger::default()),
             topology: Mutex::new(topology),
             regions: Mutex::new(terrabase::RegionCatalog::production()),

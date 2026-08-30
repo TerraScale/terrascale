@@ -1,9 +1,9 @@
 use terrabase::encryption::{
-    ArtifactCipher, ArtifactKind, Compression, DatabaseKey, DatabaseKeyVersion, EncryptionContext,
-    EncryptionError, KeyProviderIdentity, KeyPurpose, KeyRotation, KeyScope, KeyVersionMetadata,
-    KeyWrappingProvider, LocalFileKeyProvider, MAX_PLAINTEXT_BYTES, ProductionCapabilityStatus,
-    ProviderCapability, ProviderMode, UnconfiguredOciVaultProvider, WrappedDatabaseKey,
-    production_capability_status,
+    ArtifactCipher, ArtifactKind, Compression, DatabaseKey, DatabaseKeyLease, DatabaseKeyVersion,
+    EncryptionContext, EncryptionError, KeyProviderIdentity, KeyPurpose, KeyRotation, KeyScope,
+    KeyVersionMetadata, KeyWrappingProvider, LocalFileKeyProvider, MAX_PLAINTEXT_BYTES,
+    ProductionCapabilityStatus, ProviderCapability, ProviderMode, UnconfiguredOciVaultProvider,
+    WrappedDatabaseKey, production_capability_status,
 };
 use terrabase::identity::{DatabaseUlid, TenantUlid, Ulid};
 use terrabase::regions::RegionCode;
@@ -338,6 +338,51 @@ fn oci_vault_seam_is_unconfigured_and_fails_closed() {
         Err(EncryptionError::KeyProviderUnconfigured)
     ));
     assert!(!format!("{wrapper:?}").contains("[2, 2"));
+}
+
+#[test]
+fn local_lease_cannot_claim_production_provenance() {
+    let scope = typed_scope(KeyPurpose::Data);
+    let version = DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap();
+    let metadata = KeyVersionMetadata::new(scope.clone(), version);
+    let lease = DatabaseKeyLease::new(
+        metadata,
+        DatabaseKey::from_bytes([0x55; 32]),
+        std::time::Duration::from_secs(30),
+    )
+    .unwrap();
+    let context = EncryptionContext::new(
+        scope.environment(),
+        scope.tenant().to_text(),
+        scope.database().to_text(),
+        "wal",
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        version.to_text(),
+        1,
+        Compression::None,
+    )
+    .unwrap();
+    assert!(matches!(
+        ArtifactCipher::from_database_key_lease(&lease, context, 0),
+        Err(EncryptionError::ProductionProviderUnavailable)
+    ));
+}
+
+#[test]
+fn database_key_lease_expires_and_redacts_key_material() {
+    let metadata = KeyVersionMetadata::new(
+        typed_scope(KeyPurpose::Data),
+        DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB3").unwrap(),
+    );
+    let lease = DatabaseKeyLease::new(
+        metadata,
+        DatabaseKey::from_bytes([0x5a; 32]),
+        std::time::Duration::from_nanos(1),
+    )
+    .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1));
+    assert_eq!(lease.with_database_key(|_| 1_u8), Err(EncryptionError::KeyLeaseExpired));
+    assert!(!format!("{lease:?}").contains("5a"));
 }
 
 #[test]

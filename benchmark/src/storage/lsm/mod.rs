@@ -68,7 +68,8 @@ use super::frontier::{
     STORAGE_FRONTIER_FEATURE, StoreId,
 };
 use super::{
-    PublishedCommit, PublishedWrite, StoragePort, UsageFactPosition, UsageStorageError, codec,
+    PublishedCommit, PublishedWrite, SnapshotReadError, StoragePort, UsageFactPosition,
+    UsageStorageError, codec,
     faults::{FaultPlan, FaultPoint},
     intent::{
         CommitIntent, CommitRejection, CommitResult, StagedWrite, StorageReceipt, UnknownCause,
@@ -2254,28 +2255,33 @@ fn tenant_documents_from_key_at(
     after: Option<(&CollectionName, &DocumentId)>,
     limit: u32,
     sequence: u64,
-) -> Vec<Document> {
+) -> Result<Vec<Document>, SnapshotReadError> {
     let limit = usize::try_from(limit).unwrap_or(usize::MAX);
     let mut documents = Vec::new();
-    for (candidate_tenant, collection, identifier) in &storage.document_keys {
-        if candidate_tenant != tenant.as_str() {
-            continue;
-        }
-        if after.is_some_and(|(after_collection, after_identifier)| {
-            (collection.as_str(), identifier.as_str())
-                <= (after_collection.as_str(), after_identifier.as_str())
-        }) {
+    let lower = after.map_or_else(
+        || (tenant.as_str().to_owned(), String::new(), String::new()),
+        |(collection, identifier)| {
+            (tenant.as_str().to_owned(), collection.as_str().to_owned(), identifier.as_str().to_owned())
+        },
+    );
+    for (candidate_tenant, collection, identifier) in
+        storage.document_keys.range((std::ops::Bound::Included(lower), std::ops::Bound::Unbounded))
+    {
+        if candidate_tenant != tenant.as_str()
+            || after.is_some_and(|(after_collection, after_identifier)| {
+                (collection.as_str(), identifier.as_str())
+                    <= (after_collection.as_str(), after_identifier.as_str())
+            })
+        {
             continue;
         }
         if documents.len() == limit {
             break;
         }
-        let Ok(collection) = CollectionName::try_new(collection) else {
-            continue;
-        };
-        let Ok(identifier) = DocumentId::try_new(identifier) else {
-            continue;
-        };
+        let collection =
+            CollectionName::try_new(collection).map_err(|_| SnapshotReadError::Integrity)?;
+        let identifier =
+            DocumentId::try_new(identifier).map_err(|_| SnapshotReadError::Integrity)?;
         let key = InternalKey::document(tenant, &collection, &identifier, 0);
         let Some((deletion, value)) = storage.newest_document_entry(&key, sequence) else {
             continue;
@@ -2284,11 +2290,16 @@ fn tenant_documents_from_key_at(
             continue;
         }
         let mut reader = codec::Reader::new(&value);
-        if let Some(document) = codec::decode_document(&mut reader) {
-            documents.push(document);
+        let document = codec::decode_document(&mut reader).ok_or(SnapshotReadError::Integrity)?;
+        if reader.remaining() != 0
+            || document.collection().as_str() != collection.as_str()
+            || document.id().as_str() != identifier.as_str()
+        {
+            return Err(SnapshotReadError::Integrity);
         }
+        documents.push(document);
     }
-    documents
+    Ok(documents)
 }
 
 impl StoragePort for LsmStorage {
@@ -2515,8 +2526,47 @@ impl StoragePort for LsmStorage {
         tenant: &TenantId,
         after: Option<(&CollectionName, &DocumentId)>,
         limit: u32,
-    ) -> Vec<Document> {
+    ) -> Result<Vec<Document>, SnapshotReadError> {
         tenant_documents_from_key_at(self, tenant, after, limit, sequence.get())
+    }
+
+    fn snapshot_boundary_available(&self, sequence: StorageSequence) -> bool {
+        sequence.get() <= self.published_state().0.get()
+            && self.history_floor.is_none_or(|floor| sequence.get() >= floor)
+    }
+
+    fn winning_durabilities_at(
+        &self,
+        tenant: &TenantId,
+        sequence: StorageSequence,
+        keys: &[(&str, &str)],
+    ) -> Option<Vec<LocalDurability>> {
+        let mut winners = vec![None; keys.len()];
+        for commit in self.history_index.values() {
+            if commit.sequence().get() > sequence.get() {
+                break;
+            }
+            if commit.tenant() != tenant {
+                continue;
+            }
+            for write in commit.writes() {
+                let (collection, identifier, put) = match write {
+                    PublishedWrite::Put { document } => {
+                        (document.collection().as_str(), document.id().as_str(), true)
+                    }
+                    PublishedWrite::Delete { collection: Some(collection), id, .. } => {
+                        (collection.as_str(), id.as_str(), false)
+                    }
+                    PublishedWrite::Delete { collection: None, .. } => continue,
+                };
+                for (index, (key_collection, key_identifier)) in keys.iter().enumerate() {
+                    if *key_collection == collection && *key_identifier == identifier {
+                        winners[index] = put.then_some(commit.durability());
+                    }
+                }
+            }
+        }
+        winners.into_iter().collect()
     }
 
     fn tenant_commits(

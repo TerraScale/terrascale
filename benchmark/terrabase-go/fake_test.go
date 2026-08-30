@@ -21,15 +21,15 @@ import (
 // Channel/Bind, idempotency keys on mutations, engine-shaped errors —
 // and answers from a tiny document store plus canned state.
 type fakeTBEP struct {
-	v1.UnimplementedChannelServiceServer
-	v1.UnimplementedEngineServiceServer
-	v1.UnimplementedBackboneServiceServer
-	v1.UnimplementedSyncServiceServer
-	v1.UnimplementedSchemaServiceServer
-	v1.UnimplementedReplicationServiceServer
-	v1.UnimplementedMaintenanceServiceServer
-	v1.UnimplementedUsageServiceServer
-	v1.UnimplementedTierServiceServer
+	v1.UnimplementedChannelServer
+	v1.UnimplementedEngineServer
+	v1.UnimplementedBackboneServer
+	v1.UnimplementedSyncServer
+	v1.UnimplementedSchemaServer
+	v1.UnimplementedReplicationServer
+	v1.UnimplementedMaintenanceServer
+	v1.UnimplementedUsageServer
+	v1.UnimplementedTierServer
 
 	mu                  sync.Mutex
 	documents           map[string]*v1.DocumentBody
@@ -64,15 +64,15 @@ func newFakeTBEP() *fakeTBEP {
 
 // register wires every service of the contract onto one server.
 func (fake *fakeTBEP) register(server *grpc.Server) {
-	v1.RegisterChannelServiceServer(server, fake)
-	v1.RegisterEngineServiceServer(server, fake)
-	v1.RegisterBackboneServiceServer(server, fake)
-	v1.RegisterSyncServiceServer(server, fake)
-	v1.RegisterSchemaServiceServer(server, fake)
-	v1.RegisterReplicationServiceServer(server, fake)
-	v1.RegisterMaintenanceServiceServer(server, fake)
-	v1.RegisterUsageServiceServer(server, fake)
-	v1.RegisterTierServiceServer(server, fake)
+	v1.RegisterChannelServer(server, fake)
+	v1.RegisterEngineServer(server, fake)
+	v1.RegisterBackboneServer(server, fake)
+	v1.RegisterSyncServer(server, fake)
+	v1.RegisterSchemaServer(server, fake)
+	v1.RegisterReplicationServer(server, fake)
+	v1.RegisterMaintenanceServer(server, fake)
+	v1.RegisterUsageServer(server, fake)
+	v1.RegisterTierServer(server, fake)
 }
 
 // engineStatus builds the failure shape of the Rust server: the closed

@@ -78,6 +78,8 @@ sbom_name=$artifact_stem.cdx.json
 provenance_name=$artifact_stem.intoto.json
 manifest_name=$artifact_stem.release.json
 oci_tag=$package-$version-$expected_arch
+fips_feature_graph_name=
+fips_feature_graph_digest=
 
 jq -e \
   --arg archive "$archive_name" \
@@ -105,14 +107,28 @@ jq -e \
   exit 1
 }
 if [[ "$component" == server ]]; then
-  jq -e '
+  expected_fips_feature_graph=$artifact_stem.fips-features.txt
+  fips_feature_graph_name=$(jq -er '.evidence.fipsFeatureGraph.name' "$manifest")
+  fips_feature_graph_digest=$(jq -er '.evidence.fipsFeatureGraph.sha256' "$manifest")
+  jq -e --arg feature_graph "$expected_fips_feature_graph" '
+    .evidence.fipsFeatureGraph.name == $feature_graph and
+    (.evidence.fipsFeatureGraph.sha256 | test("^[0-9a-f]{64}$")) and
     .evidence.productionCapability.statement == "PRODUCTION-CAPABILITY.json" and
     .evidence.productionCapability.signature == "PRODUCTION-CAPABILITY.sig" and
     .evidence.productionCapability.clusterComposition == "cluster-composition.evidence.json" and
     .evidence.productionCapability.encryptionAtRest == "encryption-at-rest.evidence.json"
   ' "$manifest" >/dev/null
+  [[ $(sha256sum "$output/$fips_feature_graph_name" | awk '{print $1}') == "$fips_feature_graph_digest" ]]
+  grep -Fq 'terrabase feature "production-fips"' "$output/$fips_feature_graph_name"
+  grep -Fq 'aws-lc-rs feature "fips"' "$output/$fips_feature_graph_name"
+  grep -Fq 'aws-lc-fips-sys v' "$output/$fips_feature_graph_name"
+  ! grep -Fq 'terrabase feature "local-crypto"' "$output/$fips_feature_graph_name"
+  ! grep -Fq 'aws-lc-rs feature "non-fips"' "$output/$fips_feature_graph_name"
 else
-  jq -e '.evidence | has("productionCapability") | not' "$manifest" >/dev/null
+  jq -e '
+    (.evidence | has("fipsFeatureGraph") | not) and
+    (.evidence | has("productionCapability") | not)
+  ' "$manifest" >/dev/null
 fi
 
 archive_digest=$(jq -er '.artifacts.archive.sha256' "$manifest")
@@ -144,6 +160,9 @@ jq -e \
   --arg revision "$(jq -er '.source.revision' "$manifest")" \
   --arg tree "$(jq -er '.source.tree' "$manifest")" \
   --argjson dirty "$(jq -er '.source.dirty' "$manifest")" \
+  --arg component "$component" \
+  --arg fips_feature_graph "$fips_feature_graph_name" \
+  --arg fips_feature_graph_digest "$fips_feature_graph_digest" \
   '
     ._type == "https://in-toto.io/Statement/v1" and
     .predicateType == "https://slsa.dev/provenance/v1" and
@@ -152,6 +171,12 @@ jq -e \
     (.subject | length) == 2 and
     .predicate.buildDefinition.externalParameters.target == $target and
     .predicate.buildDefinition.externalParameters.sourceDirty == $dirty and
+    (if $component == "server" then
+      .predicate.buildDefinition.internalParameters.fipsFeatureGraph.name == $fips_feature_graph and
+      .predicate.buildDefinition.internalParameters.fipsFeatureGraph.sha256 == $fips_feature_graph_digest
+    else
+      (.predicate.buildDefinition.internalParameters | has("fipsFeatureGraph") | not)
+    end) and
     ([.predicate.buildDefinition.resolvedDependencies[] |
       select(.digest.gitCommit == $revision and .digest.gitTree == $tree)] | length) == 1
   ' "$output/$provenance_name" >/dev/null
@@ -200,8 +225,10 @@ expected_files=$(jq -rn \
   --arg sbom "$sbom_name" \
   --arg mode "$mode" \
   --arg component "$component" \
+  --arg fips_feature_graph "$fips_feature_graph_name" \
   '
     [$archive, $manifest, $oci, $provenance, $sbom, "SHA256SUMS"] +
+    (if $component == "server" then [$fips_feature_graph] else [] end) +
     (if $mode == "signed" then ["SHA256SUMS.sig"] else [] end) +
     (if $mode == "signed" and $component == "server" then [
       "PRODUCTION-CAPABILITY.json",

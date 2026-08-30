@@ -131,14 +131,14 @@ const (
 	UsageRecordPublicEgressBytes
 )
 
-func (meter UsageRecordMeter) proto() (v1.UsageRecordMeter, bool) {
+func (meter UsageRecordMeter) proto() (v1.UsageServiceRecordMeter, bool) {
 	switch meter {
 	case UsageRecordAdmittedRequestUnits:
-		return v1.UsageRecordMeter_USAGE_RECORD_METER_ADMITTED_REQUEST_UNITS, true
+		return v1.UsageServiceRecordMeter_USAGE_RECORD_METER_ADMITTED_REQUEST_UNITS, true
 	case UsageRecordPublicEgressBytes:
-		return v1.UsageRecordMeter_USAGE_RECORD_METER_PUBLIC_EGRESS_BYTES, true
+		return v1.UsageServiceRecordMeter_USAGE_RECORD_METER_PUBLIC_EGRESS_BYTES, true
 	default:
-		return v1.UsageRecordMeter_USAGE_RECORD_METER_UNSPECIFIED, false
+		return v1.UsageServiceRecordMeter_USAGE_RECORD_METER_UNSPECIFIED, false
 	}
 }
 
@@ -304,8 +304,8 @@ type UsageWindow struct {
 	EndMillis   uint64
 }
 
-// UsageServiceExportRequest selects one page of a stable tenant-bound snapshot.
-type UsageServiceExportRequest struct {
+// UsageExportRequest selects one page of a stable tenant-bound snapshot.
+type UsageExportRequest struct {
 	Window       *UsageWindow
 	PageSize     uint32
 	Continuation []byte
@@ -320,7 +320,7 @@ type UsagePage struct {
 
 // UsageExport reads one page of authoritative usage facts. Existing
 // continuation bytes are copied and treated as opaque.
-func (c *Client) UsageExport(ctx context.Context, request UsageServiceExportRequest) (UsagePage, error) {
+func (c *Client) UsageExport(ctx context.Context, request UsageExportRequest) (UsagePage, error) {
 	if request.PageSize == 0 || request.PageSize > maxUsageFacts {
 		return UsagePage{}, localError("the usage page size must be 1..=%d", maxUsageFacts)
 	}

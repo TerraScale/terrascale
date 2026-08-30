@@ -21,6 +21,12 @@ use object_store::{
 use serde::{Deserialize, Serialize};
 use terrabase::backup::{BackupKind, BackupManifest, BackupResult, RecoveryReceipt};
 
+#[cfg(all(feature = "local-crypto", feature = "production-fips"))]
+compile_error!("select exactly one of `local-crypto` or `production-fips`");
+
+#[cfg(not(any(feature = "local-crypto", feature = "production-fips")))]
+compile_error!("select one of `local-crypto` or `production-fips`");
+
 const MANIFEST_FILE: &str = "manifest.tbv2m";
 const MANIFEST_LIMIT_BYTES: u64 = 1024 * 1024;
 /// Bounds list memory and manifest fetch work for one repository prefix.
@@ -245,6 +251,7 @@ impl S3BackupRepository {
     /// credential-provider environment.
     pub fn from_settings(settings: &S3BackupSettings) -> Result<Self, String> {
         settings.validate()?;
+        install_rustls_provider()?;
         let mut builder = AmazonS3Builder::from_env()
             .with_bucket_name(&settings.bucket)
             .with_region(&settings.region)
@@ -470,6 +477,34 @@ impl S3BackupRepository {
     fn object_path(&self, identity: &str, file: &str) -> ObjectPath {
         self.prefix.clone().join(format!("rp-{identity}")).join(file)
     }
+}
+
+fn install_rustls_provider() -> Result<(), String> {
+    #[cfg(feature = "local-crypto")]
+    let provider = rustls::crypto::ring::default_provider();
+
+    #[cfg(feature = "production-fips")]
+    let provider = {
+        let provider = rustls::crypto::aws_lc_rs::default_provider();
+        if !provider.fips() {
+            return Err("the production S3 TLS provider is not in FIPS mode".to_owned());
+        }
+        provider
+    };
+
+    if provider.install_default().is_ok() {
+        return Ok(());
+    }
+
+    let installed = rustls::crypto::CryptoProvider::get_default()
+        .ok_or_else(|| "cannot install the S3 TLS crypto provider".to_owned())?;
+    #[cfg(feature = "production-fips")]
+    if !installed.fips() {
+        return Err("the process installed a non-FIPS TLS provider before S3 setup".to_owned());
+    }
+    #[cfg(feature = "local-crypto")]
+    let _ = installed;
+    Ok(())
 }
 
 /// Runs a full or incremental engine backup and commits it to S3.
@@ -1026,6 +1061,17 @@ mod tests {
         assert!(settings.validate().is_ok());
         settings.endpoint = "https://access:secret@s3.example.test".to_owned();
         assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn s3_tls_provider_matches_the_studio_crypto_profile() {
+        install_rustls_provider().unwrap();
+        let installed = rustls::crypto::CryptoProvider::get_default()
+            .expect("S3 setup installs a process-wide TLS provider");
+        #[cfg(feature = "production-fips")]
+        assert!(installed.fips());
+        #[cfg(feature = "local-crypto")]
+        let _ = installed;
     }
 
     #[tokio::test]

@@ -1236,12 +1236,25 @@ impl super::StoragePort for FileStorage {
         tenant: &TenantId,
         after: Option<(&CollectionName, &DocumentId)>,
         limit: u32,
-    ) -> Vec<Document> {
-        self.table_at(sequence).tenant_documents_from_key(
+    ) -> Result<Vec<Document>, super::SnapshotReadError> {
+        Ok(self.table_at(sequence).tenant_documents_from_key(
             tenant,
             after.map(|(collection, identifier)| (collection.as_str(), identifier.as_str())),
             limit,
-        )
+        ))
+    }
+
+    fn snapshot_boundary_available(&self, sequence: StorageSequence) -> bool {
+        self.published.sequence == sequence.get() || self.history.contains_key(&sequence.get())
+    }
+
+    fn winning_durabilities_at(
+        &self,
+        tenant: &TenantId,
+        sequence: StorageSequence,
+        keys: &[(&str, &str)],
+    ) -> Option<Vec<LocalDurability>> {
+        self.journal_index.winning_durabilities_at(tenant, sequence, keys)
     }
 
     fn tenant_commits(

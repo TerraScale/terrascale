@@ -13,6 +13,7 @@ compile_error!("select exactly one of local-crypto or production-fips");
 
 use std::collections::BTreeSet;
 use std::fmt;
+use std::time::Instant;
 
 use aws_lc_rs::{aead, digest, hkdf, rand};
 use zeroize::Zeroize;
@@ -391,6 +392,7 @@ pub struct ArtifactCipher {
     mode: ProviderMode,
     next_ordinal: u128,
     reserved_ordinal: Option<u128>,
+    authorization_expires_at: Option<Instant>,
 }
 
 impl fmt::Debug for ArtifactCipher {
@@ -430,7 +432,7 @@ impl ArtifactCipher {
         next_ordinal: u128,
     ) -> Result<Self, EncryptionError> {
         context.validate()?;
-        let cipher = Self::from_key(mode, &database_key, context, next_ordinal, false)?;
+        let cipher = Self::from_key(mode, &database_key, context, next_ordinal, None)?;
         drop(database_key);
         Ok(cipher)
     }
@@ -450,6 +452,9 @@ impl ArtifactCipher {
         context: EncryptionContext,
         next_ordinal: u128,
     ) -> Result<Self, EncryptionError> {
+        if lease.provider() != KeyProviderIdentity::OciVault {
+            return Err(EncryptionError::ProductionProviderUnavailable);
+        }
         let metadata = lease.metadata();
         let scope = metadata.scope();
         if context.environment() != scope.environment()
@@ -460,7 +465,13 @@ impl ArtifactCipher {
             return Err(EncryptionError::InvalidKeyMetadata);
         }
         lease.with_database_key(|key| {
-            Self::from_key(ProviderMode::ProductionFips, key, context, next_ordinal, true)
+            Self::from_key(
+                ProviderMode::ProductionFips,
+                key,
+                context,
+                next_ordinal,
+                Some(lease.expires_at()),
+            )
         })?
     }
 
@@ -469,10 +480,12 @@ impl ArtifactCipher {
         database_key: &DatabaseKey,
         context: EncryptionContext,
         next_ordinal: u128,
-        provider_authorized: bool,
+        authorization_expires_at: Option<Instant>,
     ) -> Result<Self, EncryptionError> {
         context.validate()?;
-        if mode.is_production() && (!provider_authorized || aws_lc_rs::try_fips_mode().is_err()) {
+        if mode.is_production()
+            && (authorization_expires_at.is_none() || aws_lc_rs::try_fips_mode().is_err())
+        {
             return Err(EncryptionError::ProductionProviderUnavailable);
         }
         if next_ordinal > MAX_ORDINAL {
@@ -493,7 +506,18 @@ impl ArtifactCipher {
             mode,
             next_ordinal,
             reserved_ordinal: None,
+            authorization_expires_at,
         })
+    }
+
+    fn ensure_authorized(&self) -> Result<(), EncryptionError> {
+        if self.mode.is_production()
+            && self.authorization_expires_at.is_none_or(|expires_at| Instant::now() >= expires_at)
+        {
+            Err(EncryptionError::KeyLeaseExpired)
+        } else {
+            Ok(())
+        }
     }
 
     /// Returns the selected provider mode.
@@ -519,6 +543,7 @@ impl ArtifactCipher {
     /// exhausted, or [`EncryptionError::OrdinalReservationInvalid`] when a
     /// previous reservation is still awaiting sealing.
     pub fn reserve_ordinal(&mut self) -> Result<OrdinalReservation, EncryptionError> {
+        self.ensure_authorized()?;
         if self.reserved_ordinal.is_some() {
             return Err(EncryptionError::OrdinalReservationInvalid);
         }
@@ -566,6 +591,7 @@ impl ArtifactCipher {
     }
 
     fn seal_at(&self, ordinal: u128, plaintext: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+        self.ensure_authorized()?;
         if plaintext.len() > MAX_PLAINTEXT_BYTES {
             return Err(EncryptionError::SizeLimit);
         }
@@ -636,6 +662,7 @@ impl ArtifactCipher {
         aad: &[u8],
         ciphertext: &mut [u8],
     ) -> Result<Vec<u8>, EncryptionError> {
+        self.ensure_authorized()?;
         let parsed = parse_aad(aad)?;
         if parsed.ordinal != ordinal
             || parsed.environment != self.context.environment.as_bytes()
