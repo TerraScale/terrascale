@@ -1,4 +1,0 @@
-<Solution>
-  <Project Path="TerraBase.Cli/TerraBase.Cli.csproj" />
-  <Project Path="TerraBase.Cli.Tests/TerraBase.Cli.Tests.csproj" />
-</Solution>

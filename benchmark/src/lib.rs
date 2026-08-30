@@ -2,6 +2,11 @@
 //!
 //! The workspace charter defines the native product boundary and qualification
 //! rules. Accepted architecture is not an implementation or performance claim.
+//!
+//! The identity layer ([`identity`]) implements the ADR 0027 ULID object
+//! identities. The engine's persisted-format migration to ULID keys remains
+//! open under ADR 0031's activation rules, so no existing storage format
+//! changed in that lane.
 
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
