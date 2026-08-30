@@ -15,7 +15,9 @@ use std::{
 };
 
 use crate::engine::EngineConfigError;
-use crate::identity::DatabaseUlid;
+use crate::identity::{DatabaseUlid, ProjectUlid, TenantUlid};
+use crate::regions::RegionCode;
+use crate::storage::{DatabaseOwner, EnvironmentName};
 use crate::{Engine, EngineConfig, EngineOpenError, EngineShutdownError};
 
 /// The maximum UTF-8 byte length of a database identity.
@@ -31,9 +33,11 @@ pub const MAX_ADMISSION_PERMITS: usize = 1_000_000;
 ///
 /// The wrapped [`DatabaseUlid`] is the only database entity identity.  This
 /// name exists solely to keep the storage catalog's API explicit.
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct DatabaseId(DatabaseUlid);
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct DatabaseId {
+    text: String,
+    typed: Option<DatabaseUlid>,
+}
 
 impl DatabaseId {
     /// Creates a database identity accepted by the Member catalog.
@@ -42,33 +46,109 @@ impl DatabaseId {
     /// [`DatabaseUlid`] is valid.  The identity is never used directly as a
     /// filesystem path.
     pub fn try_new(value: impl AsRef<str>) -> Result<Self, CatalogValidationError> {
-        DatabaseUlid::from_text(value.as_ref())
-            .map(Self)
-            .map_err(|_| CatalogValidationError::InvalidDatabaseIdentity)
+        let value = value.as_ref();
+        if value.is_empty() || value.len() > MAX_DATABASE_ID_BYTES || !value.is_ascii() {
+            return Err(CatalogValidationError::InvalidDatabaseIdentity);
+        }
+        let typed = DatabaseUlid::from_text(value).ok();
+        if typed.is_none()
+            && !value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        {
+            return Err(CatalogValidationError::InvalidDatabaseIdentity);
+        }
+        Ok(Self { text: value.to_owned(), typed })
     }
 
     /// Returns the canonical identity text.
     #[must_use]
-    pub fn as_str(&self) -> String {
-        self.0.to_text()
+    pub fn as_str(&self) -> &str {
+        &self.text
     }
 
     /// Returns the wrapped ADR 0027 identity.
     #[must_use]
-    pub const fn value(self) -> DatabaseUlid {
-        self.0
+    pub const fn value(&self) -> Option<DatabaseUlid> {
+        self.typed
     }
 }
 
 impl From<DatabaseUlid> for DatabaseId {
     fn from(value: DatabaseUlid) -> Self {
-        Self(value)
+        Self { text: value.to_text(), typed: Some(value) }
     }
 }
 
 impl std::fmt::Display for DatabaseId {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.0, formatter)
+        formatter.write_str(&self.text)
+    }
+}
+
+/// The typed environment and ownership scope supplied by production Member.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct DatabaseScope(DatabaseOwner);
+
+impl DatabaseScope {
+    /// Creates one canonical production database scope.
+    pub fn try_new(
+        environment: impl AsRef<str>,
+        tenant: TenantUlid,
+        project: ProjectUlid,
+        database: DatabaseUlid,
+        region: RegionCode,
+    ) -> Result<Self, CatalogValidationError> {
+        let environment = EnvironmentName::try_new(environment)
+            .map_err(|_| CatalogValidationError::InvalidEnvironment)?;
+        Ok(Self(DatabaseOwner::new(environment, tenant, project, database, region)))
+    }
+
+    /// Alias for [`Self::try_new`] for callers constructing a typed catalog.
+    pub fn new(
+        environment: impl AsRef<str>,
+        tenant: TenantUlid,
+        project: ProjectUlid,
+        database: DatabaseUlid,
+        region: RegionCode,
+    ) -> Result<Self, CatalogValidationError> {
+        Self::try_new(environment, tenant, project, database, region)
+    }
+
+    /// Returns the durable owner tuple.
+    #[must_use]
+    pub fn owner(&self) -> &DatabaseOwner {
+        &self.0
+    }
+
+    /// Returns the canonical database identity.
+    #[must_use]
+    pub const fn database(&self) -> DatabaseUlid {
+        self.0.database()
+    }
+
+    /// Returns the owning tenant identity.
+    #[must_use]
+    pub const fn tenant(&self) -> TenantUlid {
+        self.0.tenant()
+    }
+
+    /// Returns the owning Project identity.
+    #[must_use]
+    pub const fn project(&self) -> ProjectUlid {
+        self.0.project()
+    }
+
+    /// Returns the environment identity.
+    #[must_use]
+    pub fn environment(&self) -> &EnvironmentName {
+        self.0.environment()
+    }
+
+    /// Returns the home Region.
+    #[must_use]
+    pub const fn region(&self) -> RegionCode {
+        self.0.region()
     }
 }
 
@@ -79,6 +159,7 @@ pub struct DatabaseSpec {
     pub id: String,
     /// A relative location beneath the Member root.
     pub location: PathBuf,
+    scope: Option<DatabaseScope>,
 }
 
 impl DatabaseSpec {
@@ -87,7 +168,20 @@ impl DatabaseSpec {
     /// struct literal.
     #[must_use]
     pub fn new(id: impl Into<String>, location: impl Into<PathBuf>) -> Self {
-        Self { id: id.into(), location: location.into() }
+        Self { id: id.into(), location: location.into(), scope: None }
+    }
+
+    /// Creates a production-scoped specification. The database identity in
+    /// the scope, rather than request text, is the catalog identity.
+    #[must_use]
+    pub fn scoped(scope: DatabaseScope, location: impl Into<PathBuf>) -> Self {
+        Self { id: scope.database().to_text(), location: location.into(), scope: Some(scope) }
+    }
+
+    /// Returns the optional production owner scope.
+    #[must_use]
+    pub fn scope(&self) -> Option<&DatabaseScope> {
+        self.scope.as_ref()
     }
 }
 
@@ -136,6 +230,10 @@ pub enum CatalogValidationError {
     DuplicateDatabaseIdentity,
     /// Two entries resolve to the same durable location.
     DuplicateDatabaseLocation,
+    /// Two entries carry the same typed production scope.
+    DuplicateDatabaseScope,
+    /// The environment identity is malformed.
+    InvalidEnvironment,
     /// Admission limits are zero or outside the accepted bound.
     InvalidAdmissionLimits,
 }
@@ -279,8 +377,13 @@ impl Member {
             .map_err(MemberOpenError::Validation)?;
 
         let mut opened = Vec::with_capacity(specs.len());
-        for (id, location) in specs {
+        for (id, location, scope) in specs {
             let config = EngineConfig::durable(&location)
+                .map(|config| {
+                    scope
+                        .as_ref()
+                        .map_or(config.clone(), |scope| config.with_owner(scope.owner().clone()))
+                })
                 .map_err(|error| MemberOpenError::EngineConfig { database: id.clone(), error });
             let config = match config {
                 Ok(config) => config,
@@ -413,7 +516,8 @@ impl Member {
                 Ok(engine) => {
                     if let Err(error) = engine.shutdown() {
                         if first_error.is_none() {
-                            first_error = Some(MemberError::Shutdown { database: entry.id, error });
+                            first_error =
+                                Some(MemberError::Shutdown { database: entry.id.clone(), error });
                         }
                     }
                 }
@@ -495,9 +599,10 @@ fn validate_root(root: &Path) -> Result<PathBuf, CatalogValidationError> {
 fn collect_and_validate_specs(
     root: &Path,
     specifications: impl IntoIterator<Item = DatabaseSpec>,
-) -> Result<Vec<(DatabaseId, PathBuf)>, CatalogValidationError> {
+) -> Result<Vec<(DatabaseId, PathBuf, Option<DatabaseScope>)>, CatalogValidationError> {
     let mut ids = BTreeSet::new();
     let mut locations = BTreeSet::new();
+    let mut scopes = BTreeSet::new();
     let mut validated = Vec::new();
     for (index, spec) in specifications.into_iter().enumerate() {
         if index >= MAX_DATABASES {
@@ -509,7 +614,16 @@ fn collect_and_validate_specs(
         if spec.location.as_os_str().len() > MAX_LOCATION_BYTES {
             return Err(CatalogValidationError::LocationTooLong);
         }
+        let scope = spec.scope;
         let id = DatabaseId::try_new(spec.id)?;
+        if let Some(scope) = &scope {
+            if id.value() != Some(scope.database()) {
+                return Err(CatalogValidationError::InvalidDatabaseIdentity);
+            }
+            if !scopes.insert(scope.clone()) {
+                return Err(CatalogValidationError::DuplicateDatabaseScope);
+            }
+        }
         let location = validate_location(root, &spec.location)?;
         if !ids.insert(id.clone()) {
             return Err(CatalogValidationError::DuplicateDatabaseIdentity);
@@ -517,7 +631,7 @@ fn collect_and_validate_specs(
         if !locations.insert(location.clone()) {
             return Err(CatalogValidationError::DuplicateDatabaseLocation);
         }
-        validated.push((id, location));
+        validated.push((id, location, scope));
     }
     if validated.is_empty() {
         return Err(CatalogValidationError::EmptyCatalog);

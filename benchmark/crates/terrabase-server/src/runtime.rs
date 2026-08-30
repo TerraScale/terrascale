@@ -1,6 +1,8 @@
 //! Production daemon composition and shutdown.
 
 use std::error::Error;
+use std::fs::{File, OpenOptions};
+use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -44,7 +46,7 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
             &config.project,
             &config.database,
         )
-            .map_err(|error| DaemonError::Engine(error.detail()))?,
+        .map_err(|error| DaemonError::Engine(error.detail()))?,
     );
     let metrics = host.metrics();
     metrics.set_component_health(Component::Metrics, HealthStatus::Healthy);
@@ -147,12 +149,9 @@ async fn wait_for_shutdown() -> Result<(), std::io::Error> {
 }
 
 fn read_pem(path: &Path, private: bool) -> Result<String, DaemonError> {
-    let metadata = std::fs::symlink_metadata(path).map_err(|_| DaemonError::SecretFile)?;
-    if metadata.file_type().is_symlink()
-        || !metadata.is_file()
-        || metadata.len() == 0
-        || metadata.len() > MAX_PEM_BYTES
-    {
+    let mut file = open_readonly(path)?;
+    let metadata = file.metadata().map_err(|_| DaemonError::SecretFile)?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_PEM_BYTES {
         return Err(DaemonError::SecretFile);
     }
     #[cfg(unix)]
@@ -162,11 +161,146 @@ fn read_pem(path: &Path, private: bool) -> Result<String, DaemonError> {
             return Err(DaemonError::PrivateKeyPermissions);
         }
     }
-    let text = std::fs::read_to_string(path).map_err(|_| DaemonError::SecretFile)?;
-    if !text.contains("-----BEGIN") || !text.contains("-----END") {
+    let expected_len = usize::try_from(metadata.len()).map_err(|_| DaemonError::SecretFile)?;
+    let mut bytes = Vec::with_capacity(expected_len);
+    (&mut file)
+        .take(MAX_PEM_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|_| DaemonError::SecretFile)?;
+    let after = file.metadata().map_err(|_| DaemonError::SecretFile)?;
+    if bytes.len() > MAX_PEM_BYTES as usize
+        || bytes.len() != expected_len
+        || after.len() != metadata.len()
+    {
+        return Err(DaemonError::SecretFile);
+    }
+    let text = String::from_utf8(bytes).map_err(|_| DaemonError::SecretFile)?;
+    if !valid_pem(&text, private) {
         return Err(DaemonError::SecretFile);
     }
     Ok(text)
+}
+
+fn open_readonly(path: &Path) -> Result<File, DaemonError> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        options.custom_flags(0o400000); // O_NOFOLLOW
+        #[cfg(any(
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        ))]
+        options.custom_flags(0x100); // O_NOFOLLOW
+    }
+    options.open(path).map_err(|_| DaemonError::SecretFile)
+}
+
+/// Checks PEM framing and base64 syntax before the TLS parser sees the bytes.
+/// The decoded DER is intentionally left to rustls, which owns certificate and
+/// key semantics; this layer only enforces a bounded, structurally complete
+/// PEM document without retaining another copy of the file.
+fn valid_pem(text: &str, private: bool) -> bool {
+    let mut blocks = 0usize;
+    let mut private_block = false;
+    let mut lines = text.split('\n').peekable();
+    while let Some(raw_line) = lines.next() {
+        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+        if line.is_empty() {
+            continue;
+        }
+        let Some(label) =
+            line.strip_prefix("-----BEGIN ").and_then(|value| value.strip_suffix("-----"))
+        else {
+            return false;
+        };
+        if label.is_empty() || !label.bytes().all(|byte| byte.is_ascii_uppercase() || byte == b' ')
+        {
+            return false;
+        }
+        let mut encoded = String::new();
+        let mut ended = false;
+        while let Some(raw_body) = lines.next() {
+            let body = raw_body.strip_suffix('\r').unwrap_or(raw_body);
+            if let Some(end_label) =
+                body.strip_prefix("-----END ").and_then(|value| value.strip_suffix("-----"))
+            {
+                if end_label != label || encoded.is_empty() {
+                    return false;
+                }
+                ended = true;
+                break;
+            }
+            if body.bytes().any(|byte| !byte.is_ascii_whitespace() && byte != b'=')
+                && body
+                    .bytes()
+                    .any(|byte| !byte.is_ascii_alphanumeric() && !matches!(byte, b'+' | b'/'))
+            {
+                return false;
+            }
+            encoded.push_str(body);
+        }
+        if !ended || decode_base64(&encoded).is_none() {
+            return false;
+        }
+        blocks = blocks.saturating_add(1);
+        private_block |= label.contains("PRIVATE KEY");
+    }
+    blocks > 0 && (!private || private_block)
+}
+
+fn decode_base64(value: &str) -> Option<Vec<u8>> {
+    let bytes: Vec<u8> = value.bytes().filter(|byte| !byte.is_ascii_whitespace()).collect();
+    if bytes.is_empty() || !bytes.len().is_multiple_of(4) {
+        return None;
+    }
+    let chunks = bytes.chunks_exact(4);
+    let chunk_count = chunks.len();
+    let mut decoded = Vec::with_capacity(bytes.len() / 4 * 3);
+    for (index, chunk) in chunks.enumerate() {
+        let padding = if chunk[2] == b'=' {
+            if chunk[3] != b'=' {
+                return None;
+            }
+            2
+        } else if chunk[3] == b'=' {
+            1
+        } else {
+            0
+        };
+        if padding != 0 && index + 1 != chunk_count {
+            return None;
+        }
+        let a = base64_value(chunk[0])?;
+        let b = base64_value(chunk[1])?;
+        let c = if padding == 2 { 0 } else { base64_value(chunk[2])? };
+        let d = if padding != 0 { 0 } else { base64_value(chunk[3])? };
+        decoded.push((a << 2) | (b >> 4));
+        if padding < 2 {
+            decoded.push((b << 4) | (c >> 2));
+        }
+        if padding == 0 {
+            decoded.push((c << 6) | d);
+        }
+    }
+    Some(decoded)
+}
+
+fn base64_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'A'..=b'Z' => Some(byte - b'A'),
+        b'a'..=b'z' => Some(byte - b'a' + 26),
+        b'0'..=b'9' => Some(byte - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    }
 }
 
 fn validate_uds_parent(path: &Path) -> Result<(), DaemonError> {
@@ -232,7 +366,23 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
     use std::net::SocketAddr;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use terrabase::observability::Region;
+
+    fn temporary_path(label: &str) -> std::path::PathBuf {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        std::env::temp_dir().join(format!(
+            "terrabase-server-{label}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    fn write_temporary(label: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let path = temporary_path(label);
+        std::fs::write(&path, bytes).expect("temporary PEM writes");
+        path
+    }
 
     #[tokio::test]
     async fn configured_gateway_identity_reaches_secret_validation() {
@@ -261,5 +411,61 @@ mod tests {
         };
         let error = run(config).await.expect_err("missing TLS material must fail closed");
         assert!(error.to_string().contains("TLS material file is unsafe or invalid"));
+    }
+
+    #[test]
+    fn pem_validation_rejects_empty_malformed_and_non_utf8_material() {
+        assert!(!valid_pem("", false));
+        assert!(!valid_pem(
+            "-----BEGIN CERTIFICATE-----\nnot-base64\n-----END CERTIFICATE-----",
+            false
+        ));
+        assert!(!valid_pem("-----BEGIN PRIVATE KEY-----\nAQ==\n-----END CERTIFICATE-----", true));
+        assert!(!valid_pem(
+            "-----BEGIN CERTIFICATE-----\nAQ==\n-----END CERTIFICATE-----\ntrailing",
+            false
+        ));
+
+        let empty = write_temporary("pem-empty", b"");
+        assert!(matches!(read_pem(&empty, false), Err(DaemonError::SecretFile)));
+        std::fs::remove_file(&empty).expect("temporary PEM removes");
+
+        let invalid_utf8 = write_temporary("pem-utf8", &[0xff, 0xfe]);
+        assert!(matches!(read_pem(&invalid_utf8, false), Err(DaemonError::SecretFile)));
+        std::fs::remove_file(&invalid_utf8).expect("temporary PEM removes");
+    }
+
+    #[test]
+    fn pem_read_rejects_growth_and_oversize_without_path_redaction() {
+        let oversized = write_temporary("pem-oversized", &vec![b'x'; MAX_PEM_BYTES as usize + 1]);
+        let error = read_pem(&oversized, false).expect_err("oversized PEM refuses");
+        assert!(matches!(error, DaemonError::SecretFile));
+        assert!(!error.to_string().contains(oversized.to_string_lossy().as_ref()));
+        std::fs::remove_file(&oversized).expect("temporary PEM removes");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_key_permissions_and_symlinks_fail_closed() {
+        use std::os::unix::fs::{PermissionsExt as _, symlink};
+
+        let target = write_temporary(
+            "pem-target",
+            b"-----BEGIN PRIVATE KEY-----\nAQ==\n-----END PRIVATE KEY-----\n",
+        );
+        let link = temporary_path("pem-link");
+        symlink(&target, &link).expect("temporary PEM symlink");
+        assert!(matches!(read_pem(&link, true), Err(DaemonError::SecretFile)));
+        std::fs::remove_file(&link).expect("temporary symlink removes");
+
+        let private = write_temporary(
+            "pem-private-permissions",
+            b"-----BEGIN PRIVATE KEY-----\nAQ==\n-----END PRIVATE KEY-----\n",
+        );
+        std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o644))
+            .expect("temporary PEM permissions");
+        assert!(matches!(read_pem(&private, true), Err(DaemonError::PrivateKeyPermissions)));
+        std::fs::remove_file(&target).expect("temporary PEM removes");
+        std::fs::remove_file(&private).expect("temporary PEM removes");
     }
 }

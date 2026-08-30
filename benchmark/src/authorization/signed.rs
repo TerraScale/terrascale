@@ -650,7 +650,7 @@ impl PrincipalContextVerifier {
                 return Err(AuthorizationError::ContextSigningFailed);
             }
         }
-        UnparsedPublicKey::new(&ECDSA_P256_SHA256_FIXED, key.public_key)
+        UnparsedPublicKey::new(&ECDSA_P256_SHA256_FIXED, key.public_key.as_slice())
             .verify(&envelope.payload, &envelope.signature)
             .map_err(|_| AuthorizationError::InvalidContextSignature)?;
         let payload = decode_payload(&envelope.payload)?;

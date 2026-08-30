@@ -787,7 +787,7 @@ fn execute(
         tenant_counts,
         boundary,
         plan.kind,
-        format!("{:032x}", engine.identity()),
+        engine.database_id().to_text(),
         destination,
         staging,
     )

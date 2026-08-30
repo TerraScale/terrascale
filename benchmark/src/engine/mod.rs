@@ -410,6 +410,7 @@ pub struct EngineConfig {
     location: PathBuf,
     lifecycle_thresholds: crate::query::optimizer::LifecycleThresholds,
     storage_backend: StorageBackend,
+    owner: Option<crate::storage::DatabaseOwner>,
 }
 
 /// Which storage engine backs a durable Engine location (P1, ADR 0016).
@@ -466,7 +467,19 @@ impl EngineConfig {
             location,
             lifecycle_thresholds: crate::query::optimizer::LifecycleThresholds::DEFAULT,
             storage_backend: StorageBackend::default(),
+            owner: None,
         })
+    }
+
+    /// Binds this location to the supplied production database owner tuple.
+    ///
+    /// A location may already carry the same owner and is reopened only when
+    /// every field matches. A local-development owner, a corrupt record, or
+    /// a different scope is refused by [`Engine::open`].
+    #[must_use]
+    pub fn with_owner(mut self, owner: crate::storage::DatabaseOwner) -> Self {
+        self.owner = Some(owner);
+        self
     }
 
     /// Selects the storage backend of the durable location. Crate-private
@@ -783,6 +796,7 @@ pub(crate) struct StorageState {
 /// ```
 pub struct Engine {
     identity: u128,
+    durable_owner: crate::storage::DatabaseOwner,
     pub(crate) storage: Arc<Mutex<StorageState>>,
     /// One bounded registry shared by the engine, storage, TBEP, probes, and
     /// Prometheus adapter for this process-local engine instance.
@@ -869,6 +883,24 @@ impl Engine {
         if location.as_os_str().is_empty() {
             return Err(EngineOpenError::InvalidConfig);
         }
+        let owner = crate::storage::load_or_create(
+            &location,
+            config.owner.as_ref(),
+            if config.owner.is_some() {
+                crate::storage::OwnershipMode::Production
+            } else {
+                crate::storage::OwnershipMode::LocalDevelopment
+            },
+        )
+        .map_err(|error| match error {
+            crate::storage::OwnershipError::Unavailable => EngineOpenError::StorageUnavailable,
+            crate::storage::OwnershipError::InvalidEnvironment
+            | crate::storage::OwnershipError::InvalidLocation
+            | crate::storage::OwnershipError::ForeignLocation
+            | crate::storage::OwnershipError::Corrupt
+            | crate::storage::OwnershipError::Mismatch
+            | crate::storage::OwnershipError::ModeMismatch => EngineOpenError::FormatMismatch,
+        })?;
         let backend = backend_of_location(&location, config.storage_backend);
         let metrics = Arc::new(MetricsRegistry::new());
         let storage: Box<dyn storage::StoragePort> = match backend {
@@ -916,6 +948,7 @@ impl Engine {
         let index_subscription = subscriptions.subscribe(indexes.sink());
         Ok(Self {
             identity: EngineIdentity::next().0,
+            durable_owner: owner,
             storage: Arc::new(Mutex::new(StorageState { port: storage })),
             metrics,
             in_flight: Mutex::new(BTreeSet::new()),
@@ -928,6 +961,18 @@ impl Engine {
             commit_arrivals: std::sync::Condvar::new(),
             wal_sync,
         })
+    }
+
+    /// Returns the durable database identity bound to this location.
+    #[must_use]
+    pub fn database_id(&self) -> crate::identity::DatabaseUlid {
+        self.durable_owner.database()
+    }
+
+    /// Returns the complete durable owner tuple recovered from this location.
+    #[must_use]
+    pub fn database_owner(&self) -> &crate::storage::DatabaseOwner {
+        &self.durable_owner
     }
 
     /// Returns the bounded registry shared with this Engine's storage path.

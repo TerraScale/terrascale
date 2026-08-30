@@ -64,6 +64,14 @@ pub const MAX_REQUEST_SERIES: usize =
 /// partial exposition.
 pub const MAX_PROMETHEUS_BODY_BYTES: usize = 512 * 1024;
 
+/// The maximum diagnostic text inspected by [`redact_diagnostic`].
+///
+/// Diagnostic text is not a metric label and is therefore intentionally kept
+/// separate from the exposition bound.  Truncating before classification gives
+/// callers a fixed-cost disclosure boundary even when a dependency supplies a
+/// pathological error string.
+pub const MAX_DIAGNOSTIC_BYTES: usize = 64 * 1024;
+
 /// The fixed histogram boundaries for request latency, in seconds.
 pub const REQUEST_LATENCY_BUCKETS: [f64; 11] =
     [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0];
@@ -695,7 +703,11 @@ impl HealthReport {
     /// Returns the status code an adapter should use for a readiness probe.
     #[must_use]
     pub fn readiness_status_code(&self) -> u16 {
-        if self.is_ready() { 200 } else { 503 }
+        if self.is_ready() {
+            200
+        } else {
+            503
+        }
     }
 
     /// Returns the status code an adapter should use for a health probe.
@@ -2082,140 +2094,249 @@ fn saturating_increment(value: &mut u64) {
 /// The observability contract never exports free-form diagnostic text in
 /// Prometheus labels.  This helper exists for adapters that need to display a
 /// safe reason alongside a probe result.  It handles bearer credentials and
-/// common key/value names case-insensitively, while retaining the key and
-/// surrounding punctuation for useful diagnostics.
+/// a closed set of exact or namespaced key/value names case-insensitively,
+/// while retaining the key and surrounding punctuation for useful diagnostics.
+/// Input beyond [`MAX_DIAGNOSTIC_BYTES`] is not inspected or returned.
 #[must_use]
 pub fn redact_diagnostic(input: &str) -> String {
-    let mut redacted = input.to_owned();
-    for marker in [
-        "aws_secret_access_key",
-        "aws-secret-access-key",
-        "proxy-authorization",
-        "authorization",
-        "client_secret",
-        "client-secret",
-        "secret_access_key",
-        "secret-access-key",
-        "access_token",
-        "access-token",
-        "access_key",
-        "access-key",
-        "private_key",
-        "private-key",
-        "x-api-key",
-        "api_key",
-        "api-key",
-        "apikey",
-        "set-cookie",
-        "credentials",
-        "credential",
-        "password",
-        "passwd",
-        "bearer",
-        "secret",
-        "token",
-        "cookie",
-    ] {
-        redact_marker(&mut redacted, marker);
-    }
-    redacted
-}
-
-fn redact_marker(text: &mut String, marker: &str) {
-    let mut search_from = 0;
-    while search_from < text.len() {
-        let lower = text.to_ascii_lowercase();
-        let Some(relative) = lower[search_from..].find(marker) else { break };
-        let start = search_from + relative;
-        let end_marker = start + marker.len();
-        if (start != 0 && is_key_byte(lower.as_bytes()[start - 1]))
-            || lower.as_bytes().get(end_marker).is_some_and(|byte| is_key_byte(*byte))
-        {
-            search_from = end_marker;
-            continue;
-        }
-
-        let mut cursor = end_marker;
-        if text.as_bytes().get(cursor).is_some_and(|byte| *byte == b'"' || *byte == b'\'') {
-            cursor += 1;
-        }
-        let before_whitespace = cursor;
-        skip_ascii_whitespace(text, &mut cursor);
-        let bearer_with_space = marker == "bearer" && cursor > before_whitespace;
-        if text.as_bytes().get(cursor).is_some_and(|byte| *byte == b'=' || *byte == b':') {
-            cursor += 1;
-            skip_ascii_whitespace(text, &mut cursor);
-        } else if !bearer_with_space {
-            search_from = end_marker;
-            continue;
-        }
-
-        let value_start = cursor;
-        let quote = text
-            .as_bytes()
-            .get(value_start)
-            .copied()
-            .filter(|byte| *byte == b'"' || *byte == b'\'');
-        let content_start = value_start + usize::from(quote.is_some());
-        let value_end = match quote {
-            Some(quote_byte) => quoted_value_end(text, content_start, quote_byte),
-            None => unquoted_value_end(text, &lower, content_start, marker),
+    let input = bounded_diagnostic(input);
+    let mut output = String::with_capacity(input.len());
+    let mut scan = 0;
+    while scan < input.len() {
+        let Some(start) = next_key_start(input, scan) else {
+            output.push_str(&input[scan..]);
+            break;
         };
-        if value_end > content_start {
-            text.replace_range(content_start..value_end, "[REDACTED]");
-            search_from = content_start + "[REDACTED]".len();
-        } else {
-            search_from = end_marker;
+        output.push_str(&input[scan..start]);
+
+        let mut key_end = key_end(input, start);
+        // A colon is both a namespace separator and a header/assignment
+        // delimiter.  Prefer the delimiter interpretation when the portion
+        // before it is itself a sensitive key, so `Authorization:Bearer`
+        // cannot hide behind one oversized candidate.
+        if !input.as_bytes().get(key_end).is_some_and(|byte| *byte == b'=' || *byte == b':') {
+            if let Some(relative) = input[start..key_end].rfind(':') {
+                let prefix_end = start + relative;
+                if is_secret_key(&input[start..prefix_end]) {
+                    key_end = prefix_end;
+                }
+            }
+        }
+        let key = &input[start..key_end];
+        if is_secret_key(key) {
+            if let Some((value_start, value_end)) = secret_value_range(input, key_end, key) {
+                output.push_str(&input[start..value_start]);
+                output.push_str("[REDACTED]");
+                scan = value_end;
+                continue;
+            }
+        }
+        output.push_str(&input[start..key_end]);
+        scan = key_end;
+    }
+    output
+}
+
+const SECRET_KEY_ALIASES: &[&str] = &[
+    "aws_secret_access_key",
+    "aws-secret-access-key",
+    "proxy-authorization",
+    "authorization",
+    "client_secret",
+    "client-secret",
+    "secret_access_key",
+    "secret-access-key",
+    "access_token",
+    "access-token",
+    "access_key",
+    "access-key",
+    "private_key",
+    "private-key",
+    "x-api-key",
+    "api_key",
+    "api-key",
+    "apikey",
+    "set-cookie",
+    "credentials",
+    "credential",
+    "password",
+    "passwd",
+    "bearer",
+    "secret",
+    "token",
+    "cookie",
+];
+
+fn bounded_diagnostic(input: &str) -> &str {
+    if input.len() <= MAX_DIAGNOSTIC_BYTES {
+        return input;
+    }
+    let mut end = MAX_DIAGNOSTIC_BYTES;
+    while !input.is_char_boundary(end) {
+        end -= 1;
+    }
+    &input[..end]
+}
+
+fn next_key_start(input: &str, from: usize) -> Option<usize> {
+    let mut previous_is_path = input[..from].chars().next_back().is_some_and(is_key_path_char);
+    for (offset, character) in input[from..].char_indices() {
+        let is_start = is_key_atom_char(character) && !previous_is_path;
+        previous_is_path = is_key_path_char(character);
+        if is_start {
+            return Some(from + offset);
         }
     }
+    None
 }
 
-fn skip_ascii_whitespace(text: &str, cursor: &mut usize) {
-    while text.as_bytes().get(*cursor).is_some_and(u8::is_ascii_whitespace) {
-        *cursor += 1;
-    }
-}
-
-fn quoted_value_end(text: &str, start: usize, quote: u8) -> usize {
+fn key_end(input: &str, start: usize) -> usize {
     let mut cursor = start;
-    let mut escaped = false;
-    while cursor < text.len() {
-        let byte = text.as_bytes()[cursor];
-        if escaped {
-            escaped = false;
-        } else if byte == b'\\' {
-            escaped = true;
-        } else if byte == quote {
+    let mut characters = input[start..].char_indices().peekable();
+    while let Some((offset, character)) = characters.next() {
+        let include = if character == ':' {
+            characters
+                .peek()
+                .is_some_and(|(_, next)| is_key_atom_char(*next) || is_unicode_trick(*next))
+        } else {
+            is_key_atom_char(character) || is_unicode_trick(character)
+        };
+        if !include {
             break;
         }
-        cursor += 1;
+        cursor = start + offset + character.len_utf8();
     }
     cursor
 }
 
-fn unquoted_value_end(text: &str, lower: &str, start: usize, marker: &str) -> usize {
-    let mut cursor = start;
-    if matches!(marker, "authorization" | "proxy-authorization") {
+fn is_secret_key(key: &str) -> bool {
+    SECRET_KEY_ALIASES.iter().any(|alias| has_secret_suffix(key, alias))
+}
+
+fn has_secret_suffix(key: &str, alias: &str) -> bool {
+    let key = trim_unicode_tricks(key);
+    if ascii_eq_ignore_case(key, alias) {
+        return true;
+    }
+    let Some(offset) = key.len().checked_sub(alias.len()) else { return false };
+    offset > 0
+        && key[..offset].chars().next_back().is_some_and(is_namespace_separator)
+        && ascii_eq_ignore_case(&key[offset..], alias)
+}
+
+fn trim_unicode_tricks(mut key: &str) -> &str {
+    while let Some((offset, character)) = key.char_indices().next_back() {
+        if !is_unicode_trick(character) {
+            break;
+        }
+        key = &key[..offset];
+    }
+    key
+}
+
+fn ascii_eq_ignore_case(value: &str, expected: &str) -> bool {
+    value.len() == expected.len()
+        && value
+            .bytes()
+            .zip(expected.bytes())
+            .all(|(value, expected)| value.eq_ignore_ascii_case(&expected))
+}
+
+fn secret_value_range(
+    input: &str,
+    key_end: usize,
+    key: &str,
+) -> Option<(usize, usize)> {
+    let mut cursor = key_end;
+    skip_whitespace(input, &mut cursor);
+    let bare_bearer = has_secret_suffix(key, "bearer")
+        && ascii_eq_ignore_case(trim_unicode_tricks(key), "bearer");
+    if input.as_bytes().get(cursor).is_some_and(|byte| *byte == b'=' || *byte == b':') {
+        cursor += 1;
+        skip_whitespace(input, &mut cursor);
+    } else if !bare_bearer {
+        return None;
+    }
+
+    let value_start = cursor;
+    let quote = input[value_start..]
+        .chars()
+        .next()
+        .filter(|character| *character == '"' || *character == '\'');
+    if let Some(quote) = quote {
+        let content_start = value_start + quote.len_utf8();
+        let value_end = quoted_value_end(input, content_start, quote);
+        return (value_end > content_start).then_some((content_start, value_end));
+    }
+
+    let mut content_start = value_start;
+    if has_secret_suffix(key, "authorization") || has_secret_suffix(key, "proxy-authorization") {
         for scheme in ["bearer", "basic"] {
-            if lower[start..].starts_with(scheme) {
-                cursor += scheme.len();
-                skip_ascii_whitespace(text, &mut cursor);
-                break;
+            if starts_with_ascii_ignore_case(&input[content_start..], scheme) {
+                let after_scheme = content_start + scheme.len();
+                if input[after_scheme..].chars().next().is_some_and(char::is_whitespace) {
+                    content_start = after_scheme;
+                    skip_whitespace(input, &mut content_start);
+                    break;
+                }
             }
         }
     }
-    while cursor < text.len() {
-        let byte = text.as_bytes()[cursor];
-        if byte.is_ascii_whitespace() || matches!(byte, b',' | b';' | b'&' | b'#' | b'}' | b']') {
-            break;
-        }
-        cursor += 1;
-    }
-    cursor
+    let value_end = unquoted_value_end(input, content_start);
+    (value_end > content_start).then_some((value_start, value_end))
 }
 
-const fn is_key_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
+fn skip_whitespace(input: &str, cursor: &mut usize) {
+    while input[*cursor..].chars().next().is_some_and(char::is_whitespace) {
+        *cursor += input[*cursor..].chars().next().expect("checked above").len_utf8();
+    }
+}
+
+fn quoted_value_end(input: &str, start: usize, quote: char) -> usize {
+    let mut escaped = false;
+    for (offset, character) in input[start..].char_indices() {
+        if escaped {
+            escaped = false;
+        } else if character == '\\' {
+            escaped = true;
+        } else if character == quote {
+            return start + offset;
+        }
+    }
+    input.len()
+}
+
+fn unquoted_value_end(input: &str, start: usize) -> usize {
+    for (offset, character) in input[start..].char_indices() {
+        if character.is_whitespace() || matches!(character, ',' | ';' | '&' | '#' | '}' | ']') {
+            return start + offset;
+        }
+    }
+    input.len()
+}
+
+fn starts_with_ascii_ignore_case(value: &str, expected: &str) -> bool {
+    value.len() >= expected.len()
+        && value.as_bytes()[..expected.len()]
+            .iter()
+            .zip(expected.bytes())
+            .all(|(value, expected)| value.eq_ignore_ascii_case(&expected))
+}
+
+fn is_key_atom_char(character: char) -> bool {
+    character.is_alphanumeric() || matches!(character, '_' | '-' | '.')
+}
+
+fn is_key_path_char(character: char) -> bool {
+    is_key_atom_char(character) || character == ':' || is_unicode_trick(character)
+}
+
+const fn is_namespace_separator(character: char) -> bool {
+    matches!(character, '_' | '-' | '.' | ':') || is_unicode_trick(character)
+}
+
+const fn is_unicode_trick(character: char) -> bool {
+    matches!(character, '\u{200b}'..='\u{200d}' | '\u{2060}' | '\u{feff}' | '\u{fe00}'..='\u{fe0f}')
 }
 
 #[cfg(test)]
@@ -2547,5 +2668,70 @@ mod tests {
     fn redaction_does_not_rewrite_words_that_only_contain_a_marker() {
         let input = "tokenizer ready; passwordless mode; secretive status";
         assert_eq!(redact_diagnostic(input), input);
+    }
+
+    #[test]
+    fn redaction_classifies_namespaced_secret_keys_case_insensitively() {
+        let input = concat!(
+            "db_password=db-secret oauth_token:oauth-secret ",
+            "DB.PASSWORD=dot-secret service:client_secret='client-secret' ",
+            "x-api-key=header-secret nested:private-key=private-secret"
+        );
+        let output = redact_diagnostic(input);
+        for secret in [
+            "db-secret",
+            "oauth-secret",
+            "dot-secret",
+            "client-secret",
+            "header-secret",
+            "private-secret",
+        ] {
+            assert!(!output.contains(secret), "secret remained in {output}");
+        }
+        assert!(output.contains("db_password=[REDACTED]"));
+        assert!(output.contains("oauth_token:[REDACTED]"));
+        assert!(output.contains("service:client_secret='[REDACTED]'"));
+    }
+
+    #[test]
+    fn redaction_handles_unicode_boundaries_and_format_tricks() {
+        let input = concat!(
+            "DB_PASSWORD\u{200d}=zero-width-secret ",
+            "oauth\u{2060}_token=word-joiner-secret ",
+            "password\u{00a0}=nonbreaking-space-secret ",
+            "tenant=public"
+        );
+        let output = redact_diagnostic(input);
+        for secret in ["zero-width-secret", "word-joiner-secret", "nonbreaking-space-secret"] {
+            assert!(!output.contains(secret), "secret remained in {output}");
+        }
+        assert!(output.contains("tenant=public"));
+    }
+
+    #[test]
+    fn redaction_handles_header_delimiter_adjacency() {
+        let output = redact_diagnostic("Authorization:Bearer header-secret X-Trace: kept");
+        assert!(!output.contains("header-secret"));
+        assert!(output.contains("Authorization:[REDACTED]"));
+        assert!(output.contains("X-Trace: kept"));
+    }
+
+    #[test]
+    fn redaction_handles_duplicate_keys_and_adjacent_delimiters_in_one_pass() {
+        let input = "password=one&password=two;oauth_token:three,tenant=public document=visible";
+        let output = redact_diagnostic(input);
+        for secret in ["one", "two", "three"] {
+            assert!(!output.contains(secret), "secret remained in {output}");
+        }
+        assert!(output.contains("password=[REDACTED]&password=[REDACTED]"));
+        assert!(output.contains("tenant=public document=visible"));
+    }
+
+    #[test]
+    fn redaction_bounds_pathological_diagnostic_text() {
+        let input = "tenant=public ".repeat(MAX_DIAGNOSTIC_BYTES);
+        let output = redact_diagnostic(&input);
+        assert!(output.len() <= MAX_DIAGNOSTIC_BYTES);
+        assert!(output.contains("tenant=public"));
     }
 }

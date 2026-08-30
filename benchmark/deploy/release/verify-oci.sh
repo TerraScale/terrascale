@@ -23,7 +23,7 @@ base_reference=$5
   echo "invalid OCI identity" >&2
   exit 1
 }
-for tool in buildah find gzip jq sha256sum stat tar; do
+for tool in find gzip jq sha256sum stat tar; do
   command -v "$tool" >/dev/null || {
     echo "required OCI verification tool is missing: $tool" >&2
     exit 1
@@ -32,12 +32,6 @@ done
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/terrabase-oci-verify.XXXXXXXX")
 cleanup() {
-  if [[ -n ${container-} ]]; then
-    buildah --root "$work/buildah-storage" --runroot "$work/buildah-runroot" \
-      --storage-driver vfs umount "$container" >/dev/null 2>&1 || true
-    buildah --root "$work/buildah-storage" --runroot "$work/buildah-runroot" \
-      --storage-driver vfs rm "$container" >/dev/null 2>&1 || true
-  fi
   if [[ -n ${work-} && -d "$work" && "$work" == */terrabase-oci-verify.* ]]; then
     rm -rf -- "$work"
   fi
@@ -51,8 +45,10 @@ mkdir "$oci_root"
 while IFS= read -r entry; do
   entry=${entry%/}
   case "$entry" in
-    oci-layout|index.json|blobs|blobs/sha256|blobs/sha256/[0-9a-f]*)
-      [[ "$entry" != blobs/sha256/* || "${#entry}" -eq 77 ]] || {
+    oci-layout|index.json|blobs|blobs/sha256)
+      ;;
+    blobs/sha256/*)
+      [[ "$entry" =~ ^blobs/sha256/[0-9a-f]{64}$ ]] || {
         echo "OCI archive contains an invalid blob name: $entry" >&2
         exit 1
       }
@@ -63,6 +59,10 @@ while IFS= read -r entry; do
       ;;
   esac
 done < <(tar -tf "$archive")
+[[ -z "$(tar -tf "$archive" | sed 's:/$::' | sort | uniq -d)" ]] || {
+  echo "OCI archive contains duplicate entries" >&2
+  exit 1
+}
 if tar -tvf "$archive" | awk 'substr($1, 1, 1) != "-" && substr($1, 1, 1) != "d" { exit 1 }'; then
   :
 else
@@ -163,22 +163,61 @@ for ((index_number = 0; index_number < layer_count; index_number++)); do
   }
 done
 
-# Buildah applies the verified layer graph, so this checks the final merged
-# filesystem rather than trusting a config label for the shipped executable.
-container=$(buildah --root "$work/buildah-storage" --runroot "$work/buildah-runroot" \
-  --storage-driver vfs from --name terrabase-oci-verify "oci-archive:$archive:$oci_tag")
-mountpoint=$(buildah --root "$work/buildah-storage" --runroot "$work/buildah-runroot" \
-  --storage-driver vfs mount "$container")
-image_binary="$mountpoint/usr/local/bin/$(basename -- "$native_binary")"
-[[ -f "$image_binary" && ! -L "$image_binary" ]] || {
-  echo "OCI image executable is missing or unsafe" >&2
+# Apply only the executable path from each verified layer. This avoids
+# mounting an untrusted image on a signing runner while retaining OCI whiteout
+# semantics for the one path whose bytes are bound to the native artifact.
+target_path=usr/local/bin/$(basename -- "$native_binary")
+current_binary=$work/current-binary
+current_present=$work/current-present
+: >"$current_present"
+for ((index_number = 0; index_number < layer_count; index_number++)); do
+  layer_digest=$(jq -er ".layers[$index_number].digest" "$manifest_path")
+  layer_media=$(jq -er ".layers[$index_number].mediaType" "$manifest_path")
+  layer_path=$(blob_path "$layer_digest")
+  raw_layer=$work/layer-$index_number.tar
+  if [[ "$layer_media" == *+gzip || "$layer_media" == *.gzip ]]; then
+    gzip -cd "$layer_path" >"$raw_layer"
+  else
+    cp -- "$layer_path" "$raw_layer"
+  fi
+  while IFS= read -r entry; do
+    normalized=${entry#./}
+    case "$normalized" in
+      *\\*)
+        echo "OCI layer contains an unsafe path: $entry" >&2
+        exit 1
+        ;;
+    esac
+    [[ "$normalized" != /* && "$normalized" != *'\'\'* && "$normalized" != .. && "$normalized" != ../* && "$normalized" != */../* && "$normalized" != */.. ]] || {
+      echo "OCI layer contains an unsafe path: $entry" >&2
+      exit 1
+    }
+    case "$normalized" in
+      "$target_path")
+        type=$(tar -tvf "$raw_layer" "$entry" | awk 'NR == 1 { print substr($1, 1, 1) }')
+        [[ "$type" == - ]] || {
+          echo "OCI executable layer entry is not a regular file" >&2
+          exit 1
+        }
+        tar -xOf "$raw_layer" "$entry" >"$current_binary"
+        : >"$current_present"
+        ;;
+      "usr/local/bin/.wh.$(basename -- "$native_binary")"|"usr/local/bin/.wh..wh..opq")
+        rm -f -- "$current_present"
+        rm -f -- "$current_binary"
+        ;;
+    esac
+  done < <(tar -tf "$raw_layer")
+done
+[[ -f "$current_binary" && -s "$current_present" ]] || {
+  echo "OCI image executable is missing after applying its layers" >&2
   exit 1
 }
-[[ $(sha256sum "$image_binary" | awk '{print $1}') == "$binary_digest" ]] || {
-  echo "OCI image executable digest does not match the native artifact" >&2
+[[ $(sha256sum "$current_binary" | awk '{print $1}') == "$binary_digest" ]] || {
+  echo "OCI image executable bytes do not match the native artifact" >&2
   exit 1
 }
-cmp -s "$native_binary" "$image_binary" || {
+cmp -s "$native_binary" "$current_binary" || {
   echo "OCI image executable bytes do not match the native artifact" >&2
   exit 1
 }

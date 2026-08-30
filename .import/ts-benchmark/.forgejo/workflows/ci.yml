@@ -72,7 +72,9 @@ jobs:
       - name: Test AWS-LC FIPS selection
         run: cargo test -p terrabase --locked --no-default-features --features production-fips --test encryption production_profile_links_an_operational_aws_lc_fips_module
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Clippy production server with AWS-LC FIPS
+        run: cargo clippy -p terrabase-server --all-targets --locked --no-default-features --features production-fips -- -D warnings
       - name: Documentation
         run: cargo doc --workspace --no-deps --locked
       # The benchmark-lane driver is a standalone workspace so the engine
@@ -88,7 +90,7 @@ jobs:
           cargo test --manifest-path bench/Cargo.toml --locked
           cargo clippy --manifest-path bench/Cargo.toml --all-targets --locked -- -D warnings
           cargo doc --manifest-path bench/Cargo.toml --no-deps --locked
-          python3 bench/scripts/render-history.py
+          cargo run --manifest-path bench/Cargo.toml --locked -- --render-history
           git diff --exit-code -- docs/evidence/benchmarks/benchmark-history.md
       # Studio owns a separate workspace so the engine's dependency budget
       # remains explicit. It is nevertheless a release deliverable and gets
@@ -99,7 +101,7 @@ jobs:
           cargo check --manifest-path crates/terrabase-studio/Cargo.toml --locked
           cargo build --manifest-path crates/terrabase-studio/Cargo.toml --locked --release
           cargo test --manifest-path crates/terrabase-studio/Cargo.toml --locked
-          cargo clippy --manifest-path crates/terrabase-studio/Cargo.toml --all-targets --all-features --locked -- -D warnings
+          cargo clippy --manifest-path crates/terrabase-studio/Cargo.toml --all-targets --locked -- -D warnings
           cargo doc --manifest-path crates/terrabase-studio/Cargo.toml --no-deps --locked
       - name: Release packaging definitions
         run: |

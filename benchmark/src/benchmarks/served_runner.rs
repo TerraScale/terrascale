@@ -40,7 +40,8 @@ pub(super) struct ServedRunnerConfig {
     pub workload: Workload,
     /// Existing test-only qualification harness executable.
     pub qualification_harness_executable: PathBuf,
-    /// Go executable used when adapter_executable is absent.
+    /// Legacy Go executable setting, retained for configuration compatibility.
+    /// Served runs never invoke it; they require `adapter_executable`.
     pub go_executable: PathBuf,
     /// Working directory containing the Go adapter command.
     pub go_workdir: PathBuf,

@@ -36,6 +36,8 @@ pub fn run(
         );
     }
     let status = Command::new(executable_path)
+        .env("TERRABASE_BENCH_BOUNDARY_CLASS", boundary)
+        .env("TERRABASE_BENCH_OUTPUT_DIR", output)
         .arg("--boundary-class")
         .arg(boundary)
         .arg("--workload")

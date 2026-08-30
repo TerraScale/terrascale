@@ -21,7 +21,9 @@ Server outputs retain a normalized Cargo feature graph. Packaging and
 verification require `terrabase/production-fips`, `aws-lc-rs/fips`, and
 `aws-lc-fips-sys`, and reject the local and non-FIPS feature paths.
 
-`reproduce.sh` builds twice and compares the complete unsigned output.
+`reproduce.sh` builds twice and compares the complete unsigned output. The
+packager clears ambient encoded Rust flags so effective release flags cannot be
+injected by the runner environment.
 `sign.sh` signs `SHA256SUMS` with an ECDSA key supplied by the protected
 release environment and verifies the signature against the independently
 configured public key. Keys are never copied into an artifact. For the server,
@@ -30,12 +32,20 @@ the source binding, and the two evidence digests before signing. `verify.sh`
 rechecks the checksums, signatures, SBOM and provenance bindings, native
 archive binary, OCI platform, and entrypoint.
 
-The Forgejo release workflow runs on `develop` without secrets. Native runners
-build each package twice, compare the unsigned outputs, and retain the exact
-bytes. The protected manual promotion workflow runs only when its selected ref
-is `main`. It downloads those exact artifacts and independent capability
-evidence by workflow-run ID, checks that every source binding equals the event
-SHA, and adds signatures without rebuilding.
+The Forgejo release workflow is a manually confirmed build of protected
+`main`, without signing secrets. Native runners build each package twice,
+compare the unsigned outputs, and retain the exact bytes. The protected manual
+promotion workflow runs only when its selected ref is `main`. It authenticates
+both selected workflow runs through the Forgejo Actions API (repository, ref,
+commit, workflow, successful conclusion), downloads those exact artifacts and
+independent capability evidence, checks that every source binding equals the
+event SHA, and adds signatures without rebuilding. Missing API credentials or
+an unavailable run document is a hard failure.
+
+OCI admission validates the archive layout, every manifest/config/layer digest
+and size, each compressed layer's rootfs diff ID, the pinned base declaration,
+and the final `/usr/local/bin` bytes against the native archive binary. OCI
+labels alone are not treated as payload evidence.
 
 The capability artifact is named `terrabase-production-capability` within its
 selected workflow run and contains:

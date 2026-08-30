@@ -20,6 +20,7 @@ mod file;
 mod frontier;
 mod intent;
 mod ledger;
+mod ownership;
 mod retained;
 mod root;
 mod wal;
@@ -43,6 +44,8 @@ pub(crate) use frontier::{
 pub(crate) use intent::{
     CommitIntent, CommitRejection, CommitResult, OperationResolution, StagedWrite, UnknownCause,
 };
+pub use ownership::{DatabaseOwner, EnvironmentName};
+pub(crate) use ownership::{OwnershipError, OwnershipMode, load_or_create};
 pub(crate) use root::StorageRootId;
 
 pub use compaction::{

@@ -73,6 +73,7 @@ type slot interface {
 
 type clientSlot struct {
 	client    *terrabase.Client
+	transport *terrabase.Transport
 	slotIndex int
 }
 
@@ -121,7 +122,14 @@ func (s *clientSlot) query(ctx context.Context, index int) error {
 	return nil
 }
 
-func (s *clientSlot) close() error { return s.client.Close() }
+func (s *clientSlot) close() error {
+	clientErr := s.client.Close()
+	transportErr := s.transport.Close()
+	if clientErr != nil {
+		return clientErr
+	}
+	return transportErr
+}
 
 // Run connects, binds, seeds, and measures one complete workload. It never
 // starts or stops the harness process.
@@ -157,7 +165,6 @@ func Run(ctx context.Context, config Config) (RunResults, error) {
 	if err != nil {
 		return RunResults{}, fmt.Errorf("dial mTLS endpoint: %w", err)
 	}
-	defer transport.Close()
 	scope := terrabase.BindingScope{
 		Principal: config.Principal,
 		Tenant:    config.Tenant,
@@ -167,24 +174,37 @@ func Run(ctx context.Context, config Config) (RunResults, error) {
 
 	admin, _, err := transport.Bind(ctx, scope)
 	if err != nil {
+		_ = transport.Close()
 		return RunResults{}, fmt.Errorf("bind seed client: %w", err)
 	}
 	if err := seed(ctx, admin, config.Lane.SeedDocuments); err != nil {
 		admin.Close()
+		_ = transport.Close()
 		return RunResults{}, err
 	}
 	admin.Close()
+	if err := transport.Close(); err != nil {
+		return RunResults{}, fmt.Errorf("close seed transport: %w", err)
+	}
 
 	slots := make([]slot, 0, config.Lane.Concurrency)
 	for index := 0; index < config.Lane.Concurrency; index++ {
-		client, _, bindErr := transport.Bind(ctx, scope)
+		slotTransport, dialErr := terrabase.DialTransport(config.Endpoint, options...)
+		if dialErr != nil {
+			for _, opened := range slots {
+				opened.close()
+			}
+			return RunResults{}, fmt.Errorf("dial concurrency slot %d: %w", index, dialErr)
+		}
+		client, _, bindErr := slotTransport.Bind(ctx, scope)
 		if bindErr != nil {
+			_ = slotTransport.Close()
 			for _, opened := range slots {
 				opened.close()
 			}
 			return RunResults{}, fmt.Errorf("bind concurrency slot %d: %w", index, bindErr)
 		}
-		slots = append(slots, &clientSlot{client: client, slotIndex: index})
+		slots = append(slots, &clientSlot{client: client, transport: slotTransport, slotIndex: index})
 	}
 	result, err := runSlots(ctx, config, slots)
 	for _, opened := range slots {
@@ -363,7 +383,7 @@ func runSlots(ctx context.Context, config Config, slots []slot) (RunResults, err
 		Samples:     samples,
 		Limits: []string{
 			"the harness is an already-started standalone loopback mTLS server; this command does not own its lifecycle",
-			"one bound terrabase-go client is used per concurrency slot and every mutation requests regional quorum",
+			"one physical terrabase-go transport and bound client are used per concurrency slot; standalone mutations request local-synced acknowledgement",
 			"source identity: " + config.SourceIdentity,
 		},
 	}, nil

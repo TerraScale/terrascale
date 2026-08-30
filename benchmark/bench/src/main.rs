@@ -14,8 +14,18 @@
 //! cargo run --release --manifest-path bench/Cargo.toml -- \
 //!   --target pg --workload read --out bench/results
 //! ```
+//!
+//! A served TerraBase run requires `TERRABASE_BENCH_SERVED_RUNNER` to name a
+//! prebuilt Rust runner executable and an explicit boundary contract:
+//!
+//! ```text
+//! cargo run --release --manifest-path bench/Cargo.toml -- \
+//!   --target terrabase --boundary-class diagnostic-qualification \
+//!   --workload read --out bench/results
+//! ```
 
 mod config;
+mod history;
 mod lane;
 mod metrics;
 mod pg;
@@ -28,6 +38,14 @@ use config::{LaneConfig, Target, Workload};
 use lane::Backend;
 
 fn main() {
+    let mut command_arguments = std::env::args().skip(1);
+    if command_arguments.next().as_deref() == Some("--render-history") {
+        if let Err(error) = history::run(command_arguments) {
+            eprintln!("history rendering failed: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let mut target = None;
     let mut workload = None;
     let mut out = PathBuf::from("bench/results");

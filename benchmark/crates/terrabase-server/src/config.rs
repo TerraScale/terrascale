@@ -2,6 +2,8 @@
 
 use std::collections::BTreeSet;
 use std::ffi::OsString;
+use std::fs::{File, OpenOptions};
+use std::io::Read;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -85,6 +87,8 @@ struct FileEngine {
 #[serde(deny_unknown_fields)]
 struct FileTbep {
     listen: String,
+    #[serde(default)]
+    allow_wildcard: bool,
     server_certificate: PathBuf,
     server_private_key: PathBuf,
     client_ca: PathBuf,
@@ -108,6 +112,8 @@ struct FileUds {
 #[serde(deny_unknown_fields)]
 struct FileObservability {
     listen: String,
+    #[serde(default)]
+    allow_wildcard: bool,
 }
 
 impl ServerConfig {
@@ -139,18 +145,11 @@ impl ServerConfig {
         }
     }
 
-    /// Reads and validates one configuration file. Symlinks, oversized files,
-    /// unknown keys, relative production paths, zero bounds, and plaintext TCP
-    /// configurations fail closed.
+    /// Reads and validates one configuration file from one inspected handle.
+    /// Symlinks, oversized files, unknown keys, relative production paths, zero
+    /// bounds, and plaintext TCP configurations fail closed.
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
-        let metadata = std::fs::symlink_metadata(path).map_err(ConfigError::ReadConfiguration)?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err(ConfigError::UnsafeConfigurationFile);
-        }
-        if metadata.len() > MAX_CONFIG_BYTES {
-            return Err(ConfigError::ConfigurationTooLarge);
-        }
-        let text = std::fs::read_to_string(path).map_err(ConfigError::ReadConfiguration)?;
+        let text = read_configuration(path)?;
         Self::parse(&text)
     }
 
@@ -162,6 +161,8 @@ impl ServerConfig {
         if tbep_listen.port() == 0
             || observability_listen.port() == 0
             || tbep_listen == observability_listen
+            || (tbep_listen.ip().is_unspecified() && !file.tbep.allow_wildcard)
+            || (observability_listen.ip().is_unspecified() && !file.observability.allow_wildcard)
         {
             return Err(ConfigError::InvalidListenAddress);
         }
@@ -256,6 +257,78 @@ fn absolute(path: &Path) -> Result<(), ConfigError> {
     Ok(())
 }
 
+/// Opens a file for reading without following a final symlink where the host
+/// platform provides that flag. Metadata and bytes are then obtained from the
+/// same descriptor, closing the metadata/read replacement race.
+fn open_readonly(path: &Path) -> Result<File, ConfigError> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        options.custom_flags(0o400000); // O_NOFOLLOW
+        #[cfg(any(
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        ))]
+        options.custom_flags(0x100); // O_NOFOLLOW
+    }
+    options.open(path).map_err(|error| {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if error.raw_os_error() == Some(40) {
+            return ConfigError::UnsafeConfigurationFile;
+        }
+        ConfigError::ReadConfiguration(error)
+    })
+}
+
+fn read_configuration(path: &Path) -> Result<String, ConfigError> {
+    let mut file = open_readonly(path)?;
+    let metadata = file.metadata().map_err(ConfigError::ReadConfiguration)?;
+    if !metadata.is_file() {
+        return Err(ConfigError::UnsafeConfigurationFile);
+    }
+    let expected_len =
+        usize::try_from(metadata.len()).map_err(|_| ConfigError::ConfigurationTooLarge)?;
+    if expected_len == 0 {
+        return Err(ConfigError::EmptyConfiguration);
+    }
+    if metadata.len() > MAX_CONFIG_BYTES {
+        return Err(ConfigError::ConfigurationTooLarge);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        if metadata.permissions().mode() & 0o022 != 0 {
+            return Err(ConfigError::UnsafeConfigurationFile);
+        }
+    }
+    let mut bytes = Vec::with_capacity(expected_len);
+    let read_limit = MAX_CONFIG_BYTES.checked_add(1).ok_or(ConfigError::ConfigurationTooLarge);
+    (&mut file)
+        .take(read_limit?)
+        .read_to_end(&mut bytes)
+        .map_err(ConfigError::ReadConfiguration)?;
+    let after = file.metadata().map_err(ConfigError::ReadConfiguration)?;
+    if bytes.len() > MAX_CONFIG_BYTES as usize {
+        return Err(ConfigError::ConfigurationTooLarge);
+    }
+    if bytes.len() != expected_len || after.len() != metadata.len() {
+        return Err(ConfigError::ConfigurationChanged);
+    }
+    String::from_utf8(bytes).map_err(|_| {
+        ConfigError::ReadConfiguration(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "configuration is not UTF-8",
+        ))
+    })
+}
+
 fn socket(value: &str, _field: &'static str) -> Result<SocketAddr, ConfigError> {
     value.parse().map_err(|_| ConfigError::InvalidListenAddress)
 }
@@ -282,6 +355,10 @@ pub enum ConfigError {
     UnsafeConfigurationFile,
     /// The configuration exceeded its byte bound.
     ConfigurationTooLarge,
+    /// The configuration was empty.
+    EmptyConfiguration,
+    /// The opened configuration changed while it was being read.
+    ConfigurationChanged,
     /// TOML parsing or unknown-field validation failed.
     ParseConfiguration(toml::de::Error),
     /// A production path was relative.
@@ -307,6 +384,8 @@ impl std::fmt::Display for ConfigError {
             Self::ReadConfiguration(_) => "the configuration file could not be read",
             Self::UnsafeConfigurationFile => "the configuration path is not a safe regular file",
             Self::ConfigurationTooLarge => "the configuration file exceeds 64 KiB",
+            Self::EmptyConfiguration => "the configuration file is empty",
+            Self::ConfigurationChanged => "the configuration file changed while being read",
             Self::ParseConfiguration(_) => "the configuration file is not valid strict TOML",
             Self::RelativeProductionPath => "production file paths must be absolute",
             Self::InvalidListenAddress => "configured listener addresses are invalid",
@@ -331,6 +410,22 @@ impl std::error::Error for ConfigError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn temporary_path(label: &str) -> PathBuf {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        std::env::temp_dir().join(format!(
+            "terrabase-server-{label}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    fn write_temporary(label: &str, bytes: &[u8]) -> PathBuf {
+        let path = temporary_path(label);
+        std::fs::write(&path, bytes).expect("temporary configuration writes");
+        path
+    }
 
     fn valid() -> String {
         r#"
@@ -344,6 +439,7 @@ region = "GRU"
 
 [tbep]
 listen = "0.0.0.0:8421"
+allow_wildcard = true
 server_certificate = "/run/secrets/terrabase.crt"
 server_private_key = "/run/secrets/terrabase.key"
 client_ca = "/run/secrets/gateway-ca.crt"
@@ -356,6 +452,7 @@ shutdown_grace_millis = 30000
 
 [observability]
 listen = "127.0.0.1:9464"
+allow_wildcard = false
 "#
         .to_owned()
     }
@@ -437,12 +534,71 @@ listen = "127.0.0.1:9464"
 
     #[test]
     fn observability_can_bind_the_orchestrator_private_network() {
-        let private_network = valid().replace("127.0.0.1:9464", "0.0.0.0:9464");
+        let private_network = valid()
+            .replace("127.0.0.1:9464", "0.0.0.0:9464")
+            .replace("allow_wildcard = false", "allow_wildcard = true");
         let config = ServerConfig::parse(&private_network).expect("private-network metrics bind");
-        assert_eq!(
-            config.observability_listen,
-            "0.0.0.0:9464".parse().expect("socket")
-        );
+        assert_eq!(config.observability_listen, "0.0.0.0:9464".parse().expect("socket"));
+    }
+
+    #[test]
+    fn wildcard_listeners_require_explicit_opt_in() {
+        let tbep = valid().replace("allow_wildcard = true", "allow_wildcard = false");
+        assert!(matches!(ServerConfig::parse(&tbep), Err(ConfigError::InvalidListenAddress)));
+
+        let without_opt_in = valid().replace("127.0.0.1:9464", "0.0.0.0:9464");
+        assert!(matches!(
+            ServerConfig::parse(&without_opt_in),
+            Err(ConfigError::InvalidListenAddress)
+        ));
+    }
+
+    #[test]
+    fn load_reads_one_regular_handle_and_rejects_empty_oversized_and_non_utf8() {
+        let valid_path = write_temporary("config-valid", valid().as_bytes());
+        let config = ServerConfig::load(&valid_path).expect("regular configuration loads");
+        assert_eq!(config.region, Region::Gru);
+        std::fs::remove_file(&valid_path).expect("temporary configuration removes");
+
+        let empty_path = write_temporary("config-empty", b"");
+        assert!(matches!(ServerConfig::load(&empty_path), Err(ConfigError::EmptyConfiguration)));
+        std::fs::remove_file(&empty_path).expect("temporary configuration removes");
+
+        let oversized_path =
+            write_temporary("config-oversized", &vec![b'x'; MAX_CONFIG_BYTES as usize + 1]);
+        assert!(matches!(
+            ServerConfig::load(&oversized_path),
+            Err(ConfigError::ConfigurationTooLarge)
+        ));
+        std::fs::remove_file(&oversized_path).expect("temporary configuration removes");
+
+        let invalid_utf8_path = write_temporary("config-utf8", &[0xff, 0xfe]);
+        let error = ServerConfig::load(&invalid_utf8_path).expect_err("invalid UTF-8 refuses");
+        assert!(matches!(error, ConfigError::ReadConfiguration(_)));
+        assert!(!error.to_string().contains(invalid_utf8_path.to_string_lossy().as_ref()));
+        std::fs::remove_file(&invalid_utf8_path).expect("temporary configuration removes");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_rejects_symlink_and_group_or_other_writable_configuration() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let target = write_temporary("config-target", valid().as_bytes());
+        let link = temporary_path("config-link");
+        std::os::unix::fs::symlink(&target, &link).expect("temporary configuration symlink");
+        assert!(matches!(
+            ServerConfig::load(&link),
+            Err(ConfigError::UnsafeConfigurationFile | ConfigError::ReadConfiguration(_))
+        ));
+        std::fs::remove_file(&link).expect("temporary symlink removes");
+
+        let writable = write_temporary("config-writable", valid().as_bytes());
+        std::fs::set_permissions(&writable, std::fs::Permissions::from_mode(0o666))
+            .expect("temporary configuration permissions");
+        assert!(matches!(ServerConfig::load(&writable), Err(ConfigError::UnsafeConfigurationFile)));
+        std::fs::remove_file(&target).expect("temporary configuration removes");
+        std::fs::remove_file(&writable).expect("temporary configuration removes");
     }
 
     #[test]

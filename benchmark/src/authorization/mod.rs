@@ -19,7 +19,7 @@ mod signed;
 pub use signed::{
     AuthorizationCryptoMode, PrincipalContextEnvelope, PrincipalContextKey, PrincipalContextKeySet,
     PrincipalContextPayload, PrincipalContextReplayGuard, PrincipalContextVerifier,
-    SigningKeyProvenance,
+    PrincipalContextSigner, SigningKeyProvenance,
 };
 
 /// The canonical version of the engine authorization policy language.
@@ -337,7 +337,7 @@ pub(crate) struct VerifiedPrincipalInput {
 }
 
 /// An opaque engine authorization context produced only by the verified seam.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct PrincipalContext {
     scope: ResourceScope,
     environment: String,
@@ -928,6 +928,12 @@ impl Policy {
     #[must_use]
     pub fn rules(&self) -> &[PolicyRule] {
         &self.rules
+    }
+
+    /// Returns whether this policy contains the signed grant identity.
+    #[must_use]
+    pub fn contains_grant(&self, grant_id: PrincipalGrantUlid) -> bool {
+        self.rules.iter().any(|rule| rule.grant_id == grant_id)
     }
 
     /// Returns a stable textual canonical representation for dependency keys.

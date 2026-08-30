@@ -1292,19 +1292,30 @@ const fn usage_region_pb(value: registry::UsageRegion) -> i32 {
 }
 
 const MAX_VALUE_DEPTH: usize = 64;
+/// Cumulative node budget for one recursive value conversion. Per-container
+/// bounds alone still permit an exponential tree (for example, 4,096
+/// one-item lists at every level); consume this budget before allocating the
+/// corresponding domain node.
+const MAX_VALUE_NODES: usize = 1 << 16;
 const MAX_VALUE_TEXT_BYTES: usize = 1 << 20;
 const MAX_VALUE_LIST_ITEMS: usize = 4096;
 const MAX_VALUE_MAP_ENTRIES: usize = 1024;
 const MAX_VALUE_NAME_BYTES: usize = 64;
 
 fn value_from_pb(value: &pb::Value) -> Result<TbepValue, HostingError> {
-    value_from_pb_depth(value, 0)
+    let mut budget = MAX_VALUE_NODES;
+    value_from_pb_depth(value, 0, &mut budget)
 }
 
-fn value_from_pb_depth(value: &pb::Value, depth: usize) -> Result<TbepValue, HostingError> {
+fn value_from_pb_depth(
+    value: &pb::Value,
+    depth: usize,
+    budget: &mut usize,
+) -> Result<TbepValue, HostingError> {
     if depth > MAX_VALUE_DEPTH {
         return Err(invalid("a value exceeds its nesting bound"));
     }
+    consume_value_budget(budget, 1)?;
     let kind = value.kind.as_ref().ok_or_else(|| invalid("a value carries no kind"))?;
     Ok(match kind {
         pb::value::Kind::Null(_) => TbepValue::Null,
@@ -1320,10 +1331,11 @@ fn value_from_pb_depth(value: &pb::Value, depth: usize) -> Result<TbepValue, Hos
             if list.items.len() > MAX_VALUE_LIST_ITEMS {
                 return Err(invalid("a value list exceeds its item bound"));
             }
+            consume_value_budget(budget, list.items.len())?;
             TbepValue::Array(
                 list.items
                     .iter()
-                    .map(|item| value_from_pb_depth(item, depth + 1))
+                    .map(|item| value_from_pb_depth(item, depth + 1, budget))
                     .collect::<Result<Vec<_>, _>>()?,
             )
         }
@@ -1331,6 +1343,7 @@ fn value_from_pb_depth(value: &pb::Value, depth: usize) -> Result<TbepValue, Hos
             if map.entries.len() > MAX_VALUE_MAP_ENTRIES {
                 return Err(invalid("a value map exceeds its entry bound"));
             }
+            consume_value_budget(budget, map.entries.len())?;
             let mut fields = Vec::with_capacity(map.entries.len());
             for entry in &map.entries {
                 if entry.name.is_empty()
@@ -1350,6 +1363,7 @@ fn value_from_pb_depth(value: &pb::Value, depth: usize) -> Result<TbepValue, Hos
                             .as_ref()
                             .ok_or_else(|| invalid("a value entry carries no value"))?,
                         depth + 1,
+                        budget,
                     )?,
                 ));
             }
@@ -1357,6 +1371,14 @@ fn value_from_pb_depth(value: &pb::Value, depth: usize) -> Result<TbepValue, Hos
             TbepValue::Object(fields).canonical()
         }
     })
+}
+
+fn consume_value_budget(budget: &mut usize, amount: usize) -> Result<(), HostingError> {
+    if *budget < amount {
+        return Err(invalid("a value exceeds its cumulative allocation bound"));
+    }
+    *budget -= amount;
+    Ok(())
 }
 
 fn value_to_pb(value: &TbepValue) -> pb::Value {
@@ -1388,15 +1410,9 @@ fn value_to_pb(value: &TbepValue) -> pb::Value {
 fn acknowledgement(v: i32) -> Option<registry::Acknowledgement> {
     match pb::Acknowledgement::try_from(v).ok()? {
         pb::Acknowledgement::Unspecified => None,
-        pb::Acknowledgement::LocalSynced => {
-            Some(registry::Acknowledgement::LocalSynced)
-        }
-        pb::Acknowledgement::RegionalQuorum => {
-            Some(registry::Acknowledgement::RegionalQuorum)
-        }
-        pb::Acknowledgement::GlobalQuorum => {
-            Some(registry::Acknowledgement::GlobalQuorum)
-        }
+        pb::Acknowledgement::LocalSynced => Some(registry::Acknowledgement::LocalSynced),
+        pb::Acknowledgement::RegionalQuorum => Some(registry::Acknowledgement::RegionalQuorum),
+        pb::Acknowledgement::GlobalQuorum => Some(registry::Acknowledgement::GlobalQuorum),
         pb::Acknowledgement::Backup => Some(registry::Acknowledgement::BackupAck),
     }
 }
@@ -1406,9 +1422,7 @@ fn acknowledgement_pb(value: Option<registry::Acknowledgement>) -> i32 {
         None | Some(registry::Acknowledgement::RegionalQuorum) => {
             pb::Acknowledgement::RegionalQuorum as i32
         }
-        Some(registry::Acknowledgement::GlobalQuorum) => {
-            pb::Acknowledgement::GlobalQuorum as i32
-        }
+        Some(registry::Acknowledgement::GlobalQuorum) => pb::Acknowledgement::GlobalQuorum as i32,
         Some(registry::Acknowledgement::BackupAck) => pb::Acknowledgement::Backup as i32,
         Some(registry::Acknowledgement::LocalSynced) => pb::Acknowledgement::LocalSynced as i32,
     }

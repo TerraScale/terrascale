@@ -15,7 +15,10 @@
 
 use crate::backup::sha256::{Sha256, to_hex};
 use crate::backup::{BackupError, BackupKind};
-use crate::types::{StorageSequence, TenantId};
+use crate::{
+    identity::DatabaseUlid,
+    types::{StorageSequence, TenantId},
+};
 use std::io::Read;
 
 /// The manifest file name inside one recovery-point directory.
@@ -520,9 +523,9 @@ fn parse_kind(line: &str) -> Result<BackupKind, BackupError> {
 
 fn parse_database_id(line: &str) -> Result<String, BackupError> {
     let value = line.strip_prefix("database ").ok_or(BackupError::ManifestInvalid)?;
-    if value.len() != 32
-        || !value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
+    let legacy_hex = value.len() == 32
+        && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    if DatabaseUlid::from_text(value).is_err() && !legacy_hex {
         return Err(BackupError::ManifestInvalid);
     }
     Ok(value.to_owned())

@@ -4,6 +4,61 @@ use crate::identity::{
     AuthorizationPolicyUlid, DatabaseUlid, PrincipalGrantUlid, PrincipalSessionUlid, PrincipalUlid,
     ProjectUlid, TenantUlid,
 };
+
+fn signed_payload() -> PrincipalContextPayload {
+    PrincipalContextPayload::try_new(
+        "production",
+        "spiffe://terrascale/gateway",
+        "terrascale-go",
+        "terrascale.database",
+        scope(),
+        PrincipalUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB4").unwrap(),
+        PrincipalSessionUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB5").unwrap(),
+        PrincipalGrantUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB6").unwrap(),
+        AuthorizationPolicyUlid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB7").unwrap(),
+        BTreeSet::from([Action::Read, Action::Query]),
+        PrincipalClaims::try_new([("role", AttributeValue::String("reader".to_owned()))]).unwrap(),
+        7,
+        1_000,
+        1_300,
+    )
+    .unwrap()
+}
+
+fn signed_verifier(
+    signer: &PrincipalContextSigner,
+    mode: AuthorizationCryptoMode,
+) -> PrincipalContextVerifier {
+    let key = PrincipalContextKey::new(
+        signer.key_id(),
+        signer.public_key().unwrap(),
+        signer.provenance(),
+    )
+    .unwrap();
+    PrincipalContextVerifier::new(
+        mode,
+        "production",
+        "spiffe://terrascale/gateway",
+        "terrascale-go",
+        "terrascale.database",
+        PrincipalContextKeySet::try_new([key]).unwrap(),
+    )
+    .unwrap()
+}
+
+fn test_signer(key_id: &str) -> PrincipalContextSigner {
+    let der = aws_lc_rs::signature::EcdsaKeyPair::generate_pkcs8(
+        &aws_lc_rs::signature::ECDSA_P256_SHA256_FIXED_SIGNING,
+        &aws_lc_rs::rand::SystemRandom::new(),
+    )
+    .unwrap();
+    PrincipalContextSigner::from_pkcs8(
+        key_id,
+        der.as_ref().to_vec(),
+        SigningKeyProvenance::LocalDevelopment,
+    )
+    .unwrap()
+}
 use std::collections::{BTreeMap, BTreeSet};
 
 fn scope() -> ResourceScope {
@@ -157,6 +212,92 @@ fn scope_audience_action_expiry_and_generation_are_all_fail_closed() {
     assert_eq!(
         evaluate(&context(2), &policy, &request(Action::Read, 150)),
         AuthorizationDecision::Deny(DenialReason::PolicyGenerationMismatch)
+    );
+}
+
+#[test]
+fn signed_context_is_canonical_authenticated_and_bound() {
+    let signer = test_signer("local-k1");
+    let payload = signed_payload();
+    assert_eq!(payload.canonical_bytes(), payload.canonical_bytes());
+    let envelope = signer.sign(&payload, AuthorizationCryptoMode::LocalDevelopment).unwrap();
+    let encoded = envelope.as_bytes();
+    assert_eq!(PrincipalContextEnvelope::from_bytes(&encoded).unwrap(), envelope);
+    let verifier = signed_verifier(&signer, AuthorizationCryptoMode::LocalDevelopment);
+    let context = verifier.verify(&envelope, 1_100).unwrap();
+    assert_eq!(context.principal_id(), payload.principal_id());
+    assert_eq!(context.session_id(), payload.session_id());
+    assert_eq!(context.grant_id(), payload.grant_id());
+    assert_eq!(context.policy_id(), payload.policy_id());
+
+    let mut tampered = encoded;
+    tampered[12 + 4] ^= 1;
+    let tampered = PrincipalContextEnvelope::from_bytes(&tampered).unwrap();
+    assert_eq!(verifier.verify(&tampered, 1_100), Err(AuthorizationError::InvalidContextSignature));
+}
+
+#[test]
+fn signed_context_rejects_wrong_binding_time_key_and_replay() {
+    let signer = test_signer("local-k2");
+    let payload = signed_payload();
+    let envelope = signer.sign(&payload, AuthorizationCryptoMode::LocalDevelopment).unwrap();
+    let verifier = signed_verifier(&signer, AuthorizationCryptoMode::LocalDevelopment);
+    assert_eq!(verifier.verify(&envelope, 999), Err(AuthorizationError::ContextNotYetValid));
+    assert_eq!(verifier.verify(&envelope, 1_300), Err(AuthorizationError::ContextExpired));
+
+    let wrong = PrincipalContextVerifier::new(
+        AuthorizationCryptoMode::LocalDevelopment,
+        "other-environment",
+        "spiffe://terrascale/gateway",
+        "terrascale-go",
+        "terrascale.database",
+        PrincipalContextKeySet::try_new([PrincipalContextKey::new(
+            signer.key_id(),
+            signer.public_key().unwrap(),
+            signer.provenance(),
+        )
+        .unwrap()])
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(wrong.verify(&envelope, 1_100), Err(AuthorizationError::ContextBindingMismatch));
+
+    let other = test_signer("other");
+    let wrong_key = signed_verifier(&other, AuthorizationCryptoMode::LocalDevelopment);
+    assert_eq!(wrong_key.verify(&envelope, 1_100), Err(AuthorizationError::UnknownContextKey));
+
+    let mut guard = PrincipalContextReplayGuard::new();
+    assert!(verifier.verify_with_replay(&envelope, 1_100, b"channel-a", &mut guard).is_ok());
+    assert_eq!(
+        verifier.verify_with_replay(&envelope, 1_100, b"channel-a", &mut guard),
+        Err(AuthorizationError::ContextReplay)
+    );
+    assert!(verifier.verify_with_replay(&envelope, 1_100, b"channel-b", &mut guard).is_ok());
+}
+
+#[test]
+fn signed_context_rejects_development_keys_in_production() {
+    let signer = test_signer("local-prod");
+    let key = PrincipalContextKey::new(
+        signer.key_id(),
+        signer.public_key().unwrap(),
+        SigningKeyProvenance::LocalDevelopment,
+    )
+    .unwrap();
+    assert!(matches!(
+        PrincipalContextVerifier::new(
+            AuthorizationCryptoMode::ProductionFips,
+            "production",
+            "spiffe://terrascale/gateway",
+            "terrascale-go",
+            "terrascale.database",
+            PrincipalContextKeySet::try_new([key]).unwrap(),
+        ),
+        Err(AuthorizationError::DevelopmentSigningKey)
+    ));
+    assert_eq!(
+        signer.sign(&signed_payload(), AuthorizationCryptoMode::ProductionFips),
+        Err(AuthorizationError::DevelopmentSigningKey)
     );
 }
 

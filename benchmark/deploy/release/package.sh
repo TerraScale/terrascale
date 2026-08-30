@@ -72,6 +72,10 @@ ambient_flags="${RUSTFLAGS-} ${CARGO_ENCODED_RUSTFLAGS-}"
   echo "generic release artifacts refuse target-cpu flags; tuned artifacts require a separate qualification" >&2
   exit 1
 }
+# Cargo gives CARGO_ENCODED_RUSTFLAGS precedence in some invocation paths.
+# Refuse ambient encoded flags entirely so the reproducibility contract is
+# controlled by this script's explicit release flags below.
+unset CARGO_ENCODED_RUSTFLAGS
 
 source_dirty=false
 if ! git diff --quiet --ignore-submodules -- \

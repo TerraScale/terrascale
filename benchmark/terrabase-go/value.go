@@ -19,7 +19,8 @@ const (
 	maxListItems    = 4096
 	maxMapEntries   = 1024
 	maxNameBytes    = 64
-	maxDetailIndent = 64 // one recursion guard for cyclic input
+	maxValueNodes   = 1 << 16 // cumulative nodes in one recursive value
+	maxDetailIndent = 64      // one recursion guard for cyclic input
 )
 
 // Value is one recursive TerraBase document value: the payload of
@@ -47,13 +48,18 @@ type Value any
 // valueToProto converts one Go value into the protobuf value, refusing
 // representations outside the closed set with a local error.
 func valueToProto(value Value) (*v1.Value, error) {
-	return valueToProtoDepth(value, 0)
+	budget := maxValueNodes
+	return valueToProtoDepth(value, 0, &budget)
 }
 
-func valueToProtoDepth(value Value, depth int) (*v1.Value, error) {
+func valueToProtoDepth(value Value, depth int, budget *int) (*v1.Value, error) {
 	if depth > maxDetailIndent {
 		return nil, localError("value nesting exceeds %d levels", maxDetailIndent)
 	}
+	if *budget == 0 {
+		return nil, localError("value exceeds %d cumulative nodes", maxValueNodes)
+	}
+	*budget--
 	switch typed := value.(type) {
 	case nil:
 		return &v1.Value{Kind: &v1.Value_Null{Null: v1.NullValue_NULL_VALUE_NULL}}, nil
@@ -101,9 +107,12 @@ func valueToProtoDepth(value Value, depth int) (*v1.Value, error) {
 		if len(typed) > maxListItems {
 			return nil, localError("value list exceeds %d items", maxListItems)
 		}
+		if err := consumeValueBudget(budget, len(typed)); err != nil {
+			return nil, err
+		}
 		items := make([]*v1.Value, 0, len(typed))
 		for index, item := range typed {
-			converted, err := valueToProtoDepth(item, depth+1)
+			converted, err := valueToProtoDepth(item, depth+1, budget)
 			if err != nil {
 				return nil, localError("list item %d: %s", index, localDetail(err))
 			}
@@ -114,6 +123,9 @@ func valueToProtoDepth(value Value, depth int) (*v1.Value, error) {
 		if len(typed) > maxMapEntries {
 			return nil, localError("value map exceeds %d entries", maxMapEntries)
 		}
+		if err := consumeValueBudget(budget, len(typed)); err != nil {
+			return nil, err
+		}
 		entries := make([]*v1.ValueEntry, 0, len(typed))
 		for name, item := range typed {
 			if name == "" || len(name) > maxNameBytes {
@@ -122,7 +134,7 @@ func valueToProtoDepth(value Value, depth int) (*v1.Value, error) {
 			if !utf8.ValidString(name) || hasControl(name) {
 				return nil, localError("value map name carries invalid characters")
 			}
-			converted, err := valueToProtoDepth(item, depth+1)
+			converted, err := valueToProtoDepth(item, depth+1, budget)
 			if err != nil {
 				return nil, localError("map field %q: %s", name, localDetail(err))
 			}
@@ -158,13 +170,18 @@ func uint64ToProto(number uint64) (*v1.Value, error) {
 // representation. Objects decode as map[string]Value, lists as
 // []Value; a value carrying no kind is refused.
 func valueFromProto(value *v1.Value) (Value, error) {
-	return valueFromProtoDepth(value, 0)
+	budget := maxValueNodes
+	return valueFromProtoDepth(value, 0, &budget)
 }
 
-func valueFromProtoDepth(value *v1.Value, depth int) (Value, error) {
+func valueFromProtoDepth(value *v1.Value, depth int, budget *int) (Value, error) {
 	if depth > maxDetailIndent {
 		return nil, localError("the engine sent a value nested beyond %d levels", maxDetailIndent)
 	}
+	if *budget == 0 {
+		return nil, localError("the engine sent a value beyond %d cumulative nodes", maxValueNodes)
+	}
+	*budget--
 	if value == nil {
 		return nil, localError("the engine sent a value carrying no kind")
 	}
@@ -189,9 +206,12 @@ func valueFromProtoDepth(value *v1.Value, depth int) (Value, error) {
 		if len(kind.List.GetItems()) > maxListItems {
 			return nil, localError("the engine sent a value list beyond %d items", maxListItems)
 		}
+		if err := consumeValueBudget(budget, len(kind.List.GetItems())); err != nil {
+			return nil, err
+		}
 		items := make([]Value, 0, len(kind.List.GetItems()))
 		for _, item := range kind.List.GetItems() {
-			converted, err := valueFromProtoDepth(item, depth+1)
+			converted, err := valueFromProtoDepth(item, depth+1, budget)
 			if err != nil {
 				return nil, err
 			}
@@ -202,6 +222,9 @@ func valueFromProtoDepth(value *v1.Value, depth int) (Value, error) {
 		if len(kind.Map.GetEntries()) > maxMapEntries {
 			return nil, localError("the engine sent a value map beyond %d entries", maxMapEntries)
 		}
+		if err := consumeValueBudget(budget, len(kind.Map.GetEntries())); err != nil {
+			return nil, err
+		}
 		entries := make(map[string]Value, len(kind.Map.GetEntries()))
 		for _, entry := range kind.Map.GetEntries() {
 			if entry.GetName() == "" || len(entry.GetName()) > maxNameBytes {
@@ -210,7 +233,7 @@ func valueFromProtoDepth(value *v1.Value, depth int) (Value, error) {
 			if _, exists := entries[entry.GetName()]; exists {
 				return nil, localError("the engine sent duplicate map name %q", entry.GetName())
 			}
-			converted, err := valueFromProtoDepth(entry.GetValue(), depth+1)
+			converted, err := valueFromProtoDepth(entry.GetValue(), depth+1, budget)
 			if err != nil {
 				return nil, localError("map field %q: %s", entry.GetName(), localDetail(err))
 			}
@@ -220,4 +243,12 @@ func valueFromProtoDepth(value *v1.Value, depth int) (Value, error) {
 	default:
 		return nil, localError("the engine sent a value outside the closed value set")
 	}
+}
+
+func consumeValueBudget(budget *int, amount int) error {
+	if *budget < amount {
+		return localError("value exceeds %d cumulative allocations", maxValueNodes)
+	}
+	*budget -= amount
+	return nil
 }

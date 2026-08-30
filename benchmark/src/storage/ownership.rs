@@ -12,7 +12,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{identity::{DatabaseUlid, ProjectUlid, TenantUlid}, regions::RegionCode};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
+use crate::{
+    identity::{DatabaseUlid, ProjectUlid, TenantUlid},
+    regions::RegionCode,
+};
 
 const MAGIC: &[u8; 8] = b"TBOwner1";
 const VERSION: u8 = 1;
@@ -33,9 +39,10 @@ impl EnvironmentName {
         if value.is_empty() || value.len() > MAX_ENVIRONMENT_BYTES {
             return Err(OwnershipError::InvalidEnvironment);
         }
-        if !value.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
-        }) {
+        if !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        {
             return Err(OwnershipError::InvalidEnvironment);
         }
         Ok(Self(value.to_owned()))
@@ -202,19 +209,29 @@ fn validate_location(location: &Path) -> Result<(), OwnershipError> {
     // silently adopted as a database location. The owner file itself is the
     // only permitted exception while a first open is being completed.
     let mut entries = fs::read_dir(location).map_err(|_| OwnershipError::Unavailable)?;
+    let mut has_format = false;
+    let mut has_other = false;
     while let Some(entry) = entries.next() {
         let entry = entry.map_err(|_| OwnershipError::Unavailable)?;
         let name = entry.file_name();
-        if name == FILE_NAME || name == "format.tmp" || name == "manifest.tmp" {
+        if name == FILE_NAME
+            || name == "format.tmp"
+            || name == "manifest.tmp"
+            || name.to_str().is_some_and(|name| name.starts_with("owner.tbv1.tmp-"))
+        {
             continue;
         }
         if name == "format" {
             let bytes = fs::read(entry.path()).map_err(|_| OwnershipError::ForeignLocation)?;
             if bytes.starts_with(b"TBV2LSM1") || bytes.starts_with(b"TBV2FORMAT") {
+                has_format = true;
                 continue;
             }
             return Err(OwnershipError::ForeignLocation);
         }
+        has_other = true;
+    }
+    if has_other && !has_format {
         // Existing known engine artifacts imply a recognized location only
         // when the format marker is present; reject everything else.
         return Err(OwnershipError::ForeignLocation);
@@ -223,7 +240,9 @@ fn validate_location(location: &Path) -> Result<(), OwnershipError> {
 }
 
 fn unique_temp_path(location: &Path) -> PathBuf {
-    location.join(format!("{FILE_NAME}.tmp-{}-{}", std::process::id(), std::thread::current().name().unwrap_or("main")))
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    location.join(format!("{FILE_NAME}.tmp-{}-{count}", std::process::id()))
 }
 
 fn create_private(path: &Path) -> Result<File, OwnershipError> {
@@ -263,17 +282,28 @@ fn push_string(bytes: &mut Vec<u8>, value: &str) {
 
 fn read_record(path: &Path) -> Result<(DatabaseOwner, OwnershipMode), OwnershipError> {
     let metadata = fs::symlink_metadata(path).map_err(|_| OwnershipError::Unavailable)?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() as usize > MAX_RECORD_BYTES {
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.len() as usize > MAX_RECORD_BYTES
+    {
         return Err(OwnershipError::Corrupt);
     }
-    let mut file = OpenOptions::new().read(true).open(path).map_err(|_| OwnershipError::Unavailable)?;
+    #[cfg(unix)]
+    if metadata.permissions().mode() & 0o077 != 0 {
+        return Err(OwnershipError::Corrupt);
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "linux")]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, 0x20000);
+    let mut file = options.open(path).map_err(|_| OwnershipError::Unavailable)?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).map_err(|_| OwnershipError::Unavailable)?;
     if bytes.len() > MAX_RECORD_BYTES {
         return Err(OwnershipError::Corrupt);
     }
     let mut reader = RecordReader { bytes: &bytes, offset: 0 };
-    if reader.take(MAGIC.len()) != MAGIC || reader.byte() != Some(VERSION) {
+    if reader.take(MAGIC.len()) != Some(MAGIC.as_slice()) || reader.byte() != Some(VERSION) {
         return Err(OwnershipError::Corrupt);
     }
     let mode = match reader.byte() {
@@ -281,12 +311,18 @@ fn read_record(path: &Path) -> Result<(DatabaseOwner, OwnershipMode), OwnershipE
         Some(MODE_PRODUCTION) => OwnershipMode::Production,
         _ => return Err(OwnershipError::Corrupt),
     };
-    let environment = EnvironmentName::try_new(reader.string()?) .map_err(|_| OwnershipError::Corrupt)?;
-    let tenant = TenantUlid::from_binary(reader.take(16).ok_or(OwnershipError::Corrupt)?).map_err(|_| OwnershipError::Corrupt)?;
-    let project = ProjectUlid::from_binary(reader.take(16).ok_or(OwnershipError::Corrupt)?).map_err(|_| OwnershipError::Corrupt)?;
-    let database = DatabaseUlid::from_binary(reader.take(16).ok_or(OwnershipError::Corrupt)?).map_err(|_| OwnershipError::Corrupt)?;
-    let region = RegionCode::from_wire_bytes(reader.take(3).ok_or(OwnershipError::Corrupt)?.try_into().expect("fixed width"))
+    let environment =
+        EnvironmentName::try_new(reader.string()?).map_err(|_| OwnershipError::Corrupt)?;
+    let tenant = TenantUlid::from_binary(reader.take(16).ok_or(OwnershipError::Corrupt)?)
         .map_err(|_| OwnershipError::Corrupt)?;
+    let project = ProjectUlid::from_binary(reader.take(16).ok_or(OwnershipError::Corrupt)?)
+        .map_err(|_| OwnershipError::Corrupt)?;
+    let database = DatabaseUlid::from_binary(reader.take(16).ok_or(OwnershipError::Corrupt)?)
+        .map_err(|_| OwnershipError::Corrupt)?;
+    let region = RegionCode::from_wire_bytes(
+        reader.take(3).ok_or(OwnershipError::Corrupt)?.try_into().expect("fixed width"),
+    )
+    .map_err(|_| OwnershipError::Corrupt)?;
     if reader.remaining() != 0 {
         return Err(OwnershipError::Corrupt);
     }
@@ -320,5 +356,78 @@ impl<'a> RecordReader<'a> {
 
     fn remaining(&self) -> usize {
         self.bytes.len().saturating_sub(self.offset)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn location(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "terrabase-owner-{label}-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("location");
+        path
+    }
+
+    #[test]
+    fn local_owner_is_created_once_and_recovered() {
+        let path = location("restart");
+        let first = load_or_create(&path, None, OwnershipMode::LocalDevelopment).expect("create");
+        let second = load_or_create(&path, None, OwnershipMode::LocalDevelopment).expect("read");
+        assert_eq!(first, second);
+        let _ = fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn owner_mismatch_and_mode_mismatch_fail_closed() {
+        let path = location("mismatch");
+        let owner = DatabaseOwner::local_development();
+        load_or_create(&path, Some(&owner), OwnershipMode::Production).expect("create");
+        assert_eq!(
+            load_or_create(&path, None, OwnershipMode::LocalDevelopment),
+            Err(OwnershipError::ModeMismatch)
+        );
+        let other = DatabaseOwner::local_development();
+        assert_eq!(
+            load_or_create(&path, Some(&other), OwnershipMode::Production),
+            Err(OwnershipError::Mismatch)
+        );
+        let _ = fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn malformed_and_oversized_owner_records_fail_closed() {
+        let path = location("corrupt");
+        let owner_path = path.join(FILE_NAME);
+        fs::write(&owner_path, vec![0_u8; MAX_RECORD_BYTES + 1]).expect("write");
+        assert_eq!(
+            load_or_create(&path, None, OwnershipMode::LocalDevelopment),
+            Err(OwnershipError::Corrupt)
+        );
+        fs::write(&owner_path, b"bad").expect("truncate");
+        assert_eq!(
+            load_or_create(&path, None, OwnershipMode::LocalDevelopment),
+            Err(OwnershipError::Corrupt)
+        );
+        let _ = fs::remove_dir_all(path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owner_symlink_is_rejected() {
+        let path = location("symlink");
+        let target = path.join("target");
+        fs::write(&target, b"not-owner").expect("target");
+        std::os::unix::fs::symlink(&target, path.join(FILE_NAME)).expect("symlink");
+        assert_eq!(
+            load_or_create(&path, None, OwnershipMode::LocalDevelopment),
+            Err(OwnershipError::InvalidLocation)
+        );
+        let _ = fs::remove_dir_all(path);
     }
 }
