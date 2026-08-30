@@ -1036,6 +1036,21 @@ message TbepError {
   string detail = 2; // <= 512 bytes.
 }
 
+// A protobuf `Any`, as defined by the language-neutral wire contract; the
+// status envelope below is the `google.rpc.Status` shape so stock gRPC
+// clients decode engine failures without extra dependencies.
+message Any {
+  string type_url = 1;
+  bytes value = 2;
+}
+
+// The `google.rpc.Status` shape carried in gRPC trailing status details.
+message RpcStatus {
+  int32 code = 1;
+  string message = 2;
+  repeated Any details = 3;
+}
+
 // ---------------------------------------------------------------------------
 // Services
 // ---------------------------------------------------------------------------
