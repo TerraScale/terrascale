@@ -73,6 +73,8 @@ pub enum DurableMemberError {
     Draining,
     /// A bounded exchange deadline elapsed.
     Timeout,
+    /// The post-exchange Merkle roots did not verify.
+    Verification,
 }
 
 impl From<ReplicaError> for DurableMemberError {
@@ -147,6 +149,13 @@ impl DurableMember {
     #[must_use]
     pub const fn progress(&self) -> DurableMemberProgress {
         self.progress
+    }
+
+    /// Returns the dual Merkle roots of the current durable replica.
+    pub fn merkle_roots(&self) -> Result<crate::anti_entropy::MerkleRoots, DurableMemberError> {
+        crate::anti_entropy::tree_for_replica(&self.replica, 64, 4096)
+            .map(|tree| tree.roots())
+            .map_err(|_| DurableMemberError::Verification)
     }
 
     /// Returns the merged durable replica state.
@@ -295,6 +304,9 @@ impl DurableMember {
         }
         self.reconcile_engine()?;
         other.reconcile_engine()?;
+        if self.merkle_roots()? != other.merkle_roots()? {
+            return Err(DurableMemberError::Verification);
+        }
         self.progress.applied = self.replica.operation_count();
         other.progress.applied = other.replica.operation_count();
         self.progress.verified = self.progress.applied;
@@ -580,6 +592,10 @@ mod tests {
         first.put("operation-a", "document-a", &body("one")).expect("put");
         first.reconcile_with(&mut second).expect("repair");
         assert_eq!(second.read("document-a").expect("read"), Some(body("one")));
+        assert_eq!(
+            first.merkle_roots().expect("first roots"),
+            second.merkle_roots().expect("second roots")
+        );
         second.drain().expect("drain second");
         first.drain().expect("drain first");
         second_catalog.close(std::time::Duration::from_secs(1)).expect("close second");
