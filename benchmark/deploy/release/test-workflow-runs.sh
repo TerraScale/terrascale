@@ -7,9 +7,16 @@ revision=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 "$script_dir/verify-workflow-runs.sh" --fixtures "$fixtures" \
   101 202 "$revision" TerraScale/TerraBase refs/heads/main qualification.yml
+for run_id in 303 304 305 306 307 308 309 310; do
+  if "$script_dir/verify-workflow-runs.sh" --fixtures "$fixtures" \
+    "$run_id" 202 "$revision" TerraScale/TerraBase refs/heads/main qualification.yml >/dev/null 2>&1; then
+    echo "candidate workflow fixture $run_id unexpectedly succeeded" >&2
+    exit 1
+  fi
+done
 if "$script_dir/verify-workflow-runs.sh" --fixtures "$fixtures" \
-  303 202 "$revision" TerraScale/TerraBase refs/heads/main qualification.yml >/dev/null 2>&1; then
-  echo "wrong-revision workflow fixture unexpectedly succeeded" >&2
+  101 311 "$revision" TerraScale/TerraBase refs/heads/main qualification.yml >/dev/null 2>&1; then
+  echo "wrong-capability-workflow fixture unexpectedly succeeded" >&2
   exit 1
 fi
 if "$script_dir/verify-workflow-runs.sh" 101 202 "$revision" TerraScale/TerraBase refs/heads/main qualification.yml >/dev/null 2>&1; then

@@ -1,0 +1,10 @@
+{
+  "repository": {"full_name": "TerraScale/TerraBase"},
+  "head_repository": {"full_name": "TerraScale/TerraBase"},
+  "head_branch": "main",
+  "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "event": "push",
+  "status": "completed",
+  "conclusion": "success",
+  "workflow_id": "release.yml"
+}
