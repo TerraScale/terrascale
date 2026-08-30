@@ -752,6 +752,8 @@ impl LsmStorage {
             }
             return results.into_iter().map(Option::unwrap).collect();
         };
+        let trace = std::env::var_os("TERRABASE_TRACE_BATCHES").is_some();
+        let trace_started = std::time::Instant::now();
         if any_synced && self.faults.fire(FaultPoint::ReadyLedgerSync).is_err() {
             if self.activation.is_some() {
                 self.frontier_poisoned = true;
@@ -779,6 +781,9 @@ impl LsmStorage {
                 ));
             }
             return results.into_iter().map(Option::unwrap).collect();
+        }
+        if trace {
+            eprintln!("terrabase batch stage: main witness done at {:.1}ms", trace_started.elapsed().as_secs_f64() * 1_000.0);
         }
         let pointer_fault =
             any_synced && self.faults.fire(FaultPoint::PointerSync).is_err();
@@ -824,6 +829,9 @@ impl LsmStorage {
                 Err(()) => false,
             }
         };
+        if trace {
+            eprintln!("terrabase batch stage: flip done at {:.1}ms", trace_started.elapsed().as_secs_f64() * 1_000.0);
+        }
         for item in &prepared {
             let cause = if item.synced && !flip_witnessed {
                 Some(UnknownCause::PublishedLedgerSync)
@@ -836,6 +844,13 @@ impl LsmStorage {
                 cause,
                 item.synced && flip_witnessed,
             ));
+        }
+        if trace {
+            eprintln!(
+                "terrabase commit batch: {} intents, {:.1}ms total",
+                prepared.len(),
+                trace_started.elapsed().as_secs_f64() * 1_000.0
+            );
         }
         results.into_iter().map(Option::unwrap).collect()
     }
