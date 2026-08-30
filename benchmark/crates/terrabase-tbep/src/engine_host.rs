@@ -91,6 +91,33 @@ fn to_pb_value(value: &DocumentValue) -> pb::Value {
     pb::Value { kind: Some(kind) }
 }
 
+fn from_pb_value(value: &pb::Value) -> Result<DocumentValue, HostingError> {
+    use pb::value::Kind;
+    match value.kind.as_ref() {
+        Some(Kind::Null(value)) if *value == pb::NullValue::Null as i32 => Ok(DocumentValue::Null),
+        Some(Kind::Boolean(value)) => Ok(DocumentValue::Boolean(*value)),
+        Some(Kind::Integer(value)) => Ok(DocumentValue::Integer(*value)),
+        Some(Kind::Number(value)) => Ok(DocumentValue::Number(*value)),
+        Some(Kind::Text(value)) => Ok(DocumentValue::String(value.clone())),
+        Some(Kind::List(value)) => Ok(DocumentValue::Array(
+            value.items.iter().map(from_pb_value).collect::<Result<_, _>>()?,
+        )),
+        Some(Kind::Map(value)) => Ok(DocumentValue::Object(
+            value
+                .entries
+                .iter()
+                .map(|entry| {
+                    let value = entry.value.as_ref().ok_or_else(|| {
+                        HostingError::Invalid("a family map entry has no value".into())
+                    })?;
+                    Ok((entry.name.clone(), from_pb_value(value)?))
+                })
+                .collect::<Result<_, HostingError>>()?,
+        )),
+        _ => Err(HostingError::Invalid("a family value has no kind".into())),
+    }
+}
+
 fn family_result_payload(
     result: terrabase::families::FamilyReadResult,
 ) -> Result<pb::FamilyResponsePayload, HostingError> {
@@ -206,9 +233,7 @@ fn family_expected(value: Option<&pb::ExpectedVersion>) -> EngineVersion {
     }
 }
 
-fn family_write_payload(
-    outcome: WriteOutcome,
-) -> Result<pb::FamilyResponsePayload, HostingError> {
+fn family_write_payload(outcome: WriteOutcome) -> Result<pb::FamilyResponsePayload, HostingError> {
     match outcome {
         WriteOutcome::Committed(receipt) => Ok(pb::FamilyResponsePayload {
             result: Some(pb::family_response_payload::Result::Write(
@@ -219,7 +244,9 @@ fn family_write_payload(
             )),
         }),
         WriteOutcome::Conflict => Err(HostingError::Refused("the family write conflicted".into())),
-        WriteOutcome::Rejected(_) => Err(HostingError::Invalid("the family write was rejected".into())),
+        WriteOutcome::Rejected(_) => {
+            Err(HostingError::Invalid("the family write was rejected".into()))
+        }
     }
 }
 
@@ -1186,11 +1213,332 @@ impl TbepHost for EngineHost {
 
     fn family_write(
         &self,
-        _scope: &BoundScope,
-        _request: &crate::registry::FamilyWriteRequest,
-        _idempotency_key: &str,
+        bound_scope: &BoundScope,
+        request: &crate::registry::FamilyWriteRequest,
+        idempotency_key: &str,
     ) -> Result<crate::registry::FamilyWriteResponse, HostingError> {
-        Err(HostingError::Refused("family_write is served by the family-plane landing".into()))
+        self.count_frame();
+        self.ensure_serving()?;
+        let tenant = self.tenant_of_scope(bound_scope)?;
+        let payload =
+            request.decode_payload().map_err(|error| HostingError::Invalid(error.to_string()))?;
+        let operation_id = OperationId::try_new(idempotency_key)
+            .map_err(|_| HostingError::Invalid("the operation identity is invalid".into()))?;
+        let scope = self.engine.scope_for(&tenant);
+        let deadline = family_deadline()?;
+        let cancellation = terrabase::types::Cancellation::new();
+        let root = match payload
+            .operation
+            .ok_or_else(|| HostingError::Invalid("family request has no operation".into()))?
+        {
+            pb::family_request_payload::Operation::AttachmentWrite(value) => {
+                let document = DocumentId::try_new(&value.document).map_err(|_| {
+                    HostingError::Invalid("the attachment document is invalid".into())
+                })?;
+                use pb::family_attachment_write::Mutation;
+                let mutation = match value.mutation.ok_or_else(|| {
+                    HostingError::Invalid("the attachment mutation is missing".into())
+                })? {
+                    Mutation::Store(value) => terrabase::families::AttachmentMutation::Store {
+                        name: value.name,
+                        content_type: value.content_type,
+                        size: value.size,
+                        hash: value.hash,
+                        replace: value.replace,
+                    },
+                    Mutation::Delete(value) => {
+                        terrabase::families::AttachmentMutation::Delete { name: value.name }
+                    }
+                    Mutation::Rename(value) => terrabase::families::AttachmentMutation::Rename {
+                        from: value.from,
+                        to: value.to,
+                    },
+                    Mutation::Copy(value) => terrabase::families::AttachmentMutation::Copy {
+                        name: value.name,
+                        to_document: DocumentId::try_new(&value.to_document).map_err(|_| {
+                            HostingError::Invalid("the target document is invalid".into())
+                        })?,
+                        to_name: value.to_name,
+                    },
+                    Mutation::Move(value) => terrabase::families::AttachmentMutation::Move {
+                        name: value.name,
+                        to_document: DocumentId::try_new(&value.to_document).map_err(|_| {
+                            HostingError::Invalid("the target document is invalid".into())
+                        })?,
+                        to_name: value.to_name,
+                    },
+                };
+                terrabase::families::FamilyWriteRequest::attachment_mutation(
+                    terrabase::families::AttachmentWrite::try_new(
+                        scope.clone(),
+                        document,
+                        mutation,
+                        family_expected(value.expected.as_ref()),
+                        operation_id.clone(),
+                        deadline,
+                        cancellation,
+                    )
+                    .map_err(|_| HostingError::Invalid("the attachment write is invalid".into()))?,
+                )
+            }
+            pb::family_request_payload::Operation::CounterWrite(value) => {
+                let document = DocumentId::try_new(&value.document)
+                    .map_err(|_| HostingError::Invalid("the counter document is invalid".into()))?;
+                let operations = value
+                    .operations
+                    .into_iter()
+                    .map(|operation| {
+                        match operation.operation.ok_or_else(|| {
+                            HostingError::Invalid("the counter operation is missing".into())
+                        })? {
+                            pb::family_counter_operation::Operation::Increment(value) => {
+                                Ok(terrabase::families::CounterOperation::Increment {
+                                    name: value.name,
+                                    delta: value.delta,
+                                })
+                            }
+                            pb::family_counter_operation::Operation::Delete(value) => {
+                                Ok(terrabase::families::CounterOperation::Delete {
+                                    name: value.name,
+                                })
+                            }
+                        }
+                    })
+                    .collect::<Result<Vec<_>, HostingError>>()?;
+                terrabase::families::FamilyWriteRequest::counter_batch(
+                    terrabase::families::CounterBatchWrite::try_new(
+                        scope.clone(),
+                        document,
+                        operations,
+                        family_expected(value.expected.as_ref()),
+                        operation_id.clone(),
+                        deadline,
+                        cancellation,
+                    )
+                    .map_err(|_| HostingError::Invalid("the counter write is invalid".into()))?,
+                )
+            }
+            pb::family_request_payload::Operation::CompareExchangeWrite(value) => {
+                let condition = match value.condition.ok_or_else(|| {
+                    HostingError::Invalid("the compare-exchange condition is missing".into())
+                })? {
+                    pb::family_compare_exchange_write::Condition::PutIfIndex(value) => {
+                        terrabase::families::CompareExchangeCondition::PutIfIndex {
+                            index: value.index,
+                            value: from_pb_value(value.value.as_ref().ok_or_else(|| {
+                                HostingError::Invalid(
+                                    "the compare-exchange value is missing".into(),
+                                )
+                            })?)?,
+                            expires_at: value.expires_at,
+                        }
+                    }
+                    pb::family_compare_exchange_write::Condition::PutIfMissing(value) => {
+                        terrabase::families::CompareExchangeCondition::PutIfMissing {
+                            value: from_pb_value(value.value.as_ref().ok_or_else(|| {
+                                HostingError::Invalid(
+                                    "the compare-exchange value is missing".into(),
+                                )
+                            })?)?,
+                            expires_at: value.expires_at,
+                        }
+                    }
+                    pb::family_compare_exchange_write::Condition::DeleteIfIndex(value) => {
+                        terrabase::families::CompareExchangeCondition::DeleteIfIndex {
+                            index: value.index,
+                        }
+                    }
+                };
+                terrabase::families::FamilyWriteRequest::compare_exchange_condition(
+                    terrabase::families::CompareExchangeWrite::try_new(
+                        scope.clone(),
+                        value.key,
+                        condition,
+                        operation_id.clone(),
+                        deadline,
+                        cancellation,
+                    )
+                    .map_err(|_| {
+                        HostingError::Invalid("the compare-exchange write is invalid".into())
+                    })?,
+                )
+            }
+            pb::family_request_payload::Operation::IdentityWrite(value) => {
+                let command = match value.command.ok_or_else(|| {
+                    HostingError::Invalid("the identity command is missing".into())
+                })? {
+                    pb::family_identity_write::Command::Allocate(value) => {
+                        terrabase::families::IdentityCommand::Allocate {
+                            name: value.name,
+                            count: value.count,
+                        }
+                    }
+                    pb::family_identity_write::Command::Seed(value) => {
+                        terrabase::families::IdentityCommand::Seed {
+                            name: value.name,
+                            value: value.value,
+                            force: value.force,
+                        }
+                    }
+                };
+                let name = command.name().to_owned();
+                terrabase::families::FamilyWriteRequest::identity_allocation(
+                    terrabase::families::IdentityWrite::try_new(
+                        scope.clone(),
+                        name,
+                        command,
+                        operation_id.clone(),
+                        deadline,
+                        cancellation,
+                    )
+                    .map_err(|_| HostingError::Invalid("the identity write is invalid".into()))?,
+                )
+            }
+            pb::family_request_payload::Operation::LifecycleWrite(value) => {
+                let command = match value.command.ok_or_else(|| {
+                    HostingError::Invalid("the lifecycle command is missing".into())
+                })? {
+                    pb::family_lifecycle_write::Command::Refresh(value) => {
+                        terrabase::families::LifecycleCommand::SetExpiration {
+                            at: Some(value.expires_at),
+                        }
+                    }
+                    pb::family_lifecycle_write::Command::Delete(_) => {
+                        terrabase::families::LifecycleCommand::Clear
+                    }
+                };
+                let document = DocumentId::try_new(&value.document).map_err(|_| {
+                    HostingError::Invalid("the lifecycle document is invalid".into())
+                })?;
+                terrabase::families::FamilyWriteRequest::lifecycle_update(
+                    terrabase::families::LifecycleWrite::try_new(
+                        scope.clone(),
+                        document,
+                        command,
+                        EngineVersion::Any,
+                        operation_id.clone(),
+                        deadline,
+                        cancellation,
+                    )
+                    .map_err(|_| HostingError::Invalid("the lifecycle write is invalid".into()))?,
+                )
+            }
+            pb::family_request_payload::Operation::RevisionWrite(value) => {
+                let document = DocumentId::try_new(&value.document).map_err(|_| {
+                    HostingError::Invalid("the revision document is invalid".into())
+                })?;
+                let command = match value.command.ok_or_else(|| {
+                    HostingError::Invalid("the revision command is missing".into())
+                })? {
+                    pb::family_revision_write::Command::ForceCreate(value) => {
+                        terrabase::families::RevisionCommand::ForceCreate {
+                            expected: family_expected(value.expected.as_ref()),
+                        }
+                    }
+                    pb::family_revision_write::Command::Revert(value) => {
+                        terrabase::families::RevisionCommand::Revert {
+                            to_revision: value.to_revision,
+                        }
+                    }
+                    pb::family_revision_write::Command::Configure(value) => {
+                        terrabase::families::RevisionCommand::Configure {
+                            policy: terrabase::families::RevisionPolicy::try_new(
+                                value.minimum_revisions,
+                                value.maximum_revisions,
+                            )
+                            .map_err(|_| {
+                                HostingError::Invalid("the revision policy is invalid".into())
+                            })?,
+                        }
+                    }
+                };
+                terrabase::families::FamilyWriteRequest::revision_command(
+                    terrabase::families::RevisionWrite::try_new(
+                        scope.clone(),
+                        document,
+                        command,
+                        operation_id.clone(),
+                        deadline,
+                        cancellation,
+                    )
+                    .map_err(|_| HostingError::Invalid("the revision write is invalid".into()))?,
+                )
+            }
+            pb::family_request_payload::Operation::ArchivalWrite(value) => {
+                let document = DocumentId::try_new(&value.document).map_err(|_| {
+                    HostingError::Invalid("the archival document is invalid".into())
+                })?;
+                let command = match value.command.ok_or_else(|| {
+                    HostingError::Invalid("the archival command is missing".into())
+                })? {
+                    pb::family_archival_write::Command::Set(value) => {
+                        terrabase::families::ArchivalCommand::Archive {
+                            at: i64::from(value.archived),
+                        }
+                    }
+                    pb::family_archival_write::Command::Delete(_) => {
+                        terrabase::families::ArchivalCommand::Restore
+                    }
+                };
+                terrabase::families::FamilyWriteRequest::archival_update(
+                    terrabase::families::ArchivalWrite::try_new(
+                        scope.clone(),
+                        document,
+                        command,
+                        operation_id.clone(),
+                        deadline,
+                        cancellation,
+                    )
+                    .map_err(|_| HostingError::Invalid("the archival write is invalid".into()))?,
+                )
+            }
+            _ => {
+                return Err(HostingError::Refused(
+                    "this family write is not yet supported by the engine host".into(),
+                ));
+            }
+        };
+        let snapshot = self.engine.read_snapshot(&scope).map_err(|_| {
+            HostingError::EngineFailure("the family snapshot is unavailable".into())
+        })?;
+        let mut transaction = self
+            .engine
+            .begin(&scope, snapshot, operation_id)
+            .map_err(|_| HostingError::EngineFailure("the family write could not begin".into()))?;
+        self.engine
+            .families()
+            .stage(&mut transaction, root)
+            .map_err(|_| HostingError::Invalid("the family write was not admissible".into()))?;
+        if let Some(usage) = request.usage.as_ref() {
+            if usage.project != bound_scope.project || usage.database != bound_scope.database {
+                return Err(HostingError::Invalid(
+                    "the usage admission does not match the bound scope".into(),
+                ));
+            }
+            transaction
+                .attach_usage_admission(engine_usage_admission(usage)?)
+                .map_err(usage_error)?;
+        }
+        let outcome = match transaction.commit(LocalDurability::Synced) {
+            CommitOutcome::Committed(receipt) => WriteOutcome::Committed(CommitReceipt {
+                sequence: receipt.sequence().get(),
+                version: 0,
+                operation_id: receipt.operation_id().as_str().to_owned(),
+                acknowledgement: Some(crate::registry::Acknowledgement::LocalSynced),
+                backup: None,
+            }),
+            CommitOutcome::Rejected(_) => WriteOutcome::Conflict,
+            CommitOutcome::Unknown(_) => {
+                return Err(HostingError::EngineFailure("the family write is uncertain".into()));
+            }
+        };
+        let response = family_write_payload(outcome)?;
+        let bytes = family_codec::encode_response(&response)
+            .map_err(|error| HostingError::Invalid(error.to_string()))?;
+        Ok(crate::registry::FamilyWriteResponse {
+            response_codec: family_codec::RESPONSE_CODEC.into(),
+            response: bytes,
+        })
     }
 
     fn backbone_subscribe(
@@ -1740,5 +2088,30 @@ mod tests {
                 "{error:?}"
             );
         }
+    }
+
+    #[test]
+    fn query_identity_includes_project_and_database() {
+        let first = crate::registry::BoundScope {
+            principal: "p".into(),
+            tenant: "t".into(),
+            project: "one".into(),
+            database: "db".into(),
+        };
+        let second = crate::registry::BoundScope {
+            project: "two".into(),
+            database: "db".into(),
+            ..first.clone()
+        };
+        let third = crate::registry::BoundScope {
+            project: "one".into(),
+            database: "other".into(),
+            ..first.clone()
+        };
+        let mut live = std::collections::HashMap::new();
+        live.insert((first, 7), terrabase::types::Cancellation::new());
+        live.insert((second, 7), terrabase::types::Cancellation::new());
+        live.insert((third, 7), terrabase::types::Cancellation::new());
+        assert_eq!(live.len(), 3);
     }
 }

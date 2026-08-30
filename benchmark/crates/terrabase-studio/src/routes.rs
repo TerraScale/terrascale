@@ -2469,7 +2469,25 @@ mod tests {
 
     #[test]
     fn headerless_requests_are_allowed_for_non_browser_operators() {
-        assert!(same_origin(&post(&[]), &security()));
+        let request = post(&[]);
+        assert!(trusted_request_host(&request, &security()));
+        assert!(same_origin(&request, &security()));
+    }
+
+    #[test]
+    fn host_gate_rejects_dns_rebinding_and_wrong_ports() {
+        for host in [
+            "evil.example:8090",
+            "127.0.0.2:8090",
+            "127.0.0.1:8091",
+            "localhost:8091",
+            "user@127.0.0.1:8090",
+        ] {
+            assert!(!trusted_request_host(&post(&[("host", host)]), &security()));
+        }
+        for host in ["127.0.0.1:8090", "localhost:8090"] {
+            assert!(trusted_request_host(&post(&[("host", host)]), &security()));
+        }
     }
 
     #[test]
@@ -2635,6 +2653,23 @@ mod tests {
                     .header(header::ORIGIN, "https://evil.example:8090")
                     .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                     .body(Body::from("confirm_target=one&confirm_target=two&confirm_phrase=action"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_security_headers(&response);
+    }
+
+    #[tokio::test]
+    async fn untrusted_host_cannot_read_studio_pages() {
+        let response = router(studio("dns-rebinding-read"))
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/backups")
+                    .header(header::HOST, "attacker.example:8090")
+                    .body(Body::empty())
                     .unwrap(),
             )
             .await
