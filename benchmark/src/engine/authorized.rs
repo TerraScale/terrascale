@@ -543,6 +543,10 @@ mod tests {
         engine_path: std::path::PathBuf,
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the fixture binds the complete signed gateway context"
+    )]
     fn fixture() -> Fixture {
         let engine_path = path("engine");
         let policy_path = engine_path.join("authorization.journal");
@@ -683,8 +687,8 @@ mod tests {
             "terrascale.database",
             Action::Read,
             "documents",
-            Default::default(),
-            Default::default(),
+            BTreeMap::default(),
+            BTreeSet::default(),
             10,
         )
         .expect("request");
@@ -694,8 +698,6 @@ mod tests {
             gateway.authorize_bound(&session, &request, 100),
             Err(AuthorizedEngineError::Authorization(AuthorizationError::ContextExpired))
         ));
-        let policy_id = AuthorizationPolicyUlid::from_wire_bytes([5; 16]);
-        let grant = PrincipalGrantUlid::from_wire_bytes([4; 16]);
         let replacement = Policy::try_new_with_id(
             policy_id,
             2,

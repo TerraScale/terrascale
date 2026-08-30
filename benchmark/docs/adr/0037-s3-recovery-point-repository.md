@@ -41,7 +41,13 @@ The transport follows these rules:
 - Transfer scratch is disposable. S3 is the only durable backup copy.
 - Bucket encryption policy is the default. An optional KMS key adds SSE-KMS
   headers. Access credentials come from workload identity, task or instance
-  roles, or standard AWS environment providers. Studio never persists them.
+  roles, or standard AWS credential variables. Studio never persists them.
+  The credential-provider allowlist does not import transport, signing,
+  certificate, metadata endpoint, or encryption overrides from `AWS_*`
+  variables. S3 response bodies do not enter Studio receipts or its journal.
+- The local crypto profile uses ring for TLS and SigV4. The production FIPS
+  profile uses AWS-LC FIPS for both and rejects a previously installed
+  non-FIPS TLS provider.
 - S3 lifecycle policy owns retention. Objects carry a bounded
   `terrabase-kind` tag so full roots can outlive incrementals by at least one
   configured full-point interval. Bucket versioning and object lock are

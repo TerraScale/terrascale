@@ -153,12 +153,16 @@ pub(super) fn merge_l0(storage: &mut LsmStorage) -> Option<(u64, u64)> {
         // that recovery will not observe.
         storage.manifest = manifest_before;
         storage.readers.remove(&id);
-        let _ = std::fs::remove_file(super::segment_path(&dir, id));
+        let path = super::segment_path(&dir, id);
+        let _ = std::fs::remove_file(&path);
+        segment::retire_ordinal(&path);
         return None;
     }
     for id in removed {
         storage.readers.remove(&id);
-        let _ = std::fs::remove_file(super::segment_path(&dir, id));
+        let path = super::segment_path(&dir, id);
+        let _ = std::fs::remove_file(&path);
+        segment::retire_ordinal(&path);
     }
     Some((removed_before, 1))
 }

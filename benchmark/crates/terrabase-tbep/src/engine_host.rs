@@ -283,8 +283,9 @@ pub struct EngineHost {
     instance: u64,
     reads: Mutex<u64>,
     frames_served: Mutex<u64>,
-    live_queries: Mutex<std::collections::HashMap<(String, u64), terrabase::types::Cancellation>>,
-    completed_queries: Mutex<std::collections::VecDeque<(String, u64)>>,
+    live_queries:
+        Mutex<std::collections::HashMap<(BoundScope, u64), terrabase::types::Cancellation>>,
+    completed_queries: Mutex<std::collections::VecDeque<(BoundScope, u64)>>,
     health: Mutex<HealthState>,
 }
 
@@ -377,7 +378,7 @@ impl EngineHost {
     /// Registers one live query's cancellation signal under its id.
     fn register_live_query(
         &self,
-        tenant: &str,
+        scope: &BoundScope,
         query_id: u64,
         cancellation: &terrabase::types::Cancellation,
     ) -> Result<(), HostingError> {
@@ -389,30 +390,30 @@ impl EngineHost {
             return Err(HostingError::Refused("the host is draining".into()));
         }
         let mut live = self.live_queries.lock().expect("the live set is not poisoned");
-        if live.contains_key(&(tenant.to_owned(), query_id)) {
+        if live.contains_key(&(scope.clone(), query_id)) {
             return Err(HostingError::Refused("the query id is already active".into()));
         }
-        live.insert((tenant.to_owned(), query_id), cancellation.clone());
+        live.insert((scope.clone(), query_id), cancellation.clone());
         Ok(())
     }
 
     /// Retires one query: the id moves to the bounded completed set a
     /// cancel can still name.
-    fn retire_live_query(&self, tenant: &str, query_id: u64) {
+    fn retire_live_query(&self, scope: &BoundScope, query_id: u64) {
         let mut live = self.live_queries.lock().expect("the live set is not poisoned");
-        live.remove(&(tenant.to_owned(), query_id));
+        live.remove(&(scope.clone(), query_id));
         let mut completed =
             self.completed_queries.lock().expect("the completed set is not poisoned");
-        completed.push_back((tenant.to_owned(), query_id));
+        completed.push_back((scope.clone(), query_id));
         while completed.len() > COMPLETED_QUERY_HORIZON {
             completed.pop_front();
         }
     }
 
     /// Reports whether a finished query is still inside the horizon.
-    fn query_completed(&self, tenant: &str, query_id: u64) -> bool {
+    fn query_completed(&self, scope: &BoundScope, query_id: u64) -> bool {
         let completed = self.completed_queries.lock().expect("the completed set is not poisoned");
-        completed.contains(&(tenant.to_owned(), query_id))
+        completed.contains(&(scope.clone(), query_id))
     }
 
     fn ensure_serving(&self) -> Result<(), HostingError> {
@@ -769,7 +770,7 @@ impl TbepHost for EngineHost {
         let cancellation = terrabase::types::Cancellation::new();
         let deadline = terrabase::types::Deadline::after(std::time::Duration::from_secs(30))
             .map_err(|_| HostingError::EngineFailure("the deadline is invalid".into()))?;
-        self.register_live_query(tenant.as_str(), request.query_id, &cancellation)?;
+        self.register_live_query(bound_scope, request.query_id, &cancellation)?;
         let input = terrabase::operations::QueryInput::tql_bounded(text, deadline, cancellation);
         let scope = self.engine.scope_for(&tenant);
         let executed = (|| -> Result<
@@ -791,7 +792,7 @@ impl TbepHost for EngineHost {
             Ok((store.execute(&plan, &snapshot), position))
         })();
         // Every completion path retires the query from the live set.
-        self.retire_live_query(tenant.as_str(), request.query_id);
+        self.retire_live_query(bound_scope, request.query_id);
         let (executed, position) = executed?;
         let result = match executed {
             Ok(result) => result,
@@ -843,13 +844,13 @@ impl TbepHost for EngineHost {
         // A live query cancels at its next bounded checkpoint; a
         // finished one reports completion; anything else is unknown.
         let mut live = self.live_queries.lock().expect("the live set is not poisoned");
-        if let Some(cancellation) = live.remove(&(scope.tenant.clone(), request.query_id)) {
+        if let Some(cancellation) = live.remove(&(scope.clone(), request.query_id)) {
             cancellation.cancel();
             return Ok(crate::registry::QueryCancelResponse {
                 outcome: crate::registry::CancelOutcome::Cancelled,
             });
         }
-        let outcome = if self.query_completed(&scope.tenant, request.query_id) {
+        let outcome = if self.query_completed(scope, request.query_id) {
             crate::registry::CancelOutcome::AlreadyComplete
         } else {
             crate::registry::CancelOutcome::UnknownQuery

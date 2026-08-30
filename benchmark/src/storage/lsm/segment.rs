@@ -60,10 +60,15 @@ impl SegmentEncryption {
 
     fn cipher(&self, path: &Path, id: u64, level: u16) -> io::Result<(ArtifactCipher, PathBuf)> {
         let key = self.provider.load_or_create().map_err(encryption_io)?;
-        let cipher = self.build_cipher(key, id, level, load_or_create_ordinal(
-            &segment_ordinal_path(path),
-            segment_ordinal_path(path).exists(),
-        )?)?;
+        let cipher = self.build_cipher(
+            key,
+            id,
+            level,
+            load_or_create_ordinal(
+                &segment_ordinal_path(path),
+                segment_ordinal_path(path).exists(),
+            )?,
+        )?;
         Ok((cipher, segment_ordinal_path(path)))
     }
 
@@ -383,18 +388,12 @@ impl SegmentReader {
         let file = match OpenOptions::new().read(true).open(path) {
             Ok(file) => file,
             Err(error) => {
-                RESIDENT_PLAINTEXT_BYTES.fetch_sub(plaintext_len, std::sync::atomic::Ordering::AcqRel);
+                RESIDENT_PLAINTEXT_BYTES
+                    .fetch_sub(plaintext_len, std::sync::atomic::Ordering::AcqRel);
                 return Err(error);
             }
         };
-        Ok(Self {
-            file,
-            plaintext: Some(plaintext),
-            sparse,
-            meta,
-            records_end,
-            cached: None,
-        })
+        Ok(Self { file, plaintext: Some(plaintext), sparse, meta, records_end, cached: None })
     }
 
     /// Populates the decoded-record cache when this segment is small
@@ -569,10 +568,8 @@ pub(super) fn decode_encrypted_segment_bytes(
 impl Drop for SegmentReader {
     fn drop(&mut self) {
         if let Some(plaintext) = &self.plaintext {
-            RESIDENT_PLAINTEXT_BYTES.fetch_sub(
-                plaintext.len(),
-                std::sync::atomic::Ordering::AcqRel,
-            );
+            RESIDENT_PLAINTEXT_BYTES
+                .fetch_sub(plaintext.len(), std::sync::atomic::Ordering::AcqRel);
         }
         if let Some(cached) = self.cached.take() {
             CACHED_ENTRIES.fetch_sub(cached.len(), std::sync::atomic::Ordering::Relaxed);
@@ -666,6 +663,12 @@ fn segment_ordinal_path(path: &Path) -> PathBuf {
         "{}.ordinal",
         path.file_name().and_then(|name| name.to_str()).unwrap_or("segment")
     ))
+}
+
+/// Removes the nonce-state sidecar after an immutable segment has been
+/// retired from every manifest. The caller must publish that retirement first.
+pub(super) fn retire_ordinal(path: &Path) {
+    let _ = std::fs::remove_file(segment_ordinal_path(path));
 }
 
 fn encryption_io(error: crate::encryption::EncryptionError) -> io::Error {
@@ -1024,6 +1027,10 @@ mod tests {
         std::fs::write(LocalFileKeyProvider::at_engine_location(&dir).path(), [0x45; 32]).unwrap();
         let wrong = segment_encryption(&dir, [0x45; 32]);
         assert!(SegmentReader::open_with_encryption(&path, 1, 0, &wrong).is_err());
+        let ordinal_path = segment_ordinal_path(&path);
+        assert!(ordinal_path.is_file());
+        retire_ordinal(&path);
+        assert!(!ordinal_path.exists(), "retiring a segment retires its nonce state");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

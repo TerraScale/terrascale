@@ -66,6 +66,7 @@ use terrabase::observability::{
     MetricsRegistry, Operation as MetricOperation, Outcome as MetricOutcome, Region as MetricRegion,
 };
 
+use crate::family_codec;
 use crate::host::HostingError;
 use crate::host::TbepHost;
 use crate::host::TbepNotification;
@@ -2599,12 +2600,23 @@ impl EngineService for Arc<TbepGrpcServer> {
             request: message.request,
         };
         domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let _payload =
+            domain.decode_payload().map_err(|error| conversion_error(&error.to_string()))?;
+        let family = domain.family.clone();
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response = run_host(self.as_ref(), MetricOperation::Read, move || {
             host.family_read(&tenant, &domain)
         })
         .await?;
+        let response_payload = family_codec::decode_response(&response.response)
+            .map_err(|error| conversion_error(&error.to_string()))?;
+        family_codec::validate_response_family(
+            &family,
+            &response.response_codec,
+            &response_payload,
+        )
+        .map_err(|error| conversion_error(&error.to_string()))?;
         Ok(Response::new(pb::EngineServiceFamilyReadResponse {
             response_codec: response.response_codec,
             response: response.response,
@@ -2632,12 +2644,23 @@ impl EngineService for Arc<TbepGrpcServer> {
         };
         self.require_mutation_usage(domain.usage.is_some())?;
         domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
+        let _payload =
+            domain.decode_payload().map_err(|error| conversion_error(&error.to_string()))?;
+        let family = domain.family.clone();
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response = run_host(self.as_ref(), MetricOperation::Write, move || {
             host.family_write(&tenant, &domain, &key)
         })
         .await?;
+        let response_payload = family_codec::decode_response(&response.response)
+            .map_err(|error| conversion_error(&error.to_string()))?;
+        family_codec::validate_response_family(
+            &family,
+            &response.response_codec,
+            &response_payload,
+        )
+        .map_err(|error| conversion_error(&error.to_string()))?;
         Ok(Response::new(pb::EngineServiceFamilyWriteResponse {
             response_codec: response.response_codec,
             response: response.response,

@@ -280,6 +280,39 @@ fn discover_encrypted_points(
     Ok(points)
 }
 
+/// Verifies the newest encrypted recovery-point chain, including manifest
+/// and member authentication, without materializing a restore target.
+///
+/// # Errors
+///
+/// Returns [`BackupError::ChainIncomplete`] for missing points or members,
+/// [`BackupError::ManifestInvalid`] for malformed manifests, and
+/// [`BackupError::ChecksumMismatch`] for a digest or authentication failure.
+pub fn verify_latest_chain_encrypted(
+    destination: &Path,
+    cipher: &ArtifactCipher,
+) -> Result<Vec<BackupManifest>, BackupError> {
+    let chain = resolve_encrypted_chain(destination, cipher, &Selection::Latest)?;
+    for link in &chain {
+        for member in link.members() {
+            let path = destination.join(point_directory(link.identity())).join(member.name());
+            let mut file = open_member(&path, member.length())?;
+            if member.length() > (crate::encryption::MAX_PLAINTEXT_BYTES as u64 + 4096) {
+                return Err(BackupError::ChecksumMismatch);
+            }
+            let capacity =
+                usize::try_from(member.length()).map_err(|_| BackupError::ChecksumMismatch)?;
+            let mut envelope = Vec::with_capacity(capacity);
+            file.read_to_end(&mut envelope).map_err(|_| BackupError::ChainIncomplete)?;
+            if !member.matches_bytes(&envelope) {
+                return Err(BackupError::ChecksumMismatch);
+            }
+            cipher.open(&envelope).map_err(|_| BackupError::ChecksumMismatch)?;
+        }
+    }
+    Ok(chain)
+}
+
 /// Walks one selected head down to its chain root, preferring a chain root
 /// over another link at the same base boundary and breaking remaining ties
 /// by identity — the same deterministic choice `verify_latest_chain` makes.

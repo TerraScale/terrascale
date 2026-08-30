@@ -515,7 +515,8 @@ pub(crate) fn read_segment_with_sources(
         if bytes.len() as u64 != object.byte_len {
             continue;
         }
-        if decode_segment_bytes_for_storage(storage, &bytes, object.segment_id, object.level).is_ok()
+        if decode_segment_bytes_for_storage(storage, &bytes, object.segment_id, object.level)
+            .is_ok()
         {
             return Ok(bytes);
         }

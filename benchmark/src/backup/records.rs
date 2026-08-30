@@ -29,7 +29,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::encryption::ArtifactCipher;
+use crate::encryption::{ArtifactCipher, MAX_PLAINTEXT_BYTES};
 
 use crate::backup::sha256::{Sha256, to_hex};
 use crate::types::{Document, LocalDurability, TenantId};
@@ -293,6 +293,9 @@ impl MemberWriter {
         if let Some(file) = member.file.as_mut() {
             file.write_all(&encoded)?;
         } else {
+            if member.plaintext.len().saturating_add(encoded.len()) > MAX_PLAINTEXT_BYTES {
+                return Err(std::io::Error::other("encrypted member exceeds plaintext bound"));
+            }
             member.plaintext.extend_from_slice(&encoded);
         }
         member.hasher.update(&encoded);

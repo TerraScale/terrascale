@@ -95,7 +95,7 @@ mod sha256;
 mod tests;
 
 pub use manifest::{BackupManifest, BackupMember, BackupTenantCount};
-pub use restore::RecoveryReceipt;
+pub use restore::{RecoveryReceipt, verify_latest_chain_encrypted};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

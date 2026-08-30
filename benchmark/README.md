@@ -30,6 +30,15 @@ restore, deletion, reactive state, and authoritative usage facts. A durable
 engine opens one filesystem location through `Engine::open` and
 `EngineConfig::durable`.
 
+The production engine must run asynchronously across multiple threads and use
+all CPUs admitted to the Member. Independent storage, network, replication,
+and maintenance I/O must not block executor threads. Query execution,
+indexing, compaction, repair, encoding, and other CPU-heavy work must use
+bounded parallelism instead of serial hot paths or unbounded task spawning.
+Runtime limits must account for available CPUs, memory, storage, and network
+capacity while preserving deterministic results, durability, tenant
+isolation, fairness, and backpressure.
+
 Local commit acknowledgements mean:
 
 ```text
@@ -90,6 +99,9 @@ cd terrabase-go && go vet -mod=readonly ./... && go test -mod=readonly ./...
 CI also checks protobuf generation drift, hostile input handling, architecture
 rules, dashboard queries, benchmark-history drift, licenses, and advisories.
 See [docs/development.md](docs/development.md) before changing code or evidence.
+Performance-sensitive changes must also prove multicore scaling and report CPU
+utilization, executor delay, queue depth, throughput, latency, and resource
+use under the decision-grade policy in ADR 0026.
 
 ## Production evidence
 

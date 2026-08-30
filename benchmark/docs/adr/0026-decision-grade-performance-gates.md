@@ -28,6 +28,40 @@ hardware allocation, configured storage tiers, Block Volume profile, storage
 image, kernel, measurement windows, raw sample identities, environment
 validity, OCI price inputs, and confidence intervals.
 
+## Runtime parallelism and hardware efficiency
+
+The production Member uses an asynchronous, multithreaded, multicore execution
+model. Independent storage, network, replication, backup, and maintenance I/O
+must not block async executor threads. Query execution, indexing, compaction,
+repair, compression, encryption, hashing, encoding, and other CPU-bound work
+use bounded parallelism across the CPUs admitted to the Member. Blocking work
+uses an explicitly bounded blocking pool.
+
+Worker counts, queue capacities, batching, memory budgets, I/O concurrency,
+and background-work admission derive from the Member's admitted CPU, memory,
+storage, and network resources. The runtime must avoid oversubscription,
+unbounded task or thread creation, busy waiting, global-lock serialization,
+and background work that starves foreground requests. Parallel execution may
+not change deterministic results or weaken correctness, durability,
+authorization, isolation, fairness, backpressure, shutdown, or recovery.
+
+Decision-grade receipts report admitted and visible CPUs, affinity and quota
+settings, runtime and blocking-pool worker counts, per-core utilization,
+executor and scheduler delay, runnable tasks, queue depth, context switches,
+throughput, latency, memory, allocations, storage I/O, network I/O, and
+background-work interference. Unsupported counters remain explicit rather
+than being inferred.
+
+Every parallel workload includes a same-architecture scaling curve at one,
+two, four, and eight admitted vCPUs, or every available point when the fixed
+shape has fewer than eight. The receipt reports throughput, p95 and p99
+latency, errors, CPU time per admitted durable operation, and parallel
+efficiency relative to the one-vCPU run. No aggregate may hide a serial
+bottleneck, idle admitted cores, lock contention, executor starvation, or an
+oversubscription collapse. The fixed eight-vCPU comparison lane remains the
+release decision point; the scaling curve proves that the candidate can use
+that hardware.
+
 ## Fair workload contracts
 
 One versioned workload manifest drives TerraBase and every comparison

@@ -137,6 +137,10 @@ fn committed(outcome: CommitOutcome) -> StorageSequence {
 }
 
 fn test_backup_cipher() -> ArtifactCipher {
+    test_backup_cipher_with_key(7)
+}
+
+fn test_backup_cipher_with_key(key_byte: u8) -> ArtifactCipher {
     let context = EncryptionContext::new(
         "test",
         "tenant-a",
@@ -148,7 +152,7 @@ fn test_backup_cipher() -> ArtifactCipher {
         Compression::None,
     )
     .expect("encryption context");
-    ArtifactCipher::new(ProviderMode::LocalFile, DatabaseKey::from_bytes([7; 32]), context)
+    ArtifactCipher::new(ProviderMode::LocalFile, DatabaseKey::from_bytes([key_byte; 32]), context)
         .expect("backup cipher")
 }
 
@@ -180,6 +184,45 @@ fn encrypted_backup_seals_members_and_manifest_and_round_trips() {
     }
     RestorePlan::restore_latest_encrypted(&destination, &target, &test_backup_cipher())
         .expect("encrypted restore");
+}
+
+#[test]
+fn encrypted_restore_rejects_wrong_key_and_member_tampering() {
+    let (_dir, engine) = open_engine("encrypted-tamper");
+    let destination = location("encrypted-tamper-dest");
+    let target = location("encrypted-tamper-target");
+    committed(put(
+        &engine,
+        "alpha",
+        "encrypted-tamper-put",
+        "doc-1",
+        "users",
+        text("secret-value"),
+        LocalDurability::Synced,
+    ));
+    let result =
+        run_backup(&engine, BackupPlan::full().with_encryption(test_backup_cipher()), &destination)
+            .expect("encrypted backup");
+    let point = destination.join(format!("rp-{}", result.manifest().identity()));
+    assert_eq!(
+        RestorePlan::restore_latest_encrypted(
+            &destination,
+            &target,
+            &test_backup_cipher_with_key(8)
+        ),
+        Err(BackupError::ChecksumMismatch)
+    );
+    let member = result.manifest().members().first().expect("member");
+    let member_path = point.join(member.name());
+    let mut bytes = std::fs::read(&member_path).expect("member bytes");
+    let last = bytes.last_mut().expect("ciphertext");
+    *last ^= 1;
+    std::fs::write(&member_path, bytes).expect("tamper member");
+    assert_eq!(
+        RestorePlan::restore_latest_encrypted(&destination, &target, &test_backup_cipher()),
+        Err(BackupError::ChecksumMismatch)
+    );
+    assert!(!target.exists(), "failed restore must not publish target");
 }
 
 #[test]

@@ -52,6 +52,17 @@ export AWS_SESSION_TOKEN='...'
 Studio does not save these values. Its sidecar stores only the bucket, Region,
 prefix, endpoint, intervals, request style, and KMS key id.
 
+Studio copies only credential-provider variables into the S3 client. It
+supports static credentials, `AWS_WEB_IDENTITY_TOKEN_FILE` with
+`AWS_ROLE_ARN`, ECS task credentials, EKS pod credentials, and the EC2 IMDSv2
+fallback. `AWS_ENDPOINT_URL_S3`, `AWS_SKIP_SIGNATURE`, `AWS_UNSIGNED_PAYLOAD`,
+proxy and certificate switches, metadata endpoint overrides, and environment
+encryption headers are ignored. Configure the S3 endpoint, HTTP opt-in, and
+KMS key through the `TERRABASE_BACKUP_*` settings that Studio validates and
+displays. A custom `AWS_ENDPOINT_URL_STS` must use HTTPS. A cleartext EKS
+credential URI is accepted only on an AWS-documented loopback or link-local
+credential address.
+
 ## Configure in Studio
 
 Start Studio on loopback and open `/backups`. Enter the bucket, signing Region,
@@ -59,16 +70,16 @@ and a database-specific prefix. For AWS S3, leave the endpoint blank. For an
 S3-compatible provider, enter its HTTPS endpoint and choose the request style
 it requires.
 
-The default Studio build installs the ring TLS provider before it creates the
-S3 client. Build the production FIPS profile explicitly:
+The default Studio build uses ring for TLS and SigV4 request signing. Build the
+production FIPS profile explicitly:
 
 ```sh
 cargo run --manifest-path crates/terrabase-studio/Cargo.toml --release --no-default-features --features production-fips
 ```
 
-That profile installs AWS-LC FIPS and refuses S3 setup if another process
-component installed a non-FIPS TLS provider first. Do not enable both crypto
-profiles.
+That profile uses AWS-LC FIPS for TLS and SigV4 request signing. It refuses S3
+setup if another process component installed a non-FIPS TLS provider first.
+Do not enable both crypto profiles.
 
 Choose the incremental interval and the full-point interval. Five minutes and
 twenty-four hours are the defaults. Select "Save and test S3". Studio lists the
