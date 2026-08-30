@@ -688,6 +688,11 @@ impl Engine {
     fn drive_commit_batches(&self) {
         const GROUP_HARVEST_WIDTH: usize = 8;
         const GROUP_HARVEST_WINDOW: std::time::Duration = std::time::Duration::from_micros(250);
+        /// How long a leader that deferred a flip sync lingers for the next
+        /// wave: one sync window, so the idle tail costs at most one extra
+        /// flush and a saturated run never pays a separate flip sync.
+        const GROUP_LINGER_WINDOW: std::time::Duration = std::time::Duration::from_millis(4);
+        let mut deferred_last = false;
         loop {
             let mut batch = {
                 let Ok(mut mailbox) = self.commit_mailbox.lock() else {
@@ -696,6 +701,33 @@ impl Engine {
                 std::mem::take(&mut mailbox.queue)
             };
             if batch.is_empty() {
+                if deferred_last {
+                    // The previous batch deferred its flip sync: linger one
+                    // sync window for the next wave rather than paying a
+                    // separate flush now. Arrivals ride the next batch's
+                    // witness; a quiet window flushes and steps down.
+                    let deadline = std::time::Instant::now() + GROUP_LINGER_WINDOW;
+                    while std::time::Instant::now() < deadline {
+                        std::thread::sleep(GROUP_HARVEST_WINDOW);
+                        if let Ok(mut mailbox) = self.commit_mailbox.lock()
+                            && !mailbox.queue.is_empty()
+                        {
+                            break;
+                        }
+                    }
+                    if self
+                        .commit_mailbox
+                        .lock()
+                        .is_ok_and(|mailbox| !mailbox.queue.is_empty())
+                    {
+                        continue;
+                    }
+                }
+                // No further batch can carry the deferred flips: make any
+                // deferred records durable before the leader steps down.
+                if let Ok(mut storage) = self.lock_storage() {
+                    storage.port.flush_pending_flips();
+                }
                 return;
             }
             if batch.len() < GROUP_HARVEST_WIDTH {
@@ -706,8 +738,13 @@ impl Engine {
             }
             let intents: Vec<storage::CommitIntent> =
                 batch.iter().map(|(intent, _)| intent.clone()).collect();
+            // A full-width batch is the saturated signal: defer its flip
+            // sync into the next batch's witness. Anything narrower —
+            // including every serial commit — syncs before answering.
+            let defer_flips = intents.len() >= GROUP_HARVEST_WIDTH;
+            deferred_last = defer_flips;
             let results = match self.lock_storage() {
-                Ok(mut storage) => storage.port.commit_batch(intents),
+                Ok(mut storage) => storage.port.commit_batch(intents, defer_flips),
                 Err(_) => vec![storage::CommitResult::Rejected(storage::CommitRejection::Storage); batch.len()],
             };
             for ((_, sender), result) in batch.into_iter().zip(results) {

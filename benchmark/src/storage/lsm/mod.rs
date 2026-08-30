@@ -206,6 +206,9 @@ pub(crate) struct LsmStorage {
     usage_index: UsageFactLedger,
     /// A malformed or conflicting persisted fact makes recovery fail closed.
     usage_corrupt: bool,
+    /// Flip records whose append succeeded but whose sync was deferred to
+    /// the next batch or the idle flush (group commit).
+    pending_flips: Vec<Entry>,
     faults: FaultPlan,
 }
 
@@ -384,6 +387,7 @@ impl LsmStorage {
             frontier_poisoned: false,
             usage_index: UsageFactLedger::default(),
             usage_corrupt: false,
+            pending_flips: Vec::new(),
             faults: FaultPlan::empty(),
         };
         engine.rebuild_indexes_from_segments();
@@ -693,7 +697,7 @@ impl LsmStorage {
 
     /// Encodes, appends, and applies one commit batch.
     pub(crate) fn commit_intent(&mut self, intent: &CommitIntent) -> CommitResult {
-        self.commit_batch(vec![intent.clone()])
+        self.commit_batch(vec![intent.clone()], false)
             .pop()
             .expect("a one-intent batch returns one result")
     }
@@ -707,11 +711,16 @@ impl LsmStorage {
     /// acknowledgement still implies its records are durable (the batch's
     /// single sync covers them), and a crash mid-batch leaves the same
     /// states a crash between serial commits would.
+    /// Commits a batch of intents under one durable append and one WAL
+    /// sync. When `defer_flips` is set and the batch carries `Synced`
+    /// intents, the flip records' sync is deferred to the next batch or
+    /// the idle flush — the saturated group-commit shape.
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn commit_batch(&mut self, intents: Vec<CommitIntent>) -> Vec<CommitResult> {
-        if std::env::var_os("TERRABASE_TRACE_BATCHES").is_some() {
-            eprintln!("terrabase commit batch size: {}", intents.len());
-        }
+    pub(crate) fn commit_batch(
+        &mut self,
+        intents: Vec<CommitIntent>,
+        defer_flips: bool,
+    ) -> Vec<CommitResult> {
         let mut results: Vec<Option<CommitResult>> = intents.iter().map(|_| None).collect();
         let mut prepared: Vec<PreparedCommit> = Vec::with_capacity(intents.len());
         for (index, intent) in intents.iter().enumerate() {
@@ -743,6 +752,7 @@ impl LsmStorage {
         let mut durable: Vec<Entry> = Vec::with_capacity(
             prepared.iter().map(|item| item.durable_batch.len()).sum(),
         );
+        durable.extend(std::mem::take(&mut self.pending_flips));
         for item in &prepared {
             durable.extend(item.durable_batch.iter().cloned());
         }
@@ -752,7 +762,8 @@ impl LsmStorage {
             }
             return results.into_iter().map(Option::unwrap).collect();
         };
-        let trace = std::env::var_os("TERRABASE_TRACE_BATCHES").is_some();
+        static TRACE_BATCHES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let trace = *TRACE_BATCHES.get_or_init(|| std::env::var_os("TERRABASE_TRACE_BATCHES").is_some());
         let trace_started = std::time::Instant::now();
         if any_synced && self.faults.fire(FaultPoint::ReadyLedgerSync).is_err() {
             if self.activation.is_some() {
@@ -781,9 +792,6 @@ impl LsmStorage {
                 ));
             }
             return results.into_iter().map(Option::unwrap).collect();
-        }
-        if trace {
-            eprintln!("terrabase batch stage: main witness done at {:.1}ms", trace_started.elapsed().as_secs_f64() * 1_000.0);
         }
         let pointer_fault =
             any_synced && self.faults.fire(FaultPoint::PointerSync).is_err();
@@ -823,15 +831,27 @@ impl LsmStorage {
             }
             match self.append_wal_batch(&flips) {
                 Ok(flip_append) => {
-                    self.witness_wal_append(&flip_append, true, FaultPoint::PublishedFrontierSync)
+                    // A saturated caller defers the flip's sync to the next
+                    // batch's: the main frames are already durable, the
+                    // flips' bytes are written, and the next witness — or
+                    // the idle flush — makes them durable. An idle caller
+                    // syncs now, so a serial commit's acknowledgement still
+                    // implies its flip record is durable.
+                    if defer_flips {
+                        self.pending_flips = flips;
+                        true
+                    } else {
+                        self.witness_wal_append(
+                            &flip_append,
+                            true,
+                            FaultPoint::PublishedFrontierSync,
+                        )
                         .is_ok()
+                    }
                 }
                 Err(()) => false,
             }
         };
-        if trace {
-            eprintln!("terrabase batch stage: flip done at {:.1}ms", trace_started.elapsed().as_secs_f64() * 1_000.0);
-        }
         for item in &prepared {
             let cause = if item.synced && !flip_witnessed {
                 Some(UnknownCause::PublishedLedgerSync)
@@ -1893,8 +1913,12 @@ impl StoragePort for LsmStorage {
         self.commit_intent(&intent)
     }
 
-    fn commit_batch(&mut self, intents: Vec<CommitIntent>) -> Vec<CommitResult> {
-        LsmStorage::commit_batch(self, intents)
+    fn commit_batch(&mut self, intents: Vec<CommitIntent>, defer_flips: bool) -> Vec<CommitResult> {
+        LsmStorage::commit_batch(self, intents, defer_flips)
+    }
+
+    fn flush_pending_flips(&mut self) {
+        LsmStorage::flush_pending_flips(self)
     }
 
     fn resolve_operation(
@@ -2169,6 +2193,9 @@ impl StoragePort for LsmStorage {
         if self.frontier_poisoned && self.activation.is_some() {
             return Err(());
         }
+        if let Err(()) = self.flush_pending_flips_inner() {
+            return Err(());
+        }
         // The lazily advanced legacy shadow catches up here: one slot
         // write and sync at the bounded flush point instead of one per
         // commit. A crash before this point leaves a lagging durable
@@ -2185,6 +2212,25 @@ impl StoragePort for LsmStorage {
     #[cfg(test)]
     fn arm_test_fault(&mut self, point: FaultPoint) {
         self.faults.arm(point);
+    }
+}
+
+impl LsmStorage {
+    /// Syncs any flip records whose sync a saturated batch deferred.
+    pub(crate) fn flush_pending_flips(&mut self) {
+        let _ = self.flush_pending_flips_inner();
+    }
+
+    fn flush_pending_flips_inner(&mut self) -> Result<(), ()> {
+        if self.pending_flips.is_empty() {
+            return Ok(());
+        }
+        let flips = std::mem::take(&mut self.pending_flips);
+        let Ok(append) = self.append_wal_batch(&flips) else {
+            return Err(());
+        };
+        self.witness_wal_append(&append, true, FaultPoint::PublishedFrontierSync)
+            .map_err(|()| ())
     }
 }
 

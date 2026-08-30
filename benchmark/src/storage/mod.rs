@@ -67,9 +67,18 @@ pub(crate) trait StoragePort: Send {
     /// under one shared durable append where the implementation supports
     /// it (group commit). The default commits each intent alone, which is
     /// exactly the serial behavior.
-    fn commit_batch(&mut self, intents: Vec<CommitIntent>) -> Vec<CommitResult> {
+    fn commit_batch(
+        &mut self,
+        intents: Vec<CommitIntent>,
+        defer_flips: bool,
+    ) -> Vec<CommitResult> {
+        let _ = defer_flips;
         intents.into_iter().map(|intent| self.commit(intent)).collect()
     }
+
+    /// Durable-side flush of any records a deferred batch left unsynced.
+    /// The default has nothing to flush.
+    fn flush_pending_flips(&mut self) {}
 
     /// Returns the durable resolution of one operation identity, if recorded.
     fn resolve_operation(
