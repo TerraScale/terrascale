@@ -1,7 +1,7 @@
 // Round-trip conformance for the generated public
 // `terrascale.sync.v2.msgpack` protocol (ADR 0025, qualification-gap-sweep
 // row 28) over the engine's vendored golden-vector corpus:
-// test/fixtures/terrascale.sync.v2/ (read-only byte-exact pin of TerraBaseV2
+// test/fixtures/terrascale.sync.v2/ (read-only byte-exact pin of TerraBase
 // crates/terrabase-sync-core/vectors/terrascale.sync.v2/).
 //
 // Every frame description in every vendored vector is mapped to the

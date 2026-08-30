@@ -1,6 +1,6 @@
 // The native `terrascale.sync.v2` frame codec: the versioned
 // client-channel wire protocol defined by the sync-v2 wire spec
-// (`docs/sync/terrascale-sync-v2.md` in TerraBaseV2) and qualified by the
+// (`docs/sync/terrascale-sync-v2.md` in TerraBase) and qualified by the
 // SE-04/SE-05 golden-vector corpus. PD-2026-08-26-12 D1: this is a
 // native-language implementation — no wasm, no C ABI embedding — and
 // conformance to the committed corpus is the compatibility guarantee.

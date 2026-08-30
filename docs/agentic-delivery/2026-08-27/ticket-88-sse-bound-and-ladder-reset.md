@@ -1,4 +1,4 @@
-# Ticket TerraBaseV2#88 — TS SDK follow-ups: SSE bound placement + slow-cadence ladder reset
+# Ticket TerraBase#88 — TS SDK follow-ups: SSE bound placement + slow-cadence ladder reset
 
 Packet `fups-ts` on branch `fleet/fups-ts`, base `6da6565` (`origin/develop`
 HEAD at packet start). Both warden re-gate MINORs were repaired red-then-green

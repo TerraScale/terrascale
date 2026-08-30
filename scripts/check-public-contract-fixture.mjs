@@ -28,8 +28,14 @@ if (process.argv.includes("--write")) {
 
 function normalizeContract(spec) {
   const schemas = spec.components.schemas;
-  const v3 = spec.paths["/api/v3/projects/{projectId}/saved-queries"].get;
-  const page = schemas.ProjectSavedQuerySnapshotPageResponse;
+  const savedQueryListPath = "/api/v1/projects/{projectId}/saved-queries";
+  const savedQueryGetPath = "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}";
+  const listSavedQueries = spec.paths[savedQueryListPath]?.get;
+  const getSavedQuery = spec.paths[savedQueryGetPath]?.get;
+  if (listSavedQueries === undefined || getSavedQuery === undefined) {
+    throw new Error("The owner OpenAPI must publish both v1 saved-query list and get operations.");
+  }
+  assertLegacySavedQueryRoutesAbsent(spec.paths);
   const capabilityPath = "/api/v1/projects/{projectId}/database-branches/capability";
   const clonePath = "/api/v1/projects/{projectId}/database-branches";
   const capability = spec.paths[capabilityPath].get;
@@ -39,25 +45,22 @@ function normalizeContract(spec) {
 
   return {
     contractVersion: 1,
-    savedQueriesV3: {
-      method: "get",
-      operationId: v3.operationId,
-      path: "/api/v3/projects/{projectId}/saved-queries",
-      parameters: v3.parameters.map((parameter) => ({
-        name: parameter.name,
-        required: parameter.required === true,
-        types: types(parameter.schema),
-        ...(parameter.schema.maxLength === undefined ? {} : { maxLength: parameter.schema.maxLength }),
-        ...(parameter.schema.minimum === undefined ? {} : { minimum: parameter.schema.minimum }),
-        ...(parameter.schema.maximum === undefined ? {} : { maximum: parameter.schema.maximum }),
-        ...(parameter.schema.default === undefined ? {} : { default: parameter.schema.default }),
-      })),
-      response: {
-        required: page.required,
-        itemsRef: page.properties.items.items.$ref,
-        nextCursorTypes: types(page.properties.nextCursor),
+    savedQueriesV1: {
+      list: {
+        method: "get",
+        operationId: listSavedQueries.operationId,
+        path: savedQueryListPath,
+        parameters: listSavedQueries.parameters.map(normalizeParameter),
+        responseItemsRef: listSavedQueries.responses["200"].content["application/json"].schema.items.$ref,
+        errorStatuses: errorStatuses(listSavedQueries),
       },
-      errorStatuses: Object.keys(v3.responses).filter((status) => status !== "200").map(Number),
+      get: {
+        method: "get",
+        operationId: getSavedQuery.operationId,
+        path: savedQueryGetPath,
+        responseRef: getSavedQuery.responses["200"].content["application/json"].schema.$ref,
+        errorStatuses: errorStatuses(getSavedQuery),
+      },
     },
     databaseBranches: {
       capability: {
@@ -83,6 +86,30 @@ function normalizeContract(spec) {
       },
     },
   };
+}
+
+function assertLegacySavedQueryRoutesAbsent(paths) {
+  const legacyPaths = Object.keys(paths).filter((route) =>
+    /^\/api\/v[23]\/projects\/\{projectId\}\/saved-queries(?:\/|$)/u.test(route),
+  );
+  if (legacyPaths.length > 0) {
+    throw new Error(`Legacy saved-query routes must remain absent: ${legacyPaths.sort().join(", ")}.`);
+  }
+}
+
+function normalizeParameter(parameter) {
+  return {
+    name: parameter.name,
+    required: parameter.required === true,
+    types: types(parameter.schema),
+    ...(parameter.schema.minimum === undefined ? {} : { minimum: parameter.schema.minimum }),
+    ...(parameter.schema.maximum === undefined ? {} : { maximum: parameter.schema.maximum }),
+    ...(parameter.schema.default === undefined ? {} : { default: parameter.schema.default }),
+  };
+}
+
+function errorStatuses(operation) {
+  return Object.keys(operation.responses).filter((status) => status !== "200").map(Number);
 }
 
 function types(schema) {

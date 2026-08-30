@@ -5,7 +5,7 @@ Status: **implemented (TypeScript half only)**. Honest scope below.
 The canonical repository decision record is [ADR 0025](../adr/0025-public-messagepack-manifest.md).
 
 This lands gap-sweep row 28's TypeScript half
-(`TerraBaseV2/docs/evidence/qualification-gap-sweep.md`): the public
+(`TerraBase/docs/evidence/qualification-gap-sweep.md`): the public
 `terrascale.sync.v2.msgpack` WebSocket protocol is now generated from one
 checked-in versioned manifest, per GOAL.md ADR 0025 and the ADR 0032 decoded
 ceilings. Nothing existed before this change (row 28: "missing").
@@ -18,7 +18,7 @@ ceilings. Nothing existed before this change (row 28: "missing").
   `[major, minor, features, tag, correlation, causation, body]`, 19 messages
   with explicit numeric tags (never reused), named structured types, closed
   enums, tagged unions, and per-field bounds. Message names align with the
-  engine corpus vocabulary (`TerraBaseV2/crates/terrabase-sync-conformance`):
+  engine corpus vocabulary (`TerraBase/crates/terrabase-sync-conformance`):
   `session_setup`, `session_accepted`, `subscription_modify`,
   `subscription_changed`, `checkpoint_ack`, `heartbeat`, `delta_batch`,
   `snapshot_answer`, `trigger`, `resync_required`, `region_route_change`,

@@ -4,7 +4,7 @@
   "protocolMajor": 2,
   "protocolMinor": 0,
   "supportedFeatures": 0,
-  "doc": "The checked-in, language-neutral protocol manifest for the public reactive WebSocket subprotocol terrascale.sync.v2.msgpack (GOAL.md ADR 0025). One binary WebSocket message is one complete MessagePack envelope. Messages are indexed arrays with explicit numeric tags; field positions are never reused or reinterpreted. The C# and TypeScript bindings are generated from this file, which is the sole authority. Bounds mirror the GOAL.md ADR 0032 decoded ceilings and the engine corpus field limits (TerraBaseV2 crates/terrabase-sync-conformance).",
+  "doc": "The checked-in, language-neutral protocol manifest for the public reactive WebSocket subprotocol terrascale.sync.v2.msgpack (GOAL.md ADR 0025). One binary WebSocket message is one complete MessagePack envelope. Messages are indexed arrays with explicit numeric tags; field positions are never reused or reinterpreted. The C# and TypeScript bindings are generated from this file, which is the sole authority. Bounds mirror the GOAL.md ADR 0032 decoded ceilings and the engine corpus field limits (TerraBase crates/terrabase-sync-conformance).",
   "envelope": {
     "doc": "Every message is one MessagePack array of exactly seven elements: [major, minor, features, tag, correlation, causation, body]. The body is the indexed field array of the tagged message. Unknown majors, minors this build does not speak, or unknown required feature bits fail closed before any body field is read.",
     "elements": [

@@ -14,7 +14,7 @@
 // and advances the authoritative client state (the checkpoint) while
 // handing payload bytes to an optional materializer.
 //
-// Follow-up repairs (TerraBaseV2#88, warden re-gate MINORs, both pinned
+// Follow-up repairs (TerraBase#88, warden re-gate MINORs, both pinned
 // red-then-green): the SSE line bound is evaluated only after complete
 // lines are drained from the read buffer, so it measures an actual
 // (undelimited) line, never a reader chunk carrying many complete events;

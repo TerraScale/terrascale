@@ -86,7 +86,7 @@ remain forbidden.
 | Stream | Scope | Depends on | Deliverable |
 | --- | --- | --- | --- |
 | A: public contracts | Route capture, OpenAPI, operation identity, limits, errors, and compatibility. | Dashboard and Database API owners. | Versioned contract and drift receipt. |
-| B: reactive protocol | Manifest generation, codecs, result-view engine, session transport, and recovery. | TerraBaseV2, Database API, .NET corpus. | Cross-language conformance receipt. |
+| B: reactive protocol | Manifest generation, codecs, result-view engine, session transport, and recovery. | TerraBase, Database API, .NET corpus. | Cross-language conformance receipt. |
 | C: Better Auth | Node-only adapter, transactions, uniqueness, one-time consume, migrations, and revocation. | Database API auth contract. | Adapter compatibility receipt. |
 | D: client quality | Retry, cancellation, backpressure, pagination, browser support, local runtime, and security scans. | A and stable models. | Unit, browser, and boundary evidence. |
 | E: package release | Build, pack, archive inspection, provenance, registry promotion, and rollback. | A through D. | Immutable npm candidate and handoff. |

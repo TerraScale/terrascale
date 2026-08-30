@@ -1,6 +1,6 @@
 # Vendored `terrascale.sync.v2` golden-vector corpus
 
-This is the native `vector-corpus@2` corpus shared with TerraBaseV2. It records
+This is the native `vector-corpus@2` corpus shared with TerraBase. It records
 the bounded protocol envelope and native payload codecs (IDs 3 and 4). The
 result-view state machine is exercised by the SDK's native result-view tests;
 these byte fixtures remain the cross-language wire corpus.
@@ -13,7 +13,7 @@ drift, so a stale pin is a test failure, not a silent mismatch.
 
 ## Source
 
-- Engine repository: TerraBaseV2, `develop` at the revision providing
+- Engine repository: TerraBase, `develop` at the revision providing
   `crates/terrabase-sync-core/vectors/terrascale.sync.v2/`.
 - Vectors source: `crates/terrabase-sync-core/vectors/terrascale.sync.v2/`.
 - Manifest source: `crates/terrabase-sync-conformance/fixtures/manifest.json`
@@ -39,7 +39,7 @@ Provenance:
   an ancestor of the engine checkout used.
 - Command: `cargo run -p terrabase-sync-conformance -- --manifest
   crates/terrabase-sync-conformance/fixtures/manifest.json --report <file>`
-  from the TerraBaseV2 root.
+  from the TerraBase root.
 - Corpus manifest digest (sha256) at that revision:
   `dd21e1dd21f3ed8c73250a6dd2c345fde206ba8ddd9606e4e05eae353744f599`.
 - Reference result: 9/9 vectors, 257/257 checks, status `pass`.
@@ -51,8 +51,8 @@ Regenerate it from one engine checkout together with a re-vendor.
 When the engine corpus legitimately changes, re-vendor the whole directory
 from one engine checkout:
 
-    cp <TerraBaseV2>/crates/terrabase-sync-core/vectors/terrascale.sync.v2/*.json vectors/
-    cp <TerraBaseV2>/crates/terrabase-sync-conformance/fixtures/manifest.json manifest.json
+    cp <TerraBase>/crates/terrabase-sync-core/vectors/terrascale.sync.v2/*.json vectors/
+    cp <TerraBase>/crates/terrabase-sync-conformance/fixtures/manifest.json manifest.json
 
 then run `node --test dist/sync-v2-conformance.test.js`. If any conformance
 check fails against the freshly vendored corpus, investigate the codec —

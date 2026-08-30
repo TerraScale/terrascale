@@ -2,7 +2,7 @@
 // runs the client codec, the client delivery store, and the authorized
 // result-view engine against every vector of the vendored engine corpus.
 //
-// Corpus: TerraBaseV2 `crates/terrabase-sync-core/vectors/terrascale.sync.v2/`
+// Corpus: TerraBase `crates/terrabase-sync-core/vectors/terrascale.sync.v2/`
 // (schema `terrascale.sync.v2/vector-corpus@2`), vendored byte-exact under
 // `test/fixtures/terrascale.sync.v2/` together with the engine's SHA-256
 // integrity manifest. The report produced by the engine's own reference

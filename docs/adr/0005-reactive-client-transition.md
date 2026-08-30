@@ -25,7 +25,7 @@ reconnect, cancellation, and typed errors.
 
 `TerraScale.Database`, whose permanent source home is `TerraScale.Internals`
 while the service remains independently deployable, must publish the WebSocket
-schema, route, and cutover/deprecation record. TerraBaseV2 remains the reference for shared
+schema, route, and cutover/deprecation record. TerraBase remains the reference for shared
 semantics and corpus vectors. TerraScale.TypeScript and TerraScale.DotNet own
 their bindings. Do not switch the live client until those bindings agree, the
 Rust/TypeScript/.NET corpus is bidirectionally green, and live recovery
@@ -34,7 +34,7 @@ semantics as a second production protocol.
 
 ## Consequences
 
-This proposal requires coordinated SDK, Database API, TerraBaseV2, and .NET
+This proposal requires coordinated SDK, Database API, TerraBase, and .NET
 work. It changes observable wire and reconnect behavior, so the cutover,
 deprecation window, and compatibility promise require owner ratification.
 Until then, documentation must describe `src/sync/v2/session.ts` as its

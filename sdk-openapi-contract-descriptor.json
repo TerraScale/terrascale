@@ -1,6 +1,6 @@
 {
   "descriptorVersion": 1,
-  "routeCount": 82,
+  "routeCount": 79,
   "routes": [
     {
       "base": "api",
@@ -11381,7 +11381,7 @@
       ],
       "routeName": "savedQueries.list",
       "sdkRequestType": "void",
-      "sdkResponseType": "readonly ProjectSavedQueryResponse[]",
+      "sdkResponseType": "ProjectSavedQueryPageResponse",
       "sourceContract": {
         "body": {
           "kind": "void"
@@ -11406,6 +11406,315 @@
             "value": "100"
           }
         ]
+      }
+    },
+    {
+      "base": "api",
+      "client": "savedQueries",
+      "method": "GET",
+      "operation": "get",
+      "operationId": "GetProjectSavedQuery",
+      "parameters": [
+        {
+          "in": "path",
+          "name": "projectId",
+          "parameter": {
+            "in": "path",
+            "name": "projectId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "savedQueryId",
+          "parameter": {
+            "in": "path",
+            "name": "savedQueryId",
+            "required": true,
+            "schema": {
+              "format": "ulid",
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "ulid",
+            "type": "string"
+          }
+        }
+      ],
+      "pathTemplate": "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}",
+      "request": {
+        "kind": "void"
+      },
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSavedQueryResponse",
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "createdAt": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "projectId": {
+                          "$ref": "#/components/schemas/Ulid",
+                          "siblings": {
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        },
+                        "query": {
+                          "type": "string"
+                        },
+                        "repositoryId": {
+                          "oneOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "$ref": "#/components/schemas/Ulid",
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              },
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              }
+                            }
+                          ]
+                        },
+                        "savedQueryId": {
+                          "$ref": "#/components/schemas/Ulid",
+                          "siblings": {
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "resolved": {
+                            "format": "ulid",
+                            "type": "string"
+                          }
+                        },
+                        "updatedAt": {
+                          "format": "date-time",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "savedQueryId",
+                        "projectId",
+                        "name",
+                        "query",
+                        "repositoryId",
+                        "createdAt",
+                        "updatedAt"
+                      ],
+                      "type": "object"
+                    },
+                    "siblings": {
+                      "resolved": {
+                        "properties": {
+                          "createdAt": {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "projectId": {
+                            "$ref": "#/components/schemas/Ulid",
+                            "siblings": {
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              },
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "query": {
+                            "type": "string"
+                          },
+                          "repositoryId": {
+                            "oneOf": [
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "$ref": "#/components/schemas/Ulid",
+                                "siblings": {
+                                  "resolved": {
+                                    "format": "ulid",
+                                    "type": "string"
+                                  },
+                                  "siblings": {
+                                    "resolved": {
+                                      "format": "ulid",
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              }
+                            ]
+                          },
+                          "savedQueryId": {
+                            "$ref": "#/components/schemas/Ulid",
+                            "siblings": {
+                              "resolved": {
+                                "format": "ulid",
+                                "type": "string"
+                              },
+                              "siblings": {
+                                "resolved": {
+                                  "format": "ulid",
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          },
+                          "updatedAt": {
+                            "format": "date-time",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "savedQueryId",
+                          "projectId",
+                          "name",
+                          "query",
+                          "repositoryId",
+                          "createdAt",
+                          "updatedAt"
+                        ],
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "resolved": {
+                    "properties": {
+                      "createdAt": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "projectId": {
+                        "$ref": "#/components/schemas/Ulid",
+                        "resolved": {
+                          "format": "ulid",
+                          "type": "string"
+                        }
+                      },
+                      "query": {
+                        "type": "string"
+                      },
+                      "repositoryId": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "$ref": "#/components/schemas/Ulid",
+                            "resolved": {
+                              "format": "ulid",
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "savedQueryId": {
+                        "$ref": "#/components/schemas/Ulid",
+                        "resolved": {
+                          "format": "ulid",
+                          "type": "string"
+                        }
+                      },
+                      "updatedAt": {
+                        "format": "date-time",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "savedQueryId",
+                      "projectId",
+                      "name",
+                      "query",
+                      "repositoryId",
+                      "createdAt",
+                      "updatedAt"
+                    ],
+                    "type": "object"
+                  }
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "status": "200"
+        }
+      ],
+      "routeName": "savedQueries.get",
+      "sdkRequestType": "void",
+      "sdkResponseType": "ProjectSavedQueryResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "x-terrascale-project-id",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+          }
+        ],
+        "query": []
       }
     },
     {
@@ -16492,1318 +16801,6 @@
           {
             "name": "unreadOnly",
             "value": "true"
-          }
-        ]
-      }
-    },
-    {
-      "base": "api",
-      "client": "savedQueries.v2",
-      "method": "GET",
-      "operation": "list",
-      "operationId": "ListProjectSavedQueriesV2",
-      "parameters": [
-        {
-          "in": "path",
-          "name": "projectId",
-          "parameter": {
-            "in": "path",
-            "name": "projectId",
-            "required": true,
-            "schema": {
-              "format": "ulid",
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "format": "ulid",
-            "type": "string"
-          }
-        },
-        {
-          "in": "query",
-          "name": "skip",
-          "parameter": {
-            "in": "query",
-            "name": "skip",
-            "schema": {
-              "default": 0,
-              "format": "int32",
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          "required": false,
-          "schema": {
-            "default": 0,
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        {
-          "in": "query",
-          "name": "take",
-          "parameter": {
-            "in": "query",
-            "name": "take",
-            "schema": {
-              "default": 100,
-              "format": "int32",
-              "maximum": 500,
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          "required": false,
-          "schema": {
-            "default": 100,
-            "format": "int32",
-            "maximum": 500,
-            "minimum": 0,
-            "type": "integer"
-          }
-        }
-      ],
-      "pathTemplate": "/api/v2/projects/{projectId}/saved-queries",
-      "request": {
-        "kind": "void"
-      },
-      "responses": [
-        {
-          "response": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/ProjectSavedQueryV2Response",
-                    "siblings": {
-                      "resolved": {
-                        "properties": {
-                          "createdAt": {
-                            "format": "date-time",
-                            "type": "string"
-                          },
-                          "name": {
-                            "type": "string"
-                          },
-                          "projectId": {
-                            "$ref": "#/components/schemas/Ulid",
-                            "siblings": {
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            },
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          },
-                          "query": {
-                            "type": "string"
-                          },
-                          "repositoryId": {
-                            "oneOf": [
-                              {
-                                "type": "null"
-                              },
-                              {
-                                "$ref": "#/components/schemas/Ulid",
-                                "siblings": {
-                                  "resolved": {
-                                    "format": "ulid",
-                                    "type": "string"
-                                  }
-                                },
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              }
-                            ]
-                          },
-                          "revision": {
-                            "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                            "type": "string"
-                          },
-                          "savedQueryId": {
-                            "$ref": "#/components/schemas/Ulid",
-                            "siblings": {
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            },
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          },
-                          "updatedAt": {
-                            "format": "date-time",
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "savedQueryId",
-                          "projectId",
-                          "name",
-                          "query",
-                          "repositoryId",
-                          "createdAt",
-                          "updatedAt",
-                          "revision"
-                        ],
-                        "type": "object"
-                      },
-                      "siblings": {
-                        "resolved": {
-                          "properties": {
-                            "createdAt": {
-                              "format": "date-time",
-                              "type": "string"
-                            },
-                            "name": {
-                              "type": "string"
-                            },
-                            "projectId": {
-                              "$ref": "#/components/schemas/Ulid",
-                              "siblings": {
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                },
-                                "siblings": {
-                                  "resolved": {
-                                    "format": "ulid",
-                                    "type": "string"
-                                  }
-                                }
-                              },
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            },
-                            "query": {
-                              "type": "string"
-                            },
-                            "repositoryId": {
-                              "oneOf": [
-                                {
-                                  "type": "null"
-                                },
-                                {
-                                  "$ref": "#/components/schemas/Ulid",
-                                  "siblings": {
-                                    "resolved": {
-                                      "format": "ulid",
-                                      "type": "string"
-                                    },
-                                    "siblings": {
-                                      "resolved": {
-                                        "format": "ulid",
-                                        "type": "string"
-                                      }
-                                    }
-                                  },
-                                  "resolved": {
-                                    "format": "ulid",
-                                    "type": "string"
-                                  }
-                                }
-                              ]
-                            },
-                            "revision": {
-                              "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                              "type": "string"
-                            },
-                            "savedQueryId": {
-                              "$ref": "#/components/schemas/Ulid",
-                              "siblings": {
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                },
-                                "siblings": {
-                                  "resolved": {
-                                    "format": "ulid",
-                                    "type": "string"
-                                  }
-                                }
-                              },
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            },
-                            "updatedAt": {
-                              "format": "date-time",
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "savedQueryId",
-                            "projectId",
-                            "name",
-                            "query",
-                            "repositoryId",
-                            "createdAt",
-                            "updatedAt",
-                            "revision"
-                          ],
-                          "type": "object"
-                        }
-                      }
-                    },
-                    "resolved": {
-                      "properties": {
-                        "createdAt": {
-                          "format": "date-time",
-                          "type": "string"
-                        },
-                        "name": {
-                          "type": "string"
-                        },
-                        "projectId": {
-                          "$ref": "#/components/schemas/Ulid",
-                          "resolved": {
-                            "format": "ulid",
-                            "type": "string"
-                          }
-                        },
-                        "query": {
-                          "type": "string"
-                        },
-                        "repositoryId": {
-                          "oneOf": [
-                            {
-                              "type": "null"
-                            },
-                            {
-                              "$ref": "#/components/schemas/Ulid",
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            }
-                          ]
-                        },
-                        "revision": {
-                          "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                          "type": "string"
-                        },
-                        "savedQueryId": {
-                          "$ref": "#/components/schemas/Ulid",
-                          "resolved": {
-                            "format": "ulid",
-                            "type": "string"
-                          }
-                        },
-                        "updatedAt": {
-                          "format": "date-time",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "savedQueryId",
-                        "projectId",
-                        "name",
-                        "query",
-                        "repositoryId",
-                        "createdAt",
-                        "updatedAt",
-                        "revision"
-                      ],
-                      "type": "object"
-                    }
-                  },
-                  "type": "array"
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "status": "200"
-        }
-      ],
-      "routeName": "savedQueries.v2.list",
-      "sdkRequestType": "void",
-      "sdkResponseType": "readonly ProjectSavedQueryV2Response[]",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": [
-          {
-            "name": "skip",
-            "value": "0"
-          },
-          {
-            "name": "take",
-            "value": "100"
-          }
-        ]
-      }
-    },
-    {
-      "base": "api",
-      "client": "savedQueries.v2",
-      "method": "GET",
-      "operation": "get",
-      "operationId": "GetProjectSavedQueryV2",
-      "parameters": [
-        {
-          "in": "path",
-          "name": "projectId",
-          "parameter": {
-            "in": "path",
-            "name": "projectId",
-            "required": true,
-            "schema": {
-              "format": "ulid",
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "format": "ulid",
-            "type": "string"
-          }
-        },
-        {
-          "in": "path",
-          "name": "savedQueryId",
-          "parameter": {
-            "in": "path",
-            "name": "savedQueryId",
-            "required": true,
-            "schema": {
-              "format": "ulid",
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "format": "ulid",
-            "type": "string"
-          }
-        }
-      ],
-      "pathTemplate": "/api/v2/projects/{projectId}/saved-queries/{savedQueryId}",
-      "request": {
-        "kind": "void"
-      },
-      "responses": [
-        {
-          "response": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProjectSavedQueryV2Response",
-                  "siblings": {
-                    "resolved": {
-                      "properties": {
-                        "createdAt": {
-                          "format": "date-time",
-                          "type": "string"
-                        },
-                        "name": {
-                          "type": "string"
-                        },
-                        "projectId": {
-                          "$ref": "#/components/schemas/Ulid",
-                          "siblings": {
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          },
-                          "resolved": {
-                            "format": "ulid",
-                            "type": "string"
-                          }
-                        },
-                        "query": {
-                          "type": "string"
-                        },
-                        "repositoryId": {
-                          "oneOf": [
-                            {
-                              "type": "null"
-                            },
-                            {
-                              "$ref": "#/components/schemas/Ulid",
-                              "siblings": {
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              },
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            }
-                          ]
-                        },
-                        "revision": {
-                          "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                          "type": "string"
-                        },
-                        "savedQueryId": {
-                          "$ref": "#/components/schemas/Ulid",
-                          "siblings": {
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          },
-                          "resolved": {
-                            "format": "ulid",
-                            "type": "string"
-                          }
-                        },
-                        "updatedAt": {
-                          "format": "date-time",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "savedQueryId",
-                        "projectId",
-                        "name",
-                        "query",
-                        "repositoryId",
-                        "createdAt",
-                        "updatedAt",
-                        "revision"
-                      ],
-                      "type": "object"
-                    },
-                    "siblings": {
-                      "resolved": {
-                        "properties": {
-                          "createdAt": {
-                            "format": "date-time",
-                            "type": "string"
-                          },
-                          "name": {
-                            "type": "string"
-                          },
-                          "projectId": {
-                            "$ref": "#/components/schemas/Ulid",
-                            "siblings": {
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              },
-                              "siblings": {
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              }
-                            },
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          },
-                          "query": {
-                            "type": "string"
-                          },
-                          "repositoryId": {
-                            "oneOf": [
-                              {
-                                "type": "null"
-                              },
-                              {
-                                "$ref": "#/components/schemas/Ulid",
-                                "siblings": {
-                                  "resolved": {
-                                    "format": "ulid",
-                                    "type": "string"
-                                  },
-                                  "siblings": {
-                                    "resolved": {
-                                      "format": "ulid",
-                                      "type": "string"
-                                    }
-                                  }
-                                },
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              }
-                            ]
-                          },
-                          "revision": {
-                            "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                            "type": "string"
-                          },
-                          "savedQueryId": {
-                            "$ref": "#/components/schemas/Ulid",
-                            "siblings": {
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              },
-                              "siblings": {
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              }
-                            },
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          },
-                          "updatedAt": {
-                            "format": "date-time",
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "savedQueryId",
-                          "projectId",
-                          "name",
-                          "query",
-                          "repositoryId",
-                          "createdAt",
-                          "updatedAt",
-                          "revision"
-                        ],
-                        "type": "object"
-                      }
-                    }
-                  },
-                  "resolved": {
-                    "properties": {
-                      "createdAt": {
-                        "format": "date-time",
-                        "type": "string"
-                      },
-                      "name": {
-                        "type": "string"
-                      },
-                      "projectId": {
-                        "$ref": "#/components/schemas/Ulid",
-                        "resolved": {
-                          "format": "ulid",
-                          "type": "string"
-                        }
-                      },
-                      "query": {
-                        "type": "string"
-                      },
-                      "repositoryId": {
-                        "oneOf": [
-                          {
-                            "type": "null"
-                          },
-                          {
-                            "$ref": "#/components/schemas/Ulid",
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "revision": {
-                        "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                        "type": "string"
-                      },
-                      "savedQueryId": {
-                        "$ref": "#/components/schemas/Ulid",
-                        "resolved": {
-                          "format": "ulid",
-                          "type": "string"
-                        }
-                      },
-                      "updatedAt": {
-                        "format": "date-time",
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "savedQueryId",
-                      "projectId",
-                      "name",
-                      "query",
-                      "repositoryId",
-                      "createdAt",
-                      "updatedAt",
-                      "revision"
-                    ],
-                    "type": "object"
-                  }
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "status": "200"
-        }
-      ],
-      "routeName": "savedQueries.v2.get",
-      "sdkRequestType": "void",
-      "sdkResponseType": "ProjectSavedQueryV2Response",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "savedQueries.v3",
-      "method": "GET",
-      "operation": "list",
-      "operationId": "ListProjectSavedQueriesV3",
-      "parameters": [
-        {
-          "in": "path",
-          "name": "projectId",
-          "parameter": {
-            "in": "path",
-            "name": "projectId",
-            "required": true,
-            "schema": {
-              "format": "ulid",
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "format": "ulid",
-            "type": "string"
-          }
-        },
-        {
-          "in": "query",
-          "name": "cursor",
-          "parameter": {
-            "description": "Opaque project-bound continuation cursor. Reload the collection after a 409 response.",
-            "in": "query",
-            "name": "cursor",
-            "schema": {
-              "maxLength": 4096,
-              "type": "string"
-            }
-          },
-          "required": false,
-          "schema": {
-            "maxLength": 4096,
-            "type": "string"
-          }
-        },
-        {
-          "in": "query",
-          "name": "take",
-          "parameter": {
-            "in": "query",
-            "name": "take",
-            "schema": {
-              "default": 100,
-              "format": "int32",
-              "maximum": 500,
-              "minimum": 1,
-              "type": "integer"
-            }
-          },
-          "required": false,
-          "schema": {
-            "default": 100,
-            "format": "int32",
-            "maximum": 500,
-            "minimum": 1,
-            "type": "integer"
-          }
-        }
-      ],
-      "pathTemplate": "/api/v3/projects/{projectId}/saved-queries",
-      "request": {
-        "kind": "void"
-      },
-      "responses": [
-        {
-          "response": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProjectSavedQuerySnapshotPageResponse",
-                  "siblings": {
-                    "resolved": {
-                      "properties": {
-                        "items": {
-                          "items": {
-                            "$ref": "#/components/schemas/ProjectSavedQueryV2Response",
-                            "siblings": {
-                              "resolved": {
-                                "properties": {
-                                  "createdAt": {
-                                    "format": "date-time",
-                                    "type": "string"
-                                  },
-                                  "name": {
-                                    "type": "string"
-                                  },
-                                  "projectId": {
-                                    "$ref": "#/components/schemas/Ulid",
-                                    "siblings": {
-                                      "resolved": {
-                                        "format": "ulid",
-                                        "type": "string"
-                                      }
-                                    },
-                                    "resolved": {
-                                      "format": "ulid",
-                                      "type": "string"
-                                    }
-                                  },
-                                  "query": {
-                                    "type": "string"
-                                  },
-                                  "repositoryId": {
-                                    "oneOf": [
-                                      {
-                                        "type": "null"
-                                      },
-                                      {
-                                        "$ref": "#/components/schemas/Ulid",
-                                        "siblings": {
-                                          "resolved": {
-                                            "format": "ulid",
-                                            "type": "string"
-                                          }
-                                        },
-                                        "resolved": {
-                                          "format": "ulid",
-                                          "type": "string"
-                                        }
-                                      }
-                                    ]
-                                  },
-                                  "revision": {
-                                    "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                                    "type": "string"
-                                  },
-                                  "savedQueryId": {
-                                    "$ref": "#/components/schemas/Ulid",
-                                    "siblings": {
-                                      "resolved": {
-                                        "format": "ulid",
-                                        "type": "string"
-                                      }
-                                    },
-                                    "resolved": {
-                                      "format": "ulid",
-                                      "type": "string"
-                                    }
-                                  },
-                                  "updatedAt": {
-                                    "format": "date-time",
-                                    "type": "string"
-                                  }
-                                },
-                                "required": [
-                                  "savedQueryId",
-                                  "projectId",
-                                  "name",
-                                  "query",
-                                  "repositoryId",
-                                  "createdAt",
-                                  "updatedAt",
-                                  "revision"
-                                ],
-                                "type": "object"
-                              }
-                            },
-                            "resolved": {
-                              "properties": {
-                                "createdAt": {
-                                  "format": "date-time",
-                                  "type": "string"
-                                },
-                                "name": {
-                                  "type": "string"
-                                },
-                                "projectId": {
-                                  "$ref": "#/components/schemas/Ulid",
-                                  "resolved": {
-                                    "format": "ulid",
-                                    "type": "string"
-                                  }
-                                },
-                                "query": {
-                                  "type": "string"
-                                },
-                                "repositoryId": {
-                                  "oneOf": [
-                                    {
-                                      "type": "null"
-                                    },
-                                    {
-                                      "$ref": "#/components/schemas/Ulid",
-                                      "resolved": {
-                                        "format": "ulid",
-                                        "type": "string"
-                                      }
-                                    }
-                                  ]
-                                },
-                                "revision": {
-                                  "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                                  "type": "string"
-                                },
-                                "savedQueryId": {
-                                  "$ref": "#/components/schemas/Ulid",
-                                  "resolved": {
-                                    "format": "ulid",
-                                    "type": "string"
-                                  }
-                                },
-                                "updatedAt": {
-                                  "format": "date-time",
-                                  "type": "string"
-                                }
-                              },
-                              "required": [
-                                "savedQueryId",
-                                "projectId",
-                                "name",
-                                "query",
-                                "repositoryId",
-                                "createdAt",
-                                "updatedAt",
-                                "revision"
-                              ],
-                              "type": "object"
-                            }
-                          },
-                          "type": "array"
-                        },
-                        "nextCursor": {
-                          "description": "Opaque project-bound continuation cursor. It expires shortly; reload after a 409 response.",
-                          "type": [
-                            "string",
-                            "null"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "items"
-                      ],
-                      "type": "object"
-                    },
-                    "siblings": {
-                      "resolved": {
-                        "properties": {
-                          "items": {
-                            "items": {
-                              "$ref": "#/components/schemas/ProjectSavedQueryV2Response",
-                              "siblings": {
-                                "resolved": {
-                                  "properties": {
-                                    "createdAt": {
-                                      "format": "date-time",
-                                      "type": "string"
-                                    },
-                                    "name": {
-                                      "type": "string"
-                                    },
-                                    "projectId": {
-                                      "$ref": "#/components/schemas/Ulid",
-                                      "siblings": {
-                                        "resolved": {
-                                          "format": "ulid",
-                                          "type": "string"
-                                        }
-                                      },
-                                      "resolved": {
-                                        "format": "ulid",
-                                        "type": "string"
-                                      }
-                                    },
-                                    "query": {
-                                      "type": "string"
-                                    },
-                                    "repositoryId": {
-                                      "oneOf": [
-                                        {
-                                          "type": "null"
-                                        },
-                                        {
-                                          "$ref": "#/components/schemas/Ulid",
-                                          "siblings": {
-                                            "resolved": {
-                                              "format": "ulid",
-                                              "type": "string"
-                                            }
-                                          },
-                                          "resolved": {
-                                            "format": "ulid",
-                                            "type": "string"
-                                          }
-                                        }
-                                      ]
-                                    },
-                                    "revision": {
-                                      "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                                      "type": "string"
-                                    },
-                                    "savedQueryId": {
-                                      "$ref": "#/components/schemas/Ulid",
-                                      "siblings": {
-                                        "resolved": {
-                                          "format": "ulid",
-                                          "type": "string"
-                                        }
-                                      },
-                                      "resolved": {
-                                        "format": "ulid",
-                                        "type": "string"
-                                      }
-                                    },
-                                    "updatedAt": {
-                                      "format": "date-time",
-                                      "type": "string"
-                                    }
-                                  },
-                                  "required": [
-                                    "savedQueryId",
-                                    "projectId",
-                                    "name",
-                                    "query",
-                                    "repositoryId",
-                                    "createdAt",
-                                    "updatedAt",
-                                    "revision"
-                                  ],
-                                  "type": "object"
-                                },
-                                "siblings": {
-                                  "resolved": {
-                                    "properties": {
-                                      "createdAt": {
-                                        "format": "date-time",
-                                        "type": "string"
-                                      },
-                                      "name": {
-                                        "type": "string"
-                                      },
-                                      "projectId": {
-                                        "$ref": "#/components/schemas/Ulid",
-                                        "siblings": {
-                                          "resolved": {
-                                            "format": "ulid",
-                                            "type": "string"
-                                          },
-                                          "siblings": {
-                                            "resolved": {
-                                              "format": "ulid",
-                                              "type": "string"
-                                            }
-                                          }
-                                        },
-                                        "resolved": {
-                                          "format": "ulid",
-                                          "type": "string"
-                                        }
-                                      },
-                                      "query": {
-                                        "type": "string"
-                                      },
-                                      "repositoryId": {
-                                        "oneOf": [
-                                          {
-                                            "type": "null"
-                                          },
-                                          {
-                                            "$ref": "#/components/schemas/Ulid",
-                                            "siblings": {
-                                              "resolved": {
-                                                "format": "ulid",
-                                                "type": "string"
-                                              },
-                                              "siblings": {
-                                                "resolved": {
-                                                  "format": "ulid",
-                                                  "type": "string"
-                                                }
-                                              }
-                                            },
-                                            "resolved": {
-                                              "format": "ulid",
-                                              "type": "string"
-                                            }
-                                          }
-                                        ]
-                                      },
-                                      "revision": {
-                                        "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                                        "type": "string"
-                                      },
-                                      "savedQueryId": {
-                                        "$ref": "#/components/schemas/Ulid",
-                                        "siblings": {
-                                          "resolved": {
-                                            "format": "ulid",
-                                            "type": "string"
-                                          },
-                                          "siblings": {
-                                            "resolved": {
-                                              "format": "ulid",
-                                              "type": "string"
-                                            }
-                                          }
-                                        },
-                                        "resolved": {
-                                          "format": "ulid",
-                                          "type": "string"
-                                        }
-                                      },
-                                      "updatedAt": {
-                                        "format": "date-time",
-                                        "type": "string"
-                                      }
-                                    },
-                                    "required": [
-                                      "savedQueryId",
-                                      "projectId",
-                                      "name",
-                                      "query",
-                                      "repositoryId",
-                                      "createdAt",
-                                      "updatedAt",
-                                      "revision"
-                                    ],
-                                    "type": "object"
-                                  }
-                                }
-                              },
-                              "resolved": {
-                                "properties": {
-                                  "createdAt": {
-                                    "format": "date-time",
-                                    "type": "string"
-                                  },
-                                  "name": {
-                                    "type": "string"
-                                  },
-                                  "projectId": {
-                                    "$ref": "#/components/schemas/Ulid",
-                                    "resolved": {
-                                      "format": "ulid",
-                                      "type": "string"
-                                    }
-                                  },
-                                  "query": {
-                                    "type": "string"
-                                  },
-                                  "repositoryId": {
-                                    "oneOf": [
-                                      {
-                                        "type": "null"
-                                      },
-                                      {
-                                        "$ref": "#/components/schemas/Ulid",
-                                        "resolved": {
-                                          "format": "ulid",
-                                          "type": "string"
-                                        }
-                                      }
-                                    ]
-                                  },
-                                  "revision": {
-                                    "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                                    "type": "string"
-                                  },
-                                  "savedQueryId": {
-                                    "$ref": "#/components/schemas/Ulid",
-                                    "resolved": {
-                                      "format": "ulid",
-                                      "type": "string"
-                                    }
-                                  },
-                                  "updatedAt": {
-                                    "format": "date-time",
-                                    "type": "string"
-                                  }
-                                },
-                                "required": [
-                                  "savedQueryId",
-                                  "projectId",
-                                  "name",
-                                  "query",
-                                  "repositoryId",
-                                  "createdAt",
-                                  "updatedAt",
-                                  "revision"
-                                ],
-                                "type": "object"
-                              }
-                            },
-                            "type": "array"
-                          },
-                          "nextCursor": {
-                            "description": "Opaque project-bound continuation cursor. It expires shortly; reload after a 409 response.",
-                            "type": [
-                              "string",
-                              "null"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "items"
-                        ],
-                        "type": "object"
-                      }
-                    }
-                  },
-                  "resolved": {
-                    "properties": {
-                      "items": {
-                        "items": {
-                          "$ref": "#/components/schemas/ProjectSavedQueryV2Response",
-                          "resolved": {
-                            "properties": {
-                              "createdAt": {
-                                "format": "date-time",
-                                "type": "string"
-                              },
-                              "name": {
-                                "type": "string"
-                              },
-                              "projectId": {
-                                "$ref": "#/components/schemas/Ulid",
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              },
-                              "query": {
-                                "type": "string"
-                              },
-                              "repositoryId": {
-                                "oneOf": [
-                                  {
-                                    "type": "null"
-                                  },
-                                  {
-                                    "$ref": "#/components/schemas/Ulid",
-                                    "resolved": {
-                                      "format": "ulid",
-                                      "type": "string"
-                                    }
-                                  }
-                                ]
-                              },
-                              "revision": {
-                                "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                                "type": "string"
-                              },
-                              "savedQueryId": {
-                                "$ref": "#/components/schemas/Ulid",
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              },
-                              "updatedAt": {
-                                "format": "date-time",
-                                "type": "string"
-                              }
-                            },
-                            "required": [
-                              "savedQueryId",
-                              "projectId",
-                              "name",
-                              "query",
-                              "repositoryId",
-                              "createdAt",
-                              "updatedAt",
-                              "revision"
-                            ],
-                            "type": "object"
-                          }
-                        },
-                        "type": "array"
-                      },
-                      "nextCursor": {
-                        "description": "Opaque project-bound continuation cursor. It expires shortly; reload after a 409 response.",
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "items"
-                    ],
-                    "type": "object"
-                  }
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "status": "200"
-        }
-      ],
-      "routeName": "savedQueries.v3.list",
-      "sdkRequestType": "void",
-      "sdkResponseType": "ProjectSavedQuerySnapshotPageResponse",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": [
-          {
-            "name": "cursor",
-            "value": "opaque-snapshot-cursor"
-          },
-          {
-            "name": "take",
-            "value": "100"
           }
         ]
       }
@@ -35446,14 +34443,15 @@
         }
       ],
       "routeName": "savedQueries.update",
-      "sdkRequestType": "ProjectSavedQueryRequest",
+      "sdkRequestType": "UpdateProjectSavedQueryRequest",
       "sdkResponseType": "ProjectSavedQueryResponse",
       "sourceContract": {
         "body": {
           "kind": "json",
           "shape": {
             "name": "Active users",
-            "query": "SELECT * FROM users WHERE active = true"
+            "query": "SELECT * FROM users WHERE active = true",
+            "revision": "opaque-revision"
           }
         },
         "headers": [
@@ -36241,659 +35239,6 @@
           {
             "name": "content-type",
             "value": "application/json"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "savedQueries.v2",
-      "method": "PUT",
-      "operation": "update",
-      "operationId": "UpdateProjectSavedQueryV2",
-      "parameters": [
-        {
-          "in": "header",
-          "name": "Idempotency-Key",
-          "parameter": {
-            "description": "Optional replay key. Provide at most 128 characters and reuse it only when retrying the same request.",
-            "in": "header",
-            "name": "Idempotency-Key",
-            "schema": {
-              "maxLength": 128,
-              "type": "string"
-            }
-          },
-          "required": false,
-          "schema": {
-            "maxLength": 128,
-            "type": "string"
-          }
-        },
-        {
-          "in": "path",
-          "name": "projectId",
-          "parameter": {
-            "in": "path",
-            "name": "projectId",
-            "required": true,
-            "schema": {
-              "format": "ulid",
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "format": "ulid",
-            "type": "string"
-          }
-        },
-        {
-          "in": "path",
-          "name": "savedQueryId",
-          "parameter": {
-            "in": "path",
-            "name": "savedQueryId",
-            "required": true,
-            "schema": {
-              "format": "ulid",
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "format": "ulid",
-            "type": "string"
-          }
-        }
-      ],
-      "pathTemplate": "/api/v2/projects/{projectId}/saved-queries/{savedQueryId}",
-      "request": {
-        "content": [
-          {
-            "mediaType": "application/json",
-            "schema": {
-              "$ref": "#/components/schemas/UpdateProjectSavedQueryV2Request",
-              "siblings": {
-                "resolved": {
-                  "properties": {
-                    "name": {
-                      "maxLength": 120,
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "query": {
-                      "maxLength": 8000,
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "repositoryId": {
-                      "oneOf": [
-                        {
-                          "type": "null"
-                        },
-                        {
-                          "$ref": "#/components/schemas/Ulid",
-                          "siblings": {
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          },
-                          "resolved": {
-                            "format": "ulid",
-                            "type": "string"
-                          }
-                        }
-                      ]
-                    },
-                    "revision": {
-                      "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                      "maxLength": 2048,
-                      "minLength": 1,
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "name",
-                    "query",
-                    "revision"
-                  ],
-                  "type": "object"
-                },
-                "siblings": {
-                  "resolved": {
-                    "properties": {
-                      "name": {
-                        "maxLength": 120,
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "query": {
-                        "maxLength": 8000,
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "repositoryId": {
-                        "oneOf": [
-                          {
-                            "type": "null"
-                          },
-                          {
-                            "$ref": "#/components/schemas/Ulid",
-                            "siblings": {
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              },
-                              "siblings": {
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              }
-                            },
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "revision": {
-                        "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                        "maxLength": 2048,
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name",
-                      "query",
-                      "revision"
-                    ],
-                    "type": "object"
-                  }
-                }
-              },
-              "resolved": {
-                "properties": {
-                  "name": {
-                    "maxLength": 120,
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "query": {
-                    "maxLength": 8000,
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "repositoryId": {
-                    "oneOf": [
-                      {
-                        "type": "null"
-                      },
-                      {
-                        "$ref": "#/components/schemas/Ulid",
-                        "resolved": {
-                          "format": "ulid",
-                          "type": "string"
-                        }
-                      }
-                    ]
-                  },
-                  "revision": {
-                    "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                    "maxLength": 2048,
-                    "minLength": 1,
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "name",
-                  "query",
-                  "revision"
-                ],
-                "type": "object"
-              }
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateProjectSavedQueryV2Request",
-                "siblings": {
-                  "resolved": {
-                    "properties": {
-                      "name": {
-                        "maxLength": 120,
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "query": {
-                        "maxLength": 8000,
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "repositoryId": {
-                        "oneOf": [
-                          {
-                            "type": "null"
-                          },
-                          {
-                            "$ref": "#/components/schemas/Ulid",
-                            "siblings": {
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            },
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "revision": {
-                        "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                        "maxLength": 2048,
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name",
-                      "query",
-                      "revision"
-                    ],
-                    "type": "object"
-                  },
-                  "siblings": {
-                    "resolved": {
-                      "properties": {
-                        "name": {
-                          "maxLength": 120,
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "query": {
-                          "maxLength": 8000,
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        "repositoryId": {
-                          "oneOf": [
-                            {
-                              "type": "null"
-                            },
-                            {
-                              "$ref": "#/components/schemas/Ulid",
-                              "siblings": {
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                },
-                                "siblings": {
-                                  "resolved": {
-                                    "format": "ulid",
-                                    "type": "string"
-                                  }
-                                }
-                              },
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            }
-                          ]
-                        },
-                        "revision": {
-                          "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                          "maxLength": 2048,
-                          "minLength": 1,
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "name",
-                        "query",
-                        "revision"
-                      ],
-                      "type": "object"
-                    }
-                  }
-                },
-                "resolved": {
-                  "properties": {
-                    "name": {
-                      "maxLength": 120,
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "query": {
-                      "maxLength": 8000,
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "repositoryId": {
-                      "oneOf": [
-                        {
-                          "type": "null"
-                        },
-                        {
-                          "$ref": "#/components/schemas/Ulid",
-                          "resolved": {
-                            "format": "ulid",
-                            "type": "string"
-                          }
-                        }
-                      ]
-                    },
-                    "revision": {
-                      "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                      "maxLength": 2048,
-                      "minLength": 1,
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "name",
-                    "query",
-                    "revision"
-                  ],
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "required": true
-        },
-        "required": true
-      },
-      "responses": [
-        {
-          "response": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProjectSavedQueryV2Response",
-                  "siblings": {
-                    "resolved": {
-                      "properties": {
-                        "createdAt": {
-                          "format": "date-time",
-                          "type": "string"
-                        },
-                        "name": {
-                          "type": "string"
-                        },
-                        "projectId": {
-                          "$ref": "#/components/schemas/Ulid",
-                          "siblings": {
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          },
-                          "resolved": {
-                            "format": "ulid",
-                            "type": "string"
-                          }
-                        },
-                        "query": {
-                          "type": "string"
-                        },
-                        "repositoryId": {
-                          "oneOf": [
-                            {
-                              "type": "null"
-                            },
-                            {
-                              "$ref": "#/components/schemas/Ulid",
-                              "siblings": {
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              },
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            }
-                          ]
-                        },
-                        "revision": {
-                          "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                          "type": "string"
-                        },
-                        "savedQueryId": {
-                          "$ref": "#/components/schemas/Ulid",
-                          "siblings": {
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          },
-                          "resolved": {
-                            "format": "ulid",
-                            "type": "string"
-                          }
-                        },
-                        "updatedAt": {
-                          "format": "date-time",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "savedQueryId",
-                        "projectId",
-                        "name",
-                        "query",
-                        "repositoryId",
-                        "createdAt",
-                        "updatedAt",
-                        "revision"
-                      ],
-                      "type": "object"
-                    },
-                    "siblings": {
-                      "resolved": {
-                        "properties": {
-                          "createdAt": {
-                            "format": "date-time",
-                            "type": "string"
-                          },
-                          "name": {
-                            "type": "string"
-                          },
-                          "projectId": {
-                            "$ref": "#/components/schemas/Ulid",
-                            "siblings": {
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              },
-                              "siblings": {
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              }
-                            },
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          },
-                          "query": {
-                            "type": "string"
-                          },
-                          "repositoryId": {
-                            "oneOf": [
-                              {
-                                "type": "null"
-                              },
-                              {
-                                "$ref": "#/components/schemas/Ulid",
-                                "siblings": {
-                                  "resolved": {
-                                    "format": "ulid",
-                                    "type": "string"
-                                  },
-                                  "siblings": {
-                                    "resolved": {
-                                      "format": "ulid",
-                                      "type": "string"
-                                    }
-                                  }
-                                },
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              }
-                            ]
-                          },
-                          "revision": {
-                            "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                            "type": "string"
-                          },
-                          "savedQueryId": {
-                            "$ref": "#/components/schemas/Ulid",
-                            "siblings": {
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              },
-                              "siblings": {
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              }
-                            },
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          },
-                          "updatedAt": {
-                            "format": "date-time",
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "savedQueryId",
-                          "projectId",
-                          "name",
-                          "query",
-                          "repositoryId",
-                          "createdAt",
-                          "updatedAt",
-                          "revision"
-                        ],
-                        "type": "object"
-                      }
-                    }
-                  },
-                  "resolved": {
-                    "properties": {
-                      "createdAt": {
-                        "format": "date-time",
-                        "type": "string"
-                      },
-                      "name": {
-                        "type": "string"
-                      },
-                      "projectId": {
-                        "$ref": "#/components/schemas/Ulid",
-                        "resolved": {
-                          "format": "ulid",
-                          "type": "string"
-                        }
-                      },
-                      "query": {
-                        "type": "string"
-                      },
-                      "repositoryId": {
-                        "oneOf": [
-                          {
-                            "type": "null"
-                          },
-                          {
-                            "$ref": "#/components/schemas/Ulid",
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
-                      "revision": {
-                        "description": "Opaque, resource-bound conditional revision token. Obtain it from a v2 read or list response.",
-                        "type": "string"
-                      },
-                      "savedQueryId": {
-                        "$ref": "#/components/schemas/Ulid",
-                        "resolved": {
-                          "format": "ulid",
-                          "type": "string"
-                        }
-                      },
-                      "updatedAt": {
-                        "format": "date-time",
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "savedQueryId",
-                      "projectId",
-                      "name",
-                      "query",
-                      "repositoryId",
-                      "createdAt",
-                      "updatedAt",
-                      "revision"
-                    ],
-                    "type": "object"
-                  }
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "status": "200"
-        }
-      ],
-      "routeName": "savedQueries.v2.update",
-      "sdkRequestType": "UpdateProjectSavedQueryV2Request",
-      "sdkResponseType": "ProjectSavedQueryV2Response",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "name": "Active users",
-            "query": "SELECT * FROM users WHERE active = true",
-            "revision": "opaque-revision"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
           }
         ],
         "query": []

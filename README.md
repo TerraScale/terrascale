@@ -15,7 +15,7 @@ The SDK uses public versioned TerraScale HTTPS and reactive contracts:
 - The independently deployable C#/.NET 10 `TerraScale.Database` service,
   sourced permanently in `TerraScale.Internals`, owns database, query,
   placement, backup, usage, and reactive routes.
-- TerraBaseV2 is private. The SDK never speaks TBEP, opens a TerraBase
+- TerraBase is private. The SDK never speaks TBEP, opens a TerraBase
   connection, consumes native replication data, or uses NATS.
 
 Dashboard uses this package exactly as an external customer application does.
@@ -148,7 +148,7 @@ await local.close();
 Importing `local` is the opt-in. Root, `admin`, and `better-auth`
 entrypoints never enable SQLite automatically.
 
-The local runtime does not prove TerraBaseV2 replication, RF=2 durability,
+The local runtime does not prove TerraBase replication, RF=2 durability,
 failover, reactive conformance, authorization, usage, billing, external
 providers, or performance. Unsupported operations fail explicitly.
 

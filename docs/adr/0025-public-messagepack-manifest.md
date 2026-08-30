@@ -9,7 +9,7 @@ Date: 2026-08-29
 
 The public reactive protocol needs a versioned, language-neutral contract with
 bounded decoding and stable field positions. Private TBEP and TerraBase
-replication formats must not leak into public clients. TerraBaseV2 owns the
+replication formats must not leak into public clients. TerraBase owns the
 reference semantics and corpus, TerraScale.Database owns the public WebSocket
 contract, and the two SDK repositories own their generated bindings.
 
