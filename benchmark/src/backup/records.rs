@@ -27,6 +27,9 @@
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+use crate::encryption::ArtifactCipher;
 
 use crate::backup::sha256::{Sha256, to_hex};
 use crate::types::{Document, LocalDurability, TenantId};
@@ -181,7 +184,11 @@ fn encode_u32_text(buffer: &mut Vec<u8>, text: &str) {
 /// One staged archive member under construction.
 struct OpenMember {
     name: String,
-    file: File,
+    file: Option<File>,
+    /// Encrypted members are assembled in bounded memory and only written
+    /// after authentication has sealed the complete member. Plain members
+    /// retain the streaming file path used by the compatibility format.
+    plaintext: Vec<u8>,
     hasher: Sha256,
     length: u64,
 }
@@ -198,6 +205,7 @@ pub(crate) struct MemberWriter {
     counter: u64,
     open: Option<OpenMember>,
     sealed: Vec<SealedMember>,
+    encryption: Option<Arc<Mutex<ArtifactCipher>>>,
 }
 
 /// One sealed member: its ordered name, exact length, and SHA-256 digest.
@@ -229,7 +237,31 @@ impl MemberWriter {
     /// Creates a writer that seals members at `bound_bytes` (never splitting
     /// a record) inside `directory`, which the destination already created.
     pub(crate) fn new(directory: PathBuf, bound_bytes: u64) -> Self {
-        Self { directory, bound_bytes, counter: 0, open: None, sealed: Vec::new() }
+        Self {
+            directory,
+            bound_bytes,
+            counter: 0,
+            open: None,
+            sealed: Vec::new(),
+            encryption: None,
+        }
+    }
+
+    /// Creates an encrypted writer. The cipher is shared with the manifest
+    /// sealing step so every envelope uses one caller-owned ordinal stream.
+    pub(crate) fn new_encrypted(
+        directory: PathBuf,
+        bound_bytes: u64,
+        encryption: Arc<Mutex<ArtifactCipher>>,
+    ) -> Self {
+        Self {
+            directory,
+            bound_bytes,
+            counter: 0,
+            open: None,
+            sealed: Vec::new(),
+            encryption: Some(encryption),
+        }
     }
 
     /// Writes one record, rotating members at record boundaries.
@@ -242,13 +274,27 @@ impl MemberWriter {
         if self.open.is_none() {
             let name = format!("member-{:06}", self.counter);
             self.counter += 1;
-            let file = File::create(self.directory.join(&name))?;
-            self.open = Some(OpenMember { name, file, hasher: Sha256::new(), length: 0 });
+            let file = self
+                .encryption
+                .is_none()
+                .then(|| File::create(self.directory.join(&name)))
+                .transpose()?;
+            self.open = Some(OpenMember {
+                name,
+                file,
+                plaintext: Vec::new(),
+                hasher: Sha256::new(),
+                length: 0,
+            });
         }
         let mut encoded = Vec::new();
         encode_into(&mut encoded, record);
         let member = self.open.as_mut().expect("a member is open");
-        member.file.write_all(&encoded)?;
+        if let Some(file) = member.file.as_mut() {
+            file.write_all(&encoded)?;
+        } else {
+            member.plaintext.extend_from_slice(&encoded);
+        }
         member.hasher.update(&encoded);
         member.length += encoded.len() as u64;
         if member.length >= self.bound_bytes {
@@ -271,12 +317,24 @@ impl MemberWriter {
         let Some(member) = self.open.take() else {
             return Ok(());
         };
-        member.file.sync_all()?;
-        self.sealed.push(SealedMember {
-            name: member.name,
-            length: member.length,
-            digest: to_hex(&member.hasher.finish()),
-        });
+        let (length, digest) = if let Some(file) = member.file {
+            file.sync_all()?;
+            (member.length, to_hex(&member.hasher.finish()))
+        } else {
+            let cipher = self.encryption.as_ref().expect("encrypted member cipher");
+            let envelope = cipher
+                .lock()
+                .map_err(|_| std::io::Error::other("encrypted member lock poisoned"))?
+                .seal(&member.plaintext)
+                .map_err(|_| std::io::Error::other("encrypted member sealing failed"))?;
+            let mut file = File::create(self.directory.join(&member.name))?;
+            file.write_all(&envelope)?;
+            file.sync_all()?;
+            let mut hasher = Sha256::new();
+            hasher.update(&envelope);
+            (envelope.len() as u64, to_hex(&hasher.finish()))
+        };
+        self.sealed.push(SealedMember { name: member.name, length, digest });
         Ok(())
     }
 }

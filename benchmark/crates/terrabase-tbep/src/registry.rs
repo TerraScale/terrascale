@@ -1966,6 +1966,29 @@ impl FamilyReadRequest {
         crate::value::check_str_bound(&self.request_codec, 64, "request_codec")?;
         Ok(())
     }
+
+    /// Decodes and validates the canonical v1 protobuf payload, including
+    /// agreement between the outer family and the read operation tag.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`crate::family_codec::FamilyCodecError`] when the codec,
+    /// bytes, payload bounds, or family/read agreement is invalid.
+    pub fn decode_payload(
+        &self,
+    ) -> Result<
+        crate::proto::terrabase::v1::FamilyRequestPayload,
+        crate::family_codec::FamilyCodecError,
+    > {
+        let payload = crate::family_codec::decode_request(&self.request)?;
+        crate::family_codec::validate_request_family(&self.family, &self.request_codec, &payload)?;
+        if crate::family_codec::request_is_write(&payload)? {
+            return Err(crate::family_codec::FamilyCodecError::InvalidField {
+                field: "read.operation",
+            });
+        }
+        Ok(payload)
+    }
 }
 
 /// The `family_read_response` frame body.
@@ -1986,6 +2009,23 @@ impl FamilyReadResponse {
     pub fn validate(&self) -> Result<(), crate::value::BodyError> {
         crate::value::check_str_bound(&self.response_codec, 64, "response_codec")?;
         Ok(())
+    }
+
+    /// Decodes and validates the canonical v1 protobuf response payload.
+    pub fn decode_payload(
+        &self,
+    ) -> Result<
+        crate::proto::terrabase::v1::FamilyResponsePayload,
+        crate::family_codec::FamilyCodecError,
+    > {
+        let payload = crate::family_codec::decode_response(&self.response)?;
+        if self.response_codec != crate::family_codec::RESPONSE_CODEC {
+            return Err(crate::family_codec::FamilyCodecError::CodecMismatch {
+                expected: crate::family_codec::RESPONSE_CODEC,
+                actual: self.response_codec.clone(),
+            });
+        }
+        Ok(payload)
     }
 }
 
@@ -2020,6 +2060,24 @@ impl FamilyWriteRequest {
         crate::value::check_str_bound(&self.operation_id, 128, "operation_id")?;
         Ok(())
     }
+
+    /// Decodes and validates the canonical v1 protobuf payload, including
+    /// agreement between the outer family and the write operation tag.
+    pub fn decode_payload(
+        &self,
+    ) -> Result<
+        crate::proto::terrabase::v1::FamilyRequestPayload,
+        crate::family_codec::FamilyCodecError,
+    > {
+        let payload = crate::family_codec::decode_request(&self.request)?;
+        crate::family_codec::validate_request_family(&self.family, &self.request_codec, &payload)?;
+        if !crate::family_codec::request_is_write(&payload)? {
+            return Err(crate::family_codec::FamilyCodecError::InvalidField {
+                field: "write.operation",
+            });
+        }
+        Ok(payload)
+    }
 }
 
 /// The `family_write_response` frame body.
@@ -2040,6 +2098,23 @@ impl FamilyWriteResponse {
     pub fn validate(&self) -> Result<(), crate::value::BodyError> {
         crate::value::check_str_bound(&self.response_codec, 64, "response_codec")?;
         Ok(())
+    }
+
+    /// Decodes and validates the canonical v1 protobuf response payload.
+    pub fn decode_payload(
+        &self,
+    ) -> Result<
+        crate::proto::terrabase::v1::FamilyResponsePayload,
+        crate::family_codec::FamilyCodecError,
+    > {
+        let payload = crate::family_codec::decode_response(&self.response)?;
+        if self.response_codec != crate::family_codec::RESPONSE_CODEC {
+            return Err(crate::family_codec::FamilyCodecError::CodecMismatch {
+                expected: crate::family_codec::RESPONSE_CODEC,
+                actual: self.response_codec.clone(),
+            });
+        }
+        Ok(payload)
     }
 }
 
@@ -4250,7 +4325,8 @@ mod tests {
 
     #[test]
     fn query_execute_request_rejects_invalid_bounds() {
-        let valid = QueryExecuteRequest { query_id: 1, text: "select *".into(), max_items: 1, level: None };
+        let valid =
+            QueryExecuteRequest { query_id: 1, text: "select *".into(), max_items: 1, level: None };
         assert!(valid.validate().is_ok());
 
         let mut invalid = valid.clone();

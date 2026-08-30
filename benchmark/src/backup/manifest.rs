@@ -24,6 +24,11 @@ use std::io::Read;
 /// The manifest file name inside one recovery-point directory.
 pub(crate) const MANIFEST_FILE: &str = "manifest.tbv2m";
 
+/// Manifest file name for the authenticated current backup format. The
+/// legacy plaintext path above is intentionally retained only for explicit
+/// compatibility reads.
+pub(crate) const ENCRYPTED_MANIFEST_FILE: &str = "manifest.tbv3e";
+
 /// The manifest format header and version.
 ///
 /// Version 3 binds database, partition, and tenant scope identities in

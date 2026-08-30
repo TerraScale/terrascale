@@ -19,7 +19,7 @@
 //! pins the mirror: the encoder's own output is the decoder's test oracle.
 
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Cursor, Read};
 
 use crate::backup::BackupError;
 use crate::backup::records::Record;
@@ -86,7 +86,33 @@ pub(crate) fn decode_member(
     expected_digest: &str,
     on_record: &mut dyn FnMut(&Record, u64) -> Result<(), BackupError>,
 ) -> Result<(), BackupError> {
-    let digest_reader = DigestReader { file, hasher: Sha256::new(), remaining: expected_len };
+    let digest_reader = DigestReader { reader: file, hasher: Sha256::new(), remaining: expected_len };
+    decode_reader(digest_reader, expected_len, Some(expected_digest), on_record)
+}
+
+/// Decodes an authenticated member already held in the bounded encryption
+/// foundation's plaintext window. The encrypted restore path uses this after
+/// `ArtifactCipher::open`; the ciphertext itself is verified separately
+/// against the manifest before decryption.
+pub(crate) fn decode_member_bytes(
+    bytes: Vec<u8>,
+    on_record: &mut dyn FnMut(&Record, u64) -> Result<(), BackupError>,
+) -> Result<(), BackupError> {
+    let expected_len = u64::try_from(bytes.len()).map_err(|_| BackupError::ChecksumMismatch)?;
+    let digest_reader = DigestReader {
+        reader: Cursor::new(bytes),
+        hasher: Sha256::new(),
+        remaining: expected_len,
+    };
+    decode_reader(digest_reader, expected_len, None, on_record)
+}
+
+fn decode_reader<R: Read>(
+    digest_reader: DigestReader<R>,
+    expected_len: u64,
+    expected_digest: Option<&str>,
+    on_record: &mut dyn FnMut(&Record, u64) -> Result<(), BackupError>,
+) -> Result<(), BackupError> {
     let mut reader = BufReader::with_capacity(READ_CHUNK_BYTES, digest_reader);
     {
         let mut cursor = FrameCursor { reader: &mut reader, remaining: expected_len };
@@ -98,7 +124,7 @@ pub(crate) fn decode_member(
         }
     }
     let digest = reader.into_inner().finish();
-    if digest != expected_digest {
+    if expected_digest.is_some_and(|expected| digest != expected) {
         return Err(BackupError::ChecksumMismatch);
     }
     Ok(())
@@ -107,26 +133,26 @@ pub(crate) fn decode_member(
 /// A bounded reader that hashes exactly the manifest-sized prefix consumed by
 /// the decoder. Limiting the underlying reads prevents `BufReader` from
 /// absorbing bytes beyond the member length into the digest.
-struct DigestReader {
-    file: File,
+struct DigestReader<R> {
+    reader: R,
     hasher: Sha256,
     remaining: u64,
 }
 
-impl DigestReader {
+impl<R> DigestReader<R> {
     fn finish(self) -> String {
         to_hex(&self.hasher.finish())
     }
 }
 
-impl Read for DigestReader {
+impl<R: Read> Read for DigestReader<R> {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
         if self.remaining == 0 || buffer.is_empty() {
             return Ok(0);
         }
         let limit = usize::try_from(self.remaining).unwrap_or(usize::MAX);
         let read_limit = buffer.len().min(limit);
-        let read = self.file.read(&mut buffer[..read_limit])?;
+        let read = self.reader.read(&mut buffer[..read_limit])?;
         if read > 0 {
             self.hasher.update(&buffer[..read]);
             self.remaining -= read as u64;

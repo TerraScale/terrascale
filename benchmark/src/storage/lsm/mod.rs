@@ -78,7 +78,7 @@ use super::{
     root::StorageRootId,
 };
 use internal::{Entry, InternalKey};
-use manifest::{ActiveWalManifest, SegmentManifest, WalCheckpoint};
+use manifest::{ActiveWalManifest, ManifestEncryption, SegmentManifest, WalCheckpoint};
 use memtable::MemTable;
 use segment::{SegmentMeta, SegmentReader};
 use wal::WalLog;
@@ -188,6 +188,7 @@ pub(crate) struct LsmStorage {
     metrics: Arc<MetricsRegistry>,
     wal: WalLog,
     segment_encryption: Option<segment::SegmentEncryption>,
+    manifest_encryption: Option<ManifestEncryption>,
     wal_frontier: Option<WalFrontier>,
     memtable: MemTable,
     frozen: Vec<MemTable>,
@@ -292,13 +293,15 @@ impl LsmStorage {
         let key = provider.load_or_create().map_err(|_| LsmOpenError::Unavailable)?;
         let key_version = crate::encryption::DatabaseKeyVersion::from_wire_bytes([0_u8; 16]);
         let segment_encryption =
-            segment::SegmentEncryption::new(owner.clone(), provider, key_version);
+            segment::SegmentEncryption::new(owner.clone(), provider.clone(), key_version);
+        let manifest_encryption = ManifestEncryption::new(owner.clone(), provider, key_version);
         Self::recover(
             dir,
             format.state,
             metrics,
             Some(wal::WalEncryptionConfig { owner, key, key_version }),
             Some(segment_encryption),
+            Some(manifest_encryption),
             false,
         )
     }
@@ -315,7 +318,7 @@ impl LsmStorage {
         if format.created {
             super::root::sync_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
         }
-        Self::recover(dir, format.state, metrics, None, None, true)
+        Self::recover(dir, format.state, metrics, None, None, None, true)
     }
 
     /// Rebuilds engine state from the manifest anchor, the verifying
@@ -332,6 +335,7 @@ impl LsmStorage {
         metrics: Arc<MetricsRegistry>,
         wal_encryption: Option<wal::WalEncryptionConfig>,
         segment_encryption: Option<segment::SegmentEncryption>,
+        manifest_encryption: Option<ManifestEncryption>,
         writes_unavailable: bool,
     ) -> Result<Self, LsmOpenError> {
         let retained_path = dir.join("retained");
@@ -342,6 +346,8 @@ impl LsmStorage {
         };
         let retained_exists = retained_path.try_exists().map_err(|_| LsmOpenError::Unavailable)?;
         let wal_exists = wal_path.try_exists().map_err(|_| LsmOpenError::Unavailable)?;
+        let encrypted_wal = wal_path.metadata().map_or(true, |metadata| metadata.len() == 0)
+            || fs::read(&wal_path).is_ok_and(|bytes| bytes.starts_with(b"TBE1"));
         if active_format.is_some() && (!retained_exists || !wal_exists) {
             return Err(LsmOpenError::FormatMismatch);
         }
@@ -353,7 +359,29 @@ impl LsmStorage {
             // bound; unreadable evidence fails the open (GAP-S1 D3).
             return Err(LsmOpenError::FormatMismatch);
         }
-        let read_manifest = if active_format.is_some() {
+        let encrypted_manifest = SegmentManifest::has_encrypted_bytes(dir, active_format.is_some())
+            .map_err(|error| {
+                if error.kind() == std::io::ErrorKind::InvalidData {
+                    LsmOpenError::FormatMismatch
+                } else {
+                    LsmOpenError::Unavailable
+                }
+            })?;
+        let manifest_exists = if active_format.is_some() {
+            dir.join("MANIFEST.active").exists() || dir.join("MANIFEST").exists()
+        } else {
+            dir.join("MANIFEST").exists()
+        };
+        let use_encrypted_manifest = manifest_encryption.is_some()
+            && (active_format.is_some() || encrypted_wal || encrypted_manifest);
+        let read_manifest = if use_encrypted_manifest {
+            let encryption = manifest_encryption.as_ref().ok_or(LsmOpenError::FormatMismatch)?;
+            if active_format.is_some() {
+                SegmentManifest::read_active_with_encryption(dir, encryption)
+            } else {
+                SegmentManifest::read_with_encryption(dir, encryption)
+            }
+        } else if active_format.is_some() {
             SegmentManifest::read_active(dir)
         } else {
             SegmentManifest::read(dir)
@@ -376,9 +404,10 @@ impl LsmStorage {
         // A local compatibility location has a legacy plaintext WAL; only a
         // WAL that is already envelope-formatted activates encrypted segment
         // reads. Fresh empty WALs are encrypted by the Engine open seam.
-        let encrypted_wal = wal_path.metadata().map_or(true, |metadata| metadata.len() == 0)
-            || fs::read(&wal_path).is_ok_and(|bytes| bytes.starts_with(b"TBE1"));
         let segment_encryption = segment_encryption.filter(|_| encrypted_wal);
+        if manifest_exists && encrypted_manifest != encrypted_wal {
+            return Err(LsmOpenError::FormatMismatch);
+        }
         let mut readers: BTreeMap<u64, RefCell<SegmentReader>> = BTreeMap::new();
         let mut segment_documents: Vec<Entry> = Vec::new();
         for meta in &manifest.segments {
@@ -488,6 +517,7 @@ impl LsmStorage {
             metrics,
             wal,
             segment_encryption,
+            manifest_encryption,
             wal_frontier,
             memtable: MemTable::default(),
             frozen: Vec::new(),
@@ -2883,7 +2913,14 @@ impl StoragePort for LsmStorage {
         activated_manifest.epoch = activated_manifest.epoch.saturating_add(1);
         activated_manifest.active_wal =
             Some(ActiveWalManifest { live_epoch: wal_epoch, checkpoint: None });
-        if activated_manifest.publish_activation(&self.dir, &mut self.faults).is_err() {
+        if activated_manifest
+            .publish_activation_with_encryption(
+                &self.dir,
+                &mut self.faults,
+                self.manifest_encryption.as_ref(),
+            )
+            .is_err()
+        {
             self.frontier_poisoned = true;
             return Err(LedgerFrontierActivationError::StorageUnavailable);
         }
@@ -3071,7 +3108,10 @@ impl LsmStorage {
         if self.faults.fire(FaultPoint::CompactionCheckpointPublish).is_err() {
             return Err(());
         }
-        if candidate.publish(&self.dir).is_err() {
+        if candidate
+            .publish_with_encryption(&self.dir, self.manifest_encryption.as_ref())
+            .is_err()
+        {
             self.frontier_poisoned = true;
             return Err(());
         }

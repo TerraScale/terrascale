@@ -120,8 +120,6 @@ pub const MAX_INFLIGHT_OPERATIONS: usize = 128;
 /// that keeps a slow stream consumer from pinning engine memory.
 pub const OUTBOUND_DEPTH: usize = 64;
 
-const DEFAULT_QUERY_MAX_ITEMS: u32 = registry::MAX_LIST_ITEMS as u32;
-
 const MAX_SYNC_TOKEN_BYTES: usize = 1057;
 const MAX_PEER_CERT_BYTES: usize = 1 << 20;
 
@@ -286,6 +284,7 @@ pub struct TbepGrpcHandle {
     completion: Option<std::sync::mpsc::Receiver<std::io::Result<()>>>,
     shutdown_grace: Duration,
     inflight: Arc<AtomicUsize>,
+    background: Arc<AtomicUsize>,
     draining: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -361,7 +360,9 @@ impl TbepGrpcHandle {
     }
 
     fn wait_for_inflight(&self, deadline: Instant) -> std::io::Result<()> {
-        while self.inflight.load(Ordering::Acquire) != 0 {
+        while self.inflight.load(Ordering::Acquire) != 0
+            || self.background.load(Ordering::Acquire) != 0
+        {
             let now = Instant::now();
             if now >= deadline {
                 return Err(std::io::Error::new(
@@ -422,6 +423,7 @@ pub struct TbepGrpcServer {
     region: MetricRegion,
     frames_served: AtomicU64,
     inflight: Arc<AtomicUsize>,
+    background: Arc<AtomicUsize>,
     draining: Arc<std::sync::atomic::AtomicBool>,
     active_queries: Arc<Mutex<BTreeSet<(registry::BoundScope, u64)>>>,
 }
@@ -465,6 +467,7 @@ impl TbepGrpcServer {
             region,
             frames_served: AtomicU64::new(0),
             inflight: Arc::new(AtomicUsize::new(0)),
+            background: Arc::new(AtomicUsize::new(0)),
             draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             active_queries: Arc::new(Mutex::new(BTreeSet::new())),
         }
@@ -503,6 +506,7 @@ impl TbepGrpcServer {
             key,
             host: Arc::clone(&self.host),
             scope: scope.clone(),
+            background: Arc::clone(&self.background),
         }))
     }
 
@@ -704,6 +708,7 @@ impl TbepGrpcServer {
             completion: Some(completion),
             shutdown_grace: self.config.shutdown_grace(),
             inflight: Arc::clone(&self.inflight),
+            background: Arc::clone(&self.background),
             draining: Arc::clone(&self.draining),
         })
     }
@@ -865,6 +870,7 @@ impl TbepGrpcServer {
             completion: Some(completion),
             shutdown_grace: self.config.shutdown_grace(),
             inflight: Arc::clone(&self.inflight),
+            background: Arc::clone(&self.background),
             draining: Arc::clone(&self.draining),
         })
     }
@@ -1023,6 +1029,7 @@ struct QueryLifecycle {
     key: (registry::BoundScope, u64),
     host: Arc<dyn TbepHost>,
     scope: registry::BoundScope,
+    background: Arc<AtomicUsize>,
 }
 
 impl Drop for QueryLifecycle {
@@ -1085,10 +1092,13 @@ impl QueryLifecycle {
             return;
         }
 
+        self.background.fetch_add(1, Ordering::AcqRel);
+        let background_permit = Permit(Arc::clone(&self.background));
         let lifecycle = Arc::clone(self);
         if std::thread::Builder::new()
             .name("tbep-query-cancel".into())
             .spawn(move || {
+                let _background_permit = background_permit;
                 let request = registry::QueryCancelRequest { query_id: lifecycle.key.1 };
                 let _ = lifecycle.host.query_cancel(&lifecycle.scope, &request);
                 lifecycle.cancel_finished();
@@ -2502,11 +2512,7 @@ impl EngineService for Arc<TbepGrpcServer> {
         self.counted();
         let identity = self.identity(&request)?;
         let message = request.into_inner();
-        let max_items = match message.max_items {
-            0 => DEFAULT_QUERY_MAX_ITEMS,
-            value if value <= DEFAULT_QUERY_MAX_ITEMS => value,
-            _ => return Err(conversion_error("query max_items exceeds the response list bound")),
-        };
+        let max_items = message.max_items;
         let domain = registry::QueryExecuteRequest {
             query_id: message.query_id,
             text: message.text,

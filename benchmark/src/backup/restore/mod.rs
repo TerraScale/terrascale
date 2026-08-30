@@ -102,16 +102,19 @@ mod tests;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use decode::decode_member;
+use decode::{decode_member, decode_member_bytes};
 
 use crate::backup::manifest::point_directory;
+use crate::backup::manifest::ENCRYPTED_MANIFEST_FILE;
 use crate::backup::records::Record;
 use crate::backup::{
     BackupError, BackupKind, BackupManifest, RestorePlan, discover_points, select_latest_chain,
     validate_chain_frontier,
 };
+use crate::encryption::ArtifactCipher;
 use crate::storage::{
     CommitIntent, CommitResult, FileStorage, StagedWrite, StoragePort, write_set_digest,
 };
@@ -189,6 +192,90 @@ fn resolve_chain(
     }
     validate_chain_frontier(&chain)?;
     Ok(chain)
+}
+
+/// Resolves a chain whose manifest and members use the authenticated current
+/// backup format. Encrypted points are deliberately a separate namespace from
+/// the legacy plaintext reader, so a mixed destination cannot be accepted.
+fn resolve_encrypted_chain(
+    destination: &Path,
+    cipher: &ArtifactCipher,
+    selection: &Selection,
+) -> Result<Vec<BackupManifest>, BackupError> {
+    let points = discover_encrypted_points(destination, cipher)?;
+    let head = match selection {
+        Selection::Latest => points
+            .iter()
+            .max_by(|left, right| {
+                (left.boundary_sequence().get(), left.identity())
+                    .cmp(&(right.boundary_sequence().get(), right.identity()))
+            })
+            .ok_or(BackupError::ChainIncomplete)?,
+        Selection::Point { identity } => points
+            .iter()
+            .find(|point| point.identity() == identity)
+            .ok_or(BackupError::ChainIncomplete)?,
+    };
+    let mut chain = vec![head.clone()];
+    let mut visited = BTreeSet::from([head.identity().to_owned()]);
+    while let Some(base) = chain.last().and_then(BackupManifest::base_sequence) {
+        let link = points
+            .iter()
+            .filter(|point| point.boundary_sequence() == base && !visited.contains(point.identity()))
+            .min_by(|left, right| {
+                (usize::from(left.base_sequence().is_some()), left.identity())
+                    .cmp(&(usize::from(right.base_sequence().is_some()), right.identity()))
+            })
+            .ok_or(BackupError::ChainIncomplete)?;
+        visited.insert(link.identity().to_owned());
+        chain.push(link.clone());
+    }
+    chain.reverse();
+    validate_chain_frontier(&chain)?;
+    Ok(chain)
+}
+
+fn discover_encrypted_points(
+    destination: &Path,
+    cipher: &ArtifactCipher,
+) -> Result<Vec<BackupManifest>, BackupError> {
+    let entries = std::fs::read_dir(destination).map_err(|_| BackupError::ChainIncomplete)?;
+    let mut points = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|_| BackupError::ChainIncomplete)?;
+        let name = entry.file_name();
+        let Some(identity) = name.to_str().and_then(|name| name.strip_prefix("rp-")) else {
+            continue;
+        };
+        if crate::backup::manifest::validate_identity(identity).is_err() {
+            continue;
+        }
+        let point = entry.path();
+        let metadata = std::fs::symlink_metadata(&point)
+            .map_err(|_| BackupError::ChainIncomplete)?;
+        if !metadata.file_type().is_dir() {
+            return Err(BackupError::ChainIncomplete);
+        }
+        let manifest_path = point.join(ENCRYPTED_MANIFEST_FILE);
+        let metadata = std::fs::symlink_metadata(&manifest_path)
+            .map_err(|_| BackupError::ChainIncomplete)?;
+        if !metadata.file_type().is_file() {
+            return Err(BackupError::ChainIncomplete);
+        }
+        let mut envelope = Vec::new();
+        File::open(&manifest_path)
+            .map_err(|_| BackupError::ChainIncomplete)?
+            .take((crate::encryption::MAX_PLAINTEXT_BYTES + 4096) as u64)
+            .read_to_end(&mut envelope)
+            .map_err(|_| BackupError::ChainIncomplete)?;
+        let bytes = cipher.open(&envelope).map_err(|_| BackupError::ChecksumMismatch)?;
+        let manifest = BackupManifest::decode(&bytes)?;
+        if manifest.identity() != identity {
+            return Err(BackupError::ManifestInvalid);
+        }
+        points.push(manifest);
+    }
+    Ok(points)
 }
 
 /// Walks one selected head down to its chain root, preferring a chain root
@@ -716,6 +803,17 @@ impl RestorePlan {
         execute_restore(destination, target, &Selection::Latest)
     }
 
+    /// Restores the newest encrypted recovery-point chain using the caller's
+    /// authenticated backup cipher. Plaintext and encrypted point namespaces
+    /// are intentionally not interchangeable.
+    pub fn restore_latest_encrypted(
+        destination: &Path,
+        target: &Path,
+        cipher: &ArtifactCipher,
+    ) -> Result<RecoveryReceipt, BackupError> {
+        execute_restore_encrypted(destination, target, &Selection::Latest, cipher)
+    }
+
     /// Restores exactly the named sealed recovery point, consuming the
     /// chain down to and including it (PB-6015/PB-6016).
     ///
@@ -736,6 +834,22 @@ impl RestorePlan {
         crate::backup::manifest::validate_identity(identity)?;
         execute_restore(destination, target, &Selection::Point { identity: identity.to_owned() })
     }
+
+    /// Restores one named encrypted recovery point and its predecessor chain.
+    pub fn restore_recovery_point_encrypted(
+        identity: &str,
+        destination: &Path,
+        target: &Path,
+        cipher: &ArtifactCipher,
+    ) -> Result<RecoveryReceipt, BackupError> {
+        crate::backup::manifest::validate_identity(identity)?;
+        execute_restore_encrypted(
+            destination,
+            target,
+            &Selection::Point { identity: identity.to_owned() },
+            cipher,
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -754,6 +868,28 @@ fn execute_restore(
     admit_target(target)?;
     let staging = StagingDir::create(target)?;
     let outcome = build_and_verify(&staging, destination, &chain)
+        .and_then(|run| publish(&staging, target).map(|()| run));
+    match outcome {
+        Ok(run) => Ok(receipt(&chain, run)),
+        Err(error) => {
+            staging.discard();
+            Err(error)
+        }
+    }
+}
+
+/// Encrypted counterpart of [`execute_restore`]. Manifest and member bytes
+/// are authenticated before any archive record is parsed or published.
+fn execute_restore_encrypted(
+    destination: &Path,
+    target: &Path,
+    selection: &Selection,
+    cipher: &ArtifactCipher,
+) -> Result<RecoveryReceipt, BackupError> {
+    let chain = resolve_encrypted_chain(destination, cipher, selection)?;
+    admit_target(target)?;
+    let staging = StagingDir::create(target)?;
+    let outcome = build_and_verify_encrypted(&staging, destination, &chain, cipher)
         .and_then(|run| publish(&staging, target).map(|()| run));
     match outcome {
         Ok(run) => Ok(receipt(&chain, run)),
@@ -867,7 +1003,23 @@ fn build_and_verify(
     let mut storage =
         FileStorage::open(staging.path()).map_err(|_| BackupError::DestinationUnavailable)?;
     let mut replay = Replay::new();
-    replay.chain(&mut storage, destination, chain)?;
+    replay.chain(&mut storage, destination, chain, None)?;
+    storage.flush().map_err(|()| BackupError::DestinationUnavailable)?;
+    drop(storage);
+    let verification = verify_staging(staging.path(), &replay)?;
+    Ok(replay.into_facts(verification))
+}
+
+fn build_and_verify_encrypted(
+    staging: &StagingDir,
+    destination: &Path,
+    chain: &[BackupManifest],
+    cipher: &ArtifactCipher,
+) -> Result<RunFacts, BackupError> {
+    let mut storage =
+        FileStorage::open(staging.path()).map_err(|_| BackupError::DestinationUnavailable)?;
+    let mut replay = Replay::new();
+    replay.chain(&mut storage, destination, chain, Some(cipher))?;
     storage.flush().map_err(|()| BackupError::DestinationUnavailable)?;
     drop(storage);
     let verification = verify_staging(staging.path(), &replay)?;
@@ -952,6 +1104,7 @@ impl Replay {
         storage: &mut FileStorage,
         destination: &Path,
         chain: &[BackupManifest],
+        cipher: Option<&ArtifactCipher>,
     ) -> Result<(), BackupError> {
         for link in chain {
             let expected_tenants: BTreeMap<_, _> = link
@@ -974,12 +1127,24 @@ impl Replay {
                 // Manifest validation admits only canonical member names,
                 // so the joined path stays inside the point's directory.
                 let path = destination.join(point_directory(link.identity())).join(member.name());
-                let file = open_member(&path, member.length())?;
-                decode_member(
-                    file,
-                    member.length(),
-                    member.digest(),
-                    &mut |record, frame_bytes| {
+                let mut file = open_member(&path, member.length())?;
+                if let Some(cipher) = cipher {
+                    // The manifest binds the ciphertext length and digest;
+                    // only after those checks does the cipher authenticate
+                    // and expose the bounded plaintext member.
+                    if member.length() > (crate::encryption::MAX_PLAINTEXT_BYTES as u64 + 4096) {
+                        return Err(BackupError::ChecksumMismatch);
+                    }
+                    let mut envelope = Vec::with_capacity(member.length() as usize);
+                    file.read_to_end(&mut envelope)
+                        .map_err(|_| BackupError::ChainIncomplete)?;
+                    if !member.matches_bytes(&envelope) {
+                        return Err(BackupError::ChecksumMismatch);
+                    }
+                    let plaintext = cipher
+                        .open(&envelope)
+                        .map_err(|_| BackupError::ChecksumMismatch)?;
+                    decode_member_bytes(plaintext, &mut |record, frame_bytes| {
                         let tenant = match record {
                             Record::Document { tenant, .. } | Record::Delete { tenant, .. } => {
                                 tenant
@@ -989,8 +1154,23 @@ impl Replay {
                             return Err(BackupError::ChecksumMismatch);
                         }
                         self.apply(storage, record, frame_bytes, &mut counts)
-                    },
-                )?;
+                    })?;
+                } else {
+                    decode_member(
+                        file,
+                        member.length(),
+                        member.digest(),
+                        &mut |record, frame_bytes| {
+                            let tenant = match record {
+                                Record::Document { tenant, .. } | Record::Delete { tenant, .. } => tenant,
+                            };
+                            if !link.tenants().iter().any(|bound| bound.tenant() == tenant) {
+                                return Err(BackupError::ChecksumMismatch);
+                            }
+                            self.apply(storage, record, frame_bytes, &mut counts)
+                        },
+                    )?;
+                }
             }
             // The decoded frames must reproduce the manifest's bound facts
             // exactly; a divergence is a content failure, never a success.

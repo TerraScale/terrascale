@@ -497,7 +497,7 @@ async fn bounds_fail_closed_before_the_host_runs() {
 }
 
 #[tokio::test]
-async fn query_max_items_uses_the_list_default_and_rejects_oversized_pages() {
+async fn query_max_items_rejects_zero_and_oversized_pages() {
     let socket = socket_path("query-bounds");
     let server = Arc::new(TbepGrpcServer::new(
         Arc::new(FixedHost { feed: Mutex::new(None) }) as Arc<dyn TbepHost>,
@@ -507,7 +507,7 @@ async fn query_max_items_uses_the_list_default_and_rejects_oversized_pages() {
     let channel = connect(socket.clone()).await;
     let mut engine = EngineServiceClient::new(channel);
 
-    let defaulted = engine
+    let status = engine
         .query_execute(identified(pb::EngineServiceQueryExecuteRequest {
             query_id: 1,
             text: "from orders".into(),
@@ -515,8 +515,9 @@ async fn query_max_items_uses_the_list_default_and_rejects_oversized_pages() {
             level: 0,
         }))
         .await
-        .expect("zero max_items uses the bounded default");
-    assert!(defaulted.into_inner().documents.is_empty());
+        .expect_err("zero max_items is outside the closed request bound");
+    assert_eq!(status.code(), tonic::Code::InvalidArgument);
+    assert_eq!(tbep_code(&status), Some(pb::ErrorCode::InvalidRequest));
 
     let status = engine
         .query_execute(identified(pb::EngineServiceQueryExecuteRequest {

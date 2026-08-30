@@ -68,7 +68,10 @@ pub(super) fn flush_frozen(storage: &mut LsmStorage) -> Vec<SegmentMeta> {
         return written;
     }
     candidate.epoch = candidate.epoch.saturating_add(1);
-    if candidate.publish(&dir).is_err() {
+    if candidate
+        .publish_with_encryption(&dir, storage.manifest_encryption.as_ref())
+        .is_err()
+    {
         return Vec::new();
     }
     for (id, reader) in readers {
@@ -145,7 +148,11 @@ pub(super) fn merge_l0(storage: &mut LsmStorage) -> Option<(u64, u64)> {
     storage.manifest.segments.retain(|meta| !removed.contains(&meta.id));
     storage.manifest.segments.push(meta);
     storage.manifest.epoch += 1;
-    if storage.manifest.publish(&dir).is_err() {
+    if storage
+        .manifest
+        .publish_with_encryption(&dir, storage.manifest_encryption.as_ref())
+        .is_err()
+    {
         // Keep the in-memory view aligned with the durable manifest. The
         // output was written before publication, so a failed rename must not
         // make this process serve an unreferenced segment or report a merge

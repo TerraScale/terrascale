@@ -99,13 +99,14 @@ pub use restore::RecoveryReceipt;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use manifest::{MANIFEST_FILE, ManifestFacts, point_directory};
+use manifest::{ENCRYPTED_MANIFEST_FILE, MANIFEST_FILE, ManifestFacts, point_directory};
 use records::{MemberWriter, Record};
 use sha256::digest_file;
 
+use crate::encryption::ArtifactCipher;
 use crate::engine::{Engine, MAX_SNAPSHOT_RECORD_PAGE};
 use crate::replication::SharedTombstoneRetention;
 use crate::storage::{PublishedCommit, PublishedWrite};
@@ -177,6 +178,9 @@ pub struct BackupPlan {
     progress: Option<Arc<dyn Fn(BackupProgress) + Send + Sync>>,
     cancellation: Option<Arc<Cancellation>>,
     retention: Option<SharedTombstoneRetention>,
+    /// Explicit opt-in encryption for the current backup format. Plaintext
+    /// output remains available only through the legacy-compatible builder.
+    encryption: Option<Arc<Mutex<ArtifactCipher>>>,
 }
 
 impl BackupPlan {
@@ -193,6 +197,7 @@ impl BackupPlan {
             progress: None,
             cancellation: None,
             retention: None,
+            encryption: None,
         }
     }
 
@@ -274,6 +279,20 @@ impl BackupPlan {
     #[must_use]
     pub fn with_retention(mut self, retention: SharedTombstoneRetention) -> Self {
         self.retention = Some(retention);
+        self
+    }
+
+    /// Enables authenticated encryption for every member and the manifest.
+    ///
+    /// The cipher (including its ordinal state) is caller-owned. A caller
+    /// that may restart between runs must persist the next ordinal returned
+    /// by its reservation policy before publishing a backup, as required by
+    /// [`crate::encryption::ArtifactCipher`]. Encrypted recovery points use a
+    /// distinct current-format manifest name and are never discovered by the
+    /// plaintext compatibility reader.
+    #[must_use]
+    pub fn with_encryption(mut self, cipher: ArtifactCipher) -> Self {
+        self.encryption = Some(Arc::new(Mutex::new(cipher)));
         self
     }
 }
@@ -737,7 +756,14 @@ fn execute(
     let boundary = resolve_boundary(engine, &mut state, plan, destination, &tenants)?;
 
     let effective_start = effective_history_start(engine, plan)?;
-    let mut writer = MemberWriter::new(staging.path().to_owned(), plan.member_bound_bytes);
+    let mut writer = match &plan.encryption {
+        Some(cipher) => MemberWriter::new_encrypted(
+            staging.path().to_owned(),
+            plan.member_bound_bytes,
+            Arc::clone(cipher),
+        ),
+        None => MemberWriter::new(staging.path().to_owned(), plan.member_bound_bytes),
+    };
     // Bind the complete selected scope even when a tenant contributes no
     // records to this particular range. Object-store chain planners use the
     // manifest scope to detect a requested tenant that is absent from the
@@ -796,6 +822,7 @@ fn execute(
         engine.database_id().to_text(),
         destination,
         staging,
+        plan.encryption.as_ref(),
     )
 }
 
@@ -1137,6 +1164,7 @@ fn seal_run(
     database_id: String,
     destination: &Path,
     staging: &StagingDir,
+    encryption: Option<&Arc<Mutex<ArtifactCipher>>>,
 ) -> Result<BackupResult, BackupError> {
     state.observe(BackupStep::WritingArchive)?;
     let sealed = writer.finish().map_err(|_| BackupError::DestinationUnavailable)?;
@@ -1167,7 +1195,16 @@ fn seal_run(
     };
     let manifest = BackupManifest::assemble(facts);
     let identity = manifest.identity().to_owned();
-    seal_point(destination, staging, &manifest)?;
+    let encrypted_manifest = encryption
+        .map(|cipher| {
+            cipher
+                .lock()
+                .map_err(|_| BackupError::DestinationUnavailable)?
+                .seal(manifest.render().as_bytes())
+                .map_err(|_| BackupError::DestinationUnavailable)
+        })
+        .transpose()?;
+    seal_point(destination, staging, &manifest, encrypted_manifest.as_deref())?;
     let archive = BackupArchive::new(identity, members);
     Ok(BackupResult::new(manifest, archive, state.skipped.clone(), state.source_reads))
 }
@@ -1255,16 +1292,21 @@ fn seal_point(
     destination: &Path,
     staging: &StagingDir,
     manifest: &BackupManifest,
+    encrypted_manifest: Option<&[u8]>,
 ) -> Result<(), BackupError> {
     let point = destination.join(point_directory(manifest.identity()));
-    if point.join(MANIFEST_FILE).is_file() {
+    let manifest_file = encrypted_manifest.map_or(MANIFEST_FILE, |_| ENCRYPTED_MANIFEST_FILE);
+    if point.join(manifest_file).is_file() {
         // Idempotent retry: the identical recovery point is already
         // sealed, and a second run must not mint a second one.
-        let existing = load_point_manifest(&point)?;
-        if existing == *manifest {
+        let existing = std::fs::read(point.join(manifest_file))
+            .map_err(|_| BackupError::DestinationUnavailable)?;
+        let expected =
+            encrypted_manifest.map_or_else(|| manifest.render().into_bytes(), <[u8]>::to_vec);
+        if existing == expected {
             return Ok(());
         }
-        return Err(BackupError::ManifestInvalid);
+        return Err(BackupError::ChecksumMismatch);
     }
     if point.is_dir() {
         // An `rp-<identity>` directory with no sealed manifest is an unsealed
@@ -1279,8 +1321,10 @@ fn seal_point(
         std::fs::rename(staging.path().join(member.name()), candidate.join(member.name()))
             .map_err(|_| BackupError::DestinationUnavailable)?;
     }
-    let candidate_manifest = candidate.join(MANIFEST_FILE);
-    std::fs::write(&candidate_manifest, manifest.render())
+    let candidate_manifest = candidate.join(manifest_file);
+    let manifest_bytes =
+        encrypted_manifest.map_or_else(|| manifest.render().into_bytes(), <[u8]>::to_vec);
+    std::fs::write(&candidate_manifest, manifest_bytes)
         .and_then(|()| {
             let file = std::fs::File::open(&candidate_manifest)?;
             file.sync_all()
@@ -1289,14 +1333,17 @@ fn seal_point(
     let _ = std::fs::File::open(&candidate).and_then(|directory| directory.sync_all());
     match std::fs::rename(&candidate, &point) {
         Ok(()) => {}
-        Err(_) if point.join(MANIFEST_FILE).is_file() => {
+        Err(_) if point.join(manifest_file).is_file() => {
             // Another run sealed the same content-derived identity first;
             // the same identity binds the same facts.
-            let existing = load_point_manifest(&point)?;
-            if existing == *manifest {
+            let existing = std::fs::read(point.join(manifest_file))
+                .map_err(|_| BackupError::DestinationUnavailable)?;
+            let expected =
+                encrypted_manifest.map_or_else(|| manifest.render().into_bytes(), <[u8]>::to_vec);
+            if existing == expected {
                 return Ok(());
             }
-            return Err(BackupError::ManifestInvalid);
+            return Err(BackupError::ChecksumMismatch);
         }
         Err(_) => return Err(BackupError::DestinationUnavailable),
     }

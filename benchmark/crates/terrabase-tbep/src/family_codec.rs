@@ -52,6 +52,11 @@ pub enum FamilyCodecError {
         /// Codec identifier presented by the outer request.
         actual: String,
     },
+    /// A DTO field violates a family operation's semantic bounds.
+    InvalidField {
+        /// Field name that failed validation.
+        field: &'static str,
+    },
 }
 
 impl std::fmt::Display for FamilyCodecError {
@@ -69,6 +74,7 @@ impl std::fmt::Display for FamilyCodecError {
             Self::CodecMismatch { expected, actual } => {
                 write!(f, "family codec is {actual}, expected {expected}")
             }
+            Self::InvalidField { field } => write!(f, "invalid family payload field {field}"),
         }
     }
 }
@@ -112,37 +118,383 @@ fn bounded_decode<M: Message + Default>(
     Ok(message)
 }
 
+fn invalid(field: &'static str) -> FamilyCodecError {
+    FamilyCodecError::InvalidField { field }
+}
+
+fn identifier(value: &str, field: &'static str) -> Result<(), FamilyCodecError> {
+    if value.is_empty()
+        || value.len() > 255
+        || value != value.trim()
+        || value.chars().any(char::is_control)
+    {
+        return Err(invalid(field));
+    }
+    Ok(())
+}
+
+fn bounded_list<T>(value: &[T], field: &'static str) -> Result<(), FamilyCodecError> {
+    if value.len() > registry::MAX_LIST_ITEMS { Err(invalid(field)) } else { Ok(()) }
+}
+
+fn validate_expected(value: Option<&pb::ExpectedVersion>) -> Result<(), FamilyCodecError> {
+    if value.is_some_and(|value| value.discipline.is_none()) {
+        Err(invalid("expected"))
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_value(value: Option<&pb::Value>, depth: usize) -> Result<(), FamilyCodecError> {
+    let Some(value) = value else {
+        return Err(invalid("value"));
+    };
+    if depth > 64 {
+        return Err(invalid("value.depth"));
+    }
+    match value.kind.as_ref() {
+        Some(pb::value::Kind::Number(number)) if !number.is_finite() => {
+            Err(invalid("value.number"))
+        }
+        Some(pb::value::Kind::List(items)) => {
+            bounded_list(&items.items, "value.list")?;
+            for item in &items.items {
+                validate_value(Some(item), depth + 1)?;
+            }
+            Ok(())
+        }
+        Some(pb::value::Kind::Map(map)) => {
+            bounded_list(&map.entries, "value.map")?;
+            let mut previous = None;
+            for entry in &map.entries {
+                identifier(&entry.name, "value.map.name")?;
+                if previous.is_some_and(|previous: &str| previous >= entry.name.as_str()) {
+                    return Err(invalid("value.map.order"));
+                }
+                previous = Some(entry.name.as_str());
+                validate_value(entry.value.as_ref(), depth + 1)?;
+            }
+            Ok(())
+        }
+        Some(_) => Ok(()),
+        None => Err(invalid("value")),
+    }
+}
+
+fn validate_request_payload(payload: &pb::FamilyRequestPayload) -> Result<(), FamilyCodecError> {
+    use pb::family_request_payload::Operation;
+    let Some(operation) = payload.operation.as_ref() else {
+        return Err(FamilyCodecError::MissingVariant { payload: "FamilyRequestPayload" });
+    };
+    match operation {
+        Operation::AttachmentRead(value) => identifier(&value.document, "document")?,
+        Operation::CounterRead(value) => {
+            identifier(&value.document, "document")?;
+            bounded_list(&value.names, "names")?;
+            for name in &value.names {
+                identifier(name, "names")?;
+            }
+        }
+        Operation::TimeSeriesRead(value) => {
+            identifier(&value.document, "document")?;
+            identifier(&value.name, "name")?;
+            if value.range_start.zip(value.range_end).is_some_and(|(start, end)| start > end) {
+                return Err(invalid("range"));
+            }
+            if value.limit.is_some_and(|limit| {
+                limit == 0
+                    || usize::try_from(limit).unwrap_or(usize::MAX) > registry::MAX_LIST_ITEMS
+            }) {
+                return Err(invalid("limit"));
+            }
+        }
+        Operation::RevisionRead(value) => {
+            identifier(&value.document, "document")?;
+            if value.limit == 0
+                || usize::try_from(value.limit).unwrap_or(usize::MAX) > registry::MAX_LIST_ITEMS
+            {
+                return Err(invalid("limit"));
+            }
+        }
+        Operation::CompareExchangeRead(value) => identifier(&value.key, "key")?,
+        Operation::IdentityRead(value) => {
+            bounded_list(&value.names, "names")?;
+            for name in &value.names {
+                identifier(name, "names")?;
+            }
+        }
+        Operation::LifecycleRead(value) => identifier(&value.document, "document")?,
+        Operation::ArchivalRead(value) => identifier(&value.document, "document")?,
+        Operation::AttachmentWrite(value) => {
+            identifier(&value.document, "document")?;
+            validate_expected(value.expected.as_ref())?;
+            let Some(mutation) = value.mutation.as_ref() else {
+                return Err(invalid("mutation"));
+            };
+            use pb::family_attachment_write::Mutation;
+            match mutation {
+                Mutation::Store(value) => {
+                    identifier(&value.name, "name")?;
+                    identifier(&value.content_type, "content_type")?;
+                    if value.hash.len() != 64 {
+                        return Err(invalid("hash"));
+                    }
+                }
+                Mutation::Delete(value) => identifier(&value.name, "name")?,
+                Mutation::Rename(value) => {
+                    identifier(&value.from, "from")?;
+                    identifier(&value.to, "to")?;
+                }
+                Mutation::Copy(value) => {
+                    identifier(&value.name, "name")?;
+                    identifier(&value.to_document, "to_document")?;
+                    identifier(&value.to_name, "to_name")?;
+                }
+                Mutation::Move(value) => {
+                    identifier(&value.name, "name")?;
+                    identifier(&value.to_document, "to_document")?;
+                    identifier(&value.to_name, "to_name")?;
+                }
+            }
+        }
+        Operation::AttachmentContentRead(value) => {
+            if value.digest.len() != 64
+                || !value
+                    .digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            {
+                return Err(invalid("digest"));
+            }
+            if let Some(pb::family_attachment_content_read::Range::Bytes(range)) =
+                value.range.as_ref()
+            {
+                if range.to.is_some_and(|to| to < range.from) {
+                    return Err(invalid("range"));
+                }
+            }
+            if matches!(value.range, Some(pb::family_attachment_content_read::Range::Suffix(0))) {
+                return Err(invalid("suffix"));
+            }
+        }
+        Operation::AttachmentContentWrite(value) => {
+            if value.expected_digest.as_ref().is_some_and(|digest| digest.len() != 64) {
+                return Err(invalid("expected_digest"));
+            }
+            bounded_list(&value.segments, "segments")?;
+            let total = value.segments.iter().try_fold(0usize, |total, segment| {
+                if segment.len() > 64 * 1024 {
+                    return Err(invalid("segments"));
+                }
+                total.checked_add(segment.len()).ok_or_else(|| invalid("segments"))
+            })?;
+            if total > 8 * 1024 * 1024 {
+                return Err(invalid("segments"));
+            }
+        }
+        Operation::AttachmentContentDelete(value) => {
+            if value.digest.len() != 64 {
+                return Err(invalid("digest"));
+            }
+        }
+        Operation::CounterWrite(value) => {
+            identifier(&value.document, "document")?;
+            validate_expected(value.expected.as_ref())?;
+            bounded_list(&value.operations, "operations")?;
+            for operation in &value.operations {
+                let Some(operation) = operation.operation.as_ref() else {
+                    return Err(invalid("operation"));
+                };
+                match operation {
+                    pb::family_counter_operation::Operation::Increment(value) => {
+                        identifier(&value.name, "name")?
+                    }
+                    pb::family_counter_operation::Operation::Delete(value) => {
+                        identifier(&value.name, "name")?
+                    }
+                }
+            }
+        }
+        Operation::TimeSeriesWrite(value) => {
+            identifier(&value.document, "document")?;
+            identifier(&value.name, "name")?;
+            validate_expected(value.expected.as_ref())?;
+            bounded_list(&value.appends, "appends")?;
+            bounded_list(&value.deletes, "deletes")?;
+            for append in &value.appends {
+                if append.values.is_empty()
+                    || append.values.len() > registry::MAX_LIST_ITEMS
+                    || append.values.iter().any(|value| !value.is_finite())
+                {
+                    return Err(invalid("values"));
+                }
+            }
+            for delete in &value.deletes {
+                let Some(deletion) = delete.deletion.as_ref() else {
+                    return Err(invalid("deletion"));
+                };
+                if let pb::family_time_series_delete::Deletion::Range(range) = deletion {
+                    if range.start > range.end {
+                        return Err(invalid("range"));
+                    }
+                }
+            }
+        }
+        Operation::RevisionWrite(value) => {
+            identifier(&value.document, "document")?;
+            let Some(command) = value.command.as_ref() else {
+                return Err(invalid("command"));
+            };
+            if let pb::family_revision_write::Command::ForceCreate(value) = command {
+                validate_expected(value.expected.as_ref())?;
+            }
+        }
+        Operation::CompareExchangeWrite(value) => {
+            identifier(&value.key, "key")?;
+            let Some(condition) = value.condition.as_ref() else {
+                return Err(invalid("condition"));
+            };
+            match condition {
+                pb::family_compare_exchange_write::Condition::PutIfIndex(value) => {
+                    if value.index == 0 {
+                        return Err(invalid("index"));
+                    }
+                    validate_value(value.value.as_ref(), 0)?;
+                }
+                pb::family_compare_exchange_write::Condition::PutIfMissing(value) => {
+                    validate_value(value.value.as_ref(), 0)?
+                }
+                pb::family_compare_exchange_write::Condition::DeleteIfIndex(value)
+                    if value.index == 0 =>
+                {
+                    return Err(invalid("index"));
+                }
+                _ => {}
+            }
+        }
+        Operation::IdentityWrite(value) => {
+            let Some(command) = value.command.as_ref() else {
+                return Err(invalid("command"));
+            };
+            match command {
+                pb::family_identity_write::Command::Allocate(value) => {
+                    identifier(&value.name, "name")?;
+                    if value.count == 0 {
+                        return Err(invalid("count"));
+                    }
+                }
+                pb::family_identity_write::Command::Seed(value) => identifier(&value.name, "name")?,
+            }
+        }
+        Operation::LifecycleWrite(value) => {
+            identifier(&value.document, "document")?;
+            if value.command.is_none() {
+                return Err(invalid("command"));
+            }
+        }
+        Operation::ArchivalWrite(value) => {
+            identifier(&value.document, "document")?;
+            if value.command.is_none() {
+                return Err(invalid("command"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_response_payload(payload: &pb::FamilyResponsePayload) -> Result<(), FamilyCodecError> {
+    use pb::family_response_payload::Result;
+    let Some(result) = payload.result.as_ref() else {
+        return Err(FamilyCodecError::MissingVariant { payload: "FamilyResponsePayload" });
+    };
+    match result {
+        Result::Attachment(value) => {
+            bounded_list(&value.entries, "entries")?;
+            for entry in &value.entries {
+                identifier(&entry.name, "name")?;
+                identifier(&entry.content_type, "content_type")?;
+                identifier(&entry.document, "document")?;
+                if entry.hash.len() != 64 {
+                    return Err(invalid("hash"));
+                }
+            }
+        }
+        Result::Counter(value) => {
+            bounded_list(&value.entries, "entries")?;
+            for entry in &value.entries {
+                identifier(&entry.name, "name")?;
+            }
+        }
+        Result::TimeSeries(value) => {
+            bounded_list(&value.entries, "entries")?;
+            for entry in &value.entries {
+                if entry.values.iter().any(|value| !value.is_finite()) {
+                    return Err(invalid("values"));
+                }
+            }
+        }
+        Result::Revisions(value) => {
+            bounded_list(&value.entries, "entries")?;
+            for entry in &value.entries {
+                validate_value(entry.value.as_ref(), 0)?;
+            }
+        }
+        Result::CompareExchange(value) => {
+            identifier(&value.key, "key")?;
+            if let Some(entry) = &value.entry {
+                validate_value(entry.value.as_ref(), 0)?;
+            }
+        }
+        Result::Identities(value) => {
+            bounded_list(&value.entries, "entries")?;
+            for entry in &value.entries {
+                identifier(&entry.name, "name")?;
+            }
+        }
+        Result::ExpirationRefresh(_) | Result::Archival(_) | Result::Write(_) => {}
+        Result::AttachmentContent(value) => {
+            if value.digest.len() != 64 && !value.digest.is_empty() {
+                return Err(invalid("digest"));
+            }
+            bounded_list(&value.chunks, "chunks")?;
+            let mut total = 0usize;
+            for chunk in &value.chunks {
+                if chunk.bytes.len() > 64 * 1024 || chunk.bytes.len().checked_add(total).is_none() {
+                    return Err(invalid("chunks"));
+                }
+                total += chunk.bytes.len();
+            }
+            if total > 8 * 1024 * 1024 {
+                return Err(invalid("chunks"));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Encodes a canonical v1 family request payload.
 pub fn encode_request(payload: &pb::FamilyRequestPayload) -> Result<Vec<u8>, FamilyCodecError> {
-    if payload.operation.is_none() {
-        return Err(FamilyCodecError::MissingVariant { payload: "FamilyRequestPayload" });
-    }
+    validate_request_payload(payload)?;
     bounded_encode(payload, "FamilyRequestPayload")
 }
 
 /// Decodes a canonical v1 family request payload.
 pub fn decode_request(bytes: &[u8]) -> Result<pb::FamilyRequestPayload, FamilyCodecError> {
     let payload = bounded_decode::<pb::FamilyRequestPayload>(bytes, "FamilyRequestPayload")?;
-    if payload.operation.is_none() {
-        return Err(FamilyCodecError::MissingVariant { payload: "FamilyRequestPayload" });
-    }
+    validate_request_payload(&payload)?;
     Ok(payload)
 }
 
 /// Encodes a canonical v1 family response payload.
 pub fn encode_response(payload: &pb::FamilyResponsePayload) -> Result<Vec<u8>, FamilyCodecError> {
-    if payload.result.is_none() {
-        return Err(FamilyCodecError::MissingVariant { payload: "FamilyResponsePayload" });
-    }
+    validate_response_payload(payload)?;
     bounded_encode(payload, "FamilyResponsePayload")
 }
 
 /// Decodes a canonical v1 family response payload.
 pub fn decode_response(bytes: &[u8]) -> Result<pb::FamilyResponsePayload, FamilyCodecError> {
     let payload = bounded_decode::<pb::FamilyResponsePayload>(bytes, "FamilyResponsePayload")?;
-    if payload.result.is_none() {
-        return Err(FamilyCodecError::MissingVariant { payload: "FamilyResponsePayload" });
-    }
+    validate_response_payload(&payload)?;
     Ok(payload)
 }
 
@@ -227,6 +579,7 @@ pub fn validate_request_family(
             actual: request_codec.to_owned(),
         });
     }
+    validate_request_payload(payload)?;
     let actual = request_family(payload)?;
     if actual != family {
         return Err(FamilyCodecError::FamilyMismatch {
@@ -249,6 +602,7 @@ pub fn validate_response_family(
             actual: response_codec.to_owned(),
         });
     }
+    validate_response_payload(payload)?;
     if let Some(actual) = response_family(payload)?
         && actual != family
     {
@@ -332,42 +686,46 @@ mod tests {
             let payload = match family {
                 "attachment" => pb::FamilyRequestPayload {
                     operation: Some(pb::family_request_payload::Operation::AttachmentRead(
-                        pb::FamilyAttachmentRead::default(),
+                        pb::FamilyAttachmentRead { document: "d".into() },
                     )),
                 },
                 "counter" => pb::FamilyRequestPayload {
                     operation: Some(pb::family_request_payload::Operation::CounterRead(
-                        pb::FamilyCounterRead::default(),
+                        pb::FamilyCounterRead { document: "d".into(), names: Vec::new() },
                     )),
                 },
                 "time_series" => pb::FamilyRequestPayload {
                     operation: Some(pb::family_request_payload::Operation::TimeSeriesRead(
-                        pb::FamilyTimeSeriesRead::default(),
+                        pb::FamilyTimeSeriesRead {
+                            document: "d".into(),
+                            name: "s".into(),
+                            ..Default::default()
+                        },
                     )),
                 },
                 "revisions" => pb::FamilyRequestPayload {
                     operation: Some(pb::family_request_payload::Operation::RevisionRead(
-                        pb::FamilyRevisionRead::default(),
+                        pb::FamilyRevisionRead { document: "d".into(), offset: 0, limit: 1 },
                     )),
                 },
                 "compare_exchange" => pb::FamilyRequestPayload {
                     operation: Some(pb::family_request_payload::Operation::CompareExchangeRead(
-                        pb::FamilyCompareExchangeRead::default(),
+                        pb::FamilyCompareExchangeRead { key: "k".into() },
                     )),
                 },
                 "identities" => pb::FamilyRequestPayload {
                     operation: Some(pb::family_request_payload::Operation::IdentityRead(
-                        pb::FamilyIdentityRead::default(),
+                        pb::FamilyIdentityRead { names: Vec::new() },
                     )),
                 },
                 "expiration_refresh" => pb::FamilyRequestPayload {
                     operation: Some(pb::family_request_payload::Operation::LifecycleRead(
-                        pb::FamilyLifecycleRead::default(),
+                        pb::FamilyLifecycleRead { document: "d".into() },
                     )),
                 },
                 "archival" => pb::FamilyRequestPayload {
                     operation: Some(pb::family_request_payload::Operation::ArchivalRead(
-                        pb::FamilyArchivalRead::default(),
+                        pb::FamilyArchivalRead { document: "d".into() },
                     )),
                 },
                 _ => unreachable!(),

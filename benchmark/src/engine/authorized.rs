@@ -64,7 +64,7 @@ pub struct AuthorizedEngine {
     gateway_spiffe_principal: String,
     verifier: PrincipalContextVerifier,
     replay_guard: Mutex<PrincipalContextReplayGuard>,
-    policy_store: AuthorizationPolicyStore,
+    policy_store: Mutex<AuthorizationPolicyStore>,
 }
 
 impl fmt::Debug for AuthorizedEngine {
@@ -102,7 +102,7 @@ impl AuthorizedEngine {
             gateway_spiffe_principal,
             verifier,
             replay_guard: Mutex::new(PrincipalContextReplayGuard::new()),
-            policy_store,
+            policy_store: Mutex::new(policy_store),
         })
     }
 
@@ -146,7 +146,23 @@ impl AuthorizedEngine {
         now: u64,
     ) -> Result<AuthorizationDecision, AuthorizedEngineError> {
         self.check_session(session, now)?;
-        Ok(self.policy_store.evaluate(&session.context, request))
+        self.policy_decision(&session.context, request)
+    }
+
+    /// Publishes a policy through the gateway's synchronized durable store.
+    /// Existing bound sessions observe its generation on their next request.
+    pub fn publish_policy(
+        &self,
+        scope: ResourceScope,
+        policy: crate::authorization::Policy,
+    ) -> Result<(), AuthorizedEngineError> {
+        self.policy_store
+            .lock()
+            .map_err(|_| {
+                AuthorizedEngineError::Authorization(AuthorizationError::PolicyStoreUnavailable)
+            })?
+            .publish(scope, policy)
+            .map_err(AuthorizedEngineError::Authorization)
     }
 
     /// Authorizes a bounded query request. Query planning and execution stay
@@ -272,7 +288,7 @@ impl AuthorizedEngine {
             now,
         )
         .map_err(AuthorizedEngineError::Authorization)?;
-        Ok(self.policy_store.evaluate(context, &request))
+        self.policy_decision(context, &request)
     }
 
     /// Stages and commits one authorized document write. Authorization is
@@ -297,7 +313,7 @@ impl AuthorizedEngine {
             now,
         )
         .map_err(AuthorizedEngineError::Authorization)?;
-        if !self.policy_store.evaluate(context, &request).is_allowed() {
+        if !self.policy_decision(context, &request)?.is_allowed() {
             return Err(AuthorizedEngineError::Denied);
         }
         let tenant = self.tenant_for(context)?;
@@ -310,7 +326,7 @@ impl AuthorizedEngine {
             .begin(&tenant, snapshot, operation)
             .map_err(AuthorizedEngineError::Engine)?;
         transaction.put(document, expected).map_err(AuthorizedEngineError::Engine)?;
-        if !self.policy_store.evaluate(context, &request).is_allowed() {
+        if !self.policy_decision(context, &request)?.is_allowed() {
             return Err(AuthorizedEngineError::Denied);
         }
         Ok(transaction.commit(crate::types::LocalDurability::Synced))
@@ -337,7 +353,7 @@ impl AuthorizedEngine {
             now,
         )
         .map_err(AuthorizedEngineError::Authorization)?;
-        if !self.policy_store.evaluate(context, &request).is_allowed() {
+        if !self.policy_decision(context, &request)?.is_allowed() {
             return Err(AuthorizedEngineError::Denied);
         }
         let tenant = self.tenant_for(context)?;
@@ -350,7 +366,7 @@ impl AuthorizedEngine {
             .begin(&tenant, snapshot, operation)
             .map_err(AuthorizedEngineError::Engine)?;
         transaction.delete_in_collection(collection, document_id, expected);
-        if !self.policy_store.evaluate(context, &request).is_allowed() {
+        if !self.policy_decision(context, &request)?.is_allowed() {
             return Err(AuthorizedEngineError::Denied);
         }
         Ok(transaction.commit(crate::types::LocalDurability::Synced))
@@ -404,6 +420,17 @@ impl AuthorizedEngine {
         self.authorize_bound(session, request, now)
     }
 
+    fn policy_decision(
+        &self,
+        context: &PrincipalContext,
+        request: &AuthorizationRequest,
+    ) -> Result<AuthorizationDecision, AuthorizedEngineError> {
+        let store = self.policy_store.lock().map_err(|_| {
+            AuthorizedEngineError::Authorization(AuthorizationError::PolicyStoreUnavailable)
+        })?;
+        Ok(store.evaluate(context, request))
+    }
+
     fn tenant_for(
         &self,
         context: &PrincipalContext,
@@ -441,4 +468,138 @@ fn scalar_fields(
             Some((field.clone(), value))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::authorization::{
+        Action, AuthorizationCryptoMode, AuthorizationRequest, Operation, Policy, PolicyRule,
+        PrincipalClaims, PrincipalContextKey, PrincipalContextKeySet, PrincipalContextPayload,
+        PrincipalContextSigner,
+    };
+    use crate::identity::{
+        AuthorizationPolicyUlid, PrincipalGrantUlid, PrincipalSessionUlid, PrincipalUlid,
+        ProjectUlid, TenantUlid,
+    };
+    use std::{
+        collections::BTreeSet,
+        fs,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "terrabase-authorized-{name}-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    #[test]
+    fn one_bind_supports_repeated_bound_checks_without_replaying_envelope() {
+        let engine_path = path("engine");
+        let policy_path = engine_path.join("authorization.journal");
+        let engine =
+            Engine::open(crate::engine::EngineConfig::durable(&engine_path).expect("config"))
+                .expect("engine");
+        let scope = ResourceScope::try_new(
+            TenantUlid::from_wire_bytes([1; 16]),
+            ProjectUlid::from_wire_bytes([2; 16]),
+            engine.database_id(),
+        )
+        .expect("scope");
+        let grant = PrincipalGrantUlid::from_wire_bytes([4; 16]);
+        let policy_id = AuthorizationPolicyUlid::from_wire_bytes([5; 16]);
+        let policy = Policy::try_new_with_id(
+            policy_id,
+            1,
+            std::iter::empty::<String>(),
+            [PolicyRule::try_new_with_id(grant, Operation::Read, "documents").expect("rule")],
+        )
+        .expect("policy");
+        let mut store = AuthorizationPolicyStore::open(&policy_path, [42; 32]).expect("store");
+        store.publish(scope.clone(), policy).expect("publish");
+        let signer = PrincipalContextSigner::from_pkcs8(
+            "authorized-test",
+            aws_lc_rs::signature::EcdsaKeyPair::generate_pkcs8(
+                &aws_lc_rs::signature::ECDSA_P256_SHA256_FIXED_SIGNING,
+                &aws_lc_rs::rand::SystemRandom::new(),
+            )
+            .expect("key")
+            .as_ref()
+            .to_vec(),
+        )
+        .expect("signer");
+        let payload = PrincipalContextPayload::try_new(
+            "production",
+            "spiffe://terrascale/gateway",
+            "terrascale-go",
+            "terrascale.database",
+            scope.clone(),
+            PrincipalUlid::from_wire_bytes([6; 16]),
+            PrincipalSessionUlid::from_wire_bytes([7; 16]),
+            grant,
+            policy_id,
+            BTreeSet::from([Action::Read]),
+            PrincipalClaims::default(),
+            1,
+            1,
+            100,
+        )
+        .expect("payload");
+        let envelope =
+            signer.sign(&payload, AuthorizationCryptoMode::LocalDevelopment).expect("sign");
+        let key = PrincipalContextKey::new(signer.key_id(), signer.public_key().expect("public"))
+            .expect("key");
+        let verifier = crate::authorization::PrincipalContextVerifier::new(
+            AuthorizationCryptoMode::LocalDevelopment,
+            "production",
+            "spiffe://terrascale/gateway",
+            "terrascale-go",
+            "terrascale.database",
+            PrincipalContextKeySet::try_new([key]).expect("keys"),
+        )
+        .expect("verifier");
+        let gateway = AuthorizedEngine::new(
+            engine,
+            scope.clone(),
+            "production",
+            "spiffe://terrascale/gateway",
+            verifier,
+            store,
+        )
+        .expect("gateway");
+        assert!(matches!(
+            gateway.bind(&envelope, PrincipalSessionUlid::from_wire_bytes([8; 16]), 10),
+            Err(AuthorizedEngineError::Authorization(AuthorizationError::ContextBindingMismatch))
+        ));
+        let session = gateway
+            .bind(&envelope, PrincipalSessionUlid::from_wire_bytes([7; 16]), 10)
+            .expect("bind");
+        assert!(matches!(
+            gateway.bind(&envelope, PrincipalSessionUlid::from_wire_bytes([7; 16]), 10),
+            Err(AuthorizedEngineError::Authorization(AuthorizationError::ContextReplay))
+        ));
+        let request = AuthorizationRequest::try_new(
+            scope,
+            "terrascale.database",
+            Action::Read,
+            "documents",
+            Default::default(),
+            Default::default(),
+            10,
+        )
+        .expect("request");
+        assert!(gateway.authorize_bound(&session, &request, 10).expect("authorize").is_allowed());
+        assert!(gateway.authorize_bound(&session, &request, 11).expect("authorize").is_allowed());
+        assert!(matches!(
+            gateway.authorize_bound(&session, &request, 100),
+            Err(AuthorizedEngineError::Authorization(AuthorizationError::ContextExpired))
+        ));
+        drop(gateway);
+        let _ = fs::remove_dir_all(engine_path);
+    }
 }
