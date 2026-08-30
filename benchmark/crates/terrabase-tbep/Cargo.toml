@@ -1,18 +1,13 @@
 # `terrabase-tbep` — the TerraBase Engine Protocol (TBEP) engine server
-# crate (ticket SE-14, charter PD-2026-08-26-02).
+# crate (ticket SE-14, charter PD-2026-08-26-02; ADR 0028: gRPC).
 #
-# Standalone workspace root on purpose, exactly like
-# `crates/terrabase-sync-core` before its integrator wiring: the engine
-# workspace at the repository root stays zero-dependency and untouched;
-# the integrator adds this crate to the root `members` list when wiring
-# it in (recorded as a collision action in the SE-14 packet report).
+# Standalone workspace member: the engine workspace at the repository
+# root stays zero-dependency and untouched.
 #
-# Async is allowed to live here and nowhere else (PD-2026-08-26-05 D1);
-# this packet serves the UDS binding with the standard library's
-# synchronous Unix-domain listener plus one thread per connection, which
-# keeps the dependency closure to the mandated codec pair (rmp-serde).
-# The QUIC binding is deferred per PD-2026-08-26-11 D1.
-
+# The wire protocol is gRPC (tonic) over the generated protobuf contract
+# in `proto/terrabase/v1/engine.proto`, compiled at build time by the
+# pure-Rust `protox` front end — no system `protoc`, no committed
+# generated code, no repository-owned generator.
 
 [package]
 name = "terrabase-tbep"
@@ -20,7 +15,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "LicenseRef-TerraScale-Pending"
-description = "TerraBase engine server behind generated FlatBuffers TBEP over authenticated QUIC"
+description = "TerraBase engine server behind the TBEP gRPC contract"
 publish = false
 
 [lints.rust]
@@ -31,42 +26,47 @@ missing_docs = "deny"
 pedantic = "warn"
 
 [dependencies]
-# The QUIC+TLS network binding (P4): quinn over rustls with the `ring`
-# provider — the same pins `terrabase-member-transport` qualified for its
-# member lanes — so the TBEP frame layer rides an authenticated TLS 1.3
-# transport beside the local UDS binding.
-quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
-tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "time", "sync", "io-util"] }
+# The gRPC serving stack (ADR 0028): tonic over tokio, prost messages,
+# rustls TLS with the `ring` provider — the same pins
+# `terrabase-member-transport` qualified for its member lanes.
+tonic = { version = "0.14", default-features = false, features = [
+  "codegen",
+  "transport",
+  "server",
+  "tls-ring",
+] }
+prost = "0.14"
+tokio = { version = "1", default-features = false, features = [
+  "rt-multi-thread",
+  "net",
+  "time",
+  "sync",
+  "io-util",
+  "macros",
+] }
+tokio-stream = { version = "0.1", default-features = false, features = [
+  "net",
+] }
 
-# The mandated codec pair (PD-2026-08-26-02 D4): Rust rmp-serde against
-# C# MessagePack-CSharp with contractless/typeless modes disabled.
-# serde rides as rmp-serde's foundation (the generated frame bodies
-# implement the serde traits directly); MIT/Apache-2.0.
-serde = "1"
-rmp-serde = "1.3"
-# The shared generated schema's source of truth is JSON, and the drift
-# tests parse it with serde_json; the golden conformance corpus is JSON
-# too so every language's CI consumes the same data files (same
-# convention as the SE-04 corpus). The generator itself lives in its own
-# nested package (`tools/tbep-gen`) so it can regenerate the bindings
-# before this crate compiles.
-serde_json = "1.0.150"
 # The adopted sync delivery core (SE-02 GO decision) this server hosts
-# behind TBEP's sync-delivery frames.
+# behind TBEP's sync-delivery operations.
 terrabase-sync-core = { path = "../terrabase-sync-core" }
 # The engine this host serves (P4): the real durable engine behind the
 # document spine.
 terrabase-cluster = { path = "../terrabase-cluster" }
 terrabase = { path = "../.." }
-# The generated FlatBuffers bindings and their verified, owned production
-# request/response boundary. Keeping the compiler-owned unsafe code in this
-# audited dependency preserves this crate's repository-wide unsafe denial.
-tbep-fbs = { path = "tools/tbep-fbs" }
+
+[build-dependencies]
+# The protobuf front end: pure-Rust schema compilation feeding
+# tonic-build, so builds need no system `protoc` installation.
+protox = "0.9"
+tonic-build = { version = "0.14", default-features = false, features = [
+  "prost",
+] }
 
 [dev-dependencies]
-# Self-signed test certificates for the QUIC binding's conformance rows.
-rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
-# The QUIC conformance client builds requests from the same pinned generated
-# FlatBuffers bindings used by the production decoder.
-flatbuffers = "=25.12.19"
+# Self-signed test certificates for the TLS binding's conformance rows.
+rcgen = { version = "0.13", default-features = false, features = [
+  "ring",
+  "pem",
+] }

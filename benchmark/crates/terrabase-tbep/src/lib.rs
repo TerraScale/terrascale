@@ -1,37 +1,30 @@
 //! `terrabase-tbep` — the `TerraBase` Engine Protocol engine server.
 //!
-//! TBEP is the custom C#↔Rust process-to-process wire protocol mandated
-//! by ADR 0025: generated, verified `FlatBuffers` over authenticated QUIC.
-//! The legacy UDS conformance binding retains its positional codec while
-//! migration-only consumers are retired; it is not a production listener.
-//! The closed typed operation set, backbone
-//! subscription streams (including the content-free trigger
-//! notifications of PD-2026-08-26-13 D3), sync-delivery frames,
-//! topology/admin reads, and supervision frames — served by the engine
-//! process over the local Unix-domain-socket binding (the required
-//! transport per PD-2026-08-26-11 D1; the QUIC binding is deferred until
-//! a networked-engine need is recorded).
+//! TBEP is the Go↔Rust process-to-process wire protocol (ADR 0028):
+//! gRPC over the protobuf contract in `proto/terrabase/v1/engine.proto`,
+//! served by tonic. The retired custom MessagePack and FlatBuffers
+//! framings (and their generators) are gone; the closed typed operation
+//! set, backbone subscription streams, sync-delivery operations,
+//! topology/admin reads, and supervision operations all ride gRPC now.
 //!
 //! Layout:
 //!
-//! - [`codegen`]: the generator behind the shared schema (one source of
-//!   truth for the Rust and C# bindings, drift-checked).
-//! - [`generated`]: the generated registry and typed frame bodies.
-//! - [`codec`]: the body codec discipline (`rmp-serde`, positional
-//!   arrays, fail-closed bounds) and the [`codec::TbepValue`] type.
-//! - [`envelope`]: the frame envelope — the SE-04 envelope discipline in
-//!   its `MessagePack` profile — and the stream framing.
+//! - [`registry`]: the hand-maintained domain types and closed
+//!   vocabularies the hosting seam exchanges (bounds stay fail-closed).
+//! - [`value`]: the recursive document value and the shared bounds
+//!   discipline.
 //! - [`host`]: the hosting seam the engine process wires
 //!   ([`host::TbepHost`]) plus the shipped [`host::SyncDeliveryHost`]
 //!   over the adopted sync core.
-//! - [`server`]: the UDS engine server.
+//! - [`grpc`]: the tonic serving layer — prost⇄domain conversion,
+//!   metadata discipline, streaming subscriptions, and the UDS and
+//!   TLS listeners.
 //!
-//! Scope limits, stated exactly (the SE-14 record, `docs/sync/tbep.md`):
+//! Scope limits, stated exactly (the SE-14 record):
 //!
 //! - The engine crate (`terrabase`) stays synchronous and
-//!   zero-dependency; any async transport concern lives in this crate
-//!   only. This packet serves the UDS binding with the standard
-//!   library's synchronous listener plus one thread per connection.
+//!   zero-dependency; every async transport concern lives in this crate
+//!   only.
 //! - The Rust engine-backed document/query/family operations and the
 //!   engine backbone subscriptions ride the [`host::TbepHost`] seam: the
 //!   engine crate's Platform adapter constructors are crate-private by
@@ -40,36 +33,36 @@
 //!   the sync-delivery family, supervision, and admin reads over the
 //!   real `terrabase-sync-core` today.
 //! - No performance claim is made anywhere in this crate
-//!   (PD-2026-08-26-03); the bytes-on-wire budget table holds written
-//!   definitions, and the conformance corpus recomputes deterministic
-//!   artifact values only.
+//!   (PD-2026-08-26-03); the per-operation message-size bounds below
+//!   hold written definitions, and the conformance corpus recomputes
+//!   deterministic artifact values only.
 
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
 
 pub mod cluster_host;
-pub mod codec;
-pub mod codegen;
 pub mod engine_host;
-pub mod envelope;
-mod flatbuffers_server;
-pub mod generated;
+pub mod grpc;
 pub mod host;
-pub mod quic;
-pub mod server;
+pub mod registry;
+pub mod value;
 
-pub use codec::BodyError;
-pub use codec::TbepValue;
-pub use codec::WireBody;
-pub use envelope::EnvelopeError;
-pub use envelope::FrameDigest;
-pub use envelope::IdempotencyKey;
-pub use envelope::TbepFrame;
-pub use generated::FrameKind;
-pub use generated::TbepBody;
+/// The compiled protobuf contract (prost messages and tonic stubs).
+pub mod proto {
+    #![allow(clippy::module_name_repetitions, clippy::return_self_not_must_use)]
+
+    /// The `terrabase.v1` package.
+    pub mod terrabase {
+        /// The `terrabase.v1` package.
+        pub mod v1 {
+            include!(concat!(env!("OUT_DIR"), "/terrabase.v1.rs"));
+        }
+    }
+}
+
+pub use grpc::TbepGrpcServer;
 pub use host::HostingError;
 pub use host::SyncDeliveryHost;
 pub use host::TbepHost;
-pub use server::MAX_TENANT_INFLIGHT_OPERATIONS;
-pub use server::TbepServer;
-pub use server::TbepServerHandle;
+pub use value::BodyError;
+pub use value::TbepValue;
