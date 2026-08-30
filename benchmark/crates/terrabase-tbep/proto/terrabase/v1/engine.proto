@@ -32,7 +32,7 @@ syntax = "proto3";
 
 package terrabase.v1;
 
-option go_package = "git.terrascale.tech/TerraScale/TerraBase/go/tbep/gen/terrabase/v1";
+option go_package = "terrascale.tech/terrabase-go/terrabase/v1;v1";
 
 // ---------------------------------------------------------------------------
 // The recursive document value
