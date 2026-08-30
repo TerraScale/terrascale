@@ -435,6 +435,7 @@ fn scan_encrypted_file(file: &File, wal_cipher: &WalCipher) -> io::Result<WalSca
     let mut mid_file_damage = false;
     let mut frame_ends = Vec::new();
     let mut required_next = 0_u128;
+    let mut previous_ordinal = None;
     while offset < bytes.len() {
         let remaining = &bytes[offset..];
         if remaining.len() < 29 {
@@ -493,6 +494,14 @@ fn scan_encrypted_file(file: &File, wal_cipher: &WalCipher) -> io::Result<WalSca
         let mut ordinal_bytes = [0_u8; 16];
         ordinal_bytes[4..].copy_from_slice(&envelope[5..17]);
         let ordinal = u128::from_be_bytes(ordinal_bytes);
+        if previous_ordinal.is_some_and(|previous| ordinal <= previous) {
+            // Authenticated envelopes can still be replayed or reordered by
+            // an attacker who has copied valid bytes. WAL recovery requires
+            // strict append order; crash-created gaps remain valid.
+            mid_file_damage = true;
+            break;
+        }
+        previous_ordinal = Some(ordinal);
         required_next = required_next.max(ordinal.saturating_add(1));
         entries.append(&mut decoded);
         offset = offset.saturating_add(envelope_len);
@@ -565,26 +574,55 @@ fn persist_ordinal(path: &Path, ordinal: u128) -> io::Result<()> {
     body.extend_from_slice(ORDINAL_MAGIC);
     body.extend_from_slice(&ordinal.to_be_bytes());
     body.extend_from_slice(&ordinal_checksum(&body));
+    if std::fs::symlink_metadata(path)
+        .ok()
+        .is_some_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "unsafe WAL ordinal symlink"));
+    }
+    static TEMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let temp = path.with_file_name(format!(
-        "{}.tmp-{}",
+        "{}.tmp-{}-{}",
         path.file_name().and_then(|n| n.to_str()).unwrap_or("wal.ordinal"),
-        std::process::id()
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     let mut options = OpenOptions::new();
-    options.create(true).truncate(true).write(true);
+    options.create_new(true).write(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600);
     }
-    let mut file = options.open(&temp)?;
-    file.write_all(&body)?;
-    file.sync_all()?;
-    std::fs::rename(&temp, path)?;
+    let mut file = match options.open(&temp) {
+        Ok(file) => file,
+        Err(error) => return Err(error),
+    };
+    if let Err(error) = file.write_all(&body).and_then(|()| file.sync_all()) {
+        return cleanup_temp(&temp, error);
+    }
+    drop(file);
+    if let Err(error) = std::fs::rename(&temp, path) {
+        return cleanup_temp(&temp, error);
+    }
     if let Some(parent) = path.parent() {
-        std::fs::File::open(parent)?.sync_data()?;
+        if let Err(error) = std::fs::File::open(parent).and_then(|directory| directory.sync_data())
+        {
+            return Err(error);
+        }
     }
     Ok(())
+}
+
+fn cleanup_temp(path: &Path, primary: io::Error) -> io::Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Err(primary),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Err(primary),
+        Err(cleanup) => Err(io::Error::new(
+            primary.kind(),
+            format!("{primary}; ordinal temp cleanup failed: {cleanup}"),
+        )),
+    }
 }
 
 /// Reports whether a complete, self-verifying frame begins after a damaged
@@ -635,6 +673,7 @@ impl WalLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::encryption::DatabaseKey;
     use crate::types::{CollectionName, Document, DocumentId, DocumentValue, TenantId};
 
     fn doc_entry(tenant: &str, id: &str, sequence: u64, value: &[u8]) -> Entry {
@@ -655,6 +694,23 @@ mod tests {
             ),
             value: encoded,
         }
+    }
+
+    fn encrypted_config(_dir: &std::path::Path, key: [u8; 32]) -> WalEncryptionConfig {
+        WalEncryptionConfig {
+            owner: DatabaseOwner::local_development(),
+            key: DatabaseKey::from_bytes(key),
+            key_version: DatabaseKeyVersion::from_wire_bytes([0; 16]),
+        }
+    }
+
+    fn encrypted_path(tag: &str) -> (std::path::PathBuf, WalEncryptionConfig) {
+        let dir = std::env::temp_dir()
+            .join(format!("terrabase-lsm-wal-encrypted-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("wal");
+        (path, encrypted_config(&dir, [0x5a; 32]))
     }
 
     fn resign_frame(frame: &mut [u8]) {
@@ -865,5 +921,192 @@ mod tests {
         assert_eq!(wal.len(), 0);
         assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn encrypted_frames_round_trip_and_restart_without_plaintext() {
+        let (path, config) = encrypted_path("restart");
+        let owner = config.owner.clone();
+        let mut wal = WalLog::open_unrepaired_with_encryption(&path, config).unwrap();
+        wal.append(&[doc_entry("t", "a", 1, b"secret")]).unwrap();
+        wal.sync().unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(!bytes.windows(b"secret".len()).any(|window| window == b"secret"));
+        drop(wal);
+        let config = WalEncryptionConfig {
+            owner: owner.clone(),
+            key: DatabaseKey::from_bytes([0x5a; 32]),
+            key_version: DatabaseKeyVersion::from_wire_bytes([0; 16]),
+        };
+        let reopened = WalLog::open_unrepaired_with_encryption(&path, config).unwrap();
+        let scan = reopened.scan().unwrap();
+        assert!(!scan.mid_file_damage);
+        assert_eq!(scan.entries.len(), 1);
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn encrypted_wrong_key_and_owner_are_refused() {
+        let (path, config) = encrypted_path("wrong-key");
+        let owner = config.owner.clone();
+        let mut wal = WalLog::open_unrepaired_with_encryption(&path, config).unwrap();
+        wal.append(&[doc_entry("t", "a", 1, b"secret")]).unwrap();
+        drop(wal);
+        let wrong_key = WalLog::open_unrepaired_with_encryption(
+            &path,
+            WalEncryptionConfig {
+                owner: owner.clone(),
+                key: DatabaseKey::from_bytes([0x5b; 32]),
+                key_version: DatabaseKeyVersion::from_wire_bytes([0; 16]),
+            },
+        )
+        .unwrap();
+        assert!(wrong_key.scan().unwrap().mid_file_damage);
+        let wrong_owner = WalLog::open_unrepaired_with_encryption(
+            &path,
+            WalEncryptionConfig {
+                owner: DatabaseOwner::local_development(),
+                key: DatabaseKey::from_bytes([0x5a; 32]),
+                key_version: DatabaseKeyVersion::from_wire_bytes([0; 16]),
+            },
+        )
+        .unwrap();
+        assert!(wrong_owner.scan().unwrap().mid_file_damage);
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn encrypted_tamper_and_truncated_tail_fail_or_repair_safely() {
+        let (path, config) = encrypted_path("damage");
+        let owner = config.owner.clone();
+        let mut wal = WalLog::open_unrepaired_with_encryption(&path, config).unwrap();
+        wal.append(&[doc_entry("t", "a", 1, b"one")]).unwrap();
+        wal.append(&[doc_entry("t", "b", 2, b"two")]).unwrap();
+        wal.sync().unwrap();
+        let first_end = wal.scan().unwrap().frame_ends()[0];
+        drop(wal);
+        let original = std::fs::read(&path).unwrap();
+        let mut tampered = original.clone();
+        *tampered.last_mut().unwrap() ^= 0x01;
+        std::fs::write(&path, tampered).unwrap();
+        let reader = WalLog::open_unrepaired_with_encryption(
+            &path,
+            WalEncryptionConfig {
+                owner: owner.clone(),
+                key: DatabaseKey::from_bytes([0x5a; 32]),
+                key_version: DatabaseKeyVersion::from_wire_bytes([0; 16]),
+            },
+        )
+        .unwrap();
+        assert!(reader.scan().unwrap().mid_file_damage);
+        let mut truncated = original;
+        truncated.truncate(usize::try_from(first_end).unwrap() + 3);
+        std::fs::write(&path, truncated).unwrap();
+        let reader = WalLog::open_unrepaired_with_encryption(
+            &path,
+            WalEncryptionConfig {
+                owner,
+                key: DatabaseKey::from_bytes([0x5a; 32]),
+                key_version: DatabaseKeyVersion::from_wire_bytes([0; 16]),
+            },
+        )
+        .unwrap();
+        let scan = reader.scan().unwrap();
+        assert!(!scan.mid_file_damage);
+        assert_eq!(scan.entries.len(), 1);
+        assert_eq!(scan.good_bytes, first_end);
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn encrypted_recovery_rejects_duplicate_and_reordered_ordinals() {
+        for reordered in [false, true] {
+            let tag = if reordered { "reordered" } else { "duplicate" };
+            let (path, config) = encrypted_path(tag);
+            let owner = config.owner.clone();
+            let mut wal = WalLog::open_unrepaired_with_encryption(&path, config).unwrap();
+            wal.append(&[doc_entry("t", "a", 1, b"one")]).unwrap();
+            wal.append(&[doc_entry("t", "b", 2, b"two")]).unwrap();
+            drop(wal);
+            let original = std::fs::read(&path).unwrap();
+            let first_len = envelope_length_prefix(&original).unwrap();
+            let first = &original[..first_len];
+            let second = &original[first_len..];
+            let bytes = if reordered { [second, first].concat() } else { [first, first].concat() };
+            std::fs::write(&path, bytes).unwrap();
+            let wal = WalLog::open_unrepaired_with_encryption(
+                &path,
+                WalEncryptionConfig {
+                    owner,
+                    key: DatabaseKey::from_bytes([0x5a; 32]),
+                    key_version: DatabaseKeyVersion::from_wire_bytes([0; 16]),
+                },
+            )
+            .unwrap();
+            assert!(wal.scan().unwrap().mid_file_damage, "{tag}");
+            std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    fn encrypted_ordinal_state_is_required_integral_and_allows_gaps() {
+        let (path, config) = encrypted_path("ordinal-state");
+        let owner = config.owner.clone();
+        let ordinal_path = path.with_file_name("wal.ordinal");
+        let mut wal = WalLog::open_unrepaired_with_encryption(&path, config).unwrap();
+        wal.append(&[doc_entry("t", "a", 1, b"one")]).unwrap();
+        drop(wal);
+        std::fs::remove_file(&ordinal_path).unwrap();
+        assert!(
+            WalLog::open_unrepaired_with_encryption(
+                &path,
+                WalEncryptionConfig {
+                    owner: owner.clone(),
+                    key: DatabaseKey::from_bytes([0x5a; 32]),
+                    key_version: DatabaseKeyVersion::from_wire_bytes([0; 16]),
+                },
+            )
+            .is_err()
+        );
+        persist_ordinal(&ordinal_path, 0).unwrap();
+        let wal = WalLog::open_unrepaired_with_encryption(
+            &path,
+            WalEncryptionConfig {
+                owner: owner.clone(),
+                key: DatabaseKey::from_bytes([0x5a; 32]),
+                key_version: DatabaseKeyVersion::from_wire_bytes([0; 16]),
+            },
+        )
+        .unwrap();
+        assert!(wal.scan().unwrap().mid_file_damage);
+        persist_ordinal(&ordinal_path, 7).unwrap();
+        let mut wal = WalLog::open_unrepaired_with_encryption(
+            &path,
+            WalEncryptionConfig {
+                owner,
+                key: DatabaseKey::from_bytes([0x5a; 32]),
+                key_version: DatabaseKeyVersion::from_wire_bytes([0; 16]),
+            },
+        )
+        .unwrap();
+        // Existing bytes still have ordinal zero; a gap is only valid for a
+        // newly created WAL, not when it would conceal a rollback.
+        assert!(wal.scan().unwrap().mid_file_damage);
+        let _ = &mut wal;
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn encrypted_new_wal_recovers_after_a_reserved_nonce_gap() {
+        let (path, config) = encrypted_path("nonce-gap");
+        let owner = config.owner.clone();
+        let ordinal_path = path.with_file_name("wal.ordinal");
+        persist_ordinal(&ordinal_path, 7).unwrap();
+        let mut wal = WalLog::open_unrepaired_with_encryption(&path, config).unwrap();
+        wal.append(&[doc_entry("t", "a", 1, b"one")]).unwrap();
+        assert!(!wal.scan().unwrap().mid_file_damage);
+        drop(wal);
+        let _ = owner;
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 }

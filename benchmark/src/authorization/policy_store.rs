@@ -36,9 +36,18 @@ const MAX_RECORD_BYTES: usize = 4 * 1024 * 1024;
 const RECORD_DOMAIN: &[u8] = b"terrabase.authorization.policy-journal.record.v1\0";
 
 /// An immutable view of the latest durable policy for each database scope.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Default, Eq, PartialEq)]
 pub struct PolicyStoreSnapshot {
     policies: BTreeMap<ResourceScope, Policy>,
+}
+
+impl std::fmt::Debug for PolicyStoreSnapshot {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PolicyStoreSnapshot")
+            .field("policy_count", &self.policies.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl PolicyStoreSnapshot {
@@ -74,6 +83,15 @@ pub struct AuthorizationPolicyStore {
     previous_tag: [u8; AUTHENTICATION_BYTES],
     lock_path: PathBuf,
     _writer_lease: Arc<File>,
+    expiries: BTreeMap<ResourceScope, u64>,
+    generations: BTreeMap<ResourceScope, u64>,
+    revoked_principals: BTreeMap<(ResourceScope, PrincipalUlid), u64>,
+    revoked_grants: BTreeMap<(ResourceScope, PrincipalGrantUlid), u64>,
+}
+
+struct RecoveredState {
+    snapshot: PolicyStoreSnapshot,
+    previous_tag: [u8; AUTHENTICATION_BYTES],
     expiries: BTreeMap<ResourceScope, u64>,
     generations: BTreeMap<ResourceScope, u64>,
     revoked_principals: BTreeMap<(ResourceScope, PrincipalUlid), u64>,
@@ -130,7 +148,15 @@ impl AuthorizationPolicyStore {
             sync_parent(&path)?;
         }
 
-        let (previous_tag, snapshot) = replay(&mut file, &authentication_key)?;
+        let recovered = replay(&mut file, &authentication_key)?;
+        let RecoveredState {
+            snapshot,
+            previous_tag,
+            expiries,
+            generations,
+            revoked_principals,
+            revoked_grants,
+        } = recovered;
         let lock_path = PathBuf::from(format!("{}.lock", path.display()));
         let writer_lease = acquire_writer_lease(&lock_path)?;
         file.seek(SeekFrom::End(0)).map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
@@ -142,6 +168,10 @@ impl AuthorizationPolicyStore {
             previous_tag,
             lock_path,
             _writer_lease: Arc::new(writer_lease),
+            expiries,
+            generations,
+            revoked_principals,
+            revoked_grants,
         })
     }
 
@@ -159,12 +189,35 @@ impl AuthorizationPolicyStore {
         scope: ResourceScope,
         policy: Policy,
     ) -> Result<(), AuthorizationError> {
+        self.publish_with_expiry(scope, policy, u64::MAX)
+    }
+
+    /// Appends a policy whose validity ends at the supplied Unix-second
+    /// instant. A zero expiry is refused.
+    pub fn publish_with_expiry(
+        &mut self,
+        scope: ResourceScope,
+        policy: Policy,
+        expires_at: u64,
+    ) -> Result<(), AuthorizationError> {
+        if expires_at == 0 {
+            return Err(AuthorizationError::InvalidExpiry);
+        }
+        let current_generation = self.generations.get(&scope).copied().unwrap_or(0);
+        if policy.generation() < current_generation {
+            return Err(AuthorizationError::PolicyGenerationRollback);
+        }
         if let Some(current) = self.snapshot.policies.get(&scope) {
             match policy.generation().cmp(&current.generation()) {
                 std::cmp::Ordering::Less => {
                     return Err(AuthorizationError::PolicyGenerationRollback);
                 }
-                std::cmp::Ordering::Equal if &policy == current => return Ok(()),
+                std::cmp::Ordering::Equal
+                    if &policy == current
+                        && self.expiries.get(&scope).copied().unwrap_or(u64::MAX) == expires_at =>
+                {
+                    return Ok(());
+                }
                 std::cmp::Ordering::Equal => {
                     return Err(AuthorizationError::PolicyGenerationEquivocation);
                 }
@@ -172,7 +225,8 @@ impl AuthorizationPolicyStore {
             }
         }
 
-        let payload = encode_record(&scope, &policy)?;
+        let generation = policy.generation();
+        let payload = encode_publish_record(&scope, &policy, expires_at)?;
         let payload_len =
             u32::try_from(payload.len()).map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
         let tag = authenticate(&self.authentication_key, &self.previous_tag, &payload);
@@ -183,7 +237,94 @@ impl AuthorizationPolicyStore {
             .and_then(|()| self.file.write_all(tag.as_bytes()))
             .and_then(|()| self.file.sync_data())
             .map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
-        self.snapshot.policies.insert(scope, policy);
+        self.snapshot.policies.insert(scope.clone(), policy);
+        self.expiries.insert(scope.clone(), expires_at);
+        self.generations.insert(scope, generation);
+        self.previous_tag.copy_from_slice(tag.as_bytes());
+        Ok(())
+    }
+
+    /// Advances the scope generation and revokes all contexts for a principal
+    /// at or below that generation.
+    pub fn revoke_principal(
+        &mut self,
+        scope: ResourceScope,
+        principal_id: PrincipalUlid,
+        generation: u64,
+    ) -> Result<(), AuthorizationError> {
+        self.append_revocation(Revocation::Principal { scope, principal_id, generation })
+    }
+
+    /// Advances the scope generation and revokes one signed grant at or below
+    /// that generation.
+    pub fn revoke_grant(
+        &mut self,
+        scope: ResourceScope,
+        grant_id: PrincipalGrantUlid,
+        generation: u64,
+    ) -> Result<(), AuthorizationError> {
+        self.append_revocation(Revocation::Grant { scope, grant_id, generation })
+    }
+
+    /// Evaluates against the current durable publication and refuses missing,
+    /// expired, stale, cross-scope, or revoked contexts before the policy AST.
+    #[must_use]
+    pub fn evaluate(
+        &self,
+        context: &super::PrincipalContext,
+        request: &super::AuthorizationRequest,
+    ) -> super::AuthorizationDecision {
+        let Some(policy) = self.snapshot.policies.get(&request.scope) else {
+            return super::AuthorizationDecision::Deny(super::DenialReason::ScopeMismatch);
+        };
+        let generation = self.generations.get(&request.scope).copied().unwrap_or(0);
+        let revoked_principal = self
+            .revoked_principals
+            .get(&(request.scope.clone(), context.principal_id()))
+            .is_some_and(|value| *value >= context.policy_generation());
+        let revoked_grant = self
+            .revoked_grants
+            .get(&(request.scope.clone(), context.grant_id()))
+            .is_some_and(|value| *value >= context.policy_generation());
+        if request.scope != context.scope
+            || generation != context.policy_generation()
+            || policy.policy_id() != context.policy_id()
+            || !policy.contains_grant(context.grant_id())
+            || revoked_principal
+            || revoked_grant
+            || self.expiries.get(&request.scope).copied().unwrap_or(0) <= request.now
+        {
+            return super::AuthorizationDecision::Deny(
+                super::DenialReason::PolicyGenerationMismatch,
+            );
+        }
+        super::evaluate(context, policy, request)
+    }
+
+    fn append_revocation(&mut self, revocation: Revocation) -> Result<(), AuthorizationError> {
+        let (scope, generation) = match &revocation {
+            Revocation::Principal { scope, generation, .. }
+            | Revocation::Grant { scope, generation, .. } => (scope, *generation),
+        };
+        if generation == 0 || generation <= self.generations.get(scope).copied().unwrap_or(0) {
+            return Err(AuthorizationError::PolicyGenerationRollback);
+        }
+        let payload = encode_revocation_record(&revocation)?;
+        let tag = authenticate(&self.authentication_key, &self.previous_tag, &payload);
+        let payload_len =
+            u32::try_from(payload.len()).map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
+        self.file
+            .write_all(&payload_len.to_le_bytes())
+            .and_then(|()| self.file.write_all(&payload))
+            .and_then(|()| self.file.write_all(tag.as_bytes()))
+            .and_then(|()| self.file.sync_data())
+            .map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
+        apply_revocation(
+            &mut self.generations,
+            &mut self.revoked_principals,
+            &mut self.revoked_grants,
+            revocation,
+        )?;
         self.previous_tag.copy_from_slice(tag.as_bytes());
         Ok(())
     }
@@ -297,10 +438,34 @@ fn acquire_writer_lease(path: &Path) -> Result<File, AuthorizationError> {
     Ok(file)
 }
 
+enum Revocation {
+    Principal { scope: ResourceScope, principal_id: PrincipalUlid, generation: u64 },
+    Grant { scope: ResourceScope, grant_id: PrincipalGrantUlid, generation: u64 },
+}
+
+fn apply_revocation(
+    generations: &mut BTreeMap<ResourceScope, u64>,
+    principals: &mut BTreeMap<(ResourceScope, PrincipalUlid), u64>,
+    grants: &mut BTreeMap<(ResourceScope, PrincipalGrantUlid), u64>,
+    revocation: Revocation,
+) -> Result<(), AuthorizationError> {
+    match revocation {
+        Revocation::Principal { scope, principal_id, generation } => {
+            generations.insert(scope.clone(), generation);
+            principals.insert((scope, principal_id), generation);
+        }
+        Revocation::Grant { scope, grant_id, generation } => {
+            generations.insert(scope.clone(), generation);
+            grants.insert((scope, grant_id), generation);
+        }
+    }
+    Ok(())
+}
+
 fn replay(
     file: &mut File,
     authentication_key: &[u8; AUTHENTICATION_BYTES],
-) -> Result<([u8; AUTHENTICATION_BYTES], PolicyStoreSnapshot), AuthorizationError> {
+) -> Result<RecoveredState, AuthorizationError> {
     let length = file.metadata().map_err(|_| AuthorizationError::PolicyStoreUnavailable)?.len();
     if length > MAX_JOURNAL_BYTES {
         return Err(AuthorizationError::PolicyJournalCorrupt);
@@ -318,6 +483,10 @@ fn replay(
     let mut offset = JOURNAL_MAGIC.len();
     let mut previous_tag = [0_u8; AUTHENTICATION_BYTES];
     let mut policies = BTreeMap::new();
+    let mut expiries = BTreeMap::new();
+    let mut generations = BTreeMap::new();
+    let mut revoked_principals = BTreeMap::new();
+    let mut revoked_grants = BTreeMap::new();
     while offset < bytes.len() {
         let record_start = offset;
         let length_end = offset.checked_add(4).ok_or(AuthorizationError::PolicyJournalCorrupt)?;
@@ -350,12 +519,45 @@ fn replay(
         if authenticate(authentication_key, &previous_tag, payload).as_bytes() != tag {
             return Err(AuthorizationError::PolicyJournalCorrupt);
         }
-        let (scope, policy) = decode_record(payload)?;
-        apply_replayed(&mut policies, scope, policy)?;
+        match decode_journal_record(payload)? {
+            JournalRecord::Publish { scope, policy, expires_at } => {
+                if policy.generation() < generations.get(&scope).copied().unwrap_or(0) {
+                    return Err(AuthorizationError::PolicyGenerationRollback);
+                }
+                apply_replayed(&mut policies, scope.clone(), policy.clone())?;
+                generations.insert(scope.clone(), policy.generation());
+                expiries.insert(scope, expires_at);
+            }
+            JournalRecord::Revoke(revocation) => {
+                let generation = match &revocation {
+                    Revocation::Principal { generation, .. }
+                    | Revocation::Grant { generation, .. } => *generation,
+                };
+                let scope = match &revocation {
+                    Revocation::Principal { scope, .. } | Revocation::Grant { scope, .. } => scope,
+                };
+                if generation <= generations.get(scope).copied().unwrap_or(0) {
+                    return Err(AuthorizationError::PolicyGenerationRollback);
+                }
+                apply_revocation(
+                    &mut generations,
+                    &mut revoked_principals,
+                    &mut revoked_grants,
+                    revocation,
+                )?;
+            }
+        }
         previous_tag.copy_from_slice(tag);
         offset = tag_end;
     }
-    Ok((previous_tag, PolicyStoreSnapshot { policies }))
+    Ok(RecoveredState {
+        snapshot: PolicyStoreSnapshot { policies },
+        previous_tag,
+        expiries,
+        generations,
+        revoked_principals,
+        revoked_grants,
+    })
 }
 
 fn truncate_tail(file: &mut File, length: u64) -> Result<(), AuthorizationError> {
@@ -395,6 +597,104 @@ fn authenticate(
     hasher.update(previous_tag);
     hasher.update(payload);
     hasher.finalize()
+}
+
+enum JournalRecord {
+    Publish { scope: ResourceScope, policy: Policy, expires_at: u64 },
+    Revoke(Revocation),
+}
+
+fn encode_publish_record(
+    scope: &ResourceScope,
+    policy: &Policy,
+    expires_at: u64,
+) -> Result<Vec<u8>, AuthorizationError> {
+    let legacy = encode_record(scope, policy)?;
+    let mut output = Vec::with_capacity(legacy.len() + 10);
+    output.push(RECORD_VERSION);
+    output.push(1);
+    output.extend_from_slice(&expires_at.to_le_bytes());
+    output.extend_from_slice(&legacy[1..]);
+    if output.len() > MAX_RECORD_BYTES {
+        return Err(AuthorizationError::PolicyStoreUnavailable);
+    }
+    Ok(output)
+}
+
+fn encode_revocation_record(revocation: &Revocation) -> Result<Vec<u8>, AuthorizationError> {
+    let mut output = vec![RECORD_VERSION];
+    match revocation {
+        Revocation::Principal { scope, principal_id, generation } => {
+            output.push(2);
+            encode_scope(&mut output, scope);
+            output.extend_from_slice(&principal_id.as_bytes());
+            output.extend_from_slice(&generation.to_le_bytes());
+        }
+        Revocation::Grant { scope, grant_id, generation } => {
+            output.push(3);
+            encode_scope(&mut output, scope);
+            output.extend_from_slice(&grant_id.as_bytes());
+            output.extend_from_slice(&generation.to_le_bytes());
+        }
+    }
+    if output.len() > MAX_RECORD_BYTES {
+        return Err(AuthorizationError::PolicyStoreUnavailable);
+    }
+    Ok(output)
+}
+
+fn encode_scope(output: &mut Vec<u8>, scope: &ResourceScope) {
+    output.extend_from_slice(&scope.tenant_id().as_bytes());
+    output.extend_from_slice(&scope.project_id().as_bytes());
+    output.extend_from_slice(&scope.database_id().as_bytes());
+}
+
+fn decode_journal_record(bytes: &[u8]) -> Result<JournalRecord, AuthorizationError> {
+    let mut decoder = Decoder::new(bytes);
+    if decoder.byte()? != RECORD_VERSION {
+        return Err(AuthorizationError::PolicyJournalCorrupt);
+    }
+    match decoder.byte()? {
+        1 => {
+            let expires_at = decoder.u64()?;
+            let mut legacy = Vec::with_capacity(bytes.len() - 9);
+            legacy.push(RECORD_VERSION);
+            legacy.extend_from_slice(decoder.take(bytes.len() - decoder.offset)?);
+            let (scope, policy) = decode_record(&legacy)?;
+            if expires_at == 0 {
+                return Err(AuthorizationError::PolicyJournalCorrupt);
+            }
+            Ok(JournalRecord::Publish { scope, policy, expires_at })
+        }
+        2 | 3 => {
+            let scope = ResourceScope::try_new(
+                TenantUlid::from_wire_bytes(decoder.array()?),
+                ProjectUlid::from_wire_bytes(decoder.array()?),
+                DatabaseUlid::from_wire_bytes(decoder.array()?),
+            )
+            .map_err(|_| AuthorizationError::PolicyJournalCorrupt)?;
+            let id = decoder.array()?;
+            let generation = decoder.u64()?;
+            if generation == 0 || !decoder.is_finished() {
+                return Err(AuthorizationError::PolicyJournalCorrupt);
+            }
+            let revocation = if bytes[1] == 2 {
+                Revocation::Principal {
+                    scope,
+                    principal_id: PrincipalUlid::from_wire_bytes(id),
+                    generation,
+                }
+            } else {
+                Revocation::Grant {
+                    scope,
+                    grant_id: PrincipalGrantUlid::from_wire_bytes(id),
+                    generation,
+                }
+            };
+            Ok(JournalRecord::Revoke(revocation))
+        }
+        _ => Err(AuthorizationError::PolicyJournalCorrupt),
+    }
 }
 
 fn encode_record(scope: &ResourceScope, policy: &Policy) -> Result<Vec<u8>, AuthorizationError> {
@@ -758,7 +1058,8 @@ mod tests {
             .expect("open for truncate")
             .set_len(length - 1)
             .expect("truncate");
-        let recovered = AuthorizationPolicyStore::open(&path, [10; 32]).expect("torn tail recovery");
+        let recovered =
+            AuthorizationPolicyStore::open(&path, [10; 32]).expect("torn tail recovery");
         assert!(recovered.snapshot().is_empty());
         std::fs::remove_file(path).expect("remove journal");
 
@@ -768,7 +1069,8 @@ mod tests {
             store.publish(scope(), policy(1)).expect("publish");
         }
         let mut file = OpenOptions::new().read(true).write(true).open(&tampered).expect("open");
-        file.seek(SeekFrom::Start((JOURNAL_MAGIC.len() + 8) as u64)).expect("seek");
+        // Skip the frame length, version/op, and the all-ones expiry.
+        file.seek(SeekFrom::Start((JOURNAL_MAGIC.len() + 17) as u64)).expect("seek");
         file.write_all(&[0xFF]).expect("tamper");
         file.sync_all().expect("sync");
         assert!(matches!(

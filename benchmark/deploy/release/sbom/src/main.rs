@@ -5,6 +5,8 @@ use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 
 const MAX_METADATA_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
@@ -136,8 +138,7 @@ fn valid_cli_string(value: &str, name: &str) -> Result<(), String> {
 }
 
 fn read_bounded_regular(path: &Path, limit: u64, label: &str) -> Result<Vec<u8>, String> {
-    regular_file(path, label)?;
-    let mut file = File::open(path).map_err(|error| format!("cannot open {label}: {error}"))?;
+    let mut file = open_regular(path, label)?;
     let mut bytes = Vec::new();
     Read::by_ref(&mut file)
         .take(limit.saturating_add(1))
@@ -158,6 +159,23 @@ fn regular_file(path: &Path, label: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn open_regular(path: &Path, label: &str) -> Result<File, String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("cannot inspect {label}: {error}"))?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err(format!("{label} is not a safe regular file"));
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NOFOLLOW);
+    let file = options.open(path).map_err(|error| format!("cannot open {label}: {error}"))?;
+    if !file.metadata().map_err(|error| format!("cannot inspect {label}: {error}"))?.is_file() {
+        return Err(format!("{label} is not a safe regular file"));
+    }
+    Ok(file)
+}
+
 fn file_name(path: &Path, label: &str) -> Result<String, String> {
     let name = path
         .file_name()
@@ -172,24 +190,57 @@ fn file_name(path: &Path, label: &str) -> Result<String, String> {
 }
 
 fn digest_regular(path: &Path) -> Result<String, String> {
-    regular_file(path, "artifact")?;
-    let metadata =
-        fs::metadata(path).map_err(|error| format!("cannot inspect artifact: {error}"))?;
-    if metadata.len() > MAX_ARTIFACT_BYTES {
+    let mut file = open_regular(path, "artifact")?;
+    let before = fingerprint(&file)?;
+    if before.length > MAX_ARTIFACT_BYTES {
         return Err(format!("artifact exceeds {MAX_ARTIFACT_BYTES} bytes"));
     }
-    let mut file = File::open(path).map_err(|error| format!("cannot open artifact: {error}"))?;
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 1024 * 1024];
+    let mut read = 0u64;
     loop {
         let count =
             file.read(&mut buffer).map_err(|error| format!("cannot read artifact: {error}"))?;
         if count == 0 {
             break;
         }
+        read = read.checked_add(count as u64).ok_or("artifact byte count overflow")?;
+        if read > MAX_ARTIFACT_BYTES {
+            return Err(format!("artifact exceeds {MAX_ARTIFACT_BYTES} bytes"));
+        }
         hasher.update(&buffer[..count]);
     }
+    let after = fingerprint(&file)?;
+    if before != after || read != before.length {
+        return Err("artifact changed while it was being hashed".to_owned());
+    }
     Ok(hex_lower(&hasher.finalize()))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct Fingerprint {
+    length: u64,
+    modified: Option<std::time::SystemTime>,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    changed: (i64, i64),
+}
+
+fn fingerprint(file: &File) -> Result<Fingerprint, String> {
+    let metadata = file.metadata().map_err(|error| format!("cannot inspect artifact: {error}"))?;
+    Ok(Fingerprint {
+        length: metadata.len(),
+        modified: metadata.modified().ok(),
+        #[cfg(unix)]
+        inode: metadata.ino(),
+        #[cfg(unix)]
+        device: metadata.dev(),
+        #[cfg(unix)]
+        changed: (metadata.ctime(), metadata.ctime_nsec()),
+    })
 }
 
 fn write_output(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -198,14 +249,27 @@ fn write_output(path: &Path, bytes: &[u8]) -> Result<(), String> {
     {
         return Err("output is not a safe regular file".to_owned());
     }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = file_name(path, "output")?;
+    let temporary = parent.join(format!(".{name}.{}.tmp", std::process::id()));
     let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .write(true)
-        .open(path)
-        .map_err(|error| format!("cannot create output: {error}"))?;
-    file.write_all(bytes).map_err(|error| format!("cannot write output: {error}"))?;
-    file.sync_all().map_err(|error| format!("cannot flush output: {error}"))
+        .open(&temporary)
+        .map_err(|error| format!("cannot create temporary output: {error}"))?;
+    let result = (|| {
+        file.write_all(bytes).map_err(|error| format!("cannot write output: {error}"))?;
+        file.sync_all().map_err(|error| format!("cannot flush output: {error}"))?;
+        drop(file);
+        fs::rename(&temporary, path).map_err(|error| format!("cannot install output: {error}"))?;
+        File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| format!("cannot flush output directory: {error}"))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 fn validate_json(value: &Value, depth: usize, location: &str) -> Result<(), String> {

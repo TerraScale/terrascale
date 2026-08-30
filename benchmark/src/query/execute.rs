@@ -201,6 +201,9 @@ fn execute_with_index(
     let started = Instant::now();
     let query: &NormalizedQuery = plan.model();
     // Tenant, snapshot, and namespace validation before any data access.
+    if snapshot.engine_identity() != engine.identity() {
+        return Err(QueryError::SnapshotEngineMismatch);
+    }
     if let Some(claim) = query.tenant_claim()
         && claim != snapshot.tenant()
     {
@@ -276,21 +279,9 @@ fn execute_with_index(
         (Vec::new(), 0, 0, 0)
     };
 
-    // The document list is materialized, so no Engine or storage lock is held
-    // while candidate filtering, ordering, projecting, or paging. When an
-    // index read above succeeded, only its bounded candidate IDs are filtered;
-    // otherwise this is the complete source-collection scan. The accounting
-    // counts candidates — the FILTER accounting of V1's statistics — and
-    // saturates, so no count ever wraps.
-    // Reference resolution for the loads clause: one bounded id lookup per
-    // load, served from the same materialized snapshot view. The map spans
-    // every collection of the tenant, because a reference is an id, not a
-    // collection-qualified pointer. Storage keys documents by tenant,
-    // collection, and identifier, and nothing forbids reusing one id across a
-    // tenant's collections, so the first document in canonical key order
-    // wins: the same first-match rule the engine's identifier-only point read
-    // applies (`find_by_document_id` through `read_document_at`), so a load
-    // and a point read never disagree about which document one bare id names.
+    // The scan retained only the ordered candidate window. Loads and includes
+    // resolve their page's references through a separate bounded tenant pass,
+    // preserving canonical first-match semantics for reused IDs.
     // Bounded checkpoint at the scan/sort boundary: a bound that expired
     // during the scan stops the query before the sort starts.
     check_bounds(query.deadline(), query.cancellation_signal())?;
@@ -556,7 +547,7 @@ fn collect_matches(
             .count(),
     )
     .unwrap_or(u64::MAX);
-    if query.paging().limit().is_none() && matched_count as usize > retained_capacity {
+    if query.paging().limit().is_none() && matched_count > retained_capacity as u64 {
         return Err(QueryError::CandidateBoundExceeded);
     }
     Ok((matched, matched_count, scanned, skipped))

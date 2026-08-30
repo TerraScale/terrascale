@@ -437,7 +437,9 @@ impl<'engine> QueryStore<'engine> {
     /// [`QueryError::TenantMismatch`] when a required index namespace belongs
     /// to another tenant, [`QueryError::IndexNotReady`] when a strict policy
     /// is not met, [`QueryError::Deadline`] or [`QueryError::Cancelled`] at a
-    /// bounded checkpoint, and [`QueryError::StorageFailure`] when the
+    /// bounded checkpoint, [`QueryError::CandidateBoundExceeded`] when the
+    /// requested page cannot fit the bounded execution window, and
+    /// [`QueryError::StorageFailure`] when the
     /// snapshot view fails.
     pub fn execute(
         &self,

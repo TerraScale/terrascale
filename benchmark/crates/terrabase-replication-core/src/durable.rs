@@ -18,6 +18,7 @@ use terrabase::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
     OperationId, TenantId,
 };
+use terrabase_causal::{CanonicalEncode, canonical_hash};
 
 use crate::{
     ReplicaDoc, ReplicaError, ReplicaExchange, ReplicaFrontier, ReplicaScope, ReplicaValue,
@@ -25,8 +26,15 @@ use crate::{
 
 const COLLECTION: &str = "documents";
 const SNAPSHOT: &str = "replica.snapshot";
-const SNAPSHOT_TEMP: &str = "replica.snapshot.tmp";
 const OPERATIONS: &str = "replica.operations";
+const STATE: &str = "replica.state";
+const STATE_TEMP: &str = "replica.state.tmp";
+const STATE_MAGIC: &[u8] = b"terrabase-durable-replica-state\0";
+const STATE_VERSION: u8 = 1;
+const MAX_STATE_BYTES: usize = 16 << 20;
+const MAX_SNAPSHOT_BYTES: usize = 16 << 20;
+const MAX_OPERATION_IDS: usize = 65_536;
+const MAX_OPERATION_ID_BYTES: usize = 256;
 
 /// Durable progress exposed by one replica member.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -91,7 +99,6 @@ pub struct DurableMember {
     tenant: TenantId,
     replica: ReplicaDoc,
     operations: BTreeSet<String>,
-    persisted_operations: BTreeSet<String>,
     known_documents: BTreeSet<String>,
     progress: DurableMemberProgress,
     reads: u64,
@@ -106,13 +113,20 @@ impl DurableMember {
     ) -> Result<Self, DurableMemberError> {
         let location = lease.location().to_path_buf();
         let actor = actor_for(member_identity);
-        let snapshot = match fs::read(location.join(SNAPSHOT)) {
-            Ok(bytes) => ReplicaDoc::from_snapshot(actor, &bytes)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => ReplicaDoc::new(actor),
-            Err(_) => return Err(DurableMemberError::Persistence),
+        let (snapshot, operations) = match read_state(&location)? {
+            Some((snapshot, operations)) => {
+                (ReplicaDoc::from_snapshot(actor, &snapshot)?, operations)
+            }
+            None => {
+                // Read the old pair only when the atomic state record does
+                // not exist. The next successful persist migrates it.
+                let snapshot = match read_legacy_snapshot(&location)? {
+                    Some(bytes) => ReplicaDoc::from_snapshot(actor, &bytes)?,
+                    None => ReplicaDoc::new(actor),
+                };
+                (snapshot, read_legacy_operations(&location)?)
+            }
         };
-        let operations = load_operations(&location)?;
-        let persisted_operations = operations.clone();
         let known_documents = snapshot.materialized().into_keys().collect();
         let progress = DurableMemberProgress {
             stored: lease.published_sequence().map_err(|_| DurableMemberError::Engine)?.get(),
@@ -126,7 +140,6 @@ impl DurableMember {
             replica: snapshot,
             lease: Some(lease),
             operations,
-            persisted_operations,
             known_documents,
             progress,
             reads: 0,
@@ -209,6 +222,7 @@ impl DurableMember {
         if self.operations.contains(operation) {
             return committed_receipt(lease, &scope, operation_id);
         }
+        ensure_operation_capacity(&self.operations, operation)?;
         let snapshot = lease.read_snapshot(&scope).map_err(|_| DurableMemberError::Engine)?;
         let mut transaction = lease
             .begin(&scope, snapshot, operation_id.clone())
@@ -251,6 +265,7 @@ impl DurableMember {
         if self.operations.contains(operation) {
             return committed_receipt(lease, &scope, operation_id);
         }
+        ensure_operation_capacity(&self.operations, operation)?;
         let snapshot = lease.read_snapshot(&scope).map_err(|_| DurableMemberError::Engine)?;
         let mut transaction =
             lease.begin(&scope, snapshot, operation_id).map_err(|_| DurableMemberError::Engine)?;
@@ -426,36 +441,38 @@ impl DurableMember {
     }
 
     fn persist(&mut self) -> Result<(), DurableMemberError> {
-        let bytes = self.replica.snapshot_bytes()?;
-        let temporary = self.location.join(SNAPSHOT_TEMP);
-        let mut snapshot = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&temporary)
-            .map_err(|_| DurableMemberError::Persistence)?;
-        snapshot.write_all(&bytes).map_err(|_| DurableMemberError::Persistence)?;
-        snapshot.sync_all().map_err(|_| DurableMemberError::Persistence)?;
-        drop(snapshot);
-        fs::rename(temporary, self.location.join(SNAPSHOT))
+        let snapshot = self.replica.snapshot_bytes()?;
+        let bytes = encode_state(&snapshot, &self.operations)?;
+        let temporary = self.location.join(STATE_TEMP);
+        let mut options = OpenOptions::new();
+        options.create_new(true).write(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, 0x20000);
+        let mut file = match options.open(&temporary) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let metadata = fs::symlink_metadata(&temporary)
+                    .map_err(|_| DurableMemberError::Persistence)?;
+                if metadata.file_type().is_symlink() {
+                    return Err(DurableMemberError::Persistence);
+                }
+                fs::remove_file(&temporary).map_err(|_| DurableMemberError::Persistence)?;
+                let mut retry = OpenOptions::new();
+                retry.create_new(true).write(true);
+                #[cfg(unix)]
+                std::os::unix::fs::OpenOptionsExt::custom_flags(&mut retry, 0x20000);
+                retry.open(&temporary).map_err(|_| DurableMemberError::Persistence)?
+            }
+            Err(_) => return Err(DurableMemberError::Persistence),
+        };
+        file.write_all(&bytes).map_err(|_| DurableMemberError::Persistence)?;
+        file.sync_all().map_err(|_| DurableMemberError::Persistence)?;
+        drop(file);
+        fs::rename(&temporary, self.location.join(STATE))
             .map_err(|_| DurableMemberError::Persistence)?;
         File::open(&self.location)
             .and_then(|directory| directory.sync_all())
-            .map_err(|_| DurableMemberError::Persistence)?;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.location.join(OPERATIONS))
-            .map_err(|_| DurableMemberError::Persistence)?;
-        // The operation ledger is a set in memory; appending only newly seen
-        // operations keeps replay checks durable without changing snapshot
-        // codec bytes.
-        for operation in self.operations.difference(&self.persisted_operations) {
-            writeln!(file, "{operation}").map_err(|_| DurableMemberError::Persistence)?;
-        }
-        file.sync_data().map_err(|_| DurableMemberError::Persistence)?;
-        self.persisted_operations = self.operations.clone();
-        Ok(())
+            .map_err(|_| DurableMemberError::Persistence)
     }
 }
 
@@ -492,14 +509,184 @@ fn committed_receipt(
     }
 }
 
-fn load_operations(location: &Path) -> Result<BTreeSet<String>, DurableMemberError> {
-    let bytes = match fs::read(location.join(OPERATIONS)) {
-        Ok(bytes) => bytes,
+struct ChecksumInput<'a>(&'a [u8]);
+
+impl CanonicalEncode for ChecksumInput<'_> {
+    fn encode_canonical(&self, output: &mut Vec<u8>) {
+        output.extend_from_slice(&(self.0.len() as u64).to_le_bytes());
+        output.extend_from_slice(self.0);
+    }
+}
+
+fn encode_state(
+    snapshot: &[u8],
+    operations: &BTreeSet<String>,
+) -> Result<Vec<u8>, DurableMemberError> {
+    if snapshot.len() > MAX_SNAPSHOT_BYTES || operations.len() > MAX_OPERATION_IDS {
+        return Err(DurableMemberError::Persistence);
+    }
+    let snapshot_len = u64::try_from(snapshot.len()).map_err(|_| DurableMemberError::Persistence)?;
+    let operation_count = u32::try_from(operations.len()).map_err(|_| DurableMemberError::Persistence)?;
+    let mut body = Vec::with_capacity(STATE_MAGIC.len() + 1 + 12 + snapshot.len());
+    body.extend_from_slice(STATE_MAGIC);
+    body.push(STATE_VERSION);
+    body.extend_from_slice(&snapshot_len.to_le_bytes());
+    body.extend_from_slice(&operation_count.to_le_bytes());
+    body.extend_from_slice(snapshot);
+    for operation in operations {
+        ensure_operation_capacity(operations, operation)?;
+        let length = u32::try_from(operation.len()).map_err(|_| DurableMemberError::Persistence)?;
+        body.extend_from_slice(&length.to_le_bytes());
+        body.extend_from_slice(operation.as_bytes());
+    }
+    let checksum = canonical_hash("durable-replica-state", &ChecksumInput(&body))
+        .map_err(|_| DurableMemberError::Persistence)?;
+    body.extend_from_slice(&checksum);
+    if body.len() > MAX_STATE_BYTES {
+        return Err(DurableMemberError::Persistence);
+    }
+    Ok(body)
+}
+
+fn read_state(location: &Path) -> Result<Option<(Vec<u8>, BTreeSet<String>)>, DurableMemberError> {
+    let path = location.join(STATE);
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(DurableMemberError::Persistence),
+    };
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        return Err(DurableMemberError::Persistence);
+    }
+    let bytes = fs::read(path).map_err(|_| DurableMemberError::Persistence)?;
+    decode_state(&bytes).map(Some)
+}
+
+fn decode_state(bytes: &[u8]) -> Result<(Vec<u8>, BTreeSet<String>), DurableMemberError> {
+    if bytes.len() > MAX_STATE_BYTES || bytes.len() < 32 {
+        return Err(DurableMemberError::Persistence);
+    }
+    let split = bytes.len() - 32;
+    let (body, checksum) = bytes.split_at(split);
+    let expected = canonical_hash("durable-replica-state", &ChecksumInput(body))
+        .map_err(|_| DurableMemberError::Persistence)?;
+    if checksum != expected {
+        return Err(DurableMemberError::Persistence);
+    }
+    let mut cursor = 0;
+    if take(body, &mut cursor, STATE_MAGIC.len()) != Some(STATE_MAGIC)
+        || take(body, &mut cursor, 1) != Some(&[STATE_VERSION])
+    {
+        return Err(DurableMemberError::Persistence);
+    }
+    let snapshot_len = u64::from_le_bytes(
+        take(body, &mut cursor, 8)
+            .ok_or(DurableMemberError::Persistence)?
+            .try_into()
+            .map_err(|_| DurableMemberError::Persistence)?,
+    );
+    let snapshot_len = usize::try_from(snapshot_len).map_err(|_| DurableMemberError::Persistence)?;
+    if snapshot_len > MAX_SNAPSHOT_BYTES {
+        return Err(DurableMemberError::Persistence);
+    }
+    let count = u32::from_le_bytes(
+        take(body, &mut cursor, 4)
+            .ok_or(DurableMemberError::Persistence)?
+            .try_into()
+            .map_err(|_| DurableMemberError::Persistence)?,
+    ) as usize;
+    if count > MAX_OPERATION_IDS {
+        return Err(DurableMemberError::Persistence);
+    }
+    let snapshot = take(body, &mut cursor, snapshot_len)
+        .ok_or(DurableMemberError::Persistence)?
+        .to_vec();
+    let mut operations = BTreeSet::new();
+    for _ in 0..count {
+        let length = u32::from_le_bytes(
+            take(body, &mut cursor, 4)
+                .ok_or(DurableMemberError::Persistence)?
+                .try_into()
+                .map_err(|_| DurableMemberError::Persistence)?,
+        ) as usize;
+        if length == 0 || length > MAX_OPERATION_ID_BYTES {
+            return Err(DurableMemberError::Persistence);
+        }
+        let operation = std::str::from_utf8(
+            take(body, &mut cursor, length).ok_or(DurableMemberError::Persistence)?,
+        )
+        .map_err(|_| DurableMemberError::Persistence)?;
+        OperationId::try_new(operation).map_err(|_| DurableMemberError::Persistence)?;
+        if !operations.insert(operation.to_owned()) {
+            return Err(DurableMemberError::Persistence);
+        }
+    }
+    if cursor != body.len() {
+        return Err(DurableMemberError::Persistence);
+    }
+    Ok((snapshot, operations))
+}
+
+fn take<'a>(bytes: &'a [u8], cursor: &mut usize, length: usize) -> Option<&'a [u8]> {
+    let end = cursor.checked_add(length)?;
+    let value = bytes.get(*cursor..end)?;
+    *cursor = end;
+    Some(value)
+}
+
+fn read_legacy_snapshot(location: &Path) -> Result<Option<Vec<u8>>, DurableMemberError> {
+    let path = location.join(SNAPSHOT);
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(DurableMemberError::Persistence),
+    };
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        return Err(DurableMemberError::Persistence);
+    }
+    let bytes = fs::read(path).map_err(|_| DurableMemberError::Persistence)?;
+    if bytes.len() > MAX_SNAPSHOT_BYTES {
+        return Err(DurableMemberError::Persistence);
+    }
+    Ok(Some(bytes))
+}
+
+fn read_legacy_operations(location: &Path) -> Result<BTreeSet<String>, DurableMemberError> {
+    let path = location.join(OPERATIONS);
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeSet::new()),
         Err(_) => return Err(DurableMemberError::Persistence),
     };
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        return Err(DurableMemberError::Persistence);
+    }
+    let bytes = fs::read(path).map_err(|_| DurableMemberError::Persistence)?;
+    if bytes.len() > MAX_STATE_BYTES {
+        return Err(DurableMemberError::Persistence);
+    }
     let text = std::str::from_utf8(&bytes).map_err(|_| DurableMemberError::Persistence)?;
-    Ok(text.lines().filter(|line| !line.is_empty()).map(str::to_owned).collect())
+    let mut operations = BTreeSet::new();
+    for operation in text.lines().filter(|line| !line.is_empty()) {
+        ensure_operation_capacity(&operations, operation)?;
+        if !operations.insert(operation.to_owned()) {
+            return Err(DurableMemberError::Persistence);
+        }
+    }
+    Ok(operations)
+}
+
+fn ensure_operation_capacity(
+    operations: &BTreeSet<String>,
+    operation: &str,
+) -> Result<(), DurableMemberError> {
+    if operation.is_empty()
+        || operation.len() > MAX_OPERATION_ID_BYTES
+        || operations.len() >= MAX_OPERATION_IDS
+    {
+        return Err(DurableMemberError::Persistence);
+    }
+    Ok(())
 }
 
 fn to_replica(value: &DocumentValue) -> ReplicaValue {

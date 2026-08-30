@@ -413,32 +413,40 @@ impl S3BackupRepository {
         tags: TagSet,
     ) -> Result<bool, String> {
         let payload = PutPayload::from(bytes);
-        match self.store.head(&location).await {
-            Ok(metadata) => {
-                if self.existing_matches(&location, metadata.size, &payload).await? {
-                    return Ok(false);
-                }
-                return Err(format!("refusing to overwrite the existing S3 object {location}"));
-            }
-            Err(ObjectStoreError::NotFound { .. }) => {}
-            Err(error) => return Err(safe_store_error("inspect S3 object", error)),
-        }
         let options = PutOptions { mode: PutMode::Create, tags, ..PutOptions::default() };
         match self.store.put_opts(&location, payload.clone(), options).await {
             Ok(_) => Ok(true),
-            Err(ObjectStoreError::AlreadyExists { .. }) => {
-                let metadata = self
-                    .store
-                    .head(&location)
-                    .await
-                    .map_err(|error| safe_store_error("inspect raced S3 object", error))?;
-                if self.existing_matches(&location, metadata.size, &payload).await? {
-                    Ok(false)
-                } else {
-                    Err(format!("refusing to overwrite the existing S3 object {location}"))
-                }
+            // A failed HTTP response is not proof that S3 rejected the PUT:
+            // the service may have committed the object before the response
+            // was lost. Re-read every failure, including AlreadyExists, and
+            // accept only the exact immutable payload.
+            Err(error) => self.reconcile_failed_put(&location, &payload, error).await,
+        }
+    }
+
+    async fn reconcile_failed_put(
+        &self,
+        location: &ObjectPath,
+        expected: &PutPayload,
+        upload_error: ObjectStoreError,
+    ) -> Result<bool, String> {
+        let upload_failure = safe_store_error("upload S3 object", upload_error);
+        let metadata = match self.store.head(location).await {
+            Ok(metadata) => metadata,
+            Err(ObjectStoreError::NotFound { .. }) => return Err(upload_failure),
+            Err(error) => {
+                return Err(format!(
+                    "{upload_failure}; the PUT outcome could not be reconciled: {}",
+                    safe_store_error("inspect S3 object", error),
+                ));
             }
-            Err(error) => Err(safe_store_error("upload S3 object", error)),
+        };
+        match self.existing_matches(location, metadata.size, expected).await {
+            Ok(true) => Ok(false),
+            Ok(false) => Err(format!("refusing to overwrite the existing S3 object {location}")),
+            Err(error) => {
+                Err(format!("{upload_failure}; the PUT outcome could not be reconciled: {error}"))
+            }
         }
     }
 
@@ -1102,6 +1110,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_lost_put_response_is_reconciled_from_the_committed_object() {
+        let store = Arc::new(InMemory::new());
+        let repository = memory_repository(Arc::clone(&store));
+        let location = repository.prefix.clone().join("ambiguous-object");
+        let payload = PutPayload::from(b"committed".to_vec());
+        store.put(&location, payload.clone()).await.unwrap();
+
+        let response_lost = ObjectStoreError::Generic {
+            store: "test",
+            source: Box::new(std::io::Error::other("response lost after commit")),
+        };
+        assert!(
+            !repository.reconcile_failed_put(&location, &payload, response_lost).await.unwrap()
+        );
+    }
+
+    #[tokio::test]
     async fn full_then_incremental_points_restore_latest_or_an_older_selection() {
         let root = test_root("round-trip");
         let state = sample_state(&root);
@@ -1232,6 +1257,34 @@ mod tests {
         let store = Arc::new(InMemory::new());
         let repository = memory_repository(Arc::clone(&store));
         assert!(repository.upload_point(&destination, &result).await.is_err());
+        let objects = store.list(Some(&repository.prefix)).try_collect::<Vec<_>>().await.unwrap();
+        assert!(objects.iter().all(|object| object.location.filename() != Some(MANIFEST_FILE)));
+        assert!(repository.list_recovery_points().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn same_length_staging_corruption_never_commits_the_manifest() {
+        let root = test_root("manifest-checksum");
+        let state = sample_state(&root);
+        let destination = root.join("staged");
+        let result = terrabase::backup::run_backup(
+            state.engine.as_ref(),
+            terrabase::BackupPlan::full(),
+            &destination,
+        )
+        .unwrap();
+        let member = &result.manifest().members()[0];
+        let member_path =
+            destination.join(format!("rp-{}", result.manifest().identity())).join(member.name());
+        let mut corrupted = std::fs::read(&member_path).unwrap();
+        assert!(!corrupted.is_empty());
+        corrupted[0] ^= 0xff;
+        std::fs::write(member_path, corrupted).unwrap();
+
+        let store = Arc::new(InMemory::new());
+        let repository = memory_repository(Arc::clone(&store));
+        let failure = repository.upload_point(&destination, &result).await.unwrap_err();
+        assert!(failure.contains("failed manifest verification"));
         let objects = store.list(Some(&repository.prefix)).try_collect::<Vec<_>>().await.unwrap();
         assert!(objects.iter().all(|object| object.location.filename() != Some(MANIFEST_FILE)));
         assert!(repository.list_recovery_points().await.unwrap().is_empty());
