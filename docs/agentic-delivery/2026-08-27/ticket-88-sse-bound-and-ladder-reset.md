@@ -5,6 +5,11 @@ HEAD at packet start). Both warden re-gate MINORs were repaired red-then-green
 at the public session seam; each repair is one commit with its pinning test in
 the same commit.
 
+This is a historical packet record. Its route-manifest receipts describe the
+161-route packet checkout, not the current `develop` checkout. The current
+manifest has 79 routes; see the repository [GOAL.md](../../../../GOAL.md) for
+current production status and gaps.
+
 ## What landed
 
 1. **SSE line bound placement** (`src/sync/v2/session.ts`,

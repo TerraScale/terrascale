@@ -2,6 +2,8 @@
 
 Status: **implemented (TypeScript half only)**. Honest scope below.
 
+The canonical repository decision record is [ADR 0025](../adr/0025-public-messagepack-manifest.md).
+
 This lands gap-sweep row 28's TypeScript half
 (`TerraBaseV2/docs/evidence/qualification-gap-sweep.md`): the public
 `terrascale.sync.v2.msgpack` WebSocket protocol is now generated from one
@@ -74,7 +76,9 @@ ceilings. Nothing existed before this change (row 28: "missing").
   snapshot chunk round-trips.
 - Repo gates re-run with the new tree: `npm run typecheck` passes,
   `npm test` passes (159/159), `check:forbidden-surface` and
-  `check:route-manifest` pass.
+  `check:route-manifest` pass. The standalone MessagePack suites are not part
+  of the current `.forgejo/workflows/ci.yml` release profile and must be wired
+  into release admission before this becomes production evidence.
 
 Pre-existing, out-of-packet failures observed in this checkout (untouched by
 this change; the failures reference the Dashboard repo's OpenAPI snapshot):
@@ -91,18 +95,17 @@ packet owns is involved.
   bindings. The manifest here is language-neutral JSON precisely so the C#
   generator can consume it unchanged.
 - **The live protocol is not switched over.** The reactive client still
-  speaks the committed native `terrascale.sync.v2` corpus codec
-  (`src/sync/v2/`); nothing sends or receives
+  speaks HTTP setup and JSON mutation/delta/snapshot calls plus an SSE trigger
+  stream using the committed native `terrascale.sync.v2` corpus codec
+  (`src/sync/v2/`). Nothing sends or receives
   `terrascale.sync.v2.msgpack` bytes on a socket yet. Switchover (server
   emission, WebSocket subprotocol registration, resume/cancel paths) is a
-  later coordinated phase per the ADR's versioning section.
-- **`@msgpack/msgpack` is not used.** ADR 0025 names it for TypeScript, but
-  it is not a dependency of this repository, and adding one would touch the
-  shared `package.json` outside this packet's owned paths. This packet
-  vendors a minimal bounded core with the decoder-limit posture the ADR
-  requires instead. Migrating onto `@msgpack/msgpack` (pinned in
-  `package.json`, with `useBigInt64` and explicit limits) is a follow-up that
-  must re-pass the same three suites.
+  later coordinated phase per [ADR 0005](../adr/0005-reactive-client-transition.md)
+  and ADR 0025's versioning section.
+- **`@msgpack/msgpack` is not used.** The current checkout's in-repository
+  bounded core is the accepted TypeScript implementation. A future dependency
+  change would need a new reviewed record and must preserve the same explicit
+  limits, hostile-input behavior, and performance evidence.
 - **Cross-language conformance and fuzzing are not run.** Structure-aware
   fuzzing, supported-version-skew matrix, fragmentation, and decompression
   lanes remain release-qualification work under ADR 0025's conformance

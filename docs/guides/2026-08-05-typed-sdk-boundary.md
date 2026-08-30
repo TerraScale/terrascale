@@ -5,6 +5,10 @@ created with `createTerraScaleClient`. The root package no longer exports
 `TerraScaleHttp` or request option types, and `TerraScaleClient.request` has
 been removed.
 
+This guide records the boundary decision in [ADR 0002](../adr/0002-typed-public-sdk-boundary.md).
+The current route and OpenAPI status, including unresolved cross-repository
+drift, is tracked in the repository [GOAL.md](../../GOAL.md).
+
 ## Migration
 
 Replace arbitrary `client.request({ method, path, ... })` calls with the

@@ -17,6 +17,20 @@ npm run test:browser
 npm pack --pack-destination artifacts/candidate
 ```
 
+The generated public MessagePack binding is qualified by additional commands
+because the current npm `test` script does not discover `test/*.mjs`:
+
+```bash
+node scripts/generate-msgpack-protocol.mjs --check
+node --test test/msgpack-manifest-drift.test.mjs
+node --test test/msgpack-hostile-decode.test.mjs
+node --test test/msgpack-corpus-roundtrip.test.mjs
+node --test test/sync-v2-native-corpus-view.test.mjs
+```
+
+These commands are required release evidence today. The protected workflow
+does not yet run them automatically, which is tracked as TS-006 in `GOAL.md`.
+
 The workflow also runs the unit and contract suite on Node.js 22 and 24 and
 the browser contract suite on the current pinned Playwright Chromium, Firefox,
 and WebKit engines. Update Playwright at qualification time so its engine
@@ -40,11 +54,16 @@ build before testing or packing; do not rely on artifacts from another job.
 Release admission runs strict OpenAPI drift validation. The normal-CI debt
 baseline does not permit promotion: unresolved entries stop production release
 until the owning service publishes the matching typed schemas. Dashboard owns
-identity and product routes; the independent `TerraScale.Database` service
-owns database and reactive routes.
+identity and product routes; the independently deployable `TerraScale.Database`
+service, sourced permanently in `TerraScale.Internals`, owns database and
+reactive routes.
 It also regenerates and compares the committed comprehensive OpenAPI descriptor;
 operation IDs, parameters, request contracts, and every 2xx response shape must
 match the reviewed pin before the trusted candidate can be created.
+
+The OpenAPI snapshot is owned by Dashboard. If the snapshot and SDK disagree,
+stop and resolve ownership or refresh the snapshot. Do not add a local debt
+baseline entry for an unreviewed route.
 
 ## Publish
 
@@ -70,6 +89,11 @@ verified tarball to npm. If npm publishing is interrupted or its result is
 uncertain, operators must inspect npm and the candidate-store records before
 any recovery action; do not assume this workflow will create or repair a
 Forgejo Release.
+
+The local SQLite runtime and emulator tests are development evidence only. They
+cannot satisfy live API, authorization, multi-Region, recovery, or performance
+gates. Integration tests that lack their required environment skip and must be
+recorded as skipped in the release receipt.
 
 ## Version classification
 

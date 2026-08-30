@@ -2,8 +2,9 @@
 
 `@terrascale/sdk` is the public TypeScript client for TerraScale.
 
-The workspace `../GOAL.md` defines target architecture. An accepted target is
-not a released SDK capability.
+The workspace `../GOAL.md` defines the target architecture. This repository's
+current status and production gaps are tracked in [GOAL.md](GOAL.md). An
+accepted target is not a released SDK capability.
 
 ## Service boundary
 
@@ -11,8 +12,9 @@ The SDK uses public versioned TerraScale HTTPS and reactive contracts:
 
 - Dashboard owns Better Auth, Organizations, Projects, Users, Payments, HTTP
   MCP, and those public product routes.
-- The independent C#/.NET 10 `TerraScale.Database` service owns database,
-  query, placement, backup, usage, and reactive routes.
+- The independently deployable C#/.NET 10 `TerraScale.Database` service,
+  sourced permanently in `TerraScale.Internals`, owns database, query,
+  placement, backup, usage, and reactive routes.
 - TerraBaseV2 is private. The SDK never speaks TBEP, opens a TerraBase
   connection, consumes native replication data, or uses NATS.
 
@@ -29,12 +31,12 @@ path.
 | `@terrascale/sdk/local` | Explicit development-only local runtime |
 | `@terrascale/sdk/better-auth` | Public server-only Better Auth adapter |
 
-The Better Auth adapter accepts the generated Database API operation port and
-maps Better Auth's adapter contract to named unique-insert, compare-and-swap,
+The Better Auth adapter accepts a typed Database API operation port and maps
+Better Auth's adapter contract to named unique-insert, compare-and-swap,
 one-time-consume, pagination, transaction, and migration operations. It is
-server-only and is excluded from browser bundles. The live Database API
-implementation and adapter conformance evidence are separate qualification
-gates.
+server-only and is excluded from browser bundles. The generated Database API
+implementation, pinned Better Auth compatibility and license evidence, and
+adapter conformance are separate qualification gates.
 
 There is no Dashboard-named or generic request entrypoint.
 
@@ -43,14 +45,15 @@ There is no Dashboard-named or generic request entrypoint.
 This tree still contains:
 
 - the legacy `terrascale.sync.v1` client; and
-- a Loro-era `terrascale.sync.v2` client, codec, and vendored corpus.
+- a `terrascale.sync.v2` client over HTTP setup, JSON mutation/delta/snapshot
+  calls, and an SSE trigger stream, with opaque `terrabase-native/1` and
+  `terrabase-snapshot/1` payloads.
 
-Neither implements the accepted replacement reactive contract. The old v2
-uses collection subscriptions, opaque Loro deltas and snapshots, and
-server-ack-only presentation. It is migration evidence and must not receive new
-product features.
+Neither is the final public MessagePack reactive transport. The current v2 is
+conformance and migration evidence and must not receive new production
+protocol semantics.
 
-The replacement `terrascale.sync.v2` will:
+The proposed replacement `terrascale.sync.v2.msgpack` will:
 
 - subscribe to bounded typed TQL queries;
 - receive authorized result snapshots, insert, update, patch, remove, move, or
@@ -64,9 +67,11 @@ The replacement `terrascale.sync.v2` will:
 - bound every queue, subscription, result, and reconnect path; and
 - pass one semantic corpus shared with Rust and .NET.
 
-The new generated corpus must not preserve old Loro bytes. Until the
-replacement passes conformance, the current sync story is decided but
-unqualified.
+The generated manifest does not make native payload bytes a customer contract.
+Until the replacement is wired to the owner-published WebSocket contract and
+passes cross-language and live conformance, the reactive production story is
+unqualified. See [ADR 0005](docs/adr/0005-reactive-client-transition.md) and
+[ADR 0025](docs/adr/0025-public-messagepack-manifest.md).
 
 ## Better Auth adapter target
 
@@ -171,6 +176,10 @@ Each operation is gated against:
 Unbacked operations remain omitted. Do not invent types or use a generic
 request to hide a contract gap.
 
+The repository decision records are under [`docs/adr/`](docs/adr/). Start with
+[GOAL.md](GOAL.md) for the current implementation, cross-repository gaps,
+parallel work waves, and production exit gates.
+
 ## Development
 
 ~~~bash
@@ -194,10 +203,22 @@ npm run generate:openapi-contract-descriptor
 npm run check:openapi-contract-descriptor
 ~~~
 
+The MessagePack generator and its qualification suites are separate from
+`npm test`:
+
+~~~bash
+node scripts/generate-msgpack-protocol.mjs --check
+node --test test/msgpack-manifest-drift.test.mjs
+node --test test/msgpack-hostile-decode.test.mjs
+node --test test/msgpack-corpus-roundtrip.test.mjs
+node --test test/sync-v2-native-corpus-view.test.mjs
+~~~
+
 Integration tests target the fixed DevHost public routes. When the required
 base URLs or credentials are absent, they skip instead of using mocked HTTP.
-The new Database API needs a fixed DevHost route before its live tests can be
-current.
+The new Database API needs fixed DevHost routes before its live tests can be
+current. OpenAPI drift and descriptor checks must use the owner-published
+Dashboard snapshot. A local emulator cannot substitute for that evidence.
 
 ## Releases
 
