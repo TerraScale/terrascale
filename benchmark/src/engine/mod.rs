@@ -691,7 +691,7 @@ impl Engine {
         /// How long a leader that deferred a flip sync lingers for the next
         /// wave: one sync window, so the idle tail costs at most one extra
         /// flush and a saturated run never pays a separate flip sync.
-        const GROUP_LINGER_WINDOW: std::time::Duration = std::time::Duration::from_millis(4);
+        const GROUP_LINGER_WINDOW: std::time::Duration = std::time::Duration::from_millis(8);
         let mut deferred_last = false;
         loop {
             let mut batch = {
