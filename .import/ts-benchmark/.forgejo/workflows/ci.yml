@@ -90,7 +90,13 @@ jobs:
           cargo test --manifest-path bench/Cargo.toml --locked
           cargo clippy --manifest-path bench/Cargo.toml --all-targets --locked -- -D warnings
           cargo doc --manifest-path bench/Cargo.toml --no-deps --locked
-          cargo run --manifest-path bench/Cargo.toml --locked -- --render-history
+          history_check="$(mktemp -d)"
+          trap 'rm -rf -- "$history_check"' EXIT
+          cargo run --manifest-path bench/Cargo.toml --locked -- --render-history --history-dir "$history_check"
+          history_files=("$history_check"/*.md)
+          test "${#history_files[@]}" -eq 1
+          grep -Fq '# Benchmark history' "${history_files[0]}"
+          grep -Fq '| workload | side | status |' "${history_files[0]}"
           git diff --exit-code -- docs/evidence/benchmarks/benchmark-history.md
       # Studio owns a separate workspace so the engine's dependency budget
       # remains explicit. It is nevertheless a release deliverable and gets
@@ -241,7 +247,7 @@ jobs:
       - name: Build, vet, and test
         run: |
           go list -mod=readonly ./...
-          test -z "$(gofmt -d -e $(git ls-files 'terrabase-go/*.go' 'terrabase-go/**/*.go'))"
+          test -z "$(gofmt -d -e $(git ls-files '*.go'))"
           go vet -mod=readonly ./...
           go test -mod=readonly ./...
           go test -mod=readonly -race ./...

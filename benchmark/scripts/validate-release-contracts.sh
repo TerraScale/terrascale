@@ -61,8 +61,26 @@ grep -Fq 'fipsFeatureGraph' deploy/release/verify.sh
 
 grep -Fq 'GITHUB_BASE_REF' "$ci"
 grep -Fq 'git rev-parse --verify HEAD^' "$ci"
+grep -Fq 'buf lint' "$ci"
 grep -Fq 'buf breaking --against ".git#ref=$against_commit"' "$ci"
+grep -Fq 'buf generate --template buf.gen.yaml' "$ci"
+grep -Fq 'schema_digest=' "$ci"
 grep -Fq 'deploy/release/test-boundary.sh' "$ci"
+grep -Fq 'scripts/validate-studio-assets.sh' "$ci"
+grep -Fq 'cargo test --workspace --locked --release' "$ci"
+grep -Fq 'cargo clippy --workspace --all-targets --locked -- -D warnings' "$ci"
+grep -Fq 'cargo doc --workspace --no-deps --locked' "$ci"
+grep -Fq 'cargo run --manifest-path bench/Cargo.toml --locked -- --render-history' "$ci"
+grep -Fq 'git diff --exit-code -- docs/evidence/benchmarks/benchmark-history.md' "$ci"
+grep -Fq 'cargo fmt --manifest-path crates/terrabase-studio/Cargo.toml -- --check' "$ci"
+grep -Fq 'cargo test --manifest-path crates/terrabase-studio/Cargo.toml --locked' "$ci"
+grep -Fq 'cargo clippy --manifest-path crates/terrabase-studio/Cargo.toml --all-targets --locked -- -D warnings' "$ci"
+grep -Fq 'cargo doc --manifest-path crates/terrabase-studio/Cargo.toml --no-deps --locked' "$ci"
+grep -Fq 'cargo deny --all-features --locked check' "$ci"
+grep -Fq 'cargo deny --manifest-path bench/Cargo.toml --config bench/deny.toml --locked check' "$ci"
+grep -Fq 'cargo deny --manifest-path crates/terrabase-studio/Cargo.toml --config crates/terrabase-studio/deny.toml --locked check' "$ci"
+grep -Fq 'gofmt -d -e' "$ci"
+grep -Fq 'go vet -mod=readonly ./...' "$ci"
 ! grep -Fq '.git#branch=${GITHUB_REF_NAME}' "$ci"
 awk '
   /^  push:$/ { in_push = 1; next }
@@ -71,5 +89,6 @@ awk '
   END { exit(found ? 0 : 1) }
 ' "$ci"
 grep -Fq 'go test -mod=readonly -race ./...' "$ci"
+grep -Fq 'pull_request:' "$ci"
 
 echo "validated immutable promotion and protobuf baseline contracts"
