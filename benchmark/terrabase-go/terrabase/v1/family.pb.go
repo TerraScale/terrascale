@@ -565,6 +565,9 @@ type FamilyRequestPayload struct {
 	//	*FamilyRequestPayload_IdentityWrite
 	//	*FamilyRequestPayload_LifecycleWrite
 	//	*FamilyRequestPayload_ArchivalWrite
+	//	*FamilyRequestPayload_AttachmentContentRead
+	//	*FamilyRequestPayload_AttachmentContentWrite
+	//	*FamilyRequestPayload_AttachmentContentDelete
 	Operation     isFamilyRequestPayload_Operation `protobuf_oneof:"operation"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -751,6 +754,33 @@ func (x *FamilyRequestPayload) GetArchivalWrite() *FamilyArchivalWrite {
 	return nil
 }
 
+func (x *FamilyRequestPayload) GetAttachmentContentRead() *FamilyAttachmentContentRead {
+	if x != nil {
+		if x, ok := x.Operation.(*FamilyRequestPayload_AttachmentContentRead); ok {
+			return x.AttachmentContentRead
+		}
+	}
+	return nil
+}
+
+func (x *FamilyRequestPayload) GetAttachmentContentWrite() *FamilyAttachmentContentWrite {
+	if x != nil {
+		if x, ok := x.Operation.(*FamilyRequestPayload_AttachmentContentWrite); ok {
+			return x.AttachmentContentWrite
+		}
+	}
+	return nil
+}
+
+func (x *FamilyRequestPayload) GetAttachmentContentDelete() *FamilyAttachmentContentDelete {
+	if x != nil {
+		if x, ok := x.Operation.(*FamilyRequestPayload_AttachmentContentDelete); ok {
+			return x.AttachmentContentDelete
+		}
+	}
+	return nil
+}
+
 type isFamilyRequestPayload_Operation interface {
 	isFamilyRequestPayload_Operation()
 }
@@ -819,6 +849,18 @@ type FamilyRequestPayload_ArchivalWrite struct {
 	ArchivalWrite *FamilyArchivalWrite `protobuf:"bytes,16,opt,name=archival_write,json=archivalWrite,proto3,oneof"`
 }
 
+type FamilyRequestPayload_AttachmentContentRead struct {
+	AttachmentContentRead *FamilyAttachmentContentRead `protobuf:"bytes,17,opt,name=attachment_content_read,json=attachmentContentRead,proto3,oneof"`
+}
+
+type FamilyRequestPayload_AttachmentContentWrite struct {
+	AttachmentContentWrite *FamilyAttachmentContentWrite `protobuf:"bytes,18,opt,name=attachment_content_write,json=attachmentContentWrite,proto3,oneof"`
+}
+
+type FamilyRequestPayload_AttachmentContentDelete struct {
+	AttachmentContentDelete *FamilyAttachmentContentDelete `protobuf:"bytes,19,opt,name=attachment_content_delete,json=attachmentContentDelete,proto3,oneof"`
+}
+
 func (*FamilyRequestPayload_AttachmentRead) isFamilyRequestPayload_Operation() {}
 
 func (*FamilyRequestPayload_CounterRead) isFamilyRequestPayload_Operation() {}
@@ -850,6 +892,12 @@ func (*FamilyRequestPayload_IdentityWrite) isFamilyRequestPayload_Operation() {}
 func (*FamilyRequestPayload_LifecycleWrite) isFamilyRequestPayload_Operation() {}
 
 func (*FamilyRequestPayload_ArchivalWrite) isFamilyRequestPayload_Operation() {}
+
+func (*FamilyRequestPayload_AttachmentContentRead) isFamilyRequestPayload_Operation() {}
+
+func (*FamilyRequestPayload_AttachmentContentWrite) isFamilyRequestPayload_Operation() {}
+
+func (*FamilyRequestPayload_AttachmentContentDelete) isFamilyRequestPayload_Operation() {}
 
 type FamilyAttachmentRead struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1713,6 +1761,246 @@ func (x *FamilyAttachmentMove) GetToName() string {
 	return ""
 }
 
+// Attachment content is digest-addressed and transported as bounded segments
+// (at most 64 KiB each, with the family's 8 MiB total ceiling).
+type FamilyAttachmentContentRead struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Digest string                 `protobuf:"bytes,1,opt,name=digest,proto3" json:"digest,omitempty"`
+	// Types that are valid to be assigned to Range:
+	//
+	//	*FamilyAttachmentContentRead_Bytes
+	//	*FamilyAttachmentContentRead_Suffix
+	Range         isFamilyAttachmentContentRead_Range `protobuf_oneof:"range"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FamilyAttachmentContentRead) Reset() {
+	*x = FamilyAttachmentContentRead{}
+	mi := &file_terrabase_v1_family_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FamilyAttachmentContentRead) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FamilyAttachmentContentRead) ProtoMessage() {}
+
+func (x *FamilyAttachmentContentRead) ProtoReflect() protoreflect.Message {
+	mi := &file_terrabase_v1_family_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FamilyAttachmentContentRead.ProtoReflect.Descriptor instead.
+func (*FamilyAttachmentContentRead) Descriptor() ([]byte, []int) {
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *FamilyAttachmentContentRead) GetDigest() string {
+	if x != nil {
+		return x.Digest
+	}
+	return ""
+}
+
+func (x *FamilyAttachmentContentRead) GetRange() isFamilyAttachmentContentRead_Range {
+	if x != nil {
+		return x.Range
+	}
+	return nil
+}
+
+func (x *FamilyAttachmentContentRead) GetBytes() *FamilyAttachmentContentByteRange {
+	if x != nil {
+		if x, ok := x.Range.(*FamilyAttachmentContentRead_Bytes); ok {
+			return x.Bytes
+		}
+	}
+	return nil
+}
+
+func (x *FamilyAttachmentContentRead) GetSuffix() uint64 {
+	if x != nil {
+		if x, ok := x.Range.(*FamilyAttachmentContentRead_Suffix); ok {
+			return x.Suffix
+		}
+	}
+	return 0
+}
+
+type isFamilyAttachmentContentRead_Range interface {
+	isFamilyAttachmentContentRead_Range()
+}
+
+type FamilyAttachmentContentRead_Bytes struct {
+	Bytes *FamilyAttachmentContentByteRange `protobuf:"bytes,2,opt,name=bytes,proto3,oneof"`
+}
+
+type FamilyAttachmentContentRead_Suffix struct {
+	Suffix uint64 `protobuf:"varint,3,opt,name=suffix,proto3,oneof"`
+}
+
+func (*FamilyAttachmentContentRead_Bytes) isFamilyAttachmentContentRead_Range() {}
+
+func (*FamilyAttachmentContentRead_Suffix) isFamilyAttachmentContentRead_Range() {}
+
+type FamilyAttachmentContentByteRange struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	From          uint64                 `protobuf:"varint,1,opt,name=from,proto3" json:"from,omitempty"`
+	To            *uint64                `protobuf:"varint,2,opt,name=to,proto3,oneof" json:"to,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FamilyAttachmentContentByteRange) Reset() {
+	*x = FamilyAttachmentContentByteRange{}
+	mi := &file_terrabase_v1_family_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FamilyAttachmentContentByteRange) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FamilyAttachmentContentByteRange) ProtoMessage() {}
+
+func (x *FamilyAttachmentContentByteRange) ProtoReflect() protoreflect.Message {
+	mi := &file_terrabase_v1_family_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FamilyAttachmentContentByteRange.ProtoReflect.Descriptor instead.
+func (*FamilyAttachmentContentByteRange) Descriptor() ([]byte, []int) {
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *FamilyAttachmentContentByteRange) GetFrom() uint64 {
+	if x != nil {
+		return x.From
+	}
+	return 0
+}
+
+func (x *FamilyAttachmentContentByteRange) GetTo() uint64 {
+	if x != nil && x.To != nil {
+		return *x.To
+	}
+	return 0
+}
+
+type FamilyAttachmentContentWrite struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ExpectedDigest *string                `protobuf:"bytes,1,opt,name=expected_digest,json=expectedDigest,proto3,oneof" json:"expected_digest,omitempty"`
+	Segments       [][]byte               `protobuf:"bytes,2,rep,name=segments,proto3" json:"segments,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *FamilyAttachmentContentWrite) Reset() {
+	*x = FamilyAttachmentContentWrite{}
+	mi := &file_terrabase_v1_family_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FamilyAttachmentContentWrite) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FamilyAttachmentContentWrite) ProtoMessage() {}
+
+func (x *FamilyAttachmentContentWrite) ProtoReflect() protoreflect.Message {
+	mi := &file_terrabase_v1_family_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FamilyAttachmentContentWrite.ProtoReflect.Descriptor instead.
+func (*FamilyAttachmentContentWrite) Descriptor() ([]byte, []int) {
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *FamilyAttachmentContentWrite) GetExpectedDigest() string {
+	if x != nil && x.ExpectedDigest != nil {
+		return *x.ExpectedDigest
+	}
+	return ""
+}
+
+func (x *FamilyAttachmentContentWrite) GetSegments() [][]byte {
+	if x != nil {
+		return x.Segments
+	}
+	return nil
+}
+
+type FamilyAttachmentContentDelete struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Digest        string                 `protobuf:"bytes,1,opt,name=digest,proto3" json:"digest,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FamilyAttachmentContentDelete) Reset() {
+	*x = FamilyAttachmentContentDelete{}
+	mi := &file_terrabase_v1_family_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FamilyAttachmentContentDelete) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FamilyAttachmentContentDelete) ProtoMessage() {}
+
+func (x *FamilyAttachmentContentDelete) ProtoReflect() protoreflect.Message {
+	mi := &file_terrabase_v1_family_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FamilyAttachmentContentDelete.ProtoReflect.Descriptor instead.
+func (*FamilyAttachmentContentDelete) Descriptor() ([]byte, []int) {
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *FamilyAttachmentContentDelete) GetDigest() string {
+	if x != nil {
+		return x.Digest
+	}
+	return ""
+}
+
 type FamilyCounterWrite struct {
 	state         protoimpl.MessageState    `protogen:"open.v1"`
 	Document      string                    `protobuf:"bytes,1,opt,name=document,proto3" json:"document,omitempty"`
@@ -1724,7 +2012,7 @@ type FamilyCounterWrite struct {
 
 func (x *FamilyCounterWrite) Reset() {
 	*x = FamilyCounterWrite{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[22]
+	mi := &file_terrabase_v1_family_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1736,7 +2024,7 @@ func (x *FamilyCounterWrite) String() string {
 func (*FamilyCounterWrite) ProtoMessage() {}
 
 func (x *FamilyCounterWrite) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[22]
+	mi := &file_terrabase_v1_family_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1749,7 +2037,7 @@ func (x *FamilyCounterWrite) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyCounterWrite.ProtoReflect.Descriptor instead.
 func (*FamilyCounterWrite) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{22}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *FamilyCounterWrite) GetDocument() string {
@@ -1786,7 +2074,7 @@ type FamilyCounterOperation struct {
 
 func (x *FamilyCounterOperation) Reset() {
 	*x = FamilyCounterOperation{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[23]
+	mi := &file_terrabase_v1_family_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1798,7 +2086,7 @@ func (x *FamilyCounterOperation) String() string {
 func (*FamilyCounterOperation) ProtoMessage() {}
 
 func (x *FamilyCounterOperation) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[23]
+	mi := &file_terrabase_v1_family_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1811,7 +2099,7 @@ func (x *FamilyCounterOperation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyCounterOperation.ProtoReflect.Descriptor instead.
 func (*FamilyCounterOperation) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{23}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *FamilyCounterOperation) GetOperation() isFamilyCounterOperation_Operation {
@@ -1865,7 +2153,7 @@ type FamilyCounterIncrement struct {
 
 func (x *FamilyCounterIncrement) Reset() {
 	*x = FamilyCounterIncrement{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[24]
+	mi := &file_terrabase_v1_family_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1877,7 +2165,7 @@ func (x *FamilyCounterIncrement) String() string {
 func (*FamilyCounterIncrement) ProtoMessage() {}
 
 func (x *FamilyCounterIncrement) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[24]
+	mi := &file_terrabase_v1_family_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1890,7 +2178,7 @@ func (x *FamilyCounterIncrement) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyCounterIncrement.ProtoReflect.Descriptor instead.
 func (*FamilyCounterIncrement) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{24}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *FamilyCounterIncrement) GetName() string {
@@ -1916,7 +2204,7 @@ type FamilyCounterDelete struct {
 
 func (x *FamilyCounterDelete) Reset() {
 	*x = FamilyCounterDelete{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[25]
+	mi := &file_terrabase_v1_family_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1928,7 +2216,7 @@ func (x *FamilyCounterDelete) String() string {
 func (*FamilyCounterDelete) ProtoMessage() {}
 
 func (x *FamilyCounterDelete) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[25]
+	mi := &file_terrabase_v1_family_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1941,7 +2229,7 @@ func (x *FamilyCounterDelete) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyCounterDelete.ProtoReflect.Descriptor instead.
 func (*FamilyCounterDelete) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{25}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *FamilyCounterDelete) GetName() string {
@@ -1965,7 +2253,7 @@ type FamilyTimeSeriesWrite struct {
 
 func (x *FamilyTimeSeriesWrite) Reset() {
 	*x = FamilyTimeSeriesWrite{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[26]
+	mi := &file_terrabase_v1_family_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1977,7 +2265,7 @@ func (x *FamilyTimeSeriesWrite) String() string {
 func (*FamilyTimeSeriesWrite) ProtoMessage() {}
 
 func (x *FamilyTimeSeriesWrite) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[26]
+	mi := &file_terrabase_v1_family_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1990,7 +2278,7 @@ func (x *FamilyTimeSeriesWrite) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyTimeSeriesWrite.ProtoReflect.Descriptor instead.
 func (*FamilyTimeSeriesWrite) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{26}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *FamilyTimeSeriesWrite) GetDocument() string {
@@ -2046,7 +2334,7 @@ type FamilyTimeSeriesAppend struct {
 
 func (x *FamilyTimeSeriesAppend) Reset() {
 	*x = FamilyTimeSeriesAppend{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[27]
+	mi := &file_terrabase_v1_family_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2058,7 +2346,7 @@ func (x *FamilyTimeSeriesAppend) String() string {
 func (*FamilyTimeSeriesAppend) ProtoMessage() {}
 
 func (x *FamilyTimeSeriesAppend) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[27]
+	mi := &file_terrabase_v1_family_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2071,7 +2359,7 @@ func (x *FamilyTimeSeriesAppend) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyTimeSeriesAppend.ProtoReflect.Descriptor instead.
 func (*FamilyTimeSeriesAppend) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{27}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *FamilyTimeSeriesAppend) GetTimestamp() int64 {
@@ -2108,7 +2396,7 @@ type FamilyTimeSeriesDelete struct {
 
 func (x *FamilyTimeSeriesDelete) Reset() {
 	*x = FamilyTimeSeriesDelete{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[28]
+	mi := &file_terrabase_v1_family_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2120,7 +2408,7 @@ func (x *FamilyTimeSeriesDelete) String() string {
 func (*FamilyTimeSeriesDelete) ProtoMessage() {}
 
 func (x *FamilyTimeSeriesDelete) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[28]
+	mi := &file_terrabase_v1_family_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2133,7 +2421,7 @@ func (x *FamilyTimeSeriesDelete) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyTimeSeriesDelete.ProtoReflect.Descriptor instead.
 func (*FamilyTimeSeriesDelete) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{28}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *FamilyTimeSeriesDelete) GetDeletion() isFamilyTimeSeriesDelete_Deletion {
@@ -2187,7 +2475,7 @@ type FamilyTimeSeriesRange struct {
 
 func (x *FamilyTimeSeriesRange) Reset() {
 	*x = FamilyTimeSeriesRange{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[29]
+	mi := &file_terrabase_v1_family_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2199,7 +2487,7 @@ func (x *FamilyTimeSeriesRange) String() string {
 func (*FamilyTimeSeriesRange) ProtoMessage() {}
 
 func (x *FamilyTimeSeriesRange) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[29]
+	mi := &file_terrabase_v1_family_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2212,7 +2500,7 @@ func (x *FamilyTimeSeriesRange) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyTimeSeriesRange.ProtoReflect.Descriptor instead.
 func (*FamilyTimeSeriesRange) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{29}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *FamilyTimeSeriesRange) GetStart() int64 {
@@ -2239,7 +2527,7 @@ type FamilyTimeSeriesPolicy struct {
 
 func (x *FamilyTimeSeriesPolicy) Reset() {
 	*x = FamilyTimeSeriesPolicy{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[30]
+	mi := &file_terrabase_v1_family_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2251,7 +2539,7 @@ func (x *FamilyTimeSeriesPolicy) String() string {
 func (*FamilyTimeSeriesPolicy) ProtoMessage() {}
 
 func (x *FamilyTimeSeriesPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[30]
+	mi := &file_terrabase_v1_family_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2264,7 +2552,7 @@ func (x *FamilyTimeSeriesPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyTimeSeriesPolicy.ProtoReflect.Descriptor instead.
 func (*FamilyTimeSeriesPolicy) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{30}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *FamilyTimeSeriesPolicy) GetRetentionMs() int64 {
@@ -2292,7 +2580,7 @@ type FamilyRollupPolicy struct {
 
 func (x *FamilyRollupPolicy) Reset() {
 	*x = FamilyRollupPolicy{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[31]
+	mi := &file_terrabase_v1_family_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2304,7 +2592,7 @@ func (x *FamilyRollupPolicy) String() string {
 func (*FamilyRollupPolicy) ProtoMessage() {}
 
 func (x *FamilyRollupPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[31]
+	mi := &file_terrabase_v1_family_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2317,7 +2605,7 @@ func (x *FamilyRollupPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyRollupPolicy.ProtoReflect.Descriptor instead.
 func (*FamilyRollupPolicy) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{31}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *FamilyRollupPolicy) GetName() string {
@@ -2356,7 +2644,7 @@ type FamilyRevisionWrite struct {
 
 func (x *FamilyRevisionWrite) Reset() {
 	*x = FamilyRevisionWrite{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[32]
+	mi := &file_terrabase_v1_family_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2368,7 +2656,7 @@ func (x *FamilyRevisionWrite) String() string {
 func (*FamilyRevisionWrite) ProtoMessage() {}
 
 func (x *FamilyRevisionWrite) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[32]
+	mi := &file_terrabase_v1_family_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2381,7 +2669,7 @@ func (x *FamilyRevisionWrite) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyRevisionWrite.ProtoReflect.Descriptor instead.
 func (*FamilyRevisionWrite) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{32}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *FamilyRevisionWrite) GetDocument() string {
@@ -2456,7 +2744,7 @@ type FamilyRevisionForceCreate struct {
 
 func (x *FamilyRevisionForceCreate) Reset() {
 	*x = FamilyRevisionForceCreate{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[33]
+	mi := &file_terrabase_v1_family_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2468,7 +2756,7 @@ func (x *FamilyRevisionForceCreate) String() string {
 func (*FamilyRevisionForceCreate) ProtoMessage() {}
 
 func (x *FamilyRevisionForceCreate) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[33]
+	mi := &file_terrabase_v1_family_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2481,7 +2769,7 @@ func (x *FamilyRevisionForceCreate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyRevisionForceCreate.ProtoReflect.Descriptor instead.
 func (*FamilyRevisionForceCreate) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{33}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *FamilyRevisionForceCreate) GetExpected() *ExpectedVersion {
@@ -2500,7 +2788,7 @@ type FamilyRevisionRevert struct {
 
 func (x *FamilyRevisionRevert) Reset() {
 	*x = FamilyRevisionRevert{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[34]
+	mi := &file_terrabase_v1_family_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2512,7 +2800,7 @@ func (x *FamilyRevisionRevert) String() string {
 func (*FamilyRevisionRevert) ProtoMessage() {}
 
 func (x *FamilyRevisionRevert) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[34]
+	mi := &file_terrabase_v1_family_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2525,7 +2813,7 @@ func (x *FamilyRevisionRevert) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyRevisionRevert.ProtoReflect.Descriptor instead.
 func (*FamilyRevisionRevert) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{34}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *FamilyRevisionRevert) GetToRevision() uint64 {
@@ -2545,7 +2833,7 @@ type FamilyRevisionConfigure struct {
 
 func (x *FamilyRevisionConfigure) Reset() {
 	*x = FamilyRevisionConfigure{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[35]
+	mi := &file_terrabase_v1_family_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2557,7 +2845,7 @@ func (x *FamilyRevisionConfigure) String() string {
 func (*FamilyRevisionConfigure) ProtoMessage() {}
 
 func (x *FamilyRevisionConfigure) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[35]
+	mi := &file_terrabase_v1_family_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2570,7 +2858,7 @@ func (x *FamilyRevisionConfigure) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyRevisionConfigure.ProtoReflect.Descriptor instead.
 func (*FamilyRevisionConfigure) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{35}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *FamilyRevisionConfigure) GetMinimumRevisions() uint32 {
@@ -2602,7 +2890,7 @@ type FamilyCompareExchangeWrite struct {
 
 func (x *FamilyCompareExchangeWrite) Reset() {
 	*x = FamilyCompareExchangeWrite{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[36]
+	mi := &file_terrabase_v1_family_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2614,7 +2902,7 @@ func (x *FamilyCompareExchangeWrite) String() string {
 func (*FamilyCompareExchangeWrite) ProtoMessage() {}
 
 func (x *FamilyCompareExchangeWrite) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[36]
+	mi := &file_terrabase_v1_family_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2627,7 +2915,7 @@ func (x *FamilyCompareExchangeWrite) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyCompareExchangeWrite.ProtoReflect.Descriptor instead.
 func (*FamilyCompareExchangeWrite) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{36}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *FamilyCompareExchangeWrite) GetKey() string {
@@ -2704,7 +2992,7 @@ type FamilyCompareExchangePutIfIndex struct {
 
 func (x *FamilyCompareExchangePutIfIndex) Reset() {
 	*x = FamilyCompareExchangePutIfIndex{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[37]
+	mi := &file_terrabase_v1_family_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2716,7 +3004,7 @@ func (x *FamilyCompareExchangePutIfIndex) String() string {
 func (*FamilyCompareExchangePutIfIndex) ProtoMessage() {}
 
 func (x *FamilyCompareExchangePutIfIndex) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[37]
+	mi := &file_terrabase_v1_family_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2729,7 +3017,7 @@ func (x *FamilyCompareExchangePutIfIndex) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyCompareExchangePutIfIndex.ProtoReflect.Descriptor instead.
 func (*FamilyCompareExchangePutIfIndex) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{37}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *FamilyCompareExchangePutIfIndex) GetIndex() uint64 {
@@ -2763,7 +3051,7 @@ type FamilyCompareExchangePutIfMissing struct {
 
 func (x *FamilyCompareExchangePutIfMissing) Reset() {
 	*x = FamilyCompareExchangePutIfMissing{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[38]
+	mi := &file_terrabase_v1_family_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2775,7 +3063,7 @@ func (x *FamilyCompareExchangePutIfMissing) String() string {
 func (*FamilyCompareExchangePutIfMissing) ProtoMessage() {}
 
 func (x *FamilyCompareExchangePutIfMissing) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[38]
+	mi := &file_terrabase_v1_family_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2788,7 +3076,7 @@ func (x *FamilyCompareExchangePutIfMissing) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use FamilyCompareExchangePutIfMissing.ProtoReflect.Descriptor instead.
 func (*FamilyCompareExchangePutIfMissing) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{38}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *FamilyCompareExchangePutIfMissing) GetValue() *Value {
@@ -2814,7 +3102,7 @@ type FamilyCompareExchangeDeleteIfIndex struct {
 
 func (x *FamilyCompareExchangeDeleteIfIndex) Reset() {
 	*x = FamilyCompareExchangeDeleteIfIndex{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[39]
+	mi := &file_terrabase_v1_family_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2826,7 +3114,7 @@ func (x *FamilyCompareExchangeDeleteIfIndex) String() string {
 func (*FamilyCompareExchangeDeleteIfIndex) ProtoMessage() {}
 
 func (x *FamilyCompareExchangeDeleteIfIndex) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[39]
+	mi := &file_terrabase_v1_family_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2839,7 +3127,7 @@ func (x *FamilyCompareExchangeDeleteIfIndex) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use FamilyCompareExchangeDeleteIfIndex.ProtoReflect.Descriptor instead.
 func (*FamilyCompareExchangeDeleteIfIndex) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{39}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *FamilyCompareExchangeDeleteIfIndex) GetIndex() uint64 {
@@ -2862,7 +3150,7 @@ type FamilyIdentityWrite struct {
 
 func (x *FamilyIdentityWrite) Reset() {
 	*x = FamilyIdentityWrite{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[40]
+	mi := &file_terrabase_v1_family_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2874,7 +3162,7 @@ func (x *FamilyIdentityWrite) String() string {
 func (*FamilyIdentityWrite) ProtoMessage() {}
 
 func (x *FamilyIdentityWrite) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[40]
+	mi := &file_terrabase_v1_family_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2887,7 +3175,7 @@ func (x *FamilyIdentityWrite) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyIdentityWrite.ProtoReflect.Descriptor instead.
 func (*FamilyIdentityWrite) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{40}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *FamilyIdentityWrite) GetCommand() isFamilyIdentityWrite_Command {
@@ -2941,7 +3229,7 @@ type FamilyIdentityAllocate struct {
 
 func (x *FamilyIdentityAllocate) Reset() {
 	*x = FamilyIdentityAllocate{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[41]
+	mi := &file_terrabase_v1_family_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2953,7 +3241,7 @@ func (x *FamilyIdentityAllocate) String() string {
 func (*FamilyIdentityAllocate) ProtoMessage() {}
 
 func (x *FamilyIdentityAllocate) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[41]
+	mi := &file_terrabase_v1_family_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2966,7 +3254,7 @@ func (x *FamilyIdentityAllocate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyIdentityAllocate.ProtoReflect.Descriptor instead.
 func (*FamilyIdentityAllocate) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{41}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *FamilyIdentityAllocate) GetName() string {
@@ -2994,7 +3282,7 @@ type FamilyIdentitySeed struct {
 
 func (x *FamilyIdentitySeed) Reset() {
 	*x = FamilyIdentitySeed{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[42]
+	mi := &file_terrabase_v1_family_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3006,7 +3294,7 @@ func (x *FamilyIdentitySeed) String() string {
 func (*FamilyIdentitySeed) ProtoMessage() {}
 
 func (x *FamilyIdentitySeed) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[42]
+	mi := &file_terrabase_v1_family_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3019,7 +3307,7 @@ func (x *FamilyIdentitySeed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyIdentitySeed.ProtoReflect.Descriptor instead.
 func (*FamilyIdentitySeed) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{42}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *FamilyIdentitySeed) GetName() string {
@@ -3057,7 +3345,7 @@ type FamilyLifecycleWrite struct {
 
 func (x *FamilyLifecycleWrite) Reset() {
 	*x = FamilyLifecycleWrite{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[43]
+	mi := &file_terrabase_v1_family_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3069,7 +3357,7 @@ func (x *FamilyLifecycleWrite) String() string {
 func (*FamilyLifecycleWrite) ProtoMessage() {}
 
 func (x *FamilyLifecycleWrite) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[43]
+	mi := &file_terrabase_v1_family_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3082,7 +3370,7 @@ func (x *FamilyLifecycleWrite) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyLifecycleWrite.ProtoReflect.Descriptor instead.
 func (*FamilyLifecycleWrite) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{43}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *FamilyLifecycleWrite) GetDocument() string {
@@ -3142,7 +3430,7 @@ type FamilyLifecycleRefresh struct {
 
 func (x *FamilyLifecycleRefresh) Reset() {
 	*x = FamilyLifecycleRefresh{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[44]
+	mi := &file_terrabase_v1_family_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3154,7 +3442,7 @@ func (x *FamilyLifecycleRefresh) String() string {
 func (*FamilyLifecycleRefresh) ProtoMessage() {}
 
 func (x *FamilyLifecycleRefresh) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[44]
+	mi := &file_terrabase_v1_family_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3167,7 +3455,7 @@ func (x *FamilyLifecycleRefresh) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyLifecycleRefresh.ProtoReflect.Descriptor instead.
 func (*FamilyLifecycleRefresh) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{44}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *FamilyLifecycleRefresh) GetExpiresAt() int64 {
@@ -3185,7 +3473,7 @@ type FamilyLifecycleDelete struct {
 
 func (x *FamilyLifecycleDelete) Reset() {
 	*x = FamilyLifecycleDelete{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[45]
+	mi := &file_terrabase_v1_family_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3197,7 +3485,7 @@ func (x *FamilyLifecycleDelete) String() string {
 func (*FamilyLifecycleDelete) ProtoMessage() {}
 
 func (x *FamilyLifecycleDelete) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[45]
+	mi := &file_terrabase_v1_family_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3210,7 +3498,7 @@ func (x *FamilyLifecycleDelete) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyLifecycleDelete.ProtoReflect.Descriptor instead.
 func (*FamilyLifecycleDelete) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{45}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{49}
 }
 
 type FamilyArchivalWrite struct {
@@ -3227,7 +3515,7 @@ type FamilyArchivalWrite struct {
 
 func (x *FamilyArchivalWrite) Reset() {
 	*x = FamilyArchivalWrite{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[46]
+	mi := &file_terrabase_v1_family_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3239,7 +3527,7 @@ func (x *FamilyArchivalWrite) String() string {
 func (*FamilyArchivalWrite) ProtoMessage() {}
 
 func (x *FamilyArchivalWrite) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[46]
+	mi := &file_terrabase_v1_family_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3252,7 +3540,7 @@ func (x *FamilyArchivalWrite) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyArchivalWrite.ProtoReflect.Descriptor instead.
 func (*FamilyArchivalWrite) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{46}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *FamilyArchivalWrite) GetDocument() string {
@@ -3312,7 +3600,7 @@ type FamilyArchivalSet struct {
 
 func (x *FamilyArchivalSet) Reset() {
 	*x = FamilyArchivalSet{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[47]
+	mi := &file_terrabase_v1_family_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3324,7 +3612,7 @@ func (x *FamilyArchivalSet) String() string {
 func (*FamilyArchivalSet) ProtoMessage() {}
 
 func (x *FamilyArchivalSet) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[47]
+	mi := &file_terrabase_v1_family_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3337,7 +3625,7 @@ func (x *FamilyArchivalSet) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyArchivalSet.ProtoReflect.Descriptor instead.
 func (*FamilyArchivalSet) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{47}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *FamilyArchivalSet) GetArchived() bool {
@@ -3355,7 +3643,7 @@ type FamilyArchivalDelete struct {
 
 func (x *FamilyArchivalDelete) Reset() {
 	*x = FamilyArchivalDelete{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[48]
+	mi := &file_terrabase_v1_family_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3367,7 +3655,7 @@ func (x *FamilyArchivalDelete) String() string {
 func (*FamilyArchivalDelete) ProtoMessage() {}
 
 func (x *FamilyArchivalDelete) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[48]
+	mi := &file_terrabase_v1_family_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3380,7 +3668,7 @@ func (x *FamilyArchivalDelete) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyArchivalDelete.ProtoReflect.Descriptor instead.
 func (*FamilyArchivalDelete) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{48}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{52}
 }
 
 // Results are transport DTOs. They intentionally do not pretend to be root
@@ -3398,6 +3686,7 @@ type FamilyResponsePayload struct {
 	//	*FamilyResponsePayload_ExpirationRefresh
 	//	*FamilyResponsePayload_Archival
 	//	*FamilyResponsePayload_Write
+	//	*FamilyResponsePayload_AttachmentContent
 	Result        isFamilyResponsePayload_Result `protobuf_oneof:"result"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3405,7 +3694,7 @@ type FamilyResponsePayload struct {
 
 func (x *FamilyResponsePayload) Reset() {
 	*x = FamilyResponsePayload{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[49]
+	mi := &file_terrabase_v1_family_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3417,7 +3706,7 @@ func (x *FamilyResponsePayload) String() string {
 func (*FamilyResponsePayload) ProtoMessage() {}
 
 func (x *FamilyResponsePayload) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[49]
+	mi := &file_terrabase_v1_family_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3430,7 +3719,7 @@ func (x *FamilyResponsePayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyResponsePayload.ProtoReflect.Descriptor instead.
 func (*FamilyResponsePayload) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{49}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *FamilyResponsePayload) GetResult() isFamilyResponsePayload_Result {
@@ -3521,6 +3810,15 @@ func (x *FamilyResponsePayload) GetWrite() *FamilyWriteReceiptResponse {
 	return nil
 }
 
+func (x *FamilyResponsePayload) GetAttachmentContent() *FamilyAttachmentContentResponse {
+	if x != nil {
+		if x, ok := x.Result.(*FamilyResponsePayload_AttachmentContent); ok {
+			return x.AttachmentContent
+		}
+	}
+	return nil
+}
+
 type isFamilyResponsePayload_Result interface {
 	isFamilyResponsePayload_Result()
 }
@@ -3561,6 +3859,10 @@ type FamilyResponsePayload_Write struct {
 	Write *FamilyWriteReceiptResponse `protobuf:"bytes,9,opt,name=write,proto3,oneof"`
 }
 
+type FamilyResponsePayload_AttachmentContent struct {
+	AttachmentContent *FamilyAttachmentContentResponse `protobuf:"bytes,10,opt,name=attachment_content,json=attachmentContent,proto3,oneof"`
+}
+
 func (*FamilyResponsePayload_Attachment) isFamilyResponsePayload_Result() {}
 
 func (*FamilyResponsePayload_Counter) isFamilyResponsePayload_Result() {}
@@ -3579,6 +3881,8 @@ func (*FamilyResponsePayload_Archival) isFamilyResponsePayload_Result() {}
 
 func (*FamilyResponsePayload_Write) isFamilyResponsePayload_Result() {}
 
+func (*FamilyResponsePayload_AttachmentContent) isFamilyResponsePayload_Result() {}
+
 type FamilyAttachmentResponse struct {
 	state         protoimpl.MessageState   `protogen:"open.v1"`
 	Entries       []*FamilyAttachmentEntry `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
@@ -3588,7 +3892,7 @@ type FamilyAttachmentResponse struct {
 
 func (x *FamilyAttachmentResponse) Reset() {
 	*x = FamilyAttachmentResponse{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[50]
+	mi := &file_terrabase_v1_family_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3600,7 +3904,7 @@ func (x *FamilyAttachmentResponse) String() string {
 func (*FamilyAttachmentResponse) ProtoMessage() {}
 
 func (x *FamilyAttachmentResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[50]
+	mi := &file_terrabase_v1_family_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3613,7 +3917,7 @@ func (x *FamilyAttachmentResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyAttachmentResponse.ProtoReflect.Descriptor instead.
 func (*FamilyAttachmentResponse) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{50}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *FamilyAttachmentResponse) GetEntries() []*FamilyAttachmentEntry {
@@ -3636,7 +3940,7 @@ type FamilyAttachmentEntry struct {
 
 func (x *FamilyAttachmentEntry) Reset() {
 	*x = FamilyAttachmentEntry{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[51]
+	mi := &file_terrabase_v1_family_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3648,7 +3952,7 @@ func (x *FamilyAttachmentEntry) String() string {
 func (*FamilyAttachmentEntry) ProtoMessage() {}
 
 func (x *FamilyAttachmentEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[51]
+	mi := &file_terrabase_v1_family_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3661,7 +3965,7 @@ func (x *FamilyAttachmentEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyAttachmentEntry.ProtoReflect.Descriptor instead.
 func (*FamilyAttachmentEntry) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{51}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *FamilyAttachmentEntry) GetName() string {
@@ -3708,7 +4012,7 @@ type FamilyCounterResponse struct {
 
 func (x *FamilyCounterResponse) Reset() {
 	*x = FamilyCounterResponse{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[52]
+	mi := &file_terrabase_v1_family_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3720,7 +4024,7 @@ func (x *FamilyCounterResponse) String() string {
 func (*FamilyCounterResponse) ProtoMessage() {}
 
 func (x *FamilyCounterResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[52]
+	mi := &file_terrabase_v1_family_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3733,7 +4037,7 @@ func (x *FamilyCounterResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyCounterResponse.ProtoReflect.Descriptor instead.
 func (*FamilyCounterResponse) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{52}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *FamilyCounterResponse) GetEntries() []*FamilyCounterEntry {
@@ -3753,7 +4057,7 @@ type FamilyCounterEntry struct {
 
 func (x *FamilyCounterEntry) Reset() {
 	*x = FamilyCounterEntry{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[53]
+	mi := &file_terrabase_v1_family_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3765,7 +4069,7 @@ func (x *FamilyCounterEntry) String() string {
 func (*FamilyCounterEntry) ProtoMessage() {}
 
 func (x *FamilyCounterEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[53]
+	mi := &file_terrabase_v1_family_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3778,7 +4082,7 @@ func (x *FamilyCounterEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyCounterEntry.ProtoReflect.Descriptor instead.
 func (*FamilyCounterEntry) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{53}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *FamilyCounterEntry) GetName() string {
@@ -3806,7 +4110,7 @@ type FamilyTimeSeriesResponse struct {
 
 func (x *FamilyTimeSeriesResponse) Reset() {
 	*x = FamilyTimeSeriesResponse{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[54]
+	mi := &file_terrabase_v1_family_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3818,7 +4122,7 @@ func (x *FamilyTimeSeriesResponse) String() string {
 func (*FamilyTimeSeriesResponse) ProtoMessage() {}
 
 func (x *FamilyTimeSeriesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[54]
+	mi := &file_terrabase_v1_family_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3831,7 +4135,7 @@ func (x *FamilyTimeSeriesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyTimeSeriesResponse.ProtoReflect.Descriptor instead.
 func (*FamilyTimeSeriesResponse) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{54}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *FamilyTimeSeriesResponse) GetEntries() []*FamilyTimeSeriesEntry {
@@ -3866,7 +4170,7 @@ type FamilyTimeSeriesEntry struct {
 
 func (x *FamilyTimeSeriesEntry) Reset() {
 	*x = FamilyTimeSeriesEntry{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[55]
+	mi := &file_terrabase_v1_family_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3878,7 +4182,7 @@ func (x *FamilyTimeSeriesEntry) String() string {
 func (*FamilyTimeSeriesEntry) ProtoMessage() {}
 
 func (x *FamilyTimeSeriesEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[55]
+	mi := &file_terrabase_v1_family_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3891,7 +4195,7 @@ func (x *FamilyTimeSeriesEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyTimeSeriesEntry.ProtoReflect.Descriptor instead.
 func (*FamilyTimeSeriesEntry) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{55}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *FamilyTimeSeriesEntry) GetTimestamp() int64 {
@@ -3926,7 +4230,7 @@ type FamilyRevisionResponse struct {
 
 func (x *FamilyRevisionResponse) Reset() {
 	*x = FamilyRevisionResponse{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[56]
+	mi := &file_terrabase_v1_family_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3938,7 +4242,7 @@ func (x *FamilyRevisionResponse) String() string {
 func (*FamilyRevisionResponse) ProtoMessage() {}
 
 func (x *FamilyRevisionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[56]
+	mi := &file_terrabase_v1_family_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3951,7 +4255,7 @@ func (x *FamilyRevisionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyRevisionResponse.ProtoReflect.Descriptor instead.
 func (*FamilyRevisionResponse) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{56}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *FamilyRevisionResponse) GetEntries() []*FamilyRevisionEntry {
@@ -3986,7 +4290,7 @@ type FamilyRevisionEntry struct {
 
 func (x *FamilyRevisionEntry) Reset() {
 	*x = FamilyRevisionEntry{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[57]
+	mi := &file_terrabase_v1_family_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3998,7 +4302,7 @@ func (x *FamilyRevisionEntry) String() string {
 func (*FamilyRevisionEntry) ProtoMessage() {}
 
 func (x *FamilyRevisionEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[57]
+	mi := &file_terrabase_v1_family_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4011,7 +4315,7 @@ func (x *FamilyRevisionEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyRevisionEntry.ProtoReflect.Descriptor instead.
 func (*FamilyRevisionEntry) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{57}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *FamilyRevisionEntry) GetRevision() uint64 {
@@ -4045,7 +4349,7 @@ type FamilyCompareExchangeResponse struct {
 
 func (x *FamilyCompareExchangeResponse) Reset() {
 	*x = FamilyCompareExchangeResponse{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[58]
+	mi := &file_terrabase_v1_family_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4057,7 +4361,7 @@ func (x *FamilyCompareExchangeResponse) String() string {
 func (*FamilyCompareExchangeResponse) ProtoMessage() {}
 
 func (x *FamilyCompareExchangeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[58]
+	mi := &file_terrabase_v1_family_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4070,7 +4374,7 @@ func (x *FamilyCompareExchangeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyCompareExchangeResponse.ProtoReflect.Descriptor instead.
 func (*FamilyCompareExchangeResponse) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{58}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *FamilyCompareExchangeResponse) GetKey() string {
@@ -4098,7 +4402,7 @@ type FamilyCompareExchangeEntry struct {
 
 func (x *FamilyCompareExchangeEntry) Reset() {
 	*x = FamilyCompareExchangeEntry{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[59]
+	mi := &file_terrabase_v1_family_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4110,7 +4414,7 @@ func (x *FamilyCompareExchangeEntry) String() string {
 func (*FamilyCompareExchangeEntry) ProtoMessage() {}
 
 func (x *FamilyCompareExchangeEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[59]
+	mi := &file_terrabase_v1_family_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4123,7 +4427,7 @@ func (x *FamilyCompareExchangeEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyCompareExchangeEntry.ProtoReflect.Descriptor instead.
 func (*FamilyCompareExchangeEntry) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{59}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *FamilyCompareExchangeEntry) GetValue() *Value {
@@ -4156,7 +4460,7 @@ type FamilyIdentityResponse struct {
 
 func (x *FamilyIdentityResponse) Reset() {
 	*x = FamilyIdentityResponse{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[60]
+	mi := &file_terrabase_v1_family_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4168,7 +4472,7 @@ func (x *FamilyIdentityResponse) String() string {
 func (*FamilyIdentityResponse) ProtoMessage() {}
 
 func (x *FamilyIdentityResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[60]
+	mi := &file_terrabase_v1_family_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4181,7 +4485,7 @@ func (x *FamilyIdentityResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyIdentityResponse.ProtoReflect.Descriptor instead.
 func (*FamilyIdentityResponse) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{60}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *FamilyIdentityResponse) GetEntries() []*FamilyIdentityEntry {
@@ -4201,7 +4505,7 @@ type FamilyIdentityEntry struct {
 
 func (x *FamilyIdentityEntry) Reset() {
 	*x = FamilyIdentityEntry{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[61]
+	mi := &file_terrabase_v1_family_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4213,7 +4517,7 @@ func (x *FamilyIdentityEntry) String() string {
 func (*FamilyIdentityEntry) ProtoMessage() {}
 
 func (x *FamilyIdentityEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[61]
+	mi := &file_terrabase_v1_family_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4226,7 +4530,7 @@ func (x *FamilyIdentityEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyIdentityEntry.ProtoReflect.Descriptor instead.
 func (*FamilyIdentityEntry) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{61}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *FamilyIdentityEntry) GetName() string {
@@ -4253,7 +4557,7 @@ type FamilyLifecycleResponse struct {
 
 func (x *FamilyLifecycleResponse) Reset() {
 	*x = FamilyLifecycleResponse{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[62]
+	mi := &file_terrabase_v1_family_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4265,7 +4569,7 @@ func (x *FamilyLifecycleResponse) String() string {
 func (*FamilyLifecycleResponse) ProtoMessage() {}
 
 func (x *FamilyLifecycleResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[62]
+	mi := &file_terrabase_v1_family_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4278,7 +4582,7 @@ func (x *FamilyLifecycleResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyLifecycleResponse.ProtoReflect.Descriptor instead.
 func (*FamilyLifecycleResponse) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{62}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *FamilyLifecycleResponse) GetPresent() bool {
@@ -4305,7 +4609,7 @@ type FamilyArchivalResponse struct {
 
 func (x *FamilyArchivalResponse) Reset() {
 	*x = FamilyArchivalResponse{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[63]
+	mi := &file_terrabase_v1_family_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4317,7 +4621,7 @@ func (x *FamilyArchivalResponse) String() string {
 func (*FamilyArchivalResponse) ProtoMessage() {}
 
 func (x *FamilyArchivalResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[63]
+	mi := &file_terrabase_v1_family_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4330,7 +4634,7 @@ func (x *FamilyArchivalResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyArchivalResponse.ProtoReflect.Descriptor instead.
 func (*FamilyArchivalResponse) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{63}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *FamilyArchivalResponse) GetPresent() bool {
@@ -4357,7 +4661,7 @@ type FamilyWriteReceiptResponse struct {
 
 func (x *FamilyWriteReceiptResponse) Reset() {
 	*x = FamilyWriteReceiptResponse{}
-	mi := &file_terrabase_v1_family_proto_msgTypes[64]
+	mi := &file_terrabase_v1_family_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4369,7 +4673,7 @@ func (x *FamilyWriteReceiptResponse) String() string {
 func (*FamilyWriteReceiptResponse) ProtoMessage() {}
 
 func (x *FamilyWriteReceiptResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_terrabase_v1_family_proto_msgTypes[64]
+	mi := &file_terrabase_v1_family_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4382,7 +4686,7 @@ func (x *FamilyWriteReceiptResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FamilyWriteReceiptResponse.ProtoReflect.Descriptor instead.
 func (*FamilyWriteReceiptResponse) Descriptor() ([]byte, []int) {
-	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{64}
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{68}
 }
 
 func (x *FamilyWriteReceiptResponse) GetSequence() uint64 {
@@ -4397,6 +4701,134 @@ func (x *FamilyWriteReceiptResponse) GetOperationId() string {
 		return x.OperationId
 	}
 	return ""
+}
+
+type FamilyAttachmentContentResponse struct {
+	state         protoimpl.MessageState          `protogen:"open.v1"`
+	Digest        string                          `protobuf:"bytes,1,opt,name=digest,proto3" json:"digest,omitempty"`
+	Size          uint64                          `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
+	Segments      uint64                          `protobuf:"varint,3,opt,name=segments,proto3" json:"segments,omitempty"`
+	Chunks        []*FamilyAttachmentContentChunk `protobuf:"bytes,4,rep,name=chunks,proto3" json:"chunks,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FamilyAttachmentContentResponse) Reset() {
+	*x = FamilyAttachmentContentResponse{}
+	mi := &file_terrabase_v1_family_proto_msgTypes[69]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FamilyAttachmentContentResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FamilyAttachmentContentResponse) ProtoMessage() {}
+
+func (x *FamilyAttachmentContentResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_terrabase_v1_family_proto_msgTypes[69]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FamilyAttachmentContentResponse.ProtoReflect.Descriptor instead.
+func (*FamilyAttachmentContentResponse) Descriptor() ([]byte, []int) {
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{69}
+}
+
+func (x *FamilyAttachmentContentResponse) GetDigest() string {
+	if x != nil {
+		return x.Digest
+	}
+	return ""
+}
+
+func (x *FamilyAttachmentContentResponse) GetSize() uint64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+func (x *FamilyAttachmentContentResponse) GetSegments() uint64 {
+	if x != nil {
+		return x.Segments
+	}
+	return 0
+}
+
+func (x *FamilyAttachmentContentResponse) GetChunks() []*FamilyAttachmentContentChunk {
+	if x != nil {
+		return x.Chunks
+	}
+	return nil
+}
+
+type FamilyAttachmentContentChunk struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Offset        uint64                 `protobuf:"varint,1,opt,name=offset,proto3" json:"offset,omitempty"`
+	Bytes         []byte                 `protobuf:"bytes,2,opt,name=bytes,proto3" json:"bytes,omitempty"`
+	Last          bool                   `protobuf:"varint,3,opt,name=last,proto3" json:"last,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FamilyAttachmentContentChunk) Reset() {
+	*x = FamilyAttachmentContentChunk{}
+	mi := &file_terrabase_v1_family_proto_msgTypes[70]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FamilyAttachmentContentChunk) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FamilyAttachmentContentChunk) ProtoMessage() {}
+
+func (x *FamilyAttachmentContentChunk) ProtoReflect() protoreflect.Message {
+	mi := &file_terrabase_v1_family_proto_msgTypes[70]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FamilyAttachmentContentChunk.ProtoReflect.Descriptor instead.
+func (*FamilyAttachmentContentChunk) Descriptor() ([]byte, []int) {
+	return file_terrabase_v1_family_proto_rawDescGZIP(), []int{70}
+}
+
+func (x *FamilyAttachmentContentChunk) GetOffset() uint64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *FamilyAttachmentContentChunk) GetBytes() []byte {
+	if x != nil {
+		return x.Bytes
+	}
+	return nil
+}
+
+func (x *FamilyAttachmentContentChunk) GetLast() bool {
+	if x != nil {
+		return x.Last
+	}
+	return false
 }
 
 var File_terrabase_v1_family_proto protoreflect.FileDescriptor
@@ -4428,8 +4860,7 @@ const file_terrabase_v1_family_proto_rawDesc = "" +
 	"\n" +
 	"discipline\"\x10\n" +
 	"\x0eExpectedAbsent\"\r\n" +
-	"\vExpectedAny\"\x91\n" +
-	"\n" +
+	"\vExpectedAny\"\xc9\f\n" +
 	"\x14FamilyRequestPayload\x12M\n" +
 	"\x0fattachment_read\x18\x01 \x01(\v2\".terrabase.v1.FamilyAttachmentReadH\x00R\x0eattachmentRead\x12D\n" +
 	"\fcounter_read\x18\x02 \x01(\v2\x1f.terrabase.v1.FamilyCounterReadH\x00R\vcounterRead\x12N\n" +
@@ -4447,7 +4878,10 @@ const file_terrabase_v1_family_proto_rawDesc = "" +
 	"\x16compare_exchange_write\x18\r \x01(\v2(.terrabase.v1.FamilyCompareExchangeWriteH\x00R\x14compareExchangeWrite\x12J\n" +
 	"\x0eidentity_write\x18\x0e \x01(\v2!.terrabase.v1.FamilyIdentityWriteH\x00R\ridentityWrite\x12M\n" +
 	"\x0flifecycle_write\x18\x0f \x01(\v2\".terrabase.v1.FamilyLifecycleWriteH\x00R\x0elifecycleWrite\x12J\n" +
-	"\x0earchival_write\x18\x10 \x01(\v2!.terrabase.v1.FamilyArchivalWriteH\x00R\rarchivalWriteB\v\n" +
+	"\x0earchival_write\x18\x10 \x01(\v2!.terrabase.v1.FamilyArchivalWriteH\x00R\rarchivalWrite\x12c\n" +
+	"\x17attachment_content_read\x18\x11 \x01(\v2).terrabase.v1.FamilyAttachmentContentReadH\x00R\x15attachmentContentRead\x12f\n" +
+	"\x18attachment_content_write\x18\x12 \x01(\v2*.terrabase.v1.FamilyAttachmentContentWriteH\x00R\x16attachmentContentWrite\x12i\n" +
+	"\x19attachment_content_delete\x18\x13 \x01(\v2+.terrabase.v1.FamilyAttachmentContentDeleteH\x00R\x17attachmentContentDeleteB\v\n" +
 	"\toperation\"2\n" +
 	"\x14FamilyAttachmentRead\x12\x1a\n" +
 	"\bdocument\x18\x01 \x01(\tR\bdocument\"E\n" +
@@ -4511,7 +4945,22 @@ const file_terrabase_v1_family_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
 	"\vto_document\x18\x02 \x01(\tR\n" +
 	"toDocument\x12\x17\n" +
-	"\ato_name\x18\x03 \x01(\tR\x06toName\"\xb1\x01\n" +
+	"\ato_name\x18\x03 \x01(\tR\x06toName\"\xa0\x01\n" +
+	"\x1bFamilyAttachmentContentRead\x12\x16\n" +
+	"\x06digest\x18\x01 \x01(\tR\x06digest\x12F\n" +
+	"\x05bytes\x18\x02 \x01(\v2..terrabase.v1.FamilyAttachmentContentByteRangeH\x00R\x05bytes\x12\x18\n" +
+	"\x06suffix\x18\x03 \x01(\x04H\x00R\x06suffixB\a\n" +
+	"\x05range\"R\n" +
+	" FamilyAttachmentContentByteRange\x12\x12\n" +
+	"\x04from\x18\x01 \x01(\x04R\x04from\x12\x13\n" +
+	"\x02to\x18\x02 \x01(\x04H\x00R\x02to\x88\x01\x01B\x05\n" +
+	"\x03_to\"|\n" +
+	"\x1cFamilyAttachmentContentWrite\x12,\n" +
+	"\x0fexpected_digest\x18\x01 \x01(\tH\x00R\x0eexpectedDigest\x88\x01\x01\x12\x1a\n" +
+	"\bsegments\x18\x02 \x03(\fR\bsegmentsB\x12\n" +
+	"\x10_expected_digest\"7\n" +
+	"\x1dFamilyAttachmentContentDelete\x12\x16\n" +
+	"\x06digest\x18\x01 \x01(\tR\x06digest\"\xb1\x01\n" +
 	"\x12FamilyCounterWrite\x12\x1a\n" +
 	"\bdocument\x18\x01 \x01(\tR\bdocument\x12D\n" +
 	"\n" +
@@ -4617,7 +5066,7 @@ const file_terrabase_v1_family_proto_rawDesc = "" +
 	"\acommand\"/\n" +
 	"\x11FamilyArchivalSet\x12\x1a\n" +
 	"\barchived\x18\x01 \x01(\bR\barchived\"\x16\n" +
-	"\x14FamilyArchivalDelete\"\xbd\x05\n" +
+	"\x14FamilyArchivalDelete\"\x9d\x06\n" +
 	"\x15FamilyResponsePayload\x12H\n" +
 	"\n" +
 	"attachment\x18\x01 \x01(\v2&.terrabase.v1.FamilyAttachmentResponseH\x00R\n" +
@@ -4632,7 +5081,9 @@ const file_terrabase_v1_family_proto_rawDesc = "" +
 	"identities\x12V\n" +
 	"\x12expiration_refresh\x18\a \x01(\v2%.terrabase.v1.FamilyLifecycleResponseH\x00R\x11expirationRefresh\x12B\n" +
 	"\barchival\x18\b \x01(\v2$.terrabase.v1.FamilyArchivalResponseH\x00R\barchival\x12@\n" +
-	"\x05write\x18\t \x01(\v2(.terrabase.v1.FamilyWriteReceiptResponseH\x00R\x05writeB\b\n" +
+	"\x05write\x18\t \x01(\v2(.terrabase.v1.FamilyWriteReceiptResponseH\x00R\x05write\x12^\n" +
+	"\x12attachment_content\x18\n" +
+	" \x01(\v2-.terrabase.v1.FamilyAttachmentContentResponseH\x00R\x11attachmentContentB\b\n" +
 	"\x06result\"Y\n" +
 	"\x18FamilyAttachmentResponse\x12=\n" +
 	"\aentries\x18\x01 \x03(\v2#.terrabase.v1.FamilyAttachmentEntryR\aentries\"\x92\x01\n" +
@@ -4693,7 +5144,16 @@ const file_terrabase_v1_family_proto_rawDesc = "" +
 	"\barchived\x18\x02 \x01(\bR\barchived\"[\n" +
 	"\x1aFamilyWriteReceiptResponse\x12\x1a\n" +
 	"\bsequence\x18\x01 \x01(\x04R\bsequence\x12!\n" +
-	"\foperation_id\x18\x02 \x01(\tR\voperationId*<\n" +
+	"\foperation_id\x18\x02 \x01(\tR\voperationId\"\xad\x01\n" +
+	"\x1fFamilyAttachmentContentResponse\x12\x16\n" +
+	"\x06digest\x18\x01 \x01(\tR\x06digest\x12\x12\n" +
+	"\x04size\x18\x02 \x01(\x04R\x04size\x12\x1a\n" +
+	"\bsegments\x18\x03 \x01(\x04R\bsegments\x12B\n" +
+	"\x06chunks\x18\x04 \x03(\v2*.terrabase.v1.FamilyAttachmentContentChunkR\x06chunks\"`\n" +
+	"\x1cFamilyAttachmentContentChunk\x12\x16\n" +
+	"\x06offset\x18\x01 \x01(\x04R\x06offset\x12\x14\n" +
+	"\x05bytes\x18\x02 \x01(\fR\x05bytes\x12\x12\n" +
+	"\x04last\x18\x03 \x01(\bR\x04last*<\n" +
 	"\tNullValue\x12\x1a\n" +
 	"\x16NULL_VALUE_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fNULL_VALUE_NULL\x10\x01B.Z,terrascale.tech/terrabase-go/terrabase/v1;v1b\x06proto3"
@@ -4711,7 +5171,7 @@ func file_terrabase_v1_family_proto_rawDescGZIP() []byte {
 }
 
 var file_terrabase_v1_family_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_terrabase_v1_family_proto_msgTypes = make([]protoimpl.MessageInfo, 65)
+var file_terrabase_v1_family_proto_msgTypes = make([]protoimpl.MessageInfo, 71)
 var file_terrabase_v1_family_proto_goTypes = []any{
 	(NullValue)(0),                             // 0: terrabase.v1.NullValue
 	(*ValueEntry)(nil),                         // 1: terrabase.v1.ValueEntry
@@ -4736,49 +5196,55 @@ var file_terrabase_v1_family_proto_goTypes = []any{
 	(*FamilyAttachmentRename)(nil),             // 20: terrabase.v1.FamilyAttachmentRename
 	(*FamilyAttachmentCopy)(nil),               // 21: terrabase.v1.FamilyAttachmentCopy
 	(*FamilyAttachmentMove)(nil),               // 22: terrabase.v1.FamilyAttachmentMove
-	(*FamilyCounterWrite)(nil),                 // 23: terrabase.v1.FamilyCounterWrite
-	(*FamilyCounterOperation)(nil),             // 24: terrabase.v1.FamilyCounterOperation
-	(*FamilyCounterIncrement)(nil),             // 25: terrabase.v1.FamilyCounterIncrement
-	(*FamilyCounterDelete)(nil),                // 26: terrabase.v1.FamilyCounterDelete
-	(*FamilyTimeSeriesWrite)(nil),              // 27: terrabase.v1.FamilyTimeSeriesWrite
-	(*FamilyTimeSeriesAppend)(nil),             // 28: terrabase.v1.FamilyTimeSeriesAppend
-	(*FamilyTimeSeriesDelete)(nil),             // 29: terrabase.v1.FamilyTimeSeriesDelete
-	(*FamilyTimeSeriesRange)(nil),              // 30: terrabase.v1.FamilyTimeSeriesRange
-	(*FamilyTimeSeriesPolicy)(nil),             // 31: terrabase.v1.FamilyTimeSeriesPolicy
-	(*FamilyRollupPolicy)(nil),                 // 32: terrabase.v1.FamilyRollupPolicy
-	(*FamilyRevisionWrite)(nil),                // 33: terrabase.v1.FamilyRevisionWrite
-	(*FamilyRevisionForceCreate)(nil),          // 34: terrabase.v1.FamilyRevisionForceCreate
-	(*FamilyRevisionRevert)(nil),               // 35: terrabase.v1.FamilyRevisionRevert
-	(*FamilyRevisionConfigure)(nil),            // 36: terrabase.v1.FamilyRevisionConfigure
-	(*FamilyCompareExchangeWrite)(nil),         // 37: terrabase.v1.FamilyCompareExchangeWrite
-	(*FamilyCompareExchangePutIfIndex)(nil),    // 38: terrabase.v1.FamilyCompareExchangePutIfIndex
-	(*FamilyCompareExchangePutIfMissing)(nil),  // 39: terrabase.v1.FamilyCompareExchangePutIfMissing
-	(*FamilyCompareExchangeDeleteIfIndex)(nil), // 40: terrabase.v1.FamilyCompareExchangeDeleteIfIndex
-	(*FamilyIdentityWrite)(nil),                // 41: terrabase.v1.FamilyIdentityWrite
-	(*FamilyIdentityAllocate)(nil),             // 42: terrabase.v1.FamilyIdentityAllocate
-	(*FamilyIdentitySeed)(nil),                 // 43: terrabase.v1.FamilyIdentitySeed
-	(*FamilyLifecycleWrite)(nil),               // 44: terrabase.v1.FamilyLifecycleWrite
-	(*FamilyLifecycleRefresh)(nil),             // 45: terrabase.v1.FamilyLifecycleRefresh
-	(*FamilyLifecycleDelete)(nil),              // 46: terrabase.v1.FamilyLifecycleDelete
-	(*FamilyArchivalWrite)(nil),                // 47: terrabase.v1.FamilyArchivalWrite
-	(*FamilyArchivalSet)(nil),                  // 48: terrabase.v1.FamilyArchivalSet
-	(*FamilyArchivalDelete)(nil),               // 49: terrabase.v1.FamilyArchivalDelete
-	(*FamilyResponsePayload)(nil),              // 50: terrabase.v1.FamilyResponsePayload
-	(*FamilyAttachmentResponse)(nil),           // 51: terrabase.v1.FamilyAttachmentResponse
-	(*FamilyAttachmentEntry)(nil),              // 52: terrabase.v1.FamilyAttachmentEntry
-	(*FamilyCounterResponse)(nil),              // 53: terrabase.v1.FamilyCounterResponse
-	(*FamilyCounterEntry)(nil),                 // 54: terrabase.v1.FamilyCounterEntry
-	(*FamilyTimeSeriesResponse)(nil),           // 55: terrabase.v1.FamilyTimeSeriesResponse
-	(*FamilyTimeSeriesEntry)(nil),              // 56: terrabase.v1.FamilyTimeSeriesEntry
-	(*FamilyRevisionResponse)(nil),             // 57: terrabase.v1.FamilyRevisionResponse
-	(*FamilyRevisionEntry)(nil),                // 58: terrabase.v1.FamilyRevisionEntry
-	(*FamilyCompareExchangeResponse)(nil),      // 59: terrabase.v1.FamilyCompareExchangeResponse
-	(*FamilyCompareExchangeEntry)(nil),         // 60: terrabase.v1.FamilyCompareExchangeEntry
-	(*FamilyIdentityResponse)(nil),             // 61: terrabase.v1.FamilyIdentityResponse
-	(*FamilyIdentityEntry)(nil),                // 62: terrabase.v1.FamilyIdentityEntry
-	(*FamilyLifecycleResponse)(nil),            // 63: terrabase.v1.FamilyLifecycleResponse
-	(*FamilyArchivalResponse)(nil),             // 64: terrabase.v1.FamilyArchivalResponse
-	(*FamilyWriteReceiptResponse)(nil),         // 65: terrabase.v1.FamilyWriteReceiptResponse
+	(*FamilyAttachmentContentRead)(nil),        // 23: terrabase.v1.FamilyAttachmentContentRead
+	(*FamilyAttachmentContentByteRange)(nil),   // 24: terrabase.v1.FamilyAttachmentContentByteRange
+	(*FamilyAttachmentContentWrite)(nil),       // 25: terrabase.v1.FamilyAttachmentContentWrite
+	(*FamilyAttachmentContentDelete)(nil),      // 26: terrabase.v1.FamilyAttachmentContentDelete
+	(*FamilyCounterWrite)(nil),                 // 27: terrabase.v1.FamilyCounterWrite
+	(*FamilyCounterOperation)(nil),             // 28: terrabase.v1.FamilyCounterOperation
+	(*FamilyCounterIncrement)(nil),             // 29: terrabase.v1.FamilyCounterIncrement
+	(*FamilyCounterDelete)(nil),                // 30: terrabase.v1.FamilyCounterDelete
+	(*FamilyTimeSeriesWrite)(nil),              // 31: terrabase.v1.FamilyTimeSeriesWrite
+	(*FamilyTimeSeriesAppend)(nil),             // 32: terrabase.v1.FamilyTimeSeriesAppend
+	(*FamilyTimeSeriesDelete)(nil),             // 33: terrabase.v1.FamilyTimeSeriesDelete
+	(*FamilyTimeSeriesRange)(nil),              // 34: terrabase.v1.FamilyTimeSeriesRange
+	(*FamilyTimeSeriesPolicy)(nil),             // 35: terrabase.v1.FamilyTimeSeriesPolicy
+	(*FamilyRollupPolicy)(nil),                 // 36: terrabase.v1.FamilyRollupPolicy
+	(*FamilyRevisionWrite)(nil),                // 37: terrabase.v1.FamilyRevisionWrite
+	(*FamilyRevisionForceCreate)(nil),          // 38: terrabase.v1.FamilyRevisionForceCreate
+	(*FamilyRevisionRevert)(nil),               // 39: terrabase.v1.FamilyRevisionRevert
+	(*FamilyRevisionConfigure)(nil),            // 40: terrabase.v1.FamilyRevisionConfigure
+	(*FamilyCompareExchangeWrite)(nil),         // 41: terrabase.v1.FamilyCompareExchangeWrite
+	(*FamilyCompareExchangePutIfIndex)(nil),    // 42: terrabase.v1.FamilyCompareExchangePutIfIndex
+	(*FamilyCompareExchangePutIfMissing)(nil),  // 43: terrabase.v1.FamilyCompareExchangePutIfMissing
+	(*FamilyCompareExchangeDeleteIfIndex)(nil), // 44: terrabase.v1.FamilyCompareExchangeDeleteIfIndex
+	(*FamilyIdentityWrite)(nil),                // 45: terrabase.v1.FamilyIdentityWrite
+	(*FamilyIdentityAllocate)(nil),             // 46: terrabase.v1.FamilyIdentityAllocate
+	(*FamilyIdentitySeed)(nil),                 // 47: terrabase.v1.FamilyIdentitySeed
+	(*FamilyLifecycleWrite)(nil),               // 48: terrabase.v1.FamilyLifecycleWrite
+	(*FamilyLifecycleRefresh)(nil),             // 49: terrabase.v1.FamilyLifecycleRefresh
+	(*FamilyLifecycleDelete)(nil),              // 50: terrabase.v1.FamilyLifecycleDelete
+	(*FamilyArchivalWrite)(nil),                // 51: terrabase.v1.FamilyArchivalWrite
+	(*FamilyArchivalSet)(nil),                  // 52: terrabase.v1.FamilyArchivalSet
+	(*FamilyArchivalDelete)(nil),               // 53: terrabase.v1.FamilyArchivalDelete
+	(*FamilyResponsePayload)(nil),              // 54: terrabase.v1.FamilyResponsePayload
+	(*FamilyAttachmentResponse)(nil),           // 55: terrabase.v1.FamilyAttachmentResponse
+	(*FamilyAttachmentEntry)(nil),              // 56: terrabase.v1.FamilyAttachmentEntry
+	(*FamilyCounterResponse)(nil),              // 57: terrabase.v1.FamilyCounterResponse
+	(*FamilyCounterEntry)(nil),                 // 58: terrabase.v1.FamilyCounterEntry
+	(*FamilyTimeSeriesResponse)(nil),           // 59: terrabase.v1.FamilyTimeSeriesResponse
+	(*FamilyTimeSeriesEntry)(nil),              // 60: terrabase.v1.FamilyTimeSeriesEntry
+	(*FamilyRevisionResponse)(nil),             // 61: terrabase.v1.FamilyRevisionResponse
+	(*FamilyRevisionEntry)(nil),                // 62: terrabase.v1.FamilyRevisionEntry
+	(*FamilyCompareExchangeResponse)(nil),      // 63: terrabase.v1.FamilyCompareExchangeResponse
+	(*FamilyCompareExchangeEntry)(nil),         // 64: terrabase.v1.FamilyCompareExchangeEntry
+	(*FamilyIdentityResponse)(nil),             // 65: terrabase.v1.FamilyIdentityResponse
+	(*FamilyIdentityEntry)(nil),                // 66: terrabase.v1.FamilyIdentityEntry
+	(*FamilyLifecycleResponse)(nil),            // 67: terrabase.v1.FamilyLifecycleResponse
+	(*FamilyArchivalResponse)(nil),             // 68: terrabase.v1.FamilyArchivalResponse
+	(*FamilyWriteReceiptResponse)(nil),         // 69: terrabase.v1.FamilyWriteReceiptResponse
+	(*FamilyAttachmentContentResponse)(nil),    // 70: terrabase.v1.FamilyAttachmentContentResponse
+	(*FamilyAttachmentContentChunk)(nil),       // 71: terrabase.v1.FamilyAttachmentContentChunk
 }
 var file_terrabase_v1_family_proto_depIdxs = []int32{
 	3,  // 0: terrabase.v1.ValueEntry.value:type_name -> terrabase.v1.Value
@@ -4798,66 +5264,72 @@ var file_terrabase_v1_family_proto_depIdxs = []int32{
 	15, // 14: terrabase.v1.FamilyRequestPayload.lifecycle_read:type_name -> terrabase.v1.FamilyLifecycleRead
 	16, // 15: terrabase.v1.FamilyRequestPayload.archival_read:type_name -> terrabase.v1.FamilyArchivalRead
 	17, // 16: terrabase.v1.FamilyRequestPayload.attachment_write:type_name -> terrabase.v1.FamilyAttachmentWrite
-	23, // 17: terrabase.v1.FamilyRequestPayload.counter_write:type_name -> terrabase.v1.FamilyCounterWrite
-	27, // 18: terrabase.v1.FamilyRequestPayload.time_series_write:type_name -> terrabase.v1.FamilyTimeSeriesWrite
-	33, // 19: terrabase.v1.FamilyRequestPayload.revision_write:type_name -> terrabase.v1.FamilyRevisionWrite
-	37, // 20: terrabase.v1.FamilyRequestPayload.compare_exchange_write:type_name -> terrabase.v1.FamilyCompareExchangeWrite
-	41, // 21: terrabase.v1.FamilyRequestPayload.identity_write:type_name -> terrabase.v1.FamilyIdentityWrite
-	44, // 22: terrabase.v1.FamilyRequestPayload.lifecycle_write:type_name -> terrabase.v1.FamilyLifecycleWrite
-	47, // 23: terrabase.v1.FamilyRequestPayload.archival_write:type_name -> terrabase.v1.FamilyArchivalWrite
-	18, // 24: terrabase.v1.FamilyAttachmentWrite.store:type_name -> terrabase.v1.FamilyAttachmentStore
-	19, // 25: terrabase.v1.FamilyAttachmentWrite.delete:type_name -> terrabase.v1.FamilyAttachmentDelete
-	20, // 26: terrabase.v1.FamilyAttachmentWrite.rename:type_name -> terrabase.v1.FamilyAttachmentRename
-	21, // 27: terrabase.v1.FamilyAttachmentWrite.copy:type_name -> terrabase.v1.FamilyAttachmentCopy
-	22, // 28: terrabase.v1.FamilyAttachmentWrite.move:type_name -> terrabase.v1.FamilyAttachmentMove
-	5,  // 29: terrabase.v1.FamilyAttachmentWrite.expected:type_name -> terrabase.v1.ExpectedVersion
-	24, // 30: terrabase.v1.FamilyCounterWrite.operations:type_name -> terrabase.v1.FamilyCounterOperation
-	5,  // 31: terrabase.v1.FamilyCounterWrite.expected:type_name -> terrabase.v1.ExpectedVersion
-	25, // 32: terrabase.v1.FamilyCounterOperation.increment:type_name -> terrabase.v1.FamilyCounterIncrement
-	26, // 33: terrabase.v1.FamilyCounterOperation.delete:type_name -> terrabase.v1.FamilyCounterDelete
-	28, // 34: terrabase.v1.FamilyTimeSeriesWrite.appends:type_name -> terrabase.v1.FamilyTimeSeriesAppend
-	29, // 35: terrabase.v1.FamilyTimeSeriesWrite.deletes:type_name -> terrabase.v1.FamilyTimeSeriesDelete
-	31, // 36: terrabase.v1.FamilyTimeSeriesWrite.policy:type_name -> terrabase.v1.FamilyTimeSeriesPolicy
-	5,  // 37: terrabase.v1.FamilyTimeSeriesWrite.expected:type_name -> terrabase.v1.ExpectedVersion
-	30, // 38: terrabase.v1.FamilyTimeSeriesDelete.range:type_name -> terrabase.v1.FamilyTimeSeriesRange
-	32, // 39: terrabase.v1.FamilyTimeSeriesPolicy.rollups:type_name -> terrabase.v1.FamilyRollupPolicy
-	34, // 40: terrabase.v1.FamilyRevisionWrite.force_create:type_name -> terrabase.v1.FamilyRevisionForceCreate
-	35, // 41: terrabase.v1.FamilyRevisionWrite.revert:type_name -> terrabase.v1.FamilyRevisionRevert
-	36, // 42: terrabase.v1.FamilyRevisionWrite.configure:type_name -> terrabase.v1.FamilyRevisionConfigure
-	5,  // 43: terrabase.v1.FamilyRevisionForceCreate.expected:type_name -> terrabase.v1.ExpectedVersion
-	38, // 44: terrabase.v1.FamilyCompareExchangeWrite.put_if_index:type_name -> terrabase.v1.FamilyCompareExchangePutIfIndex
-	39, // 45: terrabase.v1.FamilyCompareExchangeWrite.put_if_missing:type_name -> terrabase.v1.FamilyCompareExchangePutIfMissing
-	40, // 46: terrabase.v1.FamilyCompareExchangeWrite.delete_if_index:type_name -> terrabase.v1.FamilyCompareExchangeDeleteIfIndex
-	3,  // 47: terrabase.v1.FamilyCompareExchangePutIfIndex.value:type_name -> terrabase.v1.Value
-	3,  // 48: terrabase.v1.FamilyCompareExchangePutIfMissing.value:type_name -> terrabase.v1.Value
-	42, // 49: terrabase.v1.FamilyIdentityWrite.allocate:type_name -> terrabase.v1.FamilyIdentityAllocate
-	43, // 50: terrabase.v1.FamilyIdentityWrite.seed:type_name -> terrabase.v1.FamilyIdentitySeed
-	45, // 51: terrabase.v1.FamilyLifecycleWrite.refresh:type_name -> terrabase.v1.FamilyLifecycleRefresh
-	46, // 52: terrabase.v1.FamilyLifecycleWrite.delete:type_name -> terrabase.v1.FamilyLifecycleDelete
-	48, // 53: terrabase.v1.FamilyArchivalWrite.set:type_name -> terrabase.v1.FamilyArchivalSet
-	49, // 54: terrabase.v1.FamilyArchivalWrite.delete:type_name -> terrabase.v1.FamilyArchivalDelete
-	51, // 55: terrabase.v1.FamilyResponsePayload.attachment:type_name -> terrabase.v1.FamilyAttachmentResponse
-	53, // 56: terrabase.v1.FamilyResponsePayload.counter:type_name -> terrabase.v1.FamilyCounterResponse
-	55, // 57: terrabase.v1.FamilyResponsePayload.time_series:type_name -> terrabase.v1.FamilyTimeSeriesResponse
-	57, // 58: terrabase.v1.FamilyResponsePayload.revisions:type_name -> terrabase.v1.FamilyRevisionResponse
-	59, // 59: terrabase.v1.FamilyResponsePayload.compare_exchange:type_name -> terrabase.v1.FamilyCompareExchangeResponse
-	61, // 60: terrabase.v1.FamilyResponsePayload.identities:type_name -> terrabase.v1.FamilyIdentityResponse
-	63, // 61: terrabase.v1.FamilyResponsePayload.expiration_refresh:type_name -> terrabase.v1.FamilyLifecycleResponse
-	64, // 62: terrabase.v1.FamilyResponsePayload.archival:type_name -> terrabase.v1.FamilyArchivalResponse
-	65, // 63: terrabase.v1.FamilyResponsePayload.write:type_name -> terrabase.v1.FamilyWriteReceiptResponse
-	52, // 64: terrabase.v1.FamilyAttachmentResponse.entries:type_name -> terrabase.v1.FamilyAttachmentEntry
-	54, // 65: terrabase.v1.FamilyCounterResponse.entries:type_name -> terrabase.v1.FamilyCounterEntry
-	56, // 66: terrabase.v1.FamilyTimeSeriesResponse.entries:type_name -> terrabase.v1.FamilyTimeSeriesEntry
-	58, // 67: terrabase.v1.FamilyRevisionResponse.entries:type_name -> terrabase.v1.FamilyRevisionEntry
-	3,  // 68: terrabase.v1.FamilyRevisionEntry.value:type_name -> terrabase.v1.Value
-	60, // 69: terrabase.v1.FamilyCompareExchangeResponse.entry:type_name -> terrabase.v1.FamilyCompareExchangeEntry
-	3,  // 70: terrabase.v1.FamilyCompareExchangeEntry.value:type_name -> terrabase.v1.Value
-	62, // 71: terrabase.v1.FamilyIdentityResponse.entries:type_name -> terrabase.v1.FamilyIdentityEntry
-	72, // [72:72] is the sub-list for method output_type
-	72, // [72:72] is the sub-list for method input_type
-	72, // [72:72] is the sub-list for extension type_name
-	72, // [72:72] is the sub-list for extension extendee
-	0,  // [0:72] is the sub-list for field type_name
+	27, // 17: terrabase.v1.FamilyRequestPayload.counter_write:type_name -> terrabase.v1.FamilyCounterWrite
+	31, // 18: terrabase.v1.FamilyRequestPayload.time_series_write:type_name -> terrabase.v1.FamilyTimeSeriesWrite
+	37, // 19: terrabase.v1.FamilyRequestPayload.revision_write:type_name -> terrabase.v1.FamilyRevisionWrite
+	41, // 20: terrabase.v1.FamilyRequestPayload.compare_exchange_write:type_name -> terrabase.v1.FamilyCompareExchangeWrite
+	45, // 21: terrabase.v1.FamilyRequestPayload.identity_write:type_name -> terrabase.v1.FamilyIdentityWrite
+	48, // 22: terrabase.v1.FamilyRequestPayload.lifecycle_write:type_name -> terrabase.v1.FamilyLifecycleWrite
+	51, // 23: terrabase.v1.FamilyRequestPayload.archival_write:type_name -> terrabase.v1.FamilyArchivalWrite
+	23, // 24: terrabase.v1.FamilyRequestPayload.attachment_content_read:type_name -> terrabase.v1.FamilyAttachmentContentRead
+	25, // 25: terrabase.v1.FamilyRequestPayload.attachment_content_write:type_name -> terrabase.v1.FamilyAttachmentContentWrite
+	26, // 26: terrabase.v1.FamilyRequestPayload.attachment_content_delete:type_name -> terrabase.v1.FamilyAttachmentContentDelete
+	18, // 27: terrabase.v1.FamilyAttachmentWrite.store:type_name -> terrabase.v1.FamilyAttachmentStore
+	19, // 28: terrabase.v1.FamilyAttachmentWrite.delete:type_name -> terrabase.v1.FamilyAttachmentDelete
+	20, // 29: terrabase.v1.FamilyAttachmentWrite.rename:type_name -> terrabase.v1.FamilyAttachmentRename
+	21, // 30: terrabase.v1.FamilyAttachmentWrite.copy:type_name -> terrabase.v1.FamilyAttachmentCopy
+	22, // 31: terrabase.v1.FamilyAttachmentWrite.move:type_name -> terrabase.v1.FamilyAttachmentMove
+	5,  // 32: terrabase.v1.FamilyAttachmentWrite.expected:type_name -> terrabase.v1.ExpectedVersion
+	24, // 33: terrabase.v1.FamilyAttachmentContentRead.bytes:type_name -> terrabase.v1.FamilyAttachmentContentByteRange
+	28, // 34: terrabase.v1.FamilyCounterWrite.operations:type_name -> terrabase.v1.FamilyCounterOperation
+	5,  // 35: terrabase.v1.FamilyCounterWrite.expected:type_name -> terrabase.v1.ExpectedVersion
+	29, // 36: terrabase.v1.FamilyCounterOperation.increment:type_name -> terrabase.v1.FamilyCounterIncrement
+	30, // 37: terrabase.v1.FamilyCounterOperation.delete:type_name -> terrabase.v1.FamilyCounterDelete
+	32, // 38: terrabase.v1.FamilyTimeSeriesWrite.appends:type_name -> terrabase.v1.FamilyTimeSeriesAppend
+	33, // 39: terrabase.v1.FamilyTimeSeriesWrite.deletes:type_name -> terrabase.v1.FamilyTimeSeriesDelete
+	35, // 40: terrabase.v1.FamilyTimeSeriesWrite.policy:type_name -> terrabase.v1.FamilyTimeSeriesPolicy
+	5,  // 41: terrabase.v1.FamilyTimeSeriesWrite.expected:type_name -> terrabase.v1.ExpectedVersion
+	34, // 42: terrabase.v1.FamilyTimeSeriesDelete.range:type_name -> terrabase.v1.FamilyTimeSeriesRange
+	36, // 43: terrabase.v1.FamilyTimeSeriesPolicy.rollups:type_name -> terrabase.v1.FamilyRollupPolicy
+	38, // 44: terrabase.v1.FamilyRevisionWrite.force_create:type_name -> terrabase.v1.FamilyRevisionForceCreate
+	39, // 45: terrabase.v1.FamilyRevisionWrite.revert:type_name -> terrabase.v1.FamilyRevisionRevert
+	40, // 46: terrabase.v1.FamilyRevisionWrite.configure:type_name -> terrabase.v1.FamilyRevisionConfigure
+	5,  // 47: terrabase.v1.FamilyRevisionForceCreate.expected:type_name -> terrabase.v1.ExpectedVersion
+	42, // 48: terrabase.v1.FamilyCompareExchangeWrite.put_if_index:type_name -> terrabase.v1.FamilyCompareExchangePutIfIndex
+	43, // 49: terrabase.v1.FamilyCompareExchangeWrite.put_if_missing:type_name -> terrabase.v1.FamilyCompareExchangePutIfMissing
+	44, // 50: terrabase.v1.FamilyCompareExchangeWrite.delete_if_index:type_name -> terrabase.v1.FamilyCompareExchangeDeleteIfIndex
+	3,  // 51: terrabase.v1.FamilyCompareExchangePutIfIndex.value:type_name -> terrabase.v1.Value
+	3,  // 52: terrabase.v1.FamilyCompareExchangePutIfMissing.value:type_name -> terrabase.v1.Value
+	46, // 53: terrabase.v1.FamilyIdentityWrite.allocate:type_name -> terrabase.v1.FamilyIdentityAllocate
+	47, // 54: terrabase.v1.FamilyIdentityWrite.seed:type_name -> terrabase.v1.FamilyIdentitySeed
+	49, // 55: terrabase.v1.FamilyLifecycleWrite.refresh:type_name -> terrabase.v1.FamilyLifecycleRefresh
+	50, // 56: terrabase.v1.FamilyLifecycleWrite.delete:type_name -> terrabase.v1.FamilyLifecycleDelete
+	52, // 57: terrabase.v1.FamilyArchivalWrite.set:type_name -> terrabase.v1.FamilyArchivalSet
+	53, // 58: terrabase.v1.FamilyArchivalWrite.delete:type_name -> terrabase.v1.FamilyArchivalDelete
+	55, // 59: terrabase.v1.FamilyResponsePayload.attachment:type_name -> terrabase.v1.FamilyAttachmentResponse
+	57, // 60: terrabase.v1.FamilyResponsePayload.counter:type_name -> terrabase.v1.FamilyCounterResponse
+	59, // 61: terrabase.v1.FamilyResponsePayload.time_series:type_name -> terrabase.v1.FamilyTimeSeriesResponse
+	61, // 62: terrabase.v1.FamilyResponsePayload.revisions:type_name -> terrabase.v1.FamilyRevisionResponse
+	63, // 63: terrabase.v1.FamilyResponsePayload.compare_exchange:type_name -> terrabase.v1.FamilyCompareExchangeResponse
+	65, // 64: terrabase.v1.FamilyResponsePayload.identities:type_name -> terrabase.v1.FamilyIdentityResponse
+	67, // 65: terrabase.v1.FamilyResponsePayload.expiration_refresh:type_name -> terrabase.v1.FamilyLifecycleResponse
+	68, // 66: terrabase.v1.FamilyResponsePayload.archival:type_name -> terrabase.v1.FamilyArchivalResponse
+	69, // 67: terrabase.v1.FamilyResponsePayload.write:type_name -> terrabase.v1.FamilyWriteReceiptResponse
+	70, // 68: terrabase.v1.FamilyResponsePayload.attachment_content:type_name -> terrabase.v1.FamilyAttachmentContentResponse
+	56, // 69: terrabase.v1.FamilyAttachmentResponse.entries:type_name -> terrabase.v1.FamilyAttachmentEntry
+	58, // 70: terrabase.v1.FamilyCounterResponse.entries:type_name -> terrabase.v1.FamilyCounterEntry
+	60, // 71: terrabase.v1.FamilyTimeSeriesResponse.entries:type_name -> terrabase.v1.FamilyTimeSeriesEntry
+	62, // 72: terrabase.v1.FamilyRevisionResponse.entries:type_name -> terrabase.v1.FamilyRevisionEntry
+	3,  // 73: terrabase.v1.FamilyRevisionEntry.value:type_name -> terrabase.v1.Value
+	64, // 74: terrabase.v1.FamilyCompareExchangeResponse.entry:type_name -> terrabase.v1.FamilyCompareExchangeEntry
+	3,  // 75: terrabase.v1.FamilyCompareExchangeEntry.value:type_name -> terrabase.v1.Value
+	66, // 76: terrabase.v1.FamilyIdentityResponse.entries:type_name -> terrabase.v1.FamilyIdentityEntry
+	71, // 77: terrabase.v1.FamilyAttachmentContentResponse.chunks:type_name -> terrabase.v1.FamilyAttachmentContentChunk
+	78, // [78:78] is the sub-list for method output_type
+	78, // [78:78] is the sub-list for method input_type
+	78, // [78:78] is the sub-list for extension type_name
+	78, // [78:78] is the sub-list for extension extendee
+	0,  // [0:78] is the sub-list for field type_name
 }
 
 func init() { file_terrabase_v1_family_proto_init() }
@@ -4896,6 +5368,9 @@ func file_terrabase_v1_family_proto_init() {
 		(*FamilyRequestPayload_IdentityWrite)(nil),
 		(*FamilyRequestPayload_LifecycleWrite)(nil),
 		(*FamilyRequestPayload_ArchivalWrite)(nil),
+		(*FamilyRequestPayload_AttachmentContentRead)(nil),
+		(*FamilyRequestPayload_AttachmentContentWrite)(nil),
+		(*FamilyRequestPayload_AttachmentContentDelete)(nil),
 	}
 	file_terrabase_v1_family_proto_msgTypes[10].OneofWrappers = []any{}
 	file_terrabase_v1_family_proto_msgTypes[16].OneofWrappers = []any{
@@ -4905,42 +5380,48 @@ func file_terrabase_v1_family_proto_init() {
 		(*FamilyAttachmentWrite_Copy)(nil),
 		(*FamilyAttachmentWrite_Move)(nil),
 	}
-	file_terrabase_v1_family_proto_msgTypes[23].OneofWrappers = []any{
+	file_terrabase_v1_family_proto_msgTypes[22].OneofWrappers = []any{
+		(*FamilyAttachmentContentRead_Bytes)(nil),
+		(*FamilyAttachmentContentRead_Suffix)(nil),
+	}
+	file_terrabase_v1_family_proto_msgTypes[23].OneofWrappers = []any{}
+	file_terrabase_v1_family_proto_msgTypes[24].OneofWrappers = []any{}
+	file_terrabase_v1_family_proto_msgTypes[27].OneofWrappers = []any{
 		(*FamilyCounterOperation_Increment)(nil),
 		(*FamilyCounterOperation_Delete)(nil),
 	}
-	file_terrabase_v1_family_proto_msgTypes[27].OneofWrappers = []any{}
-	file_terrabase_v1_family_proto_msgTypes[28].OneofWrappers = []any{
+	file_terrabase_v1_family_proto_msgTypes[31].OneofWrappers = []any{}
+	file_terrabase_v1_family_proto_msgTypes[32].OneofWrappers = []any{
 		(*FamilyTimeSeriesDelete_Timestamp)(nil),
 		(*FamilyTimeSeriesDelete_Range)(nil),
 	}
-	file_terrabase_v1_family_proto_msgTypes[30].OneofWrappers = []any{}
-	file_terrabase_v1_family_proto_msgTypes[32].OneofWrappers = []any{
+	file_terrabase_v1_family_proto_msgTypes[34].OneofWrappers = []any{}
+	file_terrabase_v1_family_proto_msgTypes[36].OneofWrappers = []any{
 		(*FamilyRevisionWrite_ForceCreate)(nil),
 		(*FamilyRevisionWrite_Revert)(nil),
 		(*FamilyRevisionWrite_Configure)(nil),
 	}
-	file_terrabase_v1_family_proto_msgTypes[35].OneofWrappers = []any{}
-	file_terrabase_v1_family_proto_msgTypes[36].OneofWrappers = []any{
+	file_terrabase_v1_family_proto_msgTypes[39].OneofWrappers = []any{}
+	file_terrabase_v1_family_proto_msgTypes[40].OneofWrappers = []any{
 		(*FamilyCompareExchangeWrite_PutIfIndex)(nil),
 		(*FamilyCompareExchangeWrite_PutIfMissing)(nil),
 		(*FamilyCompareExchangeWrite_DeleteIfIndex)(nil),
 	}
-	file_terrabase_v1_family_proto_msgTypes[37].OneofWrappers = []any{}
-	file_terrabase_v1_family_proto_msgTypes[38].OneofWrappers = []any{}
-	file_terrabase_v1_family_proto_msgTypes[40].OneofWrappers = []any{
+	file_terrabase_v1_family_proto_msgTypes[41].OneofWrappers = []any{}
+	file_terrabase_v1_family_proto_msgTypes[42].OneofWrappers = []any{}
+	file_terrabase_v1_family_proto_msgTypes[44].OneofWrappers = []any{
 		(*FamilyIdentityWrite_Allocate)(nil),
 		(*FamilyIdentityWrite_Seed)(nil),
 	}
-	file_terrabase_v1_family_proto_msgTypes[43].OneofWrappers = []any{
+	file_terrabase_v1_family_proto_msgTypes[47].OneofWrappers = []any{
 		(*FamilyLifecycleWrite_Refresh)(nil),
 		(*FamilyLifecycleWrite_Delete)(nil),
 	}
-	file_terrabase_v1_family_proto_msgTypes[46].OneofWrappers = []any{
+	file_terrabase_v1_family_proto_msgTypes[50].OneofWrappers = []any{
 		(*FamilyArchivalWrite_Set)(nil),
 		(*FamilyArchivalWrite_Delete)(nil),
 	}
-	file_terrabase_v1_family_proto_msgTypes[49].OneofWrappers = []any{
+	file_terrabase_v1_family_proto_msgTypes[53].OneofWrappers = []any{
 		(*FamilyResponsePayload_Attachment)(nil),
 		(*FamilyResponsePayload_Counter)(nil),
 		(*FamilyResponsePayload_TimeSeries)(nil),
@@ -4950,21 +5431,22 @@ func file_terrabase_v1_family_proto_init() {
 		(*FamilyResponsePayload_ExpirationRefresh)(nil),
 		(*FamilyResponsePayload_Archival)(nil),
 		(*FamilyResponsePayload_Write)(nil),
+		(*FamilyResponsePayload_AttachmentContent)(nil),
 	}
-	file_terrabase_v1_family_proto_msgTypes[53].OneofWrappers = []any{}
-	file_terrabase_v1_family_proto_msgTypes[54].OneofWrappers = []any{}
-	file_terrabase_v1_family_proto_msgTypes[55].OneofWrappers = []any{}
-	file_terrabase_v1_family_proto_msgTypes[56].OneofWrappers = []any{}
+	file_terrabase_v1_family_proto_msgTypes[57].OneofWrappers = []any{}
 	file_terrabase_v1_family_proto_msgTypes[58].OneofWrappers = []any{}
 	file_terrabase_v1_family_proto_msgTypes[59].OneofWrappers = []any{}
+	file_terrabase_v1_family_proto_msgTypes[60].OneofWrappers = []any{}
 	file_terrabase_v1_family_proto_msgTypes[62].OneofWrappers = []any{}
+	file_terrabase_v1_family_proto_msgTypes[63].OneofWrappers = []any{}
+	file_terrabase_v1_family_proto_msgTypes[66].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_terrabase_v1_family_proto_rawDesc), len(file_terrabase_v1_family_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   65,
+			NumMessages:   71,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

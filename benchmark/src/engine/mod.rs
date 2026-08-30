@@ -1065,6 +1065,9 @@ impl Engine {
             let mut batch = self.take_queued_intents();
             if batch.is_empty() {
                 if carry_pending && self.wait_for_arrival(GROUP_LINGER_WINDOW) {
+                    if std::env::var_os("TERRABASE_TRACE_BATCHES").is_some() {
+                        eprintln!("terrabase leader handoff");
+                    }
                     // The next wave's first arrival landed. Hand off now,
                     // while it is queued: the next arrival — or the
                     // waiter-side leadership check — takes the whole forming
@@ -1085,6 +1088,9 @@ impl Engine {
                     // one lock hold, so nothing strands.
                     if let Ok(mut storage) = self.lock_storage() {
                         storage.port.flush_pending_flips();
+                    }
+                    if std::env::var_os("TERRABASE_TRACE_BATCHES").is_some() {
+                        eprintln!("terrabase leader retired quiet");
                     }
                     let Ok(mut mailbox) = self.commit_mailbox.lock() else {
                         return;

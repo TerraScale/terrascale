@@ -156,6 +156,9 @@ impl AuthorizedEngine {
         scope: ResourceScope,
         policy: crate::authorization::Policy,
     ) -> Result<(), AuthorizedEngineError> {
+        if scope != self.expected_scope {
+            return Err(AuthorizedEngineError::BindingMismatch);
+        }
         self.policy_store
             .lock()
             .map_err(|_| {
@@ -241,6 +244,10 @@ impl AuthorizedEngine {
     /// Reads one document and returns only scalar fields admitted by the
     /// policy projection. Policies with predicates are evaluated against the
     /// document before any field is returned.
+    ///
+    /// This is a one-shot convenience operation. Call [`Self::bind`] and
+    /// [`Self::read_fields_bound`] when a client channel performs multiple
+    /// operations with one envelope binding.
     pub fn read_fields(
         &self,
         envelope: &PrincipalContextEnvelope,
@@ -300,6 +307,22 @@ impl AuthorizedEngine {
         expected: crate::types::ExpectedVersion,
         now: u64,
     ) -> Result<super::CommitOutcome, AuthorizedEngineError> {
+        let operation_text = format!("authorized-write-{}-{}", session.context.session_id(), now);
+        let operation = crate::types::OperationId::try_new(&operation_text)
+            .map_err(|_| AuthorizedEngineError::BindingMismatch)?;
+        self.write_with_operation(session, document, expected, operation, now)
+    }
+
+    /// Writes with a caller-supplied stable operation identity, preserving
+    /// Engine's idempotent retry semantics.
+    pub fn write_with_operation(
+        &self,
+        session: &AuthorizedSession,
+        document: crate::types::Document,
+        expected: crate::types::ExpectedVersion,
+        operation: crate::types::OperationId,
+        now: u64,
+    ) -> Result<super::CommitOutcome, AuthorizedEngineError> {
         self.check_session(session, now)?;
         let context = &session.context;
         let collection = document.collection().clone();
@@ -318,9 +341,6 @@ impl AuthorizedEngine {
         }
         let tenant = self.tenant_for(context)?;
         let snapshot = self.engine.read_snapshot(&tenant).map_err(AuthorizedEngineError::Engine)?;
-        let operation_text = format!("authorized-write-{}-{}", context.session_id(), now);
-        let operation = crate::types::OperationId::try_new(&operation_text)
-            .map_err(|_| AuthorizedEngineError::BindingMismatch)?;
         let mut transaction = self
             .engine
             .begin(&tenant, snapshot, operation)
@@ -341,6 +361,22 @@ impl AuthorizedEngine {
         expected: crate::types::ExpectedVersion,
         now: u64,
     ) -> Result<super::CommitOutcome, AuthorizedEngineError> {
+        let operation_text = format!("authorized-delete-{}-{}", session.context.session_id(), now);
+        let operation = crate::types::OperationId::try_new(&operation_text)
+            .map_err(|_| AuthorizedEngineError::BindingMismatch)?;
+        self.delete_with_operation(session, collection, document_id, expected, operation, now)
+    }
+
+    /// Deletes with a caller-supplied stable operation identity.
+    pub fn delete_with_operation(
+        &self,
+        session: &AuthorizedSession,
+        collection: &CollectionName,
+        document_id: DocumentId,
+        expected: crate::types::ExpectedVersion,
+        operation: crate::types::OperationId,
+        now: u64,
+    ) -> Result<super::CommitOutcome, AuthorizedEngineError> {
         self.check_session(session, now)?;
         let context = &session.context;
         let request = AuthorizationRequest::try_new(
@@ -358,9 +394,6 @@ impl AuthorizedEngine {
         }
         let tenant = self.tenant_for(context)?;
         let snapshot = self.engine.read_snapshot(&tenant).map_err(AuthorizedEngineError::Engine)?;
-        let operation_text = format!("authorized-delete-{}-{}", context.session_id(), now);
-        let operation = crate::types::OperationId::try_new(&operation_text)
-            .map_err(|_| AuthorizedEngineError::BindingMismatch)?;
         let mut transaction = self
             .engine
             .begin(&tenant, snapshot, operation)
@@ -584,7 +617,7 @@ mod tests {
             Err(AuthorizedEngineError::Authorization(AuthorizationError::ContextReplay))
         ));
         let request = AuthorizationRequest::try_new(
-            scope,
+            scope.clone(),
             "terrascale.database",
             Action::Read,
             "documents",
@@ -599,7 +632,45 @@ mod tests {
             gateway.authorize_bound(&session, &request, 100),
             Err(AuthorizedEngineError::Authorization(AuthorizationError::ContextExpired))
         ));
+        let replacement = Policy::try_new_with_id(
+            policy_id,
+            2,
+            std::iter::empty::<String>(),
+            [PolicyRule::try_new_with_id(grant, Operation::Read, "documents").expect("rule")],
+        )
+        .expect("replacement");
+        gateway.publish_policy(scope, replacement).expect("replace policy");
+        assert!(
+            !gateway.authorize_bound(&session, &request, 11).expect("stale decision").is_allowed()
+        );
+        assert!(!format!("{gateway:?}").contains("authorized-test"));
         drop(gateway);
         let _ = fs::remove_dir_all(engine_path);
+    }
+
+    #[test]
+    fn unsupported_document_values_are_not_coerced_into_authorization_claims() {
+        let document = crate::types::Document::new(
+            crate::types::DocumentId::try_new("doc").expect("id"),
+            crate::types::CollectionName::try_new("documents").expect("collection"),
+            DocumentValue::Object(
+                [
+                    ("null".to_owned(), DocumentValue::Null),
+                    ("float".to_owned(), DocumentValue::Number(1.5)),
+                    ("array".to_owned(), DocumentValue::Array(vec![DocumentValue::Integer(1)])),
+                    (
+                        "nested".to_owned(),
+                        DocumentValue::Object(
+                            [("owner".to_owned(), DocumentValue::String("acme".to_owned()))]
+                                .into_iter()
+                                .collect(),
+                        ),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+        );
+        assert!(scalar_fields(&document).is_empty());
     }
 }

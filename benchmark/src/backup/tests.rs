@@ -23,6 +23,7 @@ use crate::backup::{
     run_backup, verify_latest_chain,
 };
 use crate::engine::{CommitOutcome, Engine, EngineConfig};
+use crate::encryption::{ArtifactCipher, Compression, DatabaseKey, EncryptionContext, ProviderMode};
 use crate::types::{
     Cancellation, CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion,
     LocalDurability, OperationId, StorageSequence, TenantId, TenantScope,
@@ -131,6 +132,55 @@ fn committed(outcome: CommitOutcome) -> StorageSequence {
         CommitOutcome::Committed(receipt) => receipt.sequence(),
         other => panic!("expected a committed receipt, got {other:?}"),
     }
+}
+
+fn test_backup_cipher() -> ArtifactCipher {
+    let context = EncryptionContext::new(
+        "test",
+        "tenant-a",
+        "database-a",
+        "backup",
+        "recovery-point-a",
+        "key-a",
+        3,
+        Compression::None,
+    )
+    .expect("encryption context");
+    ArtifactCipher::new(ProviderMode::LocalFile, DatabaseKey::from_bytes([7; 32]), context)
+        .expect("backup cipher")
+}
+
+#[test]
+fn encrypted_backup_seals_members_and_manifest_and_round_trips() {
+    let (_dir, engine) = open_engine("encrypted");
+    let destination = location("encrypted-dest");
+    let target = location("encrypted-target");
+    committed(put(
+        &engine,
+        "alpha",
+        "encrypted-put",
+        "doc-1",
+        "users",
+        text("secret-value"),
+        LocalDurability::Synced,
+    ));
+
+    let result = run_backup(
+        &engine,
+        BackupPlan::full().with_encryption(test_backup_cipher()),
+        &destination,
+    )
+    .expect("encrypted backup");
+    let point = destination.join(format!("rp-{}", result.manifest().identity()));
+    assert!(!point.join("manifest.tbv2m").exists());
+    let encrypted_manifest = std::fs::read(point.join("manifest.tbv3e")).expect("manifest");
+    assert!(!String::from_utf8_lossy(&encrypted_manifest).contains("documents"));
+    for member in result.manifest().members() {
+        let bytes = std::fs::read(point.join(member.name())).expect("member");
+        assert!(!String::from_utf8_lossy(&bytes).contains("secret-value"));
+    }
+    RestorePlan::restore_latest_encrypted(&destination, &target, &test_backup_cipher())
+        .expect("encrypted restore");
 }
 
 #[test]

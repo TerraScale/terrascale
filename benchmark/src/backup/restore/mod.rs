@@ -107,8 +107,8 @@ use std::path::{Path, PathBuf};
 
 use decode::{decode_member, decode_member_bytes};
 
-use crate::backup::manifest::point_directory;
 use crate::backup::manifest::ENCRYPTED_MANIFEST_FILE;
+use crate::backup::manifest::point_directory;
 use crate::backup::records::Record;
 use crate::backup::{
     BackupError, BackupKind, BackupManifest, RestorePlan, discover_points, select_latest_chain,
@@ -221,7 +221,9 @@ fn resolve_encrypted_chain(
     while let Some(base) = chain.last().and_then(BackupManifest::base_sequence) {
         let link = points
             .iter()
-            .filter(|point| point.boundary_sequence() == base && !visited.contains(point.identity()))
+            .filter(|point| {
+                point.boundary_sequence() == base && !visited.contains(point.identity())
+            })
             .min_by(|left, right| {
                 (usize::from(left.base_sequence().is_some()), left.identity())
                     .cmp(&(usize::from(right.base_sequence().is_some()), right.identity()))
@@ -251,14 +253,14 @@ fn discover_encrypted_points(
             continue;
         }
         let point = entry.path();
-        let metadata = std::fs::symlink_metadata(&point)
-            .map_err(|_| BackupError::ChainIncomplete)?;
+        let metadata =
+            std::fs::symlink_metadata(&point).map_err(|_| BackupError::ChainIncomplete)?;
         if !metadata.file_type().is_dir() {
             return Err(BackupError::ChainIncomplete);
         }
         let manifest_path = point.join(ENCRYPTED_MANIFEST_FILE);
-        let metadata = std::fs::symlink_metadata(&manifest_path)
-            .map_err(|_| BackupError::ChainIncomplete)?;
+        let metadata =
+            std::fs::symlink_metadata(&manifest_path).map_err(|_| BackupError::ChainIncomplete)?;
         if !metadata.file_type().is_file() {
             return Err(BackupError::ChainIncomplete);
         }
@@ -806,6 +808,12 @@ impl RestorePlan {
     /// Restores the newest encrypted recovery-point chain using the caller's
     /// authenticated backup cipher. Plaintext and encrypted point namespaces
     /// are intentionally not interchangeable.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same validation, chain, target, and destination failures
+    /// as [`Self::restore_latest`], plus [`BackupError::ChecksumMismatch`] when
+    /// an encrypted member fails authentication.
     pub fn restore_latest_encrypted(
         destination: &Path,
         target: &Path,
@@ -836,6 +844,12 @@ impl RestorePlan {
     }
 
     /// Restores one named encrypted recovery point and its predecessor chain.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::restore_recovery_point`], plus
+    /// [`BackupError::ChecksumMismatch`] when an encrypted member fails
+    /// authentication.
     pub fn restore_recovery_point_encrypted(
         identity: &str,
         destination: &Path,
@@ -1135,15 +1149,15 @@ impl Replay {
                     if member.length() > (crate::encryption::MAX_PLAINTEXT_BYTES as u64 + 4096) {
                         return Err(BackupError::ChecksumMismatch);
                     }
-                    let mut envelope = Vec::with_capacity(member.length() as usize);
-                    file.read_to_end(&mut envelope)
-                        .map_err(|_| BackupError::ChainIncomplete)?;
+                    let capacity = usize::try_from(member.length())
+                        .map_err(|_| BackupError::ChecksumMismatch)?;
+                    let mut envelope = Vec::with_capacity(capacity);
+                    file.read_to_end(&mut envelope).map_err(|_| BackupError::ChainIncomplete)?;
                     if !member.matches_bytes(&envelope) {
                         return Err(BackupError::ChecksumMismatch);
                     }
-                    let plaintext = cipher
-                        .open(&envelope)
-                        .map_err(|_| BackupError::ChecksumMismatch)?;
+                    let plaintext =
+                        cipher.open(&envelope).map_err(|_| BackupError::ChecksumMismatch)?;
                     decode_member_bytes(plaintext, &mut |record, frame_bytes| {
                         let tenant = match record {
                             Record::Document { tenant, .. } | Record::Delete { tenant, .. } => {
@@ -1162,7 +1176,9 @@ impl Replay {
                         member.digest(),
                         &mut |record, frame_bytes| {
                             let tenant = match record {
-                                Record::Document { tenant, .. } | Record::Delete { tenant, .. } => tenant,
+                                Record::Document { tenant, .. } | Record::Delete { tenant, .. } => {
+                                    tenant
+                                }
                             };
                             if !link.tenants().iter().any(|bound| bound.tenant() == tenant) {
                                 return Err(BackupError::ChecksumMismatch);

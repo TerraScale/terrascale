@@ -2535,6 +2535,11 @@ impl EngineService for Arc<TbepGrpcServer> {
         if response.documents.len() > registry::MAX_LIST_ITEMS {
             return Err(conversion_error("the host returned too many query documents"));
         }
+        if usize::try_from(response.count).unwrap_or(usize::MAX) < response.documents.len() {
+            return Err(conversion_error(
+                "the host returned a query count smaller than its document page",
+            ));
+        }
         let response = pb::EngineServiceQueryExecuteResponse {
             documents: response.documents.iter().map(document_body).collect(),
             count: response.count,

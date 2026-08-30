@@ -98,6 +98,9 @@ const CACHE_ENTRY_BUDGET: usize = 262_144;
 
 /// The process-wide count of in-memory segment records.
 static CACHED_ENTRIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static SEGMENT_TEMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+type VerifiedSegment = (SegmentMeta, Vec<(Vec<u8>, u64)>, u64);
 
 /// The immutable metadata of one segment, as the manifest records it.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -491,11 +494,7 @@ impl Drop for SegmentReader {
 /// The largest key the footer tail window can carry.
 const MAX_KEY_BOUND: usize = 4096;
 
-fn verify_plaintext_segment(
-    bytes: &[u8],
-    id: u64,
-    level: u16,
-) -> io::Result<(SegmentMeta, Vec<(Vec<u8>, u64)>, u64)> {
+fn verify_plaintext_segment(bytes: &[u8], id: u64, level: u16) -> io::Result<VerifiedSegment> {
     if bytes.len() < 20 + 4 + 32 {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "segment truncated"));
     }
@@ -651,12 +650,11 @@ fn persist_ordinal(path: &Path, ordinal: u128) -> io::Result<()> {
     body.extend_from_slice(SEGMENT_ORDINAL_MAGIC);
     body.extend_from_slice(&ordinal.to_be_bytes());
     body.extend_from_slice(&ordinal_checksum(&body));
-    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let temp = path.with_file_name(format!(
         "{}.tmp-{}-{}",
         path.file_name().and_then(|name| name.to_str()).unwrap_or("segment.ordinal"),
         std::process::id(),
-        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        SEGMENT_TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);

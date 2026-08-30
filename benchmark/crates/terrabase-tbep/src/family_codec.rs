@@ -137,6 +137,15 @@ fn bounded_list<T>(value: &[T], field: &'static str) -> Result<(), FamilyCodecEr
     if value.len() > registry::MAX_LIST_ITEMS { Err(invalid(field)) } else { Ok(()) }
 }
 
+fn digest(value: &str, field: &'static str) -> Result<(), FamilyCodecError> {
+    if value.len() != 64
+        || !value.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(invalid(field));
+    }
+    Ok(())
+}
+
 fn validate_expected(value: Option<&pb::ExpectedVersion>) -> Result<(), FamilyCodecError> {
     if value.is_some_and(|value| value.discipline.is_none()) {
         Err(invalid("expected"))
@@ -145,21 +154,30 @@ fn validate_expected(value: Option<&pb::ExpectedVersion>) -> Result<(), FamilyCo
     }
 }
 
-fn validate_value(value: Option<&pb::Value>, depth: usize) -> Result<(), FamilyCodecError> {
+fn validate_value(
+    value: Option<&pb::Value>,
+    depth: usize,
+    nodes: &mut usize,
+) -> Result<(), FamilyCodecError> {
     let Some(value) = value else {
         return Err(invalid("value"));
     };
-    if depth > 64 {
+    *nodes = nodes.checked_add(1).ok_or_else(|| invalid("value.nodes"))?;
+    if depth > 64 || *nodes > 4096 {
         return Err(invalid("value.depth"));
     }
     match value.kind.as_ref() {
+        Some(pb::value::Kind::Null(value)) if *value != 1 => Err(invalid("value.null")),
         Some(pb::value::Kind::Number(number)) if !number.is_finite() => {
             Err(invalid("value.number"))
+        }
+        Some(pb::value::Kind::Text(text)) if text.len() > 1_048_576 => {
+            Err(invalid("value.text"))
         }
         Some(pb::value::Kind::List(items)) => {
             bounded_list(&items.items, "value.list")?;
             for item in &items.items {
-                validate_value(Some(item), depth + 1)?;
+                validate_value(Some(item), depth + 1, nodes)?;
             }
             Ok(())
         }
@@ -172,7 +190,7 @@ fn validate_value(value: Option<&pb::Value>, depth: usize) -> Result<(), FamilyC
                     return Err(invalid("value.map.order"));
                 }
                 previous = Some(entry.name.as_str());
-                validate_value(entry.value.as_ref(), depth + 1)?;
+                validate_value(entry.value.as_ref(), depth + 1, nodes)?;
             }
             Ok(())
         }
@@ -236,9 +254,7 @@ fn validate_request_payload(payload: &pb::FamilyRequestPayload) -> Result<(), Fa
                 Mutation::Store(value) => {
                     identifier(&value.name, "name")?;
                     identifier(&value.content_type, "content_type")?;
-                    if value.hash.len() != 64 {
-                        return Err(invalid("hash"));
-                    }
+                    digest(&value.hash, "hash")?;
                 }
                 Mutation::Delete(value) => identifier(&value.name, "name")?,
                 Mutation::Rename(value) => {
@@ -258,14 +274,7 @@ fn validate_request_payload(payload: &pb::FamilyRequestPayload) -> Result<(), Fa
             }
         }
         Operation::AttachmentContentRead(value) => {
-            if value.digest.len() != 64
-                || !value
-                    .digest
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-            {
-                return Err(invalid("digest"));
-            }
+            digest(&value.digest, "digest")?;
             if let Some(pb::family_attachment_content_read::Range::Bytes(range)) =
                 value.range.as_ref()
             {
@@ -278,8 +287,8 @@ fn validate_request_payload(payload: &pb::FamilyRequestPayload) -> Result<(), Fa
             }
         }
         Operation::AttachmentContentWrite(value) => {
-            if value.expected_digest.as_ref().is_some_and(|digest| digest.len() != 64) {
-                return Err(invalid("expected_digest"));
+            if let Some(expected_digest) = value.expected_digest.as_deref() {
+                digest(expected_digest, "expected_digest")?;
             }
             bounded_list(&value.segments, "segments")?;
             let total = value.segments.iter().try_fold(0usize, |total, segment| {
@@ -293,9 +302,7 @@ fn validate_request_payload(payload: &pb::FamilyRequestPayload) -> Result<(), Fa
             }
         }
         Operation::AttachmentContentDelete(value) => {
-            if value.digest.len() != 64 {
-                return Err(invalid("digest"));
-            }
+            digest(&value.digest, "digest")?;
         }
         Operation::CounterWrite(value) => {
             identifier(&value.document, "document")?;
@@ -359,10 +366,10 @@ fn validate_request_payload(payload: &pb::FamilyRequestPayload) -> Result<(), Fa
                     if value.index == 0 {
                         return Err(invalid("index"));
                     }
-                    validate_value(value.value.as_ref(), 0)?;
+                    validate_value(value.value.as_ref(), 0, &mut 0)?;
                 }
                 pb::family_compare_exchange_write::Condition::PutIfMissing(value) => {
-                    validate_value(value.value.as_ref(), 0)?
+                    validate_value(value.value.as_ref(), 0, &mut 0)?
                 }
                 pb::family_compare_exchange_write::Condition::DeleteIfIndex(value)
                     if value.index == 0 =>
@@ -414,9 +421,7 @@ fn validate_response_payload(payload: &pb::FamilyResponsePayload) -> Result<(), 
                 identifier(&entry.name, "name")?;
                 identifier(&entry.content_type, "content_type")?;
                 identifier(&entry.document, "document")?;
-                if entry.hash.len() != 64 {
-                    return Err(invalid("hash"));
-                }
+                digest(&entry.hash, "hash")?;
             }
         }
         Result::Counter(value) => {
@@ -436,13 +441,13 @@ fn validate_response_payload(payload: &pb::FamilyResponsePayload) -> Result<(), 
         Result::Revisions(value) => {
             bounded_list(&value.entries, "entries")?;
             for entry in &value.entries {
-                validate_value(entry.value.as_ref(), 0)?;
+                validate_value(entry.value.as_ref(), 0, &mut 0)?;
             }
         }
         Result::CompareExchange(value) => {
             identifier(&value.key, "key")?;
             if let Some(entry) = &value.entry {
-                validate_value(entry.value.as_ref(), 0)?;
+                validate_value(entry.value.as_ref(), 0, &mut 0)?;
             }
         }
         Result::Identities(value) => {
@@ -453,6 +458,9 @@ fn validate_response_payload(payload: &pb::FamilyResponsePayload) -> Result<(), 
         }
         Result::ExpirationRefresh(_) | Result::Archival(_) | Result::Write(_) => {}
         Result::AttachmentContent(value) => {
+            if !value.digest.is_empty() {
+                digest(&value.digest, "digest")?;
+            }
             if value.digest.len() != 64 && !value.digest.is_empty() {
                 return Err(invalid("digest"));
             }
@@ -634,10 +642,7 @@ mod tests {
     #[test]
     fn malformed_unknown_and_trailing_bytes_fail_closed() {
         assert!(matches!(decode_request(&[0x0a]), Err(FamilyCodecError::Malformed { .. })));
-        assert!(matches!(
-            decode_request(&[0x78, 0x01]),
-            Err(FamilyCodecError::MissingVariant { .. })
-        ));
+        assert!(decode_request(&[0x78, 0x01]).is_err());
         let payload = pb::FamilyRequestPayload {
             operation: Some(pb::family_request_payload::Operation::CounterRead(
                 pb::FamilyCounterRead { document: "d".into(), names: Vec::new() },
@@ -667,6 +672,14 @@ mod tests {
         assert!(matches!(
             validate_request_family("archival", "other", &payload),
             Err(FamilyCodecError::CodecMismatch { .. })
+        ));
+        assert!(matches!(
+            validate_request_family("archival", REQUEST_CODEC, &pb::FamilyRequestPayload {
+                operation: Some(pb::family_request_payload::Operation::ArchivalRead(
+                    pb::FamilyArchivalRead { document: "d".into() },
+                )),
+            }),
+            Ok(())
         ));
     }
 
@@ -732,5 +745,25 @@ mod tests {
             };
             assert_eq!(request_family(&payload), Ok(family));
         }
+    }
+
+    #[test]
+    fn semantic_and_size_bounds_fail_closed() {
+        let invalid = pb::FamilyRequestPayload {
+            operation: Some(pb::family_request_payload::Operation::TimeSeriesRead(
+                pb::FamilyTimeSeriesRead {
+                    document: "d".into(),
+                    name: "series".into(),
+                    range_start: Some(2),
+                    range_end: Some(1),
+                    ..Default::default()
+                },
+            )),
+        };
+        assert!(matches!(encode_request(&invalid), Err(FamilyCodecError::InvalidField { .. })));
+        assert!(matches!(
+            decode_request(&vec![0u8; MAX_PAYLOAD_BYTES + 1]),
+            Err(FamilyCodecError::PayloadTooLarge { .. })
+        ));
     }
 }

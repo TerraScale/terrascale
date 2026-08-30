@@ -86,7 +86,8 @@ pub(crate) fn decode_member(
     expected_digest: &str,
     on_record: &mut dyn FnMut(&Record, u64) -> Result<(), BackupError>,
 ) -> Result<(), BackupError> {
-    let digest_reader = DigestReader { reader: file, hasher: Sha256::new(), remaining: expected_len };
+    let digest_reader =
+        DigestReader { reader: file, hasher: Sha256::new(), remaining: expected_len };
     decode_reader(digest_reader, expected_len, Some(expected_digest), on_record)
 }
 
@@ -99,11 +100,8 @@ pub(crate) fn decode_member_bytes(
     on_record: &mut dyn FnMut(&Record, u64) -> Result<(), BackupError>,
 ) -> Result<(), BackupError> {
     let expected_len = u64::try_from(bytes.len()).map_err(|_| BackupError::ChecksumMismatch)?;
-    let digest_reader = DigestReader {
-        reader: Cursor::new(bytes),
-        hasher: Sha256::new(),
-        remaining: expected_len,
-    };
+    let digest_reader =
+        DigestReader { reader: Cursor::new(bytes), hasher: Sha256::new(), remaining: expected_len };
     decode_reader(digest_reader, expected_len, None, on_record)
 }
 

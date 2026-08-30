@@ -21,11 +21,13 @@ publish = false
 [features]
 default = ["local-crypto"]
 local-crypto = [
+  "object_store/ring",
   "rustls/ring",
   "terrabase/local-crypto",
   "terrabase-cluster/local-crypto",
 ]
 production-fips = [
+  "object_store/aws-lc-rs",
   "rustls/fips",
   "terrabase/production-fips",
   "terrabase-cluster/production-fips",
@@ -84,13 +86,13 @@ serde_json = "1"
 # S3 is the durable backup destination. The engine remains HTTP-free; Studio
 # owns credentials, SigV4, TLS, retries, and the temporary transfer staging
 # needed to drive the engine's verified archive seam.
-# Split the S3 feature bundle so signing uses ring and TLS uses the process's
-# explicitly selected rustls provider. The upstream `aws` convenience feature
-# forces non-FIPS AWS-LC, which cannot coexist with TerraBase production FIPS.
+# Split the S3 feature bundle so signing and TLS follow the deployment crypto
+# profile. Local builds use ring for both. Production builds use the AWS-LC
+# FIPS backend for both rather than leaving SigV4 HMAC on ring. The upstream
+# `aws` convenience feature selects its provider unconditionally.
 object_store = { version = "=0.14.1", default-features = false, features = [
   "aws-base",
   "reqwest",
-  "ring",
 ] }
 # Enables HTTPS without selecting a second rustls crypto provider. TerraBase's
 # deployment profile owns that process-wide choice.

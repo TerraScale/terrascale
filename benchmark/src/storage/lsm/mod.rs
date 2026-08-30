@@ -272,7 +272,7 @@ impl LsmStorage {
         if format.created {
             super::root::sync_dir(dir).map_err(|_| LsmOpenError::Unavailable)?;
         }
-        Self::recover(dir, format.state, metrics, None, None, false)
+        Self::recover(dir, format.state, metrics, None, None, None, false)
     }
 
     /// Opens a local-development encrypted WAL after the format marker has
@@ -346,8 +346,6 @@ impl LsmStorage {
         };
         let retained_exists = retained_path.try_exists().map_err(|_| LsmOpenError::Unavailable)?;
         let wal_exists = wal_path.try_exists().map_err(|_| LsmOpenError::Unavailable)?;
-        let encrypted_wal = wal_path.metadata().map_or(true, |metadata| metadata.len() == 0)
-            || fs::read(&wal_path).is_ok_and(|bytes| bytes.starts_with(b"TBE1"));
         if active_format.is_some() && (!retained_exists || !wal_exists) {
             return Err(LsmOpenError::FormatMismatch);
         }
@@ -372,6 +370,13 @@ impl LsmStorage {
         } else {
             dir.join("MANIFEST").exists()
         };
+        // An empty WAL is expected after a checkpoint, so its absence of a
+        // marker cannot distinguish a fresh encrypted location from a legacy
+        // plaintext location. A manifest marker is authoritative when one is
+        // present; a truly empty location starts in the encrypted local mode.
+        let encrypted_wal = wal_path.metadata().map_or(true, |metadata| {
+            metadata.len() == 0 && (!manifest_exists || encrypted_manifest)
+        }) || fs::read(&wal_path).is_ok_and(|bytes| bytes.starts_with(b"TBE1"));
         let use_encrypted_manifest = manifest_encryption.is_some()
             && (active_format.is_some() || encrypted_wal || encrypted_manifest);
         let read_manifest = if use_encrypted_manifest {
@@ -404,7 +409,9 @@ impl LsmStorage {
         // A local compatibility location has a legacy plaintext WAL; only a
         // WAL that is already envelope-formatted activates encrypted segment
         // reads. Fresh empty WALs are encrypted by the Engine open seam.
-        let segment_encryption = segment_encryption.filter(|_| encrypted_wal);
+        let encrypted_mode = encrypted_wal || encrypted_manifest || active_format.is_some();
+        let segment_encryption = segment_encryption.filter(|_| encrypted_mode);
+        let manifest_encryption = manifest_encryption.filter(|_| encrypted_mode);
         if manifest_exists && encrypted_manifest != encrypted_wal {
             return Err(LsmOpenError::FormatMismatch);
         }
@@ -3108,9 +3115,7 @@ impl LsmStorage {
         if self.faults.fire(FaultPoint::CompactionCheckpointPublish).is_err() {
             return Err(());
         }
-        if candidate
-            .publish_with_encryption(&self.dir, self.manifest_encryption.as_ref())
-            .is_err()
+        if candidate.publish_with_encryption(&self.dir, self.manifest_encryption.as_ref()).is_err()
         {
             self.frontier_poisoned = true;
             return Err(());

@@ -32,11 +32,31 @@ use crate::config::ProductionConfig;
 /// orchestration layer proves transport, membership, and replication facts.
 pub struct ProductionCatalogBootstrap {
     root: PathBuf,
-    member: Member,
+    member: Option<Member>,
     specs: Vec<DatabaseSpec>,
     routes: DatabaseRoutingCatalog,
     placement: ProductionPlacement,
     limits: AdmissionLimits,
+}
+
+/// The owned storage and static catalogs handed to the production runtime.
+///
+/// The [`Member`] is moved into this value and is never cloned. Callers that
+/// take ownership of this value also take responsibility for closing it via
+/// [`Member::close`] after all runtime leases and data-plane work drain.
+pub struct ProductionCatalogParts {
+    /// The validated common durable root.
+    pub root: PathBuf,
+    /// The one root-owned durable storage catalog.
+    pub member: Member,
+    /// The relative, typed database specifications used to open the Member.
+    pub specs: Vec<DatabaseSpec>,
+    /// The typed route-to-database catalog.
+    pub routes: DatabaseRoutingCatalog,
+    /// The validated placement generation and replica-set epoch.
+    pub placement: ProductionPlacement,
+    /// The derived Member-wide admission limits.
+    pub limits: AdmissionLimits,
 }
 
 impl ProductionCatalogBootstrap {
@@ -121,7 +141,7 @@ impl ProductionCatalogBootstrap {
             return close_with(member, ProductionCatalogError::CatalogMismatch);
         }
 
-        Ok(Self { root, member, specs, routes, placement, limits })
+        Ok(Self { root, member: Some(member), specs, routes, placement, limits })
     }
 
     /// Returns the validated common durable root.
@@ -132,8 +152,8 @@ impl ProductionCatalogBootstrap {
 
     /// Returns the opened root-owned storage member.
     #[must_use]
-    pub fn member(&self) -> &Member {
-        &self.member
+    pub fn member(&self) -> Option<&Member> {
+        self.member.as_ref()
     }
 
     /// Returns the relative production database specifications.
@@ -159,13 +179,50 @@ impl ProductionCatalogBootstrap {
     pub const fn limits(&self) -> AdmissionLimits {
         self.limits
     }
+
+    /// Closes the owned catalog within the caller-provided bounded deadline.
+    ///
+    /// The Member is taken before close is attempted, so the bootstrap Drop
+    /// path cannot issue a second close after this method returns. A durable
+    /// drain or engine-shutdown failure is returned unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns the durable [`MemberError`] reported by the root catalog.
+    pub fn close(mut self, timeout: Duration) -> Result<(), MemberError> {
+        let member = self.member.take().ok_or(MemberError::Draining)?;
+        member.close(timeout)
+    }
+
+    /// Transfers every owned catalog component to the production runtime.
+    ///
+    /// This consumes the bootstrap and moves the exact opened [`Member`]; no
+    /// clone or second storage authority is created. The returned parts own
+    /// the Member and must eventually close it after runtime draining.
+    #[must_use]
+    pub fn into_parts(mut self) -> ProductionCatalogParts {
+        let member = self
+            .member
+            .take()
+            .expect("a live production bootstrap always owns its Member");
+        ProductionCatalogParts {
+            root: self.root,
+            member,
+            specs: self.specs,
+            routes: self.routes,
+            placement: self.placement,
+            limits: self.limits,
+        }
+    }
 }
 
 impl Drop for ProductionCatalogBootstrap {
     fn drop(&mut self) {
         // A bootstrap owns the opened engines. Keep destruction bounded even
         // when the caller forgets to perform an orderly shutdown.
-        let _ = self.member.close(Duration::from_secs(30));
+        if let Some(member) = self.member.take() {
+            let _ = member.close(Duration::from_secs(30));
+        }
     }
 }
 

@@ -1,0 +1,81 @@
+{
+  "status": "complete",
+  "target": "terrabase",
+  "workload": "read",
+  "config": {
+    "seed_documents": 1000,
+    "operations": 10000,
+    "samples": 5,
+    "concurrency": 16,
+    "warmup_operations": 1000,
+    "noise_percent": 5
+  },
+  "binding": {
+    "principal": "spiffe://terrascale.tech/benchmark/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "tenant": "benchmark-tenant",
+    "project": "benchmark-project",
+    "database": "benchmark-database"
+  },
+  "environment": {
+    "observed_identity": "tbep-qualification-harness/network-mtls/v1",
+    "endpoint": "127.0.0.1:36885",
+    "client_transport": "ts-database/net-http1-loopback + terrabase-go/grpc-http2-mtls/shared-placement-transport/v1",
+    "http_endpoint": "http://127.0.0.1:43311",
+    "http_transport": "Go net/http HTTP/1.1 over loopback TCP with one shared connection pool",
+    "grpc_endpoint": "127.0.0.1:36885",
+    "grpc_transport": "terrabase-go gRPC over HTTP/2 mTLS; terrabase.v1.ChannelService and terrabase.v1.EngineService; one shared placement transport and bound-scope client",
+    "unix_seconds": 1788129511,
+    "kernel": "Linux 7.2.1",
+    "logical_cpus": 28,
+    "replication_factor": 1
+  },
+  "samples": [
+    {
+      "operations": 10000,
+      "wall_seconds": 3.772399487,
+      "throughput_ops_per_s": 2650.8327218421127,
+      "p50_us": 2985.077,
+      "p95_us": 24258.658,
+      "p99_us": 49754.873
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 1.964496913,
+      "throughput_ops_per_s": 5090.361778542535,
+      "p50_us": 2594.065,
+      "p95_us": 4675.041,
+      "p99_us": 11030.498
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 1.6609066590000001,
+      "throughput_ops_per_s": 6020.807939936135,
+      "p50_us": 2428.459,
+      "p95_us": 3740.21,
+      "p99_us": 4934.915
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 5.629295941,
+      "throughput_ops_per_s": 1776.4210844142578,
+      "p50_us": 3283.776,
+      "p95_us": 44298.516,
+      "p99_us": 58403.497
+    },
+    {
+      "operations": 10000,
+      "wall_seconds": 7.107758118,
+      "throughput_ops_per_s": 1406.9133802788758,
+      "p50_us": 6466.591,
+      "p95_us": 46502.678,
+      "p99_us": 54318.269
+    }
+  ],
+  "limits": [
+    "measured operations traverse loopback net/http, benchmark bearer verification, admission, routing, application services, the official terrabase-go gateway, gRPC mTLS, and the Rust engine",
+    "setup seeds through a separate official terrabase-go mTLS transport with local-synced acknowledgement outside every measured window",
+    "the Database API shares one gRPC transport and one immutable bound client across all concurrent HTTP requests",
+    "public reads use the Database API default read level; public writes request regional acknowledgement and require an explicitly qualified RF=2 or greater target",
+    "source identity: terrabase-rust-diagnostic-qualification/v1"
+  ]
+}

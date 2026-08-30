@@ -61,7 +61,7 @@ impl ManifestEncryption {
         Self { owner, provider, key_version }
     }
 
-    fn cipher(&self, dir: &Path, path: &Path) -> io::Result<(ArtifactCipher, PathBuf)> {
+    fn cipher(&self, dir: &Path) -> io::Result<(ArtifactCipher, PathBuf)> {
         let key = self.provider.load_or_create().map_err(encryption_io)?;
         let scope = KeyScope::new_with_project(
             self.owner.environment().as_str(),
@@ -84,7 +84,6 @@ impl ManifestEncryption {
         let next = load_or_create_ordinal(&ordinal_path, ordinal_path.exists())?;
         let cipher = ArtifactCipher::with_next_ordinal(ProviderMode::LocalFile, key, context, next)
             .map_err(encryption_io)?;
-        let _ = path;
         Ok((cipher, ordinal_path))
     }
 }
@@ -304,7 +303,7 @@ impl SegmentManifest {
     ) -> std::io::Result<()> {
         let encoded = self.encode();
         let encoded = if let Some(encryption) = encryption {
-            let (mut cipher, ordinal_path) = encryption.cipher(dir, dir)?;
+            let (mut cipher, ordinal_path) = encryption.cipher(dir)?;
             let reservation = cipher.reserve_ordinal().map_err(encryption_io)?;
             persist_ordinal(&ordinal_path, reservation.next_ordinal())?;
             cipher.seal_reserved(reservation, &encoded).map_err(encryption_io)?
@@ -327,16 +326,6 @@ impl SegmentManifest {
         root::sync_dir(dir)
     }
 
-    /// Publishes the expand-stage active sidecar while exposing every
-    /// physical crash boundary to the activation fault matrix.
-    pub(super) fn publish_activation(
-        &self,
-        dir: &Path,
-        faults: &mut FaultPlan,
-    ) -> std::io::Result<()> {
-        self.publish_activation_with_encryption(dir, faults, None)
-    }
-
     /// Publishes the expand-stage active sidecar with authenticated bytes.
     pub(super) fn publish_activation_with_encryption(
         &self,
@@ -352,7 +341,7 @@ impl SegmentManifest {
         }
         let encoded = self.encode();
         let encoded = if let Some(encryption) = encryption {
-            let (mut cipher, ordinal_path) = encryption.cipher(dir, dir)?;
+            let (mut cipher, ordinal_path) = encryption.cipher(dir)?;
             let reservation = cipher.reserve_ordinal().map_err(encryption_io)?;
             persist_ordinal(&ordinal_path, reservation.next_ordinal())?;
             cipher.seal_reserved(reservation, &encoded).map_err(encryption_io)?
@@ -456,12 +445,10 @@ impl SegmentManifest {
                 "manifest envelope trailing bytes",
             ));
         }
-        let (cipher, _) = encryption.cipher(
-            path.parent().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "manifest has no parent")
-            })?,
-            path,
-        )?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "manifest has no parent"))?;
+        let (cipher, _) = encryption.cipher(parent)?;
         let plaintext = cipher.open(&bytes).map_err(encryption_io)?;
         SegmentManifest::decode(&plaintext)
             .map(Some)
@@ -655,6 +642,7 @@ fn active_manifest_checksum(bytes: &[u8]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::encryption::DatabaseKeyVersion;
 
     fn hex(bytes: &[u8]) -> String {
         use std::fmt::Write as _;
@@ -683,6 +671,23 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn encryption(dir: &Path, key: [u8; 32]) -> ManifestEncryption {
+        let owner = DatabaseOwner::local_development();
+        let provider = LocalFileKeyProvider::at_engine_location(dir);
+        fs::create_dir_all(provider.path().parent().expect("key parent")).unwrap();
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        let mut file = options.open(provider.path()).unwrap();
+        file.write_all(&key).unwrap();
+        file.sync_all().unwrap();
+        ManifestEncryption::new(owner, provider, DatabaseKeyVersion::from_wire_bytes([0; 16]))
     }
 
     #[test]
@@ -744,6 +749,42 @@ mod tests {
             std::io::ErrorKind::InvalidData
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn encrypted_manifest_hides_bytes_and_refuses_tampering_and_wrong_owner() {
+        let dir = dir("encrypted");
+        let manifest = SegmentManifest {
+            epoch: 1,
+            next_segment_id: 2,
+            wal_checkpoint: 5,
+            active_wal: None,
+            segments: vec![meta(1, 0, b"secret", b"secret")],
+        };
+        let encryption = encryption(&dir, [0x51; 32]);
+        manifest.publish_with_encryption(&dir, Some(&encryption)).unwrap();
+        let path = dir.join(LEGACY_MANIFEST_FILE);
+        let raw = fs::read(&path).unwrap();
+        assert!(raw.starts_with(ENCRYPTED_MAGIC));
+        assert!(!raw.windows(b"secret".len()).any(|window| window == b"secret"));
+        assert_eq!(
+            SegmentManifest::read_with_encryption(&dir, &encryption).unwrap(),
+            Some(manifest)
+        );
+
+        let mut tampered = raw.clone();
+        *tampered.last_mut().unwrap() ^= 1;
+        fs::write(&path, tampered).unwrap();
+        assert!(SegmentManifest::read_with_encryption(&dir, &encryption).is_err());
+
+        fs::write(&path, raw).unwrap();
+        let wrong_owner = ManifestEncryption::new(
+            DatabaseOwner::local_development(),
+            encryption.provider.clone(),
+            DatabaseKeyVersion::from_wire_bytes([0; 16]),
+        );
+        assert!(SegmentManifest::read_with_encryption(&dir, &wrong_owner).is_err());
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
