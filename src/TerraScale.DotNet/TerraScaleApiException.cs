@@ -82,7 +82,7 @@ public sealed class TerraScaleApiException : HttpRequestException
             code,
             ReadHeader(response, "X-Request-Id"),
             body,
-            response.Headers.RetryAfter?.Delta,
+            ReadRetryAfter(response),
             ReadHeader(response, "X-TerraScale-Edge-Region"),
             ReadHeader(response, "X-TerraScale-Serving-Region"),
             ReadHeader(response, "X-TerraScale-Route-Mode"),
@@ -123,6 +123,22 @@ public sealed class TerraScaleApiException : HttpRequestException
     private static string? ReadHeader(HttpResponseMessage response, string name) =>
         response.Headers.TryGetValues(name, out var values) ? values.FirstOrDefault() : null;
 
+    private static TimeSpan? ReadRetryAfter(HttpResponseMessage response)
+    {
+        if (response.Headers.RetryAfter?.Delta is { } delta)
+        {
+            return delta < TimeSpan.Zero ? TimeSpan.Zero : delta;
+        }
+
+        if (response.Headers.RetryAfter?.Date is { } date)
+        {
+            var delay = date - DateTimeOffset.UtcNow;
+            return delay < TimeSpan.Zero ? TimeSpan.Zero : delay;
+        }
+
+        return null;
+    }
+
     private static async Task<string?> ReadResponseBodyAsync(
         HttpContent? content,
         CancellationToken cancellationToken)
@@ -153,6 +169,12 @@ public sealed class TerraScaleApiException : HttpRequestException
                 }
 
                 builder.Append(buffer, 0, read);
+            }
+
+            var probe = await reader.ReadAsync(buffer.AsMemory(0, 1), cancellationToken).ConfigureAwait(false);
+            if (probe == 0)
+            {
+                return builder.ToString();
             }
 
             builder.AppendLine();

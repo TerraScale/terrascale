@@ -80,7 +80,7 @@ and slow consumers have explicit state-machine behavior.
 | Stream | Scope | Depends on | Deliverable |
 | --- | --- | --- | --- |
 | A: contract parity | Route/model manifests, OpenAPI comparison, errors, limits, and compatibility. | Dashboard and Database API owners. | Versioned operation matrix. |
-| B: reactive client | Generated MessagePack binding, result-view engine, transport, checkpoints, and recovery. | A, TerraBaseV2, and TypeScript corpus. | Cross-language conformance receipt. |
+| B: reactive client | Generated MessagePack binding, result-view engine, transport, checkpoints, and recovery. | A, TerraBase, and TypeScript corpus. | Cross-language conformance receipt. |
 | C: SDK quality | Async/cancellation, retries, bounded concurrency, disposal, EF Core, and API docs. | A and stable models. | Focused test and analyzer results. |
 | D: package release | Pack, archive inspection, provenance, consumer install, runtime matrix, license and security. | A through C. | Immutable package handoff. |
 | E: live qualification | Public endpoints, identity, tenant isolation, Region movement, incident and rollback. | Owning services and fixed routes. | Environment-gated release evidence. |

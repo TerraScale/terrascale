@@ -16,9 +16,9 @@ charter PD-2026-08-26-12 (native-language SDK clients, no wasm/C-ABI
 embeddings, server-ack-only mutations), PD-2026-08-26-13 D3
 (trigger-driven delta pulls), PD-2026-08-26-11 D1 (the API host's local
 gate); the SE-04 wire spec
-(`TerraBaseV2/docs/sync/terrascale-sync-v2.md`), the SE-05 conformance
-kit contract (`TerraBaseV2/docs/sync/terrascale-sync-v2-conformance.md`),
-and the SE-08 API host (`TerraBaseV2/host/TerraBase.Api`). Worktree
+(`TerraBase/docs/sync/terrascale-sync-v2.md`), the SE-05 conformance
+kit contract (`TerraBase/docs/sync/terrascale-sync-v2-conformance.md`),
+and the SE-08 API host (`TerraBase/host/TerraBase.Api`). Worktree
 `tbv2-se10`, branch `fleet/se10-2`.
 
 Note on ticket history: the tracker body predates charter decision
@@ -397,7 +397,7 @@ cherry-pick the complementary tests.
 - The vendored corpus bytes are untouched (the manifest gate still
   verifies every digest).
 
-A live API host is not exercised here: the TerraBaseV2 host is a
+A live API host is not exercised here: the TerraBase host is a
 read-only sibling repo and this package must not reference it. The
 fixture implements the host's documented HTTP contract exactly (the
 SE-08 `TypedApi`/`Dto` surface), which is the same approach SE-08's own
