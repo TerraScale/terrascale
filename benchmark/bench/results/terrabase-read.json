@@ -1,0 +1,21 @@
+{
+  "target": "terrabase",
+  "workload": "read",
+  "config": {"seed_documents": 1000, "operations": 10000, "samples": 5, "concurrency": 16, "warmup_operations": 1000, "noise_percent": 5},
+  "environment": {
+    "observed_identity": "terrabase 94e5998-with-lane (durable engine, Synced commits)",
+    "endpoint": "/tmp/terrabase-se15-bench-se15-read-183522-0",
+    "client_transport": "in-process durable engine library, LocalDurability::Synced commits, one shared engine across all concurrency slots",
+    "unix_seconds": 1788105642,
+    "kernel": "Linux 7.2.1",
+    "logical_cpus": 28
+  },
+  "samples": [
+    {"operations": 10000, "wall_seconds": 8.46131269, "throughput_ops_per_s": 1181.849716039746, "p50_us": 829.536, "p95_us": 943.729, "p99_us": 1405.297},
+    {"operations": 10000, "wall_seconds": 9.041143416, "throughput_ops_per_s": 1106.0547919528765, "p50_us": 879.886, "p95_us": 1138.5849999999998, "p99_us": 1844},
+    {"operations": 10000, "wall_seconds": 8.957347203, "throughput_ops_per_s": 1116.4019629216555, "p50_us": 866.695, "p95_us": 1060.6770000000001, "p99_us": 1679.917},
+    {"operations": 10000, "wall_seconds": 8.870206907, "throughput_ops_per_s": 1127.3694181934375, "p50_us": 847.459, "p95_us": 1158.077, "p99_us": 1627.453},
+    {"operations": 10000, "wall_seconds": 9.000495603, "throughput_ops_per_s": 1111.0499289246752, "p50_us": 882.137, "p95_us": 1018.625, "p99_us": 1590.7269999999999}
+  ],
+  "limits": ["the engine side is an in-process library boundary; the references serve over their pinned loopback transports, so the two sides differ in boundary, stated here rather than hidden", "the engine side runs one shared engine across all concurrency slots; the references run one independent connection per slot", "the engine query operation compiles its plan per operation (in-memory, no text protocol parse); PostgreSQL reuses a prepared statement", "single host, single run, 5 samples per side; wall-clock numbers are facts about this host at this moment, not production claims"]
+}
