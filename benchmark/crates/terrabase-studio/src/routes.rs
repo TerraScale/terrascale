@@ -2042,7 +2042,7 @@ async fn family_schema_declare(
     Form(form): Form<FamilySchemaDeclareForm>,
 ) -> Response {
     let outcome = on_blocking(state, move |state| {
-        let target = format!("{}/{}", form.tenant, form.collection);
+        let target = format!("{}/{}", form.tenant.trim(), form.collection.trim());
         require_confirmation(
             &form.confirm_target,
             &form.confirm_phrase,
@@ -2085,7 +2085,7 @@ async fn family_schema_declare(
             .stage(&mut transaction, terrabase::FamilyWriteRequest::schema_validation_update(write))
             .map_err(|error| format!("schema declaration failed: {error:?}"))?;
         let receipt = transaction.commit(terrabase::LocalDurability::Synced);
-        match receipt {
+        let outcome = match receipt {
             terrabase::CommitOutcome::Committed(receipt) => Ok(format!(
                 "schema version declared at sequence {} with {:?} durability",
                 receipt.sequence().get(),
@@ -2097,7 +2097,13 @@ async fn family_schema_declare(
             terrabase::CommitOutcome::Unknown(unknown) => {
                 Err(format!("schema declaration commit is uncertain: {unknown:?}"))
             }
-        }
+        };
+        state.record(
+            "families/schema/declare",
+            outcome.clone().unwrap_or_else(|failure| failure.clone()),
+            outcome.is_ok(),
+        );
+        outcome
     })
     .await;
     merge(surfaces::FAMILY_ID, outcome)
