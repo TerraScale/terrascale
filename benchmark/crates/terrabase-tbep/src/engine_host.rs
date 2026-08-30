@@ -25,7 +25,7 @@ use terrabase::types::{
     LocalDurability, OperationId, TenantId,
 };
 
-use crate::value::TbepValue;
+use crate::host::{HostingError, TbepHost};
 use crate::registry::{
     AdminStatusResponse, ChannelBindRequest, ChannelBindResponse, CommitReceipt, DocumentBody,
     DocumentDeleteRequest, DocumentDeleteResponse, DocumentPut, DocumentReadRequest,
@@ -33,7 +33,7 @@ use crate::registry::{
     HealthState, REGISTRY_VERSION, SupervisionHealthResponse, SupervisionShutdownRequest,
     SupervisionShutdownResponse, WriteOutcome,
 };
-use crate::host::{HostingError, TbepHost};
+use crate::value::TbepValue;
 
 /// Converts one wire value into the engine's value model.
 fn to_engine_value(value: &TbepValue) -> DocumentValue {

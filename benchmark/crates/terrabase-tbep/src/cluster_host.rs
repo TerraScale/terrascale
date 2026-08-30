@@ -19,13 +19,13 @@ use terrabase::replication::LeaderlessLevel;
 use terrabase::types::DocumentValue;
 use terrabase_cluster::{ClusterHost, ClusterMode, ClusterWriteRefusal, ComposedWrite};
 
-use crate::value::TbepValue;
+use crate::host::{HostingError, TbepHost};
 use crate::registry::{
     ChannelBindRequest, ChannelBindResponse, CommitReceipt, DocumentBody, DocumentPut,
     DocumentReadRequest, DocumentReadResponse, DocumentWriteRequest, DocumentWriteResponse,
     WriteOutcome,
 };
-use crate::host::{HostingError, TbepHost};
+use crate::value::TbepValue;
 
 /// Converts one wire value into the cluster's value model.
 fn to_cluster_value(value: &TbepValue) -> DocumentValue {
@@ -214,9 +214,7 @@ impl TbepHost for ClusterTbepHost {
                     LeaderlessLevel::RegionalQuorum => {
                         crate::registry::Acknowledgement::RegionalQuorum
                     }
-                    LeaderlessLevel::GlobalQuorum => {
-                        crate::registry::Acknowledgement::GlobalQuorum
-                    }
+                    LeaderlessLevel::GlobalQuorum => crate::registry::Acknowledgement::GlobalQuorum,
                 }),
                 backup: None,
             }),

@@ -34,32 +34,12 @@ struct FixedHost {
     feed: Mutex<Option<std::sync::mpsc::Sender<TbepNotification>>>,
 }
 
-fn bound_error(code: pb::ErrorCode) -> tonic::Status {
-    let tbep_error = pb::TbepError { code: code as i32, detail: "fixture".into() };
-    let mut value = Vec::new();
-    tbep_error.encode(&mut value).expect("encodes");
-    let rpc_status = pb::RpcStatus {
-        code: 3,
-        message: "fixture".into(),
-        details: vec![pb::Any {
-            type_url: "type.googleapis.com/terrabase.v1.TbepError".into(),
-            value,
-        }],
-    };
-    let mut details = Vec::new();
-    rpc_status.encode(&mut details).expect("encodes");
-    tonic::Status::with_details(tonic::Code::InvalidArgument, "fixture", details.into())
-}
-
 impl TbepHost for FixedHost {
     fn bind_channel(
         &self,
         request: &registry::ChannelBindRequest,
     ) -> Result<registry::ChannelBindResponse, HostingError> {
-        Ok(registry::ChannelBindResponse {
-            tenant: request.tenant.clone(),
-            serving_instance: 7,
-        })
+        Ok(registry::ChannelBindResponse { tenant: request.tenant.clone(), serving_instance: 7 })
     }
 
     fn document_read(
@@ -110,9 +90,7 @@ impl TbepHost for FixedHost {
         _request: &registry::DocumentDeleteRequest,
         _idempotency_key: &str,
     ) -> Result<registry::DocumentDeleteResponse, HostingError> {
-        Ok(registry::DocumentDeleteResponse {
-            outcome: registry::WriteOutcome::Conflict,
-        })
+        Ok(registry::DocumentDeleteResponse { outcome: registry::WriteOutcome::Conflict })
     }
 
     fn query_execute(
@@ -133,9 +111,7 @@ impl TbepHost for FixedHost {
         _tenant: &str,
         _request: &registry::QueryCancelRequest,
     ) -> Result<registry::QueryCancelResponse, HostingError> {
-        Ok(registry::QueryCancelResponse {
-            outcome: registry::CancelOutcome::Cancelled,
-        })
+        Ok(registry::QueryCancelResponse { outcome: registry::CancelOutcome::Cancelled })
     }
 
     fn family_read(
@@ -160,10 +136,7 @@ impl TbepHost for FixedHost {
         _tenant: &str,
         request: &registry::BackboneSubscribeRequest,
     ) -> Result<
-        (
-            registry::BackboneSubscribeResponse,
-            std::sync::mpsc::Receiver<TbepNotification>,
-        ),
+        (registry::BackboneSubscribeResponse, std::sync::mpsc::Receiver<TbepNotification>),
         HostingError,
     > {
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -193,9 +166,7 @@ impl TbepHost for FixedHost {
         _tenant: &str,
         request: &registry::BackboneUnsubscribeRequest,
     ) -> Result<registry::BackboneUnsubscribeResponse, HostingError> {
-        Ok(registry::BackboneUnsubscribeResponse {
-            subscription_id: request.subscription_id,
-        })
+        Ok(registry::BackboneUnsubscribeResponse { subscription_id: request.subscription_id })
     }
 
     fn sync_session_setup(
@@ -247,10 +218,7 @@ impl TbepHost for FixedHost {
         Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
     }
 
-    fn topology_read(
-        &self,
-        _tenant: &str,
-    ) -> Result<registry::TopologyReadResponse, HostingError> {
+    fn topology_read(&self, _tenant: &str) -> Result<registry::TopologyReadResponse, HostingError> {
         Ok(registry::TopologyReadResponse {
             binding: registry::BindingKind::LocalUds,
             subsystems: vec!["engine".into()],
@@ -301,7 +269,9 @@ fn tbep_code(status: &tonic::Status) -> Option<pb::ErrorCode> {
 }
 
 async fn connect(socket: PathBuf) -> tonic::transport::Channel {
-    async fn bridge(socket: PathBuf) -> std::io::Result<hyper_util::rt::TokioIo<tokio::net::UnixStream>> {
+    async fn bridge(
+        socket: PathBuf,
+    ) -> std::io::Result<hyper_util::rt::TokioIo<tokio::net::UnixStream>> {
         let stream = tokio::net::UnixStream::connect(socket).await?;
         Ok(hyper_util::rt::TokioIo::new(stream))
     }
@@ -389,9 +359,7 @@ fn value_pb() -> pb::Value {
         kind: Some(pb::value::Kind::Map(pb::ValueMap {
             entries: vec![pb::ValueEntry {
                 name: "total".into(),
-                value: Some(pb::Value {
-                    kind: Some(pb::value::Kind::Integer(21)),
-                }),
+                value: Some(pb::Value { kind: Some(pb::value::Kind::Integer(21)) }),
             }],
         })),
     }
@@ -523,7 +491,8 @@ async fn the_backbone_stream_delivers_confirmation_batches_and_close() {
         .expect("the subscription opens")
         .into_inner();
 
-    let first = stream.message().await.expect("the confirmation arrives").expect("the stream is open");
+    let first =
+        stream.message().await.expect("the confirmation arrives").expect("the stream is open");
     match first.event.expect("the event rides") {
         pb::backbone_stream_event::Event::Subscribed(response) => {
             assert_eq!(response.subscription_id, 11);
@@ -560,7 +529,11 @@ async fn the_backbone_stream_delivers_confirmation_batches_and_close() {
     }))
     .expect("the close delivers");
 
-    match stream.message().await.expect("the batch arrives").expect("the stream is open")
+    match stream
+        .message()
+        .await
+        .expect("the batch arrives")
+        .expect("the stream is open")
         .event
         .expect("the event rides")
     {
@@ -570,7 +543,11 @@ async fn the_backbone_stream_delivers_confirmation_batches_and_close() {
         }
         other => panic!("unexpected batch event {other:?}"),
     }
-    match stream.message().await.expect("the trigger arrives").expect("the stream is open")
+    match stream
+        .message()
+        .await
+        .expect("the trigger arrives")
+        .expect("the stream is open")
         .event
         .expect("the event rides")
     {
@@ -579,7 +556,11 @@ async fn the_backbone_stream_delivers_confirmation_batches_and_close() {
         }
         other => panic!("unexpected trigger event {other:?}"),
     }
-    match stream.message().await.expect("the close arrives").expect("the stream is open")
+    match stream
+        .message()
+        .await
+        .expect("the close arrives")
+        .expect("the stream is open")
         .event
         .expect("the event rides")
     {
@@ -625,9 +606,7 @@ async fn the_real_sync_delivery_core_serves_one_session_over_grpc() {
                 change: Some(pb::sync_change::Change::Put(pb::SyncPut {
                     fields: vec![pb::SyncField {
                         name: "total".into(),
-                        value: Some(pb::Value {
-                            kind: Some(pb::value::Kind::Integer(21)),
-                        }),
+                        value: Some(pb::Value { kind: Some(pb::value::Kind::Integer(21)) }),
                     }],
                 })),
             }),

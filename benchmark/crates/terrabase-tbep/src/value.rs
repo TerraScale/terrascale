@@ -68,7 +68,11 @@ pub fn check_str_bound(value: &str, bound: u64, field: &'static str) -> Result<(
 /// # Errors
 ///
 /// Returns [`BodyError::NotInVocabulary`] for a non-member.
-pub fn check_one_of(value: &str, vocabulary: &[&str], field: &'static str) -> Result<(), BodyError> {
+pub fn check_one_of(
+    value: &str,
+    vocabulary: &[&str],
+    field: &'static str,
+) -> Result<(), BodyError> {
     if !vocabulary.contains(&value) {
         return Err(BodyError::NotInVocabulary { field });
     }
@@ -80,7 +84,11 @@ pub fn check_one_of(value: &str, vocabulary: &[&str], field: &'static str) -> Re
 /// # Errors
 ///
 /// Returns [`BodyError::ListTooLong`] when the bound is exceeded.
-pub fn check_list_bound<T>(value: &[T], bound: usize, field: &'static str) -> Result<(), BodyError> {
+pub fn check_list_bound<T>(
+    value: &[T],
+    bound: usize,
+    field: &'static str,
+) -> Result<(), BodyError> {
     if value.len() > bound {
         return Err(BodyError::ListTooLong { field, bound });
     }

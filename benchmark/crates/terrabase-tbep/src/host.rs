@@ -50,7 +50,6 @@ use terrabase_sync_core::SyncScope;
 use terrabase_sync_core::SyncValue;
 use terrabase_sync_core::protocol::PayloadCodec;
 
-use crate::value::TbepValue;
 use crate::registry::AdminStatusResponse;
 use crate::registry::BackboneAcknowledgeRequest;
 use crate::registry::BackboneAcknowledgeResponse;
@@ -113,6 +112,7 @@ use crate::registry::SyncSessionSetupResponse;
 use crate::registry::SyncSnapshotPullRequest;
 use crate::registry::SyncSnapshotPullResponse;
 use crate::registry::TopologyReadResponse;
+use crate::value::TbepValue;
 
 /// The batch byte budget the serving core configures (the SE-04 corpus
 /// default); a single oversize commit rides alone, flagged.
@@ -536,9 +536,7 @@ pub trait TbepHost: Send + Sync {
         &self,
         _tenant: &str,
     ) -> Result<crate::registry::ReplicationConflictsResponse, HostingError> {
-        Err(HostingError::Refused(
-            "replication.conflicts is not served by this host".into(),
-        ))
+        Err(HostingError::Refused("replication.conflicts is not served by this host".into()))
     }
 
     /// Serves one fenced-range observation.
@@ -551,9 +549,7 @@ pub trait TbepHost: Send + Sync {
         &self,
         _tenant: &str,
     ) -> Result<crate::registry::ReplicationFencedResponse, HostingError> {
-        Err(HostingError::Refused(
-            "replication.fenced is not served by this host".into(),
-        ))
+        Err(HostingError::Refused("replication.fenced is not served by this host".into()))
     }
 
     /// Serves one leadership-deposition observation.
@@ -566,9 +562,7 @@ pub trait TbepHost: Send + Sync {
         &self,
         _tenant: &str,
     ) -> Result<crate::registry::ReplicationDepositionsResponse, HostingError> {
-        Err(HostingError::Refused(
-            "replication.depositions is not served by this host".into(),
-        ))
+        Err(HostingError::Refused("replication.depositions is not served by this host".into()))
     }
 
     /// Serves the replication cursor observation.
@@ -581,9 +575,7 @@ pub trait TbepHost: Send + Sync {
         &self,
         _tenant: &str,
     ) -> Result<crate::registry::ReplicationCursorResponse, HostingError> {
-        Err(HostingError::Refused(
-            "replication.cursor is not served by this host".into(),
-        ))
+        Err(HostingError::Refused("replication.cursor is not served by this host".into()))
     }
 
     /// Serves the replication health observation.
@@ -596,9 +588,7 @@ pub trait TbepHost: Send + Sync {
         &self,
         _tenant: &str,
     ) -> Result<crate::registry::ReplicationHealthResponse, HostingError> {
-        Err(HostingError::Refused(
-            "replication.health is not served by this host".into(),
-        ))
+        Err(HostingError::Refused("replication.health is not served by this host".into()))
     }
 
     /// Serves the cross-tenant denial observation.
@@ -611,9 +601,7 @@ pub trait TbepHost: Send + Sync {
         &self,
         _tenant: &str,
     ) -> Result<crate::registry::ReplicationDenialsResponse, HostingError> {
-        Err(HostingError::Refused(
-            "replication.denials is not served by this host".into(),
-        ))
+        Err(HostingError::Refused("replication.denials is not served by this host".into()))
     }
 
     /// Configures the Storage Tier Mover's policy (P4, mutation).

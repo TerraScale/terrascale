@@ -802,6 +802,90 @@ mod tests {
         println!("receipt written: {}", receipt_path.display());
     }
 
+    /// A cost probe for lane attribution: times the read, query, and write
+    /// operations the lane drives, serially and concurrently, so a lane
+    /// number can be attributed to its engine seam. Not a receipt, not a
+    /// lane run.
+    #[test]
+    fn probe_lane_operation_costs() {
+        use std::time::Instant;
+        let lane = TerraBaseLane::open("probe");
+        lane.seed(1_000);
+        // Warm every path the lane drives.
+        for index in 0..100 {
+            let _ = lane.one_operation(Workload::DocumentRead, index);
+            let _ = lane.one_operation(Workload::IndexedQuery, index);
+        }
+
+        let iterations = 1_000;
+        let started = Instant::now();
+        for index in 0..iterations {
+            assert!(lane.one_operation(Workload::DocumentRead, index));
+        }
+        let elapsed = started.elapsed().as_secs_f64();
+        println!(
+            "probe serial point reads: {:.0} ops/s ({:.1} us/op)",
+            iterations as f64 / elapsed,
+            elapsed * 1e6 / iterations as f64
+        );
+
+        let started = Instant::now();
+        for index in 0..200 {
+            assert!(lane.one_operation(Workload::IndexedQuery, index));
+        }
+        let elapsed = started.elapsed().as_secs_f64();
+        println!(
+            "probe serial indexed queries: {:.0} ops/s ({:.1} us/op)",
+            200.0 / elapsed,
+            elapsed * 1e6 / 200.0
+        );
+
+        let started = Instant::now();
+        for index in 0..200 {
+            lane.one_operation(Workload::DocumentWrite, index);
+        }
+        let elapsed = started.elapsed().as_secs_f64();
+        println!(
+            "probe serial synced writes: {:.0} ops/s ({:.1} us/op)",
+            200.0 / elapsed,
+            elapsed * 1e6 / 200.0
+        );
+
+        let per_thread = iterations / 16;
+        std::thread::scope(|scope| {
+            let started = Instant::now();
+            for _ in 0..16 {
+                scope.spawn(|| {
+                    for index in 0..per_thread {
+                        assert!(lane.one_operation(Workload::DocumentRead, index));
+                    }
+                });
+            }
+            let elapsed = started.elapsed().as_secs_f64();
+            println!("probe 16-thread point reads: {:.0} ops/s", iterations as f64 / elapsed);
+        });
+
+        let query_error = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            std::thread::scope(|scope| {
+                let started = Instant::now();
+                for _ in 0..16 {
+                    scope.spawn(|| {
+                        for index in 0..per_thread {
+                            assert!(lane.one_operation(Workload::IndexedQuery, index));
+                        }
+                    });
+                }
+                let elapsed = started.elapsed().as_secs_f64();
+                println!("probe 16-thread indexed queries: {:.0} ops/s", iterations as f64 / elapsed);
+            });
+        }));
+        if query_error.is_err() {
+            println!("probe 16-thread indexed queries: PANICKED (see the panic hook output above)");
+        }
+
+        lane.remove();
+    }
+
     fn config_as_tuple(config: LaneConfig) -> String {
         format!(
             "seed {} / ops {} / samples {} / concurrency {} / warmup {}",

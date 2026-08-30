@@ -1597,11 +1597,11 @@ impl ChannelBindRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.principal, 128, "principal")?;
-            crate::value::check_str_bound(&self.tenant, 64, "tenant")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.principal, 128, "principal")?;
+        crate::value::check_str_bound(&self.tenant, 64, "tenant")?;
+        Ok(())
+    }
 }
 
 /// The `channel_bind_response` frame body.
@@ -1619,10 +1619,10 @@ impl ChannelBindResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.tenant, 64, "tenant")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.tenant, 64, "tenant")?;
+        Ok(())
+    }
 }
 
 /// The `document_read_request` frame body.
@@ -1642,11 +1642,11 @@ impl DocumentReadRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.collection, 64, "collection")?;
-            crate::value::check_str_bound(&self.document, 64, "document")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.collection, 64, "collection")?;
+        crate::value::check_str_bound(&self.document, 64, "document")?;
+        Ok(())
+    }
 }
 
 /// The `document_read_response` frame body.
@@ -1666,10 +1666,10 @@ impl DocumentReadResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `document_write_request` frame body.
@@ -1691,10 +1691,10 @@ impl DocumentWriteRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.operation_id, 128, "operation_id")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.operation_id, 128, "operation_id")?;
+        Ok(())
+    }
 }
 
 /// The `document_write_response` frame body.
@@ -1710,10 +1710,10 @@ impl DocumentWriteResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `document_delete_request` frame body.
@@ -1737,12 +1737,12 @@ impl DocumentDeleteRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.collection, 64, "collection")?;
-            crate::value::check_str_bound(&self.document, 64, "document")?;
-            crate::value::check_str_bound(&self.operation_id, 128, "operation_id")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.collection, 64, "collection")?;
+        crate::value::check_str_bound(&self.document, 64, "document")?;
+        crate::value::check_str_bound(&self.operation_id, 128, "operation_id")?;
+        Ok(())
+    }
 }
 
 /// The `document_delete_response` frame body.
@@ -1758,10 +1758,10 @@ impl DocumentDeleteResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `document_batch_request` frame body.
@@ -1779,10 +1779,10 @@ impl DocumentBatchRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_list_bound(&self.items, MAX_LIST_ITEMS, "items")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_list_bound(&self.items, MAX_LIST_ITEMS, "items")?;
+        Ok(())
+    }
 }
 
 /// The `document_batch_response` frame body.
@@ -1798,10 +1798,10 @@ impl DocumentBatchResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `query_execute_request` frame body.
@@ -1823,10 +1823,10 @@ impl QueryExecuteRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.text, 16384, "text")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.text, 16384, "text")?;
+        Ok(())
+    }
 }
 
 /// The `query_execute_response` frame body.
@@ -1848,10 +1848,10 @@ impl QueryExecuteResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_list_bound(&self.documents, MAX_LIST_ITEMS, "documents")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_list_bound(&self.documents, MAX_LIST_ITEMS, "documents")?;
+        Ok(())
+    }
 }
 
 /// The `query_cancel_request` frame body.
@@ -1867,10 +1867,10 @@ impl QueryCancelRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `query_cancel_response` frame body.
@@ -1886,10 +1886,10 @@ impl QueryCancelResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `family_read_request` frame body.
@@ -1911,13 +1911,13 @@ impl FamilyReadRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.family, 64, "family")?;
-            crate::value::check_one_of(&self.family, FAMILY_KINDS, "family")?;
-            crate::value::check_str_bound(&self.name, 128, "name")?;
-            crate::value::check_str_bound(&self.request_codec, 64, "request_codec")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.family, 64, "family")?;
+        crate::value::check_one_of(&self.family, FAMILY_KINDS, "family")?;
+        crate::value::check_str_bound(&self.name, 128, "name")?;
+        crate::value::check_str_bound(&self.request_codec, 64, "request_codec")?;
+        Ok(())
+    }
 }
 
 /// The `family_read_response` frame body.
@@ -1935,10 +1935,10 @@ impl FamilyReadResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.response_codec, 64, "response_codec")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.response_codec, 64, "response_codec")?;
+        Ok(())
+    }
 }
 
 /// The `family_write_request` frame body.
@@ -1962,14 +1962,14 @@ impl FamilyWriteRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.family, 64, "family")?;
-            crate::value::check_one_of(&self.family, FAMILY_KINDS, "family")?;
-            crate::value::check_str_bound(&self.name, 128, "name")?;
-            crate::value::check_str_bound(&self.request_codec, 64, "request_codec")?;
-            crate::value::check_str_bound(&self.operation_id, 128, "operation_id")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.family, 64, "family")?;
+        crate::value::check_one_of(&self.family, FAMILY_KINDS, "family")?;
+        crate::value::check_str_bound(&self.name, 128, "name")?;
+        crate::value::check_str_bound(&self.request_codec, 64, "request_codec")?;
+        crate::value::check_str_bound(&self.operation_id, 128, "operation_id")?;
+        Ok(())
+    }
 }
 
 /// The `family_write_response` frame body.
@@ -1987,10 +1987,10 @@ impl FamilyWriteResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.response_codec, 64, "response_codec")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.response_codec, 64, "response_codec")?;
+        Ok(())
+    }
 }
 
 /// The `backbone_subscribe_request` frame body.
@@ -2010,10 +2010,12 @@ impl BackboneSubscribeRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            if let Some(value) = &self.collections { crate::value::check_list_bound(value, MAX_LIST_ITEMS, "collections")?; }
-            Ok(())
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        if let Some(value) = &self.collections {
+            crate::value::check_list_bound(value, MAX_LIST_ITEMS, "collections")?;
         }
+        Ok(())
+    }
 }
 
 /// The `backbone_subscribe_response` frame body.
@@ -2031,10 +2033,10 @@ impl BackboneSubscribeResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `backbone_acknowledge_request` frame body.
@@ -2052,10 +2054,10 @@ impl BackboneAcknowledgeRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `backbone_acknowledge_response` frame body.
@@ -2073,10 +2075,10 @@ impl BackboneAcknowledgeResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `backbone_unsubscribe_request` frame body.
@@ -2092,10 +2094,10 @@ impl BackboneUnsubscribeRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `backbone_unsubscribe_response` frame body.
@@ -2111,10 +2113,10 @@ impl BackboneUnsubscribeResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `sync_session_setup_request` frame body.
@@ -2132,10 +2134,10 @@ impl SyncSessionSetupRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.collection, 64, "collection")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.collection, 64, "collection")?;
+        Ok(())
+    }
 }
 
 /// The `sync_session_setup_response` frame body.
@@ -2155,10 +2157,10 @@ impl SyncSessionSetupResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `sync_delta_pull_request` frame body.
@@ -2176,10 +2178,10 @@ impl SyncDeltaPullRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `sync_delta_pull_response` frame body.
@@ -2205,10 +2207,10 @@ impl SyncDeltaPullResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.payload_codec, 64, "payload_codec")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.payload_codec, 64, "payload_codec")?;
+        Ok(())
+    }
 }
 
 /// The `sync_snapshot_pull_request` frame body.
@@ -2224,10 +2226,10 @@ impl SyncSnapshotPullRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `sync_snapshot_pull_response` frame body.
@@ -2249,10 +2251,10 @@ impl SyncSnapshotPullResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.payload_codec, 64, "payload_codec")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.payload_codec, 64, "payload_codec")?;
+        Ok(())
+    }
 }
 
 /// The `sync_checkpoint_ack_request` frame body.
@@ -2270,10 +2272,10 @@ impl SyncCheckpointAckRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `sync_checkpoint_ack_response` frame body.
@@ -2289,10 +2291,10 @@ impl SyncCheckpointAckResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `sync_mutation_submit_request` frame body.
@@ -2312,10 +2314,10 @@ impl SyncMutationSubmitRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.document, 64, "document")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.document, 64, "document")?;
+        Ok(())
+    }
 }
 
 /// The `sync_mutation_submit_response` frame body.
@@ -2333,10 +2335,10 @@ impl SyncMutationSubmitResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `sync_session_close_request` frame body.
@@ -2352,10 +2354,10 @@ impl SyncSessionCloseRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `sync_session_close_response` frame body.
@@ -2371,16 +2373,15 @@ impl SyncSessionCloseResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `topology_read_request` frame body.
 #[derive(Clone, Debug, PartialEq)]
-pub struct TopologyReadRequest {
-}
+pub struct TopologyReadRequest {}
 
 impl TopologyReadRequest {
     /// Validates the declared bounds (fail closed).
@@ -2388,10 +2389,10 @@ impl TopologyReadRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `topology_read_response` frame body.
@@ -2413,16 +2414,15 @@ impl TopologyReadResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_list_bound(&self.subsystems, MAX_LIST_ITEMS, "subsystems")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_list_bound(&self.subsystems, MAX_LIST_ITEMS, "subsystems")?;
+        Ok(())
+    }
 }
 
 /// The `admin_status_request` frame body.
 #[derive(Clone, Debug, PartialEq)]
-pub struct AdminStatusRequest {
-}
+pub struct AdminStatusRequest {}
 
 impl AdminStatusRequest {
     /// Validates the declared bounds (fail closed).
@@ -2430,10 +2430,10 @@ impl AdminStatusRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `admin_status_response` frame body.
@@ -2457,16 +2457,15 @@ impl AdminStatusResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.registry_version, 32, "registry_version")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.registry_version, 32, "registry_version")?;
+        Ok(())
+    }
 }
 
 /// The `replication_conflicts_request` frame body.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ReplicationConflictsRequest {
-}
+pub struct ReplicationConflictsRequest {}
 
 impl ReplicationConflictsRequest {
     /// Validates the declared bounds (fail closed).
@@ -2474,10 +2473,10 @@ impl ReplicationConflictsRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `replication_conflicts_response` frame body.
@@ -2495,17 +2494,16 @@ impl ReplicationConflictsResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.member, 128, "member")?;
-            crate::value::check_list_bound(&self.records, MAX_LIST_ITEMS, "records")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.member, 128, "member")?;
+        crate::value::check_list_bound(&self.records, MAX_LIST_ITEMS, "records")?;
+        Ok(())
+    }
 }
 
 /// The `replication_fenced_request` frame body.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ReplicationFencedRequest {
-}
+pub struct ReplicationFencedRequest {}
 
 impl ReplicationFencedRequest {
     /// Validates the declared bounds (fail closed).
@@ -2513,10 +2511,10 @@ impl ReplicationFencedRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `replication_fenced_response` frame body.
@@ -2534,17 +2532,16 @@ impl ReplicationFencedResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.member, 128, "member")?;
-            crate::value::check_list_bound(&self.records, MAX_LIST_ITEMS, "records")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.member, 128, "member")?;
+        crate::value::check_list_bound(&self.records, MAX_LIST_ITEMS, "records")?;
+        Ok(())
+    }
 }
 
 /// The `replication_depositions_request` frame body.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ReplicationDepositionsRequest {
-}
+pub struct ReplicationDepositionsRequest {}
 
 impl ReplicationDepositionsRequest {
     /// Validates the declared bounds (fail closed).
@@ -2552,10 +2549,10 @@ impl ReplicationDepositionsRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `replication_depositions_response` frame body.
@@ -2573,17 +2570,16 @@ impl ReplicationDepositionsResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.member, 128, "member")?;
-            crate::value::check_list_bound(&self.records, MAX_LIST_ITEMS, "records")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.member, 128, "member")?;
+        crate::value::check_list_bound(&self.records, MAX_LIST_ITEMS, "records")?;
+        Ok(())
+    }
 }
 
 /// The `replication_cursor_request` frame body.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ReplicationCursorRequest {
-}
+pub struct ReplicationCursorRequest {}
 
 impl ReplicationCursorRequest {
     /// Validates the declared bounds (fail closed).
@@ -2591,10 +2587,10 @@ impl ReplicationCursorRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `replication_cursor_response` frame body.
@@ -2612,16 +2608,15 @@ impl ReplicationCursorResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.member, 128, "member")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.member, 128, "member")?;
+        Ok(())
+    }
 }
 
 /// The `replication_health_request` frame body.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ReplicationHealthRequest {
-}
+pub struct ReplicationHealthRequest {}
 
 impl ReplicationHealthRequest {
     /// Validates the declared bounds (fail closed).
@@ -2629,10 +2624,10 @@ impl ReplicationHealthRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `replication_health_response` frame body.
@@ -2650,16 +2645,15 @@ impl ReplicationHealthResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.member, 128, "member")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.member, 128, "member")?;
+        Ok(())
+    }
 }
 
 /// The `replication_denials_request` frame body.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ReplicationDenialsRequest {
-}
+pub struct ReplicationDenialsRequest {}
 
 impl ReplicationDenialsRequest {
     /// Validates the declared bounds (fail closed).
@@ -2667,10 +2661,10 @@ impl ReplicationDenialsRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `replication_denials_response` frame body.
@@ -2688,17 +2682,16 @@ impl ReplicationDenialsResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.member, 128, "member")?;
-            crate::value::check_list_bound(&self.records, MAX_LIST_ITEMS, "records")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.member, 128, "member")?;
+        crate::value::check_list_bound(&self.records, MAX_LIST_ITEMS, "records")?;
+        Ok(())
+    }
 }
 
 /// The `supervision_health_request` frame body.
 #[derive(Clone, Debug, PartialEq)]
-pub struct SupervisionHealthRequest {
-}
+pub struct SupervisionHealthRequest {}
 
 impl SupervisionHealthRequest {
     /// Validates the declared bounds (fail closed).
@@ -2706,10 +2699,10 @@ impl SupervisionHealthRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `supervision_health_response` frame body.
@@ -2731,10 +2724,10 @@ impl SupervisionHealthResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `supervision_shutdown_request` frame body.
@@ -2750,10 +2743,10 @@ impl SupervisionShutdownRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `supervision_shutdown_response` frame body.
@@ -2771,10 +2764,10 @@ impl SupervisionShutdownResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `schema_declare_request` frame body.
@@ -2794,11 +2787,11 @@ impl SchemaDeclareRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.collection, 64, "collection")?;
-            crate::value::check_str_bound(&self.operation_id, 128, "operation_id")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.collection, 64, "collection")?;
+        crate::value::check_str_bound(&self.operation_id, 128, "operation_id")?;
+        Ok(())
+    }
 }
 
 /// The `schema_declare_response` frame body.
@@ -2816,10 +2809,10 @@ impl SchemaDeclareResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `schema_status_request` frame body.
@@ -2835,10 +2828,10 @@ impl SchemaStatusRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.collection, 64, "collection")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.collection, 64, "collection")?;
+        Ok(())
+    }
 }
 
 /// The `schema_status_response` frame body.
@@ -2856,10 +2849,10 @@ impl SchemaStatusResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `schema_validate_request` frame body.
@@ -2877,10 +2870,10 @@ impl SchemaValidateRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.collection, 64, "collection")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.collection, 64, "collection")?;
+        Ok(())
+    }
 }
 
 /// The `schema_validate_response` frame body.
@@ -2900,10 +2893,10 @@ impl SchemaValidateResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_list_bound(&self.violations, MAX_LIST_ITEMS, "violations")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_list_bound(&self.violations, MAX_LIST_ITEMS, "violations")?;
+        Ok(())
+    }
 }
 
 /// The `migration_status_request` frame body.
@@ -2919,10 +2912,10 @@ impl MigrationStatusRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.collection, 64, "collection")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.collection, 64, "collection")?;
+        Ok(())
+    }
 }
 
 /// The `migration_status_response` frame body.
@@ -2938,10 +2931,10 @@ impl MigrationStatusResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `migration_dry_run_request` frame body.
@@ -2957,10 +2950,10 @@ impl MigrationDryRunRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `migration_dry_run_response` frame body.
@@ -2976,10 +2969,10 @@ impl MigrationDryRunResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `migration_apply_request` frame body.
@@ -2999,10 +2992,10 @@ impl MigrationApplyRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.operation_id, 128, "operation_id")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.operation_id, 128, "operation_id")?;
+        Ok(())
+    }
 }
 
 /// The `migration_apply_response` frame body.
@@ -3018,10 +3011,10 @@ impl MigrationApplyResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `tier_configure_request` frame body.
@@ -3047,11 +3040,15 @@ impl TierConfigureRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.policy_id, 128, "policy_id")?;
-            crate::value::check_list_bound(&self.pinned_segment_ids, MAX_LIST_ITEMS, "pinned_segment_ids")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.policy_id, 128, "policy_id")?;
+        crate::value::check_list_bound(
+            &self.pinned_segment_ids,
+            MAX_LIST_ITEMS,
+            "pinned_segment_ids",
+        )?;
+        Ok(())
+    }
 }
 
 /// The `tier_configure_response` frame body.
@@ -3071,16 +3068,15 @@ impl TierConfigureResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.policy_id, 128, "policy_id")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.policy_id, 128, "policy_id")?;
+        Ok(())
+    }
 }
 
 /// The `tier_inspect_request` frame body.
 #[derive(Clone, Debug, PartialEq)]
-pub struct TierInspectRequest {
-}
+pub struct TierInspectRequest {}
 
 impl TierInspectRequest {
     /// Validates the declared bounds (fail closed).
@@ -3088,10 +3084,10 @@ impl TierInspectRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `tier_inspect_response` frame body.
@@ -3115,16 +3111,15 @@ impl TierInspectResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `tier_dry_run_request` frame body.
 #[derive(Clone, Debug, PartialEq)]
-pub struct TierDryRunRequest {
-}
+pub struct TierDryRunRequest {}
 
 impl TierDryRunRequest {
     /// Validates the declared bounds (fail closed).
@@ -3132,10 +3127,10 @@ impl TierDryRunRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `tier_dry_run_response` frame body.
@@ -3151,16 +3146,15 @@ impl TierDryRunResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `tier_explain_request` frame body.
 #[derive(Clone, Debug, PartialEq)]
-pub struct TierExplainRequest {
-}
+pub struct TierExplainRequest {}
 
 impl TierExplainRequest {
     /// Validates the declared bounds (fail closed).
@@ -3168,10 +3162,10 @@ impl TierExplainRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `tier_explain_response` frame body.
@@ -3187,16 +3181,15 @@ impl TierExplainResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `tier_run_request` frame body.
 #[derive(Clone, Debug, PartialEq)]
-pub struct TierRunRequest {
-}
+pub struct TierRunRequest {}
 
 impl TierRunRequest {
     /// Validates the declared bounds (fail closed).
@@ -3204,10 +3197,10 @@ impl TierRunRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `tier_run_response` frame body.
@@ -3223,16 +3216,15 @@ impl TierRunResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `tier_pause_request` frame body.
 #[derive(Clone, Debug, PartialEq)]
-pub struct TierPauseRequest {
-}
+pub struct TierPauseRequest {}
 
 impl TierPauseRequest {
     /// Validates the declared bounds (fail closed).
@@ -3240,10 +3232,10 @@ impl TierPauseRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `tier_pause_response` frame body.
@@ -3259,16 +3251,15 @@ impl TierPauseResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `tier_resume_request` frame body.
 #[derive(Clone, Debug, PartialEq)]
-pub struct TierResumeRequest {
-}
+pub struct TierResumeRequest {}
 
 impl TierResumeRequest {
     /// Validates the declared bounds (fail closed).
@@ -3276,10 +3267,10 @@ impl TierResumeRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `tier_resume_response` frame body.
@@ -3295,10 +3286,10 @@ impl TierResumeResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `subscription_batch` frame body.
@@ -3320,10 +3311,10 @@ impl SubscriptionBatch {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_list_bound(&self.events, MAX_LIST_ITEMS, "events")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_list_bound(&self.events, MAX_LIST_ITEMS, "events")?;
+        Ok(())
+    }
 }
 
 /// The `trigger_notification` frame body.
@@ -3345,11 +3336,11 @@ impl TriggerNotification {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.collection, 64, "collection")?;
-            crate::value::check_str_bound(&self.operation_id, 128, "operation_id")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.collection, 64, "collection")?;
+        crate::value::check_str_bound(&self.operation_id, 128, "operation_id")?;
+        Ok(())
+    }
 }
 
 /// The `subscription_closed` frame body.
@@ -3367,10 +3358,10 @@ impl SubscriptionClosed {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            let _ = self;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        let _ = self;
+        Ok(())
+    }
 }
 
 /// The `error` frame body.
@@ -3388,10 +3379,10 @@ impl Error {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_str_bound(&self.detail, 256, "detail")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.detail, 256, "detail")?;
+        Ok(())
+    }
 }
 
 /// The `negotiation_request` frame body.
@@ -3409,11 +3400,15 @@ impl NegotiationRequest {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_list_bound(&self.supported_versions, MAX_LIST_ITEMS, "supported_versions")?;
-            crate::value::check_list_bound(&self.capabilities, MAX_LIST_ITEMS, "capabilities")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_list_bound(
+            &self.supported_versions,
+            MAX_LIST_ITEMS,
+            "supported_versions",
+        )?;
+        crate::value::check_list_bound(&self.capabilities, MAX_LIST_ITEMS, "capabilities")?;
+        Ok(())
+    }
 }
 
 /// The `negotiation_response` frame body.
@@ -3431,10 +3426,14 @@ impl NegotiationResponse {
     /// # Errors
     ///
     /// Returns the first bounds violation.
-        pub fn validate(&self) -> Result<(), crate::value::BodyError> {
-            crate::value::check_list_bound(&self.accepted_capabilities, MAX_LIST_ITEMS, "accepted_capabilities")?;
-            Ok(())
-        }
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_list_bound(
+            &self.accepted_capabilities,
+            MAX_LIST_ITEMS,
+            "accepted_capabilities",
+        )?;
+        Ok(())
+    }
 }
 
 /// One row of the closed frame table: the frame's wire code, kind name,
@@ -3458,16 +3457,41 @@ pub const FRAME_TABLE: &[FrameRow] = &[
     FrameRow { code: 2, kind: "NegotiationRequest", family: "channel", class: "control" },
     FrameRow { code: 3, kind: "NegotiationResponse", family: "channel", class: "control" },
     FrameRow { code: 257, kind: "DocumentReadRequest", family: "documents", class: "operation" },
-    FrameRow { code: 258, kind: "DocumentWriteRequest", family: "documents", class: "operation_large" },
+    FrameRow {
+        code: 258,
+        kind: "DocumentWriteRequest",
+        family: "documents",
+        class: "operation_large",
+    },
     FrameRow { code: 259, kind: "DocumentDeleteRequest", family: "documents", class: "operation" },
     FrameRow { code: 260, kind: "QueryExecuteRequest", family: "query", class: "operation_large" },
     FrameRow { code: 261, kind: "QueryCancelRequest", family: "query", class: "operation" },
     FrameRow { code: 262, kind: "FamilyReadRequest", family: "families", class: "operation" },
     FrameRow { code: 263, kind: "FamilyWriteRequest", family: "families", class: "operation" },
-    FrameRow { code: 264, kind: "DocumentBatchRequest", family: "documents", class: "operation_large" },
-    FrameRow { code: 272, kind: "BackboneSubscribeRequest", family: "backbone", class: "operation" },
-    FrameRow { code: 273, kind: "BackboneAcknowledgeRequest", family: "backbone", class: "operation" },
-    FrameRow { code: 274, kind: "BackboneUnsubscribeRequest", family: "backbone", class: "operation" },
+    FrameRow {
+        code: 264,
+        kind: "DocumentBatchRequest",
+        family: "documents",
+        class: "operation_large",
+    },
+    FrameRow {
+        code: 272,
+        kind: "BackboneSubscribeRequest",
+        family: "backbone",
+        class: "operation",
+    },
+    FrameRow {
+        code: 273,
+        kind: "BackboneAcknowledgeRequest",
+        family: "backbone",
+        class: "operation",
+    },
+    FrameRow {
+        code: 274,
+        kind: "BackboneUnsubscribeRequest",
+        family: "backbone",
+        class: "operation",
+    },
     FrameRow { code: 288, kind: "SyncSessionSetupRequest", family: "sync", class: "delivery" },
     FrameRow { code: 289, kind: "SyncDeltaPullRequest", family: "sync", class: "delivery" },
     FrameRow { code: 290, kind: "SyncSnapshotPullRequest", family: "sync", class: "delivery" },
@@ -3476,15 +3500,55 @@ pub const FRAME_TABLE: &[FrameRow] = &[
     FrameRow { code: 293, kind: "SyncSessionCloseRequest", family: "sync", class: "delivery" },
     FrameRow { code: 304, kind: "TopologyReadRequest", family: "topology", class: "control" },
     FrameRow { code: 305, kind: "AdminStatusRequest", family: "topology", class: "control" },
-    FrameRow { code: 306, kind: "ReplicationConflictsRequest", family: "replication", class: "observation" },
-    FrameRow { code: 307, kind: "ReplicationFencedRequest", family: "replication", class: "observation" },
-    FrameRow { code: 308, kind: "ReplicationDepositionsRequest", family: "replication", class: "observation" },
-    FrameRow { code: 309, kind: "ReplicationCursorRequest", family: "replication", class: "observation" },
-    FrameRow { code: 310, kind: "ReplicationHealthRequest", family: "replication", class: "observation" },
-    FrameRow { code: 311, kind: "ReplicationDenialsRequest", family: "replication", class: "observation" },
+    FrameRow {
+        code: 306,
+        kind: "ReplicationConflictsRequest",
+        family: "replication",
+        class: "observation",
+    },
+    FrameRow {
+        code: 307,
+        kind: "ReplicationFencedRequest",
+        family: "replication",
+        class: "observation",
+    },
+    FrameRow {
+        code: 308,
+        kind: "ReplicationDepositionsRequest",
+        family: "replication",
+        class: "observation",
+    },
+    FrameRow {
+        code: 309,
+        kind: "ReplicationCursorRequest",
+        family: "replication",
+        class: "observation",
+    },
+    FrameRow {
+        code: 310,
+        kind: "ReplicationHealthRequest",
+        family: "replication",
+        class: "observation",
+    },
+    FrameRow {
+        code: 311,
+        kind: "ReplicationDenialsRequest",
+        family: "replication",
+        class: "observation",
+    },
     FrameRow { code: 320, kind: "ChannelBindRequest", family: "supervision", class: "control" },
-    FrameRow { code: 321, kind: "SupervisionHealthRequest", family: "supervision", class: "control" },
-    FrameRow { code: 322, kind: "SupervisionShutdownRequest", family: "supervision", class: "control" },
+    FrameRow {
+        code: 321,
+        kind: "SupervisionHealthRequest",
+        family: "supervision",
+        class: "control",
+    },
+    FrameRow {
+        code: 322,
+        kind: "SupervisionShutdownRequest",
+        family: "supervision",
+        class: "control",
+    },
     FrameRow { code: 336, kind: "SchemaDeclareRequest", family: "schemas", class: "schema" },
     FrameRow { code: 337, kind: "SchemaStatusRequest", family: "schemas", class: "schema" },
     FrameRow { code: 338, kind: "SchemaValidateRequest", family: "schemas", class: "schema" },
@@ -3499,15 +3563,35 @@ pub const FRAME_TABLE: &[FrameRow] = &[
     FrameRow { code: 347, kind: "TierPauseRequest", family: "tiers", class: "control" },
     FrameRow { code: 348, kind: "TierResumeRequest", family: "tiers", class: "control" },
     FrameRow { code: 513, kind: "DocumentReadResponse", family: "documents", class: "operation" },
-    FrameRow { code: 514, kind: "DocumentWriteResponse", family: "documents", class: "operation_large" },
+    FrameRow {
+        code: 514,
+        kind: "DocumentWriteResponse",
+        family: "documents",
+        class: "operation_large",
+    },
     FrameRow { code: 515, kind: "DocumentDeleteResponse", family: "documents", class: "operation" },
     FrameRow { code: 516, kind: "QueryExecuteResponse", family: "query", class: "operation_large" },
     FrameRow { code: 517, kind: "QueryCancelResponse", family: "query", class: "operation" },
     FrameRow { code: 518, kind: "FamilyReadResponse", family: "families", class: "operation" },
     FrameRow { code: 519, kind: "FamilyWriteResponse", family: "families", class: "operation" },
-    FrameRow { code: 528, kind: "BackboneSubscribeResponse", family: "backbone", class: "operation" },
-    FrameRow { code: 529, kind: "BackboneAcknowledgeResponse", family: "backbone", class: "operation" },
-    FrameRow { code: 530, kind: "BackboneUnsubscribeResponse", family: "backbone", class: "operation" },
+    FrameRow {
+        code: 528,
+        kind: "BackboneSubscribeResponse",
+        family: "backbone",
+        class: "operation",
+    },
+    FrameRow {
+        code: 529,
+        kind: "BackboneAcknowledgeResponse",
+        family: "backbone",
+        class: "operation",
+    },
+    FrameRow {
+        code: 530,
+        kind: "BackboneUnsubscribeResponse",
+        family: "backbone",
+        class: "operation",
+    },
     FrameRow { code: 544, kind: "SyncSessionSetupResponse", family: "sync", class: "delivery" },
     FrameRow { code: 545, kind: "SyncDeltaPullResponse", family: "sync", class: "delivery" },
     FrameRow { code: 546, kind: "SyncSnapshotPullResponse", family: "sync", class: "delivery" },
@@ -3516,15 +3600,55 @@ pub const FRAME_TABLE: &[FrameRow] = &[
     FrameRow { code: 549, kind: "SyncSessionCloseResponse", family: "sync", class: "delivery" },
     FrameRow { code: 560, kind: "TopologyReadResponse", family: "topology", class: "control" },
     FrameRow { code: 561, kind: "AdminStatusResponse", family: "topology", class: "control" },
-    FrameRow { code: 562, kind: "ReplicationConflictsResponse", family: "replication", class: "observation" },
-    FrameRow { code: 563, kind: "ReplicationFencedResponse", family: "replication", class: "observation" },
-    FrameRow { code: 564, kind: "ReplicationDepositionsResponse", family: "replication", class: "observation" },
-    FrameRow { code: 565, kind: "ReplicationCursorResponse", family: "replication", class: "observation" },
-    FrameRow { code: 566, kind: "ReplicationHealthResponse", family: "replication", class: "observation" },
-    FrameRow { code: 567, kind: "ReplicationDenialsResponse", family: "replication", class: "observation" },
+    FrameRow {
+        code: 562,
+        kind: "ReplicationConflictsResponse",
+        family: "replication",
+        class: "observation",
+    },
+    FrameRow {
+        code: 563,
+        kind: "ReplicationFencedResponse",
+        family: "replication",
+        class: "observation",
+    },
+    FrameRow {
+        code: 564,
+        kind: "ReplicationDepositionsResponse",
+        family: "replication",
+        class: "observation",
+    },
+    FrameRow {
+        code: 565,
+        kind: "ReplicationCursorResponse",
+        family: "replication",
+        class: "observation",
+    },
+    FrameRow {
+        code: 566,
+        kind: "ReplicationHealthResponse",
+        family: "replication",
+        class: "observation",
+    },
+    FrameRow {
+        code: 567,
+        kind: "ReplicationDenialsResponse",
+        family: "replication",
+        class: "observation",
+    },
     FrameRow { code: 576, kind: "ChannelBindResponse", family: "supervision", class: "control" },
-    FrameRow { code: 577, kind: "SupervisionHealthResponse", family: "supervision", class: "control" },
-    FrameRow { code: 578, kind: "SupervisionShutdownResponse", family: "supervision", class: "control" },
+    FrameRow {
+        code: 577,
+        kind: "SupervisionHealthResponse",
+        family: "supervision",
+        class: "control",
+    },
+    FrameRow {
+        code: 578,
+        kind: "SupervisionShutdownResponse",
+        family: "supervision",
+        class: "control",
+    },
     FrameRow { code: 592, kind: "SchemaDeclareResponse", family: "schemas", class: "schema" },
     FrameRow { code: 593, kind: "SchemaStatusResponse", family: "schemas", class: "schema" },
     FrameRow { code: 594, kind: "SchemaValidateResponse", family: "schemas", class: "schema" },
@@ -3538,7 +3662,12 @@ pub const FRAME_TABLE: &[FrameRow] = &[
     FrameRow { code: 602, kind: "TierRunResponse", family: "tiers", class: "operation" },
     FrameRow { code: 603, kind: "TierPauseResponse", family: "tiers", class: "control" },
     FrameRow { code: 604, kind: "TierResumeResponse", family: "tiers", class: "control" },
-    FrameRow { code: 605, kind: "DocumentBatchResponse", family: "documents", class: "operation_large" },
+    FrameRow {
+        code: 605,
+        kind: "DocumentBatchResponse",
+        family: "documents",
+        class: "operation_large",
+    },
     FrameRow { code: 769, kind: "SubscriptionBatch", family: "backbone", class: "subscription" },
     FrameRow { code: 770, kind: "TriggerNotification", family: "backbone", class: "trigger" },
     FrameRow { code: 771, kind: "SubscriptionClosed", family: "backbone", class: "control" },
