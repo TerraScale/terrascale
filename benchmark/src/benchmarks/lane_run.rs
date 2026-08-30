@@ -892,7 +892,7 @@ mod tests {
     fn probe_read_subcall_costs() {
         use std::time::Instant;
         let lane = TerraBaseLane::open("subcall");
-        lane.seed(200);
+        lane.seed(1_000);
         let engine = lane.engine();
         let scope = lane.scope();
 
@@ -943,7 +943,7 @@ mod tests {
 
     impl DocumentIdProbe {
         fn of(index: u64) -> crate::types::DocumentId {
-            crate::types::DocumentId::try_new(&format!("seed-{}", index % 200)).expect("valid identifier")
+            crate::types::DocumentId::try_new(&format!("seed-{}", index % 1_000)).expect("valid identifier")
         }
     }
 
