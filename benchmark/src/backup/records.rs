@@ -30,6 +30,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::encryption::{ArtifactCipher, MAX_PLAINTEXT_BYTES};
+use zeroize::Zeroize;
 
 use crate::backup::sha256::{Sha256, to_hex};
 use crate::types::{Document, LocalDurability, TenantId};
@@ -193,6 +194,12 @@ struct OpenMember {
     length: u64,
 }
 
+impl Drop for OpenMember {
+    fn drop(&mut self) {
+        self.plaintext.zeroize();
+    }
+}
+
 /// The bounded member writer for one backup run.
 ///
 /// The writer creates member files lazily inside the staging directory the
@@ -300,6 +307,9 @@ impl MemberWriter {
         }
         member.hasher.update(&encoded);
         member.length += encoded.len() as u64;
+        // The encoded frame is copied into the member buffer in encrypted
+        // mode; do not leave a second plaintext copy in allocator memory.
+        encoded.zeroize();
         if member.length >= self.bound_bytes {
             self.seal_open_member()?;
         }
@@ -317,19 +327,26 @@ impl MemberWriter {
     }
 
     fn seal_open_member(&mut self) -> std::io::Result<()> {
-        let Some(member) = self.open.take() else {
+        let Some(mut member) = self.open.take() else {
             return Ok(());
         };
-        let (length, digest) = if let Some(file) = member.file {
+        let (length, digest) = if let Some(file) = member.file.take() {
             file.sync_all()?;
-            (member.length, to_hex(&member.hasher.finish()))
+            let hasher = std::mem::take(&mut member.hasher);
+            (member.length, to_hex(&hasher.finish()))
         } else {
             let cipher = self.encryption.as_ref().expect("encrypted member cipher");
-            let envelope = cipher
+            let plaintext = std::mem::take(&mut member.plaintext);
+            let sealed = cipher
                 .lock()
                 .map_err(|_| std::io::Error::other("encrypted member lock poisoned"))?
-                .seal(&member.plaintext)
-                .map_err(|_| std::io::Error::other("encrypted member sealing failed"))?;
+                .seal(&plaintext);
+            // Clear the independent temporary copy even when the provider
+            // rejects the envelope.
+            let mut plaintext = plaintext;
+            plaintext.zeroize();
+            let envelope =
+                sealed.map_err(|_| std::io::Error::other("encrypted member sealing failed"))?;
             let mut file = File::create(self.directory.join(&member.name))?;
             file.write_all(&envelope)?;
             file.sync_all()?;
@@ -337,7 +354,8 @@ impl MemberWriter {
             hasher.update(&envelope);
             (envelope.len() as u64, to_hex(&hasher.finish()))
         };
-        self.sealed.push(SealedMember { name: member.name, length, digest });
+        self.sealed
+            .push(SealedMember { name: std::mem::take(&mut member.name), length, digest });
         Ok(())
     }
 }

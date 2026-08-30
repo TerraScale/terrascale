@@ -184,6 +184,12 @@ async fn security_headers(
             ));
         }
     };
+    if !trusted_request_host(&request, &security) {
+        return hardened(
+            status_text(StatusCode::FORBIDDEN, "untrusted Host header refused\n"),
+            &nonce,
+        );
+    }
     if request.method() == axum::http::Method::POST && !same_origin(&request, &security) {
         return hardened(
             status_text(StatusCode::FORBIDDEN, "cross-origin action refused\n"),
@@ -196,6 +202,20 @@ async fn security_headers(
         Err(response) => return hardened(response, &nonce),
     };
     hardened(next.run(request).await, &nonce)
+}
+
+/// Rejects DNS-rebinding authorities on every method, including read-only
+/// pages. A missing Host remains available to in-process tests and explicit
+/// non-browser clients; HTTP/1.1 browsers always send one.
+fn trusted_request_host(request: &Request<Body>, security: &SecurityState) -> bool {
+    let Some(host) = request.headers().get(header::HOST) else {
+        return true;
+    };
+    host.to_str()
+        .ok()
+        .and_then(|host| host.parse::<Authority>().ok())
+        .and_then(|authority| trusted_authority(&authority, security.listener))
+        .is_some()
 }
 
 fn hardened(mut response: Response, nonce: &CspNonce) -> Response {

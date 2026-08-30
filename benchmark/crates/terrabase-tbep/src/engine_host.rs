@@ -31,7 +31,9 @@ use terrabase::usage::{
     UsageRecordRequest as EngineUsageRecordRequest,
 };
 
+use crate::family_codec;
 use crate::host::{HostingError, TbepHost};
+use crate::proto::terrabase::v1 as pb;
 use crate::registry::{
     AdminStatusResponse, BoundScope, ChannelBindRequest, ChannelBindResponse, CommitReceipt,
     DocumentBody, DocumentDeleteRequest, DocumentDeleteResponse, DocumentPut, DocumentReadRequest,
@@ -57,6 +59,167 @@ fn to_engine_value(value: &TbepValue) -> DocumentValue {
         TbepValue::Object(fields) => DocumentValue::Object(
             fields.iter().map(|(name, value)| (name.clone(), to_engine_value(value))).collect(),
         ),
+    }
+}
+
+fn family_deadline() -> Result<terrabase::types::Deadline, HostingError> {
+    terrabase::types::Deadline::after(std::time::Duration::from_secs(30))
+        .map_err(|_| HostingError::EngineFailure("the family deadline is invalid".into()))
+}
+
+fn to_pb_value(value: &DocumentValue) -> pb::Value {
+    use pb::value::Kind;
+    let kind = match value {
+        DocumentValue::Null => Kind::Null(pb::NullValue::Null as i32),
+        DocumentValue::Boolean(value) => Kind::Boolean(*value),
+        DocumentValue::Integer(value) => Kind::Integer(*value),
+        DocumentValue::Number(value) => Kind::Number(*value),
+        DocumentValue::String(value) => Kind::Text(value.clone()),
+        DocumentValue::Array(values) => {
+            Kind::List(pb::ValueList { items: values.iter().map(to_pb_value).collect() })
+        }
+        DocumentValue::Object(values) => Kind::Map(pb::ValueMap {
+            entries: values
+                .iter()
+                .map(|(name, value)| pb::ValueEntry {
+                    name: name.clone(),
+                    value: Some(to_pb_value(value)),
+                })
+                .collect(),
+        }),
+    };
+    pb::Value { kind: Some(kind) }
+}
+
+fn family_result_payload(
+    result: terrabase::families::FamilyReadResult,
+) -> Result<pb::FamilyResponsePayload, HostingError> {
+    use terrabase::families::FamilyReadResult;
+    let result = match result {
+        FamilyReadResult::AttachmentMetadata(result) => {
+            pb::family_response_payload::Result::Attachment(pb::FamilyAttachmentResponse {
+                entries: result
+                    .entries()
+                    .iter()
+                    .map(|entry| pb::FamilyAttachmentEntry {
+                        name: entry.name().to_owned(),
+                        content_type: entry.content_type().to_owned(),
+                        size: entry.size(),
+                        hash: entry.hash().to_owned(),
+                        document: entry.document().as_str().to_owned(),
+                    })
+                    .collect(),
+            })
+        }
+        FamilyReadResult::CounterGroup(result) => {
+            pb::family_response_payload::Result::Counter(pb::FamilyCounterResponse {
+                entries: result
+                    .entries()
+                    .iter()
+                    .map(|entry| pb::FamilyCounterEntry {
+                        name: entry.name().to_owned(),
+                        value: entry.value(),
+                    })
+                    .collect(),
+            })
+        }
+        FamilyReadResult::TimeSeriesPage(result) => {
+            pb::family_response_payload::Result::TimeSeries(pb::FamilyTimeSeriesResponse {
+                entries: result
+                    .entries()
+                    .iter()
+                    .map(|entry| pb::FamilyTimeSeriesEntry {
+                        timestamp: entry.timestamp(),
+                        values: entry.values().to_vec(),
+                        tag: entry.tag().map(str::to_owned),
+                    })
+                    .collect(),
+                total: Some(result.total()),
+                next: result.next_cursor(),
+            })
+        }
+        FamilyReadResult::RevisionPage(result) => {
+            pb::family_response_payload::Result::Revisions(pb::FamilyRevisionResponse {
+                entries: result
+                    .entries()
+                    .iter()
+                    .map(|entry| pb::FamilyRevisionEntry {
+                        revision: entry.revision(),
+                        version: u64::try_from(entry.at()).unwrap_or_default(),
+                        value: Some(to_pb_value(entry.value())),
+                    })
+                    .collect(),
+                total: result.total(),
+                next: None,
+            })
+        }
+        FamilyReadResult::CompareExchangeValue(result) => {
+            pb::family_response_payload::Result::CompareExchange(
+                pb::FamilyCompareExchangeResponse {
+                    key: result.key().to_owned(),
+                    entry: result.entry().map(|entry| pb::FamilyCompareExchangeEntry {
+                        value: Some(to_pb_value(entry.value())),
+                        index: entry.index(),
+                        expires_at: entry.expires_at(),
+                    }),
+                },
+            )
+        }
+        FamilyReadResult::IdentityRange(result) => {
+            pb::family_response_payload::Result::Identities(pb::FamilyIdentityResponse {
+                entries: result
+                    .entries()
+                    .iter()
+                    .map(|entry| pb::FamilyIdentityEntry {
+                        name: entry.name().to_owned(),
+                        next: entry.next(),
+                    })
+                    .collect(),
+            })
+        }
+        FamilyReadResult::Lifecycle(result) => {
+            pb::family_response_payload::Result::ExpirationRefresh(pb::FamilyLifecycleResponse {
+                present: result.present(),
+                expires_at: result.expires_at(),
+            })
+        }
+        FamilyReadResult::Archival(result) => {
+            pb::family_response_payload::Result::Archival(pb::FamilyArchivalResponse {
+                present: result.state().is_some(),
+                archived: result.state().is_some_and(|state| state.archived()),
+            })
+        }
+        FamilyReadResult::Validation(_) | FamilyReadResult::Tombstones(_) => {
+            return Err(HostingError::Refused(
+                "the requested family operation is not advertised".into(),
+            ));
+        }
+    };
+    Ok(pb::FamilyResponsePayload { result: Some(result) })
+}
+
+fn family_expected(value: Option<&pb::ExpectedVersion>) -> EngineVersion {
+    match value.and_then(|value| value.discipline.as_ref()) {
+        Some(pb::expected_version::Discipline::Absent(_)) => EngineVersion::New,
+        Some(pb::expected_version::Discipline::Exact(value)) => EngineVersion::Exact(*value),
+        Some(pb::expected_version::Discipline::Any(_)) | None => EngineVersion::Any,
+    }
+}
+
+fn family_write_payload(
+    outcome: WriteOutcome,
+) -> Result<pb::FamilyResponsePayload, HostingError> {
+    match outcome {
+        WriteOutcome::Committed(receipt) => Ok(pb::FamilyResponsePayload {
+            result: Some(pb::family_response_payload::Result::Write(
+                pb::FamilyWriteReceiptResponse {
+                    sequence: receipt.sequence,
+                    operation_id: receipt.operation_id,
+                },
+            )),
+        }),
+        WriteOutcome::Conflict => Err(HostingError::Refused("the family write conflicted".into())),
+        WriteOutcome::Rejected(_) => Err(HostingError::Invalid("the family write was rejected".into())),
     }
 }
 
@@ -860,10 +1023,165 @@ impl TbepHost for EngineHost {
 
     fn family_read(
         &self,
-        _scope: &BoundScope,
-        _request: &crate::registry::FamilyReadRequest,
+        bound_scope: &BoundScope,
+        request: &crate::registry::FamilyReadRequest,
     ) -> Result<crate::registry::FamilyReadResponse, HostingError> {
-        Err(HostingError::Refused("family_read is served by the family-plane landing".into()))
+        self.count_frame();
+        self.ensure_serving()?;
+        let tenant = self.tenant_of_scope(bound_scope)?;
+        let payload =
+            request.decode_payload().map_err(|error| HostingError::Invalid(error.to_string()))?;
+        let cancellation = terrabase::types::Cancellation::new();
+        let deadline = family_deadline()?;
+        let operation = match payload
+            .operation
+            .ok_or_else(|| HostingError::Invalid("family request has no operation".into()))?
+        {
+            pb::family_request_payload::Operation::AttachmentRead(value) => {
+                let document = DocumentId::try_new(&value.document).map_err(|_| {
+                    HostingError::Invalid("the attachment document is invalid".into())
+                })?;
+                terrabase::families::FamilyReadRequest::attachment_metadata(
+                    terrabase::families::AttachmentRead::try_new(document, deadline, cancellation)
+                        .map_err(|_| {
+                            HostingError::Invalid("the attachment read is invalid".into())
+                        })?,
+                )
+            }
+            pb::family_request_payload::Operation::CounterRead(value) => {
+                let document = DocumentId::try_new(&value.document)
+                    .map_err(|_| HostingError::Invalid("the counter document is invalid".into()))?;
+                terrabase::families::FamilyReadRequest::counter_group(
+                    terrabase::families::CounterRead::try_new(
+                        document,
+                        value.names,
+                        deadline,
+                        cancellation,
+                    )
+                    .map_err(|_| HostingError::Invalid("the counter read is invalid".into()))?,
+                )
+            }
+            pb::family_request_payload::Operation::TimeSeriesRead(value) => {
+                let document = DocumentId::try_new(&value.document).map_err(|_| {
+                    HostingError::Invalid("the time-series document is invalid".into())
+                })?;
+                let range = match (value.range_start, value.range_end) {
+                    (Some(start), Some(end)) => {
+                        Some(terrabase::families::TimeSeriesRange::try_new(start, end).map_err(
+                            |_| HostingError::Invalid("the time-series range is invalid".into()),
+                        )?)
+                    }
+                    (None, None) => None,
+                    _ => {
+                        return Err(HostingError::Invalid(
+                            "the time-series range is incomplete".into(),
+                        ));
+                    }
+                };
+                let mut read = terrabase::families::TimeSeriesRead::try_new(
+                    document,
+                    value.name,
+                    range,
+                    deadline,
+                    cancellation,
+                )
+                .map_err(|_| HostingError::Invalid("the time-series read is invalid".into()))?;
+                if let Some(rollup) = value.rollup {
+                    read = read.reading_rollup(&rollup).map_err(|_| {
+                        HostingError::Invalid("the time-series rollup is invalid".into())
+                    })?;
+                }
+                if value.after.is_some() || value.limit.is_some() {
+                    let paging =
+                        terrabase::families::TimeSeriesPaging::try_new(value.after, value.limit)
+                            .map_err(|_| {
+                                HostingError::Invalid("the time-series paging is invalid".into())
+                            })?;
+                    read = read.with_paging(paging);
+                }
+                terrabase::families::FamilyReadRequest::time_series_range(read)
+            }
+            pb::family_request_payload::Operation::RevisionRead(value) => {
+                let document = DocumentId::try_new(&value.document).map_err(|_| {
+                    HostingError::Invalid("the revision document is invalid".into())
+                })?;
+                let paging =
+                    terrabase::families::RevisionPaging::try_new(value.offset, value.limit)
+                        .map_err(|_| {
+                            HostingError::Invalid("the revision paging is invalid".into())
+                        })?;
+                terrabase::families::FamilyReadRequest::revision_page(
+                    terrabase::families::RevisionRead::try_new(
+                        document,
+                        paging,
+                        deadline,
+                        cancellation,
+                    )
+                    .map_err(|_| HostingError::Invalid("the revision read is invalid".into()))?,
+                )
+            }
+            pb::family_request_payload::Operation::CompareExchangeRead(value) => {
+                terrabase::families::FamilyReadRequest::compare_exchange_value(
+                    terrabase::families::CompareExchangeRead::try_new(
+                        value.key,
+                        deadline,
+                        cancellation,
+                    )
+                    .map_err(|_| {
+                        HostingError::Invalid("the compare-exchange read is invalid".into())
+                    })?,
+                )
+            }
+            pb::family_request_payload::Operation::IdentityRead(value) => {
+                terrabase::families::FamilyReadRequest::identity_range(
+                    terrabase::families::IdentityRead::try_new(value.names, deadline, cancellation)
+                        .map_err(|_| {
+                            HostingError::Invalid("the identity read is invalid".into())
+                        })?,
+                )
+            }
+            pb::family_request_payload::Operation::LifecycleRead(value) => {
+                let document = DocumentId::try_new(&value.document).map_err(|_| {
+                    HostingError::Invalid("the lifecycle document is invalid".into())
+                })?;
+                terrabase::families::FamilyReadRequest::lifecycle(terrabase::families::LifecycleRead::try_new(document, deadline, cancellation).map_err(|_| HostingError::Invalid("the lifecycle read is invalid".into()))?)
+            }
+            pb::family_request_payload::Operation::ArchivalRead(value) => {
+                let document = DocumentId::try_new(&value.document).map_err(|_| {
+                    HostingError::Invalid("the archival document is invalid".into())
+                })?;
+                terrabase::families::FamilyReadRequest::archival(
+                    terrabase::families::ArchivalReadRequest::try_new(
+                        document,
+                        deadline,
+                        cancellation,
+                    )
+                    .map_err(|_| HostingError::Invalid("the archival read is invalid".into()))?,
+                )
+            }
+            _ => {
+                return Err(HostingError::Invalid(
+                    "the family read carries a write operation".into(),
+                ));
+            }
+        };
+        let scope = self.engine.scope_for(&tenant);
+        let snapshot = self.engine.read_snapshot(&scope).map_err(|_| {
+            HostingError::EngineFailure("the family snapshot is unavailable".into())
+        })?;
+        let context = terrabase::families::FamilyReadContext::new(scope, snapshot);
+        let result = self
+            .engine
+            .families()
+            .read(context, operation)
+            .map_err(|_| HostingError::EngineFailure("the family read failed".into()))?;
+        let response = family_result_payload(result)?;
+        let bytes = family_codec::encode_response(&response)
+            .map_err(|error| HostingError::Invalid(error.to_string()))?;
+        Ok(crate::registry::FamilyReadResponse {
+            response_codec: family_codec::RESPONSE_CODEC.into(),
+            response: bytes,
+        })
     }
 
     fn family_write(

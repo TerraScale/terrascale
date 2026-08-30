@@ -20,7 +20,7 @@ use std::thread;
 
 use crate::backup::{
     BackupError, BackupKind, BackupPlan, BackupSkipReason, BackupStep, RestorePlan,
-    load_recovery_point, run_backup, verify_latest_chain,
+    load_recovery_point, run_backup, verify_latest_chain, verify_latest_chain_encrypted,
 };
 use crate::encryption::{
     ArtifactCipher, Compression, DatabaseKey, EncryptionContext, ProviderMode,
@@ -182,6 +182,12 @@ fn encrypted_backup_seals_members_and_manifest_and_round_trips() {
         let bytes = std::fs::read(point.join(member.name())).expect("member");
         assert!(!String::from_utf8_lossy(&bytes).contains("secret-value"));
     }
+    assert_eq!(
+        verify_latest_chain_encrypted(&destination, &test_backup_cipher())
+            .expect("verify encrypted chain")
+            .len(),
+        1
+    );
     RestorePlan::restore_latest_encrypted(&destination, &target, &test_backup_cipher())
         .expect("encrypted restore");
 }

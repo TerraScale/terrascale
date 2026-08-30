@@ -55,7 +55,7 @@ prefix, endpoint, intervals, request style, and KMS key id.
 Studio copies only credential-provider variables into the S3 client. It
 supports static credentials, `AWS_WEB_IDENTITY_TOKEN_FILE` with
 `AWS_ROLE_ARN`, ECS task credentials, EKS pod credentials, and the EC2 IMDSv2
-fallback. `AWS_ENDPOINT_URL_S3`, `AWS_SKIP_SIGNATURE`, `AWS_UNSIGNED_PAYLOAD`,
+provider. `AWS_ENDPOINT_URL_S3`, `AWS_SKIP_SIGNATURE`, `AWS_UNSIGNED_PAYLOAD`,
 proxy and certificate switches, metadata endpoint overrides, and environment
 encryption headers are ignored. Configure the S3 endpoint, HTTP opt-in, and
 KMS key through the `TERRABASE_BACKUP_*` settings that Studio validates and

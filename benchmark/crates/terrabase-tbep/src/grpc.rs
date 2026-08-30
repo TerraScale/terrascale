@@ -2609,6 +2609,11 @@ impl EngineService for Arc<TbepGrpcServer> {
             host.family_read(&tenant, &domain)
         })
         .await?;
+        if response.response.len() > self.config.max_message_bytes() {
+            return Err(response_size_error(
+                "the family response exceeds the configured message bound",
+            ));
+        }
         let response_payload = family_codec::decode_response(&response.response)
             .map_err(|error| conversion_error(&error.to_string()))?;
         family_codec::validate_response_family(
@@ -2653,6 +2658,11 @@ impl EngineService for Arc<TbepGrpcServer> {
             host.family_write(&tenant, &domain, &key)
         })
         .await?;
+        if response.response.len() > self.config.max_message_bytes() {
+            return Err(response_size_error(
+                "the family response exceeds the configured message bound",
+            ));
+        }
         let response_payload = family_codec::decode_response(&response.response)
             .map_err(|error| conversion_error(&error.to_string()))?;
         family_codec::validate_response_family(
