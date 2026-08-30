@@ -18,6 +18,8 @@ use std::time::Instant;
 use aws_lc_rs::{aead, digest, hkdf, rand};
 use zeroize::Zeroize;
 
+use crate::identity::ProjectUlid;
+
 mod local_file;
 mod oci_vault;
 mod provider;
@@ -521,7 +523,8 @@ impl ArtifactCipher {
         let scope = metadata.scope();
         if context.environment() != scope.environment()
             || context.tenant() != scope.tenant().to_text()
-            || context.project() != scope.project().map(ProjectUlid::to_text).as_deref()
+            || context.project()
+                != scope.project().map(crate::identity::ProjectUlid::to_text).as_deref()
             || context.database() != scope.database().to_text()
             || context.key_version() != metadata.version().to_text()
         {
