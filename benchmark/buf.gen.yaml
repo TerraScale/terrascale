@@ -1,0 +1,17 @@
+# Go stub generation for the TBEP gRPC contract (ADR 0028).
+#
+# Regenerate after editing the proto with:
+#
+#   PATH="$(go env GOPATH)/bin:$(go env GOBIN):$PATH" buf generate
+#
+# The committed stubs are drift-checked in CI by regenerating and
+# diffing. The Rust side needs no such step: its build.rs regenerates
+# through protox on every build.
+version: v2
+plugins:
+  - local: protoc-gen-go
+    out: go/tbep/gen
+    opt: paths=source_relative
+  - local: protoc-gen-go-grpc
+    out: go/tbep/gen
+    opt: paths=source_relative
