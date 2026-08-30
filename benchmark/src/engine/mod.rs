@@ -688,6 +688,9 @@ impl Engine {
     fn drive_commit_batches(&self) {
         const GROUP_HARVEST_WIDTH: usize = 8;
         const GROUP_HARVEST_WINDOW: std::time::Duration = std::time::Duration::from_micros(250);
+        /// The widest harvest window: how long a narrow group keeps
+        /// collecting before it commits anyway.
+        const GROUP_HARVEST_WINDOW_MAX: std::time::Duration = std::time::Duration::from_millis(2);
         /// How long a leader that deferred a flip sync lingers for the next
         /// wave: one sync window, so the idle tail costs at most one extra
         /// flush and a saturated run never pays a separate flip sync.
@@ -709,31 +712,43 @@ impl Engine {
                     let deadline = std::time::Instant::now() + GROUP_LINGER_WINDOW;
                     while std::time::Instant::now() < deadline {
                         std::thread::sleep(GROUP_HARVEST_WINDOW);
-                        if let Ok(mut mailbox) = self.commit_mailbox.lock()
-                            && !mailbox.queue.is_empty()
+                        if self
+                            .commit_mailbox
+                            .lock()
+                            .is_ok_and(|mailbox| !mailbox.queue.is_empty())
                         {
                             break;
                         }
                     }
-                    if self
-                        .commit_mailbox
-                        .lock()
-                        .is_ok_and(|mailbox| !mailbox.queue.is_empty())
-                    {
-                        continue;
-                    }
                 }
                 // No further batch can carry the deferred flips: make any
-                // deferred records durable before the leader steps down.
+                // deferred records durable, then step down atomically —
+                // the flag clear and the empty check share one lock hold,
+                // so a committer that queued while the flush ran is driven
+                // by this leader instead of waiting behind a cleared flag.
                 if let Ok(mut storage) = self.lock_storage() {
                     storage.port.flush_pending_flips();
                 }
-                return;
+                let Ok(mut mailbox) = self.commit_mailbox.lock() else {
+                    return;
+                };
+                if mailbox.queue.is_empty() {
+                    mailbox.leader_active = false;
+                    return;
+                }
+                continue;
             }
             if batch.len() < GROUP_HARVEST_WIDTH {
-                std::thread::sleep(GROUP_HARVEST_WINDOW);
-                if let Ok(mut mailbox) = self.commit_mailbox.lock() {
-                    batch.append(&mut mailbox.queue);
+                // Harvest in short slices until the group is wide or the
+                // window closes: concurrent committers arrive microseconds
+                // apart, and a leader that commits the first arrival alone
+                // re-pays the whole sync cost per writer.
+                let deadline = std::time::Instant::now() + GROUP_HARVEST_WINDOW_MAX;
+                while batch.len() < GROUP_HARVEST_WIDTH && std::time::Instant::now() < deadline {
+                    std::thread::sleep(GROUP_HARVEST_WINDOW);
+                    if let Ok(mut mailbox) = self.commit_mailbox.lock() {
+                        batch.append(&mut mailbox.queue);
+                    }
                 }
             }
             let intents: Vec<storage::CommitIntent> =
