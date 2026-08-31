@@ -21,7 +21,10 @@ export type NotificationId = Ulid;
 export type AuditEventId = Ulid;
 export type RestoreId = Ulid;
 
-const ulidPattern = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+// A canonical 128-bit ULID cannot start above 7. Accepting 8-Z would admit
+// values larger than 2^128-1 even though the remaining characters are valid
+// Crockford Base32.
+const ulidPattern = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 
 export function isUlid(value: string): value is Ulid {
   return ulidPattern.test(value);

@@ -1047,13 +1047,20 @@ export class DatabaseDocumentsClient {
     documentId: string,
     options?: Models.DatabaseDocumentReadOptions,
   ): Promise<TerraScaleResult<Models.DatabaseDocumentReadResponse<TDocument>>> {
-    return this.#http.request({
+    const result = this.#http.request<unknown>({
       method: "GET",
       path: databaseDocumentRoot(scope, documentId),
       routeName: "databaseDocuments.read",
       signal: options?.signal,
       consistency: "read",
     });
+    return result.then((response) =>
+      decodePublicResult(
+        response,
+        (value) => decodeDatabaseDocumentReadResponse<TDocument>(value, scope, documentId),
+        "The Database document read response is invalid.",
+      ),
+    );
   }
 
   create<TDocument extends Models.JsonValue = Models.JsonValue>(
@@ -1062,15 +1069,24 @@ export class DatabaseDocumentsClient {
     request: Models.DatabaseDocumentWriteRequest<TDocument>,
     options: Models.DatabaseDocumentMutationOptions,
   ): Promise<TerraScaleResult<Models.DatabaseDocumentWriteResponse>> {
-    return this.#http.request({
+    const path = databaseDocumentRoot(scope, documentId);
+    const idempotencyKey = databaseDocumentIdempotencyKey(options.idempotencyKey);
+    const result = this.#http.request<unknown>({
       method: "PUT",
-      path: databaseDocumentRoot(scope, documentId),
+      path,
       routeName: "databaseDocuments.create",
       body: request,
       signal: options.signal,
-      idempotencyKey: databaseDocumentIdempotencyKey(options.idempotencyKey),
+      idempotencyKey,
       consistency: "write",
     });
+    return result.then((response) =>
+      decodePublicResult(
+        response,
+        (value) => decodeDatabaseDocumentWriteResponse(value, scope, documentId),
+        "The Database document write response is invalid.",
+      ),
+    );
   }
 
   patch<TPatch extends Models.JsonObject = Models.JsonObject>(
@@ -1079,15 +1095,24 @@ export class DatabaseDocumentsClient {
     request: Models.DatabaseDocumentWriteRequest<TPatch>,
     options: Models.DatabaseDocumentMutationOptions,
   ): Promise<TerraScaleResult<Models.DatabaseDocumentWriteResponse>> {
-    return this.#http.request({
+    const path = databaseDocumentRoot(scope, documentId);
+    const idempotencyKey = databaseDocumentIdempotencyKey(options.idempotencyKey);
+    const result = this.#http.request<unknown>({
       method: "PATCH",
-      path: databaseDocumentRoot(scope, documentId),
+      path,
       routeName: "databaseDocuments.patch",
       body: request,
       signal: options.signal,
-      idempotencyKey: databaseDocumentIdempotencyKey(options.idempotencyKey),
+      idempotencyKey,
       consistency: "write",
     });
+    return result.then((response) =>
+      decodePublicResult(
+        response,
+        (value) => decodeDatabaseDocumentWriteResponse(value, scope, documentId),
+        "The Database document write response is invalid.",
+      ),
+    );
   }
 
   delete(
@@ -1095,15 +1120,24 @@ export class DatabaseDocumentsClient {
     documentId: string,
     options: Models.DatabaseDocumentDeleteOptions,
   ): Promise<TerraScaleResult<Models.DatabaseDocumentWriteResponse>> {
-    return this.#http.request({
+    const path = databaseDocumentRoot(scope, documentId);
+    const idempotencyKey = databaseDocumentIdempotencyKey(options.idempotencyKey);
+    const result = this.#http.request<unknown>({
       method: "DELETE",
-      path: databaseDocumentRoot(scope, documentId),
+      path,
       routeName: "databaseDocuments.delete",
       query: options.durability === undefined ? undefined : { durability: options.durability },
       signal: options.signal,
-      idempotencyKey: databaseDocumentIdempotencyKey(options.idempotencyKey),
+      idempotencyKey,
       consistency: "write",
     });
+    return result.then((response) =>
+      decodePublicResult(
+        response,
+        (value) => decodeDatabaseDocumentWriteResponse(value, scope, documentId),
+        "The Database document write response is invalid.",
+      ),
+    );
   }
 }
 
@@ -1517,6 +1551,14 @@ function decodeRegionResult<TValue>(
   result: TerraScaleResult<unknown>,
   decode: (value: unknown) => TValue,
 ): TerraScaleResult<TValue> {
+  return decodePublicResult(result, decode, "The Region response is invalid.");
+}
+
+function decodePublicResult<TValue>(
+  result: TerraScaleResult<unknown>,
+  decode: (value: unknown) => TValue,
+  fallbackMessage: string,
+): TerraScaleResult<TValue> {
   if (!result.ok) {
     return result;
   }
@@ -1524,13 +1566,14 @@ function decodeRegionResult<TValue>(
   try {
     return { ...result, value: decode(result.value) };
   } catch (error) {
-    return invalidRegionResponse(result, error);
+    return invalidPublicResponse(result, error, fallbackMessage);
   }
 }
 
-function invalidRegionResponse<TValue>(
+function invalidPublicResponse<TValue>(
   result: TerraScaleSuccess<unknown>,
   error: unknown,
+  fallbackMessage: string,
 ): TerraScaleResult<TValue> {
   const requestId = result.headers.get("x-request-id") ?? undefined;
   return {
@@ -1541,13 +1584,156 @@ function invalidRegionResponse<TValue>(
     error: {
       kind: "invalid-response",
       code: "invalid_response",
-      message: error instanceof Error ? error.message : "The Region response is invalid.",
+      message: error instanceof Error ? error.message : fallbackMessage,
       status: result.status,
       ...(requestId === undefined ? {} : { requestId }),
     },
     body: result.value,
     ...(result.routing === undefined ? {} : { routing: result.routing }),
   };
+}
+
+function decodeDatabaseDocumentReadResponse<TDocument extends Models.JsonValue>(
+  value: unknown,
+  scope: Models.DatabaseDocumentScope,
+  documentId: string,
+): Models.DatabaseDocumentReadResponse<TDocument> {
+  const response = requireExactRecord(
+    value,
+    "response",
+    ["database", "collection", "id", "version", "body", "position"],
+  );
+  requireDatabaseDocumentIdentity(response, scope, documentId);
+  return {
+    database: scope.database,
+    collection: scope.collection,
+    id: documentId,
+    version: requireSafeUnsignedInteger(response.version, "response.version"),
+    body: requireJsonValue(response.body, "response.body") as TDocument,
+    position:
+      response.position === null
+        ? null
+        : requireSafeUnsignedInteger(response.position, "response.position"),
+  };
+}
+
+function decodeDatabaseDocumentWriteResponse(
+  value: unknown,
+  scope: Models.DatabaseDocumentScope,
+  documentId: string,
+): Models.DatabaseDocumentWriteResponse {
+  const response = requireExactRecord(
+    value,
+    "response",
+    [
+      "database",
+      "collection",
+      "id",
+      "version",
+      "sequence",
+      "operationId",
+      "acknowledgement",
+      "backup",
+    ],
+  );
+  requireDatabaseDocumentIdentity(response, scope, documentId);
+  return {
+    database: scope.database,
+    collection: scope.collection,
+    id: documentId,
+    version: requireSafeUnsignedInteger(response.version, "response.version"),
+    sequence: requireSafeUnsignedInteger(response.sequence, "response.sequence"),
+    operationId: requireString(response.operationId, "response.operationId"),
+    acknowledgement: requireNullableEnum(
+      response.acknowledgement,
+      "response.acknowledgement",
+      ["regional", "global", "backup"],
+    ),
+    backup: requireNullableEnum(
+      response.backup,
+      "response.backup",
+      ["none", "full", "partial"],
+    ),
+  };
+}
+
+function requireDatabaseDocumentIdentity(
+  response: Record<string, unknown>,
+  scope: Models.DatabaseDocumentScope,
+  documentId: string,
+): void {
+  for (const [field, expected] of [
+    ["database", scope.database],
+    ["collection", scope.collection],
+    ["id", documentId],
+  ] as const) {
+    const actual = requireString(response[field], `response.${field}`);
+    if (actual !== expected) {
+      throw new TypeError(`response.${field} does not match the requested ${field}.`);
+    }
+  }
+}
+
+function requireExactRecord(
+  value: unknown,
+  path: string,
+  fields: readonly string[],
+): Record<string, unknown> {
+  const record = requireRecord(value, path);
+  const allowed = new Set(fields);
+  for (const field of Object.keys(record)) {
+    if (!allowed.has(field)) {
+      throw new TypeError(`${path} contains unknown field ${field}.`);
+    }
+  }
+  for (const field of fields) {
+    if (!Object.hasOwn(record, field)) {
+      throw new TypeError(`${path}.${field} is required.`);
+    }
+  }
+  return record;
+}
+
+function requireSafeUnsignedInteger(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new TypeError(`${path} must be an unsigned safe JSON integer.`);
+  }
+  return value;
+}
+
+function requireNullableEnum<TValue extends string>(
+  value: unknown,
+  path: string,
+  allowed: readonly TValue[],
+): TValue | null {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string" || !allowed.includes(value as TValue)) {
+    throw new TypeError(`${path} must be null or one of: ${allowed.join(", ")}.`);
+  }
+  return value as TValue;
+}
+
+function requireJsonValue(value: unknown, path: string): Models.JsonValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new TypeError(`${path} must contain only finite JSON numbers.`);
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => requireJsonValue(entry, `${path}[${index}]`));
+    return value as readonly Models.JsonValue[];
+  }
+  const object = requireRecord(value, path);
+  for (const [key, entry] of Object.entries(object)) {
+    requireJsonValue(entry, `${path}.${key}`);
+  }
+  return object as Models.JsonObject;
 }
 
 function decodeRegionsResponse(value: unknown): Models.RegionsResponse {

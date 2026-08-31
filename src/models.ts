@@ -672,8 +672,10 @@ export type DatabaseDocumentReadResponse<
   readonly database: string;
   readonly collection: string;
   readonly id: string;
+  /** A gateway JSON integer. The client rejects values outside JavaScript's safe range. */
   readonly version: number;
   readonly body: TDocument;
+  /** A gateway JSON integer. The client rejects values outside JavaScript's safe range. */
   readonly position: number | null;
 };
 
@@ -682,7 +684,9 @@ export type DatabaseDocumentWriteResponse = {
   readonly database: string;
   readonly collection: string;
   readonly id: string;
+  /** A gateway JSON integer. The client rejects values outside JavaScript's safe range. */
   readonly version: number;
+  /** A gateway JSON integer. The client rejects values outside JavaScript's safe range. */
   readonly sequence: number;
   readonly operationId: string;
   readonly acknowledgement: "regional" | "global" | "backup" | null;

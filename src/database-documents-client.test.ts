@@ -16,16 +16,16 @@ describe("DatabaseDocumentsClient", () => {
         database: scope.database,
         collection: scope.collection,
         id: documentId,
-        version: 1,
+        version: Number.MAX_SAFE_INTEGER,
         body: { name: "Ada" },
-        position: null,
+        position: Number.MAX_SAFE_INTEGER,
       },
       ...Array.from({ length: 3 }, (_, index) => ({
         database: scope.database,
         collection: scope.collection,
         id: documentId,
         version: index + 2,
-        sequence: index + 10,
+        sequence: index === 0 ? Number.MAX_SAFE_INTEGER : index + 10,
         operationId: `operation-${index + 1}`,
         acknowledgement: index === 0 ? "global" : "regional",
         backup: "full",
@@ -61,7 +61,10 @@ describe("DatabaseDocumentsClient", () => {
     });
 
     assert.equal(read.ok && read.value.body.name, "Ada");
+    assert.equal(read.ok && read.value.version, Number.MAX_SAFE_INTEGER);
+    assert.equal(read.ok && read.value.position, Number.MAX_SAFE_INTEGER);
     assert.equal(created.ok && created.value.acknowledgement, "global");
+    assert.equal(created.ok && created.value.sequence, Number.MAX_SAFE_INTEGER);
     assert.equal(patched.ok && patched.value.version, 3);
     assert.equal(deleted.ok && deleted.value.operationId, "operation-3");
 
@@ -178,6 +181,61 @@ describe("DatabaseDocumentsClient", () => {
       message: "Expected a string.",
     }]);
     assert.deepEqual(result.error.details, responseBody);
+  });
+
+  test("rejects unsafe or malformed successful metadata instead of losing identity precision", async () => {
+    const validRead = {
+      database: scope.database,
+      collection: scope.collection,
+      id: documentId,
+      version: 1,
+      body: { name: "Ada" },
+      position: null,
+    };
+    const validWrite = {
+      database: scope.database,
+      collection: scope.collection,
+      id: documentId,
+      version: 1,
+      sequence: 1,
+      operationId: "operation-1",
+      acknowledgement: "regional",
+      backup: "none",
+    };
+    const cases = [
+      { operation: "read", body: { ...validRead, version: Number.MAX_SAFE_INTEGER + 1 } },
+      { operation: "read", body: { ...validRead, position: -1 } },
+      { operation: "read", body: { ...validRead, database: "other" } },
+      { operation: "read", body: { ...validRead, unexpected: true } },
+      { operation: "create", body: { ...validWrite, sequence: Number.MAX_SAFE_INTEGER + 1 } },
+      { operation: "create", body: { ...validWrite, version: 1.5 } },
+      { operation: "create", body: { ...validWrite, acknowledgement: "eventual" } },
+      { operation: "create", body: { ...validWrite, backup: "unknown" } },
+    ] as const;
+
+    for (const candidate of cases) {
+      const client = createTerraScaleClient({
+        apiBaseUrl: "https://api.terrascale.test",
+        fetch: async () => Response.json(candidate.body, { headers: { "x-request-id": "bad-metadata" } }),
+      });
+      const result = candidate.operation === "read"
+        ? await client.databaseDocuments.read(scope, documentId)
+        : await client.databaseDocuments.create(
+          scope,
+          documentId,
+          { body: { name: "Ada" } },
+          { idempotencyKey },
+        );
+
+      assert.equal(result.ok, false, JSON.stringify(candidate.body));
+      if (!result.ok) {
+        assert.equal(result.status, 200);
+        assert.equal(result.error.kind, "invalid-response");
+        assert.equal(result.error.code, "invalid_response");
+        assert.equal(result.error.requestId, "bad-metadata");
+        assert.deepEqual(result.body, candidate.body);
+      }
+    }
   });
 
   test("rejects invalid path identifiers and noncanonical mutation keys before fetch", () => {

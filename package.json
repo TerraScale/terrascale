@@ -53,7 +53,7 @@
     "check:forbidden-surface": "node scripts/check-forbidden-surface.mjs",
     "check:route-manifest": "node scripts/generate-client-route-manifest.mjs --check",
     "generate:route-manifest": "npm run build && node scripts/generate-client-route-manifest.mjs",
-    "generate:openapi-contract-descriptor": "npm run build && node scripts/generate-openapi-contract-descriptor.mjs",
+    "generate:openapi-contract-descriptor": "npm run build && node scripts/generate-openapi-contract-descriptor.mjs && node scripts/generate-database-openapi-contract-descriptor.mjs",
     "local": "node dist/local/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run test:unit && npm run test:msgpack && npm run test:integration",

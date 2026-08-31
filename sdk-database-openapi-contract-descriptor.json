@@ -1,0 +1,38 @@
+{
+  "descriptorVersion": 2,
+  "routeCount": 4,
+  "routes": [
+    {
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/databases/{database}/collections/{collection}/documents/{documentId}",
+      "routeName": "databaseDocuments.delete",
+      "operationId": "documents.delete",
+      "contractSha256": "f8f34f6fe888e61fc4ca61d094a7c710a20357cf546aeb4020b6df15ff9345c9"
+    },
+    {
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{database}/collections/{collection}/documents/{documentId}",
+      "routeName": "databaseDocuments.read",
+      "operationId": "documents.read",
+      "contractSha256": "72a9f30ea2512ab66448cfe40cd1701a9f0ca7a9274c44eab51d3db42a447227"
+    },
+    {
+      "method": "PATCH",
+      "pathTemplate": "/api/v1/databases/{database}/collections/{collection}/documents/{documentId}",
+      "routeName": "databaseDocuments.patch",
+      "operationId": "documents.patch",
+      "contractSha256": "6fd65679fd18d87a0bd4649d06d961486caefc90bde1f5418ce6d1ba12686b18"
+    },
+    {
+      "method": "PUT",
+      "pathTemplate": "/api/v1/databases/{database}/collections/{collection}/documents/{documentId}",
+      "routeName": "databaseDocuments.create",
+      "operationId": "documents.create",
+      "contractSha256": "34806bff0c354ca79d96cf6d9c57ebee1f542c2920fff92ab6aa718865d5c364"
+    }
+  ],
+  "sources": {
+    "openApiSha256": "ef986d92df6a10792941f87525378ebd63aea5314c684f659f37d4345a01595b",
+    "routeManifestSha256": "6bbd2ee9fb22c52170841745aa9ad3b714ad928f7a9854f5b4f696b6c7a6035d"
+  }
+}

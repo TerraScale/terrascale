@@ -2,9 +2,9 @@
 
 `@terrascale/sdk` is the public TypeScript client for TerraScale.
 
-The workspace `../GOAL.md` defines the target architecture. This repository's
-current status and production gaps are tracked in [GOAL.md](GOAL.md). An
-accepted target is not a released SDK capability.
+The workspace `../GOAL.md` is the sole architecture and delivery authority.
+This repository's [GOAL.md](GOAL.md) points to it and lists the local
+verification commands. An accepted target is not a released SDK capability.
 
 ## Service boundary
 
@@ -34,7 +34,7 @@ The Better Auth adapter accepts a typed Database API operation port and maps
 Better Auth's adapter contract to named unique-insert, compare-and-swap,
 one-time-consume, pagination, transaction, and migration operations. It is
 server-only and is excluded from browser bundles. The generated Database API
-implementation, pinned Better Auth compatibility and license evidence, and
+implementation, pinned Better Auth compatibility and license checks, and
 adapter conformance are separate qualification gates.
 
 There is no Dashboard-named or generic request entrypoint.
@@ -69,6 +69,15 @@ Database, collection, and document identifiers must contain 1 to 64 UTF-8
 bytes and no control characters. Each mutation requires a canonical uppercase
 ULID, reused unchanged across retries. Create and patch put durability in the
 JSON body. Delete sends it as the published query parameter.
+The current gateway has a configurable request-body ceiling. It does not yet
+publish the launch 1 MiB document limit or an attachment route, so this SDK
+does not promise a large-value upload operation.
+
+The current gateway publishes document `version`, journal `sequence`, and
+nullable journal `position` as JSON integers. The SDK accepts only nonnegative
+safe integers and returns `invalid_response` outside that range instead of
+silently corrupting an identity. Full unsigned 64-bit support requires a
+coordinated gateway and SDK change to decimal strings.
 
 Database API failures expose the standard `TERRASCALE-####` code, category,
 detail, suggested action, documentation URL, trace ID, and field errors through
@@ -82,6 +91,13 @@ snapshots and result operations to bounded result views. The checked-in JSON
 manifest owns every tag, field position, direction, and bound. The generated
 TypeScript module consumes that file. INT-3's Go codec must check the same
 manifest instead of copying a second frame definition.
+
+MessagePack encodes the envelope, subscription identities, revisions,
+checkpoints, and result-operation structure. Document bodies inside those
+frames remain raw TerraScale-canonical JSON bytes. The gateway does not
+transcode them into MessagePack objects. The production client must decode the
+envelope, then use one native `JSON.parse` for each document body. It must not
+double-decode or parse a MessagePack-encoded document.
 
 Protocol 2.1 is the first publishable wire contract. The pre-launch 2.0
 artifacts reassigned tags during development and are withdrawn. The decoder
@@ -106,6 +122,7 @@ SDK-2 supplies the production WebSocket transport and HTTP + MessagePack
 fallback. Until those transports pass browser and live gateway tests, this
 state machine alone is not a production transport. See
 [ADR 0025](docs/adr/0025-public-messagepack-manifest.md).
+There is no JSON WebSocket variant.
 
 ## Better Auth adapter target
 
@@ -150,9 +167,10 @@ routes that global host to the nearest healthy Region. Region-pinned access
 uses `https://gru.api.terrascale.tech`, `https://sfo.api.terrascale.tech`, or
 `https://fra.api.terrascale.tech`.
 
-A database selects one through twenty active Regions, initially GRU, SFO, and
+At launch, a database selects one to three active Regions from GRU, SFO, and
 FRA. A preferred Region is a failover-capable hint. Strict affinity fails
-rather than silently serving from another Region.
+rather than silently serving from another Region. Support for Regions beyond
+those three is post-launch work.
 
 Automatic session consistency retains the latest opaque causal token inside
 one client instance and sends it on later eligible reads. A caller can request
@@ -185,17 +203,17 @@ await local.close();
 Importing `local` is the opt-in. Root, `admin`, and `better-auth`
 entrypoints never enable SQLite automatically.
 
-The local runtime does not prove TerraBase replication, RF=2 durability,
+The local runtime does not qualify TerraBase replication, RF=2 durability,
 failover, reactive conformance, authorization, usage, billing, external
 providers, or performance. Unsupported operations fail explicitly.
 
 ## Public contract discipline
 
 The SDK implements only named operations published by the owning service.
-Dashboard-owned contracts and Database API contracts may share one edge origin,
-but their runtime ownership and OpenAPI documents remain distinct.
-The public API `/api/v1` remains versioned; releases qualify the exact packed tarball
-so consumers receive the same server and browser surface that passed the repository gates.
+Dashboard-owned contracts and Database API contracts share one edge origin,
+but their runtime ownership and OpenAPI documents remain distinct. The public API `/api/v1`
+remains versioned. Releases qualify the exact packed tarball so consumers receive the same
+server and browser API that passed the repository gates.
 
 Each operation is gated against:
 
@@ -214,8 +232,8 @@ Unbacked operations remain omitted. Do not invent types or use a generic
 request to hide a contract gap.
 
 The repository decision records are under [`docs/adr/`](docs/adr/). Start with
-[GOAL.md](GOAL.md) for the current implementation, cross-repository gaps,
-parallel work waves, and production exit gates.
+the in-repository [`GOAL.md`](GOAL.md), which points workspace contributors to
+the cross-repository authority and production exit gates.
 
 ## Development
 
@@ -252,14 +270,16 @@ node --test test/msgpack-corpus-roundtrip.test.mjs
 
 Integration tests target the fixed DevHost public routes. When the required
 base URLs or credentials are absent, they skip instead of using mocked HTTP.
-Database API live tests need fixed DevHost routes and credentials. The default
-OpenAPI drift command checks both the owner-published Dashboard snapshot and
-the checked-out `ts-internals` Database API document. Auth-storage routes stay
-listed as explicit SDK-3/INT-4 deferrals until their complete durable contract
-lands. A local emulator cannot substitute for that evidence.
+Database API live tests also need fixed DevHost routes and credentials. The
+default OpenAPI gate checks the owner-published Dashboard snapshot and the
+checked-out `ts-internals` Database API document, including a complete
+contract fingerprint for each covered Database operation. Auth-storage routes stay
+listed as explicit SDK-3/INT-4 deferrals until their durable contract lands. A
+local emulator cannot qualify a live contract.
 
 ## Releases
 
-The Orchestrator-owned `develop` to `main` promotion path builds and
-publishes the immutable package only after contract, conformance, security, and
-compatibility gates pass. See `docs/release.md`.
+The protected `develop` to `main` promotion builds and publishes one immutable
+package only after contract, conformance, security, and compatibility gates
+pass. The current automation is not authorized to publish until it uses the
+current delivery toolchain described in `docs/release.md`.

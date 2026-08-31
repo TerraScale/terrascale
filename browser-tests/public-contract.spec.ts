@@ -71,7 +71,7 @@ test("the browser entrypoint exposes the published Database API document operati
             database: "customer database",
             collection: "users/v1",
             id: "user #1",
-            version: 1,
+            version: Number.MAX_SAFE_INTEGER,
             body: { name: "Ada" },
             position: null,
           }
@@ -80,7 +80,7 @@ test("the browser entrypoint exposes the published Database API document operati
             collection: "users/v1",
             id: "user #1",
             version: 2,
-            sequence: 2,
+            sequence: Number.MAX_SAFE_INTEGER,
             operationId: "operation-1",
             acknowledgement: "global",
             backup: "full",
@@ -91,7 +91,7 @@ test("the browser entrypoint exposes the published Database API document operati
     const key = sdk.toUlid("01ARZ3NDEKTSV4RRFFQ69G5FB0");
 
     const read = await client.databaseDocuments.read(scope, "user #1");
-    await client.databaseDocuments.create(
+    const created = await client.databaseDocuments.create(
       scope,
       "user #1",
       { body: { name: "Ada" }, durability: "global" },
@@ -108,10 +108,17 @@ test("the browser entrypoint exposes the published Database API document operati
       durability: "global",
     });
 
-    return { requests, readBody: read.ok ? read.value.body : null };
+    return {
+      requests,
+      readBody: read.ok ? read.value.body : null,
+      readVersion: read.ok ? read.value.version : null,
+      createSequence: created.ok ? created.value.sequence : null,
+    };
   });
 
   expect(observation.readBody).toEqual({ name: "Ada" });
+  expect(observation.readVersion).toBe(Number.MAX_SAFE_INTEGER);
+  expect(observation.createSequence).toBe(Number.MAX_SAFE_INTEGER);
   expect(observation.requests.map(request => request.method)).toEqual([
     "GET",
     "PUT",
