@@ -7,7 +7,7 @@ Date: 2026-08-29
 
 ## Decision
 
-The SDK targets the workspace public ceilings: 8 MiB documents, 16 MiB HTTP
+The SDK targets the workspace public ceilings: 1 MiB documents, 16 MiB HTTP
 requests or batches, 1,000 mutations per batch, nesting depth 64, 8 MiB per
 MessagePack message, 4 MiB chunks, query pages of 100 by default and 1,000
 maximum, query time of 5 seconds by default and 30 seconds maximum,

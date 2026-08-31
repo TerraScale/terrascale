@@ -2,9 +2,9 @@
   "manifestVersion": 1,
   "protocol": "terrascale.sync.v2.msgpack",
   "protocolMajor": 2,
-  "protocolMinor": 0,
+  "protocolMinor": 1,
   "supportedFeatures": 0,
-  "doc": "The language-neutral frame contract for the public terrascale.sync.v2 reactive protocol. One binary WebSocket message is one complete MessagePack envelope. Frames carry authorized query-result views and opaque checkpoints only.",
+  "doc": "The language-neutral frame contract for the public terrascale.sync.v2 reactive protocol. Version 2.1 is the first publishable wire contract; the withdrawn pre-launch 2.0 tag assignments are incompatible and fail closed. One binary WebSocket message is one complete MessagePack envelope. Frames carry authorized query-result views and opaque checkpoints only.",
   "envelope": {
     "doc": "Every frame is an indexed array [major, minor, features, tag, correlation, causation, body]. Unknown versions, features, tags, and field shapes fail closed.",
     "elements": [

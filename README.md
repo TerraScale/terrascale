@@ -48,6 +48,11 @@ manifest owns every tag, field position, direction, and bound. The generated
 TypeScript module consumes that file. INT-3's Go codec must check the same
 manifest instead of copying a second frame definition.
 
+Protocol 2.1 is the first publishable wire contract. The pre-launch 2.0
+artifacts reassigned tags during development and are withdrawn. The decoder
+rejects 2.0 before reading a message body, and 2.0 decoders reject 2.1. Tags
+in 2.1 are stable and future compatible changes must append new tags.
+
 The current client:
 
 - builds subscribe, unsubscribe, heartbeat, and checkpoint frames for bounded
@@ -103,9 +108,10 @@ automatic retry candidates.
 
 ## Region and session behavior
 
-The default public API origin is `https://api.terrascale.tech` in the current
-SDK. The final single-origin edge routing decision is awaiting owner
-confirmation.
+The default public API origin is `https://api.terrascale.tech`. Cloudflare
+routes that global host to the nearest healthy Region. Region-pinned access
+uses `https://gru.api.terrascale.tech`, `https://sfo.api.terrascale.tech`, or
+`https://fra.api.terrascale.tech`.
 
 A database selects one through twenty active Regions, initially GRU, SFO, and
 FRA. A preferred Region is a failover-capable hint. Strict affinity fails

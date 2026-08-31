@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { describe, test } from "node:test";
 
 import { TerrascaleMsgpackError } from "../dist/msgpack/runtime/bounded-msgpack.js";
@@ -82,6 +83,83 @@ const corpus = [
   { kind: "backpressure", mode: "resume" },
 ];
 
+const goldenMessages = [
+  { kind: "subscribe", subscription: "s", query: "q", parameters: Uint8Array.from([1, 2]), checkpoint: null },
+  { kind: "unsubscribe", subscription: "s" },
+  {
+    kind: "snapshot",
+    subscription: "s",
+    snapshot: {
+      view_generation: 1n,
+      authorization_generation: 2n,
+      revision: 3n,
+      items: [{ identity: "d", fields: [field("x", "y")] }],
+      digest: "a".repeat(64),
+      checkpoint: Uint8Array.from([0x63]),
+    },
+  },
+  {
+    kind: "delta",
+    subscription: "s",
+    view_generation: 1n,
+    from_revision: 3n,
+    to_revision: 4n,
+    operations: [
+      { kind: "insert", identity: "e", position: 1, fields: [field("x", "i")] },
+      { kind: "update", identity: "d", fields: [field("x", "u")] },
+      {
+        kind: "patch",
+        identity: "d",
+        changes: [
+          { path: "x", value: Uint8Array.from([0x70]) },
+          { path: "z", value: null },
+        ],
+      },
+      { kind: "remove", identity: "e" },
+      { kind: "move", identity: "d", position: 0 },
+    ],
+    digest: "b".repeat(64),
+    checkpoint: Uint8Array.from([0x64]),
+  },
+  {
+    kind: "reset",
+    subscription: "s",
+    reason: "generation_changed",
+    snapshot: {
+      view_generation: 2n,
+      authorization_generation: 2n,
+      revision: 5n,
+      items: [{ identity: "d", fields: [field("x", "y")] }],
+      digest: "a".repeat(64),
+      checkpoint: Uint8Array.from([0x65]),
+    },
+  },
+  { kind: "heartbeat" },
+  { kind: "checkpoint_ack", subscription: "s", checkpoint: Uint8Array.from([0x66]) },
+  {
+    kind: "authorization_changed",
+    subscription: "s",
+    authorization_generation: 3n,
+    removed: ["d"],
+    snapshot: {
+      view_generation: 2n,
+      authorization_generation: 3n,
+      revision: 5n,
+      items: [],
+      digest: "a".repeat(64),
+      checkpoint: Uint8Array.from([0x67]),
+    },
+  },
+  { kind: "region_route_change", region: "FRA" },
+  { kind: "error", code: "overloaded", detail: "retry" },
+  { kind: "backpressure", mode: "pause" },
+];
+
+const goldenFixture = JSON.parse(await readFile(
+  new URL("./fixtures/terrascale.sync.v2.msgpack/message-vectors.json", import.meta.url),
+  "utf8",
+));
+
 function roundTrip(message, index) {
   const envelope = {
     features: 0,
@@ -95,6 +173,33 @@ function roundTrip(message, index) {
 }
 
 describe("msgpack corpus round-trip", () => {
+  test("committed independent bytes pin every current message", () => {
+    assert.equal(goldenFixture.protocol, "terrascale.sync.v2.msgpack");
+    assert.equal(goldenFixture.version, "2.1");
+    assert.deepEqual(
+      goldenFixture.vectors.map(vector => vector.name).sort(),
+      Object.keys(terrascaleSyncV2MsgpackMessageTags).sort(),
+    );
+    assert.equal(goldenFixture.vectors.length, goldenMessages.length);
+
+    goldenFixture.vectors.forEach((vector, index) => {
+      const message = goldenMessages[index];
+      assert.equal(vector.name, message.kind);
+      const envelope = {
+        features: 0,
+        correlation: BigInt(vector.correlation),
+        causation: BigInt(vector.causation),
+        message,
+      };
+      const wire = Uint8Array.from(Buffer.from(vector.hex, "hex"));
+      assert.deepStrictEqual(decodeTerrascaleSyncV2MsgpackEnvelope(wire), envelope);
+      assert.equal(
+        Buffer.from(encodeTerrascaleSyncV2MsgpackEnvelope(envelope)).toString("hex"),
+        vector.hex,
+      );
+    });
+  });
+
   test("the current semantic corpus covers and round-trips every manifest message", () => {
     const covered = new Set();
     let bytes = 0;

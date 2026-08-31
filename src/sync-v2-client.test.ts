@@ -10,6 +10,7 @@ import {
 import {
   TerraScaleSyncV2Client,
   TerraScaleSyncV2ClientError,
+  SyncV2ViewError,
   syncV2ResultDigest,
   type SyncV2ResultItem,
 } from "./index.js";
@@ -106,6 +107,74 @@ describe("current reactive client", () => {
     client.receive(serverFrame({ kind: "backpressure", mode: "pause" }));
     assert.deepEqual(opened.subscription.view.getItems().map(entry => entry.identity), ["b"]);
     assert.deepEqual(client.getSnapshot(), { online: false, paused: true, region: "FRA", subscriptions: 1 });
+  });
+
+  test("rejects stale and replayed snapshots and resets across every monotonic counter", () => {
+    const client = new TerraScaleSyncV2Client();
+    client.openSubscription({ subscription: "monotonic", query: "from docs", parameters: new Uint8Array() });
+    const installed = wireSnapshot([item("current", "visible")], 11n, 5n, 7n);
+    client.receive(serverFrame({ kind: "snapshot", subscription: "monotonic", snapshot: installed }));
+
+    const rejected = [
+      { kind: "snapshot" as const, subscription: "monotonic", snapshot: wireSnapshot([], 11n, 4n, 7n) },
+      { kind: "snapshot" as const, subscription: "monotonic", snapshot: wireSnapshot([], 11n, 5n, 6n) },
+      { kind: "snapshot" as const, subscription: "monotonic", snapshot: wireSnapshot([], 10n, 5n, 7n) },
+      { kind: "snapshot" as const, subscription: "monotonic", snapshot: installed },
+      { kind: "reset" as const, subscription: "monotonic", reason: "generation_changed" as const, snapshot: wireSnapshot([], 11n, 6n, 6n) },
+      { kind: "reset" as const, subscription: "monotonic", reason: "generation_changed" as const, snapshot: installed },
+    ];
+    for (const message of rejected) {
+      assert.throws(
+        () => client.receive(serverFrame(message)),
+        (error: unknown) => error instanceof SyncV2ViewError && error.code === "reset-required",
+      );
+    }
+
+    client.receive(serverFrame({
+      kind: "reset",
+      subscription: "monotonic",
+      reason: "generation_changed",
+      snapshot: wireSnapshot([item("next", "visible")], 12n, 6n, 8n),
+    }));
+  });
+
+  test("validates a complete subscribe before publishing client state", () => {
+    const client = new TerraScaleSyncV2Client();
+    assert.throws(() => client.openSubscription({
+      subscription: "bounded",
+      query: "from docs",
+      parameters: new Uint8Array(1_048_577),
+    }));
+    assert.equal(client.getSnapshot().subscriptions, 0);
+    client.openSubscription({
+      subscription: "bounded",
+      query: "from docs",
+      parameters: new Uint8Array(),
+    });
+    assert.equal(client.getSnapshot().subscriptions, 1);
+  });
+
+  test("rejects authorization replacements that restore removed identities atomically", () => {
+    const client = new TerraScaleSyncV2Client();
+    const opened = client.openSubscription({ subscription: "authorized", query: "from docs", parameters: new Uint8Array() });
+    client.receive(serverFrame({
+      kind: "snapshot",
+      subscription: "authorized",
+      snapshot: wireSnapshot([item("secret", "visible")], 4n, 3n, 5n),
+    }));
+    assert.throws(
+      () => client.receive(serverFrame({
+        kind: "authorization_changed",
+        subscription: "authorized",
+        authorization_generation: 6n,
+        removed: ["secret"],
+        snapshot: wireSnapshot([item("secret", "restored")], 5n, 4n, 6n),
+      })),
+      (error: unknown) => error instanceof SyncV2ViewError && error.code === "reset-required",
+    );
+    assert.deepEqual(opened.subscription.view.getItems().map(entry => entry.identity), ["secret"]);
+    assert.equal(opened.subscription.view.getRevision(), 4n);
+    assert.equal(opened.subscription.view.getAuthorizationGeneration(), 5n);
   });
 
   test("rejects wrong-direction, unknown-subscription, and remote error frames", () => {

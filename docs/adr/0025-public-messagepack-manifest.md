@@ -22,6 +22,13 @@ TypeScript types, validators, encoder, and decoder. Generated files are never
 edited by hand. INT-3 must make the Database API's Go codec check the same JSON
 manifest.
 
+Version 2.1 is the first publishable wire contract. The pre-launch 2.0 files
+were never released through npm or served by a live transport, and their tag
+assignments are withdrawn. Both sides fail closed across this boundary because
+the envelope decoder requires an exact major and minor version before it reads
+the body. The 2.1 tag assignments are stable; compatible additions append new
+tags instead of reassigning an existing tag or direction.
+
 The decoder scans one complete MessagePack value before constructing a public
 value. It rejects maps, extensions, float32, invalid UTF-8, unsafe integers,
 unknown versions, features, tags, enum values, union variants, trailing bytes,
@@ -39,5 +46,6 @@ request and response shapes, and retry semantics.
 Changing any frame requires changing the manifest and regenerating the
 TypeScript module. The drift check rejects manual generated-file edits. The
 semantic corpus round-trips every message kind, and hostile byte tests gate the
-decoder. A second handwritten frame codec or compatibility client is not
-allowed.
+decoder. Committed 2.1 golden bytes independently pin every message kind and
+hostile boundary for the later Go implementation. A second handwritten frame
+codec or compatibility client is not allowed.

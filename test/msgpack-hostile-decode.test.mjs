@@ -15,6 +15,7 @@
 //   npm run build && node --test test/msgpack-hostile-decode.test.mjs
 
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { describe, test } from "node:test";
 
 import { TerrascaleMsgpackError } from "../dist/msgpack/runtime/bounded-msgpack.js";
@@ -25,6 +26,10 @@ import {
 } from "../dist/msgpack/generated/terrascale-sync-v2-msgpack.js";
 
 const encoder = new TextEncoder();
+const goldenHostileFixture = JSON.parse(await readFile(
+  new URL("./fixtures/terrascale.sync.v2.msgpack/hostile-vectors.json", import.meta.url),
+  "utf8",
+));
 
 const bytes = (...parts) => {
   // Assembles raw MessagePack bytes without spreading large parts (the
@@ -116,7 +121,7 @@ const bin32Header = (length) => [
 /** A hand-built heartbeat envelope: [major, minor, features, tag, corr, caus, []]. */
 const heartbeatEnvelope = (overrides = {}) => {
   const major = overrides.major ?? [0x02];
-  const minor = overrides.minor ?? [0x00];
+  const minor = overrides.minor ?? [0x01];
   const features = overrides.features ?? [0x00];
   const tag = overrides.tag ?? [0x06];
   const correlation = overrides.correlation ?? u64(1n);
@@ -138,6 +143,42 @@ const expectRejection = (code, wire, note) => {
 };
 
 describe("msgpack hostile decode", () => {
+  test("committed independent vectors pin every typed hostile boundary", () => {
+    const expectedCodes = [
+      "limit_message",
+      "limit_string",
+      "limit_binary",
+      "limit_array",
+      "map_forbidden",
+      "extension_forbidden",
+      "float32_forbidden",
+      "depth_exceeded",
+      "truncated",
+      "trailing_bytes",
+      "invalid_type",
+      "invalid_shape",
+      "invalid_utf8",
+      "unsafe_integer",
+      "unsupported_version",
+      "unknown_feature",
+      "unknown_message_tag",
+      "unknown_enum",
+      "unknown_variant",
+    ];
+    assert.equal(goldenHostileFixture.protocol, "terrascale.sync.v2.msgpack");
+    assert.equal(goldenHostileFixture.version, "2.1");
+    assert.deepEqual(
+      goldenHostileFixture.vectors.map(vector => vector.code).sort(),
+      [...expectedCodes].sort(),
+    );
+    for (const vector of goldenHostileFixture.vectors) {
+      const wire = vector.hex === undefined
+        ? new Uint8Array(vector.repeat.count).fill(vector.repeat.byte)
+        : Uint8Array.from(Buffer.from(vector.hex, "hex"));
+      expectRejection(vector.code, wire, `golden vector: ${vector.name}`);
+    }
+  });
+
   test("a hand-built canonical heartbeat decodes (positive control)", () => {
     const decoded = decodeTerrascaleSyncV2MsgpackEnvelope(heartbeatEnvelope());
     assert.equal(decoded.message.kind, "heartbeat");
@@ -152,7 +193,7 @@ describe("msgpack hostile decode", () => {
     const decoded = decodeTerrascaleSyncV2MsgpackEnvelope(
       heartbeatEnvelope({
         major: [0xcd, 0x00, 0x02],
-        minor: [0xcc, 0x00],
+        minor: [0xcc, 0x01],
         features: [0xce, 0x00, 0x00, 0x00, 0x00],
         tag: [0xcd, 0x00, 0x06],
         correlation: [0xcc, 0x2a],
@@ -327,7 +368,8 @@ describe("msgpack hostile decode", () => {
     // 0xff is the negative fixint -1: not a u32 at all, so it fails as an
     // unsafe integer — still fail-closed before any body field is read.
     expectRejection("unsafe_integer", heartbeatEnvelope({ major: [0xff] }), "major -1 (0xff)");
-    expectRejection("unsupported_version", heartbeatEnvelope({ minor: [0x01] }), "minor 1");
+    expectRejection("unsupported_version", heartbeatEnvelope({ minor: [0x00] }), "withdrawn pre-launch minor 0");
+    expectRejection("unsupported_version", heartbeatEnvelope({ minor: [0x02] }), "future minor 2");
     expectRejection("unsafe_integer", heartbeatEnvelope({ major: f64(3) }), "skewed major as a float");
   });
 

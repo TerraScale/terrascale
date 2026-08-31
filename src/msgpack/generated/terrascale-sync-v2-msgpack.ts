@@ -6,7 +6,7 @@
 // checked-in versioned manifest; this TypeScript half provides codecs,
 // exact-shape validators, and public types for @terrascale/sdk).
 //
-// manifest sha256:   88ce1dc3fd972bdb661cc3fb518dd73ee9212055a8d8ecb65d7a8999c0a43e1f
+// manifest sha256:   ae9d107485b38dbb20c5ab75bae083b7a83a4997ec58836fad8278118b1b5f2c
 // generator sha256:  66d0ac80bd46901fb1c78f3338dd5cff60d4288a744ec63a1944a6356430b077
 //
 // Regenerate: node scripts/generate-msgpack-protocol.mjs
@@ -54,13 +54,13 @@ export const terrascaleSyncV2MsgpackProtocol = "terrascale.sync.v2.msgpack" as c
 export const terrascaleSyncV2MsgpackManifestVersion = 1 as const;
 
 /** The SHA-256 of the manifest file this file was generated from. */
-export const terrascaleSyncV2MsgpackManifestSha256 = "88ce1dc3fd972bdb661cc3fb518dd73ee9212055a8d8ecb65d7a8999c0a43e1f" as const;
+export const terrascaleSyncV2MsgpackManifestSha256 = "ae9d107485b38dbb20c5ab75bae083b7a83a4997ec58836fad8278118b1b5f2c" as const;
 
 /** The protocol major this build speaks; anything else fails closed. */
 export const terrascaleSyncV2MsgpackMajorVersion = 2 as const;
 
 /** The protocol minor this build speaks; anything else fails closed. */
-export const terrascaleSyncV2MsgpackMinorVersion = 0 as const;
+export const terrascaleSyncV2MsgpackMinorVersion = 1 as const;
 
 /** The required feature bits this build understands; unknown bits fail closed. */
 export const terrascaleSyncV2MsgpackSupportedFeatures = 0 as const;
@@ -1283,7 +1283,7 @@ export function decodeTerrascaleSyncV2MsgpackEnvelope(bytes: Uint8Array): Terras
   }
   const minor = reader.u32();
   if (minor !== terrascaleSyncV2MsgpackMinorVersion) {
-    throw new TerrascaleMsgpackError("unsupported_version", `protocol minor ${minor} is not spoken; this build speaks 0`);
+    throw new TerrascaleMsgpackError("unsupported_version", `protocol minor ${minor} is not spoken; this build speaks 1`);
   }
   const features = reader.u32();
   if ((features & ~terrascaleSyncV2MsgpackSupportedFeatures) !== 0) {

@@ -5,6 +5,7 @@ import {
   terrascaleSyncV2MsgpackMessageDirections,
   terrascaleSyncV2MsgpackProtocol,
   terrascaleSyncV2MsgpackSupportedFeatures,
+  validateTerrascaleSyncV2MsgpackMessage,
   type TerrascaleSyncV2MsgpackEnvelope,
   type TerrascaleSyncV2MsgpackMessage,
   type TerrascaleSyncV2MsgpackProjectedField,
@@ -104,20 +105,20 @@ export class TerraScaleSyncV2Client {
     if (this.#subscriptions.size >= 128) {
       throw new TerraScaleSyncV2ClientError("invalid_state", "the 128-subscription bound is reached");
     }
+    const message = Object.freeze({
+      kind: "subscribe" as const,
+      subscription: options.subscription,
+      query: options.query,
+      parameters: new Uint8Array(options.parameters),
+      checkpoint: checkpointBytes(options.checkpoint),
+    });
+    validateTerrascaleSyncV2MsgpackMessage(message);
+
     const view = new SyncV2ResultViewStore();
     view.setOnline(this.#online);
     const subscription = Object.freeze({ id: options.subscription, view });
     this.#subscriptions.set(options.subscription, subscription);
-    return Object.freeze({
-      message: Object.freeze({
-        kind: "subscribe" as const,
-        subscription: options.subscription,
-        query: options.query,
-        parameters: new Uint8Array(options.parameters),
-        checkpoint: checkpointBytes(options.checkpoint),
-      }),
-      subscription,
-    });
+    return Object.freeze({ message, subscription });
   }
 
   /** Closes one view and returns the generated unsubscribe message to send. */
