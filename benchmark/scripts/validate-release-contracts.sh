@@ -20,13 +20,13 @@ validate_reviewed_ci_bytes "$ci"
 
 validate_workflow_inventory() {
   local workflow_dir=$1
-  local -a workflow_entries=()
+  local workflow_entry_count
 
   [[ -d "$workflow_dir" && ! -L "$workflow_dir" ]]
-  mapfile -d '' workflow_entries < <(
-    find "$workflow_dir" -mindepth 1 -maxdepth 1 -print0
-  )
-  [[ ${#workflow_entries[@]} -eq 3 ]]
+  workflow_entry_count="$(
+    find "$workflow_dir" -mindepth 1 -maxdepth 1 -printf . | wc -c
+  )"
+  [[ "$workflow_entry_count" -eq 3 ]]
 
   local workflow
   for workflow in "$ci" "$release" "$promote"; do

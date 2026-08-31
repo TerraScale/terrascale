@@ -111,4 +111,22 @@ if run_contracts "$non_regular_workflow_fixture" >/dev/null 2>&1; then
   exit 1
 fi
 
+failing_find_fixture="$fixture_root/failing-find"
+mkdir -p "$failing_find_fixture"
+make_fixture "$failing_find_fixture"
+failing_find_bin="$failing_find_fixture/find-bin"
+mkdir -p "$failing_find_bin"
+real_find=$(command -v find)
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  "\"$real_find\" \"\$@\"" \
+  'exit 1' >"$failing_find_bin/find"
+chmod 0755 "$failing_find_bin/find"
+if PATH="$failing_find_bin:$PATH" run_contracts "$failing_find_fixture" \
+  >/dev/null 2>&1; then
+  printf 'expected a failing workflow inventory scan to fail validation\n' >&2
+  exit 1
+fi
+
 printf 'validated release-contract inventory and Go scan fixtures\n'
