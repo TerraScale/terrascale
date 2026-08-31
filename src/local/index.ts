@@ -15,15 +15,10 @@ import type {
   ProjectId,
   RepositoryId,
 } from "../ids.js";
-import {
-  TerraScaleSyncV2Session,
-  type TerraScaleSyncV2SessionOptions,
-} from "../sync/v2/session.js";
 import { normalizeLocalBearerToken } from "./authentication.js";
 import { assertLocalSqliteEnvironment } from "./environment.js";
 import { clearLocalAdminState } from "./handlers/admin.js";
 import { clearLocalPlatformState } from "./handlers/platform.js";
-import { clearLocalSyncV2State } from "./handlers/sync-v2.js";
 import { TerraScaleLocalRouter, type LocalAuthenticationMode } from "./router.js";
 import {
   TerraScaleLocalHttpServer,
@@ -62,13 +57,6 @@ export type TerraScaleLocalResetOptions = {
   readonly seed?: boolean;
 };
 
-export type TerraScaleLocalSyncV2Options = Omit<
-  TerraScaleSyncV2SessionOptions,
-  "Fetch" | "StreamFactory" | "Url"
-> & {
-  readonly Url?: string;
-};
-
 export { type LocalAuthenticationMode, type LocalServerAddress };
 
 /**
@@ -83,7 +71,6 @@ export class TerraScaleSqliteRuntime {
   readonly #sqlite: TerraScaleSqliteRuntimeConfig;
   readonly #store: TerraScaleSqliteStore;
   readonly #bearerToken: string | undefined;
-  readonly #syncV2Sessions = new Set<TerraScaleSyncV2Session>();
   #closed = false;
   constructor(options: TerraScaleSqliteRuntimeOptions) {
     if (options === null || typeof options !== "object") throw new TypeError("SQLite runtime options are required.");
@@ -162,27 +149,6 @@ export class TerraScaleSqliteRuntime {
     });
   }
 
-  createSyncV2Session(options: TerraScaleLocalSyncV2Options): TerraScaleSyncV2Session {
-    this.#assertOpen();
-    const session = new TerraScaleSyncV2Session({
-      ...options,
-      Url: options.Url ?? inProcessOrigin,
-      Fetch: (input, init) => this.#fetch(input, {
-        ...(init?.method === undefined ? {} : { method: init.method }),
-        headers: {
-          ...(init?.headers ?? {}),
-          ...(this.#bearerToken === undefined
-            ? {}
-            : { authorization: `Bearer ${this.#bearerToken}` }),
-        },
-        ...(init?.body === undefined ? {} : { body: init.body }),
-        ...(init?.signal === undefined ? {} : { signal: init.signal }),
-      }),
-    });
-    this.#syncV2Sessions.add(session);
-    return session;
-  }
-
   start(options: TerraScaleLocalListenOptions = {}): Promise<LocalServerAddress> {
     this.#assertOpen();
     return this.#server.start(options);
@@ -194,7 +160,6 @@ export class TerraScaleSqliteRuntime {
 
   async reset(options: TerraScaleLocalResetOptions = {}): Promise<TerraScaleLocalSeed | undefined> {
     this.#assertOpen();
-    await this.#disconnectSyncSessions();
     this.#clearTransientState();
     this.#store.reset();
     return options.seed === true ? this.seed() : undefined;
@@ -246,11 +211,9 @@ export class TerraScaleSqliteRuntime {
     if (this.#closed) {
       return;
     }
-    await this.#disconnectSyncSessions();
     await this.#server.close();
     this.#clearTransientState();
     this.#store.close();
-    this.#syncV2Sessions.clear();
     this.#closed = true;
   }
 
@@ -263,13 +226,6 @@ export class TerraScaleSqliteRuntime {
   #clearTransientState(): void {
     clearLocalAdminState(this.#store);
     clearLocalPlatformState(this.#store);
-    clearLocalSyncV2State(this.#store);
-  }
-
-  async #disconnectSyncSessions(): Promise<void> {
-    await Promise.allSettled(
-      [...this.#syncV2Sessions].map((session) => session.disconnect()),
-    );
   }
 }
 

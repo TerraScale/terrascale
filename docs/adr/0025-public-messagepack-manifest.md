@@ -34,16 +34,12 @@ value. It rejects maps, extensions, float32, invalid UTF-8, unsafe integers,
 unknown versions, features, tags, enum values, union variants, trailing bytes,
 and all declared size or depth violations.
 
-`TerraScaleSyncV2Client` is the current reactive state machine. It accepts the
+`TerraScaleSyncV2Client` is the only reactive state machine. It accepts the
 generated server frames and applies snapshots, deltas, resets, authorization
 changes, route changes, and backpressure instructions to authorized result
 views. SDK-2 owns the WebSocket and HTTP + MessagePack transports after INT-3
 publishes their routes, authentication, subprotocol negotiation, fallback
 request and response shapes, and retry semantics.
-
-The Loro/native-v2 client remains temporarily in source so its deletion can be
-reviewed in a dependent mechanical stage. It is not an alternate current
-contract and may not receive new behavior.
 
 ## Consequences
 
@@ -52,4 +48,4 @@ TypeScript module. The drift check rejects manual generated-file edits. The
 semantic corpus round-trips every message kind, and hostile byte tests gate the
 decoder. Committed 2.1 golden bytes independently pin every message kind and
 hostile boundary for the later Go implementation. A second handwritten frame
-codec or compatibility client is not allowed after the deletion stages land.
+codec or compatibility client is not allowed.

@@ -41,16 +41,12 @@ There is no Dashboard-named or generic request entrypoint.
 
 ## Reactive protocol
 
-The current reactive candidate is `TerraScaleSyncV2Client`. It decodes
+The SDK has one reactive implementation: `TerraScaleSyncV2Client`. It decodes
 the generated `terrascale.sync.v2.msgpack` frames and applies authorized
 snapshots and result operations to bounded result views. The checked-in JSON
 manifest owns every tag, field position, direction, and bound. The generated
 TypeScript module consumes that file. INT-3's Go codec must check the same
 manifest instead of copying a second frame definition.
-
-The source still contains the Loro/native-v2 implementation while this work is
-reviewed as a dependent PR stack. It is not a current public contract. The
-final mechanical stage deletes it without changing the 2.1 manifest or client.
 
 Protocol 2.1 is the first publishable wire contract. The pre-launch 2.0
 artifacts reassigned tags during development and are withdrawn. The decoder
