@@ -26,24 +26,11 @@
 mod analyzer;
 mod execute;
 pub mod includes;
-// TB-23 leaf modules (D-31): order-preserving key encoding and the
-// QueryCondition -> SQL translator skeleton for the SQLite auto-index side
-// tables. Declaration-only until the storage seam adopts them.
-#[allow(
-    dead_code,
-    reason = "TB-23 groundwork: consumed by the SQLite storage seam, not yet wired into execution"
-)]
-mod key_encoding;
 mod model;
 pub mod optimizer;
 mod result;
 mod spatial;
 mod spec;
-#[allow(
-    dead_code,
-    reason = "TB-23 groundwork: consumed by the SQLite storage seam, not yet wired into execution"
-)]
-mod sql_where;
 mod statistics;
 mod text;
 mod vector;
