@@ -495,6 +495,8 @@ async function readResponseBody(response: Response): Promise<ParsedBody> {
 
 function errorFromResponse(response: Response, body: unknown): TerraScaleError {
   const source = unwrapErrorBody(body);
+  const category = errorCategory(source);
+  const traceId = stringProperty(source, "traceId");
   const code =
     stringProperty(source, "code") ??
     stringProperty(source, "errorCode") ??
@@ -510,16 +512,17 @@ function errorFromResponse(response: Response, body: unknown): TerraScaleError {
       stringProperty(source, "detail") ??
       stringProperty(source, "title") ??
       (response.statusText || "The TerraScale API request failed."),
-    category: errorCategory(source),
+    category,
     detail: stringProperty(source, "detail"),
     suggestedAction: stringProperty(source, "suggestedAction"),
     docsUrl: stringProperty(source, "docsUrl"),
-    traceId: stringProperty(source, "traceId"),
+    traceId,
     status: response.status,
     target: stringProperty(source, "target"),
     requestId:
       stringProperty(source, "requestId") ??
-      requestIdFrom(response.headers),
+      requestIdFrom(response.headers) ??
+      (category === undefined ? traceId : undefined),
     validation,
     details: body,
   };

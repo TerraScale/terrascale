@@ -208,7 +208,11 @@ describe("TerraScaleHttp request policy", () => {
       apiBaseUrl: "https://api.terrascale.test",
       fetch: async () =>
         Response.json(
-          { error: "A valid projectId is required.", code: "validation_error" },
+          {
+            error: "A valid projectId is required.",
+            code: "validation_error",
+            traceId: "legacy-support-id",
+          },
           { status: 400 },
         ),
     });
@@ -223,6 +227,8 @@ describe("TerraScaleHttp request policy", () => {
     if (!result.ok) {
       assert.equal(result.error.message, "A valid projectId is required.");
       assert.equal(result.error.code, "validation_error");
+      assert.equal(result.error.traceId, "legacy-support-id");
+      assert.equal(result.error.requestId, "legacy-support-id");
     }
   });
 
