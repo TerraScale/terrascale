@@ -227,8 +227,14 @@ jobs:
             --go_out=paths=source_relative:"$active_dir" \
             --go-grpc_out=paths=source_relative:"$active_dir" \
             crates/terrabase-tbep/proto/terrabase/v1/engine.proto
-          diff -u "$active_dir/terrabase/v1/engine.pb.go" terrabase-go/terrabase/v1/engine.pb.go
-          diff -u "$active_dir/terrabase/v1/engine_grpc.pb.go" terrabase-go/terrabase/v1/engine_grpc.pb.go
+          bash scripts/normalize-generated-protoc-version.sh \
+            "$active_dir/terrabase/v1/engine.pb.go" \
+            > "$active_dir/terrabase/v1/engine.pb.go.normalized"
+          bash scripts/normalize-generated-protoc-version.sh \
+            "$active_dir/terrabase/v1/engine_grpc.pb.go" \
+            > "$active_dir/terrabase/v1/engine_grpc.pb.go.normalized"
+          diff -u "$active_dir/terrabase/v1/engine.pb.go.normalized" terrabase-go/terrabase/v1/engine.pb.go
+          diff -u "$active_dir/terrabase/v1/engine_grpc.pb.go.normalized" terrabase-go/terrabase/v1/engine_grpc.pb.go
           # Exercise the checked-in buf generation contract as well as the
           # isolated protoc comparison above. Any generated-byte drift fails.
           buf generate --template buf.gen.yaml
