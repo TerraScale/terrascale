@@ -113,11 +113,10 @@ fn replica_from_environment(vars: Vars<'_>) -> Result<ReplicaConfig, String> {
             region: vars(S3_REGION_ENV).expect("checked above"),
         }));
     }
-    let path = vars(REPLICA_DIR_ENV)
-        .ok_or_else(|| format!("set {REPLICA_DIR_ENV} (or the {S3_ENDPOINT_ENV} set) when {SUPERVISION_ENV}=1"))?;
-    Ok(ReplicaConfig::File {
-        path: std::path::PathBuf::from(path),
-    })
+    let path = vars(REPLICA_DIR_ENV).ok_or_else(|| {
+        format!("set {REPLICA_DIR_ENV} (or the {S3_ENDPOINT_ENV} set) when {SUPERVISION_ENV}=1")
+    })?;
+    Ok(ReplicaConfig::File { path: std::path::PathBuf::from(path) })
 }
 
 #[cfg(test)]
@@ -132,12 +131,9 @@ mod tests {
 
     #[test]
     fn replica_requires_a_destination_variable() {
-        let error = replica_from_environment(&vars(&[]))
-            .expect_err("missing replica variables must fail");
-        assert!(
-            error.contains("TERRABASE_BACKUP_REPLICA_DIR"),
-            "got: {error}"
-        );
+        let error =
+            replica_from_environment(&vars(&[])).expect_err("missing replica variables must fail");
+        assert!(error.contains("TERRABASE_BACKUP_REPLICA_DIR"), "got: {error}");
     }
 
     #[test]
@@ -147,22 +143,22 @@ mod tests {
             (S3_BUCKET_ENV, "terrabase-backups"),
         ]))
         .expect_err("incomplete S3 variables must fail");
-        assert!(
-            error.contains(S3_PATH_ENV) && error.contains(S3_REGION_ENV),
-            "got: {error}"
-        );
+        assert!(error.contains(S3_PATH_ENV) && error.contains(S3_REGION_ENV), "got: {error}");
     }
 
     #[test]
     fn full_s3_variables_build_the_s3_replica() {
-        let config = supervisor_config(Path::new("/engine"), &vars(&[
-            (S3_ENDPOINT_ENV, "https://ns.compat.objectstorage.gru.oraclecloud.com"),
-            (S3_BUCKET_ENV, "terrabase-backups"),
-            (S3_PATH_ENV, "members/gru-1"),
-            (S3_REGION_ENV, "gru"),
-            (PATTERN_ENV, "*.db"),
-            (METRICS_ADDR_ENV, "127.0.0.1:19090"),
-        ]))
+        let config = supervisor_config(
+            Path::new("/engine"),
+            &vars(&[
+                (S3_ENDPOINT_ENV, "https://ns.compat.objectstorage.gru.oraclecloud.com"),
+                (S3_BUCKET_ENV, "terrabase-backups"),
+                (S3_PATH_ENV, "members/gru-1"),
+                (S3_REGION_ENV, "gru"),
+                (PATTERN_ENV, "*.db"),
+                (METRICS_ADDR_ENV, "127.0.0.1:19090"),
+            ]),
+        )
         .expect("complete variables build a config");
         assert_eq!(
             config.replica,
@@ -174,10 +170,7 @@ mod tests {
             })
         );
         assert_eq!(config.pattern, "*.db");
-        assert_eq!(
-            config.metrics_addr,
-            Some("127.0.0.1:19090".parse().expect("address parses"))
-        );
+        assert_eq!(config.metrics_addr, Some("127.0.0.1:19090".parse().expect("address parses")));
     }
 
     #[test]
@@ -192,13 +185,12 @@ mod tests {
 
     #[test]
     fn file_replica_defaults_apply_without_optional_variables() {
-        let config = supervisor_config(Path::new("/engine"), &vars(&[(REPLICA_DIR_ENV, "/backups")]))
-            .expect("the file replica builds with one variable");
+        let config =
+            supervisor_config(Path::new("/engine"), &vars(&[(REPLICA_DIR_ENV, "/backups")]))
+                .expect("the file replica builds with one variable");
         assert_eq!(
             config.replica,
-            ReplicaConfig::File {
-                path: std::path::PathBuf::from("/backups")
-            }
+            ReplicaConfig::File { path: std::path::PathBuf::from("/backups") }
         );
         assert_eq!(config.pattern, terrabase_backup::DEFAULT_PATTERN);
         assert_eq!(config.metrics_addr, None);

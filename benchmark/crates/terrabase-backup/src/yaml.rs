@@ -25,10 +25,10 @@ pub(crate) struct LitestreamFile {
     pub(crate) retention: Retention,
 }
 
-/// One `dbs:` entry that watches a directory for matching SQLite files.
+/// One `dbs:` entry that watches a directory for matching `SQLite` files.
 #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct WatchedDirectory {
-    /// Directory holding one SQLite file per tenant database.
+    /// Directory holding one `SQLite` file per tenant database.
     pub(crate) dir: String,
     /// Glob Litestream applies inside `dir` (for example `*.sqlite3`).
     pub(crate) pattern: String,
@@ -97,15 +97,8 @@ pub(crate) fn render(
     metrics_addr: Option<SocketAddr>,
 ) -> LitestreamFile {
     let replica = match replica {
-        ReplicaConfig::File { path } => Replica::File {
-            path: path.to_string_lossy().into_owned(),
-        },
-        ReplicaConfig::S3(S3Replica {
-            endpoint,
-            bucket,
-            path,
-            region,
-        }) => Replica::S3 {
+        ReplicaConfig::File { path } => Replica::File { path: path.to_string_lossy().into_owned() },
+        ReplicaConfig::S3(S3Replica { endpoint, bucket, path, region }) => Replica::S3 {
             endpoint: endpoint.clone(),
             bucket: bucket.clone(),
             path: path.clone(),
@@ -182,9 +175,7 @@ mod tests {
         let document = render(
             Path::new("/data"),
             "*.sqlite3",
-            &ReplicaConfig::File {
-                path: Path::new("/backups").to_path_buf(),
-            },
+            &ReplicaConfig::File { path: Path::new("/backups").to_path_buf() },
             Duration::from_secs(1),
             None,
         );

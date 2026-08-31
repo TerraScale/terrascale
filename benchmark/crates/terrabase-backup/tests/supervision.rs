@@ -75,13 +75,12 @@ async fn wait_until(limit: Duration, mut condition: impl FnMut() -> bool) -> boo
 
 fn replica_has_generations(replica: &Path) -> bool {
     let generations = replica.join(DATABASE).join("ltx");
-    std::fs::read_dir(&generations)
-        .is_ok_and(|levels| {
-            levels.filter_map(Result::ok).any(|level| {
-                std::fs::read_dir(level.path())
-                    .is_ok_and(|entries| entries.filter_map(Result::ok).count() > 0)
-            })
+    std::fs::read_dir(&generations).is_ok_and(|levels| {
+        levels.filter_map(Result::ok).any(|level| {
+            std::fs::read_dir(level.path())
+                .is_ok_and(|entries| entries.filter_map(Result::ok).count() > 0)
         })
+    })
 }
 
 #[tokio::test]
@@ -107,7 +106,8 @@ async fn replicates_writes_and_restores_point_in_time() {
         "PRAGMA journal_mode=WAL; CREATE TABLE t(x INTEGER); INSERT INTO t VALUES (42);",
     );
 
-    let mut config = SupervisorConfig::new(data.clone(), ReplicaConfig::File { path: replica.clone() });
+    let mut config =
+        SupervisorConfig::new(data.clone(), ReplicaConfig::File { path: replica.clone() });
     let metrics_address = free_loopback_address();
     config.metrics_addr = Some(metrics_address);
     config.config_path = Some(root.join("litestream.yml"));
@@ -172,7 +172,8 @@ async fn survives_database_deletion_and_crash_restarts_within_grace() {
     let root = temporary_root("survive");
     let data = root.join("data");
     let replica = root.join("replica");
-    let mut config = SupervisorConfig::new(data.clone(), ReplicaConfig::File { path: replica.clone() });
+    let mut config =
+        SupervisorConfig::new(data.clone(), ReplicaConfig::File { path: replica.clone() });
     config.shutdown_grace = Duration::from_secs(5);
     config.config_path = Some(root.join("litestream.yml"));
     let supervisor = LitestreamSupervisor::start(config).expect("supervisor starts");
@@ -246,11 +247,8 @@ async fn metrics_serves_litestream(address: SocketAddr) -> bool {
         return false;
     }
     let mut response = Vec::new();
-    let Ok(Ok(_)) = tokio::time::timeout(
-        Duration::from_secs(5),
-        stream.read_to_end(&mut response),
-    )
-    .await
+    let Ok(Ok(_)) =
+        tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut response)).await
     else {
         return false;
     };

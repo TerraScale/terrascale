@@ -1,6 +1,6 @@
-//! Embedded Litestream supervision for SQLite disaster-recovery backups.
+//! Embedded Litestream supervision for `SQLite` disaster-recovery backups.
 //!
-//! `TerraBase` stores one SQLite file per tenant database under the member's
+//! `TerraBase` stores one `SQLite` file per tenant database under the member's
 //! storage location (D-27) and streams those files to a replica for
 //! point-in-time recovery. This crate owns the process side of that contract
 //! (D-29): it writes a Litestream `replicate` config, spawns Litestream over
@@ -30,7 +30,7 @@ use tokio::sync::watch;
 
 mod yaml;
 
-/// Default directory watch pattern for tenant SQLite files.
+/// Default directory watch pattern for tenant `SQLite` files.
 pub const DEFAULT_PATTERN: &str = "*.sqlite3";
 
 /// Environment variable that overrides the discovered Litestream binary.
@@ -92,8 +92,8 @@ impl Default for BackoffConfig {
     fn default() -> Self {
         Self {
             initial: Duration::from_secs(1),
-            cap: Duration::from_secs(60),
-            reset_after: Duration::from_secs(60),
+            cap: Duration::from_mins(1),
+            reset_after: Duration::from_mins(1),
         }
     }
 }
@@ -107,9 +107,7 @@ impl BackoffConfig {
         if ran_for >= self.reset_after {
             return self.initial;
         }
-        previous
-            .map_or(self.initial, |delay| delay.saturating_mul(2))
-            .clamp(self.initial, self.cap)
+        previous.map_or(self.initial, |delay| delay.saturating_mul(2)).clamp(self.initial, self.cap)
     }
 }
 
@@ -117,7 +115,7 @@ impl BackoffConfig {
 /// location.
 #[derive(Clone, Debug)]
 pub struct SupervisorConfig {
-    /// Directory holding the tenant SQLite files to watch.
+    /// Directory holding the tenant `SQLite` files to watch.
     pub dir: PathBuf,
     /// Glob Litestream applies inside `dir`.
     pub pattern: String,
@@ -158,9 +156,7 @@ impl SupervisorConfig {
     /// The path the Litestream config is written to.
     #[must_use]
     pub fn effective_config_path(&self) -> PathBuf {
-        self.config_path
-            .clone()
-            .unwrap_or_else(|| self.dir.join("litestream.yml"))
+        self.config_path.clone().unwrap_or_else(|| self.dir.join("litestream.yml"))
     }
 }
 
@@ -276,9 +272,7 @@ impl LitestreamSupervisor {
         let rendered = serde_yaml::to_string(&document).map_err(SupervisionError::RenderConfig)?;
         std::fs::write(config.effective_config_path(), rendered)
             .map_err(SupervisionError::WriteConfig)?;
-        let child = build_command(&binary, &config)
-            .spawn()
-            .map_err(SupervisionError::Spawn)?;
+        let child = build_command(&binary, &config).spawn().map_err(SupervisionError::Spawn)?;
 
         let (shutdown, shutdown_rx) = watch::channel(false);
         let inner = Arc::new(Inner {
@@ -288,13 +282,8 @@ impl LitestreamSupervisor {
             config_path: config.effective_config_path(),
         });
         set_running(&inner, true, child.id());
-        let task = tokio::spawn(supervise(
-            binary,
-            config,
-            shutdown_rx,
-            Arc::downgrade(&inner),
-            child,
-        ));
+        let task =
+            tokio::spawn(supervise(binary, config, shutdown_rx, Arc::downgrade(&inner), child));
         *inner.done.lock().expect("supervisor state unpoisoned") = Some(task);
         Ok(Self { inner })
     }
@@ -343,12 +332,7 @@ impl LitestreamSupervisor {
                 true
             }
         });
-        let task = self
-            .inner
-            .done
-            .lock()
-            .expect("supervisor state unpoisoned")
-            .take();
+        let task = self.inner.done.lock().expect("supervisor state unpoisoned").take();
         if let Some(task) = task {
             task.await
                 .map_err(|_| SupervisionError::SupervisionTaskFailed)?
@@ -411,8 +395,9 @@ async fn supervise(
                     eprintln!(
                         "terrabase: litestream child spawn failed ({error}); retrying with backoff"
                     );
-                    delay =
-                        Some(delay.expect("delay is set").saturating_mul(2).min(config.backoff.cap));
+                    delay = Some(
+                        delay.expect("delay is set").saturating_mul(2).min(config.backoff.cap),
+                    );
                     let retry = tokio::select! {
                         () = tokio::time::sleep(delay.expect("delay is set")) => true,
                         _ = termination_requested(&mut shutdown_rx) => false,
@@ -495,10 +480,7 @@ fn pid_to_i32(pid: u32) -> i32 {
 /// an environment limited to what the replica needs.
 fn build_command(binary: &Path, config: &SupervisorConfig) -> Command {
     let mut command = Command::new(binary);
-    command
-        .arg("replicate")
-        .arg("-config")
-        .arg(config.effective_config_path());
+    command.arg("replicate").arg("-config").arg(config.effective_config_path());
     command.env_clear();
     command.envs(child_env(&config.replica, |key| std::env::var(key).ok()));
     command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
@@ -641,7 +623,7 @@ mod tests {
         let backoff = BackoffConfig {
             initial: Duration::from_secs(1),
             cap: Duration::from_secs(4),
-            reset_after: Duration::from_secs(60),
+            reset_after: Duration::from_mins(1),
         };
         assert_eq!(backoff.delay_after(Duration::from_secs(0), None), Duration::from_secs(1));
         assert_eq!(
@@ -657,20 +639,21 @@ mod tests {
             Duration::from_secs(4)
         );
         assert_eq!(
-            backoff.delay_after(Duration::from_secs(60), Some(Duration::from_secs(4))),
+            backoff.delay_after(Duration::from_mins(1), Some(Duration::from_secs(4))),
             Duration::from_secs(1)
         );
     }
 
     #[test]
     fn file_replica_child_env_is_empty() {
-        assert!(child_env(
-            &ReplicaConfig::File {
-                path: PathBuf::from("/backups")
-            },
-            |key| matches!(key, "AWS_ACCESS_KEY_ID").then(|| "leak".to_owned())
-        )
-        .is_empty());
+        assert!(
+            child_env(&ReplicaConfig::File { path: PathBuf::from("/backups") }, |key| matches!(
+                key,
+                "AWS_ACCESS_KEY_ID"
+            )
+            .then(|| "leak".to_owned()))
+            .is_empty()
+        );
     }
 
     #[test]
@@ -703,17 +686,19 @@ mod tests {
     fn config_path_defaults_into_the_watched_directory() {
         let config = SupervisorConfig::new(
             PathBuf::from("/var/lib/terrabase"),
-            ReplicaConfig::File {
-                path: PathBuf::from("/backups"),
-            },
+            ReplicaConfig::File { path: PathBuf::from("/backups") },
         );
-        assert_eq!(config.effective_config_path(), PathBuf::from("/var/lib/terrabase/litestream.yml"));
+        assert_eq!(
+            config.effective_config_path(),
+            PathBuf::from("/var/lib/terrabase/litestream.yml")
+        );
         assert_eq!(config.pattern, DEFAULT_PATTERN);
     }
 
     #[test]
     fn path_search_finds_executable_programs_only() {
-        let directory = std::env::temp_dir().join(format!("terrabase-backup-path-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("terrabase-backup-path-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("temp directory creates");
         let program = directory.join("litestream");
         std::fs::write(&program, b"#!/bin/sh\nexit 0\n").expect("program writes");
