@@ -28,6 +28,11 @@
 //! every release gate builds and tests the daemon. The cluster's dependency
 //! on `terrabase-member-transport` records ADR 0023's ownership of bounded
 //! QUIC replication lanes; both edges point strictly down the frozen layers.
+//!
+//! Review note (2026-08-31): `terrabase-backup` is the embedded Litestream
+//! supervision seam accepted by ADR 0040 owner decision D-29. It has no
+//! internal dependencies and is consumed only by `terrabase-server`, keeping
+//! process management out of the engine core and the storage seam.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -50,6 +55,7 @@ const LAYERS: &[(&str, u32)] = &[
     ("terrabase-replication-core", 4),
     ("terrabase-cluster", 5),
     ("terrabase-tbep", 6),
+    ("terrabase-backup", 6),
     ("terrabase-server", 7),
 ];
 
@@ -82,6 +88,7 @@ const ALLOWED_EDGES: &[(&str, &str)] = &[
     ("terrabase-server", "terrabase"),
     ("terrabase-server", "terrabase-cluster"),
     ("terrabase-server", "terrabase-tbep"),
+    ("terrabase-server", "terrabase-backup"),
 ];
 
 /// The engine-core package (`terrabase`) must stay dependency-minimal:

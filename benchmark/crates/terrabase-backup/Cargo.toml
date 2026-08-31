@@ -1,0 +1,34 @@
+[package]
+name = "terrabase-backup"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "MIT"
+description = "Embedded Litestream supervision for SQLite disaster-recovery backups"
+publish = false
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+
+[lints.clippy]
+pedantic = "warn"
+
+[dependencies]
+nix = { version = "0.30", default-features = false, features = ["signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+tokio = { version = "1", default-features = false, features = [
+  "macros",
+  "process",
+  "rt",
+  "sync",
+  "time",
+] }
+
+[dev-dependencies]
+tokio = { version = "1", default-features = false, features = [
+  "io-util",
+  "net",
+  "rt-multi-thread",
+] }
