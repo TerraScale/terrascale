@@ -431,17 +431,36 @@ pub enum StorageBackend {
     Lsm,
     /// The W3-1 root-file engine with full-root rewrites per commit.
     RootFiles,
+    /// The `SQLite` engine (D-27): one WAL-mode database file per location,
+    /// documents, ledger, and journal committed in one transaction. New
+    /// locations select it through the crate-private selector or the
+    /// `TERRABASE_STORAGE_BACKEND=sqlite` override; existing locations
+    /// self-describe through the `TBV3SQLITE` format marker.
+    Sqlite,
 }
 
-/// Reads a durable location's self-describing format marker.
+/// Reads a durable location's self-describing format marker, then applies
+/// the environment override for fresh locations.
 fn backend_of_location(location: &Path, configured: StorageBackend) -> StorageBackend {
     if configured != StorageBackend::Lsm {
         return configured;
     }
     match std::fs::read(location.join("format")) {
         Ok(bytes) if bytes.starts_with(b"TBV2FORMAT") => StorageBackend::RootFiles,
+        Ok(bytes) if bytes.starts_with(b"TBV3SQLITE") => StorageBackend::Sqlite,
+        // A location without a marker is fresh: the environment override
+        // lets the bench harness and tests select the `SQLite` engine without
+        // configuration plumbing. The override never converts a location
+        // that already carries another format's marker.
+        _ if env_selects_sqlite() => StorageBackend::Sqlite,
         _ => configured,
     }
+}
+
+/// Reports whether the environment requests the `SQLite` backend by name.
+fn env_selects_sqlite() -> bool {
+    std::env::var_os("TERRABASE_STORAGE_BACKEND")
+        .is_some_and(|value| value == std::ffi::OsStr::new("sqlite"))
 }
 
 impl EngineConfig {
@@ -945,6 +964,24 @@ impl Engine {
                     })?;
                 Box::new(engine)
             }
+            // The `SQLite` backend has no production-owner (encryption)
+            // integration yet, so an owner-scoped open answers the typed
+            // refusal the root-file engine gives.
+            StorageBackend::Sqlite => {
+                if config.owner.is_some() {
+                    return Err(EngineOpenError::StorageUnavailable);
+                }
+                let engine =
+                    storage::SqliteStorage::open(&location).map_err(|error| match error {
+                        storage::StorageOpenError::FormatMismatch => {
+                            EngineOpenError::FormatMismatch
+                        }
+                        storage::StorageOpenError::Unavailable => {
+                            EngineOpenError::StorageUnavailable
+                        }
+                    })?;
+                Box::new(engine)
+            }
         };
         let subscriptions = Arc::new(PublicationRegistry::new());
         // The pipelined witness handle exists only on the LSM backend: the
@@ -953,7 +990,7 @@ impl Engine {
         // file. A missing handle simply keeps the synchronous shape.
         let wal_sync = match backend {
             StorageBackend::Lsm => storage::lsm::wal::WalSyncHandle::try_open(&location),
-            StorageBackend::RootFiles => None,
+            StorageBackend::RootFiles | StorageBackend::Sqlite => None,
         };
         // W4-CA-3: register the Engine-owned index catalog's sink through the
         // production registry so index maintenance observes every publication.

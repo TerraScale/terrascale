@@ -64,6 +64,11 @@ zeroize = "1.9.0"
 # src/identity/generate.rs (BLAKE3 keyed counter mode, per ADR 0027 and the
 # engine-core dependency budget this manifest records).
 ulid = { version = "1", default-features = false }
+# D-27: the SQLite storage core (src/storage/sqlite/) rides mainline SQLite
+# compiled from the amalgamation (bundled), pinned exactly so the persisted
+# format never silently moves with a new SQLite build. Default features stay
+# on: `cache` is the prepared-statement cache `commit_batch` relies on.
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
 
 [profile.release]
 codegen-units = 1

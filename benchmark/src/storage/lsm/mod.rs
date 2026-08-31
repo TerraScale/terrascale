@@ -1975,7 +1975,7 @@ fn has_duplicate_targets(writes: &[StagedWrite]) -> bool {
 }
 
 /// Whether one observed version satisfies an expectation.
-fn matches_expectation(version: Option<u64>, expected: ExpectedVersion) -> bool {
+pub(crate) fn matches_expectation(version: Option<u64>, expected: ExpectedVersion) -> bool {
     match expected {
         ExpectedVersion::Any => true,
         ExpectedVersion::New => version.is_none(),
@@ -2078,7 +2078,7 @@ fn decode_meta_bound(bytes: &[u8]) -> Option<u64> {
 }
 
 /// Maps a durability level to its one-byte code.
-fn durability_code(level: LocalDurability) -> u8 {
+pub(crate) fn durability_code(level: LocalDurability) -> u8 {
     match level {
         LocalDurability::Buffered => 0,
         LocalDurability::Written => 1,
@@ -2357,7 +2357,7 @@ fn map_activation_frontier_error(error: FrontierError) -> LedgerFrontierActivati
 }
 
 /// Maps a durability code back to its level.
-fn durability_of(code: u8) -> Option<LocalDurability> {
+pub(crate) fn durability_of(code: u8) -> Option<LocalDurability> {
     match code {
         0 => Some(LocalDurability::Buffered),
         1 => Some(LocalDurability::Written),
@@ -2367,7 +2367,7 @@ fn durability_of(code: u8) -> Option<LocalDurability> {
 }
 
 /// Maps a rejection to its one-byte code.
-fn rejection_code(reason: CommitRejection) -> u8 {
+pub(crate) fn rejection_code(reason: CommitRejection) -> u8 {
     match reason {
         CommitRejection::Validation => 1,
         CommitRejection::Conflict => 2,
@@ -2377,7 +2377,7 @@ fn rejection_code(reason: CommitRejection) -> u8 {
 }
 
 /// Maps a rejection code back to the rejection.
-fn decode_rejection(code: u8) -> Option<CommitRejection> {
+pub(crate) fn decode_rejection(code: u8) -> Option<CommitRejection> {
     match code {
         1 => Some(CommitRejection::Validation),
         2 => Some(CommitRejection::Conflict),

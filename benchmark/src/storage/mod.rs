@@ -27,6 +27,7 @@ mod wal;
 
 mod compaction;
 pub(crate) mod lsm;
+mod sqlite;
 
 #[cfg(test)]
 mod compaction_tests;
@@ -47,6 +48,7 @@ pub(crate) use intent::{
 pub use ownership::{DatabaseOwner, EnvironmentName, OwnershipError};
 pub(crate) use ownership::{OwnershipMode, load_or_create};
 pub(crate) use root::StorageRootId;
+pub(crate) use sqlite::SqliteStorage;
 
 pub use compaction::{
     CompactionError, CompactionPhase, CompactionPolicy, CompactionProgress, CompactionProgressSink,
