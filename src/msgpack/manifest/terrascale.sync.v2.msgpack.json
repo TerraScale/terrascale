@@ -4,7 +4,7 @@
   "protocolMajor": 2,
   "protocolMinor": 1,
   "supportedFeatures": 0,
-  "doc": "The language-neutral frame contract for the public terrascale.sync.v2 reactive protocol. Version 2.1 is the first publishable wire contract; the withdrawn pre-launch 2.0 tag assignments are incompatible and fail closed. One binary WebSocket message is one complete MessagePack envelope. Frames carry authorized query-result views and opaque checkpoints only.",
+  "doc": "The language-neutral frame contract for the public terrascale.sync.v2 reactive protocol. Version 2.1 is the first publishable wire contract; the withdrawn pre-launch 2.0 tag assignments are incompatible and fail closed. One binary WebSocket message is one complete MessagePack envelope. Frames carry authorized query-result views and opaque checkpoints only. Per D-30, projected document values remain opaque canonical JSON byte strings inside the envelope; the MessagePack codec never transcodes them into nested MessagePack values.",
   "envelope": {
     "doc": "Every frame is an indexed array [major, minor, features, tag, correlation, causation, body]. Unknown versions, features, tags, and field shapes fail closed.",
     "elements": [
@@ -32,17 +32,17 @@
     {
       "struct": {
         "name": "projected_field",
-        "doc": "One projected field in an authorized result item.",
+        "doc": "One projected field in an authorized result item. Its value is an opaque canonical JSON byte string produced by the engine and parsed at most once by the browser client.",
         "fields": [
           { "name": "path", "type": { "kind": "text", "maxBytes": 256 } },
-          { "name": "value", "type": { "kind": "binary", "minBytes": 0, "maxBytes": 65536 } }
+          { "name": "value", "type": { "kind": "binary", "minBytes": 0, "maxBytes": 1048576 } }
         ]
       }
     },
     {
       "struct": {
         "name": "result_item",
-        "doc": "One authorized result item in canonical query order.",
+        "doc": "One authorized result item in canonical query order. The sum of its projected canonical JSON value bytes must not exceed the 1 MiB document limit.",
         "fields": [
           { "name": "identity", "type": { "kind": "text", "maxBytes": 256 } },
           {
@@ -72,12 +72,12 @@
     {
       "struct": {
         "name": "field_change",
-        "doc": "One projected field replacement or removal.",
+        "doc": "One projected field replacement or removal. A replacement is an opaque canonical JSON byte string, not a nested MessagePack document value.",
         "fields": [
           { "name": "path", "type": { "kind": "text", "maxBytes": 256 } },
           {
             "name": "value",
-            "type": { "kind": "option", "of": { "kind": "binary", "minBytes": 0, "maxBytes": 65536 } }
+            "type": { "kind": "option", "of": { "kind": "binary", "minBytes": 0, "maxBytes": 1048576 } }
           }
         ]
       }

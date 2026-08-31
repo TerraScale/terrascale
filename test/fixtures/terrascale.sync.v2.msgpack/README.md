@@ -2,12 +2,16 @@
 
 These fixtures pin the first publishable `terrascale.sync.v2.msgpack` wire
 contract at version 2.1. They were hand-audited against the MessagePack byte
-format and are not generated during tests by the SDK codec.
+format and are not generated during tests by the SDK codec. Each fixture pins
+the exact manifest SHA-256, so a stale corpus fails instead of silently testing
+an older contract.
 
 `message-vectors.json` contains one complete envelope for every current message
 tag. The delta vector includes every result-operation discriminant. Tests decode
 the committed bytes into the expected public values and require the encoder to
-reproduce those bytes exactly.
+reproduce those bytes exactly. A separate test-only generic MessagePack writer,
+which imports neither the SDK codec nor its runtime, independently reproduces
+the bytes from hand-audited numeric arrays.
 
 `hostile-vectors.json` contains a fixed rejection vector for every typed hostile
 decoder boundary. The whole-message limit uses a committed repeated-byte recipe

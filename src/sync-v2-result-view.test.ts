@@ -3,6 +3,7 @@ import { describe, test } from "node:test";
 
 import {
   SyncV2ResultViewStore,
+  SyncV2ViewError,
   SyncV2ViewCheckpoint,
   syncV2ResultDigest,
   type SyncV2ResultItem,
@@ -13,9 +14,14 @@ const row = (identity: string, value: string): SyncV2ResultItem => ({
   value: { value: new TextEncoder().encode(value) },
 });
 
-const snapshot = (items: readonly SyncV2ResultItem[], revision = 1n, generation = 1n) => ({
+const snapshot = (
+  items: readonly SyncV2ResultItem[],
+  revision = 1n,
+  generation = 1n,
+  authorizationGeneration = 1n,
+) => ({
   view_generation: generation,
-  authorization_generation: 1n,
+  authorization_generation: authorizationGeneration,
   revision,
   items,
   digest: syncV2ResultDigest(items),
@@ -73,5 +79,30 @@ describe("current v2 authorized result view", () => {
     });
     assert.equal(store.getAuthorizationGeneration(), 2n);
     assert.deepEqual(store.getItems().map(item => item.identity), ["b"]);
+  });
+
+  test("accepts a lower revision when the view generation advances", () => {
+    const store = new SyncV2ResultViewStore();
+    store.bootstrap(snapshot([row("a", "old")], 9n, 1n));
+
+    store.reset(snapshot([row("b", "new")], 2n, 2n));
+
+    assert.equal(store.getViewGeneration(), 2n);
+    assert.equal(store.getRevision(), 2n);
+    assert.deepEqual(store.getItems().map(item => item.identity), ["b"]);
+  });
+
+  test("rejects a lower revision in the same view generation atomically", () => {
+    const store = new SyncV2ResultViewStore();
+    store.bootstrap(snapshot([row("a", "old")], 9n, 1n));
+
+    assert.throws(
+      () => store.reset(snapshot([row("b", "stale")], 8n, 1n)),
+      (error: unknown) => error instanceof SyncV2ViewError && error.code === "reset-required",
+    );
+    assert.equal(store.getViewGeneration(), 1n);
+    assert.equal(store.getRevision(), 9n);
+    assert.deepEqual(store.getItems().map(item => item.identity), ["a"]);
+    assert.equal(new TextDecoder().decode(store.getItems()[0]!.value.value), "old");
   });
 });

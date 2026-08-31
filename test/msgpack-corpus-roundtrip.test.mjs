@@ -6,9 +6,11 @@ import { TerrascaleMsgpackError } from "../dist/msgpack/runtime/bounded-msgpack.
 import {
   decodeTerrascaleSyncV2MsgpackEnvelope,
   encodeTerrascaleSyncV2MsgpackEnvelope,
+  terrascaleSyncV2MsgpackManifestSha256,
   terrascaleSyncV2MsgpackMessageTags,
   validateTerrascaleSyncV2MsgpackMessage,
 } from "../dist/msgpack/generated/terrascale-sync-v2-msgpack.js";
+import { encodeReferenceMessagePack } from "./support/reference-msgpack.mjs";
 
 const encoder = new TextEncoder();
 const field = (path, value) => ({ path, value: encoder.encode(value) });
@@ -155,6 +157,48 @@ const goldenMessages = [
   { kind: "backpressure", mode: "pause" },
 ];
 
+// These are the hand-audited numeric wire arrays. They intentionally repeat
+// tag, enum, union, and field positions instead of consulting generated maps.
+// The test-only generic writer then acts as a producer independent of both
+// the generated SDK codec and its bounded MessagePack runtime.
+const binary = (...bytes) => Uint8Array.from(bytes);
+const projectedFields = [["x", binary(0x79)]];
+const snapshotWire = (view, authorization, revision, checkpoint, items = [["d", projectedFields]]) => [
+  view,
+  authorization,
+  revision,
+  items,
+  "a".repeat(64),
+  binary(checkpoint),
+];
+const goldenWireValues = [
+  [2, 1, 0, 1, 1, 0, ["s", "q", binary(1, 2), null]],
+  [2, 1, 0, 2, 2, 1, ["s"]],
+  [2, 1, 0, 3, 3, 2, ["s", snapshotWire(1, 2, 3, 0x63)]],
+  [2, 1, 0, 4, 4, 3, [
+    "s",
+    1,
+    3,
+    4,
+    [
+      [1, "e", 1, [["x", binary(0x69)]]],
+      [2, "d", [["x", binary(0x75)]]],
+      [3, "d", [["x", binary(0x70)], ["z", null]]],
+      [4, "e"],
+      [5, "d", 0],
+    ],
+    "b".repeat(64),
+    binary(0x64),
+  ]],
+  [2, 1, 0, 5, 5, 4, ["s", 3, snapshotWire(2, 2, 5, 0x65)]],
+  [2, 1, 0, 6, 6, 5, []],
+  [2, 1, 0, 7, 7, 6, ["s", binary(0x66)]],
+  [2, 1, 0, 8, 8, 7, ["s", 3, ["d"], snapshotWire(2, 3, 5, 0x67, [])]],
+  [2, 1, 0, 9, 9, 8, ["FRA"]],
+  [2, 1, 0, 10, 10, 9, [7, "retry"]],
+  [2, 1, 0, 11, 11, 10, [1]],
+];
+
 const goldenFixture = JSON.parse(await readFile(
   new URL("./fixtures/terrascale.sync.v2.msgpack/message-vectors.json", import.meta.url),
   "utf8",
@@ -176,6 +220,7 @@ describe("msgpack corpus round-trip", () => {
   test("committed independent bytes pin every current message", () => {
     assert.equal(goldenFixture.protocol, "terrascale.sync.v2.msgpack");
     assert.equal(goldenFixture.version, "2.1");
+    assert.equal(goldenFixture.manifestSha256, terrascaleSyncV2MsgpackManifestSha256);
     assert.deepEqual(
       goldenFixture.vectors.map(vector => vector.name).sort(),
       Object.keys(terrascaleSyncV2MsgpackMessageTags).sort(),
@@ -192,6 +237,11 @@ describe("msgpack corpus round-trip", () => {
         message,
       };
       const wire = Uint8Array.from(Buffer.from(vector.hex, "hex"));
+      assert.equal(
+        Buffer.from(encodeReferenceMessagePack(goldenWireValues[index])).toString("hex"),
+        vector.hex,
+        `${vector.name} differs from the independent MessagePack oracle`,
+      );
       assert.deepStrictEqual(decodeTerrascaleSyncV2MsgpackEnvelope(wire), envelope);
       assert.equal(
         Buffer.from(encodeTerrascaleSyncV2MsgpackEnvelope(envelope)).toString("hex"),
@@ -280,7 +330,7 @@ describe("msgpack corpus round-trip", () => {
         subscription: "view",
         snapshot: {
           ...snapshot,
-          items: [{ identity: "document-1", fields: [{ path: "value", value: new Uint8Array(65_537) }] }],
+          items: [{ identity: "document-1", fields: [{ path: "value", value: new Uint8Array(1_048_577) }] }],
         },
       })),
       TerrascaleMsgpackError,

@@ -13,14 +13,19 @@ const maxPendingMutations = 1024;
 
 export const syncV2ResultViewLimits = Object.freeze({
   maxItems: 10_000,
-  maxValueBytes: 64 * 1024,
+  /** D-25/D-30: projected canonical JSON bytes cannot bypass the document ceiling. */
+  maxValueBytes: 1024 * 1024,
   maxOperations: 1_024,
   maxIdentityBytes: 256,
   maxFieldPathBytes: 256,
   maxCheckpointBytes: 4_096,
 } as const);
 
-/** A bounded projected field. Bytes are used so the result digest is cross-language stable. */
+/**
+ * One opaque canonical JSON value emitted by the engine. SDK-1 never parses
+ * or transcodes these bytes; SDK-2 may apply one native JSON.parse at the
+ * public browser boundary.
+ */
 export type SyncV2ProjectedField = Uint8Array;
 
 /** One authorized result row, in canonical query order. */
@@ -298,7 +303,7 @@ export class SyncV2ResultViewStore {
     if (!this.#hasSnapshot) return;
     if (snapshot.view_generation < this.#viewGeneration
       || snapshot.authorization_generation < this.#authorizationGeneration
-      || snapshot.revision < this.#revision) {
+      || (snapshot.view_generation === this.#viewGeneration && snapshot.revision < this.#revision)) {
       throw new SyncV2ViewError(
         "reset-required",
         "the snapshot view, authorization, or revision generation regresses",
@@ -334,13 +339,13 @@ function validateItems(items: readonly SyncV2ResultItem[]): void {
     validateIdentity(item.identity);
     if (identities.has(item.identity)) throw new SyncV2ViewError("invalid_snapshot", "result identities are not unique");
     identities.add(item.identity);
-    let bytes = textEncoder.encode(item.identity).length + 16;
+    let valueBytes = 0;
     for (const [path, value] of Object.entries(item.value)) {
-      if (textEncoder.encode(path).length > syncV2ResultViewLimits.maxFieldPathBytes) throw new SyncV2ViewError("oversized", "a projected path exceeds its bound");
+      if (path.length === 0 || textEncoder.encode(path).length > syncV2ResultViewLimits.maxFieldPathBytes) throw new SyncV2ViewError("oversized", "a projected path exceeds its bound");
       if (!(value instanceof Uint8Array)) throw new SyncV2ViewError("invalid_snapshot", "projected values must be byte strings");
-      bytes += textEncoder.encode(path).length + value.length + 16;
+      valueBytes += value.length;
     }
-    if (bytes > syncV2ResultViewLimits.maxValueBytes) throw new SyncV2ViewError("oversized", "a projected item exceeds its bound");
+    if (valueBytes > syncV2ResultViewLimits.maxValueBytes) throw new SyncV2ViewError("oversized", "a projected item exceeds the 1 MiB canonical JSON byte bound");
   }
 }
 

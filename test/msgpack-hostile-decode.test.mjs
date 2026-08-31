@@ -22,6 +22,7 @@ import { TerrascaleMsgpackError } from "../dist/msgpack/runtime/bounded-msgpack.
 import {
   decodeTerrascaleSyncV2MsgpackEnvelope,
   encodeTerrascaleSyncV2MsgpackEnvelope,
+  terrascaleSyncV2MsgpackManifestSha256,
   terrascaleSyncV2MsgpackMaxMessageBytes,
 } from "../dist/msgpack/generated/terrascale-sync-v2-msgpack.js";
 
@@ -167,6 +168,7 @@ describe("msgpack hostile decode", () => {
     ];
     assert.equal(goldenHostileFixture.protocol, "terrascale.sync.v2.msgpack");
     assert.equal(goldenHostileFixture.version, "2.1");
+    assert.equal(goldenHostileFixture.manifestSha256, terrascaleSyncV2MsgpackManifestSha256);
     assert.deepEqual(
       goldenHostileFixture.vectors.map(vector => vector.code).sort(),
       [...expectedCodes].sort(),

@@ -6,7 +6,7 @@
 // checked-in versioned manifest; this TypeScript half provides codecs,
 // exact-shape validators, and public types for @terrascale/sdk).
 //
-// manifest sha256:   ae9d107485b38dbb20c5ab75bae083b7a83a4997ec58836fad8278118b1b5f2c
+// manifest sha256:   88a450cbe43f6e5c7e6fced3c7ff8e10408a0dfb6d3498a331166a771517a4fb
 // generator sha256:  66d0ac80bd46901fb1c78f3338dd5cff60d4288a744ec63a1944a6356430b077
 //
 // Regenerate: node scripts/generate-msgpack-protocol.mjs
@@ -54,7 +54,7 @@ export const terrascaleSyncV2MsgpackProtocol = "terrascale.sync.v2.msgpack" as c
 export const terrascaleSyncV2MsgpackManifestVersion = 1 as const;
 
 /** The SHA-256 of the manifest file this file was generated from. */
-export const terrascaleSyncV2MsgpackManifestSha256 = "ae9d107485b38dbb20c5ab75bae083b7a83a4997ec58836fad8278118b1b5f2c" as const;
+export const terrascaleSyncV2MsgpackManifestSha256 = "88a450cbe43f6e5c7e6fced3c7ff8e10408a0dfb6d3498a331166a771517a4fb" as const;
 
 /** The protocol major this build speaks; anything else fails closed. */
 export const terrascaleSyncV2MsgpackMajorVersion = 2 as const;
@@ -142,13 +142,13 @@ export const terrascaleSyncV2MsgpackMessageDirections: Readonly<Record<Terrascal
   backpressure: "server_to_client",
 });
 
-/** One projected field in an authorized result item. (indexed array of 2 fields) */
+/** One projected field in an authorized result item. Its value is an opaque canonical JSON byte string produced by the engine and parsed at most once by the browser client. (indexed array of 2 fields) */
 export type TerrascaleSyncV2MsgpackProjectedField = {
   readonly path: string;
   readonly value: Uint8Array;
 };
 
-/** One authorized result item in canonical query order. (indexed array of 2 fields) */
+/** One authorized result item in canonical query order. The sum of its projected canonical JSON value bytes must not exceed the 1 MiB document limit. (indexed array of 2 fields) */
 export type TerrascaleSyncV2MsgpackResultItem = {
   readonly identity: string;
   readonly fields: ReadonlyArray<TerrascaleSyncV2MsgpackProjectedField>;
@@ -164,7 +164,7 @@ export type TerrascaleSyncV2MsgpackSnapshot = {
   readonly checkpoint: Uint8Array;
 };
 
-/** One projected field replacement or removal. (indexed array of 2 fields) */
+/** One projected field replacement or removal. A replacement is an opaque canonical JSON byte string, not a nested MessagePack document value. (indexed array of 2 fields) */
 export type TerrascaleSyncV2MsgpackFieldChange = {
   readonly path: string;
   readonly value: Uint8Array | null;
@@ -333,7 +333,7 @@ export function validateTerrascaleSyncV2MsgpackProjectedField(candidate: unknown
     throw msgpackInvalid("projected_field.path");
   }
   const value = (candidate as { value: unknown }).value;
-  if (!msgpackIsBinary(value, 0, 65536)) {
+  if (!msgpackIsBinary(value, 0, 1048576)) {
     throw msgpackInvalid("projected_field.value");
   }
 }
@@ -423,7 +423,7 @@ export function validateTerrascaleSyncV2MsgpackFieldChange(candidate: unknown): 
   }
   const value = (candidate as { value: unknown }).value;
   if (value !== null) {
-    if (!msgpackIsBinary(value, 0, 65536)) {
+    if (!msgpackIsBinary(value, 0, 1048576)) {
       throw msgpackInvalid("field_change.value");
     }
   }
@@ -846,7 +846,7 @@ export function validateTerrascaleSyncV2MsgpackEnvelope(envelope: unknown): void
 function msgpackEncodeProjectedField(writer: MsgpackWriter, value: TerrascaleSyncV2MsgpackProjectedField): void {
   writer.arrayHeader(2);
   writer.text(value.path, 256);
-  writer.binary(value.value, 0, 65536);
+  writer.binary(value.value, 0, 1048576);
 }
 
 function msgpackEncodeResultItem(writer: MsgpackWriter, value: TerrascaleSyncV2MsgpackResultItem): void {
@@ -877,7 +877,7 @@ function msgpackEncodeFieldChange(writer: MsgpackWriter, value: TerrascaleSyncV2
   if (value.value === null) {
     writer.nil();
   } else {
-    writer.binary(value.value, 0, 65536);
+    writer.binary(value.value, 0, 1048576);
   }
 }
 
@@ -1058,7 +1058,7 @@ export function encodeTerrascaleSyncV2MsgpackEnvelope(envelope: TerrascaleSyncV2
 function msgpackDecodeProjectedField(reader: MsgpackReader): TerrascaleSyncV2MsgpackProjectedField {
   reader.arrayHeader(2);
   const path = reader.text(256);
-  const value = reader.binary(0, 65536);
+  const value = reader.binary(0, 1048576);
   return { path, value };
 }
 
@@ -1091,7 +1091,7 @@ function msgpackDecodeSnapshot(reader: MsgpackReader): TerrascaleSyncV2MsgpackSn
 function msgpackDecodeFieldChange(reader: MsgpackReader): TerrascaleSyncV2MsgpackFieldChange {
   reader.arrayHeader(2);
   const path = reader.text(256);
-  const value = reader.optionNil() ? null : reader.binary(0, 65536);
+  const value = reader.optionNil() ? null : reader.binary(0, 1048576);
   return { path, value };
 }
 
