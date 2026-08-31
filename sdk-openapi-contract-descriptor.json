@@ -1,5 +1,8 @@
 {
   "descriptorVersion": 2,
+  "excludedContracts": [
+    "database"
+  ],
   "routeCount": 91,
   "routes": [
     {
@@ -39866,6 +39869,6 @@
   ],
   "sources": {
     "openApiSha256": "f9b2207696282e832eeae08e2e7168924442fdb65098e9521e97ff910fa91131",
-    "routeManifestSha256": "39172c4fea48467977d5872d2e6b1cfd654e0ba687ac4ce86e45cc89567c63c5"
+    "routeManifestSha256": "5ae55e6b485b1606b645393937d5dcb0c865c4cfcb89a3b664631a2eb398e41f"
   }
 }

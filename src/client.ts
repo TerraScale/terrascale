@@ -32,6 +32,7 @@ export class TerraScaleClient {
   readonly repositories: RepositoriesClient;
   readonly backups: BackupsClient;
   readonly documents: DocumentsClient;
+  readonly databaseDocuments: DatabaseDocumentsClient;
   readonly query: QueryClient;
   readonly schema: SchemaClient;
   readonly access: AccessClient;
@@ -51,6 +52,7 @@ export class TerraScaleClient {
     this.repositories = new RepositoriesClient(this.#http);
     this.backups = new BackupsClient(this.#http);
     this.documents = new DocumentsClient(this.#http);
+    this.databaseDocuments = new DatabaseDocumentsClient(this.#http);
     this.query = new QueryClient(this.#http);
     this.schema = new SchemaClient(this.#http);
     this.access = new AccessClient(this.#http);
@@ -1032,6 +1034,79 @@ export class DocumentsClient {
   }
 }
 
+/** Named operations published by the TerraScale Database API document contract. */
+export class DatabaseDocumentsClient {
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
+
+  read<TDocument extends Models.JsonValue = Models.JsonValue>(
+    scope: Models.DatabaseDocumentScope,
+    documentId: string,
+    options?: Models.DatabaseDocumentReadOptions,
+  ): Promise<TerraScaleResult<Models.DatabaseDocumentReadResponse<TDocument>>> {
+    return this.#http.request({
+      method: "GET",
+      path: databaseDocumentRoot(scope, documentId),
+      routeName: "databaseDocuments.read",
+      signal: options?.signal,
+      consistency: "read",
+    });
+  }
+
+  create<TDocument extends Models.JsonValue = Models.JsonValue>(
+    scope: Models.DatabaseDocumentScope,
+    documentId: string,
+    request: Models.DatabaseDocumentWriteRequest<TDocument>,
+    options: Models.DatabaseDocumentMutationOptions,
+  ): Promise<TerraScaleResult<Models.DatabaseDocumentWriteResponse>> {
+    return this.#http.request({
+      method: "PUT",
+      path: databaseDocumentRoot(scope, documentId),
+      routeName: "databaseDocuments.create",
+      body: request,
+      signal: options.signal,
+      idempotencyKey: databaseDocumentIdempotencyKey(options.idempotencyKey),
+      consistency: "write",
+    });
+  }
+
+  patch<TPatch extends Models.JsonObject = Models.JsonObject>(
+    scope: Models.DatabaseDocumentScope,
+    documentId: string,
+    request: Models.DatabaseDocumentWriteRequest<TPatch>,
+    options: Models.DatabaseDocumentMutationOptions,
+  ): Promise<TerraScaleResult<Models.DatabaseDocumentWriteResponse>> {
+    return this.#http.request({
+      method: "PATCH",
+      path: databaseDocumentRoot(scope, documentId),
+      routeName: "databaseDocuments.patch",
+      body: request,
+      signal: options.signal,
+      idempotencyKey: databaseDocumentIdempotencyKey(options.idempotencyKey),
+      consistency: "write",
+    });
+  }
+
+  delete(
+    scope: Models.DatabaseDocumentScope,
+    documentId: string,
+    options: Models.DatabaseDocumentDeleteOptions,
+  ): Promise<TerraScaleResult<Models.DatabaseDocumentWriteResponse>> {
+    return this.#http.request({
+      method: "DELETE",
+      path: databaseDocumentRoot(scope, documentId),
+      routeName: "databaseDocuments.delete",
+      query: options.durability === undefined ? undefined : { durability: options.durability },
+      signal: options.signal,
+      idempotencyKey: databaseDocumentIdempotencyKey(options.idempotencyKey),
+      consistency: "write",
+    });
+  }
+}
+
 export class QueryClient {
   readonly #http: TerraScaleHttp;
 
@@ -1560,4 +1635,39 @@ function environmentRoot(http: TerraScaleHttp, scope: Models.EnvironmentScoped):
 
 function repositoryRoot(scope: Models.RepositoryScoped): string {
   return `${apiRoot}/repositories/${ulidPathSegment(scope.repositoryId)}`;
+}
+
+function databaseDocumentRoot(scope: Models.DatabaseDocumentScope, documentId: string): string {
+  const database = databaseDocumentIdentifier(scope.database, "database");
+  const collection = databaseDocumentIdentifier(scope.collection, "collection");
+  const id = databaseDocumentIdentifier(documentId, "documentId");
+  return `${apiRoot}/databases/${database}/collections/${collection}/documents/${id}`;
+}
+
+function databaseDocumentIdentifier(value: string, parameter: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new TypeError(`${parameter} must contain between 1 and 64 UTF-8 bytes.`);
+  }
+
+  let encoded: string;
+  try {
+    encoded = encodeURIComponent(value);
+  } catch {
+    throw new TypeError(`${parameter} must be valid UTF-8 text.`);
+  }
+
+  if (new TextEncoder().encode(value).byteLength > 64) {
+    throw new TypeError(`${parameter} must contain between 1 and 64 UTF-8 bytes.`);
+  }
+  if (/\p{Cc}/u.test(value)) {
+    throw new TypeError(`${parameter} must not contain control characters.`);
+  }
+  return encoded;
+}
+
+function databaseDocumentIdempotencyKey(value: Ulid): string {
+  if (!/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u.test(value)) {
+    throw new TypeError("idempotencyKey must be a canonical uppercase ULID.");
+  }
+  return value;
 }

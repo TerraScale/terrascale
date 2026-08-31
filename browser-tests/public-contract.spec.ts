@@ -48,6 +48,92 @@ test("the browser entrypoint keeps regional and conditional document behavior", 
   expect(observation[1]?.headers["x-terrascale-session-consistency-token"]).toBe("session-2");
 });
 
+test("the browser entrypoint exposes the published Database API document operations", async ({ page }) => {
+  await page.goto("/browser-tests/fixture.html");
+
+  const observation = await page.evaluate(async () => {
+    const sdk = await import("/candidate/dist/index.js");
+    const requests: { method: string; url: string; headers: Record<string, string>; body: unknown }[] = [];
+    const client = sdk.createTerraScaleClient({
+      apiBaseUrl: "https://api.terrascale.test",
+      accessToken: "browser-token",
+      fetch: async (input: RequestInfo | URL) => {
+        const request = input instanceof Request ? input : new Request(input);
+        const text = await request.clone().text();
+        requests.push({
+          method: request.method,
+          url: request.url,
+          headers: Object.fromEntries(request.headers),
+          body: text.length === 0 ? null : JSON.parse(text),
+        });
+        return Response.json(request.method === "GET"
+          ? {
+            database: "customer database",
+            collection: "users/v1",
+            id: "user #1",
+            version: 1,
+            body: { name: "Ada" },
+            position: null,
+          }
+          : {
+            database: "customer database",
+            collection: "users/v1",
+            id: "user #1",
+            version: 2,
+            sequence: 2,
+            operationId: "operation-1",
+            acknowledgement: "global",
+            backup: "full",
+          }, { status: request.method === "PUT" ? 201 : 200 });
+      },
+    });
+    const scope = { database: "customer database", collection: "users/v1" };
+    const key = sdk.toUlid("01ARZ3NDEKTSV4RRFFQ69G5FB0");
+
+    const read = await client.databaseDocuments.read(scope, "user #1");
+    await client.databaseDocuments.create(
+      scope,
+      "user #1",
+      { body: { name: "Ada" }, durability: "global" },
+      { idempotencyKey: key },
+    );
+    await client.databaseDocuments.patch(
+      scope,
+      "user #1",
+      { body: { title: "Engineer" } },
+      { idempotencyKey: key },
+    );
+    await client.databaseDocuments.delete(scope, "user #1", {
+      idempotencyKey: key,
+      durability: "global",
+    });
+
+    return { requests, readBody: read.ok ? read.value.body : null };
+  });
+
+  expect(observation.readBody).toEqual({ name: "Ada" });
+  expect(observation.requests.map(request => request.method)).toEqual([
+    "GET",
+    "PUT",
+    "PATCH",
+    "DELETE",
+  ]);
+  for (const request of observation.requests) {
+    expect(new URL(request.url).pathname).toBe(
+      "/api/v1/databases/customer%20database/collections/users%2Fv1/documents/user%20%231",
+    );
+    expect(request.headers.authorization).toBe("Bearer browser-token");
+  }
+  expect(observation.requests[1]?.headers["idempotency-key"]).toBe(
+    "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+  );
+  expect(observation.requests[1]?.body).toEqual({
+    body: { name: "Ada" },
+    durability: "global",
+  });
+  expect(new URL(observation.requests[3]!.url).searchParams.get("durability")).toBe("global");
+});
+
 test("the packed browser client decodes the generated reactive protocol", async ({ page }) => {
   await page.goto("/browser-tests/fixture.html");
 

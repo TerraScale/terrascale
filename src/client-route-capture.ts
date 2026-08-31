@@ -24,10 +24,20 @@ const sampleIds = {
   userId: toUlid("01KRZ3NDEKTSV4RRFFQ69G5FAV"),
 } as const;
 
+const sampleDatabaseDocument = {
+  database: "sdk2-database",
+  collection: "sdk2-collection",
+  documentId: "sdk2-document",
+  idempotencyKey: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FB0"),
+} as const;
+
 const pathTemplateSegments = new Map<string, string>(
   Object.entries(sampleIds).map(([name, value]) => [value, `{${name}}`]),
 );
 pathTemplateSegments.set("SFO", "{regionCode}");
+pathTemplateSegments.set(sampleDatabaseDocument.database, "{database}");
+pathTemplateSegments.set(sampleDatabaseDocument.collection, "{collection}");
+pathTemplateSegments.set(sampleDatabaseDocument.documentId, "{documentId}");
 
 export type CapturedSdkRoute = {
   readonly base: TerraScaleBase;
@@ -36,6 +46,8 @@ export type CapturedSdkRoute = {
   readonly operation: string;
   readonly pathTemplate: string;
   readonly routeName: TerraScaleRouteName;
+  readonly contract?: "database" | undefined;
+  readonly openApiOperationId?: string | undefined;
   readonly sourceContract: {
     readonly body: { readonly kind: "void" } | { readonly kind: "json"; readonly shape: unknown };
     readonly headers: readonly { readonly name: string; readonly value: string }[];
@@ -45,6 +57,8 @@ export type CapturedSdkRoute = {
 
 type CaptureOperation = {
   readonly client: string;
+  readonly contract?: "database" | undefined;
+  readonly openApiOperationId?: string | undefined;
   readonly defaultProject?: boolean;
   readonly invoke: (client: TerraScaleClient) => Promise<unknown>;
   readonly operation: string;
@@ -61,7 +75,9 @@ export async function exercisePublicClientRoutes(
 ): Promise<readonly CapturedSdkRoute[]> {
   assertCaptureOperationCoverage();
   const routes: CapturedSdkRoute[] = [];
-  for (const operation of captureOperations) {
+  for (const operation of captureOperations.filter(
+    (candidate) => candidate.contract !== "database",
+  )) {
     routes.push(await captureRoute(operation, fetch, true));
   }
   return routes;
@@ -132,6 +148,10 @@ async function captureRoute(
         : `${operation.operation}:${operation.variant}`,
     pathTemplate: pathToTemplate(new URL(capturedRequest.url).pathname),
     routeName: capturedMetric.routeName,
+    ...(operation.contract === undefined ? {} : { contract: operation.contract }),
+    ...(operation.openApiOperationId === undefined
+      ? {}
+      : { openApiOperationId: operation.openApiOperationId }),
     sourceContract: await capturedSourceContract(capturedRequest),
   };
 }
@@ -164,7 +184,7 @@ async function capturedSourceContract(request: Request): Promise<CapturedSdkRout
 }
 
 const safeContractValueNames = new Set([
-  "accept", "content-type", "cursor", "deletedocuments", "idempotency-key", "latitude", "limit", "longitude", "maxmessages", "organizationid", "range", "skip", "take", "unreadonly", "x-terrascale-delete-confirmation", "x-terrascale-preferred-region", "x-terrascale-project-id",
+  "accept", "content-type", "cursor", "deletedocuments", "durability", "idempotency-key", "latitude", "limit", "longitude", "maxmessages", "organizationid", "range", "skip", "take", "unreadonly", "x-terrascale-delete-confirmation", "x-terrascale-preferred-region", "x-terrascale-project-id",
 ]);
 
 export function canonicalContractHeaders(headers: Headers): readonly { readonly name: string; readonly value: string }[] {
@@ -717,6 +737,55 @@ const captureOperations: readonly CaptureOperation[] = [
     operation: "list",
     invoke: (client) =>
       client.documents.list({ repositoryId: sampleIds.repositoryId }, { skip: 0, take: 25 }),
+  },
+  {
+    client: "databaseDocuments",
+    contract: "database",
+    openApiOperationId: "documents.read",
+    operation: "read",
+    invoke: (client) =>
+      client.databaseDocuments.read(
+        sampleDatabaseDocument,
+        sampleDatabaseDocument.documentId,
+      ),
+  },
+  {
+    client: "databaseDocuments",
+    contract: "database",
+    openApiOperationId: "documents.create",
+    operation: "create",
+    invoke: (client) =>
+      client.databaseDocuments.create(
+        sampleDatabaseDocument,
+        sampleDatabaseDocument.documentId,
+        { body: { name: "Ada" }, durability: "global" },
+        { idempotencyKey: sampleDatabaseDocument.idempotencyKey },
+      ),
+  },
+  {
+    client: "databaseDocuments",
+    contract: "database",
+    openApiOperationId: "documents.patch",
+    operation: "patch",
+    invoke: (client) =>
+      client.databaseDocuments.patch(
+        sampleDatabaseDocument,
+        sampleDatabaseDocument.documentId,
+        { body: { title: "Engineer" }, durability: "regional" },
+        { idempotencyKey: sampleDatabaseDocument.idempotencyKey },
+      ),
+  },
+  {
+    client: "databaseDocuments",
+    contract: "database",
+    openApiOperationId: "documents.delete",
+    operation: "delete",
+    invoke: (client) =>
+      client.databaseDocuments.delete(
+        sampleDatabaseDocument,
+        sampleDatabaseDocument.documentId,
+        { idempotencyKey: sampleDatabaseDocument.idempotencyKey, durability: "global" },
+      ),
   },
   {
     client: "documents",

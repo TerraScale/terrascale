@@ -16,6 +16,7 @@ export type TerraScaleRouteName =
   | `admin.${string}`
   | `audit.${string}`
   | `backups.${string}`
+  | `databaseDocuments.${string}`
   | `databaseBranches.${string}`
   | `databases.${string}`
   | `documents.${string}`
@@ -93,6 +94,7 @@ export class TerraScaleHttp {
         let responseReceived = false;
         let fetchStarted = false;
         try {
+          options.signal?.throwIfAborted();
           const url = buildUrl(this.baseUrl(), options.path, options.query);
           const headers = await this.buildHeaders(options, idempotencyKey);
           const requestInit: RequestInit = {

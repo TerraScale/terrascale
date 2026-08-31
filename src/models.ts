@@ -634,6 +634,61 @@ export type DeletedDocumentResponse = {
   readonly sessionConsistencyToken?: string | null;
 };
 
+/** The durability classes published by the Database API document contract. */
+export type DatabaseDocumentDurability = "regional" | "global";
+
+/** The two path dimensions shared by the Database API document operations. */
+export type DatabaseDocumentScope = {
+  readonly database: string;
+  readonly collection: string;
+};
+
+/** Options shared by Database API document mutations. */
+export type DatabaseDocumentMutationOptions = {
+  /** A canonical uppercase ULID reused for every retry of this logical mutation. */
+  readonly idempotencyKey: Ulid;
+  readonly signal?: AbortSignal | undefined;
+};
+
+export type DatabaseDocumentDeleteOptions = DatabaseDocumentMutationOptions & {
+  readonly durability?: DatabaseDocumentDurability | undefined;
+};
+
+export type DatabaseDocumentWriteRequest<
+  TDocument extends JsonValue = JsonValue,
+> = {
+  readonly body: TDocument;
+  readonly durability?: DatabaseDocumentDurability | undefined;
+};
+
+export type DatabaseDocumentReadOptions = {
+  readonly signal?: AbortSignal | undefined;
+};
+
+/** The exact successful body returned by `documents.read`. */
+export type DatabaseDocumentReadResponse<
+  TDocument extends JsonValue = JsonValue,
+> = {
+  readonly database: string;
+  readonly collection: string;
+  readonly id: string;
+  readonly version: number;
+  readonly body: TDocument;
+  readonly position: number | null;
+};
+
+/** The exact successful body returned by Database API document mutations. */
+export type DatabaseDocumentWriteResponse = {
+  readonly database: string;
+  readonly collection: string;
+  readonly id: string;
+  readonly version: number;
+  readonly sequence: number;
+  readonly operationId: string;
+  readonly acknowledgement: "regional" | "global" | "backup" | null;
+  readonly backup: "none" | "full" | "partial" | null;
+};
+
 export type DocumentBatchResponse<TDocument extends JsonValue = JsonObject> = {
   readonly repositoryId: RepositoryId;
   readonly repository: string;

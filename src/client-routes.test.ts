@@ -57,14 +57,26 @@ type ManifestRoute = {
   readonly operation: string;
   readonly pathTemplate: string;
   readonly routeName: string;
+  readonly contract?: "database" | undefined;
+  readonly openApiOperationId?: string | undefined;
 };
 
 describe("TerraScaleClient route contracts", () => {
   test("keeps the generated SDK route manifest aligned with captured public routes", async () => {
     const manifestUrl = new URL("../sdk-route-manifest.json", import.meta.url);
+    const databaseManifestUrl = new URL("../sdk-database-route-manifest.json", import.meta.url);
     const manifest = JSON.parse(await readFile(manifestUrl, "utf8")) as {
       readonly routeCount: number;
       readonly routes: readonly ManifestRoute[];
+    };
+    const databaseManifest = JSON.parse(await readFile(databaseManifestUrl, "utf8")) as {
+      readonly routeCount: number;
+      readonly routes: readonly ManifestRoute[];
+      readonly deferredOpenApiRoutes: readonly {
+        readonly method: string;
+        readonly pathTemplate: string;
+        readonly ownerTask: string;
+      }[];
     };
     const capturedRoutes = await capturePublicClientRoutes();
 
@@ -72,8 +84,32 @@ describe("TerraScaleClient route contracts", () => {
       manifest.routes.map(routeManifestCore),
       capturedRoutes.map(routeManifestCore),
     );
-    assert.equal(manifest.routeCount, 91);
+    assert.equal(manifest.routeCount, 95);
     assert.equal(manifest.routeCount, capturedRoutes.length);
+    assert.equal(manifest.routes.filter(route => route.contract !== "database").length, 91);
+    assert.equal(databaseManifest.routeCount, 4);
+    assert.deepEqual(
+      databaseManifest.routes.map(route => [
+        route.method,
+        route.pathTemplate,
+        route.routeName,
+        route.openApiOperationId,
+      ]),
+      [
+        ["GET", "/api/v1/databases/{database}/collections/{collection}/documents/{documentId}", "databaseDocuments.read", "documents.read"],
+        ["PUT", "/api/v1/databases/{database}/collections/{collection}/documents/{documentId}", "databaseDocuments.create", "documents.create"],
+        ["PATCH", "/api/v1/databases/{database}/collections/{collection}/documents/{documentId}", "databaseDocuments.patch", "documents.patch"],
+        ["DELETE", "/api/v1/databases/{database}/collections/{collection}/documents/{documentId}", "databaseDocuments.delete", "documents.delete"],
+      ],
+    );
+    assert.deepEqual(
+      databaseManifest.deferredOpenApiRoutes.map(route => [route.method, route.pathTemplate, route.ownerTask]),
+      [
+        ["POST", "/api/v1/auth/storage/insert-unique", "SDK-3"],
+        ["POST", "/api/v1/auth/storage/compare-and-swap", "SDK-3"],
+        ["POST", "/api/v1/auth/storage/consume-one", "SDK-3"],
+      ],
+    );
     assert.equal(manifest.routes.some((route) => route.routeName === "backups.trigger"), false);
     assert.deepEqual(
       manifest.routes

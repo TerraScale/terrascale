@@ -28,7 +28,7 @@ test("built package keeps all public clients on typed operations without a runti
   assert.equal(typeof client.databaseBranches.requestClone, "function");
   assert.equal(typeof client.queues.list, "function");
   assert.equal(typeof client.queues.create, "function");
-  assert.equal(Object.values(client).length, 16);
+  assert.equal(Object.values(client).length, 17);
   for (const removedClient of ["auth", "apiKeys", "m2m", "billing", "pricing", "security"]) {
     assert.equal(removedClient in client, false);
   }
@@ -44,10 +44,12 @@ test("built package keeps all public clients on typed operations without a runti
   const savedQueries: sdk.SavedQueriesClient = client.savedQueries;
   const databaseBranches: sdk.DatabaseBranchesClient = client.databaseBranches;
   const queues: sdk.QueuesClient = client.queues;
+  const databaseDocuments: sdk.DatabaseDocumentsClient = client.databaseDocuments;
   const savedQuery: sdk.ProjectSavedQueryResponse | undefined = undefined;
   assert.equal(savedQueries, client.savedQueries);
   assert.equal(databaseBranches, client.databaseBranches);
   assert.equal(queues, client.queues);
+  assert.equal(databaseDocuments, client.databaseDocuments);
   assert.equal(savedQuery, undefined);
 
   for (const subclient of Object.values(client)) {

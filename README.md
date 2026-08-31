@@ -39,6 +39,37 @@ adapter conformance are separate qualification gates.
 
 There is no Dashboard-named or generic request entrypoint.
 
+## Database documents
+
+`databaseDocuments` follows the Go Database API contract directly. The
+currently published operations read, create, merge-patch, and delete one
+document at
+`/api/v1/databases/{database}/collections/{collection}/documents/{documentId}`.
+They are separate from the older repository-scoped `documents` client, which
+remains available for the Dashboard-owned contract.
+
+~~~ts
+import { createTerraScaleClient, toUlid } from "@terrascale/sdk";
+
+const client = createTerraScaleClient({
+  accessToken: process.env.TERRASCALE_ACCESS_TOKEN,
+});
+const scope = { database: "app", collection: "users" };
+const idempotencyKey = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FB0");
+
+await client.databaseDocuments.create(
+  scope,
+  "user-1",
+  { body: { name: "Ada" }, durability: "global" },
+  { idempotencyKey },
+);
+~~~
+
+Database, collection, and document identifiers must contain 1 to 64 UTF-8
+bytes and no control characters. Each mutation requires a canonical uppercase
+ULID, reused unchanged across retries. Create and patch put durability in the
+JSON body. Delete sends it as the published query parameter.
+
 ## Reactive protocol
 
 The SDK has one reactive implementation: `TerraScaleSyncV2Client`. It decodes
@@ -101,6 +132,8 @@ only when the operation's public contract permits no generated identity.
 Keys are nonblank and at most 128 characters. A retry reuses the same key for
 one logical attempt. Reusing a key with different input is a typed conflict.
 Replay retention and response headers follow the owning public contract.
+Database document mutations use the narrower gateway contract: a canonical
+uppercase ULID is mandatory.
 
 Mutations retry only when the operation is documented as idempotent. Validation,
 authentication, authorization, and deterministic conflict failures are not
@@ -155,8 +188,8 @@ providers, or performance. Unsupported operations fail explicitly.
 ## Public contract discipline
 
 The SDK implements only named operations published by the owning service.
-Dashboard-owned contracts and Database API contracts may share one edge origin
-and OpenAPI document, but their runtime ownership remains distinct.
+Dashboard-owned contracts and Database API contracts may share one edge origin,
+but their runtime ownership and OpenAPI documents remain distinct.
 The public API `/api/v1` remains versioned; releases qualify the exact packed tarball
 so consumers receive the same server and browser surface that passed the repository gates.
 
@@ -215,9 +248,11 @@ node --test test/msgpack-corpus-roundtrip.test.mjs
 
 Integration tests target the fixed DevHost public routes. When the required
 base URLs or credentials are absent, they skip instead of using mocked HTTP.
-The new Database API needs fixed DevHost routes before its live tests can be
-current. OpenAPI drift and descriptor checks must use the owner-published
-Dashboard snapshot. A local emulator cannot substitute for that evidence.
+Database API live tests need fixed DevHost routes and credentials. The default
+OpenAPI drift command checks both the owner-published Dashboard snapshot and
+the checked-out `ts-internals` Database API document. Auth-storage routes stay
+listed as explicit SDK-3/INT-4 deferrals until their complete durable contract
+lands. A local emulator cannot substitute for that evidence.
 
 ## Releases
 

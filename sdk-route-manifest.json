@@ -4,7 +4,7 @@
     "client": "src/client.ts",
     "capture": "src/client-route-capture.ts"
   },
-  "routeCount": 91,
+  "routeCount": 95,
   "routes": [
     {
       "base": "api",
@@ -1940,6 +1940,137 @@
           {
             "name": "take",
             "value": "25"
+          }
+        ]
+      }
+    },
+    {
+      "base": "api",
+      "client": "databaseDocuments",
+      "operation": "read",
+      "routeName": "databaseDocuments.read",
+      "contract": "database",
+      "openApiOperationId": "documents.read",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{database}/collections/{collection}/documents/{documentId}",
+      "responseType": "DatabaseDocumentReadResponse<TDocument>",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "databaseDocuments",
+      "operation": "create",
+      "routeName": "databaseDocuments.create",
+      "contract": "database",
+      "openApiOperationId": "documents.create",
+      "method": "PUT",
+      "pathTemplate": "/api/v1/databases/{database}/collections/{collection}/documents/{documentId}",
+      "requestType": "DatabaseDocumentWriteRequest<TDocument>",
+      "responseType": "DatabaseDocumentWriteResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "body": {
+              "name": "Ada"
+            },
+            "durability": "global"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "idempotency-key",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "databaseDocuments",
+      "operation": "patch",
+      "routeName": "databaseDocuments.patch",
+      "contract": "database",
+      "openApiOperationId": "documents.patch",
+      "method": "PATCH",
+      "pathTemplate": "/api/v1/databases/{database}/collections/{collection}/documents/{documentId}",
+      "requestType": "DatabaseDocumentWriteRequest<TPatch>",
+      "responseType": "DatabaseDocumentWriteResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "json",
+          "shape": {
+            "body": {
+              "title": "Engineer"
+            },
+            "durability": "regional"
+          }
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "content-type",
+            "value": "application/json"
+          },
+          {
+            "name": "idempotency-key",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+          }
+        ],
+        "query": []
+      }
+    },
+    {
+      "base": "api",
+      "client": "databaseDocuments",
+      "operation": "delete",
+      "routeName": "databaseDocuments.delete",
+      "contract": "database",
+      "openApiOperationId": "documents.delete",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/databases/{database}/collections/{collection}/documents/{documentId}",
+      "responseType": "DatabaseDocumentWriteResponse",
+      "sourceContract": {
+        "body": {
+          "kind": "void"
+        },
+        "headers": [
+          {
+            "name": "accept",
+            "value": "application/json"
+          },
+          {
+            "name": "idempotency-key",
+            "value": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+          }
+        ],
+        "query": [
+          {
+            "name": "durability",
+            "value": "global"
           }
         ]
       }

@@ -22,15 +22,25 @@ test("default OpenAPI path resolves the current ts-dashboard checkout from a wor
     "openapi",
     "server.openapi.json",
   );
+  const databaseSpecPath = path.join(
+    workspace,
+    "ts-internals",
+    "src",
+    "database",
+    "api",
+    "openapi.v1.json",
+  );
 
   try {
     await mkdir(scriptsRoot, { recursive: true });
     await mkdir(path.dirname(specPath), { recursive: true });
+    await mkdir(path.dirname(databaseSpecPath), { recursive: true });
     await cp(
       path.join(repositoryRoot, "scripts", "openapi-contract-paths.mjs"),
       path.join(scriptsRoot, "openapi-contract-paths.mjs"),
     );
     await writeFile(specPath, "{}\n", "utf8");
+    await writeFile(databaseSpecPath, "{}\n", "utf8");
 
     const moduleUrl = pathToFileURL(path.join(scriptsRoot, "openapi-contract-paths.mjs")).href;
     const result = await run(
@@ -38,12 +48,12 @@ test("default OpenAPI path resolves the current ts-dashboard checkout from a wor
       [
         "--input-type=module",
         "--eval",
-        `import { canonicalDashboardOpenApiSpec } from ${JSON.stringify(moduleUrl)}; console.log(canonicalDashboardOpenApiSpec);`,
+        `import { canonicalDashboardOpenApiSpec, canonicalDatabaseOpenApiSpec } from ${JSON.stringify(moduleUrl)}; console.log(canonicalDashboardOpenApiSpec); console.log(canonicalDatabaseOpenApiSpec);`,
       ],
       { cwd: sdkRoot },
     );
 
-    assert.equal(result.stdout.trim(), specPath);
+    assert.deepEqual(result.stdout.trim().split("\n"), [specPath, databaseSpecPath]);
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
@@ -74,6 +84,10 @@ test("configured OpenAPI drift profile runs against the checked-out Dashboard sn
       path.join(workspace, "scripts", "check-openapi-drift.mjs"),
     );
     await cp(
+      path.join(repositoryRoot, "scripts", "check-openapi-profiles.mjs"),
+      path.join(workspace, "scripts", "check-openapi-profiles.mjs"),
+    );
+    await cp(
       path.join(repositoryRoot, "scripts", "openapi-contract-paths.mjs"),
       path.join(workspace, "scripts", "openapi-contract-paths.mjs"),
     );
@@ -81,6 +95,24 @@ test("configured OpenAPI drift profile runs against the checked-out Dashboard sn
       path.join(repositoryRoot, "test", "fixtures", "openapi-drift", "sdk-route-manifest.json"),
       path.join(workspace, "sdk-route-manifest.json"),
     );
+    const databaseManifestPath = path.join(workspace, "sdk-database-route-manifest.json");
+    const fixtureManifest = JSON.parse(
+      await readFile(
+        path.join(repositoryRoot, "test", "fixtures", "openapi-drift", "sdk-route-manifest.json"),
+        "utf8",
+      ),
+    ) as { readonly routes: readonly unknown[] };
+    await writeFile(databaseManifestPath, `${JSON.stringify({
+      ...fixtureManifest,
+      openApiPathPrefix: "/api/v1",
+      deferredOpenApiRoutes: [{
+        method: "GET",
+        pathTemplate: "/api/v1/gadgets",
+        ownerTask: "SDK-3",
+        needs: "INT-4",
+        reason: "Fixture deferral for the composed profile test.",
+      }],
+    }, null, 2)}\n`, "utf8");
     const baselinePath = path.join(workspace, "typed-contract-debt-baseline.json");
     const fixtureBaseline = path.join(repositoryRoot, "test", "fixtures", "openapi-drift", "typed-contract-debt-baseline.json");
     await cp(fixtureBaseline, baselinePath);
@@ -93,6 +125,20 @@ test("configured OpenAPI drift profile runs against the checked-out Dashboard sn
         "openapi-covered-with-extra.json",
       ),
       path.join(workspace, "Dashboard", "docs", "product", "openapi", "server.openapi.json"),
+    );
+    await mkdir(
+      path.join(workspace, "ts-internals", "src", "database", "api"),
+      { recursive: true },
+    );
+    await cp(
+      path.join(
+        repositoryRoot,
+        "test",
+        "fixtures",
+        "openapi-drift",
+        "openapi-covered-with-extra.json",
+      ),
+      path.join(workspace, "ts-internals", "src", "database", "api", "openapi.v1.json"),
     );
 
     await rm(baselinePath);

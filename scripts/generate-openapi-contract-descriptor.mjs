@@ -11,13 +11,23 @@ const outputPath = path.join(root, "sdk-openapi-contract-descriptor.json");
 const manifestPath = path.join(root, "sdk-route-manifest.json");
 const specPath = process.argv.slice(2).find((argument) => !argument.startsWith("-")) ?? canonicalDashboardOpenApiSpec;
 const check = process.argv.includes("--check");
-const descriptor = await generateOpenApiContractDescriptor({ manifestPath, specPath });
+const excludedContracts = ["database"];
+const descriptor = await generateOpenApiContractDescriptor({
+  manifestPath,
+  specPath,
+  excludedContracts,
+});
 const json = `${JSON.stringify(descriptor, null, 2)}\n`;
 
 if (check) {
   if (await readFile(outputPath, "utf8") !== json) throw new Error("sdk-openapi-contract-descriptor.json is out of date. Run npm run generate:openapi-contract-descriptor.");
   console.log(`OpenAPI contract descriptor is current (${descriptor.routeCount} routes).`);
 } else {
-  await writeOpenApiContractDescriptor({ manifestPath, outputPath, specPath });
+  await writeOpenApiContractDescriptor({
+    manifestPath,
+    outputPath,
+    specPath,
+    excludedContracts,
+  });
   console.log(`Wrote sdk-openapi-contract-descriptor.json with ${descriptor.routeCount} routes.`);
 }

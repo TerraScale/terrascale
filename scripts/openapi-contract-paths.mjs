@@ -44,5 +44,45 @@ export const canonicalDashboardOpenApiSpec =
     : existsSync(siblingDashboardOpenApiSpec)
       ? siblingDashboardOpenApiSpec
       : existsSync(worktreeDashboardOpenApiSpec)
-        ? worktreeDashboardOpenApiSpec
-        : siblingDashboardOpenApiSpec);
+      ? worktreeDashboardOpenApiSpec
+      : siblingDashboardOpenApiSpec);
+
+const siblingDatabaseOpenApiSpec = path.resolve(
+  repositoryRoot,
+  "..",
+  "ts-internals",
+  "src",
+  "database",
+  "api",
+  "openapi.v1.json",
+);
+
+const worktreeDatabaseOpenApiSpec = path.resolve(
+  repositoryRoot,
+  "..",
+  "..",
+  "ts-internals",
+  "src",
+  "database",
+  "api",
+  "openapi.v1.json",
+);
+
+const checkedOutDatabaseOpenApiSpec = path.resolve(
+  process.cwd(),
+  "ts-internals",
+  "src",
+  "database",
+  "api",
+  "openapi.v1.json",
+);
+
+export const canonicalDatabaseOpenApiSpec =
+  process.env.TERRASCALE_DATABASE_OPENAPI_SPEC ??
+  (existsSync(checkedOutDatabaseOpenApiSpec)
+    ? checkedOutDatabaseOpenApiSpec
+    : existsSync(siblingDatabaseOpenApiSpec)
+      ? siblingDatabaseOpenApiSpec
+      : existsSync(worktreeDatabaseOpenApiSpec)
+        ? worktreeDatabaseOpenApiSpec
+        : siblingDatabaseOpenApiSpec);

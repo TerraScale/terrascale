@@ -18,12 +18,23 @@ if (isMainModule()) {
 
 export async function runOpenApiDriftCli(args, output = console) {
   const strict = args.includes("--strict");
+  const requireSpecCoverage = args.includes("--require-spec-coverage");
+  const excludedContracts = args
+    .filter((argument) => argument.startsWith("--exclude-contract="))
+    .map((argument) => argument.slice("--exclude-contract=".length));
   const [specReference = canonicalDashboardOpenApiSpec, manifestReference = path.join(repositoryRoot, "sdk-route-manifest.json")] = args.filter(
     (argument) => !argument.startsWith("--"),
   );
 
   try {
-    const result = await checkOpenApiDrift(specReference, manifestReference, defaultBaseline, strict);
+    const result = await checkOpenApiDrift(
+      specReference,
+      manifestReference,
+      defaultBaseline,
+      strict,
+      requireSpecCoverage,
+      excludedContracts,
+    );
     const formatted = formatOpenApiDriftResult(result, specReference, manifestReference);
     writeFormattedResult(formatted, output);
     return exitCodeForOpenApiDriftResult(result);
@@ -39,6 +50,8 @@ export async function checkOpenApiDrift(
   manifestReference = path.join(repositoryRoot, "sdk-route-manifest.json"),
   baselineReference = defaultBaseline,
   strict = false,
+  requireSpecCoverage = false,
+  excludedContracts = [],
 ) {
   const [spec, manifest, specSnapshot, baseline] = await Promise.all([
     readJson(specReference),
@@ -49,9 +62,24 @@ export async function checkOpenApiDrift(
   validateTypedContractBaseline(baseline);
 
   return {
-    ...compareOpenApiDrift(manifest, spec, baseline),
+    ...compareOpenApiDrift(excludeManifestContracts(manifest, excludedContracts), spec, baseline),
     specSnapshot,
     strict,
+    requireSpecCoverage,
+  };
+}
+
+function excludeManifestContracts(manifest, excludedContracts) {
+  if (excludedContracts.length === 0) {
+    return manifest;
+  }
+  if (!manifest || !Array.isArray(manifest.routes)) {
+    throw new Error("SDK route manifest must contain a routes array.");
+  }
+  const excluded = new Set(excludedContracts);
+  return {
+    ...manifest,
+    routes: manifest.routes.filter((route) => !excluded.has(route.contract)),
   };
 }
 
@@ -70,9 +98,23 @@ export function validateTypedContractBaseline(baseline) {
 
 export function compareOpenApiDrift(manifest, spec, baseline = []) {
   const sdkRoutes = manifestRoutes(manifest);
-  const specRoutes = openApiRoutes(spec);
+  const pathPrefix = typeof manifest.openApiPathPrefix === "string"
+    ? normalizePathTemplate(manifest.openApiPathPrefix)
+    : undefined;
+  const specRoutes = openApiRoutes(spec).filter((route) =>
+    pathPrefix === undefined || route.pathTemplate === pathPrefix || route.pathTemplate.startsWith(`${pathPrefix}/`)
+  );
+  const deferredOpenApiRoutes = manifestDeferredRoutes(manifest);
   const specRouteKeys = new Set(specRoutes.map((route) => comparableRouteKey(route)));
   const sdkRouteKeys = new Set(sdkRoutes.map((route) => comparableRouteKey(route)));
+  const deferredRouteKeys = new Set(
+    deferredOpenApiRoutes.map((route) => comparableRouteKey(route)),
+  );
+  for (const route of sdkRoutes) {
+    if (deferredRouteKeys.has(comparableRouteKey(route))) {
+      throw new Error(`SDK route is also marked as deferred: ${formatSdkRoute(route)}.`);
+    }
+  }
   const missingSdkRoutes = sdkRoutes
     .filter((route) => !specRouteKeys.has(comparableRouteKey(route)))
     .map((route) => ({
@@ -84,13 +126,31 @@ export function compareOpenApiDrift(manifest, spec, baseline = []) {
     }));
 
   const uncoveredSpecRoutes = specRoutes.filter(
-    (route) => !sdkRouteKeys.has(comparableRouteKey(route)),
+    (route) =>
+      !sdkRouteKeys.has(comparableRouteKey(route)) &&
+      !deferredRouteKeys.has(comparableRouteKey(route)),
+  );
+  const staleDeferredOpenApiRoutes = deferredOpenApiRoutes.filter(
+    (route) => !specRouteKeys.has(comparableRouteKey(route)),
   );
 
   const typedContractViolations = sdkRoutes.flatMap((route) => {
     const operation = operationForRoute(spec, route);
     const violation = operation === undefined ? undefined : typedContractViolation(route, operation);
     return violation === undefined ? [] : [{ route, ...violation }];
+  });
+  const operationIdentityViolations = sdkRoutes.flatMap((route) => {
+    if (route.openApiOperationId === undefined) {
+      return [];
+    }
+    const operation = operationForRoute(spec, route);
+    return operation?.operationId === route.openApiOperationId
+      ? []
+      : [{
+        route,
+        expected: route.openApiOperationId,
+        actual: operation?.operationId,
+      }];
   });
   const baselineKeys = new Set(baseline.map(typedContractDebtKey));
   const violationKeys = new Set(typedContractViolations.map(typedContractDebtKey));
@@ -101,7 +161,10 @@ export function compareOpenApiDrift(manifest, spec, baseline = []) {
     sdkRouteCount: sdkRoutes.length,
     specRouteCount: specRoutes.length,
     uncoveredSpecRoutes,
+    deferredOpenApiRoutes,
+    staleDeferredOpenApiRoutes,
     typedContractViolations,
+    operationIdentityViolations,
     staleTypedContractBaseline: baseline.filter((entry) => !violationKeys.has(typedContractDebtKey(entry))),
     unexpectedTypedContractViolations: typedContractViolations.filter((entry) => !baselineKeys.has(typedContractDebtKey(entry))),
   };
@@ -149,7 +212,15 @@ function isJsonElement(schema) {
 }
 
 export function exitCodeForOpenApiDriftResult(result) {
-  return result.missingSdkRoutes.length === 0 && result.unexpectedTypedContractViolations.length === 0 && result.staleTypedContractBaseline.length === 0 && (!result.strict || result.typedContractViolations.length === 0) ? 0 : 1;
+  return result.missingSdkRoutes.length === 0 &&
+    result.unexpectedTypedContractViolations.length === 0 &&
+    result.operationIdentityViolations.length === 0 &&
+    result.staleTypedContractBaseline.length === 0 &&
+    result.staleDeferredOpenApiRoutes.length === 0 &&
+    (!result.strict || result.typedContractViolations.length === 0) &&
+    (!result.requireSpecCoverage || result.uncoveredSpecRoutes.length === 0)
+    ? 0
+    : 1;
 }
 
 export function formatOpenApiDriftResult(result, specReference, manifestReference) {
@@ -194,8 +265,24 @@ export function formatOpenApiDriftResult(result, specReference, manifestReferenc
     }
   }
 
+  if (result.operationIdentityViolations.length > 0) {
+    stderr.push("");
+    stderr.push(`OpenAPI operation identity drift: ${result.operationIdentityViolations.length}`);
+    for (const violation of result.operationIdentityViolations) {
+      stderr.push(
+        `  - ${formatSdkRoute(violation.route)}: expected ${violation.expected}, published ${violation.actual ?? "<missing>"}`,
+      );
+    }
+  }
+
   if (result.unexpectedTypedContractViolations.length > 0 || result.staleTypedContractBaseline.length > 0) {
     stderr.push("\nTyped-contract debt baseline changed; production qualification remains blocked until Dashboard.Api or Authentication publishes schemas and the reviewed baseline is reduced.");
+  }
+
+  if (result.staleDeferredOpenApiRoutes.length > 0) {
+    stderr.push("");
+    stderr.push(`Deferred routes no longer published by OpenAPI: ${result.staleDeferredOpenApiRoutes.length}`);
+    stderr.push(...result.staleDeferredOpenApiRoutes.map((route) => `  - ${formatBasicRoute(route)}`));
   }
 
   if (result.missingSdkRoutes.length === 0 && specSnapshotLines.length > 0) {
@@ -204,17 +291,36 @@ export function formatOpenApiDriftResult(result, specReference, manifestReferenc
     stdout.push(...specSnapshotLines.map((line) => `  - ${line}`));
   }
 
-  stdout.push("");
-  stdout.push(`Spec routes not covered by SDK (informational): ${result.uncoveredSpecRoutes.length}`);
+  if (result.deferredOpenApiRoutes.length > 0) {
+    stdout.push("");
+    stdout.push(`Explicitly deferred OpenAPI routes: ${result.deferredOpenApiRoutes.length}`);
+    stdout.push(...result.deferredOpenApiRoutes.map((route) =>
+      `  - ${formatBasicRoute(route)} [${route.ownerTask}; needs ${route.needs}] ${route.reason}`
+    ));
+  }
+
+  const uncoveredLabel = result.requireSpecCoverage
+    ? "Spec routes missing SDK coverage or an explicit deferral"
+    : "Spec routes not covered by SDK (informational)";
+  const uncoveredLines = [
+    "",
+    `${uncoveredLabel}: ${result.uncoveredSpecRoutes.length}`,
+  ];
 
   for (const route of result.uncoveredSpecRoutes.slice(0, uncoveredDisplayLimit)) {
-    stdout.push(`  - ${formatBasicRoute(route)}`);
+    uncoveredLines.push(`  - ${formatBasicRoute(route)}`);
   }
 
   if (result.uncoveredSpecRoutes.length > uncoveredDisplayLimit) {
-    stdout.push(
+    uncoveredLines.push(
       `  - ... ${result.uncoveredSpecRoutes.length - uncoveredDisplayLimit} more uncovered spec routes`,
     );
+  }
+
+  if (result.requireSpecCoverage && result.uncoveredSpecRoutes.length > 0) {
+    stderr.push(...uncoveredLines);
+  } else {
+    stdout.push(...uncoveredLines);
   }
 
   return {
@@ -444,7 +550,47 @@ function manifestRoutes(manifest) {
       requestType: typeof route.requestType === "string" ? route.requestType : undefined,
       responseType: typeof route.responseType === "string" ? route.responseType : undefined,
       routeName: route.routeName,
+      openApiOperationId:
+        typeof route.openApiOperationId === "string" ? route.openApiOperationId : undefined,
     };
+  });
+}
+
+function manifestDeferredRoutes(manifest) {
+  const routes = manifest?.deferredOpenApiRoutes ?? [];
+  if (!Array.isArray(routes)) {
+    throw new Error("SDK route manifest deferredOpenApiRoutes must be an array.");
+  }
+
+  const keys = new Set();
+  return routes.map((route, index) => {
+    if (
+      typeof route.method !== "string" ||
+      typeof route.pathTemplate !== "string" ||
+      typeof route.ownerTask !== "string" ||
+      typeof route.needs !== "string" ||
+      typeof route.reason !== "string" ||
+      route.ownerTask.length === 0 ||
+      route.needs.length === 0 ||
+      route.reason.length === 0
+    ) {
+      throw new Error(
+        `Deferred OpenAPI route ${index} requires method, pathTemplate, ownerTask, needs, and reason.`,
+      );
+    }
+    const normalized = {
+      method: route.method.toUpperCase(),
+      pathTemplate: normalizePathTemplate(route.pathTemplate),
+      ownerTask: route.ownerTask,
+      needs: route.needs,
+      reason: route.reason,
+    };
+    const key = comparableRouteKey(normalized);
+    if (keys.has(key)) {
+      throw new Error(`Deferred OpenAPI routes contain a duplicate entry: ${key}.`);
+    }
+    keys.add(key);
+    return normalized;
   });
 }
 

@@ -108,6 +108,81 @@ describe("OpenAPI drift checker", () => {
     assert.match(formatted.stdout, /Spec routes not covered by SDK \(informational\): 1/u);
     assert.match(formatted.stdout, /GET \/api\/v1\/gadgets/u);
   });
+
+  test("requires complete Database API coverage while keeping SDK-3 deferrals explicit", async () => {
+    const checker = await checkerModule;
+    const operation = {
+      requestBody: { content: { "application/json": { schema: { type: "object" } } } },
+      responses: { 200: typedSchema() },
+    };
+    const manifest = {
+      openApiPathPrefix: "/api/v1",
+      routes: [{
+        method: "POST",
+        pathTemplate: "/api/v1/widgets",
+        routeName: "widgets.create",
+        requestType: "CreateWidgetRequest",
+        responseType: "Widget",
+      }],
+      deferredOpenApiRoutes: [{
+        method: "POST",
+        pathTemplate: "/api/v1/auth/storage/insert-unique",
+        ownerTask: "SDK-3",
+        needs: "INT-4",
+        reason: "The durable Better Auth storage contract is not published yet.",
+      }],
+    };
+    const spec = {
+      paths: {
+        "/health/live": { get: { responses: { 200: typedSchema() } } },
+        "/api/v1/widgets": { post: operation },
+        "/api/v1/auth/storage/insert-unique": { post: operation },
+      },
+    };
+    const covered = {
+      ...checker.compareOpenApiDrift(manifest, spec),
+      strict: true,
+      requireSpecCoverage: true,
+    };
+    const formatted = checker.formatOpenApiDriftResult(covered, "fixture", "fixture");
+
+    assert.equal(checker.exitCodeForOpenApiDriftResult(covered), 0, formatted.stderr);
+    assert.match(formatted.stdout, /Explicitly deferred OpenAPI routes: 1/u);
+    assert.match(formatted.stdout, /SDK-3; needs INT-4/u);
+    assert.match(formatted.stdout, /missing SDK coverage or an explicit deferral: 0/u);
+
+    const missing = {
+      ...checker.compareOpenApiDrift(
+        manifest,
+        { paths: { ...spec.paths, "/api/v1/new-route": { get: operation } } },
+      ),
+      requireSpecCoverage: true,
+    };
+    assert.equal(checker.exitCodeForOpenApiDriftResult(missing), 1);
+    assert.match(
+      checker.formatOpenApiDriftResult(missing, "fixture", "fixture").stderr,
+      /GET \/api\/v1\/new-route/u,
+    );
+
+    const wrongOperationId = checker.compareOpenApiDrift(
+      {
+        routes: [{
+          method: "POST",
+          pathTemplate: "/api/v1/widgets",
+          routeName: "databaseDocuments.create",
+          openApiOperationId: "documents.create",
+          requestType: "CreateWidgetRequest",
+          responseType: "Widget",
+        }],
+      },
+      { paths: { "/api/v1/widgets": { post: { ...operation, operationId: "widgets.create" } } } },
+    );
+    assert.equal(checker.exitCodeForOpenApiDriftResult(wrongOperationId), 1);
+    assert.match(
+      checker.formatOpenApiDriftResult(wrongOperationId, "fixture", "fixture").stderr,
+      /expected documents\.create, published widgets\.create/u,
+    );
+  });
 });
 
 type OpenApiDriftResult = {
@@ -115,7 +190,12 @@ type OpenApiDriftResult = {
   readonly typedContractViolations: readonly unknown[];
   readonly unexpectedTypedContractViolations: readonly unknown[];
   readonly staleTypedContractBaseline: readonly unknown[];
+  readonly staleDeferredOpenApiRoutes: readonly unknown[];
+  readonly uncoveredSpecRoutes: readonly unknown[];
+  readonly deferredOpenApiRoutes: readonly unknown[];
+  readonly operationIdentityViolations: readonly unknown[];
   readonly strict?: boolean;
+  readonly requireSpecCoverage?: boolean;
 };
 
 type FormattedOpenApiDriftResult = {
