@@ -41,9 +41,9 @@ views. SDK-2 owns the WebSocket and HTTP + MessagePack transports after INT-3
 publishes their routes, authentication, subprotocol negotiation, fallback
 request and response shapes, and retry semantics.
 
-The legacy v1 and Loro/native-v2 clients remain temporarily in source so their
-deletions can be reviewed in two dependent mechanical stages. They are not
-alternate current contracts and may not receive new behavior.
+The Loro/native-v2 client remains temporarily in source so its deletion can be
+reviewed in a dependent mechanical stage. It is not an alternate current
+contract and may not receive new behavior.
 
 ## Consequences
 

@@ -399,19 +399,8 @@ test("required bearer gate, health, unknown routes, reset/seed, binding, and rem
   );
 });
 
-test("the registered local Sync v1 and v2 clients use the same runtime store", async () => {
+test("the registered local Sync v2 client uses the runtime store", async () => {
   await withTempRuntime(async (runtime) => {
-    const v1 = runtime.createSyncV1Session({
-      DatabaseId: knownUserId,
-      EnvironmentId: knownUserId,
-      Tenant: "tenant-a",
-      AuthorizationScope: "local",
-      BearerTokenProvider: async () => "local-token",
-    });
-    await v1.connect();
-    assert.equal(v1.getConnectionSnapshot().Status, "connected");
-    await v1.disconnect();
-
     const v2 = runtime.createSyncV2Session({
       Collection: "tasks",
       Principal: "user-a",
@@ -529,38 +518,24 @@ test("Sync v2 journals and idempotency replays stay isolated by principal and te
   });
 });
 
-test("reset and close disconnect every registered Sync session", async () => {
+test("reset and close disconnect every registered Sync v2 session", async () => {
   await withTempRuntime(async (runtime) => {
-    const createV1 = () =>
-      runtime.createSyncV1Session({
-        DatabaseId: knownUserId,
-        EnvironmentId: knownUserId,
-        Tenant: "tenant-lifecycle",
-        AuthorizationScope: "local",
-        BearerTokenProvider: async () => "local-token",
-      });
-    const resetV1 = createV1();
     const resetV2 = runtime.createSyncV2Session({
       Collection: "tasks",
       Principal: "user-reset",
       Tenant: "tenant-lifecycle",
     });
-    await resetV1.connect();
     await resetV2.connect();
     await runtime.reset();
-    assert.equal(resetV1.getConnectionSnapshot().Status, "disconnected");
     assert.equal(resetV2.getStatus(), "closed");
 
-    const closeV1 = createV1();
     const closeV2 = runtime.createSyncV2Session({
       Collection: "tasks",
       Principal: "user-close",
       Tenant: "tenant-lifecycle",
     });
-    await closeV1.connect();
     await closeV2.connect();
     await runtime.close();
-    assert.equal(closeV1.getConnectionSnapshot().Status, "disconnected");
     assert.equal(closeV2.getStatus(), "closed");
     assert.throws(() => runtime.createClient(), /runtime is closed/u);
   });
