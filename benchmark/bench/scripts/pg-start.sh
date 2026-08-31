@@ -9,7 +9,7 @@
 # for the benchmark role only, discarded afterwards.
 set -euo pipefail
 
-ROOT=/tmp/terrabase-bench/pg
+ROOT=/tmp/terrabase-bench-pg-lane
 PORT=55432
 
 nix-shell -p postgresql_18 --run "
