@@ -24,6 +24,9 @@
 //! starts at zero and versions from a `saturating_add` over stored values,
 //! so the narrowing casts below are bounded by construction rather than by
 //! a runtime check — the same discipline the codec module records.
+//! Write-set digests are the deliberate exception: they are arbitrary
+//! 64-bit values, so they cross byte-preserving (see `digest_to_sql`)
+//! rather than value-narrowing.
 //!
 //! # Design record
 //!
@@ -47,8 +50,11 @@
 //!   `Buffered`, understating what survives.
 //!
 //! A failed transaction rolls back to a definite synchronous `Storage`
-//! rejection: nothing durable was published, so the uncertain outcome the
-//! append-then-sync backends report cannot occur here.
+//! rejection: nothing durable was published, so a real failure never
+//! reports the uncertain outcome the append-then-sync backends do. The
+//! test faults that name the post-sync windows are the one exception by
+//! construction: they suppress the durability-raising sync, record the
+//! WAL floor in the ledger, and answer `Unknown` for `Synced` intents.
 //!
 //! ## Sequences and rejections
 //!
