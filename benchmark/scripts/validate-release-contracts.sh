@@ -61,7 +61,8 @@ grep -Fq 'fipsFeatureGraph' deploy/release/package.sh
 grep -Fq 'fipsFeatureGraph' deploy/release/verify.sh
 ! grep -Fq -- '--all-features' deploy/release/package.sh
 
-grep -Fq 'GITHUB_BASE_REF' "$ci"
+! grep -Fq 'GITHUB_BASE_REF' "$ci"
+! grep -Fq 'GITHUB_EVENT_NAME' "$ci"
 grep -Fq 'git rev-parse --verify HEAD^' "$ci"
 grep -Fq 'buf lint' "$ci"
 grep -Fq 'buf breaking --against ".git#ref=$against_commit"' "$ci"
@@ -91,15 +92,67 @@ grep -Fq 'cargo doc --manifest-path deploy/release/sbom/Cargo.toml --no-deps --l
 grep -Fq 'deploy/release/test-sbom.sh' "$ci"
 grep -Fq 'gofmt -d -e' "$ci"
 grep -Fq 'go vet -mod=readonly ./...' "$ci"
+grep -Fq 'go install github.com/mikefarah/yq/v4@v4.45.1' "$ci"
 ! grep -Fq '.git#branch=${GITHUB_REF_NAME}' "$ci"
-awk '
-  /^  push:$/ { in_push = 1; next }
-  /^  [[:alnum:]_]+:$/ { in_push = 0 }
-  in_push && /branches: \[develop, main\]/ { found = 1 }
-  END { exit(found ? 0 : 1) }
-' "$ci"
+validate_trunk_ci_triggers() {
+  yq eval --exit-status '
+    (.on | type) == "!!map" and
+    (.on | has("push")) and
+    (.on.push | type) == "!!map" and
+    (.on.push.branches | type) == "!!seq" and
+    (.on.push.branches | length) == 2 and
+    .on.push.branches[0] == "develop" and
+    .on.push.branches[1] == "main" and
+    ((.on | has("pull_request")) | not) and
+    ((.on | has("pull_request_target")) | not)
+  ' "$1" >/dev/null 2>&1
+}
+
+validate_trunk_ci_triggers <(printf '%s\n' \
+  'on:' \
+  '  # pull_request: {}' \
+  '  push:' \
+  '    branches: [develop, main]' \
+  'env:' \
+  '  CONTRACT_TEXT: "pull_request: {}"' \
+  '  TARGET_TEXT: "pull_request_target: {}"')
+validate_trunk_ci_triggers <(printf '%s\n' \
+  'on: {push: {branches: [develop, main]}}')
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  'on:' \
+  '  push:' \
+  '    branches: [develop, main]' \
+  '  pull_request:' \
+  '    branches: [develop, main]')
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  'on:' \
+  '  push:' \
+  '    branches: [develop, main]' \
+  '  pull_request: {}')
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  'on:' \
+  '  push:' \
+  '    branches: [develop, main]' \
+  "  'pull_request': {}")
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  'on:' \
+  '  push:' \
+  '    branches: [develop, main]' \
+  '  "pull_request": {}')
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  'on:' \
+  '  push:' \
+  '    branches: [develop, main]' \
+  '  pull_request : {}')
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  'on: {push: {branches: [develop, main]}, pull_request: {}}')
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  'on:' \
+  '  push:' \
+  '    branches: [develop, main]' \
+  '  pull_request_target: {}')
+validate_trunk_ci_triggers "$ci"
 grep -Fq 'go test -mod=readonly -race ./...' "$ci"
-grep -Fq 'pull_request:' "$ci"
 ! grep -Fq 'python3' "$ci" deploy/release/package.sh deploy/release/reproduce.sh
 
 echo "validated immutable promotion and protobuf baseline contracts"
