@@ -866,11 +866,12 @@ pub(crate) mod json {
         {
             return Err(Error("config counts must be greater than zero".to_owned()));
         }
-        if !config_operations.is_multiple_of(config_concurrency)
-            || !config_warmup_operations.is_multiple_of(config_concurrency)
-        {
+        // The Go adapter distributes both warm-up and measured operations
+        // across slots with remainder handling, so only the measured count
+        // is pinned to whole slots per sample.
+        if !config_operations.is_multiple_of(config_concurrency) {
             return Err(Error(
-                "config operation counts must be divisible by concurrency".to_owned(),
+                "config operations per sample must be divisible by concurrency".to_owned(),
             ));
         }
         if !config_noise_percent.is_finite() || !(0.0..=100.0).contains(&config_noise_percent) {
