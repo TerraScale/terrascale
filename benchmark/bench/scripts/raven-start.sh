@@ -24,6 +24,10 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 143' INT TERM
+# Hold mode: leave the pinned reference running for the lane runs that the
+# documented se15 flow starts AFTER this script exits. The next start always
+# removes the prior server first, so nothing leaks.
+[[ "${TERRABASE_BENCH_HOLD:-}" != 1 ]] || trap - EXIT
 
 # Wait for the server to answer; the loop is best-effort and the explicit
 # probes below report readiness honestly instead of hiding a failure.

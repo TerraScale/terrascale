@@ -30,6 +30,10 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 143' INT TERM
+# Hold mode: leave the pinned reference running for the lane runs that the
+# documented se15 flow starts AFTER this script exits. The next start always
+# discards the data directory first, so nothing leaks.
+[[ "\${TERRABASE_BENCH_HOLD:-}" != 1 ]] || trap - EXIT
 psql -h $ROOT -p $PORT -U bench -d postgres \
   -c 'SELECT version();' \
   -c 'SHOW synchronous_commit;' \
