@@ -1,6 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+fixture_only=false
+case $# in
+  0) ;;
+  1)
+    if [[ "$1" == '--fixture-only' ]]; then
+      fixture_only=true
+    else
+      printf 'usage: %s [--fixture-only]\n' "$0" >&2
+      exit 64
+    fi
+    ;;
+  *)
+    printf 'usage: %s [--fixture-only]\n' "$0" >&2
+    exit 64
+    ;;
+esac
+
 release=.forgejo/workflows/release.yml
 promote=.forgejo/workflows/promote.yml
 ci=.forgejo/workflows/ci.yml
@@ -361,5 +378,9 @@ grep -Fq '"$GITHUB_ENV"' <<<"$gcc_linker_step"
 ! grep -Eq 'CARGO_TARGET_(X86_64|AARCH64|ARM|RISCV|S390X|POWERPC)[[:alnum:]_]*_LINKER' <<<"$gcc_linker_step"
 grep -Fq 'go test -mod=readonly -race ./...' "$ci"
 ! grep -Fq 'python3' "$ci" deploy/release/package.sh deploy/release/reproduce.sh
+
+if [[ "$fixture_only" == false ]]; then
+  bash scripts/test-validate-release-contracts.sh
+fi
 
 echo "validated immutable promotion and protobuf baseline contracts"
