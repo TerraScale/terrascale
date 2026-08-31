@@ -1,42 +1,55 @@
 # Public MessagePack manifest
 
-Status: Accepted for the shared manifest and bounded TypeScript generation. C#
-generation, live transport adoption, and production qualification are pending.
+Status: Accepted.
 
-Date: 2026-08-29
+Date: 2026-08-29, revised 2026-08-30.
 
 ## Context
 
-The public reactive protocol needs a versioned, language-neutral contract with
-bounded decoding and stable field positions. Private TBEP and TerraBase
-replication formats must not leak into public clients. TerraBase owns the
-reference semantics and corpus, TerraScale.Database owns the public WebSocket
-contract, and the two SDK repositories own their generated bindings.
+The public reactive protocol needs one versioned contract that TypeScript and
+Go can consume without copying field layouts into handwritten codecs. Frames
+must carry authorized query results and opaque checkpoints. Private storage,
+replication, and causal structures are not public SDK contracts.
 
 ## Decision
 
-Use `src/msgpack/manifest/terrascale.sync.v2.msgpack.json` as the sole local
-authority for the public MessagePack envelope, message tags, fields, unions,
-and bounds. `scripts/generate-msgpack-protocol.mjs` emits the TypeScript
-binding. The accepted in-repository bounded runtime performs a whole-message
-structural scan before value construction, rejects maps, extensions, float32,
-unknown tags and versions, unsafe integers, invalid UTF-8, depth/size
-violations, and trailing bytes, and returns typed failures.
+`src/msgpack/manifest/terrascale.sync.v2.msgpack.json` is the sole protocol
+authority. It declares the indexed envelope, message tags and directions,
+result operations, closed errors, field positions, and allocation bounds.
 
-Tags and field positions are never reused. Native payload codecs remain named
-and opaque until the owner-published public result-view contract replaces that
-interim implementation. The generated TypeScript module is not a new raw
-package entrypoint.
+`scripts/generate-msgpack-protocol.mjs` validates that manifest and emits the
+TypeScript types, validators, encoder, and decoder. Generated files are never
+edited by hand. INT-3 must make the Database API's Go codec check the same JSON
+manifest.
 
-## Consequences and limits
+Version 2.1 is the first publishable wire contract. The pre-launch 2.0 files
+were never released through npm or served by a live transport, and their tag
+assignments are withdrawn. Both sides fail closed across this boundary because
+the envelope decoder requires an exact major and minor version before it reads
+the body. The 2.1 tag assignments are stable; compatible additions append new
+tags instead of reassigning an existing tag or direction.
 
-Manifest drift, hostile decode, corpus round-trip, and native-view tests pass in
-this checkout, and the release workflow runs them in its protected Node 22 and
-24 lanes. The live session still uses HTTP/JSON and SSE, and no C# binding or
-bidirectional cross-language run exists here. Those are production gaps, not
-implied claims by the generated files.
+The decoder scans one complete MessagePack value before constructing a public
+value. It rejects maps, extensions, float32, invalid UTF-8, unsafe integers,
+unknown versions, features, tags, enum values, union variants, trailing bytes,
+and all declared size or depth violations.
 
-The bounded runtime remains the accepted TypeScript implementation. A future
-dependency change would require a new reviewed record and must preserve the
-same explicit limits, hostile-input behavior, and performance evidence. No
-library-selection decision is open in this ADR.
+`TerraScaleSyncV2Client` is the current reactive state machine. It accepts the
+generated server frames and applies snapshots, deltas, resets, authorization
+changes, route changes, and backpressure instructions to authorized result
+views. SDK-2 owns the WebSocket and HTTP + MessagePack transports after INT-3
+publishes their routes, authentication, subprotocol negotiation, fallback
+request and response shapes, and retry semantics.
+
+The legacy v1 and Loro/native-v2 clients remain temporarily in source so their
+deletions can be reviewed in two dependent mechanical stages. They are not
+alternate current contracts and may not receive new behavior.
+
+## Consequences
+
+Changing any frame requires changing the manifest and regenerating the
+TypeScript module. The drift check rejects manual generated-file edits. The
+semantic corpus round-trips every message kind, and hostile byte tests gate the
+decoder. Committed 2.1 golden bytes independently pin every message kind and
+hostile boundary for the later Go implementation. A second handwritten frame
+codec or compatibility client is not allowed after the deletion stages land.

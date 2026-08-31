@@ -22,7 +22,7 @@ const snapshot = (items: readonly SyncV2ResultItem[], revision = 1n, generation 
   checkpoint: new SyncV2ViewCheckpoint(`checkpoint-${generation}-${revision}`),
 });
 
-describe("native v2 authorized result view", () => {
+describe("current v2 authorized result view", () => {
   test("applies atomic insert/update/patch/remove/move revisions and ignores duplicates", () => {
     const store = new SyncV2ResultViewStore();
     store.bootstrap(snapshot([row("a", "a"), row("b", "b")]));

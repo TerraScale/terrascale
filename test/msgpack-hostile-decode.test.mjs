@@ -15,6 +15,7 @@
 //   npm run build && node --test test/msgpack-hostile-decode.test.mjs
 
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { describe, test } from "node:test";
 
 import { TerrascaleMsgpackError } from "../dist/msgpack/runtime/bounded-msgpack.js";
@@ -25,6 +26,10 @@ import {
 } from "../dist/msgpack/generated/terrascale-sync-v2-msgpack.js";
 
 const encoder = new TextEncoder();
+const goldenHostileFixture = JSON.parse(await readFile(
+  new URL("./fixtures/terrascale.sync.v2.msgpack/hostile-vectors.json", import.meta.url),
+  "utf8",
+));
 
 const bytes = (...parts) => {
   // Assembles raw MessagePack bytes without spreading large parts (the
@@ -116,7 +121,7 @@ const bin32Header = (length) => [
 /** A hand-built heartbeat envelope: [major, minor, features, tag, corr, caus, []]. */
 const heartbeatEnvelope = (overrides = {}) => {
   const major = overrides.major ?? [0x02];
-  const minor = overrides.minor ?? [0x00];
+  const minor = overrides.minor ?? [0x01];
   const features = overrides.features ?? [0x00];
   const tag = overrides.tag ?? [0x06];
   const correlation = overrides.correlation ?? u64(1n);
@@ -138,6 +143,42 @@ const expectRejection = (code, wire, note) => {
 };
 
 describe("msgpack hostile decode", () => {
+  test("committed independent vectors pin every typed hostile boundary", () => {
+    const expectedCodes = [
+      "limit_message",
+      "limit_string",
+      "limit_binary",
+      "limit_array",
+      "map_forbidden",
+      "extension_forbidden",
+      "float32_forbidden",
+      "depth_exceeded",
+      "truncated",
+      "trailing_bytes",
+      "invalid_type",
+      "invalid_shape",
+      "invalid_utf8",
+      "unsafe_integer",
+      "unsupported_version",
+      "unknown_feature",
+      "unknown_message_tag",
+      "unknown_enum",
+      "unknown_variant",
+    ];
+    assert.equal(goldenHostileFixture.protocol, "terrascale.sync.v2.msgpack");
+    assert.equal(goldenHostileFixture.version, "2.1");
+    assert.deepEqual(
+      goldenHostileFixture.vectors.map(vector => vector.code).sort(),
+      [...expectedCodes].sort(),
+    );
+    for (const vector of goldenHostileFixture.vectors) {
+      const wire = vector.hex === undefined
+        ? new Uint8Array(vector.repeat.count).fill(vector.repeat.byte)
+        : Uint8Array.from(Buffer.from(vector.hex, "hex"));
+      expectRejection(vector.code, wire, `golden vector: ${vector.name}`);
+    }
+  });
+
   test("a hand-built canonical heartbeat decodes (positive control)", () => {
     const decoded = decodeTerrascaleSyncV2MsgpackEnvelope(heartbeatEnvelope());
     assert.equal(decoded.message.kind, "heartbeat");
@@ -152,7 +193,7 @@ describe("msgpack hostile decode", () => {
     const decoded = decodeTerrascaleSyncV2MsgpackEnvelope(
       heartbeatEnvelope({
         major: [0xcd, 0x00, 0x02],
-        minor: [0xcc, 0x00],
+        minor: [0xcc, 0x01],
         features: [0xce, 0x00, 0x00, 0x00, 0x00],
         tag: [0xcd, 0x00, 0x06],
         correlation: [0xcc, 0x2a],
@@ -170,9 +211,11 @@ describe("msgpack hostile decode", () => {
       correlation: 7n,
       causation: 3n,
       message: {
-        kind: "session_setup",
-        collections: ["orders", "items"],
-        resume: { ends: [[1n, 2n]], storage_sequence: 5n },
+        kind: "subscribe",
+        subscription: "orders",
+        query: "from orders",
+        parameters: encoder.encode("open"),
+        checkpoint: encoder.encode("checkpoint"),
       },
     });
     assert.ok(envelope.length > 8);
@@ -189,10 +232,8 @@ describe("msgpack hostile decode", () => {
   });
 
   test("a truncated variable-length body list is rejected", () => {
-    // body: array of 2 fields where the list declares 3 collections but the
-    // message ends after two (and the outer second element never arrives).
-    const body = bytes([0x92], [0x93], str("a"), str("b"));
-    expectRejection("truncated", heartbeatEnvelope({ tag: [0x01], body }), "truncated session body");
+    const body = bytes([0x94], str("view"), str("from docs"), [0xc4, 0x03, 0x01]);
+    expectRejection("truncated", heartbeatEnvelope({ tag: [0x01], body }), "truncated subscription body");
   });
 
   // --- trailing bytes -----------------------------------------------------------
@@ -218,59 +259,48 @@ describe("msgpack hostile decode", () => {
     expectRejection("limit_message", giant, "whole message above the ceiling");
   });
 
-  test("a binary field declaring more than its 4 MiB bound is rejected", () => {
-    // delta_batch body: [codec, payload, next, within_budget, oversize, commits]
-    const body = bytes(
-      [0x96],
-      [0x03],
-      bin32Header(4194305),
-      [0x00],
-      [0xc2],
-      [0xc2],
-      u64(1n),
-    );
+  test("a binary field declaring more than its 1 MiB bound is rejected", () => {
+    const body = bytes([0x94], str("view"), str("from docs"), bin32Header(1048577));
     expectRejection(
       "limit_binary",
-      heartbeatEnvelope({ tag: [0x07], body }),
-      "declared payload above the chunk bound",
+      heartbeatEnvelope({ tag: [0x01], body }),
+      "declared parameters above the binary bound",
     );
   });
 
   test("a string field above its per-message bound is rejected", () => {
-    // region_route_change: one text field bounded to 256 bytes.
-    const body = bytes([0x91], str("r".repeat(257)));
+    const body = bytes([0x91], str("r".repeat(65)));
     expectRejection(
       "limit_string",
-      heartbeatEnvelope({ tag: [0x0b], body }),
-      "region above its 256-byte bound",
+      heartbeatEnvelope({ tag: [0x09], body }),
+      "region above its 64-byte bound",
     );
   });
 
   test("a list field above its per-message item bound is rejected", () => {
-    // session_setup collections bounded to 128 items.
-    const collections = [];
-    for (let index = 0; index < 129; index++) {
-      collections.push(...str("c"));
-    }
-    const body = bytes([0x92], [0xdc, 0x00, 129], ...collections, [0xc0]);
+    const body = bytes([0x94], str("view"), u64(2n), [0xdc, 0x27, 0x11]);
     expectRejection(
       "limit_array",
-      heartbeatEnvelope({ tag: [0x01], body }),
-      "129 collections",
+      heartbeatEnvelope({ tag: [0x08], body }),
+      "10001 authorization removals",
     );
   });
 
-  test("a checkpoint end list above its bound is rejected", () => {
-    const ends = [];
-    for (let index = 0; index < 65; index++) {
-      ends.push([0x92], u64(1n), u64(2n));
+  test("a projected field list above its bound is rejected", () => {
+    const fields = [];
+    for (let index = 0; index < 1025; index++) {
+      fields.push([0x92], str("p"), [0xc4, 0x00]);
     }
-    const checkpoint = bytes([0x92], [0xdc, 0x00, 65], ...ends, u64(0n));
-    const body = bytes([0x91], checkpoint);
+    const body = bytes(
+      [0x92], str("view"),
+      [0x96], u64(1n), u64(1n), u64(1n),
+      [0x91], [0x92], str("document"), [0xdc, 0x04, 0x01], ...fields,
+      str("a".repeat(64)), [0xc4, 0x01, 0x01],
+    );
     expectRejection(
       "limit_array",
-      heartbeatEnvelope({ tag: [0x05], body }),
-      "65 checkpoint ends",
+      heartbeatEnvelope({ tag: [0x03], body }),
+      "1025 projected fields",
     );
   });
 
@@ -293,7 +323,7 @@ describe("msgpack hostile decode", () => {
   // --- unknown message tags --------------------------------------------------------
 
   test("unknown message tags are rejected", () => {
-    expectRejection("unknown_message_tag", heartbeatEnvelope({ tag: [0x14] }), "tag 20 (one past the manifest)");
+    expectRejection("unknown_message_tag", heartbeatEnvelope({ tag: [0x0c] }), "tag 12 (one past the manifest)");
     expectRejection("unknown_message_tag", heartbeatEnvelope({ tag: [0xcd, 0x4f, 0xf1] }), "tag 0x4ff1");
     expectRejection("unknown_message_tag", heartbeatEnvelope({ tag: [0xcc, 0x63] }), "tag 99");
   });
@@ -322,9 +352,11 @@ describe("msgpack hostile decode", () => {
   });
 
   test("a float where a u64 counter is declared is rejected", () => {
-    // delta_batch commits
-    const body = bytes([0x96], [0x03], [0xc4, 0x00], [0x92, 0x90, 0x00], [0xc2], [0xc2], f64(3));
-    expectRejection("unsafe_integer", heartbeatEnvelope({ tag: [0x07], body }), "commits as float64");
+    const body = bytes(
+      [0x97], str("view"), f64(1), u64(1n), u64(2n),
+      [0x90], str("a".repeat(64)), [0xc4, 0x01, 0x01],
+    );
+    expectRejection("unsafe_integer", heartbeatEnvelope({ tag: [0x04], body }), "view generation as float64");
   });
 
   // --- version skew ---------------------------------------------------------------------
@@ -336,7 +368,8 @@ describe("msgpack hostile decode", () => {
     // 0xff is the negative fixint -1: not a u32 at all, so it fails as an
     // unsafe integer — still fail-closed before any body field is read.
     expectRejection("unsafe_integer", heartbeatEnvelope({ major: [0xff] }), "major -1 (0xff)");
-    expectRejection("unsupported_version", heartbeatEnvelope({ minor: [0x01] }), "minor 1");
+    expectRejection("unsupported_version", heartbeatEnvelope({ minor: [0x00] }), "withdrawn pre-launch minor 0");
+    expectRejection("unsupported_version", heartbeatEnvelope({ minor: [0x02] }), "future minor 2");
     expectRejection("unsafe_integer", heartbeatEnvelope({ major: f64(3) }), "skewed major as a float");
   });
 
@@ -367,33 +400,31 @@ describe("msgpack hostile decode", () => {
       heartbeatEnvelope({ tag: [0x06], body: [0x91, 0xc0] }),
       "heartbeat body with one element",
     );
-    // delta_batch body with seven fields instead of six.
-    const body = bytes([0x97], [0x03], [0xc4, 0x00], [0x92, 0x90, 0x00], [0xc2], [0xc2], u64(1n), [0xc2]);
+    const body = bytes([0x98], str("view"), u64(1n), u64(1n), u64(2n), [0x90], str("a".repeat(64)), [0xc4, 0x01, 0x01], [0xc2]);
     expectRejection(
       "invalid_shape",
-      heartbeatEnvelope({ tag: [0x07], body }),
+      heartbeatEnvelope({ tag: [0x04], body }),
       "delta body with an extra field",
     );
   });
 
   test("a union with the wrong arity for its discriminant is rejected", () => {
-    const fieldFor = (value) => bytes([0x92], str("k"), value);
-    const writeFor = (field) => bytes([0x92], [0x01], [0x91], field);
-    const bodyFor = (write) => bytes([0x94], str("orders"), str("d-1"), str("idem-1"), write);
-    // document_value int_v (2) must carry exactly [discriminant, value]:
-    // a missing element is an arity (shape) violation...
-    const shortValue = bytes([0x91], [0x02]);
+    const bodyFor = (operation) => bytes(
+      [0x97], str("view"), u64(1n), u64(1n), u64(2n),
+      [0x91], operation, str("a".repeat(64)), [0xc4, 0x01, 0x01],
+    );
+    const shortValue = bytes([0x91], [0x01]);
     expectRejection(
       "invalid_shape",
-      heartbeatEnvelope({ tag: [0x0e], body: bodyFor(writeFor(fieldFor(shortValue))) }),
-      "document_value missing its value element",
+      heartbeatEnvelope({ tag: [0x04], body: bodyFor(shortValue) }),
+      "insert operation missing its fields",
     );
     // ...and an extra element breaches the union's bounded array first.
-    const longValue = bytes([0x93], [0x02], i64(5n), [0xc0]);
+    const longValue = bytes([0x95], [0x01], str("document"), [0x00], [0x90], [0xc0]);
     expectRejection(
       "limit_array",
-      heartbeatEnvelope({ tag: [0x0e], body: bodyFor(writeFor(fieldFor(longValue))) }),
-      "document_value with an extra element",
+      heartbeatEnvelope({ tag: [0x04], body: bodyFor(longValue) }),
+      "insert operation with an extra element",
     );
   });
 
@@ -426,15 +457,10 @@ describe("msgpack hostile decode", () => {
   });
 
   test("float32 is rejected where float64 is the declared width", () => {
-    // mutation_request put with a float_v (3) carrying float32.
-    const value = bytes([0x92], [0x03], f32(1.5));
-    const field = bytes([0x92], str("k"), value);
-    const write = bytes([0x92], [0x01], [0x91], field);
-    const body = bytes([0x94], str("orders"), str("d-1"), str("idem-1"), write);
     expectRejection(
       "float32_forbidden",
-      heartbeatEnvelope({ tag: [0x0e], body }),
-      "float32 in a float64 field",
+      heartbeatEnvelope({ body: bytes([0x91], f32(1.5)) }),
+      "float32 anywhere in a frame",
     );
   });
 
@@ -442,7 +468,7 @@ describe("msgpack hostile decode", () => {
     const body = bytes([0x91], [0xa1, 0xff]);
     expectRejection(
       "invalid_utf8",
-      heartbeatEnvelope({ tag: [0x0b], body }),
+      heartbeatEnvelope({ tag: [0x09], body }),
       "region with byte 0xff",
     );
   });
@@ -452,51 +478,37 @@ describe("msgpack hostile decode", () => {
   test("unknown enum values are rejected", () => {
     // error message: [code, detail]
     const body = bytes([0x92], [0xcc, 99], [0xc0]);
-    expectRejection("unknown_enum", heartbeatEnvelope({ tag: [0x0d], body }), "error code 99");
-    // resync_required: [floor, reason]
-    const floor = bytes([0x92], [0x90], u64(0n));
-    const resyncBody = bytes([0x92], floor, [0x03]);
+    expectRejection("unknown_enum", heartbeatEnvelope({ tag: [0x0a], body }), "error code 99");
+    const resetBody = bytes(
+      [0x93], str("view"), [0xcc, 99],
+      [0x96], u64(1n), u64(1n), u64(1n), [0x90], str("a".repeat(64)), [0xc4, 0x01, 0x01],
+    );
     expectRejection(
       "unknown_enum",
-      heartbeatEnvelope({ tag: [0x0a], body: resyncBody }),
-      "resync reason 3",
+      heartbeatEnvelope({ tag: [0x05], body: resetBody }),
+      "reset reason 99",
     );
   });
 
   test("unknown union discriminants are rejected", () => {
-    // document_value discriminant 7.
-    const value = bytes([0x91], [0x07]);
-    const field = bytes([0x92], str("k"), value);
-    const write = bytes([0x92], [0x01], [0x91], field);
-    const body = bytes([0x94], str("orders"), str("d-1"), str("idem-1"), write);
-    expectRejection(
-      "unknown_variant",
-      heartbeatEnvelope({ tag: [0x0e], body }),
-      "document_value discriminant 7",
+    const operation = bytes([0x91], [0x07]);
+    const body = bytes(
+      [0x97], str("view"), u64(1n), u64(1n), u64(2n),
+      [0x91], operation, str("a".repeat(64)), [0xc4, 0x01, 0x01],
     );
-    // mutation_ack outcome discriminant 3.
-    const outcome = bytes([0x91], [0x03]);
     expectRejection(
       "unknown_variant",
-      heartbeatEnvelope({ tag: [0x0f], body: bytes([0x91], outcome) }),
-      "mutation outcome discriminant 3",
+      heartbeatEnvelope({ tag: [0x04], body }),
+      "result operation discriminant 7",
     );
   });
 
-  test("a fixed-length binary field with the wrong length is rejected", () => {
-    // operation_progress: [operation(16-byte ulid), phase, done, total, detail]
-    const body = bytes(
-      [0x95],
-      [0xc4, 0x0f, ...new Uint8Array(15)],
-      [0x01],
-      u64(0n),
-      [0xc0],
-      [0xc0],
-    );
+  test("a bounded binary field below its minimum length is rejected", () => {
+    const body = bytes([0x92], str("view"), [0xc4, 0x00]);
     expectRejection(
       "limit_binary",
-      heartbeatEnvelope({ tag: [0x12], body }),
-      "15-byte operation ulid",
+      heartbeatEnvelope({ tag: [0x07], body }),
+      "empty checkpoint",
     );
   });
 
