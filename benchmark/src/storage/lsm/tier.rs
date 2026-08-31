@@ -415,6 +415,9 @@ pub(crate) fn run_mover(
             error,
         );
     }
+    // Keep the read path's cached copy in step with the published manifest,
+    // so `collect_range` never needs the on-disk read it replaced.
+    storage.tier_manifest = Some(manifest);
     // The manifest names the verified object as the fallback source; the
     // `NVMe` copy may now be reclaimed. The manifest's acceptance is local
     // until P2 wires the `RegionalQuorum` vote.

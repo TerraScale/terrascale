@@ -660,7 +660,10 @@ impl TbepGrpcServer {
         let server = Arc::clone(self);
         let (shutdown, signal) = tokio::sync::oneshot::channel::<()>();
         let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
+            // The serving runtime carries TLS record processing, HTTP/2
+            // framing, and codec work for every connection; two workers
+            // serialized all of it. Size it to the host instead.
+            .worker_threads(serving_worker_threads())
             .enable_all()
             .build()
             .map_err(std::io::Error::other)?;
@@ -766,7 +769,7 @@ impl TbepGrpcServer {
             .name("tbep-grpc-tls".into())
             .spawn(move || {
                 let runtime = tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(2)
+                    .worker_threads(serving_worker_threads())
                     .enable_all()
                     .build()
                     .expect("the TBEP serving runtime starts");
@@ -875,6 +878,13 @@ impl TbepGrpcServer {
             draining: Arc::clone(&self.draining),
         })
     }
+}
+
+/// Worker count for the dedicated TBEP serving runtimes: the available
+/// parallelism, so TLS record processing, HTTP/2 framing, and codec work
+/// for concurrent connections are not squeezed onto two threads.
+fn serving_worker_threads() -> usize {
+    std::thread::available_parallelism().map_or(4, std::num::NonZeroUsize::get)
 }
 
 fn tls_server_config(

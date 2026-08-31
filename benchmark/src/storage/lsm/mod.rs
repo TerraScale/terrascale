@@ -193,6 +193,10 @@ pub(crate) struct LsmStorage {
     memtable: MemTable,
     frozen: Vec<MemTable>,
     manifest: SegmentManifest,
+    /// The cold-tier manifest, cached at open and refreshed on demotion so
+    /// the read path never re-reads `TIERMANIFEST` from disk inside the
+    /// storage lock. `None` until a demotion creates the file.
+    tier_manifest: Option<tier::TierManifest>,
     readers: BTreeMap<u64, RefCell<SegmentReader>>,
     pub(crate) tuning: LsmTuning,
     /// The highest sequence this location has ever named. Sequences may have
@@ -529,6 +533,7 @@ impl LsmStorage {
             memtable: MemTable::default(),
             frozen: Vec::new(),
             manifest,
+            tier_manifest: None,
             readers,
             tuning: LsmTuning::default(),
             sequence_watermark: 0,
@@ -555,6 +560,7 @@ impl LsmStorage {
         };
         engine.rebuild_indexes_from_segments()?;
         engine.rebuild_indexes_from_cold_tier()?;
+        engine.tier_manifest = tier::TierManifest::read(&engine.dir);
         let mut watermark = engine.sequence_watermark;
         if replay_wal {
             for entry in &wal_scan.entries {
@@ -796,12 +802,61 @@ impl LsmStorage {
     }
 
     /// Returns the newest entry for one user key at or below `sequence`.
+    ///
+    /// A point probe, not a range scan: each source is searched for this one
+    /// key only, the running best (highest sequence at or below the snapshot)
+    /// is kept, and nothing is merged, sorted, or deduplicated. Semantically
+    /// identical to reducing `collect_range` over this key, without
+    /// materializing every version of the range on each read.
     fn newest_document_entry(&self, key: &InternalKey, sequence: u64) -> Option<(bool, Vec<u8>)> {
+        let user_key = key.user_key();
         let bound = key.user_key_upper_bound();
-        self.collect_range(key.user_key(), &bound, sequence)
-            .into_iter()
-            .find(|candidate| candidate.key.user_key() == key.user_key())
-            .map(|found| (found.key.is_deletion(), found.value))
+        let mut best: Option<Entry> = None;
+        let mut consider = |entries: Vec<Entry>| {
+            for entry in entries {
+                if entry.key.user_key() == user_key
+                    && entry.key.sequence() <= sequence
+                    && best.as_ref().is_none_or(|current| entry.key.sequence() > current.key.sequence())
+                {
+                    best = Some(entry);
+                }
+            }
+        };
+        consider(self.memtable.range_between(user_key, &bound).collect());
+        for source in &self.frozen {
+            consider(source.range_between(user_key, &bound).collect());
+        }
+        for meta in &self.manifest.segments {
+            if meta.max_key.as_slice() < user_key || meta.min_key.as_slice() >= &bound {
+                continue;
+            }
+            let Some(reader) = self.readers.get(&meta.id) else {
+                continue;
+            };
+            let Ok(entries) = reader.borrow_mut().read_between(Some(user_key), &bound) else {
+                continue;
+            };
+            consider(entries);
+        }
+        // Demotion removes a segment from the NVMe manifest and reader map;
+        // its immutable object remains named by the cached tier manifest.
+        // A named cold segment that is unavailable or corrupt fails closed,
+        // exactly as the range path does, instead of silently omitting data.
+        if let Some(tier_manifest) = self.tier_manifest.as_ref() {
+            let active_ids: BTreeSet<u64> =
+                self.manifest.segments.iter().map(|meta| meta.id).collect();
+            for object in tier_manifest
+                .objects
+                .iter()
+                .filter(|object| object.verified && !active_ids.contains(&object.segment_id))
+            {
+                let Ok(entries) = tier::read_cold_segment_entries(self, object.segment_id) else {
+                    return None;
+                };
+                consider(entries);
+            }
+        }
+        best.map(|found| (found.key.is_deletion(), found.value))
     }
 
     /// Collects the newest entry per user key in `[start, end)` at or below
@@ -842,7 +897,7 @@ impl LsmStorage {
         // keys. If any named cold segment is unavailable/corrupt, fail closed
         // instead of returning a partial range that silently omits data.
         let active_ids: BTreeSet<u64> = self.manifest.segments.iter().map(|meta| meta.id).collect();
-        if let Some(tier_manifest) = tier::TierManifest::read(&self.dir) {
+        if let Some(tier_manifest) = self.tier_manifest.as_ref() {
             for object in tier_manifest
                 .objects
                 .iter()
