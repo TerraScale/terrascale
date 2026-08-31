@@ -46,40 +46,13 @@ fn reopen_engine(dir: &PathBuf) -> Engine {
     Engine::open(EngineConfig::durable(dir).expect("durable location")).expect("engine reopens")
 }
 
-/// Opens a location on the LSM engine explicitly (TB-21 deletes it).
-///
-/// The custom-WAL mechanics the tests below verify — on-disk WAL frame
-/// checksums, torn-frame truncation, the in-memory-buffered loss window —
-/// belong to that engine's format; the `SQLite` backend (D-27, the default)
-/// has no such file or half-durable buffer and proves its own equivalents in
-/// `src/storage/sqlite/tests.rs`.
-fn open_lsm_engine(tag: &str) -> (PathBuf, Engine) {
-    let dir = location(tag);
-    let engine = Engine::open(
-        EngineConfig::durable(&dir)
-            .expect("durable location")
-            .with_storage_backend(crate::engine::StorageBackend::Lsm),
-    )
-    .expect("engine opens");
-    (dir, engine)
-}
-
-/// Reopens an LSM-engine location.
-fn reopen_lsm_engine(dir: &PathBuf) -> Engine {
-    Engine::open(
-        EngineConfig::durable(dir)
-            .expect("durable location")
-            .with_storage_backend(crate::engine::StorageBackend::Lsm),
-    )
-    .expect("engine reopens")
-}
-
 /// Opens a location on the W3-1 root-file engine explicitly.
 ///
 /// The publication-order mechanics these tests verify — root-file
 /// manifests, `ReadyToPublish` ledger states, WAL prepare-group frames,
 /// post-publication root syncs — belong to that engine's format; the LSM
-/// engine (P1) proves its own equivalents in `src/storage/lsm/tests.rs`.
+/// engine (P1, the default) proves its own equivalents in
+/// `src/storage/lsm/tests.rs`.
 fn open_root_engine(tag: &str) -> (PathBuf, Engine) {
     let dir = location(tag);
     let engine = Engine::open(
@@ -338,7 +311,7 @@ fn recovery_discards_prepare_frames_without_a_valid_commit_marker() {
 fn recovery_rejects_bad_checksum_and_truncated_frame() {
     // Mid-file corruption fails closed: commit twice, then damage a byte
     // inside the first commit's frames so an intact frame still follows it.
-    let (dir, engine) = open_lsm_engine("reject-damage");
+    let (dir, engine) = open_engine("reject-damage");
     for index in 0..2 {
         commit_put(
             &engine,
@@ -356,19 +329,14 @@ fn recovery_rejects_bad_checksum_and_truncated_frame() {
     bytes[5] = bytes[5].wrapping_add(1);
     std::fs::write(&wal, bytes).expect("wal rewrites");
     assert_eq!(
-        Engine::open(
-            EngineConfig::durable(&dir)
-                .expect("durable")
-                .with_storage_backend(crate::engine::StorageBackend::Lsm),
-        )
-        .err(),
+        Engine::open(EngineConfig::durable(&dir).expect("durable")).err(),
         Some(EngineOpenError::FormatMismatch),
         "a checksum failure in a non-trailing frame must fail closed"
     );
 
     // A frame cut through while bytes still follow it is the same mid-file
     // corruption.
-    let (second_dir, second) = open_lsm_engine("reject-truncation");
+    let (second_dir, second) = open_engine("reject-truncation");
     for index in 0..2 {
         commit_put(
             &second,
@@ -388,12 +356,7 @@ fn recovery_rejects_bad_checksum_and_truncated_frame() {
     bytes.extend_from_slice(&[3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]);
     std::fs::write(&wal, bytes).expect("wal rewrites");
     assert_eq!(
-        Engine::open(
-            EngineConfig::durable(&second_dir)
-                .expect("durable")
-                .with_storage_backend(crate::engine::StorageBackend::Lsm),
-        )
-        .err(),
+        Engine::open(EngineConfig::durable(&second_dir).expect("durable")).err(),
         Some(EngineOpenError::FormatMismatch),
         "a truncated frame with bytes behind it must fail closed"
     );
@@ -403,7 +366,7 @@ fn recovery_rejects_bad_checksum_and_truncated_frame() {
 
 #[test]
 fn torn_trailing_wal_frame_is_truncated_at_recovery_and_data_survives() {
-    let (dir, engine) = open_lsm_engine("torn-tail");
+    let (dir, engine) = open_engine("torn-tail");
     commit_put(
         &engine,
         "tenant-a",
@@ -430,7 +393,7 @@ fn torn_trailing_wal_frame_is_truncated_at_recovery_and_data_survives() {
     bytes.pop().expect("the final frame has payload bytes");
     std::fs::write(&wal, bytes).expect("wal rewrites");
 
-    let reopened = reopen_lsm_engine(&dir);
+    let reopened = reopen_engine(&dir);
     assert!(
         read_document(&reopened, "tenant-a", "doc-1").is_some(),
         "the commit before the torn tail must survive recovery"
@@ -448,7 +411,7 @@ fn torn_trailing_wal_frame_is_truncated_at_recovery_and_data_survives() {
 
 #[test]
 fn complete_lsm_wal_checksum_failure_fails_engine_open_closed() {
-    let (dir, engine) = open_lsm_engine("final-wal-checksum");
+    let (dir, engine) = open_engine("final-wal-checksum");
     commit_put(
         &engine,
         "tenant-a",
@@ -467,12 +430,7 @@ fn complete_lsm_wal_checksum_failure_fails_engine_open_closed() {
     std::fs::write(&wal, bytes).expect("wal rewrites");
 
     assert_eq!(
-        Engine::open(
-            EngineConfig::durable(&dir)
-                .expect("durable")
-                .with_storage_backend(crate::engine::StorageBackend::Lsm),
-        )
-        .err(),
+        Engine::open(EngineConfig::durable(&dir).expect("durable")).err(),
         Some(EngineOpenError::FormatMismatch),
         "a complete final frame may have been acknowledged and cannot be truncated as torn"
     );
@@ -1091,12 +1049,7 @@ fn one_transaction_publishes_all_writes_atomically() {
 
 #[test]
 fn buffered_written_and_synced_have_distinct_loss_windows() {
-    // The in-memory buffer whose loss this test pins belongs to the LSM
-    // engine's format (TB-21 deletes it): the `SQLite` backend's local
-    // buffer is the WAL-mode transaction itself, so a Buffered commit
-    // deliberately understates there and survives process death (the D-27
-    // design record's durability mapping).
-    let (dir, engine) = open_lsm_engine("loss-windows");
+    let (dir, engine) = open_engine("loss-windows");
     let written = committed(commit_put(
         &engine,
         "tenant-a",
@@ -1137,65 +1090,13 @@ fn buffered_written_and_synced_have_distinct_loss_windows() {
     // Dropping the Engine models process loss: a Buffered commit loses its
     // bytes while its resolution metadata survives.
     drop(engine);
-    let reopened = reopen_lsm_engine(&dir);
+    let reopened = reopen_engine(&dir);
     assert!(read_document(&reopened, "tenant-a", "doc-written").is_some());
     assert!(read_document(&reopened, "tenant-a", "doc-synced").is_some());
     assert!(
         read_document(&reopened, "tenant-a", "doc-buffered").is_none(),
         "a Buffered commit is process-local by contract"
     );
-    let scope = tenant_scope(&reopened, "tenant-a");
-    match reopened.resolve_commit(&scope, operation("op-buffered")).expect("resolves") {
-        DurableResolution::Committed(receipt) => {
-            assert_eq!(receipt.durability(), LocalDurability::Buffered);
-        }
-        other => panic!("the buffered operation committed, got {other:?}"),
-    }
-    reopened.shutdown().expect("shuts down");
-    std::fs::remove_dir_all(&dir).ok();
-}
-
-/// The default backend's disclosure at every level: the requested durability
-/// is what the receipt and the post-restart resolution report, and process
-/// loss never takes back a `Written` or `Synced` commit. A `Buffered`
-/// commit's survival is the documented understatement, never a claim.
-#[test]
-fn written_and_synced_survive_process_loss_with_disclosed_levels() {
-    let (dir, engine) = open_engine("sqlite-loss-disclosure");
-    let written = committed(commit_put(
-        &engine,
-        "tenant-a",
-        "op-written",
-        "doc-written",
-        "written",
-        ExpectedVersion::New,
-        LocalDurability::Written,
-    ));
-    let synced = committed(commit_put(
-        &engine,
-        "tenant-a",
-        "op-synced",
-        "doc-synced",
-        "synced",
-        ExpectedVersion::New,
-        LocalDurability::Synced,
-    ));
-    let buffered = committed(commit_put(
-        &engine,
-        "tenant-a",
-        "op-buffered",
-        "doc-buffered",
-        "buffered",
-        ExpectedVersion::New,
-        LocalDurability::Buffered,
-    ));
-    assert_eq!(written.durability(), LocalDurability::Written);
-    assert_eq!(synced.durability(), LocalDurability::Synced);
-    assert_eq!(buffered.durability(), LocalDurability::Buffered);
-    drop(engine);
-    let reopened = reopen_engine(&dir);
-    assert!(read_document(&reopened, "tenant-a", "doc-written").is_some());
-    assert!(read_document(&reopened, "tenant-a", "doc-synced").is_some());
     let scope = tenant_scope(&reopened, "tenant-a");
     match reopened.resolve_commit(&scope, operation("op-buffered")).expect("resolves") {
         DurableResolution::Committed(receipt) => {

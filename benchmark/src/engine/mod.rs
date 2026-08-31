@@ -416,45 +416,51 @@ pub struct EngineConfig {
     owner: Option<crate::storage::DatabaseOwner>,
 }
 
-/// Which storage engine backs a durable Engine location (P1, ADR 0016; the
-/// D-27 default flip, TB-20).
+/// Which storage engine backs a durable Engine location (P1, ADR 0016).
 ///
-/// The default selects the `SQLite` engine for new locations — the whole
-/// workspace test surface runs on it. A location that already carries a
-/// format marker opens on the engine the marker names — locations
-/// self-describe, so restored and migrated locations keep opening — and the
-/// crate-private selector lets the LSM engine's own qualification suites pin
-/// that backend explicitly while TB-21 deletes it.
+/// The default selects the LSM engine for new locations. A location that
+/// already carries the root-file format marker opens on the root-file
+/// engine — locations self-describe, so restored and migrated locations
+/// keep opening — and the crate-private selector lets the root store's own
+/// suites pin their backend explicitly.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum StorageBackend {
     /// The ZoneTree-inspired LSM engine: WAL-backed memtable, immutable
-    /// segments, crash-safe manifest, atomic commit batches. Selectable only
-    /// through the crate-private selector; TB-21 deletes it.
+    /// segments, crash-safe manifest, atomic commit batches.
+    #[default]
     Lsm,
     /// The W3-1 root-file engine with full-root rewrites per commit.
     RootFiles,
     /// The `SQLite` engine (D-27): one WAL-mode database file per location,
-    /// documents, ledger, and journal committed in one transaction. The
-    /// default for fresh locations; existing locations self-describe
-    /// through the `TBV3SQLITE` format marker.
-    #[default]
+    /// documents, ledger, and journal committed in one transaction. New
+    /// locations select it through the crate-private selector or the
+    /// `TERRABASE_STORAGE_BACKEND=sqlite` override; existing locations
+    /// self-describe through the `TBV3SQLITE` format marker.
     Sqlite,
 }
 
-/// Reads a durable location's self-describing format marker; an explicitly
-/// configured backend always wins.
+/// Reads a durable location's self-describing format marker, then applies
+/// the environment override for fresh locations.
 fn backend_of_location(location: &Path, configured: StorageBackend) -> StorageBackend {
-    if configured != StorageBackend::Sqlite {
+    if configured != StorageBackend::Lsm {
         return configured;
     }
     match std::fs::read(location.join("format")) {
         Ok(bytes) if bytes.starts_with(b"TBV2FORMAT") => StorageBackend::RootFiles,
         Ok(bytes) if bytes.starts_with(b"TBV3SQLITE") => StorageBackend::Sqlite,
-        // A location without a marker is fresh and takes the configured
-        // default. A marker naming another format is left to that backend's
-        // own fail-closed open, which refuses the conversion.
+        // A location without a marker is fresh: the environment override
+        // lets the bench harness and tests select the `SQLite` engine without
+        // configuration plumbing. The override never converts a location
+        // that already carries another format's marker.
+        _ if env_selects_sqlite() => StorageBackend::Sqlite,
         _ => configured,
     }
+}
+
+/// Reports whether the environment requests the `SQLite` backend by name.
+fn env_selects_sqlite() -> bool {
+    std::env::var_os("TERRABASE_STORAGE_BACKEND")
+        .is_some_and(|value| value == std::ffi::OsStr::new("sqlite"))
 }
 
 impl EngineConfig {
@@ -501,10 +507,7 @@ impl EngineConfig {
     /// Selects the storage backend of the durable location. Crate-private
     /// by design: the backend is a development and qualification knob, not
     /// a public contract.
-    #[allow(
-        dead_code,
-        reason = "selected by the LSM test matrix; the default is the SQLite backend"
-    )]
+    #[allow(dead_code, reason = "selected by the LSM test matrix; the default is the LSM backend")]
     #[must_use]
     pub(crate) const fn with_storage_backend(mut self, backend: StorageBackend) -> Self {
         self.storage_backend = backend;
@@ -961,23 +964,22 @@ impl Engine {
                     })?;
                 Box::new(engine)
             }
-            // An owner-scoped open takes the production stopgap the LSM seam
-            // established: the empty location opens and catalogues, existing
-            // plaintext rows are refused, and every write answers its typed
-            // refusal until the encryption lease (TB-5) is wired.
+            // The `SQLite` backend has no production-owner (encryption)
+            // integration yet, so an owner-scoped open answers the typed
+            // refusal the root-file engine gives.
             StorageBackend::Sqlite => {
-                let result = if config.owner.is_some() {
-                    storage::SqliteStorage::open_production_unavailable_with_metrics(
-                        &location,
-                        Arc::clone(&metrics),
-                    )
-                } else {
-                    storage::SqliteStorage::open_with_metrics(&location, Arc::clone(&metrics))
-                };
-                let engine = result.map_err(|error| match error {
-                    storage::StorageOpenError::FormatMismatch => EngineOpenError::FormatMismatch,
-                    storage::StorageOpenError::Unavailable => EngineOpenError::StorageUnavailable,
-                })?;
+                if config.owner.is_some() {
+                    return Err(EngineOpenError::StorageUnavailable);
+                }
+                let engine =
+                    storage::SqliteStorage::open(&location).map_err(|error| match error {
+                        storage::StorageOpenError::FormatMismatch => {
+                            EngineOpenError::FormatMismatch
+                        }
+                        storage::StorageOpenError::Unavailable => {
+                            EngineOpenError::StorageUnavailable
+                        }
+                    })?;
                 Box::new(engine)
             }
         };
