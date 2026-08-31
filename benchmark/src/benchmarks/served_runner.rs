@@ -434,44 +434,127 @@ enum ReadEvent {
 /// `TERRABASE_BENCH_ENVELOPE=0` disables it (diagnosis runs).
 fn envelope_command(harness: &Path) -> Command {
     let mut command = Command::new(harness);
-    if std::env::var_os("TERRABASE_BENCH_ENVELOPE").as_deref() != Some(std::ffi::OsStr::new("0"))
-        && let Ok(systemd_run) = which_systemd_run()
+    // An unfenced run must not stamp the envelope into its own metadata:
+    // the spec env marks the command ONLY when a fence was applied.
+    // `TERRABASE_BENCH_ENVELOPE=0` opts out entirely (diagnosis runs).
+    if std::env::var_os("TERRABASE_BENCH_ENVELOPE").as_deref() == Some(std::ffi::OsStr::new("0")) {
+        return command;
+    }
+    // The fleet-recorded method (GOAL.md decision log, 2026-08-31): a
+    // scope holds the 8-GiB memory ceiling; taskset -c 0-7 inside it
+    // pins CPU affinity, which children inherit and
+    // available_parallelism follows, so the harness runtime sees
+    // exactly the envelope. Host-outage fallback (2026-08-31): the user
+    // manager can be down machine-wide (dev-vm-storage refused after a
+    // config switch and user@1000 Requires it), which kills every --user
+    // scope; a system scope under `sudo -nE` enforces the identical
+    // cgroup limits without the user bus, and -E preserves the
+    // subject's environment through sudo.
+    let Ok(systemd_run) = which_host_bin("systemd-run") else {
+        return command;
+    };
+    let mut wrapped = if user_manager_reachable() {
+        let mut scope = Command::new(systemd_run);
+        scope.arg("--user").arg("--scope").arg("--quiet");
+        scope
+    } else if let Some(sudo) = passwordless_sudo()
+        && let Some((uid, gid)) = current_uid_gid()
     {
-        // The fleet-recorded method (GOAL.md decision log, 2026-08-31):
-        // a user scope holds the 8-GiB memory ceiling; taskset -c 0-7
-        // inside it pins CPU affinity, which children inherit and
-        // available_parallelism follows, so the harness runtime sees
-        // exactly the envelope.
-        let mut wrapped = Command::new(systemd_run);
-        wrapped
-            .arg("--user")
+        let mut scope = Command::new(sudo);
+        scope
+            .arg("-nE")
+            .arg(systemd_run)
             .arg("--scope")
             .arg("--quiet")
-            .arg("-p")
-            .arg("MemoryMax=8G")
-            .arg("-p")
-            .arg("TasksMax=4096")
-            .arg("--")
-            .arg("taskset")
-            .arg("-c")
-            .arg("0-7")
-            .arg("--")
-            .arg(harness);
-        command = wrapped;
-    }
+            .arg("--uid")
+            .arg(uid.to_string())
+            .arg("--gid")
+            .arg(gid.to_string());
+        scope
+    } else {
+        return command;
+    };
+    wrapped
+        .arg("-p")
+        .arg("MemoryMax=8G")
+        .arg("-p")
+        .arg("TasksMax=4096")
+        .arg("--")
+        .arg("taskset")
+        .arg("-c")
+        .arg("0-7")
+        .arg(harness);
+    command = wrapped;
     command.env("TERRABASE_BENCH_ENVELOPE_SPEC", "8cpu/8G");
     command
 }
 
-fn which_systemd_run() -> Result<PathBuf, String> {
+/// Whether `systemctl --user` answers — false when the user manager is
+/// down, so no --user scope can be created anywhere on the host.
+fn user_manager_reachable() -> bool {
+    static REACHABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *REACHABLE.get_or_init(|| {
+        which_host_bin("systemctl").is_ok_and(|systemctl| {
+            Command::new(systemctl)
+                .arg("--user")
+                .arg("show")
+                .arg("-p")
+                .arg("ActiveState")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+        })
+    })
+}
+
+/// The `sudo` binary, if `sudo -n` works — the system-scope fallback
+/// needs both.
+fn passwordless_sudo() -> Option<PathBuf> {
+    static SUDO: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    SUDO.get_or_init(|| {
+        let sudo = which_host_bin("sudo").ok()?;
+        let works = Command::new(&sudo)
+            .arg("-n")
+            .arg("true")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        works.then_some(sudo)
+    })
+    .clone()
+}
+
+/// The invoking user's real uid/gid, for dropping back to it inside a
+/// sudo-started system scope.
+fn current_uid_gid() -> Option<(u32, u32)> {
+    let status = fs::read_to_string("/proc/self/status").ok()?;
+    let mut uid = None;
+    let mut gid = None;
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("Uid:")
+            && let Some(first) = rest.split_whitespace().next()
+        {
+            uid = first.parse().ok();
+        }
+        if let Some(rest) = line.strip_prefix("Gid:")
+            && let Some(first) = rest.split_whitespace().next()
+        {
+            gid = first.parse().ok();
+        }
+    }
+    Some((uid?, gid?))
+}
+
+fn which_host_bin(name: &str) -> Result<PathBuf, String> {
     let path = std::env::var_os("PATH").ok_or("PATH is unset")?;
-    let mut candidates =
-        std::env::split_paths(&path).map(|dir| dir.join("systemd-run")).collect::<Vec<_>>();
-    candidates.push(PathBuf::from("/run/current-system/sw/bin/systemd-run"));
+    let mut candidates = std::env::split_paths(&path).map(|dir| dir.join(name)).collect::<Vec<_>>();
+    candidates.push(PathBuf::from("/run/current-system/sw/bin").join(name));
     candidates
         .into_iter()
         .find(|candidate| candidate.is_file())
-        .ok_or_else(|| "systemd-run is unavailable".to_owned())
+        .ok_or_else(|| format!("{name} is unavailable"))
 }
 
 fn start_harness(config: &ServedRunnerConfig, pki: &Pki, dir: &Path) -> Result<Harness, String> {
@@ -889,6 +972,55 @@ mod tests {
     fn runner_leaves_mutation_claim_admission_to_the_boundary() {
         config(Workload::DocumentWrite).validate().expect("runner mechanics support writes");
         config(Workload::Mixed).validate().expect("runner mechanics support mixed work");
+    }
+
+    /// The envelope must never lie: when the wrapped subject reports the
+    /// spec env, the memory ceiling and CPU pin are actually in force;
+    /// when the host cannot fence at all, the spec env is absent.
+    #[test]
+    fn envelope_command_fences_only_what_it_stamps() {
+        use std::os::unix::fs::PermissionsExt;
+        let probe_dir = std::env::temp_dir().join("terrabase-served-runner-envelope");
+        fs::create_dir_all(&probe_dir).expect("probe directory");
+        let probe = probe_dir.join("probe.sh");
+        fs::write(
+            &probe,
+            "#!/usr/bin/env bash\n\
+             CG=$(cut -d: -f3 /proc/self/cgroup)\n\
+             echo \"spec=${TERRABASE_BENCH_ENVELOPE_SPEC:-}\"\n\
+             echo \"memory=$(cat /sys/fs/cgroup$CG/memory.max 2>/dev/null || echo unknown)\"\n\
+             echo \"nproc=$(nproc)\"\n",
+        )
+        .expect("probe script");
+        fs::set_permissions(&probe, fs::Permissions::from_mode(0o755)).expect("probe executable");
+        let output = envelope_command(&probe).output().expect("probe under the envelope");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut spec = "";
+        let mut memory = "";
+        let mut nproc = "";
+        for line in stdout.lines() {
+            if let Some(value) = line.strip_prefix("spec=") {
+                spec = value;
+            }
+            if let Some(value) = line.strip_prefix("memory=") {
+                memory = value;
+            }
+            if let Some(value) = line.strip_prefix("nproc=") {
+                nproc = value;
+            }
+        }
+        if spec.is_empty() {
+            // Unfenced host: the only honest behavior is no spec stamp.
+            return;
+        }
+        assert_eq!(spec, "8cpu/8G", "the stamp must name the envelope");
+        assert_eq!(nproc, "8", "the CPU pin must shrink the visible width");
+        let ceiling = memory.parse::<u64>().unwrap_or(u64::MAX);
+        assert_eq!(
+            ceiling,
+            8 * 1024 * 1024 * 1024,
+            "the memory ceiling must be enforced (reported {memory})"
+        );
     }
 
     #[test]

@@ -24,15 +24,37 @@ export TERRABASE_BENCH_ENVELOPE_SPEC="${TERRABASE_BENCH_ENVELOPE_CPUS}cpu/${TERR
 # available_parallelism follows affinity, so the subject and every
 # runtime it spawns see exactly the envelope — wrapped in a
 # systemd-run user scope for the 8-GiB memory ceiling.
+#
+# Host-outage fallback (2026-08-31): the user manager can be down
+# machine-wide (dev-vm-storage refused after a config switch and
+# user@1000 Requires it), which kills every --user scope. A system
+# scope under `sudo -nE` enforces the identical cgroup limits without
+# the user bus; -E preserves the subject's environment through sudo.
+envelope_user_manager_up() {
+  systemctl --user show -p ActiveState >/dev/null 2>&1
+}
+
 envelope_wrap() {
-  if command -v systemd-run >/dev/null 2>&1 && command -v taskset >/dev/null 2>&1; then
-    systemd-run --user --scope --quiet \
-      -p "MemoryMax=${TERRABASE_BENCH_ENVELOPE_MEMORY}" \
-      -p TasksMax=4096 \
-      -- taskset -c "0-$((TERRABASE_BENCH_ENVELOPE_CPUS - 1))" "$@"
+  local cpus="0-$((TERRABASE_BENCH_ENVELOPE_CPUS - 1))"
+  if command -v systemd-run >/dev/null 2>&1 && command -v taskset >/dev/null 2>&1 \
+    && envelope_user_manager_up; then
+    TERRABASE_BENCH_ENVELOPE_SCOPE=user \
+      systemd-run --user --scope --quiet \
+        -p "MemoryMax=${TERRABASE_BENCH_ENVELOPE_MEMORY}" \
+        -p TasksMax=4096 \
+        -- taskset -c "$cpus" "$@"
+  elif command -v systemd-run >/dev/null 2>&1 && command -v taskset >/dev/null 2>&1 \
+    && sudo -n true 2>/dev/null; then
+    echo "resource-envelope: user manager unreachable; using a sudo system scope for the memory ceiling" >&2
+    TERRABASE_BENCH_ENVELOPE_SCOPE=system \
+      sudo -nE systemd-run --scope --quiet \
+        -p "MemoryMax=${TERRABASE_BENCH_ENVELOPE_MEMORY}" \
+        -p TasksMax=4096 \
+        --uid "$(id -u)" --gid "$(id -g)" \
+        -- taskset -c "$cpus" "$@"
   elif command -v taskset >/dev/null 2>&1; then
-    echo "resource-envelope: systemd-run unavailable; applying CPU affinity only" >&2
-    taskset -c "0-$((TERRABASE_BENCH_ENVELOPE_CPUS - 1))" "$@"
+    echo "resource-envelope: no cgroup scope available; applying CPU affinity only (NO memory ceiling)" >&2
+    taskset -c "$cpus" "$@"
   else
     echo "resource-envelope: neither systemd-run nor taskset available; running unconstrained" >&2
     "$@"
