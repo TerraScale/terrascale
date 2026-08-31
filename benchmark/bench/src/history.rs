@@ -61,12 +61,22 @@ struct Failure {
     error: Option<String>,
 }
 
+/// A complete run on the diagnostic single-member boundary. It carries no
+/// comparability contract, so it can never join a decision-grade comparison
+/// group; it is rendered only in the separately labeled trajectory section.
+#[derive(Debug)]
+struct DiagnosticComplete {
+    identity: String,
+    samples: Vec<Sample>,
+}
+
 #[derive(Debug)]
 enum Loaded {
     Missing,
     Failed(Failure),
     Invalid(Failure),
     Complete(Complete),
+    Diagnostic(DiagnosticComplete),
 }
 
 pub fn run(arguments: impl Iterator<Item = String>) -> Result<PathBuf, String> {
@@ -138,6 +148,8 @@ pub fn run(arguments: impl Iterator<Item = String>) -> Result<PathBuf, String> {
     let mut rows = Vec::new();
     let mut identities = std::collections::BTreeMap::new();
     let mut admission = Vec::new();
+    let mut diagnostic_rows = Vec::new();
+    let mut diagnostic_identities = std::collections::BTreeMap::new();
     for (workload, target, document) in loaded {
         match document {
             Loaded::Missing => {
@@ -161,6 +173,11 @@ pub fn run(arguments: impl Iterator<Item = String>) -> Result<PathBuf, String> {
                     error.path,
                     markdown_inline(reason)
                 ));
+            }
+            Loaded::Diagnostic(document) => {
+                rows.push(format!("| {workload} | {target} | diagnostic | — | — | — | — | — |"));
+                diagnostic_identities.entry(target).or_insert(document.identity.clone());
+                diagnostic_rows.push(render_diagnostic_row(workload, &document.samples));
             }
             Loaded::Complete(document) => {
                 identities.entry(target).or_insert(document.identity.clone());
@@ -223,6 +240,23 @@ pub fn run(arguments: impl Iterator<Item = String>) -> Result<PathBuf, String> {
         output.push('\n');
     }
     output.push('\n');
+    if !diagnostic_rows.is_empty() {
+        output.push_str("## TerraBase diagnostic trajectory (not decision-grade evidence)\n\n");
+        output.push_str("These rows come from the diagnostic single-member loopback mTLS boundary ");
+        output.push_str("(TB-17 campaign, `campaign-goal.md`). They carry no comparability contract, ");
+        output.push_str("never join the comparison table above, and are facts about this host at the ");
+        output.push_str("moment of the run.\n\n");
+        for (target, identity) in diagnostic_identities {
+            output.push_str(&format!("- **{target}**: {identity}\n"));
+        }
+        output.push_str("\n| workload | ops/s | p50 µs | p95 µs | p99 µs |\n");
+        output.push_str("| --- | --- | --- | --- | --- |\n");
+        for row in diagnostic_rows {
+            output.push_str(&row);
+            output.push('\n');
+        }
+        output.push('\n');
+    }
     let path = write_retained(&history, &output)?;
     println!("wrote {} with {} rows", path.display(), WORKLOADS.len() * TARGETS.len());
     Ok(path)
@@ -290,8 +324,9 @@ fn load(results: &Path, target: &str, workload: &str) -> Loaded {
             });
         }
     }
-    match validate_complete(&document, target, workload) {
-        Ok(complete) => Loaded::Complete(complete),
+    match validate(&document, target, workload) {
+        Ok(Outcome::Decision(complete)) => Loaded::Complete(complete),
+        Ok(Outcome::Diagnostic(diagnostic)) => Loaded::Diagnostic(diagnostic),
         Err(error) => {
             Loaded::Invalid(Failure { path: path.display().to_string(), error: Some(error) })
         }
@@ -319,7 +354,30 @@ fn attempt_key(path: &Path, prefix: &str) -> (u8, u128, String) {
     }
 }
 
+/// What a syntactically complete document is admitted as.
+#[derive(Debug)]
+enum Outcome {
+    /// Comparable, decision-grade evidence carrying a full comparability
+    /// contract.
+    Decision(Complete),
+    /// A complete diagnostic-boundary run: retained for the TB-17 trajectory
+    /// but never comparable with the reference sides.
+    Diagnostic(DiagnosticComplete),
+}
+
+/// Validates a document for the decision-grade comparison table. Existing
+/// callers treat a diagnostic run as an error; rendering routes through
+/// [`validate`] instead.
 fn validate_complete(document: &Value, target: &str, workload: &str) -> Result<Complete, String> {
+    match validate(document, target, workload)? {
+        Outcome::Decision(complete) => Ok(complete),
+        Outcome::Diagnostic(_) => {
+            Err("diagnostic qualification result is not decision-grade evidence".to_owned())
+        }
+    }
+}
+
+fn validate(document: &Value, target: &str, workload: &str) -> Result<Outcome, String> {
     let fields = document.as_object().ok_or("document is not an object")?;
     if fields.get("target").and_then(Value::as_str) != Some(target)
         || fields.get("workload").and_then(Value::as_str) != Some(workload)
@@ -368,11 +426,6 @@ fn validate_complete(document: &Value, target: &str, workload: &str) -> Result<C
     if unix <= 0.0 || unix.fract() != 0.0 || cpus <= 0.0 || cpus.fract() != 0.0 {
         return Err("invalid environment counters".to_owned());
     }
-    if target == "terrabase" && is_diagnostic_result(fields, &identity) {
-        return Err("diagnostic qualification result is not decision-grade evidence".to_owned());
-    }
-    let comparability =
-        validate_comparability(fields.get("comparability"), config, environment, target)?;
     let values =
         fields.get("samples").and_then(Value::as_array).ok_or("samples is not an array")?;
     if values.len() != samples_count {
@@ -407,7 +460,12 @@ fn validate_complete(document: &Value, target: &str, workload: &str) -> Result<C
         }
         samples.push(Sample { wall_seconds: wall, throughput, p50, p95, p99 });
     }
-    Ok(Complete { identity, samples, comparability })
+    if target == "terrabase" && is_diagnostic_result(fields, &identity) {
+        return Ok(Outcome::Diagnostic(DiagnosticComplete { identity, samples }));
+    }
+    let comparability =
+        validate_comparability(fields.get("comparability"), config, environment, target)?;
+    Ok(Outcome::Decision(Complete { identity, samples, comparability }))
 }
 
 fn is_diagnostic_result(fields: &serde_json::Map<String, Value>, identity: &str) -> bool {
@@ -620,6 +678,20 @@ fn median(values: &[f64]) -> f64 {
     }
 }
 
+fn render_diagnostic_row(workload: &str, samples: &[Sample]) -> String {
+    let throughputs: Vec<_> = samples.iter().map(|sample| sample.throughput).collect();
+    let p50s: Vec<_> = samples.iter().map(|sample| sample.p50).collect();
+    let p95s: Vec<_> = samples.iter().map(|sample| sample.p95).collect();
+    let p99s: Vec<_> = samples.iter().map(|sample| sample.p99).collect();
+    format!(
+        "| {workload} | {:.0} | {:.0} | {:.0} | {:.0} |",
+        median(&throughputs),
+        median(&p50s),
+        median(&p95s),
+        median(&p99s)
+    )
+}
+
 fn render_row(workload: &str, target: &str, samples: &[Sample]) -> String {
     let throughputs: Vec<_> = samples.iter().map(|sample| sample.throughput).collect();
     let p50s: Vec<_> = samples.iter().map(|sample| sample.p50).collect();
@@ -796,20 +868,24 @@ mod tests {
     }
 
     #[test]
-    fn diagnostic_complete_result_is_invalid_and_keeps_its_raw_path() {
+    fn diagnostic_complete_result_is_retained_as_diagnostic_never_admitted() {
         let directory = temporary_results();
         let mut document = valid();
         document["target"] = serde_json::json!("terrabase");
         document["environment"]["observed_identity"] =
             serde_json::json!("tbep-qualification-harness/network-mtls/v1");
+        document.as_object_mut().expect("object").remove("comparability");
         let path = directory.join("terrabase-read-300-1-0.json");
         fs::write(&path, serde_json::to_vec(&document).expect("diagnostic JSON"))
             .expect("diagnostic result");
-        let Loaded::Invalid(failure) = load(&directory, "terrabase", "read") else {
-            panic!("diagnostic complete result must not be admitted");
+        // It never reaches the decision-grade validator as a pass...
+        assert!(validate_complete(&document, "terrabase", "read").is_err());
+        // ...but its facts are retained for the diagnostic trajectory.
+        let Loaded::Diagnostic(diagnostic) = load(&directory, "terrabase", "read") else {
+            panic!("diagnostic complete result must load as Diagnostic");
         };
-        assert_eq!(failure.path, path.display().to_string());
-        assert!(failure.error.expect("reason").contains("diagnostic"));
+        assert_eq!(diagnostic.identity, "tbep-qualification-harness/network-mtls/v1");
+        assert_eq!(diagnostic.samples.len(), 1);
         fs::remove_dir_all(directory).expect("remove temporary results");
     }
 

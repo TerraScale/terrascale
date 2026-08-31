@@ -69,7 +69,8 @@ TERRABASE_BENCH_SERVED_RUNNER=target/release/terrabase-bench-served \
 
 # render the history table (never hand-edit it):
 cargo run --release --manifest-path bench/Cargo.toml -- \
-  --render-history bench/results docs/evidence/benchmarks/benchmark-history.md
+  --render-history --results bench/results \
+  --history-dir docs/evidence/benchmarks/history
 ```
 
 ## Out of scope

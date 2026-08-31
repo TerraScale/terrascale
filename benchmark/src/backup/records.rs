@@ -354,8 +354,7 @@ impl MemberWriter {
             hasher.update(&envelope);
             (envelope.len() as u64, to_hex(&hasher.finish()))
         };
-        self.sealed
-            .push(SealedMember { name: std::mem::take(&mut member.name), length, digest });
+        self.sealed.push(SealedMember { name: std::mem::take(&mut member.name), length, digest });
         Ok(())
     }
 }
