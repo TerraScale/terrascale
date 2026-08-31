@@ -156,17 +156,14 @@ var ChannelService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	EngineService_DocumentRead_FullMethodName              = "/terrabase.v1.EngineService/DocumentRead"
-	EngineService_DocumentWrite_FullMethodName             = "/terrabase.v1.EngineService/DocumentWrite"
-	EngineService_DocumentDelete_FullMethodName            = "/terrabase.v1.EngineService/DocumentDelete"
-	EngineService_DocumentBatch_FullMethodName             = "/terrabase.v1.EngineService/DocumentBatch"
-	EngineService_QueryExecute_FullMethodName              = "/terrabase.v1.EngineService/QueryExecute"
-	EngineService_QueryCancel_FullMethodName               = "/terrabase.v1.EngineService/QueryCancel"
-	EngineService_FamilyRead_FullMethodName                = "/terrabase.v1.EngineService/FamilyRead"
-	EngineService_FamilyWrite_FullMethodName               = "/terrabase.v1.EngineService/FamilyWrite"
-	EngineService_AuthStorageInsertUnique_FullMethodName   = "/terrabase.v1.EngineService/AuthStorageInsertUnique"
-	EngineService_AuthStorageCompareAndSwap_FullMethodName = "/terrabase.v1.EngineService/AuthStorageCompareAndSwap"
-	EngineService_AuthStorageConsumeOne_FullMethodName     = "/terrabase.v1.EngineService/AuthStorageConsumeOne"
+	EngineService_DocumentRead_FullMethodName   = "/terrabase.v1.EngineService/DocumentRead"
+	EngineService_DocumentWrite_FullMethodName  = "/terrabase.v1.EngineService/DocumentWrite"
+	EngineService_DocumentDelete_FullMethodName = "/terrabase.v1.EngineService/DocumentDelete"
+	EngineService_DocumentBatch_FullMethodName  = "/terrabase.v1.EngineService/DocumentBatch"
+	EngineService_QueryExecute_FullMethodName   = "/terrabase.v1.EngineService/QueryExecute"
+	EngineService_QueryCancel_FullMethodName    = "/terrabase.v1.EngineService/QueryCancel"
+	EngineService_FamilyRead_FullMethodName     = "/terrabase.v1.EngineService/FamilyRead"
+	EngineService_FamilyWrite_FullMethodName    = "/terrabase.v1.EngineService/FamilyWrite"
 )
 
 // EngineServiceClient is the client API for EngineService service.
@@ -183,9 +180,6 @@ type EngineServiceClient interface {
 	QueryCancel(ctx context.Context, in *EngineServiceQueryCancelRequest, opts ...grpc.CallOption) (*EngineServiceQueryCancelResponse, error)
 	FamilyRead(ctx context.Context, in *EngineServiceFamilyReadRequest, opts ...grpc.CallOption) (*EngineServiceFamilyReadResponse, error)
 	FamilyWrite(ctx context.Context, in *EngineServiceFamilyWriteRequest, opts ...grpc.CallOption) (*EngineServiceFamilyWriteResponse, error)
-	AuthStorageInsertUnique(ctx context.Context, in *EngineServiceAuthStorageInsertUniqueRequest, opts ...grpc.CallOption) (*EngineServiceAuthStorageInsertUniqueResponse, error)
-	AuthStorageCompareAndSwap(ctx context.Context, in *EngineServiceAuthStorageCompareAndSwapRequest, opts ...grpc.CallOption) (*EngineServiceAuthStorageCompareAndSwapResponse, error)
-	AuthStorageConsumeOne(ctx context.Context, in *EngineServiceAuthStorageConsumeOneRequest, opts ...grpc.CallOption) (*EngineServiceAuthStorageConsumeOneResponse, error)
 }
 
 type engineServiceClient struct {
@@ -276,36 +270,6 @@ func (c *engineServiceClient) FamilyWrite(ctx context.Context, in *EngineService
 	return out, nil
 }
 
-func (c *engineServiceClient) AuthStorageInsertUnique(ctx context.Context, in *EngineServiceAuthStorageInsertUniqueRequest, opts ...grpc.CallOption) (*EngineServiceAuthStorageInsertUniqueResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(EngineServiceAuthStorageInsertUniqueResponse)
-	err := c.cc.Invoke(ctx, EngineService_AuthStorageInsertUnique_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *engineServiceClient) AuthStorageCompareAndSwap(ctx context.Context, in *EngineServiceAuthStorageCompareAndSwapRequest, opts ...grpc.CallOption) (*EngineServiceAuthStorageCompareAndSwapResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(EngineServiceAuthStorageCompareAndSwapResponse)
-	err := c.cc.Invoke(ctx, EngineService_AuthStorageCompareAndSwap_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *engineServiceClient) AuthStorageConsumeOne(ctx context.Context, in *EngineServiceAuthStorageConsumeOneRequest, opts ...grpc.CallOption) (*EngineServiceAuthStorageConsumeOneResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(EngineServiceAuthStorageConsumeOneResponse)
-	err := c.cc.Invoke(ctx, EngineService_AuthStorageConsumeOne_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // EngineServiceServer is the server API for EngineService service.
 // All implementations must embed UnimplementedEngineServiceServer
 // for forward compatibility.
@@ -320,9 +284,6 @@ type EngineServiceServer interface {
 	QueryCancel(context.Context, *EngineServiceQueryCancelRequest) (*EngineServiceQueryCancelResponse, error)
 	FamilyRead(context.Context, *EngineServiceFamilyReadRequest) (*EngineServiceFamilyReadResponse, error)
 	FamilyWrite(context.Context, *EngineServiceFamilyWriteRequest) (*EngineServiceFamilyWriteResponse, error)
-	AuthStorageInsertUnique(context.Context, *EngineServiceAuthStorageInsertUniqueRequest) (*EngineServiceAuthStorageInsertUniqueResponse, error)
-	AuthStorageCompareAndSwap(context.Context, *EngineServiceAuthStorageCompareAndSwapRequest) (*EngineServiceAuthStorageCompareAndSwapResponse, error)
-	AuthStorageConsumeOne(context.Context, *EngineServiceAuthStorageConsumeOneRequest) (*EngineServiceAuthStorageConsumeOneResponse, error)
 	mustEmbedUnimplementedEngineServiceServer()
 }
 
@@ -356,15 +317,6 @@ func (UnimplementedEngineServiceServer) FamilyRead(context.Context, *EngineServi
 }
 func (UnimplementedEngineServiceServer) FamilyWrite(context.Context, *EngineServiceFamilyWriteRequest) (*EngineServiceFamilyWriteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FamilyWrite not implemented")
-}
-func (UnimplementedEngineServiceServer) AuthStorageInsertUnique(context.Context, *EngineServiceAuthStorageInsertUniqueRequest) (*EngineServiceAuthStorageInsertUniqueResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method AuthStorageInsertUnique not implemented")
-}
-func (UnimplementedEngineServiceServer) AuthStorageCompareAndSwap(context.Context, *EngineServiceAuthStorageCompareAndSwapRequest) (*EngineServiceAuthStorageCompareAndSwapResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method AuthStorageCompareAndSwap not implemented")
-}
-func (UnimplementedEngineServiceServer) AuthStorageConsumeOne(context.Context, *EngineServiceAuthStorageConsumeOneRequest) (*EngineServiceAuthStorageConsumeOneResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method AuthStorageConsumeOne not implemented")
 }
 func (UnimplementedEngineServiceServer) mustEmbedUnimplementedEngineServiceServer() {}
 func (UnimplementedEngineServiceServer) testEmbeddedByValue()                       {}
@@ -531,60 +483,6 @@ func _EngineService_FamilyWrite_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
-func _EngineService_AuthStorageInsertUnique_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(EngineServiceAuthStorageInsertUniqueRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(EngineServiceServer).AuthStorageInsertUnique(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: EngineService_AuthStorageInsertUnique_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EngineServiceServer).AuthStorageInsertUnique(ctx, req.(*EngineServiceAuthStorageInsertUniqueRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _EngineService_AuthStorageCompareAndSwap_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(EngineServiceAuthStorageCompareAndSwapRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(EngineServiceServer).AuthStorageCompareAndSwap(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: EngineService_AuthStorageCompareAndSwap_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EngineServiceServer).AuthStorageCompareAndSwap(ctx, req.(*EngineServiceAuthStorageCompareAndSwapRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _EngineService_AuthStorageConsumeOne_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(EngineServiceAuthStorageConsumeOneRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(EngineServiceServer).AuthStorageConsumeOne(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: EngineService_AuthStorageConsumeOne_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(EngineServiceServer).AuthStorageConsumeOne(ctx, req.(*EngineServiceAuthStorageConsumeOneRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // EngineService_ServiceDesc is the grpc.ServiceDesc for EngineService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -623,18 +521,6 @@ var EngineService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FamilyWrite",
 			Handler:    _EngineService_FamilyWrite_Handler,
-		},
-		{
-			MethodName: "AuthStorageInsertUnique",
-			Handler:    _EngineService_AuthStorageInsertUnique_Handler,
-		},
-		{
-			MethodName: "AuthStorageCompareAndSwap",
-			Handler:    _EngineService_AuthStorageCompareAndSwap_Handler,
-		},
-		{
-			MethodName: "AuthStorageConsumeOne",
-			Handler:    _EngineService_AuthStorageConsumeOne_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
