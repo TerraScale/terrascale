@@ -18,6 +18,7 @@ make_fixture() {
   cp "$source_root/.forgejo/workflows/release.yml" "$fixture/.forgejo/workflows/"
   cp "$source_root/.forgejo/workflows/promote.yml" "$fixture/.forgejo/workflows/"
   cp "$source_root/deploy/release/package.sh" "$fixture/deploy/release/"
+  cp "$source_root/deploy/release/reproduce.sh" "$fixture/deploy/release/"
   cp "$source_root/deploy/release/verify.sh" "$fixture/deploy/release/"
   printf '.claude/\n' >"$fixture/.gitignore"
 

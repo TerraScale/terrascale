@@ -21,7 +21,8 @@ outside_go_files="$({
     -not -path './.git/*' \
     -not -path './target/*' \
     -not -path './terrabase-go/*' \
-    -not \( -path './.claude/worktrees/*' -a -exec git check-ignore -q -- {} \; \)
+    -not \( -path './.claude/worktrees/*' -a -exec git check-ignore -q -- {} \; \) \
+    -print
 } | sort)"
 if [[ -n "$outside_go_files" ]]; then
   printf 'Go source is allowed only under terrabase-go:\n%s\n' "$outside_go_files" >&2
