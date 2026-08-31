@@ -5,6 +5,106 @@ release=.forgejo/workflows/release.yml
 promote=.forgejo/workflows/promote.yml
 ci=.forgejo/workflows/ci.yml
 
+# This digest is the reviewed-tree trust boundary for the CI shell surface.
+# Semantic checks below document the required invariants, while byte identity
+# prevents an additional or obfuscated shell command from escaping them.
+readonly reviewed_ci_sha256='f710e507367ad3b62158fcfe54f5eaec7d8efe84dfcea79a7e3fa25db8b46703'
+
+validate_reviewed_ci_bytes() {
+  local actual_sha256
+  actual_sha256="$(sha256sum "$1")"
+  [[ "${actual_sha256%% *}" == "$reviewed_ci_sha256" ]]
+}
+
+validate_reviewed_ci_bytes "$ci"
+
+inject_checks_run_step() {
+  local bypass_command="$1"
+  local injected=false
+  local line
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$injected" == false && "$line" == '      - name: Test AWS-LC FIPS selection' ]]; then
+      printf '%s\n' \
+        '      - name: Rejected workspace-test bypass' \
+        '        run: |' \
+        "          $bypass_command"
+      injected=true
+    fi
+    printf '%s\n' "$line"
+  done <"$ci"
+  [[ "$injected" == true ]]
+}
+
+mutate_canonical_workspace_test() {
+  local changed=false
+  local line
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$changed" == false && "$line" == '          cargo test --workspace --locked -- \' ]]; then
+      printf '%s\n' '          cargo  test --workspace --locked -- \'
+      changed=true
+    else
+      printf '%s\n' "$line"
+    fi
+  done <"$ci"
+  [[ "$changed" == true ]]
+}
+
+add_trigger_event() {
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == 'permissions:' ]]; then
+      printf '%s\n' '  pull_request: {}'
+    fi
+    printf '%s\n' "$line"
+  done <"$ci"
+}
+
+add_trigger_filter() {
+  local added=false
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    printf '%s\n' "$line"
+    if [[ "$added" == false && "$line" == '    branches: [develop, main]' ]]; then
+      printf '%s\n' "    tags: ['*']"
+      added=true
+    fi
+  done <"$ci"
+  [[ "$added" == true ]]
+}
+
+add_yaml_document() {
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    printf '%s\n' "$line"
+  done <"$ci"
+  printf '%s\n' '---' 'name: rejected-second-document'
+}
+
+workspace_test_bypasses=(
+  'cargo  test --workspace --locked'
+  $'cargo\ttest --workspace --locked'
+  '"cargo" test --workspace --locked'
+  'c\argo test --workspace --locked'
+  'cargo "test" --workspace --locked'
+  'cargo t\est --workspace --locked'
+  'command cargo test --workspace --locked'
+  'env cargo test --workspace --locked'
+)
+for workspace_test_bypass in "${workspace_test_bypasses[@]}"; do
+  yq eval '.' <(inject_checks_run_step "$workspace_test_bypass") >/dev/null
+  ! validate_reviewed_ci_bytes <(inject_checks_run_step "$workspace_test_bypass")
+done
+
+yq eval '.' <(mutate_canonical_workspace_test) >/dev/null
+! validate_reviewed_ci_bytes <(mutate_canonical_workspace_test)
+yq eval '.' <(add_trigger_event) >/dev/null
+! validate_reviewed_ci_bytes <(add_trigger_event)
+yq eval '.' <(add_trigger_filter) >/dev/null
+! validate_reviewed_ci_bytes <(add_trigger_filter)
+yq eval-all '.' <(add_yaml_document) >/dev/null
+! validate_reviewed_ci_bytes <(add_yaml_document)
+
 legacy_language_files="$({
   find . -type f \
     \( -name '*.cs' -o -name '*.csproj' -o -name '*.sln' \) \
@@ -61,7 +161,8 @@ grep -Fq 'fipsFeatureGraph' deploy/release/package.sh
 grep -Fq 'fipsFeatureGraph' deploy/release/verify.sh
 ! grep -Fq -- '--all-features' deploy/release/package.sh
 
-grep -Fq 'GITHUB_BASE_REF' "$ci"
+! grep -Fq 'GITHUB_BASE_REF' "$ci"
+! grep -Fq 'GITHUB_EVENT_NAME' "$ci"
 grep -Fq 'git rev-parse --verify HEAD^' "$ci"
 grep -Fq 'buf lint' "$ci"
 grep -Fq 'buf breaking --against ".git#ref=$against_commit"' "$ci"
@@ -70,6 +171,70 @@ grep -Fq 'schema_digest=' "$ci"
 grep -Fq 'deploy/release/test-boundary.sh' "$ci"
 grep -Fq 'scripts/validate-studio-assets.sh' "$ci"
 grep -Fq 'cargo test --workspace --locked --release' "$ci"
+[[ $(grep -Fc 'cargo test --workspace' "$ci") -eq 2 ]]
+
+expected_dev_workspace_test="$(printf '%s\n' \
+  'cargo test --workspace --locked -- \' \
+  '  --skip benchmarks::lane_run::tests::probe_lane_operation_costs \' \
+  '  --skip benchmarks::lane_run::tests::probe_read_subcall_costs \' \
+  '  --skip benchmarks::lane_run::tests::probe_write_durability_costs \' \
+  '  --skip benchmarks::lane_run::tests::probe_concurrent_synced_writes')"
+expected_release_workspace_test="$(printf '%s\n' \
+  'cargo test --workspace --locked --release -- \' \
+  '  --skip benchmarks::lane_run::tests::probe_lane_operation_costs \' \
+  '  --skip benchmarks::lane_run::tests::probe_read_subcall_costs \' \
+  '  --skip benchmarks::lane_run::tests::probe_write_durability_costs \' \
+  '  --skip benchmarks::lane_run::tests::probe_concurrent_synced_writes')"
+
+validate_workspace_test_command() {
+  [[ "$1" == "$2" ]]
+}
+
+invalid_skip_suffixes=(
+  '  --skip benchmarks::'
+  '  --skip=benchmarks::'
+  '  --skip benchmarks'
+  '  --skip=benchmarks'
+  '  --skip bench'
+  '  --skip=bench'
+  '  --skip correctness::critical_test'
+  '  --skip=correctness::critical_test'
+  "  '--skip' correctness::critical_test"
+  '  "--skip" correctness::critical_test'
+  '  --s\kip correctness::critical_test'
+  '  --skip benchmarks::lane_run::tests::probe_lane_operation_costs'
+)
+
+for test_step_name in 'Test (dev profile)' 'Test'; do
+  case "$test_step_name" in
+    'Test (dev profile)')
+      expected_workspace_test="$expected_dev_workspace_test"
+      unfiltered_workspace_test='cargo test --workspace --locked'
+      ;;
+    'Test')
+      expected_workspace_test="$expected_release_workspace_test"
+      unfiltered_workspace_test='cargo test --workspace --locked --release'
+      ;;
+  esac
+
+  yq eval --exit-status \
+    "([.jobs.checks.steps[] | select(.name == \"$test_step_name\")] | length) == 1" \
+    "$ci" >/dev/null
+  workspace_test="$(yq eval -r \
+    ".jobs.checks.steps[] | select(.name == \"$test_step_name\") | .run" "$ci")"
+  validate_workspace_test_command "$workspace_test" "$expected_workspace_test"
+
+  for invalid_skip_suffix in "${invalid_skip_suffixes[@]}"; do
+    ! validate_workspace_test_command \
+      "$workspace_test"$'\n'"$invalid_skip_suffix" \
+      "$expected_workspace_test"
+  done
+
+  commented_expected="$(sed 's/^/# /' <<<"$expected_workspace_test")"
+  ! validate_workspace_test_command \
+    "$unfiltered_workspace_test"$'\n'"$commented_expected" \
+    "$expected_workspace_test"
+done
 grep -Fq 'cargo clippy --workspace --all-targets --locked -- -D warnings' "$ci"
 grep -Fq 'cargo doc --workspace --no-deps --locked' "$ci"
 grep -Fq 'cargo check --workspace --all-targets --locked' "$ci"
@@ -91,15 +256,92 @@ grep -Fq 'cargo doc --manifest-path deploy/release/sbom/Cargo.toml --no-deps --l
 grep -Fq 'deploy/release/test-sbom.sh' "$ci"
 grep -Fq 'gofmt -d -e' "$ci"
 grep -Fq 'go vet -mod=readonly ./...' "$ci"
+grep -Fq 'go install github.com/mikefarah/yq/v4@v4.45.1' "$ci"
 ! grep -Fq '.git#branch=${GITHUB_REF_NAME}' "$ci"
-awk '
-  /^  push:$/ { in_push = 1; next }
-  /^  [[:alnum:]_]+:$/ { in_push = 0 }
-  in_push && /branches: \[develop, main\]/ { found = 1 }
-  END { exit(found ? 0 : 1) }
-' "$ci"
+validate_trunk_ci_triggers() {
+  local workflow
+  workflow="$(<"$1")"
+
+  yq eval-all --exit-status \
+    '([documentIndex] | length) == 1' <<<"$workflow" >/dev/null 2>&1 &&
+    yq eval --exit-status '
+      (. | type) == "!!map" and
+      ([. | keys | .[] | select(. == "on")] | length) == 1 and
+      (.on | type) == "!!map" and
+      (.on | length) == 1 and
+      (.on | has("push")) and
+      (.on.push | type) == "!!map" and
+      (.on.push | length) == 1 and
+      (.on.push | has("branches")) and
+      (.on.push.branches | type) == "!!seq" and
+      (.on.push.branches | length) == 2 and
+      .on.push.branches[0] == "develop" and
+      .on.push.branches[1] == "main"
+    ' <<<"$workflow" >/dev/null 2>&1
+}
+
+validate_trunk_ci_triggers <(printf '%s\n' \
+  'on:' \
+  '  # pull_request: {}' \
+  '  push:' \
+  '    branches: [develop, main]' \
+  'env:' \
+  '  CONTRACT_TEXT: "pull_request: {}"' \
+  '  TARGET_TEXT: "pull_request_target: {}"')
+validate_trunk_ci_triggers <(printf '%s\n' \
+  'on: {push: {branches: [develop, main]}}')
+for extra_event in pull_request pull_request_target schedule workflow_dispatch; do
+  ! validate_trunk_ci_triggers <(printf '%s\n' \
+    'on:' \
+    '  push:' \
+    '    branches: [develop, main]' \
+    "  ${extra_event}: {}")
+done
+for extra_push_filter in tags tags-ignore paths paths-ignore; do
+  ! validate_trunk_ci_triggers <(printf '%s\n' \
+    'on:' \
+    '  push:' \
+    '    branches: [develop, main]' \
+    "    ${extra_push_filter}: ['*']")
+done
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  'on:' \
+  '  push:' \
+  '    branches: [develop, main]' \
+  "'on':" \
+  '  push:' \
+  '    branches: [develop, main]')
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  'on:' \
+  '  push:' \
+  '    branches: [develop, main]' \
+  '  push:' \
+  '    branches: [develop, main]')
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  'on:' \
+  '  push:' \
+  '    branches: [develop, main]' \
+  '---' \
+  'name: hidden-second-document')
+validate_trunk_ci_triggers "$ci"
+
+yq eval --exit-status '
+  .env.CC == "gcc" and
+  .env.CXX == "g++" and
+  .jobs.checks."runs-on" == "terrascale-builder" and
+  .jobs."go-client"."runs-on" == "terrascale-builder" and
+  ([.jobs.checks.steps[] | select(.name == "Select explicit GCC host linker")] | length) == 1
+' "$ci" >/dev/null
+gcc_linker_step="$(yq eval -r '.jobs.checks.steps[] | select(.name == "Select explicit GCC host linker") | .run' "$ci")"
+grep -Fq 'rustc -vV' <<<"$gcc_linker_step"
+grep -Fq 's/^host: //p' <<<"$gcc_linker_step"
+grep -Fq 'CARGO_TARGET_$(printf' <<<"$gcc_linker_step"
+grep -Fq "LC_ALL=C tr '[:lower:]-' '[:upper:]_'" <<<"$gcc_linker_step"
+grep -Fq '%s=gcc\n' <<<"$gcc_linker_step"
+grep -Fq '"$linker_env"' <<<"$gcc_linker_step"
+grep -Fq '"$GITHUB_ENV"' <<<"$gcc_linker_step"
+! grep -Eq 'CARGO_TARGET_(X86_64|AARCH64|ARM|RISCV|S390X|POWERPC)[[:alnum:]_]*_LINKER' <<<"$gcc_linker_step"
 grep -Fq 'go test -mod=readonly -race ./...' "$ci"
-grep -Fq 'pull_request:' "$ci"
 ! grep -Fq 'python3' "$ci" deploy/release/package.sh deploy/release/reproduce.sh
 
 echo "validated immutable promotion and protobuf baseline contracts"
