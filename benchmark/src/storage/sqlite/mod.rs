@@ -492,51 +492,20 @@ fn stage_intent(
     root_head: &mut String,
     intent: &CommitIntent,
 ) -> Result<CommitResult, ()> {
-    // Step 1: validation never binds the identity. An admitted commit must
-    // be local-synced — the rule that binds the billable fact to a durable
-    // sequence — and the admission's request identity must equal the
-    // transaction's operation identity.
+    // Step 1: validation never binds the identity.
     if intent.writes.is_empty() || codec::staged_writes_have_duplicate_targets(&intent.writes) {
         return Ok(CommitResult::Rejected(CommitRejection::Validation));
     }
-    let admitted_fact = if let Some(admission) = &intent.usage_admission {
-        if intent.durability != LocalDurability::Synced
-            || admission.request_id().as_str() != intent.operation.as_str()
-        {
-            return Ok(CommitResult::Rejected(CommitRejection::Validation));
-        }
-        let Ok(fact) = admission.fact_for(intent.tenant.clone()) else {
-            return Ok(CommitResult::Rejected(CommitRejection::Validation));
-        };
-        Some(fact)
-    } else {
-        None
-    };
-    // Step 2: a retried identity resolves from the durable ledger.
+    // The `SQLite` backend mints no usage facts yet, so it refuses an
+    // admission-bound intent exactly as the root-file backend does instead
+    // of silently dropping billable evidence.
+    if intent.usage_admission.is_some() {
+        return Ok(CommitResult::Rejected(CommitRejection::Storage));
+    }
     // Step 2: a retried identity resolves from the durable ledger.
     if let Some(entry) = ledger_entry(transaction, &intent.tenant, &intent.operation)? {
         if entry.digest != intent.digest {
             return Ok(CommitResult::Rejected(CommitRejection::OperationIdReuse));
-        }
-        if entry.rejection.is_none()
-            && let Some(fact) = &admitted_fact
-        {
-            // A committed replay must find exactly the fact this identity
-            // minted — same content, bound to the replayed commit's
-            // sequence — or the identity's billable evidence is broken.
-            let Some(expected) = DurableUsageFact::try_new(fact.clone(), entry.sequence, 1).ok()
-            else {
-                return Ok(CommitResult::Rejected(CommitRejection::Storage));
-            };
-            let minted = match usage_fact_body(transaction, expected.fact())? {
-                Some(body) => {
-                    DurableUsageFact::decode(&body).is_ok_and(|durable| durable == expected)
-                }
-                None => false,
-            };
-            if !minted {
-                return Ok(CommitResult::Rejected(CommitRejection::Storage));
-            }
         }
         if let Some(reason) = entry.rejection {
             // A durably rejected identity replays its rejection, never a
@@ -621,41 +590,6 @@ fn stage_intent(
     };
     *watermark = sequence;
     let root = chained_root(root_head, sequence, intent.digest);
-    // An admitted commit mints its billable fact in the same transaction,
-    // bound to this commit's sequence and identity — the LSM rule that
-    // keeps the usage fact and the write it bills atomically one outcome.
-    // A fact identity already bound to different evidence is a reuse.
-    if let Some(fact) = &admitted_fact {
-        if usage_fact_body(transaction, fact)?.is_some() {
-            return Ok(CommitResult::Rejected(CommitRejection::OperationIdReuse));
-        }
-        let Some(durable) = DurableUsageFact::try_new(fact.clone(), sequence, 1).ok() else {
-            return Ok(CommitResult::Rejected(CommitRejection::Storage));
-        };
-        let scope = durable.fact().scope();
-        let identity = durable.fact().identity();
-        transaction
-            .execute(
-                "INSERT INTO usage_facts
-                 (tenant, project, database, partition, region, rule, fact_id,
-                  seq, start_millis, end_millis, body)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                rusqlite::params![
-                    scope.tenant_id().as_str(),
-                    scope.project_id().as_str(),
-                    scope.database_id().as_str(),
-                    scope.partition_id().as_str(),
-                    scope.region_id().as_str(),
-                    minting_rule_code(identity.rule()),
-                    identity.id().as_str(),
-                    sequence as i64,
-                    durable.fact().window().start_millis() as i64,
-                    durable.fact().window().end_millis() as i64,
-                    durable.encoded(),
-                ],
-            )
-            .map_err(|_| ())?;
-    }
     // Step 5: documents, ledger row, and journal row ride one transaction.
     let mut published_writes: Vec<PublishedWrite> = Vec::with_capacity(intent.writes.len());
     for write in &intent.writes {
@@ -815,11 +749,8 @@ fn ledger_entry(
         Err(_) => return Err(()),
     };
     Ok(Some(LedgerEntryView {
-        // The writes narrow u64 hashes through SQLite's signed integers; the
-        // byte round-trip reads them back losslessly for every value, high
-        // bit included, so a replay never fails on its own digest.
-        digest: u64::from_be_bytes(digest.to_be_bytes()),
-        sequence: u64::from_be_bytes(sequence.to_be_bytes()),
+        digest: u64::try_from(digest).map_err(|_| ())?,
+        sequence: u64::try_from(sequence).map_err(|_| ())?,
         root,
         requested: lsm::durability_of(requested).ok_or(())?,
         synced: synced != 0,
