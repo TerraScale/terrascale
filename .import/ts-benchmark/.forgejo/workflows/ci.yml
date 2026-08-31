@@ -28,8 +28,15 @@ jobs:
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
+          ref: ${{ forgejo.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify checks checkout revision
+        run: |
+          event_sha='${{ forgejo.sha }}'
+          checked_out_head="$(git rev-parse --verify HEAD)"
+          [[ "$event_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$event_sha" == "$checked_out_head" ]]
       - uses: https://data.forgejo.org/actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version-file: terrabase-go/go.mod
@@ -192,17 +199,18 @@ jobs:
           mkdir -p "$GOBIN"
           go install github.com/bufbuild/buf/cmd/buf@v1.50.0
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
-          grpc_generator_version="$(sed -n 's|^// - protoc-gen-go-grpc ||p' terrabase-go/terrabase/v1/engine_grpc.pb.go)"
-          [[ "$grpc_generator_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@"$grpc_generator_version"
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
           protoc_version=34.1
-          protoc_archive="$(mktemp --suffix=.zip)"
           protoc_sha256=af27ea66cd26938fe48587804ca7d4817457a08350021a1c6e23a27ccc8c6904
+          schema_temp_root="$(mktemp -d)"
+          cleanup_schema_temp() { rm -rf -- "$schema_temp_root"; }
+          trap cleanup_schema_temp EXIT
+          protoc_archive="$schema_temp_root/protoc.zip"
           curl --fail --silent --show-error --location \
             "https://github.com/protocolbuffers/protobuf/releases/download/v${protoc_version}/protoc-${protoc_version}-linux-x86_64.zip" \
             --output "$protoc_archive"
           printf '%s  %s\n' "$protoc_sha256" "$protoc_archive" | sha256sum --check --strict
-          protoc_root="$GITHUB_WORKSPACE/.ci-protoc"
+          protoc_root="$schema_temp_root/protoc"
           mkdir -p "$protoc_root"
           unzip -q "$protoc_archive" -d "$protoc_root"
           export PATH="$protoc_root/bin:$GOBIN:$PATH"
@@ -213,32 +221,54 @@ jobs:
           [[ "$expected_schema_digest" =~ ^[0-9a-f]{64}$ ]]
           [[ "$schema_digest" == "$expected_schema_digest" ]]
           buf lint
-          against_commit="$(git rev-parse --verify HEAD^ 2>/dev/null || true)"
+          if against_commit="$(git rev-parse --verify HEAD^ 2>/dev/null)"; then
+            :
+          else
+            against_commit=
+          fi
           if [ -z "$against_commit" ]; then
             printf 'cannot resolve the previous commit for breaking-change comparison\n' >&2
             exit 1
           fi
           buf breaking --against ".git#ref=$against_commit"
-          # Generate the sole permitted network client into an isolated
-          # directory and compare it with the checked-in Go bindings.
-          active_dir="$(mktemp -d)"
+          # Direct protoc reports its compiler version while buf reports it as
+          # unknown. Generate into separate roots, canonicalize only that
+          # nonsemantic header line, then require complete inventories and
+          # every other byte to agree.
+          direct_dir="$schema_temp_root/direct"
+          buf_dir="$schema_temp_root/buf"
+          mkdir -p "$direct_dir" "$buf_dir"
           protoc \
             --proto_path=crates/terrabase-tbep/proto \
-            --go_out=paths=source_relative:"$active_dir" \
-            --go-grpc_out=paths=source_relative:"$active_dir" \
-            crates/terrabase-tbep/proto/terrabase/v1/engine.proto
-          bash scripts/normalize-generated-protoc-version.sh \
-            "$active_dir/terrabase/v1/engine.pb.go" \
-            > "$active_dir/terrabase/v1/engine.pb.go.normalized"
-          bash scripts/normalize-generated-protoc-version.sh \
-            "$active_dir/terrabase/v1/engine_grpc.pb.go" \
-            > "$active_dir/terrabase/v1/engine_grpc.pb.go.normalized"
-          diff -u "$active_dir/terrabase/v1/engine.pb.go.normalized" terrabase-go/terrabase/v1/engine.pb.go
-          diff -u "$active_dir/terrabase/v1/engine_grpc.pb.go.normalized" terrabase-go/terrabase/v1/engine_grpc.pb.go
-          # Exercise the checked-in buf generation contract as well as the
-          # isolated protoc comparison above. Any generated-byte drift fails.
-          buf generate --template buf.gen.yaml
-          git diff --exit-code -- terrabase-go/terrabase/v1/engine.pb.go terrabase-go/terrabase/v1/engine_grpc.pb.go
+            --go_out=paths=source_relative:"$direct_dir" \
+            --go-grpc_out=paths=source_relative:"$direct_dir" \
+            crates/terrabase-tbep/proto/terrabase/v1/engine.proto \
+            crates/terrabase-tbep/proto/terrabase/v1/family.proto
+          buf generate \
+            --template buf.gen.yaml \
+            --output "$buf_dir" \
+            --path crates/terrabase-tbep/proto/terrabase/v1/engine.proto \
+            --path crates/terrabase-tbep/proto/terrabase/v1/family.proto
+          scripts/normalize-generated-protoc-version.sh "$direct_dir"
+          scripts/normalize-generated-protoc-version.sh "$buf_dir/terrabase-go"
+          expected_generated_inventory="$(printf '%s\n' engine.pb.go engine_grpc.pb.go family.pb.go)"
+          for generated_root in \
+            "$direct_dir/terrabase/v1" \
+            "$buf_dir/terrabase-go/terrabase/v1" \
+            terrabase-go/terrabase/v1; do
+            [[ -d "$generated_root" && ! -L "$generated_root" ]]
+            generated_inventory="$(find "$generated_root" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)"
+            [[ "$generated_inventory" == "$expected_generated_inventory" ]]
+            while IFS= read -r generated_file; do
+              [[ -f "$generated_root/$generated_file" && ! -L "$generated_root/$generated_file" ]]
+            done <<<"$expected_generated_inventory"
+          done
+          for generated_file in engine.pb.go engine_grpc.pb.go family.pb.go; do
+            diff -u "$direct_dir/terrabase/v1/$generated_file" \
+              "$buf_dir/terrabase-go/terrabase/v1/$generated_file"
+            diff -u "$direct_dir/terrabase/v1/$generated_file" \
+              "terrabase-go/terrabase/v1/$generated_file"
+          done
 
       # The checked-in Go client must interoperate with the real Rust server,
       # not only with fake gRPC peers. The test owns its loopback PKI and
@@ -260,8 +290,15 @@ jobs:
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
+          ref: ${{ forgejo.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify Go client checkout revision
+        run: |
+          event_sha='${{ forgejo.sha }}'
+          checked_out_head="$(git rev-parse --verify HEAD)"
+          [[ "$event_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$event_sha" == "$checked_out_head" ]]
       - uses: https://data.forgejo.org/actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version-file: terrabase-go/go.mod

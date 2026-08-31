@@ -21,11 +21,15 @@ esac
 release=.forgejo/workflows/release.yml
 promote=.forgejo/workflows/promote.yml
 ci=.forgejo/workflows/ci.yml
+generated_header_normalizer=scripts/normalize-generated-protoc-version.sh
+generated_header_helper=terrabase-go/cmd/normalize-generated-protoc-version/main.go
 
 # This digest is the reviewed-tree trust boundary for the CI shell surface.
 # Semantic checks below document the required invariants, while byte identity
 # prevents an additional or obfuscated shell command from escaping them.
-readonly reviewed_ci_sha256='24c7f9d826711e3d0122408a938f37c881b63471b67494c936b52429efb525f5'
+readonly reviewed_ci_sha256='856825057502b0b2cd6c4a3b53d2b83c1521f962e15514e52b61e884bc2ead7b'
+readonly reviewed_generated_header_normalizer_sha256='3b5d9c2023949c23b03e3513a1c640d54427e9b177f0ed5624c5931606b81dc0'
+readonly reviewed_generated_header_helper_sha256='64d72dec26ab1a019ffbbb75d87166ad049edacf6f744fc423317d878a3aad84'
 
 validate_reviewed_ci_bytes() {
   local actual_sha256
@@ -34,6 +38,24 @@ validate_reviewed_ci_bytes() {
 }
 
 validate_reviewed_ci_bytes "$ci"
+
+validate_reviewed_generated_header_normalizer_bytes() {
+  local actual_sha256
+  [[ -f "$1" && ! -L "$1" ]]
+  actual_sha256="$(sha256sum "$1")"
+  [[ "${actual_sha256%% *}" == "$reviewed_generated_header_normalizer_sha256" ]]
+}
+
+validate_reviewed_generated_header_normalizer_bytes "$generated_header_normalizer"
+
+validate_reviewed_generated_header_helper_bytes() {
+  local actual_sha256
+  [[ -f "$1" && ! -L "$1" ]]
+  actual_sha256="$(sha256sum "$1")"
+  [[ "${actual_sha256%% *}" == "$reviewed_generated_header_helper_sha256" ]]
+}
+
+validate_reviewed_generated_header_helper_bytes "$generated_header_helper"
 
 validate_workflow_inventory() {
   local workflow_dir=$1
@@ -52,6 +74,41 @@ validate_workflow_inventory() {
 }
 
 validate_workflow_inventory .forgejo/workflows
+
+validate_job_checkout_binding() {
+  local job=$1
+  local checkout_count
+  local checkout_ref_count
+  local binding_count
+  local binding_step_name
+  local binding_run
+  case "$job" in
+    checks) binding_step_name='Verify checks checkout revision' ;;
+    go-client) binding_step_name='Verify Go client checkout revision' ;;
+    *) return 1 ;;
+  esac
+  checkout_count="$(YQ_JOB="$job" yq -r '
+    [.jobs[env(YQ_JOB)].steps[] | select(.uses == "https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803")] | length
+  ' "$ci")"
+  checkout_ref_count="$(YQ_JOB="$job" yq -r '
+    [.jobs[env(YQ_JOB)].steps[] | select(.uses == "https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803") | select(.with.ref == "${{ forgejo.sha }}")] | length
+  ' "$ci")"
+  binding_count="$(YQ_JOB="$job" YQ_BINDING_NAME="$binding_step_name" yq -r '
+    [.jobs[env(YQ_JOB)].steps[] | select(.name == env(YQ_BINDING_NAME))] | length
+  ' "$ci")"
+  binding_run="$(YQ_JOB="$job" YQ_BINDING_NAME="$binding_step_name" yq -r '
+    .jobs[env(YQ_JOB)].steps[] | select(.name == env(YQ_BINDING_NAME)) | .run
+  ' "$ci")"
+  [[ "$checkout_count" -eq 1 ]]
+  [[ "$checkout_ref_count" -eq 1 ]]
+  [[ "$binding_count" -eq 1 ]]
+  grep -Fq "event_sha='\${{ forgejo.sha }}'" <<<"$binding_run"
+  grep -Fq 'checked_out_head="$(git rev-parse --verify HEAD)"' <<<"$binding_run"
+  grep -Fq '[[ "$event_sha" == "$checked_out_head" ]]' <<<"$binding_run"
+}
+
+validate_job_checkout_binding checks
+validate_job_checkout_binding go-client
 
 inject_checks_run_step() {
   local bypass_command="$1"
@@ -116,6 +173,22 @@ add_yaml_document() {
   printf '%s\n' '---' 'name: rejected-second-document'
 }
 
+weaken_generated_header_normalization() {
+  local changed=false
+  local line
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$changed" == false && \
+      "$line" == '          scripts/normalize-generated-protoc-version.sh "$direct_dir"' ]]; then
+      printf '%s\n' "$line || true"
+      changed=true
+    else
+      printf '%s\n' "$line"
+    fi
+  done <"$ci"
+  [[ "$changed" == true ]]
+}
+
 workspace_test_bypasses=(
   'cargo  test --workspace --locked'
   $'cargo\ttest --workspace --locked'
@@ -139,6 +212,8 @@ yq eval '.' <(add_trigger_filter) >/dev/null
 ! validate_reviewed_ci_bytes <(add_trigger_filter)
 yq eval-all '.' <(add_yaml_document) >/dev/null
 ! validate_reviewed_ci_bytes <(add_yaml_document)
+yq eval '.' <(weaken_generated_header_normalization) >/dev/null
+! validate_reviewed_ci_bytes <(weaken_generated_header_normalization)
 
 legacy_language_files="$({
   find . -type f \
@@ -201,11 +276,9 @@ grep -Fq 'fipsFeatureGraph' deploy/release/verify.sh
 grep -Fq 'git rev-parse --verify HEAD^' "$ci"
 grep -Fq 'buf lint' "$ci"
 grep -Fq 'buf breaking --against ".git#ref=$against_commit"' "$ci"
-grep -Fq 'buf generate --template buf.gen.yaml' "$ci"
+grep -Fq 'go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2' "$ci"
+! grep -Fq 'grpc_generator_version' "$ci"
 grep -Fq 'schema_digest=' "$ci"
-[[ $(grep -Fc 'scripts/normalize-generated-protoc-version.sh' "$ci") -eq 2 ]]
-grep -Fq 'engine.pb.go.normalized' "$ci"
-grep -Fq 'engine_grpc.pb.go.normalized' "$ci"
 grep -Fq 'deploy/release/test-boundary.sh' "$ci"
 grep -Fq 'scripts/validate-studio-assets.sh' "$ci"
 grep -Fq 'cargo test --workspace --locked --release' "$ci"
@@ -296,6 +369,39 @@ grep -Fq 'gofmt -d -e' "$ci"
 grep -Fq 'go vet -mod=readonly ./...' "$ci"
 grep -Fq 'go install github.com/mikefarah/yq/v4@v4.45.1' "$ci"
 ! grep -Fq '.git#branch=${GITHUB_REF_NAME}' "$ci"
+
+yq eval --exit-status '
+  ([.jobs.checks.steps[] | select(.name == "Schema and generated-binding drift")] | length) == 1
+' "$ci" >/dev/null
+schema_generation_step="$(yq eval -r '
+  .jobs.checks.steps[] |
+  select(.name == "Schema and generated-binding drift") |
+  .run
+' "$ci")"
+grep -Fq 'direct_dir="$schema_temp_root/direct"' <<<"$schema_generation_step"
+grep -Fq 'buf_dir="$schema_temp_root/buf"' <<<"$schema_generation_step"
+grep -Fq -- '--output "$buf_dir"' <<<"$schema_generation_step"
+grep -Fq -- '--path crates/terrabase-tbep/proto/terrabase/v1/engine.proto' \
+  <<<"$schema_generation_step"
+grep -Fq -- '--path crates/terrabase-tbep/proto/terrabase/v1/family.proto' \
+  <<<"$schema_generation_step"
+grep -Fq 'crates/terrabase-tbep/proto/terrabase/v1/family.proto' \
+  <<<"$schema_generation_step"
+[[ $(grep -Fc 'scripts/normalize-generated-protoc-version.sh ' \
+  <<<"$schema_generation_step") -eq 2 ]]
+grep -Fq 'scripts/normalize-generated-protoc-version.sh "$direct_dir"' \
+  <<<"$schema_generation_step"
+grep -Fq 'scripts/normalize-generated-protoc-version.sh "$buf_dir/terrabase-go"' \
+  <<<"$schema_generation_step"
+grep -Fq 'expected_generated_inventory="$(printf' <<<"$schema_generation_step"
+grep -Fq 'engine.pb.go engine_grpc.pb.go family.pb.go' <<<"$schema_generation_step"
+grep -Fq 'terrabase-go/terrabase/v1' <<<"$schema_generation_step"
+[[ $(grep -Fc 'diff -u "$direct_dir/terrabase/v1/$generated_file"' \
+  <<<"$schema_generation_step") -eq 2 ]]
+grep -Fq 'schema_temp_root="$(mktemp -d)"' <<<"$schema_generation_step"
+grep -Fq 'trap cleanup_schema_temp EXIT' <<<"$schema_generation_step"
+! grep -Fq '|| true' <<<"$schema_generation_step"
+
 validate_trunk_ci_triggers() {
   local workflow
   workflow="$(<"$1")"
@@ -380,7 +486,10 @@ grep -Fq '"$linker_env"' <<<"$gcc_linker_step"
 grep -Fq '"$GITHUB_ENV"' <<<"$gcc_linker_step"
 ! grep -Eq 'CARGO_TARGET_(X86_64|AARCH64|ARM|RISCV|S390X|POWERPC)[[:alnum:]_]*_LINKER' <<<"$gcc_linker_step"
 grep -Fq 'go test -mod=readonly -race ./...' "$ci"
-! grep -Fq 'python3' "$ci" deploy/release/package.sh deploy/release/reproduce.sh
+if grep -Fq 'python3' "$ci" deploy/release/package.sh deploy/release/reproduce.sh; then
+  printf 'Python helpers are forbidden in the CI and release shell surface\n' >&2
+  exit 1
+fi
 
 if [[ "$fixture_only" == false ]]; then
   bash scripts/test-validate-release-contracts.sh
