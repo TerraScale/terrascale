@@ -9,12 +9,15 @@ workspace goal has decided.
 ## Mission
 
 TerraBase is TerraScale's private multi-region database engine, in Rust:
-**embedded SQLite storage** (one file per customer database — D-27), TQL
-translated to SQL over JSONB, CRDT merge and causality, the **sync engine**
-(reactive views), the **replication engine** (leaderless cross-region, RF=2
-per region), key-range shard split (D-28), **Litestream** backup/PITR
-(D-29), per-database encryption, and authoritative usage metering. Private
-protobuf/gRPC protocol (TBEP); `terrabase-go` is the only network client.
+**embedded SQLite storage** (one file per customer database — D-27),
+document bodies as **canonical JSON bytes parsed exactly once at write**
+(D-30), TQL translated to SQL over **auto-indexed extracted columns**
+(D-31 — optimizer-driven, no stale reads), CRDT merge and causality, the
+**sync engine** (reactive views), the **replication engine** (leaderless
+cross-region, RF=2 per region), key-range shard split (D-28), **Litestream**
+backup/PITR (D-29), per-database encryption, and authoritative usage
+metering. Private protobuf/gRPC protocol (TBEP); `terrabase-go` is the only
+network client. ADR 0040 records D-27..D-31 in-repo.
 
 ## STORAGE PIVOT (2026-08-30 — decisions D-27/D-28/D-29)
 
