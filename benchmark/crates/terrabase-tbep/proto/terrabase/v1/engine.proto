@@ -167,6 +167,63 @@ message ChangeEvent {
   string document = 5;     // <= 64 bytes.
 }
 
+// ---------------------------------------------------------------------------
+// Named atomic auth-storage operations
+// ---------------------------------------------------------------------------
+
+// The closed result of an auth-storage mutation. Values are returned only
+// for applied and replayed outcomes; conflict and not-found carry no value.
+enum AuthStorageMutationStatus {
+  AUTH_STORAGE_MUTATION_STATUS_UNSPECIFIED = 0;
+  AUTH_STORAGE_MUTATION_STATUS_APPLIED = 1;
+  AUTH_STORAGE_MUTATION_STATUS_REPLAYED = 2;
+  AUTH_STORAGE_MUTATION_STATUS_CONFLICT = 3;
+  AUTH_STORAGE_MUTATION_STATUS_NOT_FOUND = 4;
+}
+
+// One bounded equality predicate. The field is <=128 UTF-8 bytes and value
+// is one bounded Value tree. Scope is never present in these messages: it is
+// taken from the authenticated channel metadata.
+message AuthStorageCondition {
+  string field = 1;
+  Value value = 2;
+}
+
+// Inserts one unique auth record. The engine defines uniqueness by the
+// model/id pair in the supplied object and performs the check and insert in
+// one transaction.
+message EngineServiceAuthStorageInsertUniqueRequest {
+  string model = 1; // <=128 bytes.
+  Value data = 2; // object, <=256 KiB encoded.
+  repeated string select = 3; // <=128 fields, each <=128 bytes.
+}
+
+message EngineServiceAuthStorageInsertUniqueResponse {
+  AuthStorageMutationStatus status = 1;
+  Value value = 2;
+}
+
+message EngineServiceAuthStorageCompareAndSwapRequest {
+  string model = 1; // <=128 bytes.
+  repeated AuthStorageCondition where = 2; // <=32 conditions.
+  Value update = 3; // object, <=256 KiB encoded.
+}
+
+message EngineServiceAuthStorageCompareAndSwapResponse {
+  AuthStorageMutationStatus status = 1;
+  Value value = 2;
+}
+
+message EngineServiceAuthStorageConsumeOneRequest {
+  string model = 1; // <=128 bytes.
+  repeated AuthStorageCondition where = 2; // <=32 conditions.
+}
+
+message EngineServiceAuthStorageConsumeOneResponse {
+  AuthStorageMutationStatus status = 1;
+  Value value = 2;
+}
+
 // Where a subscription starts.
 message SubscriptionStart {
   oneof start {
@@ -1176,6 +1233,9 @@ service EngineService {
   rpc QueryCancel(EngineServiceQueryCancelRequest) returns (EngineServiceQueryCancelResponse);
   rpc FamilyRead(EngineServiceFamilyReadRequest) returns (EngineServiceFamilyReadResponse);
   rpc FamilyWrite(EngineServiceFamilyWriteRequest) returns (EngineServiceFamilyWriteResponse);
+  rpc AuthStorageInsertUnique(EngineServiceAuthStorageInsertUniqueRequest) returns (EngineServiceAuthStorageInsertUniqueResponse);
+  rpc AuthStorageCompareAndSwap(EngineServiceAuthStorageCompareAndSwapRequest) returns (EngineServiceAuthStorageCompareAndSwapResponse);
+  rpc AuthStorageConsumeOne(EngineServiceAuthStorageConsumeOneRequest) returns (EngineServiceAuthStorageConsumeOneResponse);
 }
 
 // The backbone change stream.
