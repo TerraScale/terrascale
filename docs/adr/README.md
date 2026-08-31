@@ -1,10 +1,10 @@
-# TerraScale.TypeScript ADR index
+# ts-typescript ADR index
 
 These records define the public TypeScript SDK boundary, local development
 runtime, reactive protocol, and package release gates. The workspace
 [`../../../GOAL.md`](../../../GOAL.md) and repository [`../../GOAL.md`](../../GOAL.md)
 remain authoritative. Status does not replace implementation or live
-qualification evidence.
+qualification tests.
 
 | ADR | Status | Decision |
 | --- | --- | --- |

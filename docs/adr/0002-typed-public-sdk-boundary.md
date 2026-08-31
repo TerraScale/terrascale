@@ -32,12 +32,12 @@ current package implements 91 captured routes, and the current Dashboard
 snapshot covers all 91. The saved-query CRUD operations use the owner-published
 v1 paths, page envelope, continuation offset, and revision-protected update
 contract. Project queue operations use the Dashboard-owned project-scoped
-OpenAPI contract and retain typed receipts plus explicit regional affinity for
-acknowledgement operations. The legacy global queue API remains excluded.
+OpenAPI contract and retain typed acknowledgement results plus explicit
+regional affinity. The legacy global queue API remains excluded.
 
-## Evidence and follow-up
+## Enforcement
 
 `src/public-boundary.test.ts`, `src/public-schema-parity.test.ts`,
 `scripts/check-forbidden-surface.mjs`, and
 `scripts/generate-client-route-manifest.mjs` enforce the package boundary.
-Cross-repository contract evidence remains required before production.
+The owning service contract and SDK checks must agree before production.

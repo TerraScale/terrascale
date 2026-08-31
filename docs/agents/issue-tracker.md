@@ -1,18 +1,16 @@
 # Issue tracker: Forgejo
 
 Issues and specs for this repository live in Forgejo at `git.terrascale.tech`.
-
-Prefer the configured Forgejo MCP server for all issue operations. If the MCP server is unavailable or lacks the required operation, use the `fj` CLI from inside the repository.
+Use the `fj` CLI for every issue operation.
 
 ## Conventions
 
-- Create, read, search, comment on, label, assign, and close issues through the Forgejo MCP server when possible.
 - Infer the Forgejo repository from the current repository's `origin` remote.
 - Before any write, confirm that the selected Forgejo repository matches the current Git repository.
 - Preserve existing issue content and labels unless the task calls for changing them.
-- Use `fj -C <repo-path>` when the fallback command runs outside the repository.
+- Use `fj -C <repo-path>` when the command runs outside the repository.
 
-## `fj` fallback
+## Commands
 
 - Create: `fj issue create "..." --body "..."`
 - Read: `fj issue view <number>` and `fj issue view <number> comments`
@@ -24,9 +22,9 @@ Prefer the configured Forgejo MCP server for all issue operations. If the MCP se
 
 Use `--body-file` for long issue bodies or comments.
 
-## Pull requests as a triage surface
+## Request surface
 
-PRs as a request surface: no.
+Use Forgejo issues. This repository does not use pull requests.
 
 ## When a skill says "publish to the issue tracker"
 
@@ -34,7 +32,7 @@ Create a Forgejo issue in the repository inferred from `origin`.
 
 ## When a skill says "fetch the relevant ticket"
 
-Read the issue body, comments, labels, state, and assignees through the Forgejo MCP server. Fall back to `fj issue view`.
+Read the issue body, comments, labels, state, and assignees with `fj issue view`.
 
 ## Wayfinding operations
 
