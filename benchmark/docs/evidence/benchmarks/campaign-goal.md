@@ -35,6 +35,35 @@ waive in writing in the benchmark history.
   table** yet. Known driver bug: `config operation counts must be divisible
   by concurrency` (warm-up 1,000 vs concurrency 16).
 
+## Read-path diagnosis (2026-08-30, verified by workflow wf_55ae3572-d86)
+
+Thirteen trace/verify agents followed one read op end to end. Confirmed,
+in impact order (all under the benchmark's diagnostic boundary):
+
+1. **One global `Arc<Mutex<StorageState>>`** (`src/engine/mod.rs:803`)
+   serializes all 16 slots: `read_snapshot` locks it (just to read the
+   published sequence), and `Transaction::read` locks it again around the
+   whole LSM probe.
+2. **Point reads materialize the full version range** —
+   `newest_document_entry` reduced `collect_range`, which clones every
+   matching entry from memtable/frozen/segments, sorts, and dedupes via
+   `BTreeSet<Vec<u8>>`, then keeps one entry (`src/storage/lsm/mod.rs`).
+3. **A guaranteed per-read syscall inside that mutex**: uncached
+   `TierManifest::read` (failed `openat` when no cold tier exists) on every
+   read (`src/storage/lsm/mod.rs:845` → `src/storage/lsm/tier.rs:169`).
+4. **The serving runtime is hard-coded to 2 worker threads**
+   (`crates/terrabase-tbep/src/grpc.rs`): all TLS, HTTP/2 framing, and
+   codec work for every connection shares two threads.
+5. Refuted: per-read durable metering (reads perform zero durable writes),
+   client-side connection churn (one long-lived mTLS conn per slot),
+   per-op TLS handshakes (session reuse works).
+
+Wave 1 (landed): point-probe lookup, cached tier manifest, host-sized
+serving runtime. Wave 2 (if measurements demand): `Mutex`→`RwLock` on the
+storage state (read methods already take `&self`; the `RefCell` segment
+readers must become `Mutex` first), lock-free `read_snapshot` sequence,
+per-connection X.509/SPIFFE caching.
+
 ## Plan
 
 1. **Baseline honestly.** Fix the divisibility bug, run all four families on

@@ -816,7 +816,9 @@ impl LsmStorage {
             for entry in entries {
                 if entry.key.user_key() == user_key
                     && entry.key.sequence() <= sequence
-                    && best.as_ref().is_none_or(|current| entry.key.sequence() > current.key.sequence())
+                    && best
+                        .as_ref()
+                        .is_none_or(|current| entry.key.sequence() > current.key.sequence())
                 {
                     best = Some(entry);
                 }
