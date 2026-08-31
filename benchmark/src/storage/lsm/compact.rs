@@ -60,7 +60,7 @@ pub(super) fn flush_frozen(storage: &mut LsmStorage) -> Vec<SegmentMeta> {
             return Vec::new();
         };
         candidate.segments.push(meta.clone());
-        readers.push((id, std::sync::Mutex::new(reader)));
+        readers.push((id, std::cell::RefCell::new(reader)));
         written.push(meta);
     }
     if written.is_empty() {
@@ -102,8 +102,7 @@ pub(super) fn merge_l0(storage: &mut LsmStorage) -> Option<(u64, u64)> {
     let mut merged: Vec<Entry> = Vec::new();
     for meta in &candidates {
         if let Some(reader) = storage.readers.get(&meta.id)
-            && let Ok(entries) =
-                reader.lock().unwrap_or_else(std::sync::PoisonError::into_inner).read_all()
+            && let Ok(entries) = reader.borrow_mut().read_all()
         {
             merged.extend(entries);
         }
@@ -139,7 +138,7 @@ pub(super) fn merge_l0(storage: &mut LsmStorage) -> Option<(u64, u64)> {
     } else {
         segment::SegmentReader::open(&path, id, 1)
     } {
-        storage.readers.insert(id, std::sync::Mutex::new(reader));
+        storage.readers.insert(id, std::cell::RefCell::new(reader));
     }
     let removed: Vec<u64> = candidates.iter().map(|meta| meta.id).collect();
     let removed_before = removed.len() as u64;

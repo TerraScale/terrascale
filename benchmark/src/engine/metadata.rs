@@ -200,7 +200,7 @@ fn resolve_published(
     let engine = transaction.engine;
     let tenant = transaction.scope.tenant();
     let snapshot = transaction.snapshot_sequence;
-    let storage = engine.lock_storage_shared()?;
+    let storage = engine.lock_storage()?;
     let document = storage.port.read_document_in_collection_at(snapshot, tenant, collection, id);
     let Some(document) = document else {
         return Ok(None);

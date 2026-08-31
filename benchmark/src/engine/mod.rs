@@ -10,7 +10,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex, RwLock,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -819,7 +819,7 @@ pub(crate) struct StorageState {
 pub struct Engine {
     identity: u128,
     durable_owner: crate::storage::DatabaseOwner,
-    pub(crate) storage: Arc<RwLock<StorageState>>,
+    pub(crate) storage: Arc<Mutex<StorageState>>,
     /// One bounded registry shared by the engine, storage, TBEP, probes, and
     /// Prometheus adapter for this process-local engine instance.
     metrics: Arc<MetricsRegistry>,
@@ -1002,7 +1002,7 @@ impl Engine {
         Ok(Self {
             identity: EngineIdentity::next().0,
             durable_owner: owner,
-            storage: Arc::new(RwLock::new(StorageState { port: storage })),
+            storage: Arc::new(Mutex::new(StorageState { port: storage })),
             metrics,
             in_flight: Mutex::new(BTreeSet::new()),
             subscriptions,
@@ -1376,7 +1376,7 @@ impl Engine {
         &self,
     ) -> Result<LedgerFrontierStatus, LedgerFrontierActivationError> {
         let storage =
-            self.storage.write().map_err(|_| LedgerFrontierActivationError::StorageUnavailable)?;
+            self.storage.lock().map_err(|_| LedgerFrontierActivationError::StorageUnavailable)?;
         Ok(storage.port.ledger_frontier_status())
     }
 
@@ -1394,7 +1394,7 @@ impl Engine {
             return Err(LedgerFrontierActivationError::NotQuiescent);
         }
         let mut storage =
-            self.storage.write().map_err(|_| LedgerFrontierActivationError::StorageUnavailable)?;
+            self.storage.lock().map_err(|_| LedgerFrontierActivationError::StorageUnavailable)?;
         storage.port.activate_ledger_frontier(request)
     }
 
@@ -1417,7 +1417,7 @@ impl Engine {
     ///
     /// Returns [`EngineError::StorageFailure`] when storage cannot lock.
     pub fn published_sequence(&self) -> Result<StorageSequence, EngineError> {
-        let storage = self.lock_storage_shared()?;
+        let storage = self.lock_storage()?;
         Ok(storage.port.published_state().0)
     }
 
@@ -1431,7 +1431,7 @@ impl Engine {
     pub fn read_snapshot(&self, scope: &TenantScope) -> Result<ReadSnapshot, EngineError> {
         self.validate_scope(scope)?;
         let sequence = {
-            let storage = self.lock_storage_shared()?;
+            let storage = self.lock_storage()?;
             storage.port.published_state().0
         };
         let snapshot = ReadSnapshot::new(
@@ -1469,7 +1469,7 @@ impl Engine {
             .map_err(|_| UsageCommandError::InvalidRequest)?;
         let (durable, already_recorded) = {
             let mut storage =
-                self.storage.write().map_err(|_| UsageCommandError::StorageUnavailable)?;
+                self.storage.lock().map_err(|_| UsageCommandError::StorageUnavailable)?;
             storage.port.record_usage(scope.tenant(), fact).map_err(map_usage_storage_error)?
         };
         Ok(UsageRecordReceipt::new(
@@ -1525,7 +1525,7 @@ impl Engine {
         {
             return Err(UsageCommandError::InvalidRequest);
         }
-        let storage = self.storage.read().map_err(|_| UsageCommandError::StorageUnavailable)?;
+        let storage = self.storage.lock().map_err(|_| UsageCommandError::StorageUnavailable)?;
         let current = storage.port.published_state().0;
         let snapshot = decoded.as_ref().map_or(current, |state| state.snapshot);
         if snapshot > current {
@@ -1681,7 +1681,7 @@ impl Engine {
     ) -> Result<DurableResolution, EngineError> {
         self.validate_scope(scope)?;
         let resolution = {
-            let storage = self.lock_storage_shared()?;
+            let storage = self.lock_storage()?;
             storage.port.resolve_operation(scope.tenant(), &operation)
         };
         Ok(match resolution {
@@ -1704,7 +1704,7 @@ impl Engine {
     /// unreachable through this consuming path and exists for the frozen
     /// contract only.
     pub fn shutdown(self) -> Result<(), EngineShutdownError> {
-        let mut storage = self.storage.write().map_err(|_| EngineShutdownError::StorageFailure)?;
+        let mut storage = self.storage.lock().map_err(|_| EngineShutdownError::StorageFailure)?;
         storage.port.flush().map_err(|()| EngineShutdownError::StorageFailure)
     }
 
@@ -1744,7 +1744,7 @@ impl Engine {
             return Err(EngineError::SnapshotTenantMismatch);
         }
         let documents = {
-            let storage = self.lock_storage_shared()?;
+            let storage = self.lock_storage()?;
             storage.port.documents_at(snapshot.sequence(), scope.tenant())
         };
         Ok(documents)
@@ -1778,7 +1778,7 @@ impl Engine {
             return Err(EngineError::SnapshotTenantMismatch);
         }
         let documents = {
-            let storage = self.lock_storage_shared()?;
+            let storage = self.lock_storage()?;
             storage.port.documents_in_collection_at(snapshot.sequence(), scope.tenant(), collection)
         };
         Ok(documents)
@@ -1816,7 +1816,7 @@ impl Engine {
             return Err(EngineError::SnapshotTenantMismatch);
         }
         let documents = {
-            let storage = self.lock_storage_shared()?;
+            let storage = self.lock_storage()?;
             storage.port.read_documents_in_collection_at(
                 snapshot.sequence(),
                 scope.tenant(),
@@ -1862,7 +1862,7 @@ impl Engine {
             return Err(EngineError::SnapshotTenantMismatch);
         }
         let documents = {
-            let storage = self.lock_storage_shared()?;
+            let storage = self.lock_storage()?;
             storage.port.documents_at_from(
                 snapshot.sequence(),
                 scope.tenant(),
@@ -1905,7 +1905,7 @@ impl Engine {
             return Err(EngineError::SnapshotTenantMismatch);
         }
         let documents = {
-            let storage = self.lock_storage_shared()?;
+            let storage = self.lock_storage()?;
             storage.port.documents_in_collection_at_from(
                 snapshot.sequence(),
                 scope.tenant(),
@@ -1947,7 +1947,7 @@ impl Engine {
         if limit > MAX_SNAPSHOT_RECORD_PAGE {
             return Err(EngineError::SnapshotPageLimitExceeded);
         }
-        let storage = self.lock_storage_shared()?;
+        let storage = self.lock_storage()?;
         let current = storage.port.published_state().0;
         if boundary > current {
             return Err(EngineError::SnapshotBoundaryUnavailable);
@@ -2012,7 +2012,7 @@ impl Engine {
         after: StorageSequence,
         limit: u32,
     ) -> Result<Vec<PublishedCommit>, EngineError> {
-        let storage = self.lock_storage_shared()?;
+        let storage = self.lock_storage()?;
         Ok(storage.port.tenant_commits(tenant, after, limit))
     }
 
@@ -2026,7 +2026,7 @@ impl Engine {
     /// empty list (repair F5).
     #[allow(dead_code, reason = "consumed by the W4 replication and backup packets")]
     pub(crate) fn committed_tenants(&self) -> Result<Vec<TenantId>, EngineError> {
-        let storage = self.lock_storage_shared()?;
+        let storage = self.lock_storage()?;
         Ok(storage.port.committed_tenants())
     }
 
@@ -2044,7 +2044,7 @@ impl Engine {
         tenant: &TenantId,
         at: StorageSequence,
     ) -> Result<Option<StorageSequence>, EngineError> {
-        let storage = self.lock_storage_shared()?;
+        let storage = self.lock_storage()?;
         Ok(storage.port.tenant_sequence(tenant, at))
     }
 
@@ -2061,7 +2061,7 @@ impl Engine {
     /// reached (repair F5).
     #[allow(dead_code, reason = "consumed by the W4 replication and backup packets")]
     pub(crate) fn servable_history_start(&self) -> Result<Option<StorageSequence>, EngineError> {
-        let storage = self.lock_storage_shared()?;
+        let storage = self.lock_storage()?;
         Ok(storage.port.servable_history_start())
     }
 
@@ -2079,7 +2079,7 @@ impl Engine {
     /// reached (repair F5).
     #[allow(dead_code, reason = "consumed by the W4 replication and backup packets")]
     pub(crate) fn journaled_high_water(&self) -> Result<Option<StorageSequence>, EngineError> {
-        let storage = self.lock_storage_shared()?;
+        let storage = self.lock_storage()?;
         Ok(storage.port.journaled_high_water())
     }
 
@@ -2099,21 +2099,12 @@ impl Engine {
     /// Returns [`EngineError::StorageFailure`] when storage cannot be
     /// reached (repair F5).
     pub(crate) fn journal_divergence(&self) -> Result<u64, EngineError> {
-        let storage = self.lock_storage_shared()?;
+        let storage = self.lock_storage()?;
         Ok(storage.port.journal_divergence())
     }
 
-    fn lock_storage(&self) -> Result<std::sync::RwLockWriteGuard<'_, StorageState>, EngineError> {
-        self.storage.write().map_err(|_| EngineError::StorageFailure)
-    }
-
-    /// Takes the shared storage guard: every read-side port method takes
-    /// `&self`, so concurrent readers enter the backend together instead
-    /// of serializing behind one exclusive lock (the parity ceiling fix).
-    fn lock_storage_shared(
-        &self,
-    ) -> Result<std::sync::RwLockReadGuard<'_, StorageState>, EngineError> {
-        self.storage.read().map_err(|_| EngineError::StorageFailure)
+    fn lock_storage(&self) -> Result<std::sync::MutexGuard<'_, StorageState>, EngineError> {
+        self.storage.lock().map_err(|_| EngineError::StorageFailure)
     }
 
     /// Registers one publication-event sink and returns its guard.
@@ -2295,7 +2286,7 @@ impl Engine {
     /// Arms one storage fault inside the publication order. Test-only.
     #[cfg(test)]
     pub(crate) fn arm_storage_fault(&self, point: FaultPoint) {
-        let mut storage = self.storage.write().expect("storage lock");
+        let mut storage = self.storage.lock().expect("storage lock");
         storage.port.arm_test_fault(point);
     }
 
@@ -2379,7 +2370,7 @@ impl Transaction<'_> {
                 });
             }
         }
-        let storage = self.engine.lock_storage_shared()?;
+        let storage = self.engine.lock_storage()?;
         Ok(storage.port.read_document_at(self.snapshot_sequence, self.scope.tenant(), id))
     }
 
@@ -2422,7 +2413,7 @@ impl Transaction<'_> {
                 });
             }
         }
-        let storage = self.engine.lock_storage_shared()?;
+        let storage = self.engine.lock_storage()?;
         Ok(storage.port.read_document_in_collection_at(
             self.snapshot_sequence,
             self.scope.tenant(),

@@ -16,7 +16,7 @@
 //! pause/resume gate it; the continuous scheduler lands with the
 //! cold-tier qualification and owns the `cancel` control.
 
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 
 use crate::engine::{Engine, StorageState};
 use crate::storage::lsm::tier::{self, MoveDecision, MoverOutcome, TierMovePolicy};
@@ -299,7 +299,7 @@ pub(crate) struct TierControlState {
 
 /// The typed administration handle of one Engine's Storage Tier Mover.
 pub struct TierAdministration {
-    storage: Arc<RwLock<StorageState>>,
+    storage: Arc<Mutex<StorageState>>,
     control: Arc<Mutex<TierControlState>>,
     home_region: String,
 }
@@ -405,7 +405,7 @@ impl TierAdministration {
         let paused = control.paused;
         drop(control);
         let snapshot =
-            self.storage.read().map(|storage| storage.port.tier_snapshot()).ok().flatten();
+            self.storage.lock().map(|storage| storage.port.tier_snapshot()).ok().flatten();
         TierStateView {
             configured,
             paused,
@@ -427,7 +427,7 @@ impl TierAdministration {
         let move_policy = policy.as_move_policy(dry_run);
         let outcome = {
             let mut storage =
-                self.storage.write().map_err(|_| TierAdminError::UnsupportedBackend)?;
+                self.storage.lock().map_err(|_| TierAdminError::UnsupportedBackend)?;
             storage
                 .port
                 .mover_pass(&move_policy, &self.home_region)

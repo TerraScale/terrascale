@@ -105,7 +105,7 @@ impl UsageFactPosition {
 /// The production implementation is [`FileStorage`]. The trait exists so the
 /// storage seam stays substitutable behind one typed contract instead of
 /// leaking file, codec, or WAL details into the Engine.
-pub(crate) trait StoragePort: Send + Sync {
+pub(crate) trait StoragePort: Send {
     /// Runs the publication order for one validated commit intent.
     fn commit(&mut self, intent: CommitIntent) -> CommitResult;
 

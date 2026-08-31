@@ -41,12 +41,12 @@ pub(crate) mod wal;
 pub(crate) mod wal_frontier;
 
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     fs,
     io::Write,
     path::{Path, PathBuf},
     sync::Arc,
-    sync::Mutex,
     time::Instant,
 };
 
@@ -197,7 +197,7 @@ pub(crate) struct LsmStorage {
     /// the read path never re-reads `TIERMANIFEST` from disk inside the
     /// storage lock. `None` until a demotion creates the file.
     tier_manifest: Option<tier::TierManifest>,
-    readers: BTreeMap<u64, Mutex<SegmentReader>>,
+    readers: BTreeMap<u64, RefCell<SegmentReader>>,
     pub(crate) tuning: LsmTuning,
     /// The highest sequence this location has ever named. Sequences may have
     /// holes (a rejected-after-allocation commit consumes one) and are never
@@ -419,7 +419,7 @@ impl LsmStorage {
         if manifest_exists && encrypted_manifest != encrypted_wal {
             return Err(LsmOpenError::FormatMismatch);
         }
-        let mut readers: BTreeMap<u64, Mutex<SegmentReader>> = BTreeMap::new();
+        let mut readers: BTreeMap<u64, RefCell<SegmentReader>> = BTreeMap::new();
         let mut segment_documents: Vec<Entry> = Vec::new();
         for meta in &manifest.segments {
             let segment_path = segment_path(dir, meta.id);
@@ -437,7 +437,7 @@ impl LsmStorage {
                     .into_iter()
                     .filter(|entry| entry.key.tag() == internal::Keyspace::Documents.tag()),
             );
-            readers.insert(meta.id, Mutex::new(reader));
+            readers.insert(meta.id, RefCell::new(reader));
         }
         let mut wal = match wal_encryption {
             Some(config) => WalLog::open_unrepaired_with_encryption(&wal_path, config),
@@ -614,11 +614,8 @@ impl LsmStorage {
             let Some(reader) = self.readers.get(&meta.id) else {
                 continue;
             };
-            let entries = reader
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .read_all()
-                .map_err(|_| LsmOpenError::FormatMismatch)?;
+            let entries =
+                reader.borrow_mut().read_all().map_err(|_| LsmOpenError::FormatMismatch)?;
             for entry in entries {
                 self.sequence_watermark = self.sequence_watermark.max(entry.key.sequence());
                 let tag = entry.key.tag();
@@ -838,11 +835,7 @@ impl LsmStorage {
             let Some(reader) = self.readers.get(&meta.id) else {
                 continue;
             };
-            let Ok(entries) = reader
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .read_between(Some(user_key), &bound)
-            else {
+            let Ok(entries) = reader.borrow_mut().read_between(Some(user_key), &bound) else {
                 continue;
             };
             consider(entries);
@@ -886,11 +879,7 @@ impl LsmStorage {
             let Some(reader) = self.readers.get(&meta.id) else {
                 continue;
             };
-            let Ok(entries) = reader
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .read_between(Some(start), end)
-            else {
+            let Ok(entries) = reader.borrow_mut().read_between(Some(start), end) else {
                 continue;
             };
             for entry in entries {
