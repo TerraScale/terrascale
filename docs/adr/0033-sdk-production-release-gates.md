@@ -23,8 +23,8 @@ For reactive data, MessagePack carries the envelope and operation structure.
 Document bodies remain raw TerraScale-canonical JSON bytes, and the client uses
 one native `JSON.parse` per body after decoding the envelope.
 
-The replacement workflow publishes the verified npm tarball and does not create
-or repair a Forgejo Release. npm credentials stay in protected jobs.
+The release workflow publishes the verified npm tarball. npm credentials stay
+in protected jobs.
 
 ## Current state
 
