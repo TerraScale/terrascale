@@ -104,7 +104,12 @@ const RANK_OBJECT: u8 = 7;
 
 /// Sign sub-byte of positive finite numbers inside the rank-3 payload.
 const SIGN_POSITIVE: u8 = 0x02;
-/// The zero payload: sorts between the negative (0xFD) and positive (0x02)
+/// The negative sign byte: the SMALLEST of the three sign bytes so every
+/// negative orders before zero (0x01) and the positives (0x02) under
+/// unsigned BINARY comparison — a complemented positive byte (0xFD) would
+/// sort after them, which the pairwise order test catches.
+const SIGN_NEGATIVE: u8 = 0x00;
+/// The zero payload: sorts between the negative (0x00) and positive (0x02)
 /// sign bytes.
 const SIGN_ZERO: u8 = 0x01;
 /// Bias added to the canonical exponent so it fits two unsigned bytes.
@@ -244,7 +249,7 @@ fn push_rational(out: &mut Vec<u8>, negative: bool, mantissa: u64, exponent: i32
         body.push(u8::from((mantissa >> index) & 1 == 1));
     }
     body.push(0x00);
-    out.push(if negative { !SIGN_POSITIVE } else { SIGN_POSITIVE });
+    out.push(if negative { SIGN_NEGATIVE } else { SIGN_POSITIVE });
     if negative {
         // Byte-complement the body so larger magnitudes sort earlier,
         // exactly reversing the positive order.
