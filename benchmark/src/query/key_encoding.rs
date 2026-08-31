@@ -26,19 +26,21 @@
 //!   `f64`. Each value is canonicalized to `odd m · 2^e`; positives emit a
 //!   sign byte 0x02, the leading bit's exponent `E` (of `2^E · 1.b1b2…`)
 //!   biased by 1074 as two big-endian bytes, then one byte per mantissa
-//!   bit below the leading one (0x01 set, 0x00 clear)
-//!   terminated by 0x00; negatives mirror that body byte-complemented
-//!   behind sign byte 0xFD; zero (i64 0, +0.0, −0.0) is the single byte
-//!   0x01, which sorts between the negative and positive sign bytes. This
+//!   bit below the leading one (0x02 set, 0x01 clear), a 0x00 terminator,
+//!   and 0x00 padding out to a FIXED body width; zero (i64 0, +0.0, −0.0)
+//!   is the single byte 0x01, sorting between the negative (0x00) and
+//!   positive (0x02) sign bytes; negatives emit sign byte 0x00 and the
+//!   byte-complemented fixed-width body. The fixed width is what makes the
+//!   complement reverse the order exactly: a terminated expansion of `x`
+//!   is mathematically smaller than any extension of it, and complementing
+//!   equal-length bodies reverses both the exponent and every fraction
+//!   byte with no variable-length prefix rule left un-reversed. This
 //!   makes `Integer(n)` and `Number(n as f64)` encode identically and
 //!   interleaves both encodings exactly where
 //!   `compare_integer_with_number` puts them — the fixed-width IEEE bit
 //!   flip cannot do this, because the 2^64 float patterns already exhaust
 //!   the 8-byte space the integers also need (e.g. `i64 2^53+1` lies
 //!   strictly between the adjacent floats `2^53.0` and `2^53+2.0`).
-//!   A terminator sorts below every continuation bit, and a terminated
-//!   expansion is mathematically smaller than any extension of it, so
-//!   prefix-first byte order is exactly numeric order.
 //! - **Non-finite numbers (rank 4)**: the IEEE-754 total-order bit flip of
 //!   the eight big-endian `to_bits` bytes (sign-set patterns complemented,
 //!   positive patterns sign-bit flipped), which is precisely the order of
@@ -116,6 +118,9 @@ const SIGN_ZERO: u8 = 0x01;
 /// The smallest representable magnitude (a subnormal minimum `f64`) has
 /// exponent −1074; the largest normal exponent is 1023.
 const EXPONENT_BIAS: i32 = 1074;
+/// Fixed width of every rational body: two exponent bytes plus room for
+/// the widest mantissa fraction (63 bits) and the terminator byte.
+const NUMBER_BODY_WIDTH: usize = 2 + 63 + 1;
 
 /// Encodes one present document value as an order-preserving key.
 ///
@@ -244,15 +249,23 @@ fn push_rational(out: &mut Vec<u8>, negative: bool, mantissa: u64, exponent: i32
     let biased = (exponent + lead + EXPONENT_BIAS) as u16;
     body.extend_from_slice(&biased.to_be_bytes());
     // One byte per mantissa bit below the leading one, most significant
-    // first; the trailing 0x00 terminates the expansion.
+    // first: set bit 0x02, clear bit 0x01, terminator and padding 0x00.
+    // The terminator is BELOW every fraction byte, so a terminated
+    // expansion sorts below any extension of it — exactly the
+    // binary-expansion order (x < x + any positive tail).
     for index in (0..lead).rev() {
-        body.push(u8::from((mantissa >> index) & 1 == 1));
+        body.push(if (mantissa >> index) & 1 == 1 { 0x02 } else { 0x01 });
     }
     body.push(0x00);
+    // Pad to the fixed body width with 0x00. Every body is exactly
+    // NUMBER_BODY_WIDTH bytes: complementing negatives then reverses the
+    // byte order with no variable-length prefix rule left over.
+    debug_assert!(body.len() <= NUMBER_BODY_WIDTH);
+    body.resize(NUMBER_BODY_WIDTH, 0x00);
     out.push(if negative { SIGN_NEGATIVE } else { SIGN_POSITIVE });
     if negative {
-        // Byte-complement the body so larger magnitudes sort earlier,
-        // exactly reversing the positive order.
+        // Byte-complement the fixed-width body so larger magnitudes sort
+        // earlier, exactly reversing the positive order.
         out.extend(body.iter().map(|byte| !byte));
     } else {
         out.append(&mut body);

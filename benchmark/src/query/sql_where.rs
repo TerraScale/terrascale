@@ -406,9 +406,12 @@ mod tests {
         )
         .expect("lowers");
         assert_eq!(fragment.sql, "(\"name_key\" >= ?1 AND \"name_key\" < ?2)");
-        // Rank byte 0x05 plus 'a', and its successor carrying into the
-        // array rank byte.
-        assert_eq!(fragment.params, vec![vec![0x05, b'a'], vec![0x06]]);
+        // Rank byte 0x05 plus 'a', and the tight successor 'b' — the
+        // smallest key above every "a…" string. (Carrying into the rank
+        // byte instead would wrongly admit every "b…" string; that carry
+        // is only correct when the prefix ends in 0xFF, which the
+        // exhaustion test covers.)
+        assert_eq!(fragment.params, vec![vec![0x05, b'a'], vec![0x05, b'b']]);
     }
 
     #[test]
