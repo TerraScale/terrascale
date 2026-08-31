@@ -29,7 +29,6 @@ pedantic = "warn"
 
 [dependencies]
 terrabase = { path = "../..", default-features = false }
-terrabase-backup = { path = "../terrabase-backup" }
 terrabase-tbep = { path = "../terrabase-tbep", default-features = false }
 terrabase-cluster = { path = "../terrabase-cluster", default-features = false }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }

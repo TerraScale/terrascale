@@ -31,7 +31,6 @@ const MAX_PEM_BYTES_USIZE: usize = 1024 * 1024;
 ///
 /// Returns an error when TLS material, the engine, a listener, shutdown, or
 /// graceful draining fails.
-#[allow(clippy::too_many_lines, reason = "one linear composition from listeners to drain")]
 pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
     if config.mode == ServerMode::Production {
         return Err(Box::new(DaemonError::ProductionCompositionUnavailable));
@@ -103,9 +102,6 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
     // Those required components remain Unknown, so readiness stays false until
     // the cluster composition supplies authoritative observations.
     metrics.transition_service(ServiceState::Serving)?;
-    // Opt-in disaster-recovery replication over this member's SQLite files;
-    // start failures never abort the daemon (D-29).
-    let backup_supervision = crate::backup::start(&config.engine_location, &metrics);
     wait_for_shutdown().await?;
     metrics.transition_service(ServiceState::Draining)?;
     let _ = host.begin_shutdown(&SupervisionShutdownRequest { reason: ShutdownReason::Supervisor });
@@ -141,9 +137,6 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
         Ok(Err(error)) => return Err(error),
         Err(_) => return Err(Box::new(DaemonError::ShutdownTimeout)),
     }
-    // Backup replication stays live through the drain so final WAL frames
-    // are captured, then stops with the same bounded escalation.
-    crate::backup::stop(backup_supervision.as_ref()).await;
     metrics.transition_service(ServiceState::Stopped)?;
     Ok(())
 }
