@@ -29,6 +29,12 @@ for tool in find gzip jq sha256sum stat tar; do
     exit 1
   }
 done
+if [[ -z ${TERRABASE_BASE_OCI_LAYOUT-} ]]; then
+  command -v skopeo >/dev/null || {
+    echo "skopeo is required to resolve the pinned OCI base" >&2
+    exit 1
+  }
+fi
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/terrabase-oci-verify.XXXXXXXX")
 cleanup() {
@@ -83,7 +89,7 @@ jq -e '.imageLayoutVersion == "1.0.0"' "$layout" >/dev/null
   exit 1
 }
 jq -e --arg tag "$oci_tag" \
-  '(.manifests[0].annotations["org.opencontainers.image.ref.name"] // $tag) == $tag' \
+  '.manifests[0].annotations["org.opencontainers.image.ref.name"] == $tag' \
   "$index" >/dev/null
 
 blob_path() {
@@ -134,6 +140,7 @@ jq -e --arg base "$base_reference" '.config.Labels["tech.terrascale.terrabase.ba
   echo "OCI image does not declare the pinned release base" >&2
   exit 1
 }
+image_arch=$(jq -er '.architecture | select(. == "amd64" or . == "arm64")' "$config_path")
 
 layer_count=$(jq -er '.layers | length' "$manifest_path")
 diff_count=$(jq -er '.rootfs.diff_ids | length' "$config_path")
@@ -162,6 +169,63 @@ for ((index_number = 0; index_number < layer_count; index_number++)); do
     exit 1
   }
 done
+
+# Resolve the digest-pinned base for the selected platform and require its
+# complete ordered layer graph to be an exact prefix of the candidate image.
+# A matching label alone is never base provenance.
+base_root=${TERRABASE_BASE_OCI_LAYOUT-}
+if [[ -n "$base_root" ]]; then
+  [[ -d "$base_root" && -f "$base_root/index.json" && ! -L "$base_root" ]] || {
+    echo "base OCI fixture is not a safe layout" >&2
+    exit 1
+  }
+else
+  base_root=$work/base-oci
+  skopeo copy --override-os linux --override-arch "$image_arch" \
+    "docker://$base_reference" "oci:$base_root:base" >/dev/null
+fi
+base_manifest_digest=$(jq -er '
+  if (.manifests | length) == 1 then .manifests[0].digest
+  else error("base OCI index must contain one selected manifest") end
+' "$base_root/index.json")
+[[ "$base_manifest_digest" =~ ^sha256:([0-9a-f]{64})$ ]]
+base_manifest_hex=${BASH_REMATCH[1]}
+base_manifest=$base_root/blobs/sha256/$base_manifest_hex
+base_manifest_size=$(jq -er '.manifests[0].size | numbers' "$base_root/index.json")
+[[ -f "$base_manifest" && ! -L "$base_manifest" \
+  && $(stat -c '%s' "$base_manifest") == "$base_manifest_size" \
+  && $(sha256sum "$base_manifest" | awk '{print $1}') == "$base_manifest_hex" ]]
+base_config_digest=$(jq -er '.config.digest' "$base_manifest")
+[[ "$base_config_digest" =~ ^sha256:([0-9a-f]{64})$ ]]
+base_config_hex=${BASH_REMATCH[1]}
+base_config=$base_root/blobs/sha256/$base_config_hex
+base_config_size=$(jq -er '.config.size | numbers' "$base_manifest")
+[[ -f "$base_config" && ! -L "$base_config" \
+  && $(stat -c '%s' "$base_config") == "$base_config_size" \
+  && $(sha256sum "$base_config" | awk '{print $1}') == "$base_config_hex" ]]
+[[ $(jq -er '.architecture' "$base_config") == "$image_arch" \
+  && $(jq -er '.os' "$base_config") == linux ]]
+base_layer_count=$(jq -er '.layers | length' "$base_manifest")
+[[ "$base_layer_count" -gt 0 && "$layer_count" -gt "$base_layer_count" ]] || {
+  echo "OCI image does not extend the pinned base layer graph" >&2
+  exit 1
+}
+for ((index_number = 0; index_number < base_layer_count; index_number++)); do
+  base_layer_digest=$(jq -er ".layers[$index_number].digest" "$base_manifest")
+  [[ "$base_layer_digest" =~ ^sha256:([0-9a-f]{64})$ ]]
+  base_layer_hex=${BASH_REMATCH[1]}
+  base_layer=$base_root/blobs/sha256/$base_layer_hex
+  base_layer_size=$(jq -er ".layers[$index_number].size | numbers" "$base_manifest")
+  [[ -f "$base_layer" && ! -L "$base_layer" \
+    && $(stat -c '%s' "$base_layer") == "$base_layer_size" \
+    && $(sha256sum "$base_layer" | awk '{print $1}') == "$base_layer_hex" ]]
+done
+jq -e --argjson count "$base_layer_count" \
+  --slurpfile base "$base_config" \
+  '.rootfs.diff_ids[0:$count] == $base[0].rootfs.diff_ids' "$config_path" >/dev/null || {
+  echo "OCI image rootfs prefix does not match the pinned base" >&2
+  exit 1
+}
 
 # Apply only the executable path from each verified layer. This avoids
 # mounting an untrusted image on a signing runner while retaining OCI whiteout
@@ -193,6 +257,17 @@ for ((index_number = 0; index_number < layer_count; index_number++)); do
       exit 1
     }
     case "$normalized" in
+      .wh.usr|usr/.wh.local|usr/local/.wh.bin|"usr/local/bin/.wh.$(basename -- "$native_binary")"|\
+      .wh..wh..opq|usr/.wh..wh..opq|usr/local/.wh..wh..opq|usr/local/bin/.wh..wh..opq)
+        rm -f -- "$current_present" "$current_binary"
+        ;;
+      usr|usr/|usr/local|usr/local/|usr/local/bin|usr/local/bin/)
+        type=$(tar -tvf "$raw_layer" "$entry" | awk 'NR == 1 { print substr($1, 1, 1) }')
+        [[ "$type" == d ]] || {
+          echo "OCI layer replaces an executable parent directory" >&2
+          exit 1
+        }
+        ;;
       "$target_path")
         type=$(tar -tvf "$raw_layer" "$entry" | awk 'NR == 1 { print substr($1, 1, 1) }')
         [[ "$type" == - ]] || {
@@ -201,10 +276,6 @@ for ((index_number = 0; index_number < layer_count; index_number++)); do
         }
         tar -xOf "$raw_layer" "$entry" >"$current_binary"
         : >"$current_present"
-        ;;
-      "usr/local/bin/.wh.$(basename -- "$native_binary")"|"usr/local/bin/.wh..wh..opq")
-        rm -f -- "$current_present"
-        rm -f -- "$current_binary"
         ;;
     esac
   done < <(tar -tf "$raw_layer")

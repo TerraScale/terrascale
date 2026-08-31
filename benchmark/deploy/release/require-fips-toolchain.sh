@@ -16,19 +16,24 @@ version_at_least() {
       && observed_patch >= required_patch))
 }
 
-for tool in cmake go perl; do
+cmake_command=${CMAKE:-cmake}
+build_executor=${CMAKE_MAKE_PROGRAM:-}
+go_command=${GO:-go}
+perl_command=${PERL:-perl}
+
+for tool in "$cmake_command" "$go_command" "$perl_command"; do
   command -v "$tool" >/dev/null || {
     echo "AWS-LC FIPS source builds require $tool" >&2
     exit 1
   }
 done
 
-perl -e 'exit 0' || {
+"$perl_command" -e 'exit 0' || {
   echo "AWS-LC FIPS source builds require a working Perl interpreter" >&2
   exit 1
 }
 
-go_version=$(go env GOVERSION)
+go_version=$("$go_command" env GOVERSION)
 if [[ ! $go_version =~ ^go([0-9]+)\.([0-9]+)(\.([0-9]+))?$ ]]; then
   echo "cannot parse Go version for AWS-LC FIPS source build: $go_version" >&2
   exit 1
@@ -40,12 +45,12 @@ version_at_least "$go_major" "$go_minor" "$go_patch" 1 17 13 || {
   echo "AWS-LC FIPS source builds require Go >= 1.17.13, observed: $go_version" >&2
   exit 1
 }
-go list std >/dev/null || {
+"$go_command" list std >/dev/null || {
   echo "AWS-LC FIPS source builds require a working 'go list std'" >&2
   exit 1
 }
 
-cmake_line=$(cmake --version | sed -n '1p')
+cmake_line=$("$cmake_command" --version | sed -n '1p')
 if [[ ! $cmake_line =~ ^cmake[[:space:]]+version[[:space:]]+([0-9]+)\.([0-9]+)(\.([0-9]+))? ]]; then
   echo "cannot parse CMake version for AWS-LC FIPS source build: $cmake_line" >&2
   exit 1
@@ -58,7 +63,9 @@ version_at_least "$cmake_major" "$cmake_minor" "$cmake_patch" 3 5 0 || {
   exit 1
 }
 
-if command -v clang >/dev/null; then
+if [[ -n ${CC:-} ]]; then
+  compiler=$CC
+elif command -v clang >/dev/null; then
   compiler=clang
 elif command -v gcc >/dev/null; then
   compiler=gcc
@@ -70,8 +77,16 @@ fi
   echo "AWS-LC FIPS source builds require a working $compiler" >&2
   exit 1
 }
+if [[ -n ${CXX:-} ]]; then
+  "$CXX" --version >/dev/null || {
+    echo "AWS-LC FIPS source builds require a working C++ compiler: $CXX" >&2
+    exit 1
+  }
+fi
 
-if command -v ninja >/dev/null; then
+if [[ -n $build_executor ]]; then
+  :
+elif command -v ninja >/dev/null; then
   build_executor=ninja
 elif command -v make >/dev/null; then
   build_executor=make

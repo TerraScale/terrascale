@@ -38,8 +38,17 @@ jobs:
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
+          ref: ${{ forgejo.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify exact AMD64 promotion checkout
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ forgejo.sha }}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$(git rev-parse '${{ forgejo.sha }}^{tree}')"
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
       - name: Authenticate selected Forgejo workflow runs
         env:
           FORGEJO_API_URL: ${{ forgejo.server_url }}/api/v1
@@ -86,7 +95,7 @@ jobs:
           statement=artifacts/capability/PRODUCTION-CAPABILITY.json
           test "$(jq -er '.subject.revision' "$statement")" = "$EXPECTED_REVISION"
           test "$(jq -er '.subject.tree' "$statement")" = "$expected_tree"
-          for evidence in cluster-composition.encryption-at-rest; do
+          for evidence in cluster-composition encryption-at-rest; do
             test "$(jq -er '.source.revision' "artifacts/capability/$evidence.evidence.json")" = "$EXPECTED_REVISION"
             test "$(jq -er '.source.tree' "artifacts/capability/$evidence.evidence.json")" = "$expected_tree"
           done
@@ -98,10 +107,15 @@ jobs:
           TERRABASE_PRODUCTION_CAPABILITY_STATEMENT: artifacts/capability/PRODUCTION-CAPABILITY.json
           TERRABASE_PRODUCTION_CAPABILITY_SIGNATURE: artifacts/capability/PRODUCTION-CAPABILITY.sig
           TERRABASE_PRODUCTION_CAPABILITY_EVIDENCE_DIRECTORY: artifacts/capability
+          TERRABASE_RELEASE_REGISTRY: ${{ vars.TERRABASE_RELEASE_REGISTRY }}
+          TERRABASE_RELEASE_REGISTRY_USERNAME: ${{ secrets.TERRABASE_RELEASE_REGISTRY_USERNAME }}
+          TERRABASE_RELEASE_REGISTRY_TOKEN: ${{ secrets.TERRABASE_RELEASE_REGISTRY_TOKEN }}
         run: |
-          deploy/release/verify-source-binding.sh artifacts/unsigned/terrabase-server-amd64 artifacts/unsigned/terrabase-studio-amd64
+          deploy/release/verify-source-binding.sh --target x86_64-unknown-linux-gnu artifacts/unsigned/terrabase-server-amd64 artifacts/unsigned/terrabase-studio-amd64
           deploy/release/sign.sh artifacts/unsigned/terrabase-server-amd64
           deploy/release/sign.sh artifacts/unsigned/terrabase-studio-amd64
+          deploy/release/publish-oci.sh artifacts/unsigned/terrabase-server-amd64
+          deploy/release/publish-oci.sh artifacts/unsigned/terrabase-studio-amd64
       - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
           name: terrabase-signed-amd64-${{ forgejo.sha }}
@@ -120,8 +134,17 @@ jobs:
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
+          ref: ${{ forgejo.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify exact ARM64 promotion checkout
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ forgejo.sha }}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$(git rev-parse '${{ forgejo.sha }}^{tree}')"
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
       - name: Authenticate selected Forgejo workflow runs
         env:
           FORGEJO_API_URL: ${{ forgejo.server_url }}/api/v1
@@ -168,7 +191,7 @@ jobs:
           statement=artifacts/capability/PRODUCTION-CAPABILITY.json
           test "$(jq -er '.subject.revision' "$statement")" = "$EXPECTED_REVISION"
           test "$(jq -er '.subject.tree' "$statement")" = "$expected_tree"
-          for evidence in cluster-composition.encryption-at-rest; do
+          for evidence in cluster-composition encryption-at-rest; do
             test "$(jq -er '.source.revision' "artifacts/capability/$evidence.evidence.json")" = "$EXPECTED_REVISION"
             test "$(jq -er '.source.tree' "artifacts/capability/$evidence.evidence.json")" = "$expected_tree"
           done
@@ -180,10 +203,15 @@ jobs:
           TERRABASE_PRODUCTION_CAPABILITY_STATEMENT: artifacts/capability/PRODUCTION-CAPABILITY.json
           TERRABASE_PRODUCTION_CAPABILITY_SIGNATURE: artifacts/capability/PRODUCTION-CAPABILITY.sig
           TERRABASE_PRODUCTION_CAPABILITY_EVIDENCE_DIRECTORY: artifacts/capability
+          TERRABASE_RELEASE_REGISTRY: ${{ vars.TERRABASE_RELEASE_REGISTRY }}
+          TERRABASE_RELEASE_REGISTRY_USERNAME: ${{ secrets.TERRABASE_RELEASE_REGISTRY_USERNAME }}
+          TERRABASE_RELEASE_REGISTRY_TOKEN: ${{ secrets.TERRABASE_RELEASE_REGISTRY_TOKEN }}
         run: |
-          deploy/release/verify-source-binding.sh artifacts/unsigned/terrabase-server-arm64 artifacts/unsigned/terrabase-studio-arm64
+          deploy/release/verify-source-binding.sh --target aarch64-unknown-linux-gnu artifacts/unsigned/terrabase-server-arm64 artifacts/unsigned/terrabase-studio-arm64
           deploy/release/sign.sh artifacts/unsigned/terrabase-server-arm64
           deploy/release/sign.sh artifacts/unsigned/terrabase-studio-arm64
+          deploy/release/publish-oci.sh artifacts/unsigned/terrabase-server-arm64
+          deploy/release/publish-oci.sh artifacts/unsigned/terrabase-studio-arm64
       - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
           name: terrabase-signed-arm64-${{ forgejo.sha }}

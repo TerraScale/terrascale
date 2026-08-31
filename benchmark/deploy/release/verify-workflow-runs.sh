@@ -23,6 +23,10 @@ capability_workflow_id=$6
   echo "workflow run IDs must be decimal integers" >&2
   exit 1
 }
+[[ "$candidate_run_id" != "$capability_run_id" ]] || {
+  echo "candidate and capability workflow runs must be distinct" >&2
+  exit 1
+}
 [[ "$expected_revision" =~ ^[0-9a-f]{40,64}$ ]] || {
   echo "expected revision is not a Git object ID" >&2
   exit 1
@@ -35,8 +39,8 @@ capability_workflow_id=$6
   echo "promotion is permitted only for refs/heads/main" >&2
   exit 1
 }
-[[ "$capability_workflow_id" =~ ^[A-Za-z0-9_.-]+$ ]] || {
-  echo "a trusted capability workflow identifier is required" >&2
+[[ "$capability_workflow_id" == qualification.yml ]] || {
+  echo "the trusted capability workflow must be qualification.yml" >&2
   exit 1
 }
 if [[ -z "$fixture_directory" ]]; then
@@ -95,10 +99,12 @@ fetch_run "$capability_run_id" "$capability_json"
 # conclusion. Artifact manifests remain useful consistency checks, but cannot
 # substitute for this server-side admission.
 jq -e \
+  --argjson run_id "$candidate_run_id" \
   --arg repository "$expected_repository" \
   --arg revision "$expected_revision" \
   --arg branch "${expected_ref#refs/heads/}" \
   '
+    .id == $run_id and
     .repository.full_name == $repository and
     .head_repository.full_name == $repository and
     .head_branch == $branch and
@@ -106,19 +112,21 @@ jq -e \
     .event == "workflow_dispatch" and
     .status == "completed" and
     .conclusion == "success" and
-    (.workflow_id == "release.yml" or
-      .workflow_file == "release.yml" or
-      .path == ".forgejo/workflows/release.yml")
+    ([.workflow_id, .workflow_file] | map(select(. != null)) | length) >= 1 and
+    ([.workflow_id, .workflow_file] | map(select(. != null)) | all(. == "release.yml")) and
+    (.path == null or .path == ".forgejo/workflows/release.yml")
   ' "$candidate_json" >/dev/null || {
   echo "candidate workflow run is not a successful trusted main release run" >&2
   exit 1
 }
 jq -e \
+  --argjson run_id "$capability_run_id" \
   --arg repository "$expected_repository" \
   --arg revision "$expected_revision" \
   --arg branch "${expected_ref#refs/heads/}" \
   --arg workflow "$capability_workflow_id" \
   '
+    .id == $run_id and
     .repository.full_name == $repository and
     .head_repository.full_name == $repository and
     .head_branch == $branch and
@@ -126,9 +134,9 @@ jq -e \
     .event == "workflow_dispatch" and
     .status == "completed" and
     .conclusion == "success" and
-    (.workflow_id == $workflow or
-      .workflow_file == $workflow or
-      .path == (".forgejo/workflows/" + $workflow))
+    ([.workflow_id, .workflow_file] | map(select(. != null)) | length) >= 1 and
+    ([.workflow_id, .workflow_file] | map(select(. != null)) | all(. == $workflow)) and
+    (.path == null or .path == (".forgejo/workflows/" + $workflow))
   ' "$capability_json" >/dev/null || {
   echo "capability workflow run is not the selected successful trusted qualification run" >&2
   exit 1

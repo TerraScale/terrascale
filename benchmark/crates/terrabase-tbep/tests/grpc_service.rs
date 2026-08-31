@@ -683,9 +683,22 @@ fn uds_does_not_unlink_an_existing_socket() {
 
 #[test]
 fn tls_requires_a_client_ca_for_production() {
-    let server = Arc::new(TbepGrpcServer::new(
+    let config = terrabase_tbep::grpc::TbepGrpcConfig::try_new(
+        registry::MAX_FRAME_BYTES,
+        terrabase_tbep::grpc::MAX_INFLIGHT_OPERATIONS,
+        std::time::Duration::from_secs(30),
+        std::time::Duration::from_secs(5),
+        std::time::Duration::from_secs(5),
+        ["spiffe://terrascale.tech/test/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV".to_owned()]
+            .into(),
+    )
+    .expect("the test gateway policy is valid");
+    let server = Arc::new(TbepGrpcServer::with_config_and_metrics(
         Arc::new(FixedHost { feed: Mutex::new(None) }) as Arc<dyn TbepHost>,
         pb::BindingKind::NetworkMtls,
+        config,
+        terrabase::observability::Region::Unknown,
+        Arc::new(terrabase::observability::MetricsRegistry::new()),
     ));
     let Err(error) = server.serve_tls(
         std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
@@ -706,6 +719,212 @@ fn tls_requires_a_client_ca_for_production() {
         panic!("an empty client CA must fail closed");
     };
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one real listener owns the complete positive and negative mTLS identity matrix"
+)]
+async fn tls_accepts_valid_mtls_material() {
+    use rcgen::{
+        BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, Ia5String, IsCa, KeyPair,
+        SanType,
+    };
+    use tonic::transport::{Certificate, ClientTlsConfig, Identity};
+
+    const GATEWAY_PRINCIPAL: &str =
+        "spiffe://terrascale.tech/test/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    const SECOND_ADMITTED_PRINCIPAL: &str =
+        "spiffe://terrascale.tech/test/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const UNADMITTED_PRINCIPAL: &str =
+        "spiffe://terrascale.tech/test/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAX";
+
+    let issuer_key = KeyPair::generate().expect("the test CA key generates");
+    let mut issuer_params = CertificateParams::new(Vec::new()).expect("the CA parameters parse");
+    issuer_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    let issuer = issuer_params.self_signed(&issuer_key).expect("the test CA signs");
+
+    let server_key = KeyPair::generate().expect("the server key generates");
+    let server_params =
+        CertificateParams::new(vec!["localhost".into()]).expect("the server parameters parse");
+    let server_certificate = server_params
+        .signed_by(&server_key, &issuer, &issuer_key)
+        .expect("the CA signs the server certificate");
+
+    let client_key = KeyPair::generate().expect("the gateway key generates");
+    let mut client_params =
+        CertificateParams::new(Vec::new()).expect("the gateway parameters parse");
+    client_params.subject_alt_names = vec![SanType::URI(
+        Ia5String::try_from(GATEWAY_PRINCIPAL).expect("the gateway SPIFFE ID is IA5 text"),
+    )];
+    client_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    let client_certificate = client_params
+        .signed_by(&client_key, &issuer, &issuer_key)
+        .expect("the CA signs the gateway certificate");
+
+    let config = terrabase_tbep::grpc::TbepGrpcConfig::try_new(
+        registry::MAX_FRAME_BYTES,
+        terrabase_tbep::grpc::MAX_INFLIGHT_OPERATIONS,
+        std::time::Duration::from_secs(30),
+        std::time::Duration::from_secs(5),
+        std::time::Duration::from_secs(5),
+        [GATEWAY_PRINCIPAL.to_owned(), SECOND_ADMITTED_PRINCIPAL.to_owned()].into(),
+    )
+    .expect("the test gateway policy is valid");
+    let server = Arc::new(TbepGrpcServer::with_config_and_metrics(
+        Arc::new(FixedHost { feed: Mutex::new(None) }) as Arc<dyn TbepHost>,
+        pb::BindingKind::NetworkMtls,
+        config,
+        terrabase::observability::Region::Unknown,
+        Arc::new(terrabase::observability::MetricsRegistry::new()),
+    ));
+    let mut listener = server
+        .serve_tls(
+            std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+            &server_certificate.pem(),
+            &server_key.serialize_pem(),
+            Some(&issuer.pem()),
+        )
+        .expect("valid mutual-TLS material binds the production listener");
+    let address = listener.local_addr().expect("the TLS listener has an address");
+
+    let no_certificate_channel =
+        Endpoint::from_shared(format!("https://localhost:{}", address.port()))
+            .expect("the TLS endpoint parses")
+            .tls_config(
+                ClientTlsConfig::new()
+                    .domain_name("localhost")
+                    .ca_certificate(Certificate::from_pem(issuer.pem())),
+            )
+            .expect("the client policy without an identity parses")
+            .connect()
+            .await
+            .expect("the lazy client channel is constructed");
+    ChannelServiceClient::new(no_certificate_channel)
+        .bind(Request::new(pb::ChannelServiceBindRequest {
+            principal: GATEWAY_PRINCIPAL.to_owned(),
+            tenant: "tenant-a".into(),
+            project: "project-a".into(),
+            database: "database-a".into(),
+        }))
+        .await
+        .expect_err("the production listener refuses a client without a certificate");
+
+    let wrong_issuer_key = KeyPair::generate().expect("the wrong CA key generates");
+    let mut wrong_issuer_params =
+        CertificateParams::new(Vec::new()).expect("the wrong CA parameters parse");
+    wrong_issuer_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    let wrong_issuer =
+        wrong_issuer_params.self_signed(&wrong_issuer_key).expect("the wrong CA signs itself");
+    let wrong_client_key = KeyPair::generate().expect("the wrong client key generates");
+    let mut wrong_client_params =
+        CertificateParams::new(Vec::new()).expect("the wrong client parameters parse");
+    wrong_client_params.subject_alt_names = vec![SanType::URI(
+        Ia5String::try_from(GATEWAY_PRINCIPAL).expect("the gateway SPIFFE ID is IA5 text"),
+    )];
+    wrong_client_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    let wrong_client_certificate = wrong_client_params
+        .signed_by(&wrong_client_key, &wrong_issuer, &wrong_issuer_key)
+        .expect("the wrong CA signs the client certificate");
+    let wrong_ca_channel = Endpoint::from_shared(format!("https://localhost:{}", address.port()))
+        .expect("the TLS endpoint parses")
+        .tls_config(
+            ClientTlsConfig::new()
+                .domain_name("localhost")
+                .ca_certificate(Certificate::from_pem(issuer.pem()))
+                .identity(Identity::from_pem(
+                    format!("{}{}", wrong_client_certificate.pem(), wrong_issuer.pem()),
+                    wrong_client_key.serialize_pem(),
+                )),
+        )
+        .expect("the wrong-CA client policy parses")
+        .connect()
+        .await
+        .expect("the lazy wrong-CA channel is constructed");
+    ChannelServiceClient::new(wrong_ca_channel)
+        .bind(Request::new(pb::ChannelServiceBindRequest {
+            principal: GATEWAY_PRINCIPAL.to_owned(),
+            tenant: "tenant-a".into(),
+            project: "project-a".into(),
+            database: "database-a".into(),
+        }))
+        .await
+        .expect_err("the production listener refuses a client signed by the wrong CA");
+
+    let client_identity = Identity::from_pem(
+        format!("{}{}", client_certificate.pem(), issuer.pem()),
+        client_key.serialize_pem(),
+    );
+    let channel = Endpoint::from_shared(format!("https://localhost:{}", address.port()))
+        .expect("the TLS endpoint parses")
+        .tls_config(
+            ClientTlsConfig::new()
+                .domain_name("localhost")
+                .ca_certificate(Certificate::from_pem(issuer.pem()))
+                .identity(client_identity),
+        )
+        .expect("the mTLS client policy is valid")
+        .connect()
+        .await
+        .expect("the gateway completes a mutual-TLS handshake");
+    let mut channels = ChannelServiceClient::new(channel.clone());
+    let bound = channels
+        .bind(Request::new(pb::ChannelServiceBindRequest {
+            principal: GATEWAY_PRINCIPAL.to_owned(),
+            tenant: "tenant-a".into(),
+            project: "project-a".into(),
+            database: "database-a".into(),
+        }))
+        .await
+        .expect("the certificate-bound gateway RPC succeeds")
+        .into_inner();
+    assert_eq!(bound.serving_instance, 7);
+
+    for (principal, expectation) in [
+        (SECOND_ADMITTED_PRINCIPAL, "a certificate/principal mismatch is refused"),
+        (UNADMITTED_PRINCIPAL, "an unadmitted gateway principal is refused"),
+    ] {
+        let status = channels
+            .bind(Request::new(pb::ChannelServiceBindRequest {
+                principal: principal.to_owned(),
+                tenant: "tenant-a".into(),
+                project: "project-a".into(),
+                database: "database-a".into(),
+            }))
+            .await
+            .expect_err(expectation);
+        assert_eq!(status.code(), tonic::Code::PermissionDenied);
+        assert_eq!(tbep_code(&status), Some(pb::ErrorCode::OperationRefused));
+    }
+
+    let network_request = |principal: &'static str| {
+        let mut request = Request::new(pb::EngineServiceDocumentReadRequest {
+            collection: "orders".into(),
+            document: "d-1".into(),
+            level: 0,
+        });
+        request.metadata_mut().insert("x-tb-principal", principal.parse().unwrap());
+        request.metadata_mut().insert("x-tb-tenant", "tenant-a".parse().unwrap());
+        request.metadata_mut().insert("x-tb-project", "project-a".parse().unwrap());
+        request.metadata_mut().insert("x-tb-database", "database-a".parse().unwrap());
+        request
+    };
+    let mut engine = EngineServiceClient::new(channel);
+    let read = engine
+        .document_read(network_request(GATEWAY_PRINCIPAL))
+        .await
+        .expect("an ordinary RPC accepts the certificate-bound principal")
+        .into_inner();
+    assert!(read.found);
+    let status = engine
+        .document_read(network_request(UNADMITTED_PRINCIPAL))
+        .await
+        .expect_err("ordinary RPC identity cannot escape the certificate binding");
+    assert_eq!(status.code(), tonic::Code::PermissionDenied);
+    assert_eq!(tbep_code(&status), Some(pb::ErrorCode::OperationRefused));
+    drop(channels);
+    listener.shutdown();
 }
 
 #[tokio::test]

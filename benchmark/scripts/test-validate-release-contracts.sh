@@ -15,15 +15,38 @@ make_fixture() {
     "$fixture/.claude/worktrees/ignored/terrabase-go"
   cp "$source_root/scripts/validate-release-contracts.sh" "$fixture/scripts/"
   cp "$source_root/scripts/normalize-generated-protoc-version.sh" "$fixture/scripts/"
+  cp "$source_root/scripts/run-checked-rust-tests.sh" "$fixture/scripts/"
+  cp "$source_root/scripts/run-checked-go-tests.sh" "$fixture/scripts/"
+  cp "$source_root/scripts/tbep_schema_digest.sh" "$fixture/scripts/"
   mkdir -p "$fixture/terrabase-go/cmd/normalize-generated-protoc-version"
   cp "$source_root/terrabase-go/cmd/normalize-generated-protoc-version/main.go" \
     "$fixture/terrabase-go/cmd/normalize-generated-protoc-version/"
   cp "$source_root/.forgejo/workflows/ci.yml" "$fixture/.forgejo/workflows/"
   cp "$source_root/.forgejo/workflows/release.yml" "$fixture/.forgejo/workflows/"
   cp "$source_root/.forgejo/workflows/promote.yml" "$fixture/.forgejo/workflows/"
-  cp "$source_root/deploy/release/package.sh" "$fixture/deploy/release/"
-  cp "$source_root/deploy/release/reproduce.sh" "$fixture/deploy/release/"
-  cp "$source_root/deploy/release/verify.sh" "$fixture/deploy/release/"
+  local release_script
+  for release_script in \
+    candidate.sh \
+    native-toolchain-identity.sh \
+    package.sh \
+    publish-oci.sh \
+    provision-native-toolchain.sh \
+    reproduce.sh \
+    require-fips-toolchain.sh \
+    require-production-capability.sh \
+    sign.sh \
+    test-boundary.sh \
+    test-oci.sh \
+    test-publish-oci.sh \
+    test-sbom.sh \
+    test-workflow-runs.sh \
+    verify-fips-cmake-caches.sh \
+    verify-oci.sh \
+    verify-source-binding.sh \
+    verify-workflow-runs.sh \
+    verify.sh; do
+    cp "$source_root/deploy/release/$release_script" "$fixture/deploy/release/"
+  done
   printf '.claude/\n' >"$fixture/.gitignore"
 
   git -C "$fixture" init -q
@@ -42,8 +65,11 @@ run_contracts() {
 rebind_ci_digest() {
   local fixture=$1
   local digest
+  local semantic_digest
   digest="$(sha256sum "$fixture/.forgejo/workflows/ci.yml")"
   digest="${digest%% *}"
+  semantic_digest="$(yq -o=json -I=0 '.' "$fixture/.forgejo/workflows/ci.yml" | sha256sum)"
+  semantic_digest="${semantic_digest%% *}"
   [[ $(grep -Ec "^readonly reviewed_ci_sha256='[0-9a-f]{64}'$" \
     "$fixture/scripts/validate-release-contracts.sh") -eq 1 ]]
   sed -i -E \
@@ -51,15 +77,120 @@ rebind_ci_digest() {
     "$fixture/scripts/validate-release-contracts.sh"
   [[ $(grep -Fxc "readonly reviewed_ci_sha256='$digest'" \
     "$fixture/scripts/validate-release-contracts.sh") -eq 1 ]]
+  [[ $(grep -Ec "^readonly reviewed_ci_semantic_sha256='[0-9a-f]{64}'$" \
+    "$fixture/scripts/validate-release-contracts.sh") -eq 1 ]]
+  sed -i -E \
+    "s/^readonly reviewed_ci_semantic_sha256='[0-9a-f]{64}'$/readonly reviewed_ci_semantic_sha256='$semantic_digest'/" \
+    "$fixture/scripts/validate-release-contracts.sh"
+  [[ $(grep -Fxc "readonly reviewed_ci_semantic_sha256='$semantic_digest'" \
+    "$fixture/scripts/validate-release-contracts.sh") -eq 1 ]]
+  bash -n "$fixture/scripts/validate-release-contracts.sh"
+}
+
+rebind_workflow_digest() {
+  local fixture=$1 workflow=$2 prefix=$3 digest semantic_digest
+  digest=$(sha256sum "$fixture/.forgejo/workflows/$workflow")
+  digest=${digest%% *}
+  semantic_digest=$(yq -o=json -I=0 '.' "$fixture/.forgejo/workflows/$workflow" | sha256sum)
+  semantic_digest=${semantic_digest%% *}
+  sed -i -E \
+    "s/^readonly reviewed_${prefix}_sha256='[0-9a-f]{64}'$/readonly reviewed_${prefix}_sha256='$digest'/" \
+    "$fixture/scripts/validate-release-contracts.sh"
+  sed -i -E \
+    "s/^readonly reviewed_${prefix}_semantic_sha256='[0-9a-f]{64}'$/readonly reviewed_${prefix}_semantic_sha256='$semantic_digest'/" \
+    "$fixture/scripts/validate-release-contracts.sh"
+}
+
+rebind_reviewed_script_digest() {
+  local fixture=$1
+  local relative_path=$2
+  local digest
+  digest=$(sha256sum "$fixture/$relative_path")
+  digest=${digest%% *}
+  [[ $(grep -Ec "^[0-9a-f]{64} $relative_path$" \
+    "$fixture/scripts/validate-release-contracts.sh") -eq 1 ]]
+  sed -i -E \
+    "s|^[0-9a-f]{64} $relative_path$|$digest $relative_path|" \
+    "$fixture/scripts/validate-release-contracts.sh"
+  [[ $(grep -Fxc "$digest $relative_path" \
+    "$fixture/scripts/validate-release-contracts.sh") -eq 1 ]]
   bash -n "$fixture/scripts/validate-release-contracts.sh"
 }
 
 negative_fixture_count=0
 
+expect_rebound_workflow_mutation_rejected() {
+  local name=$1 workflow=$2 prefix=$3 expression=$4 message=$5
+  local fixture="$fixture_root/$name"
+  mkdir -p "$fixture"
+  make_fixture "$fixture"
+  yq -i "$expression" "$fixture/.forgejo/workflows/$workflow"
+  rebind_workflow_digest "$fixture" "$workflow" "$prefix"
+  if run_contracts "$fixture" >/dev/null 2>&1; then
+    printf '%s\n' "$message" >&2
+    exit 1
+  fi
+  negative_fixture_count=$((negative_fixture_count + 1))
+}
+
+expect_rebound_workflow_mutation_rejected \
+  release-mutable-checkout release.yml release \
+  '(.jobs."unsigned-amd64".steps[0].with.ref) = "refs/heads/main"' \
+  'release workflow accepted a mutable checkout after digest rebinding'
+expect_rebound_workflow_mutation_rejected \
+  promotion-mutable-checkout promote.yml promote \
+  '(.jobs."sign-amd64".steps[0].with.ref) = "refs/heads/main"' \
+  'promotion workflow accepted a mutable checkout after digest rebinding'
+expect_rebound_workflow_mutation_rejected \
+  promotion-combined-evidence-name promote.yml promote \
+  '(.jobs."sign-amd64".steps[] | select(.name == "Bind downloaded bytes and capability evidence to this commit") | .run) |= sub("cluster-composition encryption-at-rest"; "cluster-composition.encryption-at-rest")' \
+  'promotion workflow accepted the broken combined evidence filename'
+expect_rebound_workflow_mutation_rejected \
+  promotion-missing-server-publication promote.yml promote \
+  '(.jobs."sign-amd64".steps[] | select(.name == "Admit, sign, and verify the exact AMD64 package bytes") | .run) |= sub("deploy/release/publish-oci.sh artifacts/unsigned/terrabase-server-amd64"; "true # removed server registry publication")' \
+  'promotion workflow accepted missing server registry publication'
+expect_rebound_workflow_mutation_rejected \
+  promotion-missing-registry-credential promote.yml promote \
+  'del(.jobs."sign-arm64".steps[] | select(.name == "Admit, sign, and verify the exact ARM64 package bytes") | .env.TERRABASE_RELEASE_REGISTRY_TOKEN)' \
+  'promotion workflow accepted missing protected registry credentials'
+
+expect_rebound_mutation_rejected() {
+  local name=$1
+  local expression=$2
+  local message=$3
+  local fixture="$fixture_root/$name"
+
+  mkdir -p "$fixture"
+  make_fixture "$fixture"
+  yq -i "$expression" "$fixture/.forgejo/workflows/ci.yml"
+  if cmp -s "$source_root/.forgejo/workflows/ci.yml" "$fixture/.forgejo/workflows/ci.yml"; then
+    printf 'hostile fixture %s made no workflow change\n' "$name" >&2
+    exit 1
+  fi
+  rebind_ci_digest "$fixture"
+  if run_contracts "$fixture" >/dev/null 2>&1; then
+    printf '%s\n' "$message" >&2
+    exit 1
+  fi
+  ((negative_fixture_count += 1))
+}
+
 pass_fixture="$fixture_root/pass"
 mkdir -p "$pass_fixture"
 make_fixture "$pass_fixture"
 run_contracts "$pass_fixture" >/dev/null
+
+source_postflight_fixture="$fixture_root/source-postflight-rebound"
+mkdir -p "$source_postflight_fixture"
+make_fixture "$source_postflight_fixture"
+sed -i 's/cmp -s "$source_state_before" "$source_state_after"/true/' \
+  "$source_postflight_fixture/deploy/release/package.sh"
+rebind_reviewed_script_digest "$source_postflight_fixture" deploy/release/package.sh
+if run_contracts "$source_postflight_fixture" >/dev/null 2>&1; then
+  printf 'expected a rebound package script without source postflight to fail validation\n' >&2
+  exit 1
+fi
+((negative_fixture_count += 1))
 
 late_perl_fixture="$fixture_root/late-perl"
 mkdir -p "$late_perl_fixture"
@@ -72,6 +203,35 @@ if run_contracts "$late_perl_fixture" >/dev/null 2>&1; then
   exit 1
 fi
 ((negative_fixture_count += 1))
+
+expect_rebound_mutation_rejected \
+  fips-missing-tbep-test \
+  '(.jobs.checks.steps[] | select(.name == "Build production server with AWS-LC FIPS") | .run) |= sub("scripts/run-checked-rust-tests.sh fips-tbep"; "true # removed TBEP FIPS test")' \
+  'expected removal of the TBEP FIPS test to fail validation'
+expect_rebound_mutation_rejected \
+  fips-local-feature \
+  '(.jobs.checks.steps[] | select(.name == "Build production server with AWS-LC FIPS") | .run) |= sub("--no-default-features --features production-fips"; "--features local-crypto")' \
+  'expected local crypto substitution to fail FIPS validation'
+expect_rebound_mutation_rejected \
+  fips-no-run \
+  '(.jobs.checks.steps[] | select(.name == "Build production server with AWS-LC FIPS") | .run) |= sub("fips-server -- -p"; "fips-server -- --no-run -p")' \
+  'expected a no-run FIPS test to fail validation'
+expect_rebound_mutation_rejected \
+  fips-missing-clippy \
+  '(.jobs.checks.steps[] | select(.name == "Build production server with AWS-LC FIPS") | .run) |= sub("cargo clippy -p terrabase-tbep"; "true # removed TBEP FIPS Clippy")' \
+  'expected removal of FIPS Clippy to fail validation'
+expect_rebound_mutation_rejected \
+  fips-missing-docs \
+  '(.jobs.checks.steps[] | select(.name == "Build production server with AWS-LC FIPS") | .run) |= sub("cargo doc -p terrabase"; "true # removed FIPS rustdoc")' \
+  'expected removal of FIPS rustdoc to fail validation'
+expect_rebound_mutation_rejected \
+  fips-missing-cmake-proof \
+  '(.jobs.checks.steps[] | select(.name == "Build production server with AWS-LC FIPS") | .run) |= sub("deploy/release/verify-fips-cmake-caches.sh \"\\$fips_target_dir\""; "true # removed FIPS CMake-cache proof")' \
+  'expected removal of FIPS CMake-cache verification to fail validation'
+expect_rebound_mutation_rejected \
+  fips-cached-target \
+  '(.jobs.checks.steps[] | select(.name == "Build production server with AWS-LC FIPS") | .run) |= sub("readonly fips_target_dir=.*"; "readonly fips_target_dir=\\\"\\$GITHUB_WORKSPACE/target\\\"")' \
+  'expected reuse of the cached target directory to fail validation'
 
 unrelated_perl_fixture="$fixture_root/unrelated-perl"
 mkdir -p "$unrelated_perl_fixture"
@@ -100,7 +260,7 @@ fi
 wrong_output_fixture="$fixture_root/wrong-perl-output"
 mkdir -p "$wrong_output_fixture"
 make_fixture "$wrong_output_fixture"
-sed -i 's/"$perl_flake#perl\^out"/"$perl_flake#perl"/' \
+sed -i 's/"$native_flake#perl\^out"/"$native_flake#perl"/' \
   "$wrong_output_fixture/.forgejo/workflows/ci.yml"
 rebind_ci_digest "$wrong_output_fixture"
 if run_contracts "$wrong_output_fixture" >/dev/null 2>&1; then
@@ -112,7 +272,7 @@ fi
 missing_path_fixture="$fixture_root/missing-perl-path"
 mkdir -p "$missing_path_fixture"
 make_fixture "$missing_path_fixture"
-sed -i '/printf '\''%s\\n'\'' "$perl_root\/bin" >> "$GITHUB_PATH"/d' \
+sed -i '/printf '\''%s\\n'\'' "$perl_root\/bin" "$(dirname "$CC")" "$(dirname "$CMAKE")" "$(dirname "$CMAKE_MAKE_PROGRAM")" >> "$GITHUB_PATH"/d' \
   "$missing_path_fixture/.forgejo/workflows/ci.yml"
 rebind_ci_digest "$missing_path_fixture"
 if run_contracts "$missing_path_fixture" >/dev/null 2>&1; then
@@ -148,7 +308,7 @@ fi
 missing_store_assertion_fixture="$fixture_root/missing-perl-store-assertion"
 mkdir -p "$missing_store_assertion_fixture"
 make_fixture "$missing_store_assertion_fixture"
-sed -i '/\[\[ "$perl_root" == \/nix\/store\/\*-perl-5\.42\.0 \]\]/d' \
+sed -i '/\[\[ "$perl_root" == \/nix\/store\/jksq0zyk08l29w4alp0g3ycgx6pwwjdk-perl-5\.42\.0 \]\]/d' \
   "$missing_store_assertion_fixture/.forgejo/workflows/ci.yml"
 rebind_ci_digest "$missing_store_assertion_fixture"
 if run_contracts "$missing_store_assertion_fixture" >/dev/null 2>&1; then
@@ -425,8 +585,8 @@ if run_contracts "$python_guard_fixture" >/dev/null 2>&1; then
 fi
 ((negative_fixture_count += 1))
 
-if [[ $negative_fixture_count -ne 27 ]]; then
-  printf 'expected twenty-seven negative release-contract fixtures, ran %s\n' \
+if [[ $negative_fixture_count -ne 40 ]]; then
+  printf 'expected forty negative release-contract fixtures, ran %s\n' \
     "$negative_fixture_count" >&2
   exit 1
 fi

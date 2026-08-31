@@ -44,12 +44,15 @@ make_layer() {
     remove)
       : >"$root/usr/local/bin/.wh.terrabase-server"
       ;;
+    remove-parent)
+      : >"$root/usr/.wh.local"
+      ;;
     *)
       echo "unknown layer fixture: $kind" >&2
       exit 1
       ;;
   esac
-  tar -cf "$output" -C "$root" usr/local/bin
+  tar -cf "$output" -C "$root" usr
 }
 
 make_image() {
@@ -114,34 +117,49 @@ assert_rejected() {
 correct_layer=$work/layer-correct.tar
 wrong_layer=$work/layer-wrong.tar
 remove_layer=$work/layer-remove.tar
+remove_parent_layer=$work/layer-remove-parent.tar
 make_layer "$correct_layer" correct
 make_layer "$wrong_layer" wrong
 make_layer "$remove_layer" remove
+make_layer "$remove_parent_layer" remove-parent
+
+base_archive=$work/pinned-base.oci.tar
+make_image "$base_archive" normal normal normal "$correct_layer"
+pinned_base_tree=$work/pinned-base-tree
+mkdir "$pinned_base_tree"
+tar -xf "$base_archive" -C "$pinned_base_tree" --no-same-owner --no-same-permissions
+export TERRABASE_BASE_OCI_LAYOUT=$pinned_base_tree
 
 valid=$work/valid.oci.tar
-make_image "$valid" normal normal normal "$correct_layer"
+make_image "$valid" normal normal normal "$correct_layer" "$correct_layer"
 "$verify" "$valid" "$native" "$native_digest" "$tag" "$base_reference" >/dev/null
 
 # A final whiteout removes the executable and must not be mistaken for a
 # successful image. A later layer replacing it is accepted.
 removed=$work/whiteout-remove.oci.tar
-make_image "$removed" normal normal normal "$correct_layer" "$remove_layer"
+make_image "$removed" normal normal normal "$correct_layer" "$correct_layer" "$remove_layer"
 assert_rejected whiteout-removal "$removed"
+ancestor_removed=$work/ancestor-whiteout-remove.oci.tar
+make_image "$ancestor_removed" normal normal normal "$correct_layer" "$correct_layer" "$remove_parent_layer"
+assert_rejected ancestor-whiteout-removal "$ancestor_removed"
 replaced=$work/whiteout-replacement.oci.tar
-make_image "$replaced" normal normal normal "$correct_layer" "$remove_layer" "$correct_layer"
+make_image "$replaced" normal normal normal "$correct_layer" "$correct_layer" "$remove_layer" "$correct_layer"
 "$verify" "$replaced" "$native" "$native_digest" "$tag" "$base_reference" >/dev/null
 
 wrong_executable=$work/wrong-executable.oci.tar
-make_image "$wrong_executable" normal normal normal "$wrong_layer"
+make_image "$wrong_executable" normal normal normal "$correct_layer" "$wrong_layer"
 assert_rejected wrong-executable "$wrong_executable"
+relabeled_wrong_base=$work/relabeled-wrong-base.oci.tar
+make_image "$relabeled_wrong_base" normal normal normal "$wrong_layer" "$correct_layer"
+assert_rejected relabeled-wrong-base "$relabeled_wrong_base"
 wrong_diff=$work/wrong-diff-id.oci.tar
-make_image "$wrong_diff" wrong normal normal "$correct_layer"
+make_image "$wrong_diff" wrong normal normal "$correct_layer" "$correct_layer"
 assert_rejected corrupted-layer-diff-id "$wrong_diff"
 wrong_size=$work/wrong-descriptor-size.oci.tar
-make_image "$wrong_size" normal normal wrong "$correct_layer"
+make_image "$wrong_size" normal normal wrong "$correct_layer" "$correct_layer"
 assert_rejected corrupted-descriptor-size "$wrong_size"
 wrong_digest=$work/wrong-descriptor-digest.oci.tar
-make_image "$wrong_digest" normal wrong normal "$correct_layer"
+make_image "$wrong_digest" normal wrong normal "$correct_layer" "$correct_layer"
 assert_rejected corrupted-descriptor-digest "$wrong_digest"
 
 # Repack a valid tree to create outer-tar attacks without changing the valid
@@ -149,6 +167,13 @@ assert_rejected corrupted-descriptor-digest "$wrong_digest"
 valid_tree=$work/valid-tree
 mkdir "$valid_tree"
 tar -xf "$valid" -C "$valid_tree" --no-same-owner --no-same-permissions
+missing_tag=$work/missing-tag.oci.tar
+jq 'del(.manifests[0].annotations["org.opencontainers.image.ref.name"])' \
+  "$valid_tree/index.json" >"$valid_tree/index.without-tag.json"
+mv -- "$valid_tree/index.without-tag.json" "$valid_tree/index.json"
+repack "$valid_tree" "$missing_tag"
+assert_rejected missing-tag "$missing_tag"
+tar -xf "$valid" -C "$valid_tree" --no-same-owner --no-same-permissions --overwrite
 duplicate=$work/duplicate-entry.oci.tar
 repack "$valid_tree" "$duplicate"
 tar -rf "$duplicate" -C "$valid_tree" index.json

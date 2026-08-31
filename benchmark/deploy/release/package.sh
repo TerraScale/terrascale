@@ -52,13 +52,25 @@ for tool in buildah cargo date file git gzip jq readelf rustc sha256sum skopeo t
   }
 done
 
-if [[ $component == server ]]; then
-  "$script_dir/require-fips-toolchain.sh"
-fi
+"$script_dir/require-fips-toolchain.sh"
+
+readonly expected_toolchain_revision=c5c4a43b0e8056328ec4529f735cabdb8f1942bb
+readonly expected_toolchain_nar_hash='sha256-u6z9VTZA4Kf3RkHQo9sQI7NI4Ei/uiU9vrMqOiwWP1Y='
+[[ ${TERRABASE_NATIVE_TOOLCHAIN_REVISION-} == "$expected_toolchain_revision" ]] || {
+  echo "release packaging requires the pinned native Nixpkgs toolchain" >&2
+  exit 1
+}
+[[ ${TERRABASE_NATIVE_TOOLCHAIN_NAR_HASH-} == "$expected_toolchain_nar_hash" ]]
+[[ ${TERRABASE_NATIVE_TOOLCHAIN_TARGET-} == "$target" ]]
 
 rust_version=$(rustc --version)
-[[ "$rust_version" == 'rustc 1.97.1 '* ]] || {
+[[ "$rust_version" == 'rustc 1.97.1 (8bab26f4f 2026-07-14)' ]] || {
   echo "release packaging requires rustc 1.97.1, observed: $rust_version" >&2
+  exit 1
+}
+cargo_version=$(cargo --version)
+[[ "$cargo_version" == 'cargo 1.97.1 (c980f4866 2026-06-30)' ]] || {
+  echo "release packaging requires Cargo 1.97.1, observed: $cargo_version" >&2
   exit 1
 }
 host_target=$(rustc -vV | sed -n 's/^host: //p')
@@ -110,6 +122,60 @@ cleanup() {
 }
 trap cleanup EXIT
 
+capture_source_state() {
+  git rev-parse --verify HEAD
+  git rev-parse --verify 'HEAD^{tree}'
+  git diff --binary --full-index --no-ext-diff HEAD --
+  while IFS= read -r -d '' untracked; do
+    printf 'untracked\0%s\0' "$untracked"
+    if [[ -L $untracked ]]; then
+      printf 'symlink\0'
+      readlink -z -- "$untracked"
+    elif [[ -f $untracked ]]; then
+      printf 'file\0'
+      sha256sum -- "$untracked" | awk '{print $1}'
+    else
+      printf 'unsupported\0'
+    fi
+  done < <(git ls-files --others --exclude-standard -z | LC_ALL=C sort -z)
+}
+
+source_state_before=$work/source-state.before
+source_state_after=$work/source-state.after
+capture_source_state >"$source_state_before"
+
+native_tools_json=$work/native-tools.json
+"$script_dir/native-toolchain-identity.sh" "$target" >"$native_tools_json"
+require_tool_path() {
+  local command_name=$1
+  local policy_path=$2
+  local actual expected
+  actual=$(readlink -f "$(command -v "$command_name")")
+  expected=$(jq -er "$policy_path" "$native_tools_json")
+  [[ "$actual" == "$expected" ]] || {
+    echo "release tool identity mismatch for $command_name: $actual != $expected" >&2
+    exit 1
+  }
+}
+[[ "$(readlink -f "${CC:?}")" == "$(jq -er '.compiler.cc.path' "$native_tools_json")" ]]
+[[ "$(readlink -f "${CXX:?}")" == "$(jq -er '.compiler.cxx.path' "$native_tools_json")" ]]
+[[ "$(readlink -f "${CMAKE:?}")" == "$(jq -er '.cmake.path' "$native_tools_json")" ]]
+[[ "$(readlink -f "${CMAKE_MAKE_PROGRAM:?}")" == "$(jq -er '.ninja.path' "$native_tools_json")" ]]
+[[ "$(readlink -f "${PERL:?}")" == "$(jq -er '.perl.path' "$native_tools_json")" ]]
+[[ "$(readlink -f "${GO:?}")" == "$(jq -er '.go.path' "$native_tools_json")" ]]
+linker_variable=CARGO_TARGET_$(printf '%s' "$target" | tr '[:lower:]-' '[:upper:]_')_LINKER
+[[ "$(readlink -f "${!linker_variable:?}")" == "$(jq -er '.rustToolchain.linker' "$native_tools_json")" ]]
+[[ $(sha256sum "$script_dir/sbom/Cargo.lock" | awk '{print $1}') == \
+  "$(jq -er '.sbomGenerator.lockSha256' "$native_tools_json")" ]]
+require_tool_path buildah '.artifactShaping.buildah.path'
+require_tool_path skopeo '.artifactShaping.skopeo.path'
+require_tool_path jq '.artifactShaping.jq.path'
+require_tool_path readelf '.artifactShaping.readelf.path'
+require_tool_path gzip '.artifactShaping.gzip.path'
+require_tool_path tar '.artifactShaping.tar.path'
+require_tool_path sha256sum '.artifactShaping.sha256sum.path'
+require_tool_path file '.artifactShaping.file.path'
+
 export CARGO_INCREMENTAL=0
 export CARGO_PROFILE_RELEASE_DEBUG=0
 export CARGO_PROFILE_RELEASE_PANIC=abort
@@ -135,12 +201,14 @@ metadata=$work/cargo-metadata.json
 cargo metadata \
   --manifest-path "$manifest" \
   --locked \
+  --no-default-features \
+  --features production-fips \
   --filter-platform "$target" \
   --format-version 1 >"$metadata"
 version=$(jq -er --arg package "$package" '[.packages[] | select(.name == $package) | .version] | if length == 1 then .[0] else error("package identity is not unique") end' "$metadata")
 
 fips_feature_graph=
-if [[ $component == server ]]; then
+{
   feature_tree_arguments=(
     --manifest-path "$manifest"
     --locked
@@ -165,23 +233,23 @@ if [[ $component == server ]]; then
   } >"$feature_tree_raw"
   sed "s|$repository_root|/usr/src/terrabase|g" "$feature_tree_raw" >"$fips_feature_graph"
   grep -Fq 'terrabase feature "production-fips"' "$fips_feature_graph" || {
-    echo "production server feature graph does not select terrabase/production-fips" >&2
+    echo "production $component feature graph does not select terrabase/production-fips" >&2
     exit 1
   }
   grep -Fq 'aws-lc-rs feature "fips"' "$fips_feature_graph" || {
-    echo "production server feature graph does not select aws-lc-rs/fips" >&2
+    echo "production $component feature graph does not select aws-lc-rs/fips" >&2
     exit 1
   }
   grep -Fq 'aws-lc-fips-sys v' "$fips_feature_graph" || {
-    echo "production server feature graph does not contain aws-lc-fips-sys" >&2
+    echo "production $component feature graph does not contain aws-lc-fips-sys" >&2
     exit 1
   }
   if grep -Fq 'terrabase feature "local-crypto"' "$fips_feature_graph" \
     || grep -Fq 'aws-lc-rs feature "non-fips"' "$fips_feature_graph"; then
-    echo "production server feature graph contains a local or non-FIPS crypto feature" >&2
+    echo "production $component feature graph contains a local or non-FIPS crypto feature" >&2
     exit 1
   fi
-fi
+}
 
 target_directory=$work/cargo-target
 build_arguments=(
@@ -192,10 +260,9 @@ build_arguments=(
   --target "$target"
   --target-dir "$target_directory"
 )
-if [[ $component == server ]]; then
-  build_arguments+=(--no-default-features --features production-fips)
-fi
+build_arguments+=(--no-default-features --features production-fips)
 cargo build "${build_arguments[@]}"
+"$script_dir/verify-fips-cmake-caches.sh" "$target_directory"
 built_binary=$target_directory/$target/release/$binary
 [[ -x "$built_binary" ]] || {
   echo "release binary was not produced: $built_binary" >&2
@@ -205,6 +272,8 @@ readelf -h "$built_binary" | grep -Fq "Machine:                           $elf_m
   echo "release binary architecture does not match $target" >&2
   exit 1
 }
+binary_digest=$(sha256sum "$built_binary" | awk '{print $1}')
+printf 'binary sha256: %s\n' "$binary_digest" >>"$fips_feature_graph"
 
 mkdir -p "$(dirname -- "$output")"
 mkdir "$output"
@@ -217,11 +286,9 @@ provenance_name=$artifact_stem.intoto.json
 manifest_name=$artifact_stem.release.json
 fips_feature_graph_name=
 fips_feature_graph_digest=
-if [[ $component == server ]]; then
-  fips_feature_graph_name=$artifact_stem.fips-features.txt
-  install -m 0644 "$fips_feature_graph" "$output/$fips_feature_graph_name"
-  fips_feature_graph_digest=$(sha256sum "$output/$fips_feature_graph_name" | awk '{print $1}')
-fi
+fips_feature_graph_name=$artifact_stem.fips-features.txt
+install -m 0644 "$fips_feature_graph" "$output/$fips_feature_graph_name"
+fips_feature_graph_digest=$(sha256sum "$output/$fips_feature_graph_name" | awk '{print $1}')
 
 archive_root=$work/archive/$artifact_stem
 install -D -m 0755 "$built_binary" "$archive_root/bin/$binary"
@@ -240,7 +307,6 @@ tar \
 image_context=$work/image
 install -D -m 0755 "$built_binary" "$image_context/rootfs/usr/local/bin/$binary"
 install -d -m 0750 "$image_context/rootfs/var/lib/$state_directory"
-binary_digest=$(sha256sum "$built_binary" | awk '{print $1}')
 image_ref=localhost/$package:$version-$oci_arch
 oci_tag=$package-$version-$oci_arch
 buildah \
@@ -251,6 +317,8 @@ buildah \
   --format oci \
   --layers=false \
   --no-cache \
+  --source-date-epoch "$source_epoch" \
+  --rewrite-timestamp \
   --pull=always \
   --platform "linux/$oci_arch" \
   --build-arg "TERRABASE_VERSION=$version" \
@@ -292,6 +360,7 @@ jq -n \
   --arg lock_digest "$lock_digest" \
   --arg fips_feature_graph "$fips_feature_graph_name" \
   --arg fips_feature_graph_digest "$fips_feature_graph_digest" \
+  --argjson native_tools "$(<"$native_tools_json")" \
   --arg base 'gcr.io/distroless/cc-debian12@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f' \
   --arg archive_name "$archive_name" \
   --arg archive_digest "$archive_digest" \
@@ -307,15 +376,15 @@ jq -n \
       "buildDefinition": {
         "buildType": "https://terrascale.tech/build/terrabase-native-oci/v1",
         "externalParameters": {"target": $target, "profile": "release", "sourceDirty": $source_dirty},
-        "internalParameters": (
-          {"rustc": $rust, "cargoLockSha256": $lock_digest} +
-          if $component == "server" then {
-            "fipsFeatureGraph": {
-              "name": $fips_feature_graph,
-              "sha256": $fips_feature_graph_digest
-            }
-          } else {} end
-        ),
+        "internalParameters": {
+          "rustc": $rust,
+          "cargoLockSha256": $lock_digest,
+          "nativeTools": $native_tools,
+          "fipsFeatureGraph": {
+            "name": $fips_feature_graph,
+            "sha256": $fips_feature_graph_digest
+          }
+        },
         "resolvedDependencies": [
           {"uri": $repository, "digest": {"gitCommit": $revision, "gitTree": $tree}},
           {"uri": $base}
@@ -357,12 +426,16 @@ jq -n \
       ociArchive: {name: $oci, sha256: $oci_digest}
     },
     evidence: (
-      {sbom: $sbom, provenance: $provenance, checksums: "SHA256SUMS"} +
-      if $component == "server" then {
+      {
+        sbom: $sbom,
+        provenance: $provenance,
+        checksums: "SHA256SUMS",
         fipsFeatureGraph: {
           name: $fips_feature_graph,
           sha256: $fips_feature_graph_digest
-        },
+        }
+      } +
+      if $component == "server" then {
         productionCapability: {
           statement: "PRODUCTION-CAPABILITY.json",
           signature: "PRODUCTION-CAPABILITY.sig",
@@ -377,9 +450,7 @@ jq -n \
 (
   cd "$output"
   checksum_files=("$archive_name" "$manifest_name" "$oci_name" "$provenance_name" "$sbom_name")
-  if [[ $component == server ]]; then
-    checksum_files+=("$fips_feature_graph_name")
-  fi
+  checksum_files+=("$fips_feature_graph_name")
   LC_ALL=C sha256sum "${checksum_files[@]}" >SHA256SUMS
   sha256sum --check --strict SHA256SUMS
 )
@@ -391,5 +462,11 @@ observed_arch=$(skopeo inspect "oci-archive:$output/$oci_name:$oci_tag" | jq -er
 }
 
 "$script_dir/verify.sh" --unsigned "$output"
+
+capture_source_state >"$source_state_after"
+cmp -s "$source_state_before" "$source_state_after" || {
+  echo "repository source changed while release artifacts were being built" >&2
+  exit 1
+}
 
 echo "packaged unsigned $package $version for $target at $output"

@@ -429,6 +429,49 @@ pub struct TbepGrpcServer {
     active_queries: Arc<Mutex<BTreeSet<(registry::BoundScope, u64)>>>,
 }
 
+fn authenticate_gateway_certificate(principal: &str, leaf: &[u8]) -> Result<(), Status> {
+    if leaf.len() > MAX_PEER_CERT_BYTES {
+        return Err(tbep_status(
+            Code::Unauthenticated,
+            pb::ErrorCode::UnboundChannel,
+            "the authenticated client certificate exceeds its bound",
+        ));
+    }
+    let (_, certificate) = X509Certificate::from_der(leaf).map_err(|_| {
+        tbep_status(
+            Code::Unauthenticated,
+            pb::ErrorCode::UnboundChannel,
+            "the authenticated client certificate is not parseable",
+        )
+    })?;
+    let mut uri_sans = Vec::new();
+    for extension in certificate.extensions() {
+        let ParsedExtension::SubjectAlternativeName(names) = extension.parsed_extension() else {
+            continue;
+        };
+        for name in &names.general_names {
+            if let GeneralName::URI(uri) = name {
+                if uri.len() > MAX_PRINCIPAL_BYTES {
+                    return Err(tbep_status(
+                        Code::PermissionDenied,
+                        pb::ErrorCode::OperationRefused,
+                        "the client certificate URI SAN exceeds its bound",
+                    ));
+                }
+                uri_sans.push(*uri);
+            }
+        }
+    }
+    if uri_sans.len() != 1 || uri_sans[0] != principal {
+        return Err(tbep_status(
+            Code::PermissionDenied,
+            pb::ErrorCode::OperationRefused,
+            "the request principal does not match exactly one authenticated SPIFFE URI SAN",
+        ));
+    }
+    Ok(())
+}
+
 impl TbepGrpcServer {
     /// Creates the serving over one host. `binding` is the transport
     /// this instance serves (local socket or mTLS network) and answers
@@ -546,47 +589,7 @@ impl TbepGrpcServer {
                 "the network RPC carries no authenticated client certificate",
             )
         })?;
-        if leaf.len() > MAX_PEER_CERT_BYTES {
-            return Err(tbep_status(
-                Code::Unauthenticated,
-                pb::ErrorCode::UnboundChannel,
-                "the authenticated client certificate exceeds its bound",
-            ));
-        }
-        let (_, certificate) = X509Certificate::from_der(leaf.as_ref()).map_err(|_| {
-            tbep_status(
-                Code::Unauthenticated,
-                pb::ErrorCode::UnboundChannel,
-                "the authenticated client certificate is not parseable",
-            )
-        })?;
-        let mut uri_sans = Vec::new();
-        for extension in certificate.extensions() {
-            let ParsedExtension::SubjectAlternativeName(names) = extension.parsed_extension()
-            else {
-                continue;
-            };
-            for name in &names.general_names {
-                if let GeneralName::URI(uri) = name {
-                    if uri.len() > MAX_PRINCIPAL_BYTES {
-                        return Err(tbep_status(
-                            Code::PermissionDenied,
-                            pb::ErrorCode::OperationRefused,
-                            "the client certificate URI SAN exceeds its bound",
-                        ));
-                    }
-                    uri_sans.push(*uri);
-                }
-            }
-        }
-        if uri_sans.len() != 1 || uri_sans[0] != principal {
-            return Err(tbep_status(
-                Code::PermissionDenied,
-                pb::ErrorCode::OperationRefused,
-                "the request principal does not match exactly one authenticated SPIFFE URI SAN",
-            ));
-        }
-        Ok(())
+        authenticate_gateway_certificate(principal, leaf.as_ref())
     }
 
     fn require_mutation_usage(&self, present: bool) -> Result<(), Status> {
@@ -1352,6 +1355,56 @@ fn response_size_error(detail: &str) -> Status {
 )]
 mod query_lifecycle_tests {
     use super::*;
+
+    fn certificate_with_uri_sans(uris: &[&str]) -> Vec<u8> {
+        use rcgen::{CertificateParams, Ia5String, KeyPair, SanType};
+
+        let key = KeyPair::generate().expect("the test certificate key generates");
+        let mut params = CertificateParams::new(Vec::new()).expect("the parameters parse");
+        params.subject_alt_names = uris
+            .iter()
+            .map(|uri| SanType::URI(Ia5String::try_from(*uri).expect("the test URI is IA5 text")))
+            .collect();
+        params.self_signed(&key).expect("the test certificate signs").der().to_vec()
+    }
+
+    #[test]
+    fn gateway_certificate_binding_rejects_malformed_and_oversized_der() {
+        let malformed = authenticate_gateway_certificate("spiffe://example.test/gateway", &[0]);
+        assert_eq!(malformed.expect_err("malformed DER is refused").code(), Code::Unauthenticated);
+
+        let oversized = vec![0; MAX_PEER_CERT_BYTES + 1];
+        let error = authenticate_gateway_certificate("spiffe://example.test/gateway", &oversized)
+            .expect_err("oversized DER is refused");
+        assert_eq!(error.code(), Code::Unauthenticated);
+    }
+
+    #[test]
+    fn gateway_certificate_binding_requires_one_exact_bounded_uri_san() {
+        const PRINCIPAL: &str =
+            "spiffe://terrascale.tech/test/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        const OTHER: &str =
+            "spiffe://terrascale.tech/test/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAW";
+
+        let exact = certificate_with_uri_sans(&[PRINCIPAL]);
+        authenticate_gateway_certificate(PRINCIPAL, &exact).expect("one exact URI SAN is accepted");
+
+        for der in [
+            certificate_with_uri_sans(&[]),
+            certificate_with_uri_sans(&[PRINCIPAL, OTHER]),
+            certificate_with_uri_sans(&[OTHER]),
+        ] {
+            let error = authenticate_gateway_certificate(PRINCIPAL, &der)
+                .expect_err("zero, multiple, and mismatched URI SANs are refused");
+            assert_eq!(error.code(), Code::PermissionDenied);
+        }
+
+        let long_uri = format!("spiffe://terrascale.tech/{}", "x".repeat(MAX_PRINCIPAL_BYTES));
+        let long_der = certificate_with_uri_sans(&[&long_uri]);
+        let error = authenticate_gateway_certificate(&long_uri, &long_der)
+            .expect_err("an over-bound URI SAN is refused");
+        assert_eq!(error.code(), Code::PermissionDenied);
+    }
 
     #[test]
     fn query_reservations_use_the_full_scope_and_drop_cleanup() {

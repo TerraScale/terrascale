@@ -13,12 +13,13 @@ if [[ ${1-} == --unsigned ]]; then
 fi
 [[ $# -eq 1 ]] || usage
 output=$1
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 [[ -d "$output" && ! -L "$output" ]] || {
   echo "release output is not a directory: $output" >&2
   exit 1
 }
 
-for tool in jq openssl sha256sum skopeo stat tar; do
+for tool in jq openssl readelf sha256sum skopeo stat tar; do
   command -v "$tool" >/dev/null || {
     echo "required verification tool is missing: $tool" >&2
     exit 1
@@ -63,8 +64,14 @@ esac
   exit 1
 }
 case "$target" in
-  x86_64-unknown-linux-gnu) expected_arch=amd64 ;;
-  aarch64-unknown-linux-gnu) expected_arch=arm64 ;;
+  x86_64-unknown-linux-gnu)
+    expected_arch=amd64
+    expected_elf_machine='Advanced Micro Devices X86-64'
+    ;;
+  aarch64-unknown-linux-gnu)
+    expected_arch=arm64
+    expected_elf_machine=AArch64
+    ;;
   *)
     echo "unsupported target in release manifest: $target" >&2
     exit 1
@@ -107,27 +114,34 @@ jq -e \
   echo "release manifest name does not match its package identity" >&2
   exit 1
 }
+expected_fips_feature_graph=$artifact_stem.fips-features.txt
+fips_feature_graph_name=$(jq -er '.evidence.fipsFeatureGraph.name' "$manifest")
+fips_feature_graph_digest=$(jq -er '.evidence.fipsFeatureGraph.sha256' "$manifest")
+expected_native_tools=$("$script_dir/native-toolchain-identity.sh" "$target")
+jq -e --arg feature_graph "$expected_fips_feature_graph" '
+  .evidence.fipsFeatureGraph.name == $feature_graph and
+  (.evidence.fipsFeatureGraph.sha256 | test("^[0-9a-f]{64}$"))
+' "$manifest" >/dev/null
+[[ $(sha256sum "$output/$fips_feature_graph_name" | awk '{print $1}') == "$fips_feature_graph_digest" ]]
+grep -Fq 'terrabase feature "production-fips"' "$output/$fips_feature_graph_name"
+grep -Fq 'aws-lc-rs feature "fips"' "$output/$fips_feature_graph_name"
+grep -Fq 'aws-lc-fips-sys v' "$output/$fips_feature_graph_name"
+! grep -Fq 'terrabase feature "local-crypto"' "$output/$fips_feature_graph_name"
+! grep -Fq 'aws-lc-rs feature "non-fips"' "$output/$fips_feature_graph_name"
+[[ $(grep -Fxc "binary sha256: $(jq -er '.binary.sha256' "$manifest")" \
+  "$output/$fips_feature_graph_name") -eq 1 ]] || {
+  echo "FIPS feature evidence is not bound to the native binary" >&2
+  exit 1
+}
 if [[ "$component" == server ]]; then
-  expected_fips_feature_graph=$artifact_stem.fips-features.txt
-  fips_feature_graph_name=$(jq -er '.evidence.fipsFeatureGraph.name' "$manifest")
-  fips_feature_graph_digest=$(jq -er '.evidence.fipsFeatureGraph.sha256' "$manifest")
-  jq -e --arg feature_graph "$expected_fips_feature_graph" '
-    .evidence.fipsFeatureGraph.name == $feature_graph and
-    (.evidence.fipsFeatureGraph.sha256 | test("^[0-9a-f]{64}$")) and
+  jq -e '
     .evidence.productionCapability.statement == "PRODUCTION-CAPABILITY.json" and
     .evidence.productionCapability.signature == "PRODUCTION-CAPABILITY.sig" and
     .evidence.productionCapability.clusterComposition == "cluster-composition.evidence.json" and
     .evidence.productionCapability.encryptionAtRest == "encryption-at-rest.evidence.json"
   ' "$manifest" >/dev/null
-  [[ $(sha256sum "$output/$fips_feature_graph_name" | awk '{print $1}') == "$fips_feature_graph_digest" ]]
-  grep -Fq 'terrabase feature "production-fips"' "$output/$fips_feature_graph_name"
-  grep -Fq 'aws-lc-rs feature "fips"' "$output/$fips_feature_graph_name"
-  grep -Fq 'aws-lc-fips-sys v' "$output/$fips_feature_graph_name"
-  ! grep -Fq 'terrabase feature "local-crypto"' "$output/$fips_feature_graph_name"
-  ! grep -Fq 'aws-lc-rs feature "non-fips"' "$output/$fips_feature_graph_name"
 else
   jq -e '
-    (.evidence | has("fipsFeatureGraph") | not) and
     (.evidence | has("productionCapability") | not)
   ' "$manifest" >/dev/null
 fi
@@ -166,24 +180,27 @@ jq -e \
   --arg component "$component" \
   --arg fips_feature_graph "$fips_feature_graph_name" \
   --arg fips_feature_graph_digest "$fips_feature_graph_digest" \
+  --argjson expected_native_tools "$expected_native_tools" \
   '
     ._type == "https://in-toto.io/Statement/v1" and
     .predicateType == "https://slsa.dev/provenance/v1" and
     ([.subject[] | select(.name == $archive and .digest.sha256 == $archive_digest)] | length) == 1 and
     ([.subject[] | select(.name == $oci and .digest.sha256 == $oci_digest)] | length) == 1 and
     (.subject | length) == 2 and
+    .predicate.buildDefinition.buildType == "https://terrascale.tech/build/terrabase-native-oci/v1" and
     .predicate.buildDefinition.externalParameters.target == $target and
+    .predicate.buildDefinition.externalParameters.profile == "release" and
     .predicate.buildDefinition.externalParameters.sourceDirty == $dirty and
-    (if $component == "server" then
-      .predicate.buildDefinition.internalParameters.fipsFeatureGraph.name == $fips_feature_graph and
-      .predicate.buildDefinition.internalParameters.fipsFeatureGraph.sha256 == $fips_feature_graph_digest
-    else
-      (.predicate.buildDefinition.internalParameters | has("fipsFeatureGraph") | not)
-    end) and
+    .predicate.buildDefinition.internalParameters.nativeTools == $expected_native_tools and
+    (.predicate.buildDefinition.internalParameters.rustc | test("^rustc 1[.]97[.]1 ")) and
+    (.predicate.buildDefinition.internalParameters.cargoLockSha256 | test("^[0-9a-f]{64}$")) and
+    .predicate.buildDefinition.internalParameters.fipsFeatureGraph.name == $fips_feature_graph and
+    .predicate.buildDefinition.internalParameters.fipsFeatureGraph.sha256 == $fips_feature_graph_digest and
     (.predicate.buildDefinition.resolvedDependencies | length) == 2 and
     ([.predicate.buildDefinition.resolvedDependencies[] |
       select(.uri == $repository and .digest.gitCommit == $revision and .digest.gitTree == $tree)] | length) == 1 and
-    ([.predicate.buildDefinition.resolvedDependencies[] | select(.uri == $base)] | length) == 1
+    ([.predicate.buildDefinition.resolvedDependencies[] | select(.uri == $base)] | length) == 1 and
+    .predicate.runDetails.builder.id == "https://git.terrascale.tech/TerraScale/TerraBase/.forgejo/workflows/release.yml"
   ' "$output/$provenance_name" >/dev/null
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/terrabase-verify.XXXXXXXX")
@@ -212,17 +229,24 @@ archive_binary=$work/archive/$artifact_stem/bin/$binary
 [[ -f "$archive_binary" && ! -L "$archive_binary" ]]
 [[ $(stat -c '%a' "$archive_binary") == 755 ]]
 [[ $(sha256sum "$archive_binary" | awk '{print $1}') == "$binary_digest" ]]
+archive_elf_machine=$(LC_ALL=C readelf -h -- "$archive_binary" | sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')
+[[ "$archive_elf_machine" == "$expected_elf_machine" ]] || {
+  echo "native archive ELF architecture does not match release target" >&2
+  exit 1
+}
+unset TERRABASE_BASE_OCI_LAYOUT
 "$(dirname -- "${BASH_SOURCE[0]}")/verify-oci.sh" \
   "$output/$oci_name" "$archive_binary" "$binary_digest" "$oci_tag" "$base_reference"
 
-image=$(skopeo inspect "oci-archive:$output/$oci_name:$oci_tag")
-[[ $(jq -er '.Architecture' <<<"$image") == "$expected_arch" ]]
-[[ $(jq -er '.Os' <<<"$image") == linux ]]
-[[ $(jq -er '.Config.Entrypoint | if length == 1 then .[0] else error("entrypoint must contain one command") end' <<<"$image") == "/usr/local/bin/$binary" ]]
-[[ $(jq -er '.Labels["tech.terrascale.terrabase.binary.sha256"]' <<<"$image") == "$binary_digest" ]]
-[[ $(jq -er '.Labels["org.opencontainers.image.title"]' <<<"$image") == "$expected_title" ]]
-[[ $(jq -er '.Labels["org.opencontainers.image.version"]' <<<"$image") == "$version" ]]
-[[ $(jq -er '.Labels["org.opencontainers.image.revision"]' <<<"$image") == "$(jq -er '.source.revision' "$manifest")" ]]
+image_metadata=$(skopeo inspect "oci-archive:$output/$oci_name:$oci_tag")
+image_config=$(skopeo inspect --config "oci-archive:$output/$oci_name:$oci_tag")
+[[ $(jq -er '.Architecture' <<<"$image_metadata") == "$expected_arch" ]]
+[[ $(jq -er '.Os' <<<"$image_metadata") == linux ]]
+[[ $(jq -er '.config.Entrypoint | if length == 1 then .[0] else error("entrypoint must contain one command") end' <<<"$image_config") == "/usr/local/bin/$binary" ]]
+[[ $(jq -er '.config.Labels["tech.terrascale.terrabase.binary.sha256"]' <<<"$image_config") == "$binary_digest" ]]
+[[ $(jq -er '.config.Labels["org.opencontainers.image.title"]' <<<"$image_config") == "$expected_title" ]]
+[[ $(jq -er '.config.Labels["org.opencontainers.image.version"]' <<<"$image_config") == "$version" ]]
+[[ $(jq -er '.config.Labels["org.opencontainers.image.revision"]' <<<"$image_config") == "$(jq -er '.source.revision' "$manifest")" ]]
 
 expected_files=$(jq -rn \
   --arg archive "$archive_name" \
@@ -235,7 +259,7 @@ expected_files=$(jq -rn \
   --arg fips_feature_graph "$fips_feature_graph_name" \
   '
     [$archive, $manifest, $oci, $provenance, $sbom, "SHA256SUMS"] +
-    (if $component == "server" then [$fips_feature_graph] else [] end) +
+    [$fips_feature_graph] +
     (if $mode == "signed" then ["SHA256SUMS.sig"] else [] end) +
     (if $mode == "signed" and $component == "server" then [
       "PRODUCTION-CAPABILITY.json",

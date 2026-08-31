@@ -48,9 +48,11 @@ exceptions = [
 [bans]
 multiple-versions = "deny"
 wildcards = "deny"
+# Every first-party workspace crate is private (`publish = false`). Permit
+# unversioned path edges between them while registry wildcard edges stay denied.
 allow-wildcard-paths = true
-# The FIPS build closure currently requires adjacent shlex major lines. All
-# other duplicate versions remain hard failures.
+# Only the enumerated upstream duplicate families are accepted. Every
+# unlisted duplicate remains a hard failure.
 skip = [
   { crate = "foldhash@0.1.5", reason = "prost-build's petgraph closure still uses hashbrown 0.15 while the runtime graph uses hashbrown 0.17" },
   { crate = "getrandom@0.2.17", reason = "ring still uses getrandom 0.2 while current build and transport dependencies use getrandom 0.4" },
