@@ -1,11 +1,9 @@
 {
   "id": 202,
   "repository": {"full_name": "TerraScale/TerraBase"},
-  "head_repository": {"full_name": "TerraScale/TerraBase"},
-  "head_branch": "main",
-  "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "prettyref": "main",
+  "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "event": "workflow_dispatch",
-  "status": "completed",
-  "conclusion": "success",
+  "status": "success",
   "workflow_id": "qualification.yml"
 }

@@ -102,19 +102,31 @@ jq -e \
   --argjson run_id "$candidate_run_id" \
   --arg repository "$expected_repository" \
   --arg revision "$expected_revision" \
+  --arg ref "$expected_ref" \
   --arg branch "${expected_ref#refs/heads/}" \
   '
     .id == $run_id and
     .repository.full_name == $repository and
-    .head_repository.full_name == $repository and
-    .head_branch == $branch and
-    .head_sha == $revision and
-    .event == "workflow_dispatch" and
-    .status == "completed" and
-    .conclusion == "success" and
-    ([.workflow_id, .workflow_file] | map(select(. != null)) | length) >= 1 and
-    ([.workflow_id, .workflow_file] | map(select(. != null)) | all(. == "release.yml")) and
-    (.path == null or .path == ".forgejo/workflows/release.yml")
+    (
+      (
+        .commit_sha == $revision and
+        (.prettyref == $ref or .prettyref == $branch) and
+        .event == "workflow_dispatch" and
+        .status == "success" and
+        .workflow_id == "release.yml"
+      ) or
+      (
+        .head_repository.full_name == $repository and
+        .head_branch == $branch and
+        .head_sha == $revision and
+        .event == "workflow_dispatch" and
+        .status == "completed" and
+        .conclusion == "success" and
+        ([.workflow_id, .workflow_file] | map(select(. != null)) | length) >= 1 and
+        ([.workflow_id, .workflow_file] | map(select(. != null)) | all(. == "release.yml")) and
+        (.path == null or .path == ".forgejo/workflows/release.yml")
+      )
+    )
   ' "$candidate_json" >/dev/null || {
   echo "candidate workflow run is not a successful trusted main release run" >&2
   exit 1
@@ -123,20 +135,32 @@ jq -e \
   --argjson run_id "$capability_run_id" \
   --arg repository "$expected_repository" \
   --arg revision "$expected_revision" \
+  --arg ref "$expected_ref" \
   --arg branch "${expected_ref#refs/heads/}" \
   --arg workflow "$capability_workflow_id" \
   '
     .id == $run_id and
     .repository.full_name == $repository and
-    .head_repository.full_name == $repository and
-    .head_branch == $branch and
-    .head_sha == $revision and
-    .event == "workflow_dispatch" and
-    .status == "completed" and
-    .conclusion == "success" and
-    ([.workflow_id, .workflow_file] | map(select(. != null)) | length) >= 1 and
-    ([.workflow_id, .workflow_file] | map(select(. != null)) | all(. == $workflow)) and
-    (.path == null or .path == (".forgejo/workflows/" + $workflow))
+    (
+      (
+        .commit_sha == $revision and
+        (.prettyref == $ref or .prettyref == $branch) and
+        .event == "workflow_dispatch" and
+        .status == "success" and
+        .workflow_id == $workflow
+      ) or
+      (
+        .head_repository.full_name == $repository and
+        .head_branch == $branch and
+        .head_sha == $revision and
+        .event == "workflow_dispatch" and
+        .status == "completed" and
+        .conclusion == "success" and
+        ([.workflow_id, .workflow_file] | map(select(. != null)) | length) >= 1 and
+        ([.workflow_id, .workflow_file] | map(select(. != null)) | all(. == $workflow)) and
+        (.path == null or .path == (".forgejo/workflows/" + $workflow))
+      )
+    )
   ' "$capability_json" >/dev/null || {
   echo "capability workflow run is not the selected successful trusted qualification run" >&2
   exit 1
