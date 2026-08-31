@@ -1648,6 +1648,104 @@ pub struct ChannelBindResponse {
     pub serving_instance: u64,
 }
 
+/// The closed result of one named atomic auth-storage mutation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AuthStorageMutationStatus {
+    Applied,
+    Replayed,
+    Conflict,
+    NotFound,
+}
+
+/// One bounded equality predicate for an auth-storage operation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AuthStorageCondition {
+    pub field: String,
+    pub value: TbepValue,
+}
+
+/// The result of an auth-storage mutation. Values are objects when present.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AuthStorageMutationResult {
+    pub status: AuthStorageMutationStatus,
+    pub value: Option<TbepValue>,
+}
+
+/// Auth-storage insertUnique request.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AuthStorageInsertUniqueRequest {
+    pub model: String,
+    pub data: TbepValue,
+    pub select: Vec<String>,
+}
+
+/// Auth-storage compareAndSwap request.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AuthStorageCompareAndSwapRequest {
+    pub model: String,
+    pub where_: Vec<AuthStorageCondition>,
+    pub update: TbepValue,
+}
+
+/// Auth-storage consumeOne request.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AuthStorageConsumeOneRequest {
+    pub model: String,
+    pub where_: Vec<AuthStorageCondition>,
+}
+
+impl AuthStorageCondition {
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        crate::value::check_str_bound(&self.field, 128, "auth_storage.field")
+    }
+}
+
+fn validate_auth_storage_model(model: &str) -> Result<(), crate::value::BodyError> {
+    crate::value::check_str_bound(model, 128, "auth_storage.model")
+}
+
+fn validate_auth_storage_conditions(
+    conditions: &[AuthStorageCondition],
+) -> Result<(), crate::value::BodyError> {
+    crate::value::check_list_bound(conditions, 32, "auth_storage.where")?;
+    for condition in conditions {
+        condition.validate()?;
+    }
+    Ok(())
+}
+
+impl AuthStorageInsertUniqueRequest {
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        validate_auth_storage_model(&self.model)?;
+        if !matches!(self.data, TbepValue::Object(_)) {
+            return Err(crate::value::BodyError::NotInVocabulary { field: "auth_storage.data" });
+        }
+        crate::value::check_list_bound(&self.select, 128, "auth_storage.select")?;
+        for field in &self.select {
+            crate::value::check_str_bound(field, 128, "auth_storage.select")?;
+        }
+        Ok(())
+    }
+}
+
+impl AuthStorageCompareAndSwapRequest {
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        validate_auth_storage_model(&self.model)?;
+        validate_auth_storage_conditions(&self.where_)?;
+        if !matches!(self.update, TbepValue::Object(_)) {
+            return Err(crate::value::BodyError::NotInVocabulary { field: "auth_storage.update" });
+        }
+        Ok(())
+    }
+}
+
+impl AuthStorageConsumeOneRequest {
+    pub fn validate(&self) -> Result<(), crate::value::BodyError> {
+        validate_auth_storage_model(&self.model)?;
+        validate_auth_storage_conditions(&self.where_)
+    }
+}
+
 impl ChannelBindResponse {
     /// Validates the declared bounds (fail closed).
     ///
