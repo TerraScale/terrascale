@@ -820,6 +820,13 @@ impl TbepGrpcServer {
                             let acceptor = tls_acceptor.clone();
                             async move {
                                 let stream = accepted?;
+                                // Request/response RPCs stall behind Nagle
+                                // coalescing plus the peer's delayed ACK when
+                                // a response splits across segments — tens of
+                                // milliseconds on every small call. Latency
+                                // beats segment efficiency on every path this
+                                // service serves, so small writes go out now.
+                                stream.set_nodelay(true)?;
                                 match tokio::time::timeout(startup_timeout, acceptor.accept(stream))
                                     .await
                                 {
