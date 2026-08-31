@@ -31,3 +31,4 @@ __pycache__/
 /.worktrees/
 deploy/release/sbom/target/
 .claude/
+.codex-worktrees/
