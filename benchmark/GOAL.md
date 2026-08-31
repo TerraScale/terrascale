@@ -45,7 +45,10 @@ cd terrabase-go && gofmt -l . && go vet ./... && go test -race ./...
 
 ## Working here
 
-- Pick tasks only from the workspace goal (`../GOAL.md`, section 6, Lane TB).
-- Branch `task/<TASK-ID>-short-name`; PR title starts with the task ID.
-- Definition of done, PR discipline, and the simplification playbook are
+- Pick tasks only from the workspace goal (`../GOAL.md`, section 6, Lane TB)
+  and claim them in its live-status table.
+- **No PRs (D-32)**: commit directly to `develop`; the verification set
+  above must pass locally BEFORE every push; commit messages start with the
+  task ID; a red `develop` stops the line.
+- Definition of done, commit discipline, and the simplification playbook are
   workspace goal section 4. The old evidence/receipt culture is retired.
