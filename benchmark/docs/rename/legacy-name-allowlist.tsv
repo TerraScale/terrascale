@@ -37,7 +37,7 @@ src/backup/restore/mod.rs	1	6ada2f5459cb2b1f77b09a7b27c0acb3594e08c227b9e0df26d3
 src/backup/restore/tests.rs	1	6ead86d9ec3852df3e80b7bf76beace9b6d926651a6359dd55d13e2c0fbabf7c	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 src/backup/tests.rs	4	02fb728d4bc1212012802b0efd70d873a1083a8c2679b7246c29762aa0dc2eef	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 src/benchmarks/tests.rs	1	ecfefac1500a30be3da7ad2880fc8812ac3a6d49ae72f38957b6a710b0db191e	historical	Exact historical benchmark receipt filename retained in its characterization note.
-src/engine/mod.rs	1	6fd405ada71b13dfce36a170d37f16fb035968628a6d08bd20435a32b0d41606	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
+src/engine/mod.rs	1	0940426cdc748b1d7489a30d7e76ed6722c8953886ded9fb65e979aa4e3e20b2	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 src/families/compare_exchange.rs	1	000cb554465c778c361792b987a26e9f412a890aa69e9afcee7a7a951ccc11e0	historical	Exact historical issue or ticket identifier retained as source provenance.
 src/families/lifecycle.rs	2	945cb5b315f6c33d26b9e7e99f6dde44bbe5fb0c786e52d48aba84a586474ecf	historical	Exact historical issue or ticket identifier retained as source provenance.
 src/families/revisions.rs	1	214518e3ed066f6c897d126163b175981db046a553766d8f456f259570253d8d	historical	Exact historical issue or ticket identifier retained as source provenance.

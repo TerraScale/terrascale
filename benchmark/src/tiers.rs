@@ -484,7 +484,15 @@ mod tests {
                 .map_or(0, |elapsed| elapsed.as_nanos())
         ));
         let _ = std::fs::remove_dir_all(&dir);
-        Engine::open(EngineConfig::durable(&dir).expect("durable")).expect("opens")
+        // The tier mover is the LSM engine's cold-segment demotion surface
+        // (TB-21 deletes it with that engine); the `SQLite` backend has no
+        // tiers and answers the typed refusal.
+        Engine::open(
+            EngineConfig::durable(&dir)
+                .expect("durable")
+                .with_storage_backend(crate::engine::StorageBackend::Lsm),
+        )
+        .expect("opens")
     }
 
     fn policy() -> TierPolicy {

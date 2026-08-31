@@ -96,13 +96,13 @@
 //!
 //! A location self-describes through its `format` marker (magic
 //! `TBV3SQLITE` + schema version); the engine's `backend_of_location`
-//! sniffs the marker, `TERRABASE_STORAGE_BACKEND=sqlite` selects the
-//! backend for fresh locations, and ownership validation recognizes the
-//! marker. A marker naming another format never converts, a missing
-//! marker beside durable artifacts is loss (not a fresh location), and a
-//! marker without its database file is loss too — `Connection::open`
-//! would otherwise silently mint a fresh database over a location whose
-//! data was lost.
+//! sniffs the marker, and since the D-27 default flip the backend is the
+//! default for fresh locations (`StorageBackend::Sqlite`). Ownership
+//! validation recognizes the marker. A marker naming another format never
+//! converts, a missing marker beside durable artifacts is loss (not a
+//! fresh location), and a marker without its database file is loss too —
+//! `Connection::open` would otherwise silently mint a fresh database over
+//! a location whose data was lost.
 #![allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
 
 #[cfg(test)]
@@ -110,7 +110,7 @@ mod tests;
 
 use std::{
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -133,13 +133,17 @@ use super::{
 };
 use super::{
     codec,
-    compaction::{CompactionDriverFacts, CompactionError, CompactionReceipt, StorageCompaction},
+    compaction::{
+        CompactionDriverFacts, CompactionError, CompactionPhase, CompactionPolicy,
+        CompactionReceipt, HistoryReclaimOutcome, StorageCompaction,
+    },
     file::min_level,
     intent::{
         CommitIntent, CommitRejection, CommitResult, OperationResolution, StagedWrite,
-        StorageReceipt,
+        StorageReceipt, UnknownCause,
     },
     ledger, lsm,
+    retained::RetainedFact,
 };
 
 /// Magic bytes prefixing the `SQLite` location's `format` marker.
@@ -224,6 +228,22 @@ CREATE TABLE IF NOT EXISTS consumer_frontiers (
     name TEXT    PRIMARY KEY,
     seq  INTEGER NOT NULL
 ) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS retained_facts (
+    tenant            TEXT    NOT NULL,
+    collection        TEXT    NOT NULL,
+    id                TEXT    NOT NULL,
+    version_at_delete INTEGER NOT NULL,
+    sequence          INTEGER NOT NULL,
+    operation         TEXT    NOT NULL,
+    durability        INTEGER NOT NULL,
+    PRIMARY KEY (tenant, collection, id, sequence)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS non_deletion_watermarks (
+    tenant  TEXT PRIMARY KEY,
+    through INTEGER NOT NULL
+) WITHOUT ROWID;
 ";
 
 /// The zero root head a fresh location records, before any commit chains it.
@@ -240,6 +260,14 @@ pub(crate) struct SqliteStorage {
     /// Idle read connections, checked out last-in-first-out and returned on
     /// drop.
     readers: Mutex<Vec<Connection>>,
+    /// Whether every writing seam refuses its typed refusal — the
+    /// production-owner stopgap the LSM engine also carries: an empty
+    /// production location opens and catalogues, but no plaintext write is
+    /// accepted until the encryption lease (TB-5) is wired.
+    writes_unavailable: bool,
+    /// The metrics registry this backend reports its durability-class work
+    /// on — the engine shares its own registry so one snapshot covers both.
+    metrics: Arc<crate::observability::MetricsRegistry>,
     /// The test-only fault plan (see [`StoragePort::arm_test_fault`]).
     #[cfg(test)]
     faults: Mutex<FaultPlan>,
@@ -268,7 +296,10 @@ impl Drop for ReaderGuard<'_> {
 }
 
 impl SqliteStorage {
-    /// Opens (or creates) the `SQLite` location in `dir`.
+    /// Opens (or creates) the `SQLite` location in `dir`, reporting on a
+    /// private registry. The storage-level suites' constructor; the engine
+    /// path shares its own registry through
+    /// [`SqliteStorage::open_with_metrics`].
     ///
     /// # Errors
     ///
@@ -276,7 +307,25 @@ impl SqliteStorage {
     /// marker names another format or is missing beside durable artifacts,
     /// and [`StorageOpenError::Unavailable`] when the database cannot be
     /// opened or initialized.
+    #[cfg(test)]
     pub(crate) fn open(dir: &Path) -> Result<Self, StorageOpenError> {
+        Self::open_with_metrics(dir, Arc::new(crate::observability::MetricsRegistry::new()))
+    }
+
+    /// Opens (or creates) the `SQLite` location reporting durability-class
+    /// work on the supplied registry — the engine's own, so one metrics
+    /// snapshot covers engine and storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageOpenError::FormatMismatch`] when the location's
+    /// marker names another format or is missing beside durable artifacts,
+    /// and [`StorageOpenError::Unavailable`] when the database cannot be
+    /// opened or initialized.
+    pub(crate) fn open_with_metrics(
+        dir: &Path,
+        metrics: Arc<crate::observability::MetricsRegistry>,
+    ) -> Result<Self, StorageOpenError> {
         // The engine path pre-creates the location; creating here too keeps
         // the seam's direct callers (and the FileStorage reference's
         // behavior) working on a named-but-absent directory.
@@ -306,9 +355,43 @@ impl SqliteStorage {
             database_path,
             writer: Mutex::new(writer),
             readers: Mutex::new(readers),
+            writes_unavailable: false,
+            metrics,
             #[cfg(test)]
             faults: Mutex::new(FaultPlan::empty()),
         })
+    }
+
+    /// Opens an empty production location reporting on the supplied registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageOpenError::FormatMismatch`] when the location already
+    /// carries data, and the [`SqliteStorage::open_with_metrics`] failures
+    /// otherwise.
+    pub(crate) fn open_production_unavailable_with_metrics(
+        dir: &Path,
+        metrics: Arc<crate::observability::MetricsRegistry>,
+    ) -> Result<Self, StorageOpenError> {
+        let storage = Self::open_with_metrics(dir, metrics)?;
+        {
+            let reader = storage.reader();
+            let populated: i64 = reader
+                .connection()
+                .query_row(
+                    "SELECT (SELECT COUNT(*) FROM documents)
+                        + (SELECT COUNT(*) FROM ledger)
+                        + (SELECT COUNT(*) FROM journal)
+                        + (SELECT COUNT(*) FROM usage_facts)",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|_| StorageOpenError::Unavailable)?;
+            if populated != 0 {
+                return Err(StorageOpenError::FormatMismatch);
+            }
+        }
+        Ok(Self { writes_unavailable: true, ..storage })
     }
 
     /// Checks out one read connection, opening a fresh one when the pool is
@@ -326,20 +409,58 @@ impl SqliteStorage {
 
     /// Commits a batch of intents inside one `BEGIN IMMEDIATE` transaction.
     fn commit_intents(&self, intents: &[CommitIntent]) -> Result<Vec<CommitResult>, ()> {
+        if self.writes_unavailable {
+            return Ok(intents
+                .iter()
+                .map(|_| CommitResult::Rejected(CommitRejection::Storage))
+                .collect());
+        }
         let mut writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         // Durability is a batch-wide property here: one transaction, one
         // commit. A single `Synced` intent raises the whole batch's commit
         // to `synchronous=FULL`; every weaker request still lands at least
         // `Written`, its honest floor under WAL + NORMAL.
         let wants_full = intents.iter().any(|intent| intent.durability == LocalDurability::Synced);
-        if wants_full {
+        // A test-armed post-sync fault suppresses the durability-raising
+        // sync: the batch rides WAL + NORMAL, the ledger rows record no
+        // sync, and the `Synced` intents answer `Unknown` — the
+        // append-then-sync window the fault names, reproduced at this
+        // backend's one-transaction granularity.
+        #[cfg(test)]
+        let suppressed_sync = if wants_full {
+            let mut faults = self.faults.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if faults.fire(super::FaultPoint::PointerSync).is_err() {
+                Some(UnknownCause::PostPublicationPointerSync)
+            } else if faults.fire(super::FaultPoint::DirectorySync).is_err() {
+                Some(UnknownCause::PostPublicationDirectorySync)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        #[cfg(not(test))]
+        let suppressed_sync: Option<UnknownCause> = None;
+        if wants_full && suppressed_sync.is_none() {
             writer.execute_batch("PRAGMA synchronous = FULL").map_err(|_| ())?;
         }
-        let result = self.commit_transaction(&mut writer, intents);
+        // A `Synced` batch's one fsync-class transaction is this backend's
+        // WAL fsync: the metric contract (one registry covering engine and
+        // storage) reports it here, timed across the raised commit.
+        let started = std::time::Instant::now();
+        let result = self.commit_transaction(&mut writer, intents, suppressed_sync);
+        if wants_full && suppressed_sync.is_none() {
+            let outcome = if result.is_ok() {
+                crate::observability::TaskOutcome::Success
+            } else {
+                crate::observability::TaskOutcome::Error
+            };
+            self.metrics.record_wal_fsync(outcome, started.elapsed());
+        }
         // Restore the steady-state pragma. A failed restore only leaves the
         // connection more durable than requested, never less, so it is not
         // a failure the caller can observe.
-        if wants_full {
+        if wants_full && suppressed_sync.is_none() {
             let _ = writer.execute_batch("PRAGMA synchronous = NORMAL");
         }
         result
@@ -450,9 +571,20 @@ impl SqliteStorage {
         &self,
         writer: &mut Connection,
         intents: &[CommitIntent],
+        suppressed_sync: Option<UnknownCause>,
     ) -> Result<Vec<CommitResult>, ()> {
         let transaction =
             writer.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| ())?;
+        // A test fault on the write-set application aborts before anything
+        // is staged: the guard's drop rolls the transaction back, the
+        // in-process stand-in for a crash before publication.
+        #[cfg(test)]
+        {
+            let mut faults = self.faults.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if faults.fire(super::FaultPoint::CommitMarkerApplication).is_err() {
+                return Err(());
+            }
+        }
         let mut results: Vec<Option<CommitResult>> = intents.iter().map(|_| None).collect();
         let mut watermark = durable_watermark(&transaction)?;
         let mut root_head: String = transaction
@@ -461,8 +593,13 @@ impl SqliteStorage {
             })
             .map_err(|_| ())?;
         for (index, intent) in intents.iter().enumerate() {
-            results[index] =
-                Some(stage_intent(&transaction, &mut watermark, &mut root_head, intent)?);
+            results[index] = Some(stage_intent(
+                &transaction,
+                &mut watermark,
+                &mut root_head,
+                intent,
+                suppressed_sync.is_some(),
+            )?);
         }
         // The test fault aborts between the staged rows and the commit: the
         // guard's drop rolls the transaction back, which is exactly the
@@ -470,11 +607,26 @@ impl SqliteStorage {
         #[cfg(test)]
         {
             let mut faults = self.faults.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if faults.fire(super::FaultPoint::WalAppend).is_err() {
+            if faults.fire(super::FaultPoint::WalAppend).is_err()
+                || faults.fire(super::FaultPoint::PointerPublish).is_err()
+            {
                 return Err(());
             }
         }
         transaction.commit().map_err(|_| ())?;
+        // A suppressed durability-raising sync leaves the publication
+        // committed at WAL durability but its `Synced` claim unproven: those
+        // intents answer `Unknown`, exactly as the append-then-sync engines
+        // answer the same fault.
+        if let Some(cause) = suppressed_sync {
+            for result in &mut results {
+                if let Some(CommitResult::Committed(receipt)) = result
+                    && receipt.durability == LocalDurability::Synced
+                {
+                    *result = Some(CommitResult::Unknown(cause));
+                }
+            }
+        }
         Ok(results.into_iter().map(Option::unwrap).collect())
     }
 }
@@ -491,6 +643,7 @@ fn stage_intent(
     watermark: &mut u64,
     root_head: &mut String,
     intent: &CommitIntent,
+    sync_suppressed: bool,
 ) -> Result<CommitResult, ()> {
     // Step 1: validation never binds the identity.
     if intent.writes.is_empty() || codec::staged_writes_have_duplicate_targets(&intent.writes) {
@@ -677,8 +830,9 @@ fn stage_intent(
             committed: true,
             // A `synchronous=FULL` commit is durable before it returns, so
             // the ledger records the flip at write time: there is no
-            // published-but-unsynced window for a crash to expose.
-            synced: intent.durability == LocalDurability::Synced,
+            // published-but-unsynced window for a crash to expose. A
+            // test-suppressed sync records the honest WAL-durability floor.
+            synced: intent.durability == LocalDurability::Synced && !sync_suppressed,
             rejection: None,
         },
     )?;
@@ -722,6 +876,20 @@ struct LedgerRow<'a> {
     rejection: Option<CommitRejection>,
 }
 
+/// Stores a 64-bit write-set digest in `SQLite`'s signed `INTEGER` without
+/// losing the high bit. A plain cast would wrap on write and its
+/// `u64::try_from` inverse would then fail on read, making every operation
+/// whose digest has the high bit set permanently unreplayable; the crossing
+/// is byte-preserving in both directions instead.
+fn digest_to_sql(digest: u64) -> i64 {
+    i64::from_be_bytes(digest.to_be_bytes())
+}
+
+/// Inverts [`digest_to_sql`].
+fn digest_from_sql(stored: i64) -> u64 {
+    u64::from_be_bytes(stored.to_be_bytes())
+}
+
 /// Reads one operation's durable ledger row.
 fn ledger_entry(
     transaction: &rusqlite::Transaction<'_>,
@@ -749,7 +917,7 @@ fn ledger_entry(
         Err(_) => return Err(()),
     };
     Ok(Some(LedgerEntryView {
-        digest: u64::try_from(digest).map_err(|_| ())?,
+        digest: digest_from_sql(digest),
         sequence: u64::try_from(sequence).map_err(|_| ())?,
         root,
         requested: lsm::durability_of(requested).ok_or(())?,
@@ -774,7 +942,7 @@ fn insert_ledger_row(
             statement.execute(rusqlite::params![
                 row.tenant,
                 row.operation,
-                row.digest as i64,
+                digest_to_sql(row.digest),
                 row.sequence as i64,
                 row.root,
                 lsm::durability_code(row.requested),
@@ -873,13 +1041,33 @@ fn durable_watermark(connection: &Connection) -> Result<u64, ()> {
 
 /// The minimum consumer frontier — the pruning floor — when any consumer
 /// has registered.
-fn history_floor_on(connection: &Connection) -> Result<Option<u64>, ()> {
+fn consumer_floor_on(connection: &Connection) -> Result<Option<u64>, ()> {
     let floor = connection
         .query_row("SELECT MIN(seq) FROM consumer_frontiers", [], |row| {
             row.get::<_, Option<i64>>(0)
         })
         .map_err(|_| ())?;
     Ok(floor.and_then(|value| u64::try_from(value).ok()))
+}
+
+/// The history bound a `ReclaimHistory` pass durably declared.
+fn declared_history_floor_on(connection: &Connection) -> Result<Option<u64>, ()> {
+    match connection.query_row("SELECT value FROM meta WHERE key = 'history_floor'", [], |row| {
+        row.get::<_, String>(0)
+    }) {
+        Ok(value) => value.parse::<u64>().map(Some).map_err(|_| ()),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(_) => Err(()),
+    }
+}
+
+/// The effective pruning floor: whichever of the consumer frontiers and the
+/// declared history bound is furthest advanced. Below it, history was given
+/// up and boundaries fail closed.
+fn history_floor_on(connection: &Connection) -> Result<Option<u64>, ()> {
+    let consumer = consumer_floor_on(connection)?;
+    let declared = declared_history_floor_on(connection)?;
+    Ok(consumer.max(declared))
 }
 
 /// Reads one fact identity's stored envelope, when the identity is bound.
@@ -1239,6 +1427,9 @@ impl StoragePort for SqliteStorage {
         tenant: &TenantId,
         fact: UsageFact,
     ) -> Result<(DurableUsageFact, bool), UsageStorageError> {
+        if self.writes_unavailable {
+            return Err(UsageStorageError::Unavailable);
+        }
         if fact.scope().tenant_id() != tenant || !standalone_usage_fact_is_valid(&fact) {
             return Err(UsageStorageError::Corrupt);
         }
@@ -1742,64 +1933,255 @@ impl StoragePort for SqliteStorage {
             )
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one pass, the GAP-S1 phase order in sequence — the LSM engine's allowance"
+    )]
     fn compact(
         &mut self,
-        _request: StorageCompaction,
+        request: StorageCompaction,
     ) -> Result<(CompactionReceipt, CompactionDriverFacts), CompactionError> {
+        let StorageCompaction { policy, floor, progress } = request;
+        let progress = progress.as_ref();
+        let mut phases: Vec<CompactionPhase> = Vec::new();
         // The lifecycle sweep first (the bounded-journal invariant): prune
         // what every consumer frontier has passed, so the receipt below
         // measures the reclaimed state. With no consumer registered the
         // sweep is a no-op.
         self.prune_below_consumer_frontiers().map_err(|()| CompactionError::Storage)?;
-        // Then the reclaim this backend owns: checkpoint the WAL back into
-        // the database file. Policy-gated history reclaim has no analogue
-        // here — journal bounding is the consumer-frontier lifecycle's.
         let wal_before = wal_file_bytes(&self.database_path);
-        let writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let journal_bytes_before = journal_length(&writer)?;
+        let journal_records_before = journal_count(&writer)?;
+        let servable_start_before =
+            history_floor_on(&writer).map_err(|()| CompactionError::Storage)?;
+        let head = journal_max(&writer)?;
+
+        // Phase: checkpoint. Fold the WAL back into the database file and
+        // truncate it (durability before any shortening).
+        emit_progress(progress, CompactionPhase::Checkpoint, false, 0, 1);
         writer
             .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
             .map_err(|_| CompactionError::Storage)?;
+        phases.push(CompactionPhase::Checkpoint);
+        emit_progress(progress, CompactionPhase::Checkpoint, true, 1, 1);
+        emit_progress(progress, CompactionPhase::WalReclaim, false, 0, wal_before);
+        phases.push(CompactionPhase::WalReclaim);
+        emit_progress(progress, CompactionPhase::WalReclaim, true, wal_before, wal_before);
+
+        // History reclaim under the GAP-S1 gates: one transaction extracts
+        // the window's deletion evidence, declares the bound, and only then
+        // drops the journal rows below it.
+        let mut bound_out: Option<StorageSequence> = None;
+        let mut history_reclaim = HistoryReclaimOutcome::NotRequested;
+        let mut evidence_extracted = 0_u64;
+        let mut evidence_retained = 0_u64;
+        let mut evidence_below_floor = 0_u64;
+        let mut window: Vec<PublishedCommit> = Vec::new();
+        if policy == CompactionPolicy::ReclaimHistory {
+            if head.is_none() {
+                // An empty journal serves no verified window: giving one up
+                // would treat an unreadable window as an empty one.
+                history_reclaim = HistoryReclaimOutcome::RefusedUnservableWindow;
+            }
+            if let Some(bound) = head {
+                let bound_value = u64::try_from(bound).unwrap_or(0);
+                let transaction = writer
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .map_err(|_| CompactionError::Storage)?;
+                window = journal_window(&transaction, bound_value)
+                    .map_err(|()| CompactionError::Storage)?;
+                // Deletion evidence below the candidate bound, respecting
+                // the watermark's retention floor.
+                let floor_value = floor.map(StorageSequence::get);
+                let mut facts: Vec<RetainedFact> = Vec::new();
+                for commit in &window {
+                    for write in commit.writes() {
+                        if let PublishedWrite::Delete { collection, id, version_at_delete } = write
+                        {
+                            evidence_extracted += 1;
+                            if floor_value.is_some_and(|value| commit.sequence().get() < value) {
+                                evidence_below_floor += 1;
+                                continue;
+                            }
+                            facts.push(RetainedFact {
+                                tenant: commit.tenant().clone(),
+                                collection: collection.clone(),
+                                id: id.clone(),
+                                version_at_delete: *version_at_delete,
+                                sequence: commit.sequence(),
+                                operation: commit.operation_id().clone(),
+                                durability: commit.durability(),
+                            });
+                        }
+                    }
+                }
+                emit_progress(
+                    progress,
+                    CompactionPhase::EvidenceExtraction,
+                    false,
+                    0,
+                    evidence_extracted,
+                );
+                // A tenant's non-deletion watermark is the highest window
+                // commit that contains a put.
+                let mut non_deletion: Vec<(TenantId, Option<StorageSequence>)> = Vec::new();
+                let mut tenants: Vec<&str> =
+                    window.iter().map(|commit| commit.tenant().as_str()).collect();
+                tenants.sort_unstable();
+                tenants.dedup();
+                for tenant in tenants {
+                    let through = window
+                        .iter()
+                        .filter(|commit| {
+                            commit.tenant().as_str() == tenant
+                                && commit
+                                    .writes()
+                                    .iter()
+                                    .any(|write| matches!(write, PublishedWrite::Put { .. }))
+                        })
+                        .map(PublishedCommit::sequence)
+                        .max();
+                    non_deletion.push((TenantId::try_new(tenant).expect("valid tenant"), through));
+                }
+                persist_retained_state(&transaction, &facts, bound_value, &non_deletion)
+                    .map_err(|()| CompactionError::Storage)?;
+                evidence_retained = u64::try_from(facts.len()).unwrap_or(u64::MAX);
+                phases.push(CompactionPhase::EvidenceExtraction);
+                emit_progress(
+                    progress,
+                    CompactionPhase::EvidenceExtraction,
+                    true,
+                    evidence_retained,
+                    evidence_extracted,
+                );
+                // The bound is durably declared: history strictly below it is
+                // given up. Version rows below the bound keep each key's
+                // newest row — the row an above-bound snapshot resolves — so
+                // an unprovable live winner is reported by
+                // [`StoragePort::winning_durabilities_at`] failing closed,
+                // never silently omitted.
+                transaction
+                    .execute("DELETE FROM journal WHERE sequence < ?1", rusqlite::params![bound])
+                    .map_err(|_| CompactionError::Storage)?;
+                transaction
+                    .execute(
+                        "DELETE FROM documents WHERE commit_seq < ?1 AND commit_seq < (
+                           SELECT MAX(newer.commit_seq) FROM documents newer
+                           WHERE newer.tenant = documents.tenant
+                             AND newer.collection = documents.collection
+                             AND newer.id = documents.id
+                         )",
+                        rusqlite::params![bound],
+                    )
+                    .map_err(|_| CompactionError::Storage)?;
+                transaction.commit().map_err(|_| CompactionError::Storage)?;
+                history_reclaim =
+                    HistoryReclaimOutcome::Reclaimed { bound: StorageSequence::new(bound_value) };
+                bound_out = Some(StorageSequence::new(bound_value));
+                phases.push(CompactionPhase::JournalRewrite);
+            }
+        }
+        // This backend has no root files; the phase stays in the reported
+        // set so callers observe the same pass shape.
+        phases.push(CompactionPhase::RootReclaim);
+
         let wal_after = wal_file_bytes(&self.database_path);
-        let journal_bytes = journal_length(&writer)?;
-        let journal_records = journal_count(&writer)?;
-        let servable_start = journal_min(&writer)?;
-        let journaled_head = journal_max(&writer)?;
+        let journal_bytes_after = journal_length(&writer)?;
+        let journal_records_after = journal_count(&writer)?;
+        let servable_start_after =
+            history_floor_on(&writer).map_err(|()| CompactionError::Storage)?;
         let sequence = durable_watermark(&writer).map_err(|()| CompactionError::Storage)?;
-        let journal_bytes = u64::try_from(journal_bytes).unwrap_or(0);
-        let records = u64::try_from(journal_records).unwrap_or(0);
-        let boundary = |value: i64| StorageSequence::new(u64::try_from(value).unwrap_or(0));
+        let boundary = |value: Option<i64>| {
+            value.map(|value| StorageSequence::new(u64::try_from(value).unwrap_or(0)))
+        };
+        let boundary_u64 = |value: Option<u64>| value.map(StorageSequence::new);
         Ok((
             CompactionReceipt::from_parts(
                 Some(StorageSequence::new(sequence)),
                 wal_before,
                 wal_after,
-                journal_bytes,
-                journal_bytes,
-                records,
-                records,
+                u64::try_from(journal_bytes_before).unwrap_or(0),
+                u64::try_from(journal_bytes_after).unwrap_or(0),
+                u64::try_from(journal_records_before).unwrap_or(0),
+                u64::try_from(journal_records_after).unwrap_or(0),
                 0,
                 0,
                 0,
-                servable_start.map(boundary),
-                servable_start.map(boundary),
-                journaled_head.map(boundary),
-                0,
-                0,
-                0,
-                0,
-                super::HistoryReclaimOutcome::NotRequested,
-                vec![super::CompactionPhase::Checkpoint, super::CompactionPhase::WalReclaim],
+                boundary_u64(servable_start_before),
+                boundary_u64(servable_start_after),
+                boundary(head),
+                u64::try_from(window.len()).unwrap_or(u64::MAX),
+                evidence_extracted,
+                evidence_retained,
+                evidence_below_floor,
+                history_reclaim,
+                phases,
             ),
-            CompactionDriverFacts::from_parts(Vec::new(), None, journaled_head.map(boundary)),
+            CompactionDriverFacts::from_parts(window, bound_out, boundary(head)),
         ))
     }
 
     fn retained_state(&self) -> super::compaction::RetainedState {
-        super::compaction::RetainedState {
-            bound: None,
-            facts: Vec::new(),
-            non_deletion: Vec::new(),
-        }
+        let reader = self.reader();
+        let connection = reader.connection();
+        let bound = declared_history_floor_on(connection).ok().flatten().map(StorageSequence::new);
+        let facts = connection
+            .prepare_cached(
+                "SELECT tenant, collection, id, version_at_delete, sequence, operation, durability
+                 FROM retained_facts ORDER BY sequence",
+            )
+            .ok()
+            .and_then(|mut statement| {
+                statement
+                    .query_map([], |row| {
+                        Ok(RetainedFact {
+                            tenant: TenantId::try_new(&row.get::<_, String>(0)?)
+                                .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                            collection: collection_from_sql(&row.get::<_, String>(1)?),
+                            id: DocumentId::try_new(&row.get::<_, String>(2)?)
+                                .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                            version_at_delete: u64::try_from(row.get::<_, i64>(3)?).unwrap_or(0),
+                            sequence: StorageSequence::new(
+                                u64::try_from(row.get::<_, i64>(4)?).unwrap_or(0),
+                            ),
+                            operation: OperationId::try_new(&row.get::<_, String>(5)?)
+                                .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                            durability: row
+                                .get::<_, u8>(6)
+                                .ok()
+                                .and_then(lsm::durability_of)
+                                .unwrap_or(LocalDurability::Written),
+                        })
+                    })
+                    .ok()
+                    .map(|rows| rows.flatten().collect())
+            })
+            .unwrap_or_default();
+        let non_deletion = connection
+            .prepare_cached("SELECT tenant, through FROM non_deletion_watermarks ORDER BY tenant")
+            .ok()
+            .and_then(|mut statement| {
+                statement
+                    .query_map([], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?))
+                    })
+                    .ok()
+                    .map(|rows| {
+                        rows.flatten()
+                            .filter_map(|(tenant, through)| {
+                                Some((
+                                    TenantId::try_new(&tenant).ok()?,
+                                    through.map(|value| {
+                                        StorageSequence::new(u64::try_from(value).unwrap_or(0))
+                                    }),
+                                ))
+                            })
+                            .collect()
+                    })
+            })
+            .unwrap_or_default();
+        super::compaction::RetainedState { bound, facts, non_deletion }
     }
 
     // The `SQLite` backend carries no tiers: P4's tier administration is the
@@ -1916,15 +2298,109 @@ fn journal_count(connection: &Connection) -> Result<i64, CompactionError> {
 }
 
 /// The journal's oldest sequence.
-fn journal_min(connection: &Connection) -> Result<Option<i64>, CompactionError> {
-    connection
-        .query_row("SELECT MIN(sequence) FROM journal", [], |row| row.get::<_, Option<i64>>(0))
-        .map_err(|_| CompactionError::Storage)
-}
-
 /// The journal's newest sequence.
 fn journal_max(connection: &Connection) -> Result<Option<i64>, CompactionError> {
     connection
         .query_row("SELECT MAX(sequence) FROM journal", [], |row| row.get::<_, Option<i64>>(0))
         .map_err(|_| CompactionError::Storage)
+}
+
+/// Emits one bounded progress event when a sink is attached.
+fn emit_progress(
+    progress: Option<&super::compaction::CompactionProgressSink>,
+    phase: CompactionPhase,
+    completed: bool,
+    units_done: u64,
+    units_total: u64,
+) {
+    if let Some(sink) = progress {
+        sink(&super::compaction::CompactionProgress::from_parts(
+            phase,
+            completed,
+            units_done,
+            units_total,
+        ));
+    }
+}
+
+/// Reads the reclaim window: every retained journal commit strictly below
+/// the candidate bound, in sequence order.
+fn journal_window(
+    transaction: &rusqlite::Transaction<'_>,
+    bound: u64,
+) -> Result<Vec<PublishedCommit>, ()> {
+    let Ok(mut statement) = transaction
+        .prepare_cached("SELECT frame FROM journal WHERE sequence < ?1 ORDER BY sequence")
+    else {
+        return Err(());
+    };
+    let rows = statement
+        .query_map(rusqlite::params![bound as i64], |row| row.get::<_, Vec<u8>>(0))
+        .map_err(|_| ())?;
+    Ok(rows.flatten().filter_map(|frame| decode_journal_frame(&frame)).collect())
+}
+
+/// Encodes a retained fact's optional collection: the empty string names the
+/// provable no-op delete (a real collection name is never empty).
+fn collection_to_sql(collection: Option<&crate::types::CollectionName>) -> &str {
+    collection.map_or("", |name| name.as_str())
+}
+
+/// Inverts [`collection_to_sql`].
+fn collection_from_sql(stored: &str) -> Option<crate::types::CollectionName> {
+    (!stored.is_empty()).then(|| crate::types::CollectionName::try_new(stored).ok()).flatten()
+}
+
+/// Persists one reclaim's retained evidence, declared bound, and per-tenant
+/// non-deletion facts inside the same transaction that drops the history
+/// below the bound.
+fn persist_retained_state(
+    transaction: &rusqlite::Transaction<'_>,
+    facts: &[RetainedFact],
+    bound: u64,
+    non_deletion: &[(TenantId, Option<StorageSequence>)],
+) -> Result<(), ()> {
+    for fact in facts {
+        transaction
+            .prepare_cached(
+                "INSERT OR IGNORE INTO retained_facts
+                 (tenant, collection, id, version_at_delete, sequence, operation, durability)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )
+            .and_then(|mut statement| {
+                statement.execute(rusqlite::params![
+                    fact.tenant.as_str(),
+                    collection_to_sql(fact.collection.as_ref()),
+                    fact.id.as_str(),
+                    fact.version_at_delete as i64,
+                    fact.sequence.get() as i64,
+                    fact.operation.as_str(),
+                    lsm::durability_code(fact.durability),
+                ])
+            })
+            .map_err(|_| ())?;
+    }
+    for (tenant, through) in non_deletion {
+        transaction
+            .prepare_cached(
+                "INSERT INTO non_deletion_watermarks (tenant, through) VALUES (?1, ?2)
+                 ON CONFLICT(tenant) DO UPDATE SET through = MAX(through, excluded.through)",
+            )
+            .and_then(|mut statement| {
+                statement.execute(rusqlite::params![
+                    tenant.as_str(),
+                    through.map_or(0, |value| value.get() as i64),
+                ])
+            })
+            .map_err(|_| ())?;
+    }
+    transaction
+        .prepare_cached(
+            "INSERT INTO meta (key, value) VALUES ('history_floor', ?1)
+             ON CONFLICT(key) DO UPDATE SET value =
+                 CAST(MAX(CAST(value AS INTEGER), CAST(excluded.value AS INTEGER)) AS TEXT)",
+        )
+        .and_then(|mut statement| statement.execute(rusqlite::params![bound.to_string()]))
+        .map_err(|_| ())?;
+    Ok(())
 }
