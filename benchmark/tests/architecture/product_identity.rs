@@ -342,7 +342,7 @@ fn sha256(input: &[u8]) -> [u8; 32] {
         0x1f83_d9ab,
         0x5be0_cd19,
     ];
-    for chunk in message.chunks_exact(64) {
+    for chunk in message.as_chunks::<64>().0 {
         let mut schedule = [0u32; 64];
         for (index, word) in schedule.iter_mut().take(16).enumerate() {
             let offset = index * 4;

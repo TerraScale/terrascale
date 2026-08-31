@@ -606,10 +606,7 @@ fn persist_ordinal(path: &Path, ordinal: u128) -> io::Result<()> {
     body.extend_from_slice(ORDINAL_MAGIC);
     body.extend_from_slice(&ordinal.to_be_bytes());
     body.extend_from_slice(&ordinal_checksum(&body));
-    if std::fs::symlink_metadata(path)
-        .ok()
-        .is_some_and(|metadata| metadata.file_type().is_symlink())
-    {
+    if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "unsafe WAL ordinal symlink"));
     }
     let temp = path.with_file_name(format!(

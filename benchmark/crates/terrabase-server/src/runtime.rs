@@ -269,10 +269,10 @@ fn decode_base64(value: &str) -> Option<Vec<u8>> {
     if bytes.is_empty() || !bytes.len().is_multiple_of(4) {
         return None;
     }
-    let chunks = bytes.chunks_exact(4);
+    let (chunks, _remainder) = bytes.as_chunks::<4>();
     let chunk_count = chunks.len();
     let mut decoded = Vec::with_capacity(bytes.len() / 4 * 3);
-    for (index, chunk) in chunks.enumerate() {
+    for (index, chunk) in chunks.iter().enumerate() {
         let padding = if chunk[2] == b'=' {
             if chunk[3] != b'=' {
                 return None;
