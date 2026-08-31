@@ -6,10 +6,10 @@ covers joined, hyphenated, underscored, spaced, dotted, and mixed-case forms.
 The default local mode includes non-ignored untracked files. CI uses
 `--tracked-only` before checking out any consumer repository.
 
-`legacy-name-allowlist.tsv` is limited to immutable evidence or files that the
-repository rules reserve for human owners. Each entry binds its path, exact
-match count, and SHA-256 fingerprint of every matched token and location. The
-check rejects missing paths, changed tokens, extra matches, and stale entries.
+`legacy-name-allowlist.tsv` is limited to files that repository rules reserve
+for human owners. Each entry binds its path, exact match count, and SHA-256
+fingerprint of every matched token and location. The check rejects missing
+paths, changed tokens, extra matches, and stale entries.
 
 Active source, package metadata, generated code, contracts, workflows, and
 operator documentation cannot use an allowance.

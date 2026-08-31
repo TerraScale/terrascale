@@ -31,5 +31,4 @@ arbitrary cookie or nonempty authorization header.
 Local semantic tests are useful for route and lifecycle behavior, but they do
 not prove TerraBase replication, RF=2 durability, failover, authorization,
 usage, billing, external providers, reactive cross-language parity, or
-performance. Release records must label local evidence separately and cannot
-substitute it for live service qualification.
+performance. They cannot substitute for live service qualification.

@@ -6,8 +6,8 @@ created with `createTerraScaleClient`. The root package no longer exports
 been removed.
 
 This guide records the boundary decision in [ADR 0002](../adr/0002-typed-public-sdk-boundary.md).
-The current route and OpenAPI status, including unresolved cross-repository
-drift, is tracked in the repository [GOAL.md](../../GOAL.md).
+The workspace [GOAL.md](../../../GOAL.md) owns cross-repository route and
+OpenAPI work.
 
 ## Migration
 

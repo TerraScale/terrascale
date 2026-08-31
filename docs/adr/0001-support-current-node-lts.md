@@ -13,12 +13,13 @@ JavaScript releases.
 ## Decision
 
 Support Node.js 22 and 24 for server use and the current stable major versions
-of Chrome, Firefox, Safari, and Edge for browser use. Pin the release builder
-and Playwright engine revisions in the release record. Do not claim a browser
-or runtime is qualified when its lane is skipped or host-blocked.
+of Chrome, Firefox, Safari, and Edge for browser use. Pin the release builder,
+Node binaries, npm version, and Playwright engine revisions in the workflow.
+Do not claim a browser or runtime passed when its lane was skipped or
+host-blocked.
 
 ## Consequences
 
 `package.json` declares the Node and browser ranges. The release workflow runs
-Node 22/24 and browser-engine lanes. Safari remains an open qualification gap
-when the builder cannot launch WebKit; see `GOAL.md` TS-007.
+Node 22/24 and browser-engine lanes. A failed or skipped required lane blocks
+publication.

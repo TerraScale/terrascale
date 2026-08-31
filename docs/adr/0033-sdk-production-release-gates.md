@@ -13,20 +13,23 @@ MessagePack generation/hostile-input gates pass. Protected live DevHost and
 release E2E must pass when required configuration is available. Missing live
 configuration is a skipped gate, never a passing result.
 
-Promotion also depends on the workspace production evidence: public REST and
-reactive contract parity, Better Auth exact-version and license evidence,
+Promotion also depends on workspace production gates: public REST and
+reactive contract parity, Better Auth exact-version and license checks,
 cross-language corpus conformance, authorization and recovery behavior,
 three-Region qualification, security, operational readiness, and the required
 production soak. The local SQLite runtime cannot satisfy any of those gates.
 
-The workflow publishes the verified npm tarball and does not create or repair a
-Forgejo Release. npm credentials and candidate-store access stay in protected
-jobs.
+For reactive data, MessagePack carries the envelope and operation structure.
+Document bodies remain raw TerraScale-canonical JSON bytes, and the client uses
+one native `JSON.parse` per body after decoding the envelope.
 
-## Current blockers
+The release workflow publishes the verified npm tarball. npm credentials stay
+in protected jobs.
+
+## Current state
 
 The current Dashboard snapshot covers all 91 SDK routes with zero typed-contract
-debt. The standalone MessagePack suites run through `npm test` and both protected
-Node runtime lanes, so they are candidate-admission prerequisites. Safari remains
-host-blocked in this environment, and no live API evidence was available. These
-remaining gates stay open in `GOAL.md`.
+debt. The standalone MessagePack suites run through `npm test` and both
+protected Node runtime lanes. Production WebSocket and HTTP fallback transport,
+live Database API checks, and the current delivery workflow remain open tasks
+in the workspace `GOAL.md`.
