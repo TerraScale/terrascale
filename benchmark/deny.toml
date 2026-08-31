@@ -1,3 +1,10 @@
+[graph]
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+]
+all-features = true
+
 [advisories]
 version = 2
 ignore = []
@@ -31,10 +38,30 @@ allow = [
   "Unlicense",
 ]
 confidence-threshold = 0.8
+# AWS-LC's FIPS source distribution combines its ISC and Apache-2.0 code with
+# the OpenSSL license. Keep that additional license scoped to the exact FIPS
+# sys crate rather than widening the repository-wide allowlist.
+exceptions = [
+  { allow = ["OpenSSL"], crate = "aws-lc-fips-sys@0.14.1" },
+]
 
 [bans]
 multiple-versions = "deny"
 wildcards = "deny"
+allow-wildcard-paths = true
+# The FIPS build closure currently requires adjacent shlex major lines. All
+# other duplicate versions remain hard failures.
+skip = [
+  { crate = "foldhash@0.1.5", reason = "prost-build's petgraph closure still uses hashbrown 0.15 while the runtime graph uses hashbrown 0.17" },
+  { crate = "getrandom@0.2.17", reason = "ring still uses getrandom 0.2 while current build and transport dependencies use getrandom 0.4" },
+  { crate = "hashbrown@0.15.5", reason = "prost-build's petgraph closure still uses hashbrown 0.15 while the runtime graph uses hashbrown 0.17" },
+  { crate = "itertools@0.13.0", reason = "aws-lc-fips-sys bindgen uses itertools 0.13 while prost code generation uses itertools 0.14" },
+  { crate = "logos@0.15.1", reason = "protox-parse uses logos 0.15 while prost-reflect uses logos 0.16" },
+  { crate = "logos-codegen@0.15.1", reason = "protox-parse uses logos 0.15 while prost-reflect uses logos 0.16" },
+  { crate = "logos-derive@0.15.1", reason = "protox-parse uses logos 0.15 while prost-reflect uses logos 0.16" },
+  { crate = "shlex@1.3.0", reason = "aws-lc-fips-sys bindgen uses shlex 1 while its cc build path uses shlex 2; both are upstream build-only dependencies" },
+  { crate = "syn@2.0.119", reason = "upstream TLS and code-generation derives still use syn 2 while current derives use syn 3" },
+]
 
 [sources]
 unknown-registry = "deny"

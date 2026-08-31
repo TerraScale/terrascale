@@ -1,6 +1,6 @@
 //! The root-owned Member catalog and lifecycle boundary.
 //!
-//! A [`Member`] owns one durable [`Engine`](crate::Engine) for each configured
+//! A [`Member`] owns one durable `Engine` for each configured
 //! database.  This module deliberately knows nothing about TBEP, membership,
 //! or replication: it reports storage health only.  A higher layer must add
 //! those authorities before advertising production readiness.

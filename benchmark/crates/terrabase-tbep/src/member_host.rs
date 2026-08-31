@@ -1,7 +1,7 @@
 //! Opt-in composition of the durable engine and sync-delivery planes.
 //!
 //! `MemberHost` is the first staged host unification. It keeps
-//! [`EngineHost`](crate::engine_host::EngineHost) as the production harness,
+//! [`EngineHost`] as the production harness,
 //! but lets focused callers construct one host whose document mutations and
 //! sync/backbone revisions share the engine publication journal.
 

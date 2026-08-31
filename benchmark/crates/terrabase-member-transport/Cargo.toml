@@ -21,12 +21,14 @@ publish = false
 
 [features]
 default = ["local-crypto"]
-local-crypto = ["quinn/rustls-ring", "rustls/ring"]
+local-crypto = ["dep:ring", "quinn/rustls-ring", "rustls/ring", "rcgen/ring"]
 production-fips = [
   "dep:aws-lc-rs",
   "aws-lc-rs/fips",
   "quinn/rustls-aws-lc-rs-fips",
   "rustls/fips",
+  "rcgen/fips",
+  "rcgen/aws_lc_rs",
 ]
 
 [lints.rust]
@@ -43,14 +45,14 @@ pedantic = "warn"
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio"] }
 rustls = { version = "0.23", default-features = false, features = ["std"] }
 aws-lc-rs = { version = "1.18.0", default-features = false, optional = true }
-rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+rcgen = { version = "0.13", default-features = false, features = ["pem"] }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "time", "sync", "macros", "io-util"] }
 x509-parser = "0.18"
 # Content digest of every envelope payload (message-contract discipline).
 # `ring` is already in the QUIC closure; reusing its SHA-256 keeps the crate's
 # dependency tree at exactly the engine-socket set, with no second digest crate
 # (and no second `cpufeatures`) in the eventual unified workspace lock.
-ring = "0.17"
+ring = { version = "0.17", optional = true }
 
 [dev-dependencies]
 # Hostile decode probes re-sign corrupted frames with the crate's own

@@ -39,12 +39,207 @@ run_contracts() {
   )
 }
 
+rebind_ci_digest() {
+  local fixture=$1
+  local digest
+  digest="$(sha256sum "$fixture/.forgejo/workflows/ci.yml")"
+  digest="${digest%% *}"
+  [[ $(grep -Ec "^readonly reviewed_ci_sha256='[0-9a-f]{64}'$" \
+    "$fixture/scripts/validate-release-contracts.sh") -eq 1 ]]
+  sed -i -E \
+    "s/^readonly reviewed_ci_sha256='[0-9a-f]{64}'$/readonly reviewed_ci_sha256='$digest'/" \
+    "$fixture/scripts/validate-release-contracts.sh"
+  [[ $(grep -Fxc "readonly reviewed_ci_sha256='$digest'" \
+    "$fixture/scripts/validate-release-contracts.sh") -eq 1 ]]
+  bash -n "$fixture/scripts/validate-release-contracts.sh"
+}
+
 negative_fixture_count=0
 
 pass_fixture="$fixture_root/pass"
 mkdir -p "$pass_fixture"
 make_fixture "$pass_fixture"
 run_contracts "$pass_fixture" >/dev/null
+
+late_perl_fixture="$fixture_root/late-perl"
+mkdir -p "$late_perl_fixture"
+make_fixture "$late_perl_fixture"
+yq -i '.jobs.checks.steps |= ([.[] | select(.name != "Install pinned Perl for AWS-LC FIPS")] + [.[] | select(.name == "Install pinned Perl for AWS-LC FIPS")])' \
+  "$late_perl_fixture/.forgejo/workflows/ci.yml"
+rebind_ci_digest "$late_perl_fixture"
+if run_contracts "$late_perl_fixture" >/dev/null 2>&1; then
+  printf 'expected Perl provisioning after FIPS commands to fail validation\n' >&2
+  exit 1
+fi
+((negative_fixture_count += 1))
+
+unrelated_perl_fixture="$fixture_root/unrelated-perl"
+mkdir -p "$unrelated_perl_fixture"
+make_fixture "$unrelated_perl_fixture"
+yq -i '(.jobs.checks.steps[] | select(.name == "Install pinned Perl for AWS-LC FIPS") | .name) = "Unrelated pinned literals"' \
+  "$unrelated_perl_fixture/.forgejo/workflows/ci.yml"
+rebind_ci_digest "$unrelated_perl_fixture"
+if run_contracts "$unrelated_perl_fixture" >/dev/null 2>&1; then
+  printf 'expected pinned Perl literals in an unrelated step to fail validation\n' >&2
+  exit 1
+fi
+((negative_fixture_count += 1))
+
+reordered_fips_fixture="$fixture_root/reordered-fips"
+mkdir -p "$reordered_fips_fixture"
+make_fixture "$reordered_fips_fixture"
+yq -i '(.jobs.checks.steps[] | select(.name == "Build production server with AWS-LC FIPS") | .run) = "cargo build -p terrabase-server --locked --release --no-default-features --features production-fips\ndeploy/release/require-fips-toolchain.sh"' \
+  "$reordered_fips_fixture/.forgejo/workflows/ci.yml"
+rebind_ci_digest "$reordered_fips_fixture"
+if run_contracts "$reordered_fips_fixture" >/dev/null 2>&1; then
+  printf 'expected a post-build FIPS prerequisite to fail validation\n' >&2
+  exit 1
+fi
+((negative_fixture_count += 1))
+
+wrong_output_fixture="$fixture_root/wrong-perl-output"
+mkdir -p "$wrong_output_fixture"
+make_fixture "$wrong_output_fixture"
+sed -i 's/"$perl_flake#perl\^out"/"$perl_flake#perl"/' \
+  "$wrong_output_fixture/.forgejo/workflows/ci.yml"
+rebind_ci_digest "$wrong_output_fixture"
+if run_contracts "$wrong_output_fixture" >/dev/null 2>&1; then
+  printf 'expected ambiguous Nix Perl output selection to fail validation\n' >&2
+  exit 1
+fi
+((negative_fixture_count += 1))
+
+missing_path_fixture="$fixture_root/missing-perl-path"
+mkdir -p "$missing_path_fixture"
+make_fixture "$missing_path_fixture"
+sed -i '/printf '\''%s\\n'\'' "$perl_root\/bin" >> "$GITHUB_PATH"/d' \
+  "$missing_path_fixture/.forgejo/workflows/ci.yml"
+rebind_ci_digest "$missing_path_fixture"
+if run_contracts "$missing_path_fixture" >/dev/null 2>&1; then
+  printf 'expected missing pinned Perl PATH publication to fail validation\n' >&2
+  exit 1
+fi
+((negative_fixture_count += 1))
+
+late_prerequisite_fixture="$fixture_root/late-fips-prerequisite"
+mkdir -p "$late_prerequisite_fixture"
+make_fixture "$late_prerequisite_fixture"
+yq -i '(.jobs.checks.steps[] | select(.name == "Build production server with AWS-LC FIPS") | .run) = "cargo build -p terrabase-server --locked --release --no-default-features --features production-fips" | .jobs.checks.steps += [{"name": "Late FIPS prerequisite", "run": "deploy/release/require-fips-toolchain.sh"}]' \
+  "$late_prerequisite_fixture/.forgejo/workflows/ci.yml"
+rebind_ci_digest "$late_prerequisite_fixture"
+if run_contracts "$late_prerequisite_fixture" >/dev/null 2>&1; then
+  printf 'expected a prerequisite moved to a later step to fail validation\n' >&2
+  exit 1
+fi
+((negative_fixture_count += 1))
+
+tampered_runtime_fixture="$fixture_root/tampered-perl-runtime"
+mkdir -p "$tampered_runtime_fixture"
+make_fixture "$tampered_runtime_fixture"
+sed -i 's/unless \$\^V eq v5\.42\.0/unless $^V eq v5.42.1/' \
+  "$tampered_runtime_fixture/.forgejo/workflows/ci.yml"
+rebind_ci_digest "$tampered_runtime_fixture"
+if run_contracts "$tampered_runtime_fixture" >/dev/null 2>&1; then
+  printf 'expected a tampered Perl runtime assertion to fail validation\n' >&2
+  exit 1
+fi
+((negative_fixture_count += 1))
+
+missing_store_assertion_fixture="$fixture_root/missing-perl-store-assertion"
+mkdir -p "$missing_store_assertion_fixture"
+make_fixture "$missing_store_assertion_fixture"
+sed -i '/\[\[ "$perl_root" == \/nix\/store\/\*-perl-5\.42\.0 \]\]/d' \
+  "$missing_store_assertion_fixture/.forgejo/workflows/ci.yml"
+rebind_ci_digest "$missing_store_assertion_fixture"
+if run_contracts "$missing_store_assertion_fixture" >/dev/null 2>&1; then
+  printf 'expected a missing Perl store-path assertion to fail validation\n' >&2
+  exit 1
+fi
+((negative_fixture_count += 1))
+
+skipped_perl_fixture="$fixture_root/skipped-perl-step"
+mkdir -p "$skipped_perl_fixture"
+make_fixture "$skipped_perl_fixture"
+yq -i '(.jobs.checks.steps[] | select(.name == "Install pinned Perl for AWS-LC FIPS") | .if) = "${{ false }}"' \
+  "$skipped_perl_fixture/.forgejo/workflows/ci.yml"
+rebind_ci_digest "$skipped_perl_fixture"
+if run_contracts "$skipped_perl_fixture" >/dev/null 2>&1; then
+  printf 'expected a skipped Perl provisioning step to fail validation\n' >&2
+  exit 1
+fi
+((negative_fixture_count += 1))
+
+skipped_fips_fixture="$fixture_root/skipped-fips-step"
+mkdir -p "$skipped_fips_fixture"
+make_fixture "$skipped_fips_fixture"
+yq -i '(.jobs.checks.steps[] | select(.name == "Build production server with AWS-LC FIPS") | .if) = "${{ false }}"' \
+  "$skipped_fips_fixture/.forgejo/workflows/ci.yml"
+rebind_ci_digest "$skipped_fips_fixture"
+if run_contracts "$skipped_fips_fixture" >/dev/null 2>&1; then
+  printf 'expected a skipped FIPS build step to fail validation\n' >&2
+  exit 1
+fi
+((negative_fixture_count += 1))
+
+continued_fips_fixture="$fixture_root/continued-fips-step"
+mkdir -p "$continued_fips_fixture"
+make_fixture "$continued_fips_fixture"
+yq -i '(.jobs.checks.steps[] | select(.name == "Build production server with AWS-LC FIPS") | .continue-on-error) = true' \
+  "$continued_fips_fixture/.forgejo/workflows/ci.yml"
+rebind_ci_digest "$continued_fips_fixture"
+if run_contracts "$continued_fips_fixture" >/dev/null 2>&1; then
+  printf 'expected a continue-on-error FIPS build to fail validation\n' >&2
+  exit 1
+fi
+((negative_fixture_count += 1))
+
+rebound_perl_env_fixture="$fixture_root/rebound-perl-env"
+mkdir -p "$rebound_perl_env_fixture"
+make_fixture "$rebound_perl_env_fixture"
+yq -i '(.jobs.checks.steps[] | select(.name == "Install pinned Perl for AWS-LC FIPS") | .env.GITHUB_PATH) = "/dev/null"' \
+  "$rebound_perl_env_fixture/.forgejo/workflows/ci.yml"
+rebind_ci_digest "$rebound_perl_env_fixture"
+if run_contracts "$rebound_perl_env_fixture" >/dev/null 2>&1; then
+  printf 'expected a rebound Perl environment to fail validation\n' >&2
+  exit 1
+fi
+((negative_fixture_count += 1))
+
+skipped_checks_job_fixture="$fixture_root/skipped-checks-job"
+mkdir -p "$skipped_checks_job_fixture"
+make_fixture "$skipped_checks_job_fixture"
+yq -i '.jobs.checks.if = "${{ false }}"' \
+  "$skipped_checks_job_fixture/.forgejo/workflows/ci.yml"
+rebind_ci_digest "$skipped_checks_job_fixture"
+if run_contracts "$skipped_checks_job_fixture" >/dev/null 2>&1; then
+  printf 'expected a skipped checks job to fail validation\n' >&2
+  exit 1
+fi
+((negative_fixture_count += 1))
+
+job_env_fixture="$fixture_root/checks-job-env"
+mkdir -p "$job_env_fixture"
+make_fixture "$job_env_fixture"
+yq -i '.jobs.checks.env.BASH_ENV = "/tmp/unreviewed"' \
+  "$job_env_fixture/.forgejo/workflows/ci.yml"
+rebind_ci_digest "$job_env_fixture"
+if run_contracts "$job_env_fixture" >/dev/null 2>&1; then
+  printf 'expected a checks-job environment override to fail validation\n' >&2
+  exit 1
+fi
+((negative_fixture_count += 1))
+
+workflow_env_fixture="$fixture_root/workflow-env"
+mkdir -p "$workflow_env_fixture"
+make_fixture "$workflow_env_fixture"
+yq -i '.env.BASH_ENV = "/tmp/unreviewed"' \
+  "$workflow_env_fixture/.forgejo/workflows/ci.yml"
+rebind_ci_digest "$workflow_env_fixture"
+if run_contracts "$workflow_env_fixture" >/dev/null 2>&1; then
+  printf 'expected an unreviewed workflow environment key to fail validation\n' >&2
+  exit 1
+fi
+((negative_fixture_count += 1))
 
 mode_fixture="$fixture_root/mode"
 mkdir -p "$mode_fixture"
@@ -230,8 +425,8 @@ if run_contracts "$python_guard_fixture" >/dev/null 2>&1; then
 fi
 ((negative_fixture_count += 1))
 
-if [[ $negative_fixture_count -ne 12 ]]; then
-  printf 'expected twelve negative release-contract fixtures, ran %s\n' \
+if [[ $negative_fixture_count -ne 27 ]]; then
+  printf 'expected twenty-seven negative release-contract fixtures, ran %s\n' \
     "$negative_fixture_count" >&2
   exit 1
 fi

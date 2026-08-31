@@ -27,7 +27,7 @@ generated_header_helper=terrabase-go/cmd/normalize-generated-protoc-version/main
 # This digest is the reviewed-tree trust boundary for the CI shell surface.
 # Semantic checks below document the required invariants, while byte identity
 # prevents an additional or obfuscated shell command from escaping them.
-readonly reviewed_ci_sha256='856825057502b0b2cd6c4a3b53d2b83c1521f962e15514e52b61e884bc2ead7b'
+readonly reviewed_ci_sha256='cd9daeb15df9c1345640892ec491011ecaa1c8acf85fb7983529ff32caf0ab33'
 readonly reviewed_generated_header_normalizer_sha256='3b5d9c2023949c23b03e3513a1c640d54427e9b177f0ed5624c5931606b81dc0'
 readonly reviewed_generated_header_helper_sha256='64d72dec26ab1a019ffbbb75d87166ad049edacf6f744fc423317d878a3aad84'
 
@@ -109,6 +109,77 @@ validate_job_checkout_binding() {
 
 validate_job_checkout_binding checks
 validate_job_checkout_binding go-client
+
+validate_fips_perl_bootstrap() {
+  local perl_step_count perl_step_index first_fips_index fips_step_count fips_step_index
+  local perl_run perl_expected fips_run fips_expected
+  perl_step_count="$(yq -r '[.jobs.checks.steps[] | select(.name == "Install pinned Perl for AWS-LC FIPS")] | length' "$ci")"
+  fips_step_count="$(yq -r '[.jobs.checks.steps[] | select(.name == "Build production server with AWS-LC FIPS")] | length' "$ci")"
+  [[ "$perl_step_count" -eq 1 && "$fips_step_count" -eq 1 ]]
+  [[ "$(yq -o=json -I=0 '.env' "$ci")" == '{"CC":"gcc","CXX":"g++","CARGO_TERM_COLOR":"always","CARGO_INCREMENTAL":0,"RUST_BACKTRACE":1,"RUSTDOCFLAGS":"-D warnings"}' ]]
+  yq eval --exit-status '(.jobs.checks | has("env")) | not' "$ci" >/dev/null
+  yq eval --exit-status '(.jobs.checks | has("if")) | not' "$ci" >/dev/null
+  yq eval --exit-status '(.jobs.checks | has("continue-on-error")) | not' "$ci" >/dev/null
+  [[ "$(yq -o=json -I=0 '.jobs.checks.steps[] | select(.name == "Install pinned Perl for AWS-LC FIPS") | keys | sort' "$ci")" == '["name","run"]' ]]
+  [[ "$(yq -o=json -I=0 '.jobs.checks.steps[] | select(.name == "Build production server with AWS-LC FIPS") | keys | sort' "$ci")" == '["name","run"]' ]]
+  perl_step_index="$(yq -r '.jobs.checks.steps | to_entries[] | select(.value.name == "Install pinned Perl for AWS-LC FIPS") | .key' "$ci")"
+  fips_step_index="$(yq -r '.jobs.checks.steps | to_entries[] | select(.value.name == "Build production server with AWS-LC FIPS") | .key' "$ci")"
+  first_fips_index="$(yq -r '.jobs.checks.steps | to_entries | [.[] | select((.value.run // "") | contains("production-fips"))][0].key' "$ci")"
+  [[ "$perl_step_index" -lt "$fips_step_index" && "$fips_step_index" -eq "$first_fips_index" ]]
+
+  perl_run="$(yq -r '.jobs.checks.steps[] | select(.name == "Install pinned Perl for AWS-LC FIPS") | .run' "$ci")"
+  perl_expected="$(cat <<'EOF'
+set -euo pipefail
+readonly perl_flake='github:NixOS/nixpkgs/c5c4a43b0e8056328ec4529f735cabdb8f1942bb?narHash=sha256-u6z9VTZA4Kf3RkHQo9sQI7NI4Ei%2FuiU9vrMqOiwWP1Y%3D'
+readonly perl_link="$GITHUB_WORKSPACE/.ci-tools/perl"
+[[ "$(uname -m)" == x86_64 ]]
+install -d -m 0755 "$(dirname "$perl_link")"
+nix build --out-link "$perl_link" "$perl_flake#perl^out"
+readonly perl_root="$(readlink -f "$perl_link")"
+[[ "$perl_root" == /nix/store/*-perl-5.42.0 ]]
+"$perl_root/bin/perl" -e 'die "unexpected Perl $^V\n" unless $^V eq v5.42.0'
+printf '%s\n' "$perl_root/bin" >> "$GITHUB_PATH"
+EOF
+)"
+  [[ "$perl_run" == "$perl_expected" ]]
+
+  fips_run="$(yq -r '.jobs.checks.steps[] | select(.name == "Build production server with AWS-LC FIPS") | .run' "$ci")"
+  fips_expected="$(cat <<'EOF'
+set -euo pipefail
+readonly perl_root=/nix/store/jksq0zyk08l29w4alp0g3ycgx6pwwjdk-perl-5.42.0
+readonly fips_target_dir="$(mktemp -d "${RUNNER_TEMP:?}/terrabase-fips.XXXXXX")"
+trap 'rm -rf -- "$fips_target_dir"' EXIT
+[[ "$(readlink -f "$GITHUB_WORKSPACE/.ci-tools/perl")" == "$perl_root" ]]
+[[ -x "$perl_root/bin/perl" ]]
+export PATH="$perl_root/bin:$PATH"
+export PERL="$perl_root/bin/perl"
+export CARGO_TARGET_DIR="$fips_target_dir"
+unset PERL5OPT PERL5LIB PERLLIB
+[[ "$(type -P perl)" == "$perl_root/bin/perl" ]]
+[[ "$(readlink -f "$(type -P perl)")" == "$perl_root/bin/perl" ]]
+deploy/release/require-fips-toolchain.sh
+cargo build -p terrabase-server --locked --release --no-default-features --features production-fips
+mapfile -d '' perl_caches < <(find "$fips_target_dir/release/build" -type f -path '*/aws-lc-fips-sys-*/out/build/CMakeCache.txt' -print0)
+[[ "${#perl_caches[@]}" -eq 1 ]]
+grep -Fxq "PERL_EXECUTABLE:FILEPATH=$perl_root/bin/perl" "${perl_caches[0]}"
+cargo test -p terrabase --locked --no-default-features --features production-fips --test encryption production_profile_links_an_operational_aws_lc_fips_module --exact
+cargo test -p terrabase-server --locked --no-default-features --features production-fips
+cargo test -p terrabase-member-transport --locked --no-default-features --features production-fips
+cargo test -p terrabase-tbep --locked --no-default-features --features production-fips
+cargo clippy -p terrabase --all-targets --locked --no-default-features --features production-fips -- -D warnings
+cargo clippy -p terrabase-member-transport --all-targets --locked --no-default-features --features production-fips -- -D warnings
+cargo clippy -p terrabase-tbep --all-targets --locked --no-default-features --features production-fips -- -D warnings
+cargo clippy -p terrabase-server --all-targets --locked --no-default-features --features production-fips -- -D warnings
+cargo doc -p terrabase-member-transport -p terrabase-tbep -p terrabase-server --no-deps --locked --no-default-features --features production-fips
+cargo test --manifest-path crates/terrabase-studio/Cargo.toml --locked --no-default-features --features production-fips
+cargo clippy --manifest-path crates/terrabase-studio/Cargo.toml --all-targets --locked --no-default-features --features production-fips -- -D warnings
+cargo doc --manifest-path crates/terrabase-studio/Cargo.toml --no-deps --locked --no-default-features --features production-fips
+EOF
+)"
+  [[ "$fips_run" == "$fips_expected" ]]
+}
+
+validate_fips_perl_bootstrap
 
 inject_checks_run_step() {
   local bypass_command="$1"
@@ -261,6 +332,11 @@ fi
 [[ $(grep -Fc 'run-id: ${{ inputs.capability_run_id }}' "$promote") -eq 2 ]]
 [[ $(grep -Fc 'deploy/release/verify-source-binding.sh' "$promote") -eq 2 ]]
 [[ $(grep -Fc 'deploy/release/require-fips-toolchain.sh' "$release") -eq 2 ]]
+[[ $(grep -Fc "readonly perl_flake='github:NixOS/nixpkgs/c5c4a43b0e8056328ec4529f735cabdb8f1942bb?narHash=sha256-u6z9VTZA4Kf3RkHQo9sQI7NI4Ei%2FuiU9vrMqOiwWP1Y%3D'" "$ci") -eq 1 ]]
+[[ $(grep -Fc 'nix build --out-link "$perl_link" "$perl_flake#perl^out"' "$ci") -eq 1 ]]
+[[ $(grep -Fc 'readonly perl_root="$(readlink -f "$perl_link")"' "$ci") -eq 1 ]]
+[[ $(grep -Fc 'unless $^V eq v5.42.0' "$ci") -eq 1 ]]
+[[ $(grep -Fc 'deploy/release/require-fips-toolchain.sh' "$ci") -eq 2 ]]
 grep -Fq '"$script_dir/require-fips-toolchain.sh"' deploy/release/package.sh
 grep -Fq 'build_arguments+=(--no-default-features --features production-fips)' deploy/release/package.sh
 grep -Fq 'terrabase feature "production-fips"' deploy/release/package.sh

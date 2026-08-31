@@ -21,7 +21,7 @@
 //! available index always carries the reason in its record, because every
 //! unchosen complete candidate records why it lost. Records are bounded
 //! engine state ([`MAX_SELECTION_RECORDS`]) and readable through the typed
-//! [`QueryStore`](super::QueryStore) reads — they are engine state, not a log
+//! `QueryStore` reads — they are engine state, not a log
 //! line and not a debug flag.
 //!
 //! # Automatic creation (D-2)
@@ -65,7 +65,7 @@
 //! through the bounded scan (correct, only not accelerated). The gap is
 //! closed by the next lifecycle pass, whose coverage catch-up rebuilds every
 //! reported namespace that trails the latest publication; see
-//! [`lifecycle`].
+//! `lifecycle`.
 //!
 //! # Selection order (AX-13, adapted)
 //!

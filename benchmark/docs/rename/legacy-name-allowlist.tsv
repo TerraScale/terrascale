@@ -1,6 +1,6 @@
 # path<TAB>expected-match-count<TAB>match-fingerprint-sha256<TAB>compatibility-class<TAB>reason
 crates/terrabase-causal/src/lib.rs	2	4365e074af24c4180dc70c870ed8534d982d360c3883ae00098896b5fd729684	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
-crates/terrabase-member-transport/src/journal.rs	1	d7cb457fdbdb44f26aacab932cc6c33d00521f27dfdcb3f3abf5334ccd5e95b2	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
+crates/terrabase-member-transport/src/journal.rs	1	1afa98dd16824e34374d43ad1a65539e5503958853d712e16f540cdfe509a320	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 crates/terrabase-replication-core/tests/vectors/adr0023/anti-entropy-causal-summary.json	1	6ba2573adfcb521c691423dafc1fbebb88448f9071e08368919aaf36959ab276	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 crates/terrabase-studio/src/s3_backup.rs	1	d520ede2ad53b4b330e30077e2e1c5a096ac1e2031133c9e5685f41d6adf5700	persisted	Persisted manifest filename compatibility.
 docs/adr/0037-s3-recovery-point-repository.md	1	067a9ac741de1ad7a483468018f641a274e6b4aa3422b6fe29d812aed05f4c6f	persisted	Persisted manifest filename compatibility.

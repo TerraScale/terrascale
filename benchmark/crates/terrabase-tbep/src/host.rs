@@ -2,7 +2,7 @@
 //!
 //! [`TbepHost`] is the seam the engine process wires behind TBEP: one
 //! method per typed operation, the subscription feeds of the backbone
-//! streams, and the supervision contract. The server ([`crate::server`])
+//! streams, and the supervision contract. The server (`crate::server`)
 //! serves any `TbepHost` over the UDS binding.
 //!
 //! Three hosts ship in this crate:

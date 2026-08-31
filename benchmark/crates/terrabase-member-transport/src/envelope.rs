@@ -18,6 +18,9 @@
 
 use crate::clock::LaneInstant;
 use crate::identity::{CollectionName, DocumentId, MemberId, OperationId, TenantId};
+#[cfg(feature = "production-fips")]
+use aws_lc_rs::digest::{Context, Digest, SHA256};
+#[cfg(feature = "local-crypto")]
 use ring::digest::{Context, Digest, SHA256};
 
 /// The schema name every member envelope carries.

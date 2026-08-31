@@ -50,7 +50,7 @@ const CLOSE_AUTHORIZATION: u32 = 0x5442_0002;
 pub enum ProductionRegion {
     /// Sao Paulo.
     Gru,
-    /// San Jose, exposed only under TerraScale's stable `SFO` code.
+    /// San Jose, exposed only under `TerraScale`'s stable `SFO` code.
     Sfo,
     /// Frankfurt.
     Fra,
@@ -184,7 +184,7 @@ impl MemberWorkloadIdentity {
         Self::parse(uri_sans[0]).map_err(|_| ProductionTransportError::InvalidPeerCertificate)
     }
 
-    /// Returns the TerraScale environment segment.
+    /// Returns the `TerraScale` environment segment.
     #[must_use]
     pub fn environment(&self) -> &str {
         &self.environment
@@ -319,13 +319,13 @@ impl ProductionTransportLimits {
             || max_queued_bytes < max_frame_bytes
             || max_queued_bytes > 1024 * 1024 * 1024
             || handshake_timeout.is_zero()
-            || handshake_timeout > Duration::from_secs(60)
+            || handshake_timeout > Duration::from_mins(1)
             || frame_timeout.is_zero()
-            || frame_timeout > Duration::from_secs(120)
+            || frame_timeout > Duration::from_mins(2)
             || idle_timeout.is_zero()
-            || idle_timeout > Duration::from_secs(600)
+            || idle_timeout > Duration::from_mins(10)
             || drain_timeout.is_zero()
-            || drain_timeout > Duration::from_secs(300);
+            || drain_timeout > Duration::from_mins(5);
         if invalid {
             return Err(ProductionTransportError::InvalidLimits);
         }
@@ -353,7 +353,7 @@ impl ProductionTransportLimits {
             max_queued_bytes: 64 * 1024 * 1024,
             handshake_timeout: Duration::from_secs(10),
             frame_timeout: Duration::from_secs(30),
-            idle_timeout: Duration::from_secs(60),
+            idle_timeout: Duration::from_mins(1),
             drain_timeout: Duration::from_secs(30),
         }
     }
@@ -613,6 +613,7 @@ impl ProductionFrameQueue {
 
 /// Factual state exposed to the owning Member runtime.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct ProductionTransportFacts {
     /// The UDP socket is bound.
     pub bound: bool,
@@ -667,6 +668,7 @@ impl ProductionQuicEndpoint {
     /// Returns a typed transport error when FIPS mode is unavailable, the
     /// local certificate identity differs from the configured identity, TLS
     /// material cannot be installed, or the UDP address cannot be bound.
+    #[allow(clippy::too_many_lines)]
     pub fn bind(
         config: ProductionTransportConfig,
         tls: ProductionTlsMaterial,
@@ -868,7 +870,7 @@ impl ProductionQuicEndpoint {
                 .await
                 .map_err(|_| ProductionTransportError::Timeout)??;
         self.validate_hello(&remote_hello, &certificate_identity, &peer)?;
-        self.finish_connection(connection, certificate_identity, remote_hello)
+        self.finish_connection(connection, certificate_identity, &remote_hello)
     }
 
     /// Accepts and authenticates the next inbound connection.
@@ -918,7 +920,7 @@ impl ProductionQuicEndpoint {
         .await
         .map_err(|_| ProductionTransportError::Timeout)??;
         send.finish().map_err(|_| ProductionTransportError::ConnectionFailed)?;
-        self.finish_connection(connection, certificate_identity, remote_hello).map(Some)
+        self.finish_connection(connection, certificate_identity, &remote_hello).map(Some)
     }
 
     fn validate_hello(
@@ -955,7 +957,7 @@ impl ProductionQuicEndpoint {
         &self,
         connection: quinn::Connection,
         peer: MemberWorkloadIdentity,
-        hello: ConnectionHello,
+        hello: &ConnectionHello,
     ) -> Result<ProductionConnection, ProductionTransportError> {
         let registration = self.state.register_connection(peer.member())?;
         Ok(ProductionConnection {
@@ -1385,12 +1387,12 @@ struct ConnectionRegistration {
 
 impl Drop for ConnectionRegistration {
     fn drop(&mut self) {
-        if let Ok(mut connections) = self.state.connections_by_peer.lock() {
-            if let Some(count) = connections.get_mut(&self.peer) {
-                *count = count.saturating_sub(1);
-                if *count == 0 {
-                    connections.remove(&self.peer);
-                }
+        if let Ok(mut connections) = self.state.connections_by_peer.lock()
+            && let Some(count) = connections.get_mut(&self.peer)
+        {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                connections.remove(&self.peer);
             }
         }
         self.state.authenticated_connections.fetch_sub(1, Ordering::AcqRel);

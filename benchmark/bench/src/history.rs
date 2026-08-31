@@ -75,7 +75,7 @@ enum Loaded {
     Missing,
     Failed(Failure),
     Invalid(Failure),
-    Complete(Complete),
+    Complete(Box<Complete>),
     Diagnostic(DiagnosticComplete),
 }
 
@@ -364,7 +364,7 @@ fn attempt_key(path: &Path, prefix: &str) -> (u8, u128, String) {
 enum Outcome {
     /// Comparable, decision-grade evidence carrying a full comparability
     /// contract.
-    Decision(Complete),
+    Decision(Box<Complete>),
     /// A complete diagnostic-boundary run: retained for the TB-17 trajectory
     /// but never comparable with the reference sides.
     Diagnostic(DiagnosticComplete),
@@ -373,9 +373,10 @@ enum Outcome {
 /// Validates a document for the decision-grade comparison table. Existing
 /// callers treat a diagnostic run as an error; rendering routes through
 /// [`validate`] instead.
+#[cfg(test)]
 fn validate_complete(document: &Value, target: &str, workload: &str) -> Result<Complete, String> {
     match validate(document, target, workload)? {
-        Outcome::Decision(complete) => Ok(complete),
+        Outcome::Decision(complete) => Ok(*complete),
         Outcome::Diagnostic(_) => {
             Err("diagnostic qualification result is not decision-grade evidence".to_owned())
         }
@@ -470,7 +471,7 @@ fn validate(document: &Value, target: &str, workload: &str) -> Result<Outcome, S
     }
     let comparability =
         validate_comparability(fields.get("comparability"), config, environment, target)?;
-    Ok(Outcome::Decision(Complete { identity, samples, comparability }))
+    Ok(Outcome::Decision(Box::new(Complete { identity, samples, comparability })))
 }
 
 fn is_diagnostic_result(fields: &serde_json::Map<String, Value>, identity: &str) -> bool {
@@ -716,7 +717,7 @@ fn render_row(workload: &str, target: &str, samples: &[Sample]) -> String {
 }
 
 fn markdown_inline(value: &str) -> String {
-    value.replace('|', "\\|").replace('\n', " ").replace('\r', " ")
+    value.replace('|', "\\|").replace(['\n', '\r'], " ")
 }
 
 fn retained_failures(results: &Path) -> Vec<(String, String)> {

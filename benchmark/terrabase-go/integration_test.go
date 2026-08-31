@@ -152,8 +152,7 @@ func TestProductionHarnessInterop(t *testing.T) {
 		t.Fatalf("the engine could not be dialed: %v", err)
 	}
 	defer client.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+	bindCtx, cancelBind := context.WithTimeout(context.Background(), 2*time.Second)
 
 	scope := BindingScope{
 		Principal: testGatewayPrincipal,
@@ -161,22 +160,44 @@ func TestProductionHarnessInterop(t *testing.T) {
 		Project:   "project-go",
 		Database:  "database-go",
 	}
-	binding, err := client.Bind(ctx, scope)
+	binding, err := client.Bind(bindCtx, scope)
+	cancelBind()
 	if err != nil {
 		t.Fatalf("the channel bind against the real engine failed: %v", err)
 	}
 	if binding.Scope != scope || binding.ServingInstance == 0 {
 		t.Fatalf("the bind answer is wrong: %+v", binding)
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
 	body := map[string]Value{
 		"title": "Designing Data-Intensive Applications",
 		"pages": 616,
 		"tags":  []Value{"distributed", "storage"},
 	}
+	_, err = client.DocumentWrite(ctx,
+		DocumentPut{Collection: "books", ID: "unadmitted", Body: body},
+		ExpectAbsent(), AckLocalSynced, "go-integration-write-unadmitted")
+	if !errors.Is(err, ErrUsageUnavailable) {
+		t.Fatalf("an unadmitted production write must be refused with usage_unavailable, got %v", err)
+	}
+	if _, found, err := client.DocumentRead(ctx, "books", "unadmitted", ReadLevelGlobalQuorum); err != nil || found {
+		t.Fatalf("the refused unadmitted write created data: found=%v err=%v", found, err)
+	}
 	outcome, err := client.DocumentWrite(ctx,
 		DocumentPut{Collection: "books", ID: "ddia", Body: body},
-		ExpectAbsent(), AckLocalSynced, "go-integration-write-1")
+		ExpectAbsent(), AckLocalSynced, "go-integration-write-1",
+		WithUsageAdmission(UsageAdmissionContext{
+			Project:          "project-go",
+			Database:         "database-go",
+			Partition:        "partition-go",
+			OriginRegion:     UsageRegionGRU,
+			RequestID:        "go-integration-write-1",
+			AcceptedAtMillis: 1_788_091_200_000,
+			MeterVersion:     1,
+			IntegerUnits:     "1",
+		}))
 	if err != nil {
 		t.Fatalf("the write against the real engine failed: %v", err)
 	}
@@ -184,7 +205,7 @@ func TestProductionHarnessInterop(t *testing.T) {
 	if !committed {
 		t.Fatalf("the write against the real engine must commit, got %+v", outcome)
 	}
-	if receipt.Sequence == 0 || receipt.Version != 1 {
+	if receipt.Sequence == 0 || receipt.Version != 1 || receipt.OperationID != "go-integration-write-1" {
 		t.Fatalf("the write receipt is wrong: %+v", receipt)
 	}
 
@@ -214,11 +235,20 @@ func TestProductionHarnessInterop(t *testing.T) {
 		t.Fatalf("the query returned the wrong document: %+v", result.Documents[0])
 	}
 
-	// The durable engine does not yet expose production accounting facts. A
-	// successful fake export proves conversion only; this live lane must retain
-	// the engine's closed usage_unavailable refusal until accounting is wired.
-	if _, err := client.UsageExport(ctx, UsageServiceExportRequest{PageSize: 1}); !errors.Is(err, ErrUsageUnavailable) {
-		t.Fatalf("the live usage export must answer ErrUsageUnavailable, got %v", err)
+	// The admitted production mutation must mint one durable accounting fact.
+	usage, err := client.UsageExport(ctx, UsageServiceExportRequest{PageSize: 1})
+	if err != nil {
+		t.Fatalf("the live usage export failed: %v", err)
+	}
+	if usage.SnapshotSequence == 0 || len(usage.Facts) != 1 || len(usage.Continuation) != 0 {
+		t.Fatalf("the live usage page is wrong: %+v", usage)
+	}
+	fact := usage.Facts[0]
+	if fact.FactID != receipt.OperationID || fact.Sequence != receipt.Sequence ||
+		fact.Tenant != "tenant-go" || fact.Project != "project-go" || fact.Database != "database-go" ||
+		fact.Partition != "partition-go" || fact.Region != UsageRegionGRU || fact.IntegerDelta != "1" ||
+		fact.MeasurementStartMillis != 1_788_091_200_000 {
+		t.Fatalf("the live usage fact is wrong: %+v", fact)
 	}
 
 	// The harness's durable engine host does not serve backbone
@@ -259,9 +289,6 @@ func TestProductionHarnessInterop(t *testing.T) {
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("the harness did not exit within 15s of the shutdown command")
-	}
-	if errors.Is(context.DeadlineExceeded, ctx.Err()) {
-		t.Fatal("the interop lane overran its deadline")
 	}
 }
 

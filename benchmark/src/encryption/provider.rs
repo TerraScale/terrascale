@@ -1,7 +1,7 @@
 //! Provider-neutral database-key metadata and lifecycle contracts.
 //!
 //! These types contain no OCI resource names or credentials. The
-//! Orchestrator-owned adapter resolves a canonical [`RegionCode`] to provider
+//! Orchestrator-owned adapter resolves a canonical `RegionCode` to provider
 //! configuration outside `TerraBase`.
 
 use std::fmt;
@@ -413,7 +413,7 @@ impl DatabaseKeyLease {
     /// Creates a local lease for non-production tests and development only.
     ///
     /// Production cipher construction rejects leases created by this method;
-    /// an adapter must use [`Self::from_adapter`] after external authorization.
+    /// an adapter must use `Self::from_adapter` after external authorization.
     ///
     /// # Errors
     ///

@@ -120,25 +120,25 @@ impl ProductionCatalogBootstrap {
 
         let routes = match DatabaseRoutingCatalog::try_new(route_scopes) {
             Ok(routes) => routes,
-            Err(error) => return close_with(member, ProductionCatalogError::Routing(error)),
+            Err(error) => return close_with(&member, ProductionCatalogError::Routing(error)),
         };
         let placement = match build_placement(config) {
             Ok(placement) => placement,
-            Err(error) => return close_with(member, error),
+            Err(error) => return close_with(&member, error),
         };
 
         if enabled
             .iter()
             .any(|database| !placement.regions().any(|entry| entry.region() == database.region))
         {
-            return close_with(member, ProductionCatalogError::DatabaseRegionNotPlaced);
+            return close_with(&member, ProductionCatalogError::DatabaseRegionNotPlaced);
         }
 
         let member_databases = member.database_ids().cloned().collect::<BTreeSet<_>>();
         let route_databases =
             routes.routes().map(|(_, database)| database.clone()).collect::<BTreeSet<_>>();
         if member_databases != route_databases || member.status().databases != routes.len() {
-            return close_with(member, ProductionCatalogError::CatalogMismatch);
+            return close_with(&member, ProductionCatalogError::CatalogMismatch);
         }
 
         Ok(Self { root, member: Some(member), specs, routes, placement, limits })
@@ -205,6 +205,11 @@ impl ProductionCatalogBootstrap {
     /// This consumes the bootstrap and moves the exact opened [`Member`]; no
     /// clone or second storage authority is created. The returned parts own
     /// the Member and must eventually close it after runtime draining.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the bootstrap was already closed and no longer owns its
+    /// Member. A closed bootstrap cannot be transferred into a live runtime.
     #[must_use]
     pub fn into_parts(mut self) -> ProductionCatalogParts {
         let member =
@@ -479,7 +484,7 @@ fn build_placement(
 }
 
 fn close_with<T>(
-    member: Member,
+    member: &Member,
     error: ProductionCatalogError,
 ) -> Result<T, ProductionCatalogError> {
     match member.close(Duration::from_secs(30)) {
@@ -601,7 +606,7 @@ mod tests {
         let (bootstrap, root, spec) = opened_bootstrap("post-open");
         let parts = bootstrap.into_parts();
         let result: Result<(), ProductionCatalogError> =
-            close_with(parts.member, ProductionCatalogError::CatalogMismatch);
+            close_with(&parts.member, ProductionCatalogError::CatalogMismatch);
         assert_eq!(result, Err(ProductionCatalogError::CatalogMismatch));
         reopen(&root, spec.clone());
         let _ = fs::remove_dir_all(&root);

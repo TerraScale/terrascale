@@ -60,7 +60,7 @@ use x509_parser::prelude::X509Certificate;
 
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls;
-use tokio_rustls::rustls::pki_types::CertificateDer;
+use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 use terrabase::observability::{
     MetricsRegistry, Operation as MetricOperation, Outcome as MetricOutcome, Region as MetricRegion,
@@ -903,8 +903,9 @@ fn tls_server_config(
     key_pem: &str,
     client_ca_pem: &str,
 ) -> std::io::Result<Arc<rustls::ServerConfig>> {
-    let mut server_reader = std::io::BufReader::new(server_pem.as_bytes());
-    let certificates = rustls_pemfile::certs(&mut server_reader)
+    use rustls_pki_types::pem::PemObject;
+
+    let certificates = CertificateDer::pem_slice_iter(server_pem.as_bytes())
         .collect::<Result<Vec<CertificateDer<'static>>, _>>()
         .map_err(std::io::Error::other)?;
     if certificates.is_empty() {
@@ -913,16 +914,10 @@ fn tls_server_config(
             "the TLS server certificate chain is empty",
         ));
     }
-    let mut key_reader = std::io::BufReader::new(key_pem.as_bytes());
-    let key = rustls_pemfile::private_key(&mut key_reader)
-        .map_err(std::io::Error::other)?
-        .ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "the TLS private key is empty")
-        })?;
+    let key = PrivateKeyDer::from_pem_slice(key_pem.as_bytes()).map_err(std::io::Error::other)?;
 
     let mut roots = rustls::RootCertStore::empty();
-    let mut ca_reader = std::io::BufReader::new(client_ca_pem.as_bytes());
-    let ca_certificates = rustls_pemfile::certs(&mut ca_reader)
+    let ca_certificates = CertificateDer::pem_slice_iter(client_ca_pem.as_bytes())
         .collect::<Result<Vec<CertificateDer<'static>>, _>>()
         .map_err(std::io::Error::other)?;
     if ca_certificates.is_empty() {
@@ -935,7 +930,18 @@ fn tls_server_config(
         roots.add(certificate).map_err(std::io::Error::other)?;
     }
 
+    #[cfg(feature = "local-crypto")]
     let provider = Arc::new(rustls::crypto::ring::default_provider());
+    #[cfg(feature = "production-fips")]
+    let provider = {
+        let provider = rustls::crypto::aws_lc_rs::default_provider();
+        if !provider.fips() {
+            return Err(std::io::Error::other(
+                "the production TLS provider is not operating in FIPS mode",
+            ));
+        }
+        Arc::new(provider)
+    };
     let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
         Arc::new(roots),
         Arc::clone(&provider),

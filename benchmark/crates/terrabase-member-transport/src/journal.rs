@@ -20,6 +20,9 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "production-fips")]
+use aws_lc_rs::digest::{Context, SHA256};
+#[cfg(feature = "local-crypto")]
 use ring::digest::{Context, SHA256};
 
 use crate::clock::ClockStamp;
