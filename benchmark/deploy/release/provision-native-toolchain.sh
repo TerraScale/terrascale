@@ -114,6 +114,12 @@ done
   printf 'CMAKE_MAKE_PROGRAM=%s/bin/ninja\n' "$ninja_root"
   printf 'PERL=%s/bin/perl\n' "$perl_root"
   printf 'GO=%s/bin/go\n' "$go_root"
+  printf 'GOROOT=%s/share/go\n' "$go_root"
+  printf 'GOENV=off\n'
+  printf 'GOTOOLCHAIN=local\n'
+  printf 'GOPATH=%s/go-path\n' "$tools_root"
+  printf 'GOCACHE=%s/go-cache\n' "$tools_root"
+  printf 'GOBIN=%s/go-bin\n' "$tools_root"
   printf 'READELF=%s/bin/readelf\n' "$binutils_root"
   printf 'CARGO_TARGET_%s_LINKER=%s/bin/gcc\n' \
     "$(printf '%s' "$target" | tr '[:lower:]-' '[:upper:]_')" "$gcc_root"

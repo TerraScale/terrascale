@@ -94,12 +94,18 @@ jq -e \
   --arg oci "$oci_name" \
   --arg sbom "$sbom_name" \
   --arg provenance "$provenance_name" \
+  --arg expected_arch "$expected_arch" \
   '
     .schemaVersion == 1 and
     .artifacts.archive.name == $archive and
     (.artifacts.archive.sha256 | test("^[0-9a-f]{64}$")) and
     .artifacts.ociArchive.name == $oci and
     (.artifacts.ociArchive.sha256 | test("^[0-9a-f]{64}$")) and
+    (.ociImage.manifestDigest | test("^sha256:[0-9a-f]{64}$")) and
+    (.ociImage.manifestSize | type == "number" and . > 0 and floor == .) and
+    .ociImage.mediaType == "application/vnd.oci.image.manifest.v1+json" and
+    .ociImage.os == "linux" and
+    .ociImage.architecture == $expected_arch and
     .evidence.sbom == $sbom and
     .evidence.provenance == $provenance and
     .evidence.checksums == "SHA256SUMS" and
@@ -148,9 +154,31 @@ fi
 
 archive_digest=$(jq -er '.artifacts.archive.sha256' "$manifest")
 oci_digest=$(jq -er '.artifacts.ociArchive.sha256' "$manifest")
+oci_manifest_digest=$(jq -er '.ociImage.manifestDigest' "$manifest")
+oci_manifest_size=$(jq -er '.ociImage.manifestSize' "$manifest")
+oci_manifest_media_type=$(jq -er '.ociImage.mediaType' "$manifest")
 [[ $(sha256sum "$output/$archive_name" | awk '{print $1}') == "$archive_digest" ]]
 [[ $(sha256sum "$output/$oci_name" | awk '{print $1}') == "$oci_digest" ]]
 [[ $(jq -er '.metadata.component.hashes[] | select(.alg == "SHA-256") | .content' "$output/$sbom_name") == "$oci_digest" ]]
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/terrabase-verify.XXXXXXXX")
+cleanup() {
+  if [[ -n ${work-} && -d "$work" && "$work" == */terrabase-verify.* ]]; then
+    rm -rf -- "$work"
+  fi
+}
+trap cleanup EXIT
+oci_manifest_raw=$work/oci-manifest.json
+skopeo inspect --raw "oci-archive:$output/$oci_name:$oci_tag" >"$oci_manifest_raw"
+observed_oci_manifest_digest=sha256:$(sha256sum "$oci_manifest_raw" | awk '{print $1}')
+observed_oci_manifest_size=$(stat -c '%s' "$oci_manifest_raw")
+observed_oci_manifest_media_type=$(jq -er '.mediaType' "$oci_manifest_raw")
+[[ "$observed_oci_manifest_digest" == "$oci_manifest_digest" \
+  && "$observed_oci_manifest_size" == "$oci_manifest_size" \
+  && "$observed_oci_manifest_media_type" == "$oci_manifest_media_type" ]] || {
+  echo "OCI image manifest descriptor differs from the signed release identity" >&2
+  exit 1
+}
 jq -e \
   --arg package "$package" \
   --arg version "$version" \
@@ -178,6 +206,11 @@ jq -e \
   --arg tree "$(jq -er '.source.tree' "$manifest")" \
   --argjson dirty "$(jq -er '.source.dirty' "$manifest")" \
   --arg component "$component" \
+  --arg oci_manifest_digest "$oci_manifest_digest" \
+  --argjson oci_manifest_size "$oci_manifest_size" \
+  --arg oci_manifest_media_type "$oci_manifest_media_type" \
+  --arg oci_os linux \
+  --arg oci_architecture "$expected_arch" \
   --arg fips_feature_graph "$fips_feature_graph_name" \
   --arg fips_feature_graph_digest "$fips_feature_graph_digest" \
   --argjson expected_native_tools "$expected_native_tools" \
@@ -192,6 +225,13 @@ jq -e \
     .predicate.buildDefinition.externalParameters.profile == "release" and
     .predicate.buildDefinition.externalParameters.sourceDirty == $dirty and
     .predicate.buildDefinition.internalParameters.nativeTools == $expected_native_tools and
+    .predicate.buildDefinition.internalParameters.ociImage == {
+      "manifestDigest": $oci_manifest_digest,
+      "manifestSize": $oci_manifest_size,
+      "mediaType": $oci_manifest_media_type,
+      "os": $oci_os,
+      "architecture": $oci_architecture
+    } and
     (.predicate.buildDefinition.internalParameters.rustc | test("^rustc 1[.]97[.]1 ")) and
     (.predicate.buildDefinition.internalParameters.cargoLockSha256 | test("^[0-9a-f]{64}$")) and
     .predicate.buildDefinition.internalParameters.fipsFeatureGraph.name == $fips_feature_graph and
@@ -202,14 +242,6 @@ jq -e \
     ([.predicate.buildDefinition.resolvedDependencies[] | select(.uri == $base)] | length) == 1 and
     .predicate.runDetails.builder.id == "https://git.terrascale.tech/TerraScale/TerraBase/.forgejo/workflows/release.yml"
   ' "$output/$provenance_name" >/dev/null
-
-work=$(mktemp -d "${TMPDIR:-/tmp}/terrabase-verify.XXXXXXXX")
-cleanup() {
-  if [[ -n ${work-} && -d "$work" && "$work" == */terrabase-verify.* ]]; then
-    rm -rf -- "$work"
-  fi
-}
-trap cleanup EXIT
 
 expected_archive_entries=$(printf '%s\n' \
   "$artifact_stem/" \

@@ -337,6 +337,23 @@ buildah \
   "$image_ref" \
   "oci-archive:$output/$oci_name:$oci_tag"
 
+oci_manifest_raw=$work/oci-manifest.json
+skopeo inspect --raw "oci-archive:$output/$oci_name:$oci_tag" >"$oci_manifest_raw"
+oci_manifest_digest=sha256:$(sha256sum "$oci_manifest_raw" | awk '{print $1}')
+oci_manifest_size=$(stat -c '%s' "$oci_manifest_raw")
+oci_manifest_media_type=$(jq -er '.mediaType' "$oci_manifest_raw")
+[[ "$oci_manifest_media_type" == application/vnd.oci.image.manifest.v1+json ]] || {
+  echo "OCI archive contains an unsupported image manifest media type" >&2
+  exit 1
+}
+image_metadata=$(skopeo inspect "oci-archive:$output/$oci_name:$oci_tag")
+observed_arch=$(jq -er '.Architecture' <<<"$image_metadata")
+observed_os=$(jq -er '.Os' <<<"$image_metadata")
+[[ "$observed_arch" == "$oci_arch" && "$observed_os" == linux ]] || {
+  echo "OCI archive platform mismatch: expected linux/$oci_arch, observed $observed_os/$observed_arch" >&2
+  exit 1
+}
+
 oci_digest=$(sha256sum "$output/$oci_name" | awk '{print $1}')
 archive_digest=$(sha256sum "$output/$archive_name" | awk '{print $1}')
 lock_digest=$(sha256sum "$(dirname -- "$manifest")/Cargo.lock" | awk '{print $1}')
@@ -358,6 +375,11 @@ jq -n \
   --arg component "$component" \
   --arg rust "$rust_version" \
   --arg lock_digest "$lock_digest" \
+  --arg oci_manifest_digest "$oci_manifest_digest" \
+  --argjson oci_manifest_size "$oci_manifest_size" \
+  --arg oci_manifest_media_type "$oci_manifest_media_type" \
+  --arg oci_os "$observed_os" \
+  --arg oci_architecture "$observed_arch" \
   --arg fips_feature_graph "$fips_feature_graph_name" \
   --arg fips_feature_graph_digest "$fips_feature_graph_digest" \
   --argjson native_tools "$(<"$native_tools_json")" \
@@ -380,6 +402,13 @@ jq -n \
           "rustc": $rust,
           "cargoLockSha256": $lock_digest,
           "nativeTools": $native_tools,
+          "ociImage": {
+            "manifestDigest": $oci_manifest_digest,
+            "manifestSize": $oci_manifest_size,
+            "mediaType": $oci_manifest_media_type,
+            "os": $oci_os,
+            "architecture": $oci_architecture
+          },
           "fipsFeatureGraph": {
             "name": $fips_feature_graph,
             "sha256": $fips_feature_graph_digest
@@ -408,6 +437,11 @@ jq -n \
   --arg archive_digest "$archive_digest" \
   --arg oci "$oci_name" \
   --arg oci_digest "$oci_digest" \
+  --arg oci_manifest_digest "$oci_manifest_digest" \
+  --argjson oci_manifest_size "$oci_manifest_size" \
+  --arg oci_manifest_media_type "$oci_manifest_media_type" \
+  --arg oci_os "$observed_os" \
+  --arg oci_architecture "$observed_arch" \
   --arg sbom "$sbom_name" \
   --arg provenance "$provenance_name" \
   --arg fips_feature_graph "$fips_feature_graph_name" \
@@ -424,6 +458,13 @@ jq -n \
     artifacts: {
       archive: {name: $archive, sha256: $archive_digest},
       ociArchive: {name: $oci, sha256: $oci_digest}
+    },
+    ociImage: {
+      manifestDigest: $oci_manifest_digest,
+      manifestSize: $oci_manifest_size,
+      mediaType: $oci_manifest_media_type,
+      os: $oci_os,
+      architecture: $oci_architecture
     },
     evidence: (
       {
@@ -454,12 +495,6 @@ jq -n \
   LC_ALL=C sha256sum "${checksum_files[@]}" >SHA256SUMS
   sha256sum --check --strict SHA256SUMS
 )
-
-observed_arch=$(skopeo inspect "oci-archive:$output/$oci_name:$oci_tag" | jq -er '.Architecture')
-[[ "$observed_arch" == "$oci_arch" ]] || {
-  echo "OCI archive architecture mismatch: expected $oci_arch, observed $observed_arch" >&2
-  exit 1
-}
 
 "$script_dir/verify.sh" --unsigned "$output"
 

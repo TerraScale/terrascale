@@ -111,7 +111,17 @@ jobs:
           [[ -x "$perl_root/bin/perl" ]]
           export PATH="$perl_root/bin:$PATH"
           export PERL="$perl_root/bin/perl"
-          export GO="$(type -P go)"
+          readonly go_command="$(type -P go)"
+          [[ -x "$go_command" ]]
+          unset GOROOT GOENV GOTOOLCHAIN GOBIN GOPATH GOCACHE
+          export GOENV=off
+          export GOTOOLCHAIN=local
+          export GOROOT="$(env -u GOROOT GOENV=off GOTOOLCHAIN=local "$go_command" env GOROOT)"
+          export GO="$go_command"
+          export GOPATH="$fips_target_dir/go-path"
+          export GOCACHE="$fips_target_dir/go-cache"
+          export GOBIN="$fips_target_dir/go-bin"
+          export PATH="$GOROOT/bin:$PATH"
           export CARGO_TARGET_DIR="$fips_target_dir"
           unset PERL5OPT PERL5LIB PERLLIB
           [[ "$(type -P perl)" == "$perl_root/bin/perl" ]]
@@ -225,7 +235,7 @@ jobs:
           go install github.com/mikefarah/yq/v4@v4.45.1
           "$GOBIN/yq" --version | grep -F 'version v4.45.1'
           echo "$GOBIN" >> "$GITHUB_PATH"
-      - name: Release packaging definitions
+      - name: Release packaging and immutable OCI definitions
         run: |
           jq --exit-status . .terrascale/deploy.json >/dev/null
           bash -n deploy/release/candidate.sh deploy/release/native-toolchain-identity.sh deploy/release/package.sh deploy/release/provision-native-toolchain.sh deploy/release/publish-oci.sh deploy/release/reproduce.sh deploy/release/require-fips-toolchain.sh deploy/release/require-production-capability.sh deploy/release/sign.sh deploy/release/test-boundary.sh deploy/release/test-oci.sh deploy/release/test-publish-oci.sh deploy/release/test-sbom.sh deploy/release/test-workflow-runs.sh deploy/release/verify-fips-cmake-caches.sh deploy/release/verify-oci.sh deploy/release/verify-source-binding.sh deploy/release/verify-workflow-runs.sh deploy/release/verify.sh scripts/run-checked-go-tests.sh scripts/run-checked-rust-tests.sh scripts/validate-release-contracts.sh scripts/validate-studio-assets.sh
@@ -357,7 +367,17 @@ jobs:
           trap 'rm -rf -- "$integration_target"' EXIT
           export PATH="$perl_root/bin:$PATH"
           export PERL="$perl_root/bin/perl"
-          export GO="$(type -P go)"
+          readonly go_command="$(type -P go)"
+          [[ -x "$go_command" ]]
+          unset GOROOT GOENV GOTOOLCHAIN GOBIN GOPATH GOCACHE
+          export GOENV=off
+          export GOTOOLCHAIN=local
+          export GOROOT="$(env -u GOROOT GOENV=off GOTOOLCHAIN=local "$go_command" env GOROOT)"
+          export GO="$go_command"
+          export GOPATH="$integration_target/go-path"
+          export GOCACHE="$integration_target/go-cache"
+          export GOBIN="$integration_target/go-bin"
+          export PATH="$GOROOT/bin:$PATH"
           export CARGO_TARGET_DIR="$integration_target"
           unset PERL5OPT PERL5LIB PERLLIB
           deploy/release/require-fips-toolchain.sh

@@ -27,17 +27,17 @@ generated_header_helper=terrabase-go/cmd/normalize-generated-protoc-version/main
 # This digest is the reviewed-tree trust boundary for the CI shell surface.
 # Semantic checks below document the required invariants, while byte identity
 # prevents an additional or obfuscated shell command from escaping them.
-readonly reviewed_ci_sha256='cf393494869b278a7e3b614770aaddb59bb8ace37e7af4530d030eb36fefdfe6'
-readonly reviewed_ci_semantic_sha256='991382d4daa666075f0d33d6455982887618a6a2d049a88085d49f64b1720d79'
+readonly reviewed_ci_sha256='99c35459b89203bb5d810538a48457be4d37439facf57ad897991c1170b6ff8c'
+readonly reviewed_ci_semantic_sha256='63b48a5764b9bae39632ce0cd965822726e1ba41706fc34ba8e42e4ea71a54c5'
 readonly reviewed_release_sha256='0ae5067f7c13c03d9c3d7f87bc1dd283890a95419bb31bd94513e3379cdf0aff'
 readonly reviewed_release_semantic_sha256='0bba8cfe324359121ba54e24d575c379428b9b877f65c951254cfb75c38d30cb'
-readonly reviewed_promote_sha256='0f0e3f05ab10ae45b5480a48b8c76f8d8b4c2b5fc189184b828d28e6265fdae7'
-readonly reviewed_promote_semantic_sha256='c0a4f9c933abb9112ef7bfe44106b6efcfb7504420aa59f5df3e380334d6143a'
+readonly reviewed_promote_sha256='ec8d26bf035c283c6b36ec50eebac00062b22a3e348ce1d30e11385b5bdc9aca'
+readonly reviewed_promote_semantic_sha256='d53f92fae0d6f5eab3d5dfc5ce7e18cd8f5bc0af838a73c6819e97d762c6c6ec'
 readonly reviewed_generated_header_normalizer_sha256='3b5d9c2023949c23b03e3513a1c640d54427e9b177f0ed5624c5931606b81dc0'
 readonly reviewed_generated_header_helper_sha256='64d72dec26ab1a019ffbbb75d87166ad049edacf6f744fc423317d878a3aad84'
 readonly reviewed_rust_test_runner_sha256='4339992f74cde43452528a0b15b32f5002354d35a71cd1393fe275a05b808c38'
 readonly reviewed_go_test_runner_sha256='635e3c69eebfadde52073c64a422a168cce9e9701cf6766d72801c75591daac2'
-readonly reviewed_native_toolchain_provisioner_sha256='eaf7f39a75790304bb2e679b48581982282d564aa843b2614534906bc9468caf'
+readonly reviewed_native_toolchain_provisioner_sha256='8b5d9ed40508fa1d8ecb885e936fad5f5364ef9a949d23d81fc37a9178f5890f'
 
 validate_reviewed_ci_bytes() {
   local actual_sha256
@@ -114,16 +114,16 @@ done <<'REVIEWED_RELEASE_SCRIPTS'
 5ecccd6ac133e0aec98b557edf475d3e055b00e4f49669bcc6b0e3034cb860d1 deploy/release/native-toolchain-identity.sh
 3fac2aca8f1012dc39e661e282f336ab5c2076e078158deb253cc2ce314c4469 deploy/release/verify-fips-cmake-caches.sh
 d3d0c13a74eac7b030523f6a98f05af6d6bc7279c465a544c5156c2dcf3d21e0 deploy/release/require-fips-toolchain.sh
-4638f070becafc81188a27cb3bef02f6ba2046169c33395d2431426e520e50aa deploy/release/package.sh
-7a695d27a93bc7ef1dece6ebcec4a0890894c82d86527a7ee67a34f7fb80a679 deploy/release/publish-oci.sh
-0d9cd338feb7193f8fd5ba67520500828e95c50466d76c9d951458fb6b1a47b1 deploy/release/verify.sh
+08c334b75a755650e479a0957a17f81e035fa89037b2a05a028fa6c5963a1299 deploy/release/package.sh
+59fa2ad078f912225e050802bb12c1dc427efcd5771f3fe24c3652bcc30ca146 deploy/release/publish-oci.sh
+4f37fa9e47c366827108b258243d1c07a953d4079b44e30af5fd4a577ea4281b deploy/release/verify.sh
 65ab80f4b96418c635e9469ef1d46cdc14d7fa561ebb0f31446e4eb4d19dfe53 deploy/release/sign.sh
 d507e3d9cec6578f8c8c20aaa2fc0e31fa74bbf7af981d4daec2a0248d0bcda1 deploy/release/verify-source-binding.sh
 9ad05e247f67feaf67999a396da3983af9ecdd00be9bd4f38655c5c42923c24a deploy/release/verify-oci.sh
 3964bbd63061001cd40ddd608bea1853eb83692c899c17c1267eb6eacf3151b3 deploy/release/reproduce.sh
 d43c59a7f601e036cb0c80a4fd623fcb365bda910e3e16cb55b9c56ee3d87e69 deploy/release/test-boundary.sh
 2a62091ea88448d1a076f0eccc6bdb2270bf6096562e16563f34f5a90941c8c0 deploy/release/test-oci.sh
-671f555e2744525813d61ad5e81183d9838ee4d63792eab548ed20f65d540d02 deploy/release/test-publish-oci.sh
+27989fd88326ff332a8e44b8dd7be6313a37269536faf1186c6d77dbf19bf6dd deploy/release/test-publish-oci.sh
 6ae7fe1892eae1f69ae3de66b3ed07a286654e1a83fb227d2ae9f0c2ff419844 deploy/release/test-sbom.sh
 1636b0cdcd88e0be5c25abdf9ce1599fa5aac4297001116857379d0e62890b66 deploy/release/test-workflow-runs.sh
 b510505f3182fee7a8345bf89e7436272e12791daa668c2b19d0e5945bc8c0f9 deploy/release/verify-workflow-runs.sh
@@ -270,7 +270,17 @@ trap 'rm -rf -- "$fips_target_dir"' EXIT
 [[ -x "$perl_root/bin/perl" ]]
 export PATH="$perl_root/bin:$PATH"
 export PERL="$perl_root/bin/perl"
-export GO="$(type -P go)"
+readonly go_command="$(type -P go)"
+[[ -x "$go_command" ]]
+unset GOROOT GOENV GOTOOLCHAIN GOBIN GOPATH GOCACHE
+export GOENV=off
+export GOTOOLCHAIN=local
+export GOROOT="$(env -u GOROOT GOENV=off GOTOOLCHAIN=local "$go_command" env GOROOT)"
+export GO="$go_command"
+export GOPATH="$fips_target_dir/go-path"
+export GOCACHE="$fips_target_dir/go-cache"
+export GOBIN="$fips_target_dir/go-bin"
+export PATH="$GOROOT/bin:$PATH"
 export CARGO_TARGET_DIR="$fips_target_dir"
 unset PERL5OPT PERL5LIB PERLLIB
 [[ "$(type -P perl)" == "$perl_root/bin/perl" ]]
@@ -462,14 +472,38 @@ fi
 [[ $(grep -Fc 'run-id: ${{ inputs.capability_run_id }}' "$promote") -eq 2 ]]
 [[ $(grep -Fc 'deploy/release/verify-source-binding.sh' "$promote") -eq 2 ]]
 [[ $(grep -Fc 'ref: ${{ forgejo.sha }}' "$release") -eq 2 ]]
-[[ $(grep -Fc 'ref: ${{ forgejo.sha }}' "$promote") -eq 2 ]]
+[[ $(grep -Fc 'ref: ${{ forgejo.sha }}' "$promote") -eq 3 ]]
 [[ $(grep -Fc 'test "$(git rev-parse HEAD)" = "${{ forgejo.sha }}"' "$release") -eq 2 ]]
-[[ $(grep -Fc 'test "$(git rev-parse HEAD)" = "${{ forgejo.sha }}"' "$promote") -eq 2 ]]
+[[ $(grep -Fc 'test "$(git rev-parse HEAD)" = "${{ forgejo.sha }}"' "$promote") -eq 3 ]]
 [[ $(grep -Fc 'for evidence in cluster-composition encryption-at-rest; do' "$promote") -eq 2 ]]
-[[ $(grep -Fc 'deploy/release/publish-oci.sh artifacts/unsigned/terrabase-server-' "$promote") -eq 2 ]]
-[[ $(grep -Fc 'deploy/release/publish-oci.sh artifacts/unsigned/terrabase-studio-' "$promote") -eq 2 ]]
-[[ $(grep -Fc 'TERRABASE_RELEASE_REGISTRY_TOKEN: ${{ secrets.TERRABASE_RELEASE_REGISTRY_TOKEN }}' "$promote") -eq 2 ]]
-grep -Fq 'registry manifest digest differs from the signed candidate' deploy/release/publish-oci.sh
+[[ $(grep -Fc 'deploy/release/publish-oci.sh artifacts/signed-amd64/terrabase-server-amd64 artifacts/signed-arm64/terrabase-server-arm64' "$promote") -eq 1 ]]
+[[ $(grep -Fc 'deploy/release/publish-oci.sh artifacts/signed-amd64/terrabase-studio-amd64 artifacts/signed-arm64/terrabase-studio-arm64' "$promote") -eq 1 ]]
+[[ $(grep -Fc 'TERRABASE_RELEASE_REGISTRY_TOKEN: ${{ secrets.TERRABASE_RELEASE_REGISTRY_TOKEN }}' "$promote") -eq 1 ]]
+[[ $(grep -Fc 'TERRABASE_RELEASE_REGISTRY_USERNAME: ${{ secrets.TERRABASE_RELEASE_REGISTRY_USERNAME }}' "$promote") -eq 1 ]]
+[[ $(grep -Fc 'TERRABASE_RELEASE_REGISTRY: ${{ vars.TERRABASE_RELEASE_REGISTRY }}' "$promote") -eq 1 ]]
+[[ $(grep -Fc 'name: terrabase-signed-amd64-${{ forgejo.sha }}' "$promote") -eq 2 ]]
+[[ $(grep -Fc 'name: terrabase-signed-arm64-${{ forgejo.sha }}' "$promote") -eq 2 ]]
+[[ $(grep -Fc 'name: terrabase-immutable-oci-references-${{ forgejo.sha }}' "$promote") -eq 1 ]]
+[[ $(yq -o=json -I=0 '.jobs | keys | sort' "$promote") == \
+  '["publish-multiarch","sign-amd64","sign-arm64"]' ]]
+[[ $(yq -o=json -I=0 '.jobs."publish-multiarch".needs' "$promote") == \
+  '["sign-amd64","sign-arm64"]' ]]
+[[ $(yq -o=json -I=0 '.jobs."publish-multiarch"."runs-on"' "$promote") == \
+  '["self-hosted","protected","terrabase-release-publisher"]' ]]
+[[ $(yq -r '.jobs."publish-multiarch".environment' "$promote") == \
+  terrabase-release-signing ]]
+yq eval --exit-status '
+  ([.jobs."sign-amd64".steps[], .jobs."sign-arm64".steps[]] |
+    map(select(
+      ((.env // {}) | has("TERRABASE_RELEASE_REGISTRY")) or
+      ((.env // {}) | has("TERRABASE_RELEASE_REGISTRY_USERNAME")) or
+      ((.env // {}) | has("TERRABASE_RELEASE_REGISTRY_TOKEN")))) | length) == 0
+' "$promote" >/dev/null
+grep -Fq 'OCI archive manifest differs from the signed image descriptor' deploy/release/publish-oci.sh
+grep -Fq 'echo "registry $label manifest differs from the signed promotion candidate"' deploy/release/publish-oci.sh
+grep -Fq 'published signature evidence is not bound to the promoted index' deploy/release/publish-oci.sh
+grep -Fq 'artifactType: $artifact_type' deploy/release/publish-oci.sh
+grep -Fq 'subject: {mediaType: "application/vnd.oci.image.index.v1+json"' deploy/release/publish-oci.sh
 grep -Fq 'deploy/release/test-publish-oci.sh' "$ci"
 grep -Fq 'candidate and capability workflow runs must be distinct' deploy/release/verify-workflow-runs.sh
 grep -Fq '[[ "$capability_workflow_id" == qualification.yml ]]' deploy/release/verify-workflow-runs.sh
@@ -490,6 +524,9 @@ grep -Fq 'terrabase feature "local-crypto"' deploy/release/package.sh
 grep -Fq 'aws-lc-rs feature "non-fips"' deploy/release/package.sh
 grep -Fq 'fipsFeatureGraph' deploy/release/package.sh
 grep -Fq 'fipsFeatureGraph' deploy/release/verify.sh
+grep -Fq 'ociImage' deploy/release/package.sh
+grep -Fq 'ociImage' deploy/release/verify.sh
+grep -Fq 'OCI image manifest descriptor differs from the signed release identity' deploy/release/verify.sh
 grep -Fq 'binary sha256: %s' deploy/release/package.sh
 grep -Fq -- '--rewrite-timestamp' deploy/release/package.sh
 grep -Fq 'FIPS feature evidence is not bound to the native binary' deploy/release/verify.sh

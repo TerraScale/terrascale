@@ -147,12 +147,28 @@ expect_rebound_workflow_mutation_rejected \
   'promotion workflow accepted the broken combined evidence filename'
 expect_rebound_workflow_mutation_rejected \
   promotion-missing-server-publication promote.yml promote \
-  '(.jobs."sign-amd64".steps[] | select(.name == "Admit, sign, and verify the exact AMD64 package bytes") | .run) |= sub("deploy/release/publish-oci.sh artifacts/unsigned/terrabase-server-amd64"; "true # removed server registry publication")' \
+  '(.jobs."publish-multiarch".steps[] | select(.name == "Verify and publish immutable multi-architecture images") | .run) |= sub("deploy/release/publish-oci.sh artifacts/signed-amd64/terrabase-server-amd64 artifacts/signed-arm64/terrabase-server-arm64"; "true # removed server registry publication")' \
   'promotion workflow accepted missing server registry publication'
 expect_rebound_workflow_mutation_rejected \
   promotion-missing-registry-credential promote.yml promote \
-  'del(.jobs."sign-arm64".steps[] | select(.name == "Admit, sign, and verify the exact ARM64 package bytes") | .env.TERRABASE_RELEASE_REGISTRY_TOKEN)' \
+  'del(.jobs."publish-multiarch".steps[] | select(.name == "Verify and publish immutable multi-architecture images") | .env.TERRABASE_RELEASE_REGISTRY_TOKEN)' \
   'promotion workflow accepted missing protected registry credentials'
+expect_rebound_workflow_mutation_rejected \
+  promotion-missing-architecture-need promote.yml promote \
+  '.jobs."publish-multiarch".needs = ["sign-amd64"]' \
+  'promotion workflow accepted publication without both signed architectures'
+expect_rebound_workflow_mutation_rejected \
+  promotion-registry-credentials-in-signing-job promote.yml promote \
+  '(.jobs."sign-amd64".steps[] | select(.name == "Admit, sign, and verify the exact AMD64 package bytes") | .env.TERRABASE_RELEASE_REGISTRY_TOKEN) = "hostile"' \
+  'promotion workflow accepted registry credentials in an architecture signing job'
+expect_rebound_workflow_mutation_rejected \
+  promotion-wrong-publisher-runner promote.yml promote \
+  '.jobs."publish-multiarch"."runs-on" = ["self-hosted", "terrabase-release-amd64"]' \
+  'promotion workflow accepted an unprotected publication runner'
+expect_rebound_workflow_mutation_rejected \
+  promotion-architecture-swap promote.yml promote \
+  '(.jobs."publish-multiarch".steps[] | select(.name == "Verify and publish immutable multi-architecture images") | .run) |= sub("artifacts/signed-arm64/terrabase-server-arm64"; "artifacts/signed-amd64/terrabase-server-amd64")' \
+  'promotion workflow accepted a duplicate AMD64 package in the multi-architecture publisher'
 
 expect_rebound_mutation_rejected() {
   local name=$1
@@ -188,6 +204,33 @@ sed -i 's/cmp -s "$source_state_before" "$source_state_after"/true/' \
 rebind_reviewed_script_digest "$source_postflight_fixture" deploy/release/package.sh
 if run_contracts "$source_postflight_fixture" >/dev/null 2>&1; then
   printf 'expected a rebound package script without source postflight to fail validation\n' >&2
+  exit 1
+fi
+((negative_fixture_count += 1))
+
+oci_identity_fixture="$fixture_root/oci-identity-rebound"
+mkdir -p "$oci_identity_fixture"
+make_fixture "$oci_identity_fixture"
+sed -i \
+  -e 's/"ociImage":/"unboundOciImage":/' \
+  -e 's/^    ociImage:/    unboundOciImage:/' \
+  "$oci_identity_fixture/deploy/release/package.sh"
+rebind_reviewed_script_digest "$oci_identity_fixture" deploy/release/package.sh
+if run_contracts "$oci_identity_fixture" >/dev/null 2>&1; then
+  printf 'expected a rebound package script without signed OCI image identity to fail validation\n' >&2
+  exit 1
+fi
+((negative_fixture_count += 1))
+
+oci_subject_fixture="$fixture_root/oci-subject-rebound"
+mkdir -p "$oci_subject_fixture"
+make_fixture "$oci_subject_fixture"
+sed -i \
+  's/subject: {mediaType: "application\/vnd.oci.image.index.v1+json"/unboundSubject: {mediaType: "application\/vnd.oci.image.index.v1+json"/' \
+  "$oci_subject_fixture/deploy/release/publish-oci.sh"
+rebind_reviewed_script_digest "$oci_subject_fixture" deploy/release/publish-oci.sh
+if run_contracts "$oci_subject_fixture" >/dev/null 2>&1; then
+  printf 'expected a rebound publisher without an OCI referrer subject to fail validation\n' >&2
   exit 1
 fi
 ((negative_fixture_count += 1))
@@ -585,8 +628,8 @@ if run_contracts "$python_guard_fixture" >/dev/null 2>&1; then
 fi
 ((negative_fixture_count += 1))
 
-if [[ $negative_fixture_count -ne 40 ]]; then
-  printf 'expected forty negative release-contract fixtures, ran %s\n' \
+if [[ $negative_fixture_count -ne 46 ]]; then
+  printf 'expected forty-six negative release-contract fixtures, ran %s\n' \
     "$negative_fixture_count" >&2
   exit 1
 fi
