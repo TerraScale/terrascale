@@ -230,6 +230,45 @@ async fn survives_database_deletion_and_crash_restarts_within_grace() {
     std::fs::remove_dir_all(&root).expect("test root removes");
 }
 
+#[tokio::test]
+async fn dropping_the_supervisor_terminates_the_child() {
+    if terrabase_backup::litestream_binary().is_none() {
+        eprintln!(
+            "skipping: no litestream binary (set TERRABASE_LITESTREAM_BIN or add litestream to PATH)"
+        );
+        return;
+    }
+    let root = temporary_root("drop");
+    let data = root.join("data");
+    let replica = root.join("replica");
+    let mut config = SupervisorConfig::new(data.clone(), ReplicaConfig::File { path: replica });
+    config.config_path = Some(root.join("litestream.yml"));
+    let supervisor = LitestreamSupervisor::start(config).expect("supervisor starts");
+    assert!(supervisor.status().running);
+    let pid = supervisor.status().pid.expect("child pid is published");
+    drop(supervisor);
+    // The child must receive its termination signal even though no shutdown
+    // call ran; a zombie (state Z) means it terminated and only awaits
+    // reaping, which the exiting test process performs.
+    assert!(
+        wait_until(Duration::from_secs(10), || { !process_is_alive(pid) }).await,
+        "dropping the supervisor must terminate the litestream child"
+    );
+    std::fs::remove_dir_all(&root).expect("test root removes");
+}
+
+#[cfg(unix)]
+fn process_is_alive(pid: u32) -> bool {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+    let state = stat.rsplit(')').next().unwrap_or_default().trim_start();
+    !matches!(state.chars().next(), None | Some('Z' | 'X' | 'x'))
+}
+
+#[cfg(not(unix))]
+fn process_is_alive(pid: u32) -> bool {
+    Path::new(&format!("/proc/{pid}")).exists()
+}
+
 async fn metrics_serves_litestream(address: SocketAddr) -> bool {
     use tokio::io::AsyncReadExt as _;
     use tokio::io::AsyncWriteExt as _;

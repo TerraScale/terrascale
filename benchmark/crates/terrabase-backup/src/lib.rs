@@ -342,6 +342,27 @@ impl LitestreamSupervisor {
     }
 }
 
+impl Drop for LitestreamSupervisor {
+    fn drop(&mut self) {
+        // The supervision task also stops the child when it observes this
+        // drop, but a runtime that unwinds or shuts down without polling the
+        // task again (a panicking test is the concrete case) never reaches
+        // that path, so deliver the termination signal synchronously here.
+        // A duplicate SIGTERM from the task is harmless.
+        let status = self.inner.status.lock().expect("supervisor state unpoisoned");
+        if !status.running {
+            return;
+        }
+        #[cfg(unix)]
+        if let Some(pid) = status.pid {
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid_to_i32(pid)),
+                Some(nix::sys::signal::Signal::SIGTERM),
+            );
+        }
+    }
+}
+
 /// Runs the supervise-restart loop until shutdown is requested or every
 /// supervisor handle is dropped.
 async fn supervise(
