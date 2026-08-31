@@ -25,7 +25,7 @@ ci=.forgejo/workflows/ci.yml
 # This digest is the reviewed-tree trust boundary for the CI shell surface.
 # Semantic checks below document the required invariants, while byte identity
 # prevents an additional or obfuscated shell command from escaping them.
-readonly reviewed_ci_sha256='f710e507367ad3b62158fcfe54f5eaec7d8efe84dfcea79a7e3fa25db8b46703'
+readonly reviewed_ci_sha256='24c7f9d826711e3d0122408a938f37c881b63471b67494c936b52429efb525f5'
 
 validate_reviewed_ci_bytes() {
   local actual_sha256
