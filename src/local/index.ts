@@ -16,10 +16,6 @@ import type {
   RepositoryId,
 } from "../ids.js";
 import {
-  TerraScaleSyncSession,
-  type TerraScaleSyncSessionOptions,
-} from "../sync/client.js";
-import {
   TerraScaleSyncV2Session,
   type TerraScaleSyncV2SessionOptions,
 } from "../sync/v2/session.js";
@@ -34,10 +30,6 @@ import {
   type LocalServerAddress,
 } from "./server.js";
 import { TerraScaleSqliteStore } from "./store.js";
-import {
-  clearLocalSyncV1State,
-  createLocalSyncWebSocketFactory,
-} from "./sync-v1.js";
 
 const inProcessOrigin = "http://terrascale.local";
 
@@ -70,13 +62,6 @@ export type TerraScaleLocalResetOptions = {
   readonly seed?: boolean;
 };
 
-export type TerraScaleLocalSyncV1Options = Omit<
-  TerraScaleSyncSessionOptions,
-  "Url" | "WebSocketFactory"
-> & {
-  readonly Url?: string;
-};
-
 export type TerraScaleLocalSyncV2Options = Omit<
   TerraScaleSyncV2SessionOptions,
   "Fetch" | "StreamFactory" | "Url"
@@ -98,7 +83,6 @@ export class TerraScaleSqliteRuntime {
   readonly #sqlite: TerraScaleSqliteRuntimeConfig;
   readonly #store: TerraScaleSqliteStore;
   readonly #bearerToken: string | undefined;
-  readonly #syncV1Sessions = new Set<TerraScaleSyncSession>();
   readonly #syncV2Sessions = new Set<TerraScaleSyncV2Session>();
   #closed = false;
   constructor(options: TerraScaleSqliteRuntimeOptions) {
@@ -176,17 +160,6 @@ export class TerraScaleSqliteRuntime {
       sqlite: this.#sqlite,
       fetch: this.#fetch,
     });
-  }
-
-  createSyncV1Session(options: TerraScaleLocalSyncV1Options): TerraScaleSyncSession {
-    this.#assertOpen();
-    const session = new TerraScaleSyncSession({
-      ...options,
-      Url: options.Url ?? "ws://terrascale.local/api/v1/sync",
-      WebSocketFactory: createLocalSyncWebSocketFactory(this.#store),
-    });
-    this.#syncV1Sessions.add(session);
-    return session;
   }
 
   createSyncV2Session(options: TerraScaleLocalSyncV2Options): TerraScaleSyncV2Session {
@@ -277,7 +250,6 @@ export class TerraScaleSqliteRuntime {
     await this.#server.close();
     this.#clearTransientState();
     this.#store.close();
-    this.#syncV1Sessions.clear();
     this.#syncV2Sessions.clear();
     this.#closed = true;
   }
@@ -291,14 +263,10 @@ export class TerraScaleSqliteRuntime {
   #clearTransientState(): void {
     clearLocalAdminState(this.#store);
     clearLocalPlatformState(this.#store);
-    clearLocalSyncV1State(this.#store);
     clearLocalSyncV2State(this.#store);
   }
 
   async #disconnectSyncSessions(): Promise<void> {
-    for (const session of this.#syncV1Sessions) {
-      session.disconnect();
-    }
     await Promise.allSettled(
       [...this.#syncV2Sessions].map((session) => session.disconnect()),
     );

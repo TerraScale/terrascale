@@ -48,10 +48,9 @@ manifest owns every tag, field position, direction, and bound. The generated
 TypeScript module consumes that file. INT-3's Go codec must check the same
 manifest instead of copying a second frame definition.
 
-The source still contains the legacy `terrascale.sync.v1` client and the
-Loro/native-v2 implementation while this work is reviewed as a dependent PR
-stack. Neither is a current public contract. The next two mechanical stages
-delete them without changing the 2.1 manifest or client.
+The source still contains the Loro/native-v2 implementation while this work is
+reviewed as a dependent PR stack. It is not a current public contract. The
+final mechanical stage deletes it without changing the 2.1 manifest or client.
 
 Protocol 2.1 is the first publishable wire contract. The pre-launch 2.0
 artifacts reassigned tags during development and are withdrawn. The decoder
