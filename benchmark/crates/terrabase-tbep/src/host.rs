@@ -333,36 +333,6 @@ pub trait TbepHost: Send + Sync {
         idempotency_key: &str,
     ) -> Result<FamilyWriteResponse, HostingError>;
 
-    /// Executes one atomic, tenant-scoped auth-storage insertUnique.
-    fn auth_storage_insert_unique(
-        &self,
-        _scope: &BoundScope,
-        _request: &crate::registry::AuthStorageInsertUniqueRequest,
-        _idempotency_key: &str,
-    ) -> Result<crate::registry::AuthStorageMutationResult, HostingError> {
-        Err(HostingError::Refused("auth storage is not configured on this host".into()))
-    }
-
-    /// Executes one atomic, tenant-scoped auth-storage compareAndSwap.
-    fn auth_storage_compare_and_swap(
-        &self,
-        _scope: &BoundScope,
-        _request: &crate::registry::AuthStorageCompareAndSwapRequest,
-        _idempotency_key: &str,
-    ) -> Result<crate::registry::AuthStorageMutationResult, HostingError> {
-        Err(HostingError::Refused("auth storage is not configured on this host".into()))
-    }
-
-    /// Executes one atomic, tenant-scoped auth-storage consumeOne.
-    fn auth_storage_consume_one(
-        &self,
-        _scope: &BoundScope,
-        _request: &crate::registry::AuthStorageConsumeOneRequest,
-        _idempotency_key: &str,
-    ) -> Result<crate::registry::AuthStorageMutationResult, HostingError> {
-        Err(HostingError::Refused("auth storage is not configured on this host".into()))
-    }
-
     /// Serves one atomic document batch (P4, mutation): one frame, one
     /// engine transaction — every item commits together or none does.
     ///

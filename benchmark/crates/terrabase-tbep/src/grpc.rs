@@ -1876,33 +1876,6 @@ fn document_body(value: &registry::DocumentBody) -> pb::DocumentBody {
     }
 }
 
-fn auth_storage_condition(
-    value: &pb::AuthStorageCondition,
-) -> Result<registry::AuthStorageCondition, HostingError> {
-    Ok(registry::AuthStorageCondition {
-        field: value.field.clone(),
-        value: value
-            .value
-            .as_ref()
-            .map(value_from_pb)
-            .transpose()?
-            .ok_or_else(|| invalid("an auth-storage condition carries no value"))?,
-    })
-}
-
-fn auth_storage_status_pb(value: registry::AuthStorageMutationStatus) -> pb::AuthStorageMutationStatus {
-    match value {
-        registry::AuthStorageMutationStatus::Applied => pb::AuthStorageMutationStatus::Applied,
-        registry::AuthStorageMutationStatus::Replayed => pb::AuthStorageMutationStatus::Replayed,
-        registry::AuthStorageMutationStatus::Conflict => pb::AuthStorageMutationStatus::Conflict,
-        registry::AuthStorageMutationStatus::NotFound => pb::AuthStorageMutationStatus::NotFound,
-    }
-}
-
-fn auth_storage_result_value(value: &registry::AuthStorageMutationResult) -> pb::Value {
-    value.value.as_ref().map(value_to_pb).unwrap_or_default()
-}
-
 fn subscription_start(
     value: &pb::SubscriptionStart,
 ) -> Result<registry::SubscriptionStart, HostingError> {
@@ -2736,103 +2709,6 @@ impl EngineService for Arc<TbepGrpcServer> {
         Ok(Response::new(pb::EngineServiceFamilyWriteResponse {
             response_codec: response.response_codec,
             response: response.response,
-        }))
-    }
-
-    async fn auth_storage_insert_unique(
-        &self,
-        request: Request<pb::EngineServiceAuthStorageInsertUniqueRequest>,
-    ) -> Result<Response<pb::EngineServiceAuthStorageInsertUniqueResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let key = idempotency_key(&request)?;
-        let message = request.into_inner();
-        let domain = registry::AuthStorageInsertUniqueRequest {
-            model: message.model,
-            data: message
-                .data
-                .as_ref()
-                .map(value_from_pb)
-                .transpose()
-                .map_err(host_error)?
-                .ok_or_else(|| conversion_error("auth-storage insertUnique carries no data"))?,
-            select: message.select,
-        };
-        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
-        let host = Arc::clone(&self.host);
-        let scope = identity.tenant.clone();
-        let response = run_host(self.as_ref(), MetricOperation::Write, move || {
-            host.auth_storage_insert_unique(&scope, &domain, &key)
-        })
-        .await?;
-        Ok(Response::new(pb::EngineServiceAuthStorageInsertUniqueResponse {
-            status: auth_storage_status_pb(response.status) as i32,
-            value: response.value.as_ref().map(value_to_pb),
-        }))
-    }
-
-    async fn auth_storage_compare_and_swap(
-        &self,
-        request: Request<pb::EngineServiceAuthStorageCompareAndSwapRequest>,
-    ) -> Result<Response<pb::EngineServiceAuthStorageCompareAndSwapResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let key = idempotency_key(&request)?;
-        let message = request.into_inner();
-        let domain = registry::AuthStorageCompareAndSwapRequest {
-            model: message.model,
-            where_: message
-                .where_
-                .iter()
-                .map(auth_storage_condition)
-                .collect::<Result<_, _>>()?,
-            update: message
-                .update
-                .as_ref()
-                .map(value_from_pb)
-                .transpose()
-                .map_err(host_error)?
-                .ok_or_else(|| conversion_error("auth-storage compareAndSwap carries no update"))?,
-        };
-        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
-        let host = Arc::clone(&self.host);
-        let scope = identity.tenant.clone();
-        let response = run_host(self.as_ref(), MetricOperation::Write, move || {
-            host.auth_storage_compare_and_swap(&scope, &domain, &key)
-        })
-        .await?;
-        Ok(Response::new(pb::EngineServiceAuthStorageCompareAndSwapResponse {
-            status: auth_storage_status_pb(response.status) as i32,
-            value: response.value.as_ref().map(value_to_pb),
-        }))
-    }
-
-    async fn auth_storage_consume_one(
-        &self,
-        request: Request<pb::EngineServiceAuthStorageConsumeOneRequest>,
-    ) -> Result<Response<pb::EngineServiceAuthStorageConsumeOneResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let key = idempotency_key(&request)?;
-        let message = request.into_inner();
-        let domain = registry::AuthStorageConsumeOneRequest {
-            model: message.model,
-            where_: message
-                .where_
-                .iter()
-                .map(auth_storage_condition)
-                .collect::<Result<_, _>>()?,
-        };
-        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
-        let host = Arc::clone(&self.host);
-        let scope = identity.tenant.clone();
-        let response = run_host(self.as_ref(), MetricOperation::Write, move || {
-            host.auth_storage_consume_one(&scope, &domain, &key)
-        })
-        .await?;
-        Ok(Response::new(pb::EngineServiceAuthStorageConsumeOneResponse {
-            status: auth_storage_status_pb(response.status) as i32,
-            value: response.value.as_ref().map(value_to_pb),
         }))
     }
 }
