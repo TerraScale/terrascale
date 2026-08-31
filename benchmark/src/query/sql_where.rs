@@ -14,7 +14,7 @@
 //! - a **present null value** is its rank-1 encoding blob, not SQL `NULL`,
 //!   so it participates in comparisons exactly where the engine's order
 //!   puts it;
-//! - conditions are ANDed as a conjunction per `spec.rs`, with
+//! - conditions are `AND`-combined as a conjunction per `spec.rs`, with
 //!   `?1..?n` placeholders bound in emission order to encoded-key blobs.
 //!
 //! ## Input contract
