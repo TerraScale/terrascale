@@ -9,6 +9,11 @@ tag. The delta vector includes every result-operation discriminant. Tests decode
 the committed bytes into the expected public values and require the encoder to
 reproduce those bytes exactly.
 
+MessagePack owns the envelope and result-operation structure. Binary document
+values remain raw TerraScale-canonical JSON bytes. The MessagePack decoder
+leaves them untouched. The production client must perform one native
+`JSON.parse` for each complete document body.
+
 `hostile-vectors.json` contains a fixed rejection vector for every typed hostile
 decoder boundary. The whole-message limit uses a committed repeated-byte recipe
 instead of adding an 8 MiB binary fixture to the repository. The recipe still
@@ -16,4 +21,4 @@ specifies every byte and its exact count.
 
 INT-3 must consume these same fixtures in Go. Replacing a vector requires a
 reviewed protocol-version decision; runtime encode/decode round trips do not
-replace this evidence.
+independently pin the bytes.
