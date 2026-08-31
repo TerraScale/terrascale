@@ -111,7 +111,8 @@ jq -e \
       (
         .commit_sha == $revision and
         (.prettyref == $ref or .prettyref == $branch) and
-        .event == "workflow_dispatch" and
+        .event == "" and
+        .trigger_event == "workflow_dispatch" and
         .status == "success" and
         .workflow_id == "release.yml"
       ) or
@@ -145,7 +146,8 @@ jq -e \
       (
         .commit_sha == $revision and
         (.prettyref == $ref or .prettyref == $branch) and
-        .event == "workflow_dispatch" and
+        .event == "" and
+        .trigger_event == "workflow_dispatch" and
         .status == "success" and
         .workflow_id == $workflow
       ) or

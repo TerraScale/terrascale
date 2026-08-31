@@ -3,7 +3,8 @@
   "repository": {"full_name": "TerraScale/TerraBase"},
   "prettyref": "refs/heads/develop",
   "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "event": "workflow_dispatch",
+  "event": "",
+  "trigger_event": "workflow_dispatch",
   "status": "success",
   "workflow_id": "release.yml"
 }
