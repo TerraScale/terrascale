@@ -428,10 +428,56 @@ enum ReadEvent {
     Error(String),
 }
 
+/// The fixed benchmark resource envelope (owner decision 2026-08-31): the
+/// measured subject (the harness) runs capped at 8 CPUs / 8 GiB RAM so the
+/// served numbers describe that envelope, not this host's full width.
+/// `TERRABASE_BENCH_ENVELOPE=0` disables it (diagnosis runs).
+fn envelope_command(harness: &Path) -> Command {
+    let mut command = Command::new(harness);
+    if std::env::var_os("TERRABASE_BENCH_ENVELOPE").as_deref() != Some(std::ffi::OsStr::new("0"))
+        && let Ok(systemd_run) = which_systemd_run()
+    {
+        // The fleet-recorded method (GOAL.md decision log, 2026-08-31):
+        // a user scope holds the 8-GiB memory ceiling; taskset -c 0-7
+        // inside it pins CPU affinity, which children inherit and
+        // available_parallelism follows, so the harness runtime sees
+        // exactly the envelope.
+        let mut wrapped = Command::new(systemd_run);
+        wrapped
+            .arg("--user")
+            .arg("--scope")
+            .arg("--quiet")
+            .arg("-p")
+            .arg("MemoryMax=8G")
+            .arg("-p")
+            .arg("TasksMax=4096")
+            .arg("--")
+            .arg("taskset")
+            .arg("-c")
+            .arg("0-7")
+            .arg("--")
+            .arg(harness);
+        command = wrapped;
+    }
+    command.env("TERRABASE_BENCH_ENVELOPE_SPEC", "8cpu/8G");
+    command
+}
+
+fn which_systemd_run() -> Result<PathBuf, String> {
+    let path = std::env::var_os("PATH").ok_or("PATH is unset")?;
+    let mut candidates =
+        std::env::split_paths(&path).map(|dir| dir.join("systemd-run")).collect::<Vec<_>>();
+    candidates.push(PathBuf::from("/run/current-system/sw/bin/systemd-run"));
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| "systemd-run is unavailable".to_owned())
+}
+
 fn start_harness(config: &ServedRunnerConfig, pki: &Pki, dir: &Path) -> Result<Harness, String> {
     let storage = dir.join("storage");
     fs::create_dir(&storage).map_err(|e| format!("create fresh harness storage: {e}"))?;
-    let mut child = Command::new(&config.qualification_harness_executable)
+    let mut child = envelope_command(&config.qualification_harness_executable)
         .arg(&pki.server)
         .arg(&pki.server_key)
         .arg(&pki.ca)

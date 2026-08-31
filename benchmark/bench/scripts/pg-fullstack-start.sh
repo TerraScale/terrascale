@@ -29,6 +29,10 @@ if [[ "${TERRABASE_PG_FULLSTACK_NIXED:-}" != "1" ]]; then
   exec nix-shell -p postgresql_18 -p pgbouncer --run "exec bash '$0'"
 fi
 
+# The measured subjects (postgres, pgbouncer, pgrest) run inside the
+# fixed 8-CPU / 8-GiB benchmark envelope.
+source "$(dirname "$0")/resource-envelope.sh"
+
 ROOT=/tmp/terrabase-bench-pgfullstack-lane
 PG_PORT=55435
 PGBOUNCER_PORT=55434
@@ -58,7 +62,7 @@ rm -rf "$ROOT"
 mkdir -p "$ROOT"
 export PGDATA="$ROOT/data"
 initdb -D "$PGDATA" --no-locale -E UTF8 -U bench >/dev/null
-pg_ctl -D "$PGDATA" -l "$ROOT/server.log" \
+envelope_wrap pg_ctl -D "$PGDATA" -l "$ROOT/server.log" \
   -o "-p $PG_PORT -c listen_addresses=127.0.0.1 -c unix_socket_directories=$ROOT -c synchronous_commit=on -c fsync=on -c full_page_writes=on -c logging_collector=off" \
   -w start >/dev/null
 
@@ -84,7 +88,7 @@ max_prepared_statements = 200
 postgres = host=127.0.0.1 port=$PG_PORT dbname=postgres
 EOF
 printf '"bench" ""\n' > "$ROOT/userlist.txt"
-pgbouncer -d "$ROOT/pgbouncer.ini"
+envelope_wrap pgbouncer -d "$ROOT/pgbouncer.ini"
 
 PGREST_LOG="$ROOT/pgrest.log"
 # sslmode=disable: the pinned stack is loopback-only, so no side of this
@@ -92,10 +96,10 @@ PGREST_LOG="$ROOT/pgrest.log"
 # default_query_exec_mode=simple_protocol: pgx's pgbouncer-compatible mode;
 # the extended protocol's prepared statements do not survive transaction
 # pooling's rerouting on PostgreSQL 18 (intermittent SQLSTATE 26000).
-DATABASE_URL="postgres://bench@127.0.0.1:$PGBOUNCER_PORT/postgres?sslmode=disable&default_query_exec_mode=simple_protocol" \
-PGREST_LISTEN="127.0.0.1:$PGREST_PORT" \
-PGREST_MAX_CONNS=32 \
-  "$PGREST_BIN" >"$PGREST_LOG" 2>&1 &
+export DATABASE_URL="postgres://bench@127.0.0.1:$PGBOUNCER_PORT/postgres?sslmode=disable&default_query_exec_mode=simple_protocol"
+export PGREST_LISTEN="127.0.0.1:$PGREST_PORT"
+export PGREST_MAX_CONNS=32
+envelope_wrap "$PGREST_BIN" >"$PGREST_LOG" 2>&1 &
 PGREST_PID=$!
 
 cleanup() {
@@ -135,6 +139,7 @@ psql -h 127.0.0.1 -p "$PGBOUNCER_PORT" -U bench -d postgres \
 echo PG_FULLSTACK_POOL:
 psql -h 127.0.0.1 -p "$PGBOUNCER_PORT" -U bench -d pgbouncer -c 'SHOW POOLS;'
 echo "endpoints:"
+echo "  envelope   $TERRABASE_BENCH_ENVELOPE_SPEC (subjects: postgres, pgbouncer, pgrest)"
 echo "  pgrest     http://127.0.0.1:$PGREST_PORT (TERRABASE_PG_FULLSTACK_ENDPOINT)"
 echo "  pgbouncer  127.0.0.1:$PGBOUNCER_PORT (pool_mode=transaction)"
 echo "  postgresql 127.0.0.1:$PG_PORT (direct)"
