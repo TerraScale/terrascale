@@ -13,6 +13,7 @@ publish = false
 resolver = "3"
 members = [
   "crates/terrabase-causal",
+  "crates/terrabase-backup",
   "crates/terrabase-crdt",
   "crates/terrabase-sync-core",
   "crates/terrabase-sync-conformance",
