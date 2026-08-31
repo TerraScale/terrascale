@@ -953,12 +953,11 @@ pub fn coordinate_composed_write(
 /// worker unjoined makes `thread::scope` resume its panic, which would escape
 /// the coordinator's typed failure contract. Sorting first also makes the
 /// selected failing Member independent of the caller's slice order.
-fn collect_fanout_workers<'scope, T>(
-    mut workers: Vec<(
-        MemberId,
-        RegionId,
-        std::thread::ScopedJoinHandle<'scope, Result<T, ComposeError>>,
-    )>,
+type FanoutWorker<'scope, T> =
+    (MemberId, RegionId, std::thread::ScopedJoinHandle<'scope, Result<T, ComposeError>>);
+
+fn collect_fanout_workers<T>(
+    mut workers: Vec<FanoutWorker<'_, T>>,
 ) -> Result<Vec<(MemberId, RegionId, T)>, ComposedCoordinationError> {
     workers.sort_by(|left, right| left.0.as_str().cmp(right.0.as_str()));
     let mut accepted = Vec::with_capacity(workers.len());

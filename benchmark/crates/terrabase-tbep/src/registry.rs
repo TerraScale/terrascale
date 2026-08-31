@@ -2012,6 +2012,10 @@ impl FamilyReadResponse {
     }
 
     /// Decodes and validates the canonical v1 protobuf response payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the response payload or codec is invalid.
     pub fn decode_payload(
         &self,
     ) -> Result<
@@ -2063,6 +2067,11 @@ impl FamilyWriteRequest {
 
     /// Decodes and validates the canonical v1 protobuf payload, including
     /// agreement between the outer family and the write operation tag.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request payload, family, operation, or codec is
+    /// invalid.
     pub fn decode_payload(
         &self,
     ) -> Result<
@@ -2101,6 +2110,10 @@ impl FamilyWriteResponse {
     }
 
     /// Decodes and validates the canonical v1 protobuf response payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the response payload or codec is invalid.
     pub fn decode_payload(
         &self,
     ) -> Result<
@@ -4338,7 +4351,7 @@ mod tests {
         assert_eq!(invalid.validate(), Err(invalid_usage("max_items")));
 
         let mut invalid = valid;
-        invalid.max_items = (MAX_LIST_ITEMS as u32) + 1;
+        invalid.max_items = u32::try_from(MAX_LIST_ITEMS).expect("the list bound fits u32") + 1;
         assert_eq!(invalid.validate(), Err(invalid_usage("max_items")));
     }
 }

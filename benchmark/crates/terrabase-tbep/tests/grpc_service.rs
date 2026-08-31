@@ -523,7 +523,8 @@ async fn query_max_items_rejects_zero_and_oversized_pages() {
         .query_execute(identified(pb::EngineServiceQueryExecuteRequest {
             query_id: 2,
             text: "from orders".into(),
-            max_items: (registry::MAX_LIST_ITEMS as u32) + 1,
+            max_items: u32::try_from(registry::MAX_LIST_ITEMS).expect("the list bound fits u32")
+                + 1,
             level: 0,
         }))
         .await
@@ -654,9 +655,8 @@ fn uds_does_not_unlink_an_existing_non_socket() {
         Arc::new(FixedHost { feed: Mutex::new(None) }) as Arc<dyn TbepHost>,
         pb::BindingKind::Local,
     ));
-    let error = match server.serve_uds(&path) {
-        Ok(_) => panic!("a regular path is refused"),
-        Err(error) => error,
+    let Err(error) = server.serve_uds(&path) else {
+        panic!("a regular path is refused");
     };
     assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
     assert_eq!(std::fs::read(&path).expect("the fixture remains"), b"operator data");
@@ -672,9 +672,8 @@ fn uds_does_not_unlink_an_existing_socket() {
         Arc::new(FixedHost { feed: Mutex::new(None) }) as Arc<dyn TbepHost>,
         pb::BindingKind::Local,
     ));
-    let error = match server.serve_uds(&path) {
-        Ok(_) => panic!("an existing socket path is refused"),
-        Err(error) => error,
+    let Err(error) = server.serve_uds(&path) else {
+        panic!("an existing socket path is refused");
     };
     assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
     assert!(std::os::unix::net::UnixStream::connect(&path).is_ok());
@@ -688,30 +687,32 @@ fn tls_requires_a_client_ca_for_production() {
         Arc::new(FixedHost { feed: Mutex::new(None) }) as Arc<dyn TbepHost>,
         pb::BindingKind::NetworkMtls,
     ));
-    let error = match server.serve_tls(
+    let Err(error) = server.serve_tls(
         std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
         "server-certificate",
         "server-key",
         None,
-    ) {
-        Ok(_) => panic!("TCP TLS without a client CA must fail closed"),
-        Err(error) => error,
+    ) else {
+        panic!("TCP TLS without a client CA must fail closed");
     };
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
 
-    let error = match server.serve_tls(
+    let Err(error) = server.serve_tls(
         std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
         "server-certificate",
         "server-key",
         Some("  \n"),
-    ) {
-        Ok(_) => panic!("an empty client CA must fail closed"),
-        Err(error) => error,
+    ) else {
+        panic!("an empty client CA must fail closed");
     };
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
 }
 
 #[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one end-to-end stream test covers confirmation, batching, and close ordering"
+)]
 async fn the_backbone_stream_delivers_confirmation_batches_and_close() {
     let socket = socket_path("backbone");
     let host = Arc::new(FixedHost { feed: Mutex::new(None) });

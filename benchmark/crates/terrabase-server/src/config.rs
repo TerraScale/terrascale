@@ -307,6 +307,10 @@ struct FileProductionDatabase {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(
+    clippy::struct_field_names,
+    reason = "the max_ prefixes are part of the production configuration contract"
+)]
 struct FileDatabaseQuotas {
     max_storage_bytes: u64,
     max_documents: u64,
@@ -540,6 +544,10 @@ impl ServerConfig {
         })
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "production configuration is validated as one fail-closed boundary"
+    )]
     fn parse_production(text: &str) -> Result<Self, ConfigError> {
         let file: FileProductionConfig =
             toml::from_str(text).map_err(ConfigError::ParseConfiguration)?;

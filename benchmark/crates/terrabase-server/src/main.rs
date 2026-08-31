@@ -1,4 +1,4 @@
-//! TerraBase production daemon entry point.
+//! `TerraBase` production daemon entry point.
 
 use std::error::Error;
 

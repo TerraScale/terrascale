@@ -203,7 +203,12 @@ fn validate_value(
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the closed request oneof is validated in one exhaustive match"
+)]
 fn validate_request_payload(payload: &pb::FamilyRequestPayload) -> Result<(), FamilyCodecError> {
+    use pb::family_attachment_write::Mutation;
     use pb::family_request_payload::Operation;
     let Some(operation) = payload.operation.as_ref() else {
         return Err(FamilyCodecError::MissingVariant { payload: "FamilyRequestPayload" });
@@ -261,7 +266,6 @@ fn validate_request_payload(payload: &pb::FamilyRequestPayload) -> Result<(), Fa
             let Some(mutation) = value.mutation.as_ref() else {
                 return Err(invalid("mutation"));
             };
-            use pb::family_attachment_write::Mutation;
             match mutation {
                 Mutation::Store(value) => {
                     identifier(&value.name, "name")?;
@@ -289,10 +293,9 @@ fn validate_request_payload(payload: &pb::FamilyRequestPayload) -> Result<(), Fa
             digest(&value.digest, "digest")?;
             if let Some(pb::family_attachment_content_read::Range::Bytes(range)) =
                 value.range.as_ref()
+                && range.to.is_some_and(|to| to < range.from)
             {
-                if range.to.is_some_and(|to| to < range.from) {
-                    return Err(invalid("range"));
-                }
+                return Err(invalid("range"));
             }
             if matches!(value.range, Some(pb::family_attachment_content_read::Range::Suffix(0))) {
                 return Err(invalid("suffix"));
@@ -332,10 +335,10 @@ fn validate_request_payload(payload: &pb::FamilyRequestPayload) -> Result<(), Fa
                 };
                 match operation {
                     pb::family_counter_operation::Operation::Increment(value) => {
-                        identifier(&value.name, "name")?
+                        identifier(&value.name, "name")?;
                     }
                     pb::family_counter_operation::Operation::Delete(value) => {
-                        identifier(&value.name, "name")?
+                        identifier(&value.name, "name")?;
                     }
                 }
             }
@@ -361,10 +364,10 @@ fn validate_request_payload(payload: &pb::FamilyRequestPayload) -> Result<(), Fa
                 let Some(deletion) = delete.deletion.as_ref() else {
                     return Err(invalid("deletion"));
                 };
-                if let pb::family_time_series_delete::Deletion::Range(range) = deletion {
-                    if range.start > range.end {
-                        return Err(invalid("range"));
-                    }
+                if let pb::family_time_series_delete::Deletion::Range(range) = deletion
+                    && range.start > range.end
+                {
+                    return Err(invalid("range"));
                 }
             }
             if let Some(policy) = &value.policy {
@@ -388,19 +391,18 @@ fn validate_request_payload(payload: &pb::FamilyRequestPayload) -> Result<(), Fa
             if let pb::family_revision_write::Command::ForceCreate(value) = command {
                 validate_expected(value.expected.as_ref())?;
             }
-            if let pb::family_revision_write::Command::Revert(value) = command {
-                if value.to_revision == 0 {
-                    return Err(invalid("to_revision"));
-                }
+            if let pb::family_revision_write::Command::Revert(value) = command
+                && value.to_revision == 0
+            {
+                return Err(invalid("to_revision"));
             }
-            if let pb::family_revision_write::Command::Configure(value) = command {
-                if value.minimum_revisions == 0
+            if let pb::family_revision_write::Command::Configure(value) = command
+                && (value.minimum_revisions == 0
                     || value
                         .maximum_revisions
-                        .is_some_and(|maximum| maximum < value.minimum_revisions)
-                {
-                    return Err(invalid("revisions"));
-                }
+                        .is_some_and(|maximum| maximum < value.minimum_revisions))
+            {
+                return Err(invalid("revisions"));
             }
         }
         Operation::CompareExchangeWrite(value) => {
@@ -429,7 +431,7 @@ fn validate_request_payload(payload: &pb::FamilyRequestPayload) -> Result<(), Fa
                 {
                     return Err(invalid("index"));
                 }
-                _ => {}
+                pb::family_compare_exchange_write::Condition::DeleteIfIndex(_) => {}
             }
         }
         Operation::IdentityWrite(value) => {
@@ -462,6 +464,10 @@ fn validate_request_payload(payload: &pb::FamilyRequestPayload) -> Result<(), Fa
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the closed response oneof is validated in one exhaustive match"
+)]
 fn validate_response_payload(payload: &pb::FamilyResponsePayload) -> Result<(), FamilyCodecError> {
     use pb::family_response_payload::Result;
     let Some(result) = payload.result.as_ref() else {
@@ -571,12 +577,21 @@ fn validate_response_payload(payload: &pb::FamilyResponsePayload) -> Result<(), 
 }
 
 /// Encodes a canonical v1 family request payload.
+///
+/// # Errors
+///
+/// Returns an error if the request is invalid or exceeds the payload bound.
 pub fn encode_request(payload: &pb::FamilyRequestPayload) -> Result<Vec<u8>, FamilyCodecError> {
     validate_request_payload(payload)?;
     bounded_encode(payload, "FamilyRequestPayload")
 }
 
 /// Decodes a canonical v1 family request payload.
+///
+/// # Errors
+///
+/// Returns an error if the bytes are malformed, non-canonical, invalid, or
+/// exceed the payload bound.
 pub fn decode_request(bytes: &[u8]) -> Result<pb::FamilyRequestPayload, FamilyCodecError> {
     let payload = bounded_decode::<pb::FamilyRequestPayload>(bytes, "FamilyRequestPayload")?;
     validate_request_payload(&payload)?;
@@ -584,12 +599,21 @@ pub fn decode_request(bytes: &[u8]) -> Result<pb::FamilyRequestPayload, FamilyCo
 }
 
 /// Encodes a canonical v1 family response payload.
+///
+/// # Errors
+///
+/// Returns an error if the response is invalid or exceeds the payload bound.
 pub fn encode_response(payload: &pb::FamilyResponsePayload) -> Result<Vec<u8>, FamilyCodecError> {
     validate_response_payload(payload)?;
     bounded_encode(payload, "FamilyResponsePayload")
 }
 
 /// Decodes a canonical v1 family response payload.
+///
+/// # Errors
+///
+/// Returns an error if the bytes are malformed, non-canonical, invalid, or
+/// exceed the payload bound.
 pub fn decode_response(bytes: &[u8]) -> Result<pb::FamilyResponsePayload, FamilyCodecError> {
     let payload = bounded_decode::<pb::FamilyResponsePayload>(bytes, "FamilyResponsePayload")?;
     validate_response_payload(&payload)?;
@@ -597,6 +621,10 @@ pub fn decode_response(bytes: &[u8]) -> Result<pb::FamilyResponsePayload, Family
 }
 
 /// Returns the advertised family selected by a request payload.
+///
+/// # Errors
+///
+/// Returns an error if the request has no operation variant.
 pub fn request_family(
     payload: &pb::FamilyRequestPayload,
 ) -> Result<&'static str, FamilyCodecError> {
@@ -625,6 +653,10 @@ pub fn request_family(
 }
 
 /// Returns whether a request payload selects a write operation.
+///
+/// # Errors
+///
+/// Returns an error if the request has no operation variant.
 pub fn request_is_write(payload: &pb::FamilyRequestPayload) -> Result<bool, FamilyCodecError> {
     use pb::family_request_payload::Operation;
     Ok(match payload.operation.as_ref() {
@@ -647,6 +679,10 @@ pub fn request_is_write(payload: &pb::FamilyRequestPayload) -> Result<bool, Fami
 
 /// Returns the family selected by a response payload. Write receipts have no
 /// family tag of their own and therefore return `None`.
+///
+/// # Errors
+///
+/// Returns an error if the response has no result variant.
 pub fn response_family(
     payload: &pb::FamilyResponsePayload,
 ) -> Result<Option<&'static str>, FamilyCodecError> {
@@ -666,6 +702,11 @@ pub fn response_family(
 }
 
 /// Validates a decoded request against the outer family and request codec.
+///
+/// # Errors
+///
+/// Returns an error if the payload is invalid or its family or codec does not
+/// match the outer envelope.
 pub fn validate_request_family(
     family: &str,
     request_codec: &str,
@@ -689,6 +730,11 @@ pub fn validate_request_family(
 }
 
 /// Validates a decoded response against the outer family and response codec.
+///
+/// # Errors
+///
+/// Returns an error if the payload is invalid or its family or codec does not
+/// match the outer envelope.
 pub fn validate_response_family(
     family: &str,
     response_codec: &str,
@@ -778,6 +824,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one table test covers every advertised request and response family"
+    )]
     fn every_advertised_family_has_request_and_response_tags() {
         let requests = [
             "attachment",

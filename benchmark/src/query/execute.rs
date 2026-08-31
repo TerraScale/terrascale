@@ -201,10 +201,7 @@ fn execute_with_index(
     // benchmark or a speed claim (see `DiagnosticDuration`).
     let started = Instant::now();
     let query: &NormalizedQuery = plan.model();
-    // Tenant, snapshot, and namespace validation before any data access.
-    if snapshot.engine_identity() != engine.identity() {
-        return Err(QueryError::SnapshotEngineMismatch);
-    }
+    // Tenant and namespace validation before catalog access.
     if let Some(claim) = query.tenant_claim()
         && claim != snapshot.tenant()
     {
@@ -216,6 +213,10 @@ fn execute_with_index(
         }
     }
     let staleness = select_indexes(view, query.staleness(), snapshot)?;
+    // Snapshot identity validation before document access.
+    if snapshot.engine_identity() != engine.identity() {
+        return Err(QueryError::SnapshotEngineMismatch);
+    }
     check_bounds(query.deadline(), query.cancellation_signal())?;
     // A family source runs the family-source bridge from here (GAP-Q19):
     // its row space is the family entry space, read through the family

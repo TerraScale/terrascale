@@ -24,8 +24,10 @@
 //!
 //! Review note (2026-08-30): `terrabase-server` is the production composition
 //! boundary accepted by GOAL.md PRG-P0-02. It sits above TBEP, depends only on
-//! TBEP and the engine, and is a workspace member so every release gate builds
-//! and tests the daemon.
+//! TBEP, cluster composition, and the engine, and is a workspace member so
+//! every release gate builds and tests the daemon. The cluster's dependency
+//! on `terrabase-member-transport` records ADR 0023's ownership of bounded
+//! QUIC replication lanes; both edges point strictly down the frozen layers.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -72,11 +74,13 @@ const ALLOWED_EDGES: &[(&str, &str)] = &[
     ("terrabase-replication-core", "terrabase-crdt"),
     ("terrabase-replication-core", "terrabase"),
     ("terrabase-cluster", "terrabase"),
+    ("terrabase-cluster", "terrabase-member-transport"),
     ("terrabase-cluster", "terrabase-replication-core"),
     ("terrabase-tbep", "terrabase"),
     ("terrabase-tbep", "terrabase-sync-core"),
     ("terrabase-tbep", "terrabase-cluster"),
     ("terrabase-server", "terrabase"),
+    ("terrabase-server", "terrabase-cluster"),
     ("terrabase-server", "terrabase-tbep"),
 ];
 

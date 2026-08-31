@@ -118,6 +118,10 @@ fn from_pb_value(value: &pb::Value) -> Result<DocumentValue, HostingError> {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the closed family result variants are converted in one exhaustive match"
+)]
 fn family_result_payload(
     result: terrabase::families::FamilyReadResult,
 ) -> Result<pb::FamilyResponsePayload, HostingError> {
@@ -213,7 +217,7 @@ fn family_result_payload(
         FamilyReadResult::Archival(result) => {
             pb::family_response_payload::Result::Archival(pb::FamilyArchivalResponse {
                 present: result.state().is_some(),
-                archived: result.state().is_some_and(|state| state.archived()),
+                archived: result.state().is_some_and(terrabase::families::ArchivalState::archived),
             })
         }
         FamilyReadResult::Validation(_) | FamilyReadResult::Tombstones(_) => {
@@ -282,8 +286,8 @@ const fn engine_region(region: crate::registry::UsageRegion) -> RegionCode {
     }
 }
 
-fn wire_region(region: &RegionCode) -> Result<crate::registry::UsageRegion, HostingError> {
-    match *region {
+fn wire_region(region: RegionCode) -> Result<crate::registry::UsageRegion, HostingError> {
+    match region {
         RegionCode::GRU => Ok(crate::registry::UsageRegion::Gru),
         RegionCode::SFO => Ok(crate::registry::UsageRegion::Sfo),
         RegionCode::FRA => Ok(crate::registry::UsageRegion::Fra),
@@ -373,7 +377,7 @@ fn wire_usage_fact(
         project: scope.project_id().as_str().to_owned(),
         database: scope.database_id().as_str().to_owned(),
         partition: scope.partition_id().as_str().to_owned(),
-        region: wire_region(scope.region_id())?,
+        region: wire_region(*scope.region_id())?,
         measurement_start_millis: window.start_millis(),
         measurement_end_millis: window.end_millis(),
         integer_delta: fact.delta().to_string(),
@@ -693,6 +697,10 @@ impl EngineHost {
 
     /// Commits one mutation through the engine's transaction path and
     /// maps the outcome to the wire's write outcome.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the transaction boundary receives each authenticated envelope field explicitly"
+    )]
     fn commit(
         &self,
         tenant: &TenantId,
@@ -1048,6 +1056,10 @@ impl TbepHost for EngineHost {
         Ok(crate::registry::QueryCancelResponse { outcome })
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the closed family read variants are decoded in one exhaustive dispatch"
+    )]
     fn family_read(
         &self,
         bound_scope: &BoundScope,
@@ -1211,12 +1223,18 @@ impl TbepHost for EngineHost {
         })
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the closed family write variants are decoded in one exhaustive dispatch"
+    )]
     fn family_write(
         &self,
         bound_scope: &BoundScope,
         request: &crate::registry::FamilyWriteRequest,
         idempotency_key: &str,
     ) -> Result<crate::registry::FamilyWriteResponse, HostingError> {
+        use pb::family_attachment_write::Mutation;
+
         self.count_frame();
         self.ensure_serving()?;
         let tenant = self.tenant_of_scope(bound_scope)?;
@@ -1235,7 +1253,6 @@ impl TbepHost for EngineHost {
                 let document = DocumentId::try_new(&value.document).map_err(|_| {
                     HostingError::Invalid("the attachment document is invalid".into())
                 })?;
-                use pb::family_attachment_write::Mutation;
                 let mutation = match value.mutation.ok_or_else(|| {
                     HostingError::Invalid("the attachment mutation is missing".into())
                 })? {

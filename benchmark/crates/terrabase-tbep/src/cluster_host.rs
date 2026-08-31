@@ -89,7 +89,10 @@ impl ClusterTbepHost {
     /// Wraps a cluster host for protocol serving. The serving member is
     /// the entry point client operations coordinate through — any
     /// member is eligible; the coordinator fans to the voters itself.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the cluster database scope is invalid.
     pub fn try_new(
         cluster: ClusterHost,
         serving_member: &str,

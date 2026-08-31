@@ -4233,6 +4233,19 @@ fn tree_fingerprint(root: &std::path::Path) -> Vec<(std::path::PathBuf, u64)> {
     out
 }
 
+fn copy_tree(source: &std::path::Path, destination: &std::path::Path) {
+    std::fs::create_dir_all(destination).expect("creates the destination");
+    for entry in std::fs::read_dir(source).expect("reads the source") {
+        let entry = entry.expect("reads the entry");
+        let target = destination.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).expect("copies the file");
+        }
+    }
+}
+
 #[test]
 fn schema_free_collections_are_byte_for_byte_unaffected() {
     // The same schema-free script runs against two fresh engines. The probe
@@ -4240,8 +4253,16 @@ fn schema_free_collections_are_byte_for_byte_unaffected() {
     // deterministic, no schema machinery appended a commit (sequences match
     // step by step), and no schema state was recorded (the reserved
     // collection stays empty). Any of those drifting turns the probe red.
+    // Clone one empty initialized store so encryption key and owner metadata
+    // are held constant. Otherwise ciphertext differences from two fresh
+    // local keys obscure whether the schema-free application bytes changed.
+    let (template, engine) = open_engine("sm02-bytes-template");
+    engine.shutdown().expect("shuts down the template");
     let run = |tag: &str| -> (Vec<u64>, Vec<(std::path::PathBuf, u64)>) {
-        let (dir, engine) = open_engine(tag);
+        let dir = location(tag);
+        copy_tree(&template, &dir);
+        let engine = Engine::open(EngineConfig::durable(&dir).expect("durable location"))
+            .expect("engine opens");
         let mut sequences = Vec::new();
         let mut commit = |operation_name: &str, stage: &dyn Fn(&mut Transaction<'_>)| {
             let tenant_scope = scope(&engine, "tenant-a");

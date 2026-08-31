@@ -1488,6 +1488,10 @@ impl TbepHost for SyncDeliveryHost {
         Ok(SyncCheckpointAckResponse { session_id: request.session_id })
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "mutation validation, deduplication, application, and receipt recording are one atomic host path"
+    )]
     fn sync_mutation_submit(
         &self,
         bound_scope: &BoundScope,

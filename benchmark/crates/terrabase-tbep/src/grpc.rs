@@ -60,7 +60,7 @@ use x509_parser::prelude::X509Certificate;
 
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls;
-use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use tokio_rustls::rustls::pki_types::CertificateDer;
 
 use terrabase::observability::{
     MetricsRegistry, Operation as MetricOperation, Outcome as MetricOutcome, Region as MetricRegion,
@@ -267,7 +267,7 @@ impl Stream for SameUidUnixIncoming {
                     Ok(credentials) if credentials.uid() == self.owner_uid => {
                         return Poll::Ready(Some(Ok(stream)));
                     }
-                    Ok(_) => continue,
+                    Ok(_) => {}
                     Err(error) => return Poll::Ready(Some(Err(error))),
                 },
                 other => return other,
@@ -733,6 +733,10 @@ impl TbepGrpcServer {
     /// Panics only if the serving runtime fails to start on the dedicated
     /// thread (an operator-level environment failure); TLS and bind
     /// failures are returned.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "listener setup keeps validation, runtime ownership, and shutdown wiring together"
+    )]
     pub fn serve_tls(
         self: &Arc<Self>,
         address: SocketAddr,
@@ -935,7 +939,7 @@ fn tls_server_config(
         .with_protocol_versions(&[&rustls::version::TLS13])
         .map_err(std::io::Error::other)?
         .with_client_cert_verifier(verifier)
-        .with_single_cert(certificates, PrivateKeyDer::from(key))
+        .with_single_cert(certificates, key)
         .map_err(std::io::Error::other)?;
     // tonic speaks HTTP/2 only; advertise the protocol during the TLS
     // handshake so grpc-go's ALPN enforcement can authenticate the peer.
@@ -1021,6 +1025,10 @@ impl Drop for Permit {
 }
 
 #[derive(Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "the four flags record independent query and cancellation milestones"
+)]
 struct QueryLifecycleState {
     started: bool,
     finished: bool,
@@ -1325,6 +1333,10 @@ fn response_size_error(detail: &str) -> Status {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::items_after_test_module,
+    reason = "the focused lifecycle test stays next to the private lifecycle state machine"
+)]
 mod query_lifecycle_tests {
     use super::*;
 
@@ -1422,8 +1434,9 @@ where
         }
         Ok(Ok(Err(error))) => {
             let outcome = match &error {
-                HostingError::EngineFailure(_) => MetricOutcome::Error,
-                HostingError::UsageCorrupt(_) => MetricOutcome::Error,
+                HostingError::EngineFailure(_) | HostingError::UsageCorrupt(_) => {
+                    MetricOutcome::Error
+                }
                 HostingError::Invalid(_)
                 | HostingError::Refused(_)
                 | HostingError::SessionRefused(_)
@@ -1454,6 +1467,10 @@ where
 
 /// Runs a query behind the overload gate and keeps its host cancellation
 /// lifecycle alive when the RPC future is cancelled or times out.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the query lifecycle and overload permit must remain visible across every task outcome"
+)]
 async fn run_query_host<F>(
     self_ref: &TbepGrpcServer,
     lifecycle: Arc<QueryLifecycle>,
@@ -1531,8 +1548,9 @@ where
         }
         Ok(Ok(Err(error))) => {
             let outcome = match &error {
-                HostingError::EngineFailure(_) => MetricOutcome::Error,
-                HostingError::UsageCorrupt(_) => MetricOutcome::Error,
+                HostingError::EngineFailure(_) | HostingError::UsageCorrupt(_) => {
+                    MetricOutcome::Error
+                }
                 HostingError::Invalid(_)
                 | HostingError::Refused(_)
                 | HostingError::SessionRefused(_)

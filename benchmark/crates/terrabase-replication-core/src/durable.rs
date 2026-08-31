@@ -36,6 +36,8 @@ const MAX_SNAPSHOT_BYTES: usize = 16 << 20;
 const MAX_OPERATION_IDS: usize = 65_536;
 const MAX_OPERATION_ID_BYTES: usize = 256;
 
+type PersistedState = (Vec<u8>, BTreeSet<String>);
+
 /// Durable progress exposed by one replica member.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DurableMemberProgress {
@@ -106,6 +108,12 @@ pub struct DurableMember {
 
 impl DurableMember {
     /// Opens a replica over an already-admitted database lease.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the persisted replica state cannot be read or
+    /// decoded, the snapshot cannot be restored, or the engine cannot report
+    /// its published sequence.
     pub fn open(
         lease: DatabaseLease,
         member_identity: &str,
@@ -113,19 +121,16 @@ impl DurableMember {
     ) -> Result<Self, DurableMemberError> {
         let location = lease.location().to_path_buf();
         let actor = actor_for(member_identity);
-        let (snapshot, operations) = match read_state(&location)? {
-            Some((snapshot, operations)) => {
-                (ReplicaDoc::from_snapshot(actor, &snapshot)?, operations)
-            }
-            None => {
-                // Read the old pair only when the atomic state record does
-                // not exist. The next successful persist migrates it.
-                let snapshot = match read_legacy_snapshot(&location)? {
-                    Some(bytes) => ReplicaDoc::from_snapshot(actor, &bytes)?,
-                    None => ReplicaDoc::new(actor),
-                };
-                (snapshot, read_legacy_operations(&location)?)
-            }
+        let (snapshot, operations) = if let Some((snapshot, operations)) = read_state(&location)? {
+            (ReplicaDoc::from_snapshot(actor, &snapshot)?, operations)
+        } else {
+            // Read the old pair only when the atomic state record does
+            // not exist. The next successful persist migrates it.
+            let snapshot = match read_legacy_snapshot(&location)? {
+                Some(bytes) => ReplicaDoc::from_snapshot(actor, &bytes)?,
+                None => ReplicaDoc::new(actor),
+            };
+            (snapshot, read_legacy_operations(&location)?)
         };
         let known_documents = snapshot.materialized().into_keys().collect();
         let progress = DurableMemberProgress {
@@ -165,6 +170,10 @@ impl DurableMember {
     }
 
     /// Returns the dual Merkle roots of the current durable replica.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the anti-entropy tree cannot be built.
     pub fn merkle_roots(&self) -> Result<crate::anti_entropy::MerkleRoots, DurableMemberError> {
         crate::anti_entropy::tree_for_replica(&self.replica, 64, 4096)
             .map(|tree| tree.roots())
@@ -178,6 +187,11 @@ impl DurableMember {
     }
 
     /// Returns the engine-backed document, if present.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the member is draining, an identifier is invalid,
+    /// or the engine refuses the read transaction.
     pub fn read(
         &mut self,
         document: &str,
@@ -197,13 +211,19 @@ impl DurableMember {
         let transaction =
             lease.begin(&scope, snapshot, operation).map_err(|_| DurableMemberError::Engine)?;
         let document = transaction.read(&id).map_err(|_| DurableMemberError::Engine)?;
-        Ok(document.and_then(|document| match document.value() {
-            DocumentValue::Object(body) => Some(body.clone()),
-            other => Some(BTreeMap::from([("value".to_owned(), other.clone())])),
+        Ok(document.map(|document| match document.value() {
+            DocumentValue::Object(body) => body.clone(),
+            other => BTreeMap::from([("value".to_owned(), other.clone())]),
         }))
     }
 
     /// Applies one client-originated put to the engine and replica.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the member is draining, input identifiers or
+    /// capacity are invalid, the engine or replica rejects the write, or the
+    /// durable replica state cannot be persisted.
     pub fn put(
         &mut self,
         operation: &str,
@@ -250,6 +270,12 @@ impl DurableMember {
     }
 
     /// Applies one client-originated delete to the engine and replica.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the member is draining, input identifiers or
+    /// capacity are invalid, the engine or replica rejects the delete, or the
+    /// durable replica state cannot be persisted.
     pub fn delete(
         &mut self,
         operation: &str,
@@ -289,11 +315,21 @@ impl DurableMember {
 
     /// Exchanges deltas in both directions, using snapshot fallback where a
     /// peer is behind the retained floor, then reconciles both engines.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either member cannot exchange, reconcile, verify,
+    /// or persist its replica state.
     pub fn reconcile_with(&mut self, other: &mut Self) -> Result<(), DurableMemberError> {
         self.reconcile_with_timeout(other, std::time::Duration::MAX)
     }
 
     /// Exchanges and reconciles with a peer before `timeout` elapses.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the deadline elapses or either member cannot
+    /// exchange, reconcile, verify, or persist its replica state.
     pub fn reconcile_with_timeout(
         &mut self,
         other: &mut Self,
@@ -332,6 +368,10 @@ impl DurableMember {
     }
 
     /// Persists the final snapshot and releases the database lease.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the replica state cannot be persisted.
     pub fn drain(&mut self) -> Result<(), DurableMemberError> {
         self.persist()?;
         self.lease.take();
@@ -550,7 +590,7 @@ fn encode_state(
     Ok(body)
 }
 
-fn read_state(location: &Path) -> Result<Option<(Vec<u8>, BTreeSet<String>)>, DurableMemberError> {
+fn read_state(location: &Path) -> Result<Option<PersistedState>, DurableMemberError> {
     let path = location.join(STATE);
     let metadata = match fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
