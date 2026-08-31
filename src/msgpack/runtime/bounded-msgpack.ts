@@ -171,6 +171,9 @@ export function scanMessagePack(bytes: Uint8Array, limits: TerrascaleMsgpackScan
   };
 
   const readLength = (width: number): number => {
+    if (cursor + width > bytes.length) {
+      fail("truncated", "the message ends inside a length prefix");
+    }
     let length = 0;
     for (let index = 0; index < width; index++) {
       length = length * 256 + bytes[cursor + index]!;

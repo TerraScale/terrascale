@@ -137,6 +137,7 @@ export class SyncV2ResultViewStore {
   #revision = 0n;
   #digest = emptyResultDigest();
   #checkpoint: SyncV2ViewCheckpoint | undefined;
+  #hasSnapshot = false;
   #online = true;
   readonly #optimistic = new Map<string, readonly SyncV2ResultOperation[]>();
   readonly #completed = new Set<string>();
@@ -180,15 +181,13 @@ export class SyncV2ResultViewStore {
 
   public bootstrap(snapshot: SyncV2ResultSnapshot): void {
     validateSnapshot(snapshot);
+    this.#assertSnapshotAdvances(snapshot);
     this.#installSnapshot(snapshot);
   }
 
   public reset(snapshot: SyncV2ResultSnapshot): void {
     validateSnapshot(snapshot);
-    if (snapshot.view_generation < this.#viewGeneration
-      || (snapshot.view_generation === this.#viewGeneration && snapshot.revision < this.#revision)) {
-      throw new SyncV2ViewError("reset-required", "the reset generation or revision regresses");
-    }
+    this.#assertSnapshotAdvances(snapshot);
     this.#installSnapshot(snapshot);
   }
 
@@ -234,7 +233,13 @@ export class SyncV2ResultViewStore {
       throw new SyncV2ViewError("reset-required", "authorization and view generations disagree");
     }
     const removed = new Set(removals);
-    this.#items = this.#items.filter(item => !removed.has(item.identity));
+    if (replacement.items.some(item => removed.has(item.identity))) {
+      throw new SyncV2ViewError(
+        "reset-required",
+        "the authorization replacement restores an identity declared removed",
+      );
+    }
+    this.#assertSnapshotAdvances(replacement);
     this.#installSnapshot(replacement);
   }
 
@@ -285,7 +290,25 @@ export class SyncV2ResultViewStore {
     this.#revision = snapshot.revision;
     this.#digest = snapshot.digest;
     this.#checkpoint = snapshot.checkpoint;
+    this.#hasSnapshot = true;
     this.#notify();
+  }
+
+  #assertSnapshotAdvances(snapshot: SyncV2ResultSnapshot): void {
+    if (!this.#hasSnapshot) return;
+    if (snapshot.view_generation < this.#viewGeneration
+      || snapshot.authorization_generation < this.#authorizationGeneration
+      || snapshot.revision < this.#revision) {
+      throw new SyncV2ViewError(
+        "reset-required",
+        "the snapshot view, authorization, or revision generation regresses",
+      );
+    }
+    if (snapshot.view_generation === this.#viewGeneration
+      && snapshot.authorization_generation === this.#authorizationGeneration
+      && snapshot.revision === this.#revision) {
+      throw new SyncV2ViewError("reset-required", "the snapshot replays installed state");
+    }
   }
 
   #rememberCompleted(identity: string): void {

@@ -8,6 +8,7 @@ export * from "./sync/protocol.js";
 export * from "./sync/store.js";
 export * from "./sync/v2/conformance.js";
 export * from "./sync/v2/frame.js";
+export * from "./sync/v2/client.js";
 export * from "./sync/v2/result-view.js";
 export { sdkRouteManifest } from "./client.js";
 export type {

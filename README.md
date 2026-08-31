@@ -12,9 +12,8 @@ The SDK uses public versioned TerraScale HTTPS and reactive contracts:
 
 - Dashboard owns Better Auth, Organizations, Projects, Users, Payments, HTTP
   MCP, and those public product routes.
-- The independently deployable C#/.NET 10 `TerraScale.Database` service,
-  sourced permanently in `TerraScale.Internals`, owns database, query,
-  placement, backup, usage, and reactive routes.
+- The Go Database API in `ts-internals` owns database, query, placement,
+  backup, usage, and reactive routes.
 - TerraBase is private. The SDK never speaks TBEP, opens a TerraBase
   connection, consumes native replication data, or uses NATS.
 
@@ -40,37 +39,42 @@ adapter conformance are separate qualification gates.
 
 There is no Dashboard-named or generic request entrypoint.
 
-## Honest sync status
+## Reactive protocol
 
-This tree still contains:
+The current reactive candidate is `TerraScaleSyncV2Client`. It decodes
+the generated `terrascale.sync.v2.msgpack` frames and applies authorized
+snapshots and result operations to bounded result views. The checked-in JSON
+manifest owns every tag, field position, direction, and bound. The generated
+TypeScript module consumes that file. INT-3's Go codec must check the same
+manifest instead of copying a second frame definition.
 
-- the legacy `terrascale.sync.v1` client; and
-- a `terrascale.sync.v2` client over HTTP setup, JSON mutation/delta/snapshot
-  calls, and an SSE trigger stream, with opaque `terrabase-native/1` and
-  `terrabase-snapshot/1` payloads.
+The source still contains the legacy `terrascale.sync.v1` client and the
+Loro/native-v2 implementation while this work is reviewed as a dependent PR
+stack. Neither is a current public contract. The next two mechanical stages
+delete them without changing the 2.1 manifest or client.
 
-Neither is the final public MessagePack reactive transport. The current v2 is
-conformance and migration evidence and must not receive new production
-protocol semantics.
+Protocol 2.1 is the first publishable wire contract. The pre-launch 2.0
+artifacts reassigned tags during development and are withdrawn. The decoder
+rejects 2.0 before reading a message body, and 2.0 decoders reject 2.1. Tags
+in 2.1 are stable and future compatible changes must append new tags.
 
-The proposed replacement `terrascale.sync.v2.msgpack` will:
+The current client:
 
-- subscribe to bounded typed TQL queries;
-- receive authorized result snapshots, insert, update, patch, remove, move, or
+- builds subscribe, unsubscribe, heartbeat, and checkpoint frames for bounded
+  typed TQL queries;
+- receives authorized result snapshots, insert, update, patch, remove, move, or
   reset operations;
-- use opaque view-scoped checkpoints;
-- support read-your-writes and Region movement through sparse causal tokens;
-- apply reversible optimistic presentation for connected online writes;
-- reject durable writes while disconnected;
-- reauthorize on reconnect and grant refresh;
-- remove data after permission loss;
-- bound every queue, subscription, result, and reconnect path; and
-- pass one semantic corpus shared with Rust and .NET.
+- keeps checkpoints opaque and view-scoped;
+- applies reversible optimistic presentation only while the transport is
+  online;
+- installs permission-change replacements before exposing the next view;
+- stops client traffic on backpressure and marks Region movement offline; and
+- passes the hostile-decode, semantic corpus, manifest-drift, unit, and browser
+  gates.
 
-The generated manifest does not make native payload bytes a customer contract.
-Until the replacement is wired to the owner-published WebSocket contract and
-passes cross-language and live conformance, the reactive production story is
-unqualified. See [ADR 0005](docs/adr/0005-reactive-client-transition.md) and
+SDK-2 supplies the production WebSocket transport and HTTP + MessagePack
+fallback. Until those transports pass browser and live gateway tests, this
+state machine alone is not a production transport. See
 [ADR 0025](docs/adr/0025-public-messagepack-manifest.md).
 
 ## Better Auth adapter target
@@ -109,9 +113,10 @@ automatic retry candidates.
 
 ## Region and session behavior
 
-The default public API origin is `https://api.terrascale.tech` in the current
-SDK. The final single-origin edge routing decision is awaiting owner
-confirmation.
+The default public API origin is `https://api.terrascale.tech`. Cloudflare
+routes that global host to the nearest healthy Region. Region-pinned access
+uses `https://gru.api.terrascale.tech`, `https://sfo.api.terrascale.tech`, or
+`https://fra.api.terrascale.tech`.
 
 A database selects one through twenty active Regions, initially GRU, SFO, and
 FRA. A preferred Region is a failover-capable hint. Strict affinity fails
@@ -211,7 +216,6 @@ node scripts/generate-msgpack-protocol.mjs --check
 node --test test/msgpack-manifest-drift.test.mjs
 node --test test/msgpack-hostile-decode.test.mjs
 node --test test/msgpack-corpus-roundtrip.test.mjs
-node --test test/sync-v2-native-corpus-view.test.mjs
 ~~~
 
 Integration tests target the fixed DevHost public routes. When the required
