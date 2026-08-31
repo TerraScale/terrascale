@@ -61,4 +61,54 @@ if output=$(run_contracts "$tracked_fixture" 2>&1); then
 fi
 grep -Fq './.claude/worktrees/ignored/rogue.go' <<<"$output"
 
-printf 'validated release-contract Go scan fixtures\n'
+extra_workflow_fixture="$fixture_root/extra-workflow"
+mkdir -p "$extra_workflow_fixture"
+make_fixture "$extra_workflow_fixture"
+printf 'name: unreviewed\n' >"$extra_workflow_fixture/.forgejo/workflows/extra.yml"
+if run_contracts "$extra_workflow_fixture" >/dev/null 2>&1; then
+  printf 'expected an extra workflow to fail validation\n' >&2
+  exit 1
+fi
+
+symlinked_workflow_fixture="$fixture_root/symlinked-workflow"
+mkdir -p "$symlinked_workflow_fixture"
+make_fixture "$symlinked_workflow_fixture"
+mv "$symlinked_workflow_fixture/.forgejo/workflows/ci.yml" \
+  "$symlinked_workflow_fixture/ci.yml"
+ln -s ../../ci.yml "$symlinked_workflow_fixture/.forgejo/workflows/ci.yml"
+if run_contracts "$symlinked_workflow_fixture" >/dev/null 2>&1; then
+  printf 'expected a symlinked workflow to fail validation\n' >&2
+  exit 1
+fi
+
+symlinked_directory_fixture="$fixture_root/symlinked-directory"
+mkdir -p "$symlinked_directory_fixture"
+make_fixture "$symlinked_directory_fixture"
+mv "$symlinked_directory_fixture/.forgejo/workflows" \
+  "$symlinked_directory_fixture/.forgejo/workflows-reviewed"
+ln -s workflows-reviewed "$symlinked_directory_fixture/.forgejo/workflows"
+if run_contracts "$symlinked_directory_fixture" >/dev/null 2>&1; then
+  printf 'expected a symlinked workflow directory to fail validation\n' >&2
+  exit 1
+fi
+
+missing_workflow_fixture="$fixture_root/missing-workflow"
+mkdir -p "$missing_workflow_fixture"
+make_fixture "$missing_workflow_fixture"
+rm "$missing_workflow_fixture/.forgejo/workflows/promote.yml"
+if run_contracts "$missing_workflow_fixture" >/dev/null 2>&1; then
+  printf 'expected a missing workflow to fail validation\n' >&2
+  exit 1
+fi
+
+non_regular_workflow_fixture="$fixture_root/non-regular-workflow"
+mkdir -p "$non_regular_workflow_fixture"
+make_fixture "$non_regular_workflow_fixture"
+rm "$non_regular_workflow_fixture/.forgejo/workflows/release.yml"
+mkdir "$non_regular_workflow_fixture/.forgejo/workflows/release.yml"
+if run_contracts "$non_regular_workflow_fixture" >/dev/null 2>&1; then
+  printf 'expected a non-regular workflow to fail validation\n' >&2
+  exit 1
+fi
+
+printf 'validated release-contract inventory and Go scan fixtures\n'

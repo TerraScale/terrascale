@@ -18,6 +18,24 @@ validate_reviewed_ci_bytes() {
 
 validate_reviewed_ci_bytes "$ci"
 
+validate_workflow_inventory() {
+  local workflow_dir=$1
+  local -a workflow_entries=()
+
+  [[ -d "$workflow_dir" && ! -L "$workflow_dir" ]]
+  mapfile -d '' workflow_entries < <(
+    find "$workflow_dir" -mindepth 1 -maxdepth 1 -print0
+  )
+  [[ ${#workflow_entries[@]} -eq 3 ]]
+
+  local workflow
+  for workflow in "$ci" "$release" "$promote"; do
+    [[ -f "$workflow" && ! -L "$workflow" ]]
+  done
+}
+
+validate_workflow_inventory .forgejo/workflows
+
 inject_checks_run_step() {
   local bypass_command="$1"
   local injected=false
