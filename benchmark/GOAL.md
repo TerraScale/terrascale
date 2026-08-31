@@ -22,15 +22,18 @@ network client. ADR 0040 records D-27..D-31 in-repo.
 ## STORAGE PIVOT (2026-08-30 — decisions D-27/D-28/D-29)
 
 The custom storage stack (LSM, RootFiles, custom WAL, compaction,
-segments/manifests) is **retired** — the 2026-08-30 benchmarks measured it
-20–70x behind PostgreSQL on reads. Data now lives in mainline SQLite
-(`rusqlite`, WAL mode, one writer per file, group commit); every document
-write commits atomically with its publication-journal row in one SQLite
-transaction. Everything above the storage seam — CRDT/causality, sync,
-replication, TBEP — survives unchanged. See workspace tasks TB-20 (SQLite
-core), TB-21 (delete the old engine), TB-22 (Litestream), and the rescoped
+segments/manifests) is **deleted, effective immediately** — the 2026-08-30
+benchmarks measured it 20–70x behind PostgreSQL on reads, and the owner
+ordered up-front deletion with no transition period (TB-21 runs in lockstep
+with TB-20 as one delete-and-replace sequence; every push stays green). Data
+lives in mainline SQLite (`rusqlite`, WAL mode, one writer per file, group
+commit); every document write commits atomically with its
+publication-journal row in one SQLite transaction. Everything above the
+storage seam — CRDT/causality, sync, replication, TBEP — survives unchanged.
+See workspace tasks TB-20 (SQLite core), TB-21 (immediate deletion), TB-22
+(Litestream), TB-23 (auto-indexing), and the rescoped
 TB-5/TB-7/TB-10/TB-12/TB-15/TB-17/TB-18. Docs and ADRs describing the old
-storage stack are deleted or marked superseded by TB-21.
+storage stack are deleted or marked superseded in the same sequence.
 
 ## Verification set (must pass before any merge)
 

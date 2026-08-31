@@ -7,10 +7,11 @@ workspace goal wins.
 
 Supersedes the storage-engine portions of earlier ADRs and design docs that
 describe the custom LSM, RootFiles, custom WAL, compaction, and
-segment/manifest machinery. Those documents are deleted together with the
-code they describe (workspace task TB-21). The CRDT/causality, sync,
-replication, TBEP, encryption-seam, and observability decisions in earlier
-ADRs remain in force.
+segment/manifest machinery. That code and those documents are deleted
+**immediately** (workspace task TB-21, in lockstep with TB-20 — owner
+order of 2026-08-30: no transition period, SQLite only from now on). The
+CRDT/causality, sync, replication, TBEP, encryption-seam, and observability
+decisions in earlier ADRs remain in force.
 
 ## Context
 
