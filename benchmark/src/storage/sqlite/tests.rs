@@ -282,7 +282,7 @@ fn faulted_batch_leaves_zero_divergence() {
         &DocumentValue::String("seeded".to_owned()),
         "the earlier synced commit survived"
     );
-    let storage = reopened.storage.lock().expect("storage lock");
+    let storage = reopened.storage.write().expect("storage lock");
     assert_eq!(storage.port.journal_divergence(), 0, "documents and journal agree");
     assert_eq!(
         storage.port.journaled_high_water().map(StorageSequence::get),
@@ -459,7 +459,7 @@ fn concurrent_writers_produce_one_continuous_journal() {
         )
         .expect("scan");
     assert_eq!(documents.len(), WRITERS, "every grouped write is visible after");
-    let storage = engine.storage.lock().expect("storage lock");
+    let storage = engine.storage.write().expect("storage lock");
     assert_eq!(storage.port.journal_divergence(), 0);
     assert_eq!(
         storage

@@ -1187,7 +1187,7 @@ fn commit_publication_event_is_emitted_after_storage_locks_release() {
         move |_event: &crate::storage::CommitPublicationEvent| {
             // If storage locks were still held, this non-reentrant probe would
             // fail to acquire them.
-            let acquired = storage_probe.try_lock().is_ok();
+            let acquired = storage_probe.try_write().is_ok();
             *released_flag.lock().expect("flag lock") = acquired;
         },
     ));
