@@ -23,7 +23,7 @@ failures.
 ## Current evidence and gap
 
 The checked-in MessagePack manifest and decoder enforce the 8 MiB message,
-1 MiB parameter, 64 KiB projected-value, depth 64, 256 KiB scan-string, and
+1 MiB parameter, 1 MiB projected-value, depth 64, 256 KiB scan-string, and
 10,000-item scan-array bounds, with stricter field limits where declared. The
 WebSocket and HTTP fallback transports still need contract-by-contract
 comparison with the Database API schemas. A bound is not production-qualified

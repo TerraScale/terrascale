@@ -34,7 +34,7 @@
         "name": "projected_field",
         "doc": "One projected field in an authorized result item. Its value is an opaque canonical JSON byte string produced by the engine and parsed at most once by the browser client.",
         "fields": [
-          { "name": "path", "type": { "kind": "text", "maxBytes": 256 } },
+          { "name": "path", "type": { "kind": "text", "minBytes": 1, "maxBytes": 256 } },
           { "name": "value", "type": { "kind": "binary", "minBytes": 0, "maxBytes": 1048576 } }
         ]
       }
@@ -47,7 +47,7 @@
           { "name": "identity", "type": { "kind": "text", "maxBytes": 256 } },
           {
             "name": "fields",
-            "type": { "kind": "array", "maxItems": 1024, "items": { "kind": "ref", "name": "projected_field" } }
+            "type": { "kind": "array", "maxItems": 1024, "items": { "kind": "ref", "name": "projected_field" }, "aggregateBytes": { "field": "value", "maxBytes": 1048576 } }
           }
         ]
       }
@@ -74,7 +74,7 @@
         "name": "field_change",
         "doc": "One projected field replacement or removal. A replacement is an opaque canonical JSON byte string, not a nested MessagePack document value.",
         "fields": [
-          { "name": "path", "type": { "kind": "text", "maxBytes": 256 } },
+          { "name": "path", "type": { "kind": "text", "minBytes": 1, "maxBytes": 256 } },
           {
             "name": "value",
             "type": { "kind": "option", "of": { "kind": "binary", "minBytes": 0, "maxBytes": 1048576 } }
@@ -95,7 +95,7 @@
               { "name": "position", "type": { "kind": "u32" } },
               {
                 "name": "fields",
-                "type": { "kind": "array", "maxItems": 1024, "items": { "kind": "ref", "name": "projected_field" } }
+                "type": { "kind": "array", "maxItems": 1024, "items": { "kind": "ref", "name": "projected_field" }, "aggregateBytes": { "field": "value", "maxBytes": 1048576 } }
               }
             ]
           },
@@ -106,7 +106,7 @@
               { "name": "identity", "type": { "kind": "text", "maxBytes": 256 } },
               {
                 "name": "fields",
-                "type": { "kind": "array", "maxItems": 1024, "items": { "kind": "ref", "name": "projected_field" } }
+                "type": { "kind": "array", "maxItems": 1024, "items": { "kind": "ref", "name": "projected_field" }, "aggregateBytes": { "field": "value", "maxBytes": 1048576 } }
               }
             ]
           },
@@ -117,7 +117,7 @@
               { "name": "identity", "type": { "kind": "text", "maxBytes": 256 } },
               {
                 "name": "changes",
-                "type": { "kind": "array", "maxItems": 1024, "items": { "kind": "ref", "name": "field_change" } }
+                "type": { "kind": "array", "maxItems": 1024, "items": { "kind": "ref", "name": "field_change" }, "aggregateBytes": { "field": "value", "maxBytes": 1048576 } }
               }
             ]
           },

@@ -103,8 +103,13 @@ function checkType(type, where) {
     case "bool":
       return;
     case "text": {
-      if (!Number.isInteger(type.maxBytes) || type.maxBytes < 0 || type.maxBytes > manifest.scan.maxStringBytes) {
-        invalid(`${where}: text maxBytes ${type.maxBytes} must fit the scan string bound`);
+      const minBytes = type.minBytes ?? 0;
+      if (
+        !Number.isInteger(minBytes) || minBytes < 0
+        || !Number.isInteger(type.maxBytes) || type.maxBytes < minBytes
+        || type.maxBytes > manifest.scan.maxStringBytes
+      ) {
+        invalid(`${where}: text bounds ${minBytes}..${type.maxBytes} must fit the scan string bound`);
       }
       return;
     }
@@ -121,6 +126,15 @@ function checkType(type, where) {
     case "array": {
       if (!Number.isInteger(type.maxItems) || type.maxItems < 0 || type.maxItems > manifest.scan.maxArrayItems) {
         invalid(`${where}: array maxItems ${type.maxItems} must fit the scan array bound`);
+      }
+      if (type.aggregateBytes !== undefined) {
+        if (typeof type.aggregateBytes !== "object" || type.aggregateBytes === null
+          || typeof type.aggregateBytes.field !== "string"
+          || !Number.isInteger(type.aggregateBytes.maxBytes)
+          || type.aggregateBytes.maxBytes < 0
+          || type.aggregateBytes.maxBytes > manifest.scan.maxBinaryBytes) {
+          invalid(`${where}: aggregateBytes must name a field and bounded maxBytes`);
+        }
       }
       checkType(type.items, `${where} items`);
       return;
@@ -366,6 +380,36 @@ function typeModel() {
     const form = Object.keys(entry)[0];
     typeForms.set(entry[form].name, { form, ...entry[form] });
   }
+  const checkAggregateFields = (fields, owner) => {
+    for (const field of fields) {
+      const aggregate = field.type.kind === "array" ? field.type.aggregateBytes : undefined;
+      if (aggregate === undefined) continue;
+      const itemType = typeOf(field.type.items);
+      if (itemType?.form !== "struct") {
+        invalid(`${owner}.${field.name}: aggregateBytes requires an array of a structured type`);
+      }
+      const aggregateField = itemType.fields.find((item) => item.name === aggregate.field);
+      if (aggregateField === undefined || !isBinaryOrOptionalBinary(aggregateField.type)) {
+        invalid(`${owner}.${field.name}: aggregateBytes field ${aggregate.field} must be binary or optional binary`);
+      }
+    }
+  };
+  for (const definition of typeForms.values()) {
+    if (definition.form === "struct") {
+      checkAggregateFields(definition.fields, definition.name);
+    } else if (definition.form === "union") {
+      for (const variant of definition.variants) {
+        checkAggregateFields(variant.fields, `${definition.name}.${variant.name}`);
+      }
+    }
+  }
+  for (const message of manifest.messages) {
+    checkAggregateFields(message.fields, message.name);
+  }
+}
+
+function isBinaryOrOptionalBinary(type) {
+  return type.kind === "binary" || (type.kind === "option" && type.of.kind === "binary");
 }
 
 function typeOf(type) {
@@ -431,7 +475,7 @@ function predicateCall(type, expr) {
     case "bool":
       return `msgpackIsBool(${expr})`;
     case "text":
-      return `msgpackIsText(${expr}, ${type.maxBytes})`;
+      return `msgpackIsText(${expr}, ${type.minBytes ?? 0}, ${type.maxBytes})`;
     case "binary":
       return `msgpackIsBinary(${expr}, ${type.minBytes}, ${type.maxBytes})`;
     case "ref":
@@ -442,6 +486,27 @@ function predicateCall(type, expr) {
     default:
       return null;
   }
+}
+
+function aggregateVariable(path) {
+  return `aggregate${path.replace(/[^a-z0-9]+/giu, "_").split("_").filter(Boolean).map(pascal).join("")}Bytes`;
+}
+
+function emitAggregateCheck(type, expr, path, indent, out, error) {
+  if (type.aggregateBytes === undefined) return;
+  const variable = aggregateVariable(path);
+  const item = `${variable}Item`;
+  const value = `${variable}Value`;
+  out.push(
+    `${pad(indent)}let ${variable} = 0;`,
+    `${pad(indent)}for (const ${item} of ${expr}) {`,
+    `${pad(indent + 1)}const ${value} = ${item}.${type.aggregateBytes.field};`,
+    `${pad(indent + 1)}if (${value} instanceof Uint8Array) ${variable} += ${value}.length;`,
+    `${pad(indent)}}`,
+    `${pad(indent)}if (${variable} > ${type.aggregateBytes.maxBytes}) {`,
+    `${pad(indent + 1)}${error};`,
+    `${pad(indent)}}`,
+  );
 }
 
 const pad = (indent) => "  ".repeat(indent);
@@ -468,6 +533,7 @@ function emitValidate(type, expr, path, indent, out) {
       out.push(`${pad(indent)}for (const element of ${expr}) {`);
       emitValidate(type.items, "element", `${path}[]`, indent + 1, out);
       out.push(`${pad(indent)}}`);
+      emitAggregateCheck(type, expr, path, indent, out, `throw msgpackInvalid("${path}.aggregateBytes")`);
       return;
     }
     case "tuple": {
@@ -570,6 +636,13 @@ function emitDecode(type, name, path, indent, out) {
   const expression = decodeExpression(type);
   if (expression !== null) {
     out.push(`${pad(indent)}const ${name} = ${expression};`);
+    if (type.kind === "text" && (type.minBytes ?? 0) > 0) {
+      out.push(
+        `${pad(indent)}if (msgpackUtf8ByteLength(${name}) < ${type.minBytes}) {`,
+        `${pad(indent + 1)}throw new TerrascaleMsgpackError("invalid_shape", "${path} is below its minimum byte bound");`,
+        `${pad(indent)}}`,
+      );
+    }
     return;
   }
   switch (type.kind) {
@@ -597,6 +670,7 @@ function emitDecode(type, name, path, indent, out) {
         out.push(`${pad(indent + 1)}${name}.push(${name}Item);`);
       }
       out.push(`${pad(indent)}}`);
+      emitAggregateCheck(type, name, path, indent, out, `throw new TerrascaleMsgpackError("limit_binary", "${path} exceeds its aggregate binary byte bound")`);
       return;
     }
     case "tuple": {
@@ -721,8 +795,9 @@ function generate(manifestText, manifestSha256, generatorSha256) {
   }
   if (usesText) {
     push(
-      "function msgpackIsText(value: unknown, maxBytes: number): value is string {",
-      "  return typeof value === \"string\" && msgpackTextIsScalar(value) && msgpackUtf8ByteLength(value) <= maxBytes;",
+      "function msgpackIsText(value: unknown, minBytes: number, maxBytes: number): value is string {",
+      "  const bytes = typeof value === \"string\" ? msgpackUtf8ByteLength(value) : -1;",
+      "  return typeof value === \"string\" && msgpackTextIsScalar(value) && bytes >= minBytes && bytes <= maxBytes;",
       "}",
       "",
     );

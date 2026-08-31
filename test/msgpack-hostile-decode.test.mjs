@@ -306,6 +306,38 @@ describe("msgpack hostile decode", () => {
     );
   });
 
+  test("the aggregate projected-value bound is enforced by the raw decoder", () => {
+    const valueLength = 524_289;
+    const body = bytes(
+      [0x92], str("view"),
+      [0x96], u64(1n), u64(1n), u64(1n),
+      [0x91], [0x92], str("document"), [0x92],
+      [0x92], str("first"), bin32Header(valueLength), new Uint8Array(valueLength),
+      [0x92], str("second"), bin32Header(valueLength), new Uint8Array(valueLength),
+      str("a".repeat(64)), [0xc4, 0x01, 0x00],
+    );
+    expectRejection(
+      "limit_binary",
+      heartbeatEnvelope({ tag: [0x03], body }),
+      "projected values above their aggregate binary bound",
+    );
+  });
+
+  test("an empty projected path is rejected by the raw decoder", () => {
+    const body = bytes(
+      [0x92], str("view"),
+      [0x96], u64(1n), u64(1n), u64(1n),
+      [0x91], [0x92], str("document"), [0x91],
+      [0x92], str(""), [0xc4, 0x00],
+      str("a".repeat(64)), [0xc4, 0x01, 0x00],
+    );
+    expectRejection(
+      "invalid_shape",
+      heartbeatEnvelope({ tag: [0x03], body }),
+      "empty projected path",
+    );
+  });
+
   // --- deep nesting --------------------------------------------------------------
 
   test("nesting beyond the depth ceiling is rejected by the structural scan", () => {

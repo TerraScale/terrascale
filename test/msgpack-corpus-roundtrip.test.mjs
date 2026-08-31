@@ -9,6 +9,8 @@ import {
   terrascaleSyncV2MsgpackManifestSha256,
   terrascaleSyncV2MsgpackMessageTags,
   validateTerrascaleSyncV2MsgpackMessage,
+  validateTerrascaleSyncV2MsgpackProjectedField,
+  validateTerrascaleSyncV2MsgpackResultItem,
 } from "../dist/msgpack/generated/terrascale-sync-v2-msgpack.js";
 import { encodeReferenceMessagePack } from "./support/reference-msgpack.mjs";
 
@@ -334,6 +336,34 @@ describe("msgpack corpus round-trip", () => {
         },
       })),
       TerrascaleMsgpackError,
+    );
+  });
+
+  test("projected paths must be nonempty and item values must stay below the aggregate bound", () => {
+    const envelope = (message) => ({ features: 0, correlation: 1n, causation: 0n, message });
+    assert.throws(
+      () => validateTerrascaleSyncV2MsgpackProjectedField({ path: "", value: new Uint8Array() }),
+      (error) => error instanceof TerrascaleMsgpackError && error.code === "invalid_shape",
+    );
+
+    const oversizedFields = [
+      field("first", "a".repeat(524_289)),
+      field("second", "b".repeat(524_289)),
+    ];
+    assert.throws(
+      () => validateTerrascaleSyncV2MsgpackResultItem({ identity: "document-1", fields: oversizedFields }),
+      (error) => error instanceof TerrascaleMsgpackError && error.code === "invalid_shape",
+    );
+    assert.throws(
+      () => encodeTerrascaleSyncV2MsgpackEnvelope(envelope({
+        kind: "snapshot",
+        subscription: "view",
+        snapshot: {
+          ...snapshot,
+          items: [{ identity: "document-1", fields: oversizedFields }],
+        },
+      })),
+      (error) => error instanceof TerrascaleMsgpackError && error.code === "invalid_shape",
     );
   });
 });

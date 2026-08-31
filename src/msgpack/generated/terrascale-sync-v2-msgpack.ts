@@ -6,8 +6,8 @@
 // checked-in versioned manifest; this TypeScript half provides codecs,
 // exact-shape validators, and public types for @terrascale/sdk).
 //
-// manifest sha256:   88a450cbe43f6e5c7e6fced3c7ff8e10408a0dfb6d3498a331166a771517a4fb
-// generator sha256:  66d0ac80bd46901fb1c78f3338dd5cff60d4288a744ec63a1944a6356430b077
+// manifest sha256:   a37d091583ce8dd6f9aa979ad617dde51abab81a1f81446077dadd94c8f34ace
+// generator sha256:  49d508d153637bd3c623e70f3310d3c22f8578a1b46331b4da229ff01619ea6e
 //
 // Regenerate: node scripts/generate-msgpack-protocol.mjs
 // Drift gate:  node scripts/generate-msgpack-protocol.mjs --check
@@ -39,8 +39,9 @@ function msgpackIsU64(value: unknown): value is bigint {
   return typeof value === "bigint" && value >= 0n && value <= 18446744073709551615n;
 }
 
-function msgpackIsText(value: unknown, maxBytes: number): value is string {
-  return typeof value === "string" && msgpackTextIsScalar(value) && msgpackUtf8ByteLength(value) <= maxBytes;
+function msgpackIsText(value: unknown, minBytes: number, maxBytes: number): value is string {
+  const bytes = typeof value === "string" ? msgpackUtf8ByteLength(value) : -1;
+  return typeof value === "string" && msgpackTextIsScalar(value) && bytes >= minBytes && bytes <= maxBytes;
 }
 
 function msgpackIsBinary(value: unknown, minBytes: number, maxBytes: number): value is Uint8Array {
@@ -54,7 +55,7 @@ export const terrascaleSyncV2MsgpackProtocol = "terrascale.sync.v2.msgpack" as c
 export const terrascaleSyncV2MsgpackManifestVersion = 1 as const;
 
 /** The SHA-256 of the manifest file this file was generated from. */
-export const terrascaleSyncV2MsgpackManifestSha256 = "88a450cbe43f6e5c7e6fced3c7ff8e10408a0dfb6d3498a331166a771517a4fb" as const;
+export const terrascaleSyncV2MsgpackManifestSha256 = "a37d091583ce8dd6f9aa979ad617dde51abab81a1f81446077dadd94c8f34ace" as const;
 
 /** The protocol major this build speaks; anything else fails closed. */
 export const terrascaleSyncV2MsgpackMajorVersion = 2 as const;
@@ -329,7 +330,7 @@ export function validateTerrascaleSyncV2MsgpackProjectedField(candidate: unknown
     throw msgpackInvalid("projected_field");
   }
   const path = (candidate as { path: unknown }).path;
-  if (!msgpackIsText(path, 256)) {
+  if (!msgpackIsText(path, 1, 256)) {
     throw msgpackInvalid("projected_field.path");
   }
   const value = (candidate as { value: unknown }).value;
@@ -350,7 +351,7 @@ export function validateTerrascaleSyncV2MsgpackResultItem(candidate: unknown): v
     throw msgpackInvalid("result_item");
   }
   const identity = (candidate as { identity: unknown }).identity;
-  if (!msgpackIsText(identity, 256)) {
+  if (!msgpackIsText(identity, 0, 256)) {
     throw msgpackInvalid("result_item.identity");
   }
   const fields = (candidate as { fields: unknown }).fields;
@@ -359,6 +360,14 @@ export function validateTerrascaleSyncV2MsgpackResultItem(candidate: unknown): v
   }
   for (const element of fields) {
     validateTerrascaleSyncV2MsgpackProjectedField(element);
+  }
+  let aggregateResultItemFieldsBytes = 0;
+  for (const aggregateResultItemFieldsBytesItem of fields) {
+    const aggregateResultItemFieldsBytesValue = aggregateResultItemFieldsBytesItem.value;
+    if (aggregateResultItemFieldsBytesValue instanceof Uint8Array) aggregateResultItemFieldsBytes += aggregateResultItemFieldsBytesValue.length;
+  }
+  if (aggregateResultItemFieldsBytes > 1048576) {
+    throw msgpackInvalid("result_item.fields.aggregateBytes");
   }
 }
 
@@ -397,7 +406,7 @@ export function validateTerrascaleSyncV2MsgpackSnapshot(candidate: unknown): voi
     validateTerrascaleSyncV2MsgpackResultItem(element);
   }
   const digest = (candidate as { digest: unknown }).digest;
-  if (!msgpackIsText(digest, 64)) {
+  if (!msgpackIsText(digest, 0, 64)) {
     throw msgpackInvalid("snapshot.digest");
   }
   const checkpoint = (candidate as { checkpoint: unknown }).checkpoint;
@@ -418,7 +427,7 @@ export function validateTerrascaleSyncV2MsgpackFieldChange(candidate: unknown): 
     throw msgpackInvalid("field_change");
   }
   const path = (candidate as { path: unknown }).path;
-  if (!msgpackIsText(path, 256)) {
+  if (!msgpackIsText(path, 1, 256)) {
     throw msgpackInvalid("field_change.path");
   }
   const value = (candidate as { value: unknown }).value;
@@ -443,7 +452,7 @@ export function validateTerrascaleSyncV2MsgpackResultOperation(candidate: unknow
       throw msgpackInvalid("result_operation.insert");
     }
     const identity = (candidate as { identity: unknown }).identity;
-    if (!msgpackIsText(identity, 256)) {
+    if (!msgpackIsText(identity, 0, 256)) {
       throw msgpackInvalid("result_operation.insert.identity");
     }
     if (!("position" in candidate)) {
@@ -463,6 +472,14 @@ export function validateTerrascaleSyncV2MsgpackResultOperation(candidate: unknow
     for (const element of fields) {
       validateTerrascaleSyncV2MsgpackProjectedField(element);
     }
+    let aggregateResultOperationInsertFieldsBytes = 0;
+    for (const aggregateResultOperationInsertFieldsBytesItem of fields) {
+      const aggregateResultOperationInsertFieldsBytesValue = aggregateResultOperationInsertFieldsBytesItem.value;
+      if (aggregateResultOperationInsertFieldsBytesValue instanceof Uint8Array) aggregateResultOperationInsertFieldsBytes += aggregateResultOperationInsertFieldsBytesValue.length;
+    }
+    if (aggregateResultOperationInsertFieldsBytes > 1048576) {
+      throw msgpackInvalid("result_operation.insert.fields.aggregateBytes");
+    }
     return;
   }
   if (kind === "update") {
@@ -473,7 +490,7 @@ export function validateTerrascaleSyncV2MsgpackResultOperation(candidate: unknow
       throw msgpackInvalid("result_operation.update");
     }
     const identity = (candidate as { identity: unknown }).identity;
-    if (!msgpackIsText(identity, 256)) {
+    if (!msgpackIsText(identity, 0, 256)) {
       throw msgpackInvalid("result_operation.update.identity");
     }
     if (!("fields" in candidate)) {
@@ -486,6 +503,14 @@ export function validateTerrascaleSyncV2MsgpackResultOperation(candidate: unknow
     for (const element of fields) {
       validateTerrascaleSyncV2MsgpackProjectedField(element);
     }
+    let aggregateResultOperationUpdateFieldsBytes = 0;
+    for (const aggregateResultOperationUpdateFieldsBytesItem of fields) {
+      const aggregateResultOperationUpdateFieldsBytesValue = aggregateResultOperationUpdateFieldsBytesItem.value;
+      if (aggregateResultOperationUpdateFieldsBytesValue instanceof Uint8Array) aggregateResultOperationUpdateFieldsBytes += aggregateResultOperationUpdateFieldsBytesValue.length;
+    }
+    if (aggregateResultOperationUpdateFieldsBytes > 1048576) {
+      throw msgpackInvalid("result_operation.update.fields.aggregateBytes");
+    }
     return;
   }
   if (kind === "patch") {
@@ -496,7 +521,7 @@ export function validateTerrascaleSyncV2MsgpackResultOperation(candidate: unknow
       throw msgpackInvalid("result_operation.patch");
     }
     const identity = (candidate as { identity: unknown }).identity;
-    if (!msgpackIsText(identity, 256)) {
+    if (!msgpackIsText(identity, 0, 256)) {
       throw msgpackInvalid("result_operation.patch.identity");
     }
     if (!("changes" in candidate)) {
@@ -509,6 +534,14 @@ export function validateTerrascaleSyncV2MsgpackResultOperation(candidate: unknow
     for (const element of changes) {
       validateTerrascaleSyncV2MsgpackFieldChange(element);
     }
+    let aggregateResultOperationPatchChangesBytes = 0;
+    for (const aggregateResultOperationPatchChangesBytesItem of changes) {
+      const aggregateResultOperationPatchChangesBytesValue = aggregateResultOperationPatchChangesBytesItem.value;
+      if (aggregateResultOperationPatchChangesBytesValue instanceof Uint8Array) aggregateResultOperationPatchChangesBytes += aggregateResultOperationPatchChangesBytesValue.length;
+    }
+    if (aggregateResultOperationPatchChangesBytes > 1048576) {
+      throw msgpackInvalid("result_operation.patch.changes.aggregateBytes");
+    }
     return;
   }
   if (kind === "remove") {
@@ -519,7 +552,7 @@ export function validateTerrascaleSyncV2MsgpackResultOperation(candidate: unknow
       throw msgpackInvalid("result_operation.remove");
     }
     const identity = (candidate as { identity: unknown }).identity;
-    if (!msgpackIsText(identity, 256)) {
+    if (!msgpackIsText(identity, 0, 256)) {
       throw msgpackInvalid("result_operation.remove.identity");
     }
     return;
@@ -532,7 +565,7 @@ export function validateTerrascaleSyncV2MsgpackResultOperation(candidate: unknow
       throw msgpackInvalid("result_operation.move");
     }
     const identity = (candidate as { identity: unknown }).identity;
-    if (!msgpackIsText(identity, 256)) {
+    if (!msgpackIsText(identity, 0, 256)) {
       throw msgpackInvalid("result_operation.move.identity");
     }
     if (!("position" in candidate)) {
@@ -561,14 +594,14 @@ export function validateTerrascaleSyncV2MsgpackMessage(candidate: unknown): void
       throw msgpackInvalid("subscribe");
     }
     const subscription = (candidate as { subscription: unknown }).subscription;
-    if (!msgpackIsText(subscription, 128)) {
+    if (!msgpackIsText(subscription, 0, 128)) {
       throw msgpackInvalid("subscribe.subscription");
     }
     if (!("query" in candidate)) {
       throw msgpackInvalid("subscribe");
     }
     const query = (candidate as { query: unknown }).query;
-    if (!msgpackIsText(query, 262144)) {
+    if (!msgpackIsText(query, 0, 262144)) {
       throw msgpackInvalid("subscribe.query");
     }
     if (!("parameters" in candidate)) {
@@ -597,7 +630,7 @@ export function validateTerrascaleSyncV2MsgpackMessage(candidate: unknown): void
       throw msgpackInvalid("unsubscribe");
     }
     const subscription = (candidate as { subscription: unknown }).subscription;
-    if (!msgpackIsText(subscription, 128)) {
+    if (!msgpackIsText(subscription, 0, 128)) {
       throw msgpackInvalid("unsubscribe.subscription");
     }
     return;
@@ -610,7 +643,7 @@ export function validateTerrascaleSyncV2MsgpackMessage(candidate: unknown): void
       throw msgpackInvalid("snapshot");
     }
     const subscription = (candidate as { subscription: unknown }).subscription;
-    if (!msgpackIsText(subscription, 128)) {
+    if (!msgpackIsText(subscription, 0, 128)) {
       throw msgpackInvalid("snapshot.subscription");
     }
     if (!("snapshot" in candidate)) {
@@ -628,7 +661,7 @@ export function validateTerrascaleSyncV2MsgpackMessage(candidate: unknown): void
       throw msgpackInvalid("delta");
     }
     const subscription = (candidate as { subscription: unknown }).subscription;
-    if (!msgpackIsText(subscription, 128)) {
+    if (!msgpackIsText(subscription, 0, 128)) {
       throw msgpackInvalid("delta.subscription");
     }
     if (!("view_generation" in candidate)) {
@@ -666,7 +699,7 @@ export function validateTerrascaleSyncV2MsgpackMessage(candidate: unknown): void
       throw msgpackInvalid("delta");
     }
     const digest = (candidate as { digest: unknown }).digest;
-    if (!msgpackIsText(digest, 64)) {
+    if (!msgpackIsText(digest, 0, 64)) {
       throw msgpackInvalid("delta.digest");
     }
     if (!("checkpoint" in candidate)) {
@@ -686,7 +719,7 @@ export function validateTerrascaleSyncV2MsgpackMessage(candidate: unknown): void
       throw msgpackInvalid("reset");
     }
     const subscription = (candidate as { subscription: unknown }).subscription;
-    if (!msgpackIsText(subscription, 128)) {
+    if (!msgpackIsText(subscription, 0, 128)) {
       throw msgpackInvalid("reset.subscription");
     }
     if (!("reason" in candidate)) {
@@ -717,7 +750,7 @@ export function validateTerrascaleSyncV2MsgpackMessage(candidate: unknown): void
       throw msgpackInvalid("checkpoint_ack");
     }
     const subscription = (candidate as { subscription: unknown }).subscription;
-    if (!msgpackIsText(subscription, 128)) {
+    if (!msgpackIsText(subscription, 0, 128)) {
       throw msgpackInvalid("checkpoint_ack.subscription");
     }
     if (!("checkpoint" in candidate)) {
@@ -737,7 +770,7 @@ export function validateTerrascaleSyncV2MsgpackMessage(candidate: unknown): void
       throw msgpackInvalid("authorization_changed");
     }
     const subscription = (candidate as { subscription: unknown }).subscription;
-    if (!msgpackIsText(subscription, 128)) {
+    if (!msgpackIsText(subscription, 0, 128)) {
       throw msgpackInvalid("authorization_changed.subscription");
     }
     if (!("authorization_generation" in candidate)) {
@@ -755,7 +788,7 @@ export function validateTerrascaleSyncV2MsgpackMessage(candidate: unknown): void
       throw msgpackInvalid("authorization_changed.removed");
     }
     for (const element of removed) {
-      if (!msgpackIsText(element, 256)) {
+      if (!msgpackIsText(element, 0, 256)) {
         throw msgpackInvalid("authorization_changed.removed[]");
       }
     }
@@ -774,7 +807,7 @@ export function validateTerrascaleSyncV2MsgpackMessage(candidate: unknown): void
       throw msgpackInvalid("region_route_change");
     }
     const region = (candidate as { region: unknown }).region;
-    if (!msgpackIsText(region, 64)) {
+    if (!msgpackIsText(region, 0, 64)) {
       throw msgpackInvalid("region_route_change.region");
     }
     return;
@@ -795,7 +828,7 @@ export function validateTerrascaleSyncV2MsgpackMessage(candidate: unknown): void
     }
     const detail = (candidate as { detail: unknown }).detail;
     if (detail !== null) {
-      if (!msgpackIsText(detail, 256)) {
+      if (!msgpackIsText(detail, 0, 256)) {
         throw msgpackInvalid("error.detail");
       }
     }
@@ -1058,6 +1091,9 @@ export function encodeTerrascaleSyncV2MsgpackEnvelope(envelope: TerrascaleSyncV2
 function msgpackDecodeProjectedField(reader: MsgpackReader): TerrascaleSyncV2MsgpackProjectedField {
   reader.arrayHeader(2);
   const path = reader.text(256);
+  if (msgpackUtf8ByteLength(path) < 1) {
+    throw new TerrascaleMsgpackError("invalid_shape", "projected_field.path is below its minimum byte bound");
+  }
   const value = reader.binary(0, 1048576);
   return { path, value };
 }
@@ -1069,6 +1105,14 @@ function msgpackDecodeResultItem(reader: MsgpackReader): TerrascaleSyncV2Msgpack
   const fields: Array<TerrascaleSyncV2MsgpackProjectedField> = [];
   for (let index = 0; index < fieldsCount; index++) {
     fields.push(msgpackDecodeProjectedField(reader));
+  }
+  let aggregateResultItemFieldsBytes = 0;
+  for (const aggregateResultItemFieldsBytesItem of fields) {
+    const aggregateResultItemFieldsBytesValue = aggregateResultItemFieldsBytesItem.value;
+    if (aggregateResultItemFieldsBytesValue instanceof Uint8Array) aggregateResultItemFieldsBytes += aggregateResultItemFieldsBytesValue.length;
+  }
+  if (aggregateResultItemFieldsBytes > 1048576) {
+    throw new TerrascaleMsgpackError("limit_binary", "result_item.fields exceeds its aggregate binary byte bound");
   }
   return { identity, fields };
 }
@@ -1091,6 +1135,9 @@ function msgpackDecodeSnapshot(reader: MsgpackReader): TerrascaleSyncV2MsgpackSn
 function msgpackDecodeFieldChange(reader: MsgpackReader): TerrascaleSyncV2MsgpackFieldChange {
   reader.arrayHeader(2);
   const path = reader.text(256);
+  if (msgpackUtf8ByteLength(path) < 1) {
+    throw new TerrascaleMsgpackError("invalid_shape", "field_change.path is below its minimum byte bound");
+  }
   const value = reader.optionNil() ? null : reader.binary(0, 1048576);
   return { path, value };
 }
@@ -1109,6 +1156,14 @@ function msgpackDecodeResultOperation(reader: MsgpackReader): TerrascaleSyncV2Ms
       for (let index = 0; index < fieldsCount; index++) {
         fields.push(msgpackDecodeProjectedField(reader));
       }
+      let aggregateResultOperationInsertFieldsBytes = 0;
+      for (const aggregateResultOperationInsertFieldsBytesItem of fields) {
+        const aggregateResultOperationInsertFieldsBytesValue = aggregateResultOperationInsertFieldsBytesItem.value;
+        if (aggregateResultOperationInsertFieldsBytesValue instanceof Uint8Array) aggregateResultOperationInsertFieldsBytes += aggregateResultOperationInsertFieldsBytesValue.length;
+      }
+      if (aggregateResultOperationInsertFieldsBytes > 1048576) {
+        throw new TerrascaleMsgpackError("limit_binary", "result_operation.insert.fields exceeds its aggregate binary byte bound");
+      }
     return { kind: "insert", identity, position, fields };
   }
   if (discriminant === 2) {
@@ -1121,6 +1176,14 @@ function msgpackDecodeResultOperation(reader: MsgpackReader): TerrascaleSyncV2Ms
       for (let index = 0; index < fieldsCount; index++) {
         fields.push(msgpackDecodeProjectedField(reader));
       }
+      let aggregateResultOperationUpdateFieldsBytes = 0;
+      for (const aggregateResultOperationUpdateFieldsBytesItem of fields) {
+        const aggregateResultOperationUpdateFieldsBytesValue = aggregateResultOperationUpdateFieldsBytesItem.value;
+        if (aggregateResultOperationUpdateFieldsBytesValue instanceof Uint8Array) aggregateResultOperationUpdateFieldsBytes += aggregateResultOperationUpdateFieldsBytesValue.length;
+      }
+      if (aggregateResultOperationUpdateFieldsBytes > 1048576) {
+        throw new TerrascaleMsgpackError("limit_binary", "result_operation.update.fields exceeds its aggregate binary byte bound");
+      }
     return { kind: "update", identity, fields };
   }
   if (discriminant === 3) {
@@ -1132,6 +1195,14 @@ function msgpackDecodeResultOperation(reader: MsgpackReader): TerrascaleSyncV2Ms
       const changes: Array<TerrascaleSyncV2MsgpackFieldChange> = [];
       for (let index = 0; index < changesCount; index++) {
         changes.push(msgpackDecodeFieldChange(reader));
+      }
+      let aggregateResultOperationPatchChangesBytes = 0;
+      for (const aggregateResultOperationPatchChangesBytesItem of changes) {
+        const aggregateResultOperationPatchChangesBytesValue = aggregateResultOperationPatchChangesBytesItem.value;
+        if (aggregateResultOperationPatchChangesBytesValue instanceof Uint8Array) aggregateResultOperationPatchChangesBytes += aggregateResultOperationPatchChangesBytesValue.length;
+      }
+      if (aggregateResultOperationPatchChangesBytes > 1048576) {
+        throw new TerrascaleMsgpackError("limit_binary", "result_operation.patch.changes exceeds its aggregate binary byte bound");
       }
     return { kind: "patch", identity, changes };
   }
