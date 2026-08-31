@@ -134,6 +134,57 @@ test("the browser entrypoint exposes the published Database API document operati
   expect(new URL(observation.requests[3]!.url).searchParams.get("durability")).toBe("global");
 });
 
+test("the browser entrypoint preserves the standard Database API error contract", async ({ page }) => {
+  await page.goto("/browser-tests/fixture.html");
+
+  const error = await page.evaluate(async () => {
+    const sdk = await import("/candidate/dist/index.js");
+    const client = sdk.createTerraScaleClient({
+      apiBaseUrl: "https://api.terrascale.test",
+      fetch: async () => Response.json({
+        error: {
+          code: "TERRASCALE-2000",
+          message: "The document does not satisfy the active schema.",
+          category: "Schema",
+          detail: "profile.email must be a string.",
+          suggestedAction: "Correct the document to match the active schema.",
+          docsUrl: "https://docs.terrascale.tech/errors/TERRASCALE-2000",
+          traceId: "trace-browser-1",
+          fieldErrors: [{
+            field: "profile.email",
+            constraint: "String",
+            message: "Expected a string.",
+          }],
+        },
+      }, {
+        status: 422,
+        headers: { "x-request-id": "request-browser-1" },
+      }),
+    });
+    const result = await client.databaseDocuments.create(
+      { database: "app", collection: "users" },
+      "user-1",
+      { body: { profile: { email: 42 } } },
+      { idempotencyKey: sdk.toUlid("01ARZ3NDEKTSV4RRFFQ69G5FB0") },
+    );
+    return result.ok ? null : result.error;
+  });
+
+  expect(error).toMatchObject({
+    kind: "validation",
+    code: "TERRASCALE-2000",
+    category: "Schema",
+    detail: "profile.email must be a string.",
+    traceId: "trace-browser-1",
+    requestId: "request-browser-1",
+    validation: [{
+      path: "profile.email",
+      code: "String",
+      message: "Expected a string.",
+    }],
+  });
+});
+
 test("the packed browser client decodes the generated reactive protocol", async ({ page }) => {
   await page.goto("/browser-tests/fixture.html");
 

@@ -129,6 +129,57 @@ describe("DatabaseDocumentsClient", () => {
     );
   });
 
+  test("projects the standardized Database API error without conflating request and trace IDs", async () => {
+    const responseBody = {
+      error: {
+        code: "TERRASCALE-2000",
+        message: "The document does not satisfy the active schema.",
+        category: "Schema",
+        detail: "profile.email must be a string.",
+        suggestedAction: "Correct the document to match the active schema.",
+        docsUrl: "https://docs.terrascale.tech/errors/TERRASCALE-2000",
+        traceId: "trace-database-1",
+        fieldErrors: [{
+          field: "profile.email",
+          constraint: "String",
+          message: "Expected a string.",
+        }],
+      },
+    } as const;
+    const client = createTerraScaleClient({
+      apiBaseUrl: "https://api.terrascale.test",
+      fetch: async () => Response.json(responseBody, {
+        status: 422,
+        headers: { "x-request-id": "request-database-1" },
+      }),
+    });
+
+    const result = await client.databaseDocuments.create(
+      scope,
+      documentId,
+      { body: { profile: { email: 42 } } },
+      { idempotencyKey },
+    );
+
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.error.kind, "validation");
+    assert.equal(result.error.code, "TERRASCALE-2000");
+    assert.equal(result.error.message, responseBody.error.message);
+    assert.equal(result.error.category, "Schema");
+    assert.equal(result.error.detail, responseBody.error.detail);
+    assert.equal(result.error.suggestedAction, responseBody.error.suggestedAction);
+    assert.equal(result.error.docsUrl, responseBody.error.docsUrl);
+    assert.equal(result.error.traceId, "trace-database-1");
+    assert.equal(result.error.requestId, "request-database-1");
+    assert.deepEqual(result.error.validation, [{
+      path: "profile.email",
+      code: "String",
+      message: "Expected a string.",
+    }]);
+    assert.deepEqual(result.error.details, responseBody);
+  });
+
   test("rejects invalid path identifiers and noncanonical mutation keys before fetch", () => {
     let fetches = 0;
     const client = createTerraScaleClient({

@@ -70,6 +70,10 @@ bytes and no control characters. Each mutation requires a canonical uppercase
 ULID, reused unchanged across retries. Create and patch put durability in the
 JSON body. Delete sends it as the published query parameter.
 
+Database API failures expose the standard `TERRASCALE-####` code, category,
+detail, suggested action, documentation URL, trace ID, and field errors through
+the typed result. The response's `X-Request-Id` remains a separate request ID.
+
 ## Reactive protocol
 
 The SDK has one reactive implementation: `TerraScaleSyncV2Client`. It decodes

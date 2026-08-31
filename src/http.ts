@@ -8,6 +8,7 @@ import {
   err,
   ok,
   type TerraScaleError,
+  type TerraScaleErrorCategory,
   type TerraScaleResult,
   type TerraScaleValidationIssue,
 } from "./result.js";
@@ -509,15 +510,41 @@ function errorFromResponse(response: Response, body: unknown): TerraScaleError {
       stringProperty(source, "detail") ??
       stringProperty(source, "title") ??
       (response.statusText || "The TerraScale API request failed."),
+    category: errorCategory(source),
+    detail: stringProperty(source, "detail"),
+    suggestedAction: stringProperty(source, "suggestedAction"),
+    docsUrl: stringProperty(source, "docsUrl"),
+    traceId: stringProperty(source, "traceId"),
     status: response.status,
     target: stringProperty(source, "target"),
     requestId:
       stringProperty(source, "requestId") ??
-      stringProperty(source, "traceId") ??
       requestIdFrom(response.headers),
     validation,
     details: body,
   };
+}
+
+function errorCategory(source: Record<string, unknown>): TerraScaleErrorCategory | undefined {
+  const value = stringProperty(source, "category");
+  switch (value) {
+    case "Validation":
+    case "Authentication":
+    case "Authorization":
+    case "NotFound":
+    case "Conflict":
+    case "RateLimit":
+    case "Schema":
+    case "Query":
+    case "Placement":
+    case "AutoFix":
+    case "AutoIndex":
+    case "Sandbox":
+    case "System":
+      return value;
+    default:
+      return undefined;
+  }
 }
 
 function unwrapErrorBody(body: unknown): Record<string, unknown> {

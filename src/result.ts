@@ -13,6 +13,22 @@ export type TerraScaleErrorKind =
   | "unavailable"
   | "validation";
 
+/** The stable category names published by the TerraScale error envelope. */
+export type TerraScaleErrorCategory =
+  | "Validation"
+  | "Authentication"
+  | "Authorization"
+  | "NotFound"
+  | "Conflict"
+  | "RateLimit"
+  | "Schema"
+  | "Query"
+  | "Placement"
+  | "AutoFix"
+  | "AutoIndex"
+  | "Sandbox"
+  | "System";
+
 export type TerraScaleRoutingObservation = {
   readonly edgeRegion?: TerraScaleRegionCode | undefined;
   readonly servingRegion?: TerraScaleRegionCode | undefined;
@@ -37,6 +53,11 @@ export type TerraScaleError = {
   readonly kind: TerraScaleErrorKind;
   readonly code: string;
   readonly message: string;
+  readonly category?: TerraScaleErrorCategory | undefined;
+  readonly detail?: string | undefined;
+  readonly suggestedAction?: string | undefined;
+  readonly docsUrl?: string | undefined;
+  readonly traceId?: string | undefined;
   readonly status?: number | undefined;
   readonly target?: string | undefined;
   readonly requestId?: string | undefined;
