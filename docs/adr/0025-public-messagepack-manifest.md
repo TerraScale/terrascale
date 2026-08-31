@@ -1,42 +1,43 @@
 # Public MessagePack manifest
 
-Status: Accepted for the shared manifest and bounded TypeScript generation. C#
-generation, live transport adoption, and production qualification are pending.
+Status: Accepted.
 
-Date: 2026-08-29
+Date: 2026-08-29, revised 2026-08-30.
 
 ## Context
 
-The public reactive protocol needs a versioned, language-neutral contract with
-bounded decoding and stable field positions. Private TBEP and TerraBase
-replication formats must not leak into public clients. TerraBase owns the
-reference semantics and corpus, TerraScale.Database owns the public WebSocket
-contract, and the two SDK repositories own their generated bindings.
+The public reactive protocol needs one versioned contract that TypeScript and
+Go can consume without copying field layouts into handwritten codecs. Frames
+must carry authorized query results and opaque checkpoints. Private storage,
+replication, and causal structures are not public SDK contracts.
 
 ## Decision
 
-Use `src/msgpack/manifest/terrascale.sync.v2.msgpack.json` as the sole local
-authority for the public MessagePack envelope, message tags, fields, unions,
-and bounds. `scripts/generate-msgpack-protocol.mjs` emits the TypeScript
-binding. The accepted in-repository bounded runtime performs a whole-message
-structural scan before value construction, rejects maps, extensions, float32,
-unknown tags and versions, unsafe integers, invalid UTF-8, depth/size
-violations, and trailing bytes, and returns typed failures.
+`src/msgpack/manifest/terrascale.sync.v2.msgpack.json` is the sole protocol
+authority. It declares the indexed envelope, message tags and directions,
+result operations, closed errors, field positions, and allocation bounds.
 
-Tags and field positions are never reused. Native payload codecs remain named
-and opaque until the owner-published public result-view contract replaces that
-interim implementation. The generated TypeScript module is not a new raw
-package entrypoint.
+`scripts/generate-msgpack-protocol.mjs` validates that manifest and emits the
+TypeScript types, validators, encoder, and decoder. Generated files are never
+edited by hand. INT-3 must make the Database API's Go codec check the same JSON
+manifest.
 
-## Consequences and limits
+The decoder scans one complete MessagePack value before constructing a public
+value. It rejects maps, extensions, float32, invalid UTF-8, unsafe integers,
+unknown versions, features, tags, enum values, union variants, trailing bytes,
+and all declared size or depth violations.
 
-Manifest drift, hostile decode, corpus round-trip, and native-view tests pass in
-this checkout, and the release workflow runs them in its protected Node 22 and
-24 lanes. The live session still uses HTTP/JSON and SSE, and no C# binding or
-bidirectional cross-language run exists here. Those are production gaps, not
-implied claims by the generated files.
+`TerraScaleSyncV2Client` is the only reactive state machine. It accepts the
+generated server frames and applies snapshots, deltas, resets, authorization
+changes, route changes, and backpressure instructions to authorized result
+views. SDK-2 owns the WebSocket and HTTP + MessagePack transports after INT-3
+publishes their routes, authentication, subprotocol negotiation, fallback
+request and response shapes, and retry semantics.
 
-The bounded runtime remains the accepted TypeScript implementation. A future
-dependency change would require a new reviewed record and must preserve the
-same explicit limits, hostile-input behavior, and performance evidence. No
-library-selection decision is open in this ADR.
+## Consequences
+
+Changing any frame requires changing the manifest and regenerating the
+TypeScript module. The drift check rejects manual generated-file edits. The
+semantic corpus round-trips every message kind, and hostile byte tests gate the
+decoder. A second handwritten frame codec or compatibility client is not
+allowed.

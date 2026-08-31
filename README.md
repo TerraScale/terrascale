@@ -12,9 +12,8 @@ The SDK uses public versioned TerraScale HTTPS and reactive contracts:
 
 - Dashboard owns Better Auth, Organizations, Projects, Users, Payments, HTTP
   MCP, and those public product routes.
-- The independently deployable C#/.NET 10 `TerraScale.Database` service,
-  sourced permanently in `TerraScale.Internals`, owns database, query,
-  placement, backup, usage, and reactive routes.
+- The Go Database API in `ts-internals` owns database, query, placement,
+  backup, usage, and reactive routes.
 - TerraBase is private. The SDK never speaks TBEP, opens a TerraBase
   connection, consumes native replication data, or uses NATS.
 
@@ -40,37 +39,32 @@ adapter conformance are separate qualification gates.
 
 There is no Dashboard-named or generic request entrypoint.
 
-## Honest sync status
+## Reactive protocol
 
-This tree still contains:
+The SDK has one reactive implementation: `TerraScaleSyncV2Client`. It decodes
+the generated `terrascale.sync.v2.msgpack` frames and applies authorized
+snapshots and result operations to bounded result views. The checked-in JSON
+manifest owns every tag, field position, direction, and bound. The generated
+TypeScript module consumes that file. INT-3's Go codec must check the same
+manifest instead of copying a second frame definition.
 
-- the legacy `terrascale.sync.v1` client; and
-- a `terrascale.sync.v2` client over HTTP setup, JSON mutation/delta/snapshot
-  calls, and an SSE trigger stream, with opaque `terrabase-native/1` and
-  `terrabase-snapshot/1` payloads.
+The current client:
 
-Neither is the final public MessagePack reactive transport. The current v2 is
-conformance and migration evidence and must not receive new production
-protocol semantics.
-
-The proposed replacement `terrascale.sync.v2.msgpack` will:
-
-- subscribe to bounded typed TQL queries;
-- receive authorized result snapshots, insert, update, patch, remove, move, or
+- builds subscribe, unsubscribe, heartbeat, and checkpoint frames for bounded
+  typed TQL queries;
+- receives authorized result snapshots, insert, update, patch, remove, move, or
   reset operations;
-- use opaque view-scoped checkpoints;
-- support read-your-writes and Region movement through sparse causal tokens;
-- apply reversible optimistic presentation for connected online writes;
-- reject durable writes while disconnected;
-- reauthorize on reconnect and grant refresh;
-- remove data after permission loss;
-- bound every queue, subscription, result, and reconnect path; and
-- pass one semantic corpus shared with Rust and .NET.
+- keeps checkpoints opaque and view-scoped;
+- applies reversible optimistic presentation only while the transport is
+  online;
+- installs permission-change replacements before exposing the next view;
+- stops client traffic on backpressure and marks Region movement offline; and
+- passes the hostile-decode, semantic corpus, manifest-drift, unit, and browser
+  gates.
 
-The generated manifest does not make native payload bytes a customer contract.
-Until the replacement is wired to the owner-published WebSocket contract and
-passes cross-language and live conformance, the reactive production story is
-unqualified. See [ADR 0005](docs/adr/0005-reactive-client-transition.md) and
+SDK-2 supplies the production WebSocket transport and HTTP + MessagePack
+fallback. Until those transports pass browser and live gateway tests, this
+state machine alone is not a production transport. See
 [ADR 0025](docs/adr/0025-public-messagepack-manifest.md).
 
 ## Better Auth adapter target
@@ -211,7 +205,6 @@ node scripts/generate-msgpack-protocol.mjs --check
 node --test test/msgpack-manifest-drift.test.mjs
 node --test test/msgpack-hostile-decode.test.mjs
 node --test test/msgpack-corpus-roundtrip.test.mjs
-node --test test/sync-v2-native-corpus-view.test.mjs
 ~~~
 
 Integration tests target the fixed DevHost public routes. When the required

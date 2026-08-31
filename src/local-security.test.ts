@@ -161,14 +161,14 @@ test("remote binding authorizes only the configured bearer token", async () => {
         assert.equal((await fetch(organizations, {
           headers: { cookie: "better-auth.session_token=anything" },
         })).status, 401);
-        assert.equal((await fetch(`${origin}/v1/sync/sessions`, {
+        assert.equal((await fetch(organizations, {
           method: "POST",
           headers: {
             "content-type": "application/json",
             "x-tb-principal": "caller-selected",
             "x-tb-tenant": "caller-selected",
           },
-          body: JSON.stringify({ collection: "security" }),
+          body: JSON.stringify({ name: "Caller-selected identity" }),
         })).status, 401);
         assert.equal((await fetch(organizations, {
           headers: { authorization: `Bearer ${bearerToken}` },

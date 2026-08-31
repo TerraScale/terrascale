@@ -23,8 +23,8 @@ failures.
 ## Current evidence and gap
 
 The checked-in MessagePack manifest and decoder enforce the 8 MiB message,
-4 MiB binary, depth 64, 16 KiB string, and 1,024-item structural scan bounds,
-with stricter field limits where declared. The current HTTP/SSE session and
-REST clients still require contract-by-contract comparison with the Database
-API schemas. A bound is not production-qualified until the service, both SDKs,
-and live tests agree.
+1 MiB parameter, 64 KiB projected-value, depth 64, 256 KiB scan-string, and
+10,000-item scan-array bounds, with stricter field limits where declared. The
+WebSocket and HTTP fallback transports still need contract-by-contract
+comparison with the Database API schemas. A bound is not production-qualified
+until the gateway, SDK, and live tests agree.

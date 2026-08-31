@@ -1,5 +1,5 @@
 // Drift gate for the generated public `terrascale.sync.v2.msgpack` protocol
-// (ADR 0025, qualification-gap-sweep row 28): the committed generated module
+// The committed generated module
 // must be byte-identical to what the pinned generator emits from the
 // checked-in manifest, the manifest digest embedded in the generated header
 // must match the committed manifest, and the generator must reject malformed
@@ -104,16 +104,16 @@ describe("msgpack manifest drift", () => {
       manifest.messages[1].tag = manifest.messages[0].tag;
     },
     "an undeclared type reference": (manifest) => {
-      manifest.messages[0].fields[1].type = { kind: "ref", name: "not_a_type" };
+      manifest.messages.find((entry) => entry.name === "snapshot").fields[1].type = { kind: "ref", name: "not_a_type" };
     },
     "a string bound above the scan ceiling": (manifest) => {
-      manifest.messages[10].fields[0].type = { kind: "text", maxBytes: 65536 };
+      manifest.messages.find((entry) => entry.name === "region_route_change").fields[0].type = { kind: "text", maxBytes: 262145 };
     },
     "an array bound above the scan ceiling": (manifest) => {
-      manifest.messages[0].fields[0].type = { kind: "array", maxItems: 4096, items: { kind: "text", maxBytes: 256 } };
+      manifest.messages.find((entry) => entry.name === "authorization_changed").fields[2].type = { kind: "array", maxItems: 10001, items: { kind: "text", maxBytes: 256 } };
     },
     "a binary bound above the scan ceiling": (manifest) => {
-      manifest.messages[6].fields[1].type = { kind: "binary", minBytes: 0, maxBytes: 8388608 };
+      manifest.messages.find((entry) => entry.name === "subscribe").fields[2].type = { kind: "binary", minBytes: 0, maxBytes: 1048577 };
     },
     "a map-permitting scan": (manifest) => {
       manifest.scan.maxMapEntries = 16;
@@ -129,11 +129,11 @@ describe("msgpack manifest drift", () => {
       errorEnum.enum.values[1].value = errorEnum.enum.values[0].value;
     },
     "a repeated union discriminant": (manifest) => {
-      const union = manifest.types.find((entry) => entry.union?.name === "document_write");
+      const union = manifest.types.find((entry) => entry.union?.name === "result_operation");
       union.union.variants[1].discriminant = union.union.variants[0].discriminant;
     },
     "a reserved field name": (manifest) => {
-      manifest.messages[10].fields[0].name = "delete";
+      manifest.messages.find((entry) => entry.name === "region_route_change").fields[0].name = "delete";
     },
     "a reserved-word type name": (manifest) => {
       manifest.types[0].struct.name = "class";
