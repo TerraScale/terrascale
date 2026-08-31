@@ -143,6 +143,9 @@ pub enum Target {
     TerraBase,
     /// The pinned PostgreSQL 18 reference.
     PostgreSql,
+    /// The pinned PostgreSQL full-stack reference: jsonb documents behind
+    /// pgbouncer behind a Go HTTP/JSON service.
+    PgFullstack,
     /// The pinned RavenDB stable reference.
     RavenDb,
 }
@@ -157,6 +160,7 @@ impl Target {
         match token {
             "terrabase" | "tb" => Ok(Self::TerraBase),
             "pg" | "postgres" | "postgresql" => Ok(Self::PostgreSql),
+            "pg-fullstack" | "pgfullstack" | "postgres-fullstack" => Ok(Self::PgFullstack),
             "raven" | "ravendb" => Ok(Self::RavenDb),
             other => Err(other.to_owned()),
         }
@@ -167,6 +171,7 @@ impl Target {
         match self {
             Self::TerraBase => "terrabase",
             Self::PostgreSql => "postgresql",
+            Self::PgFullstack => "pg-fullstack",
             Self::RavenDb => "ravendb",
         }
     }
@@ -181,6 +186,14 @@ mod tests {
         assert_eq!(Target::parse("terrabase"), Ok(Target::TerraBase));
         assert_eq!(Target::parse("tb"), Ok(Target::TerraBase));
         assert_eq!(Target::TerraBase.as_str(), "terrabase");
+    }
+
+    #[test]
+    fn parses_the_postgresql_fullstack_target_tokens() {
+        for token in ["pg-fullstack", "pgfullstack", "postgres-fullstack"] {
+            assert_eq!(Target::parse(token), Ok(Target::PgFullstack), "{token}");
+        }
+        assert_eq!(Target::PgFullstack.as_str(), "pg-fullstack");
     }
 
     #[test]

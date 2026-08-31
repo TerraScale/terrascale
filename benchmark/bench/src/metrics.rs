@@ -162,15 +162,28 @@ pub fn comparability(
             "LocalDurability::Synced acknowledged commits".to_owned(),
             "terrabase-runtime-catalog-v1".to_owned(),
         ),
+        "postgresql" => (
+            "network-reference".to_owned(),
+            "synchronous_commit=on; fsync=on; full_page_writes=on; autocommit statement \
+             acknowledgement"
+                .to_owned(),
+            "se15-reference-pin-v1".to_owned(),
+        ),
+        // The same server-side pin, but the measured boundary includes
+        // pgbouncer and the HTTP/JSON service, so the provenance names the
+        // whole stack the way the engine side names its runtime catalog.
+        "pg-fullstack" => (
+            "network-reference".to_owned(),
+            "synchronous_commit=on; fsync=on; full_page_writes=on; autocommit statement \
+             acknowledgement through pgbouncer transaction pooling and the pgrest HTTP/JSON \
+             service"
+                .to_owned(),
+            "se15-reference-pin-v1; pgbouncer transaction pooling; pgrest HTTP/JSON service"
+                .to_owned(),
+        ),
         _ => (
             "network-reference".to_owned(),
-            match target {
-                "postgresql" => {
-                    "synchronous_commit=on; fsync=on; full_page_writes=on; autocommit statement acknowledgement"
-                        .to_owned()
-                }
-                _ => "server-acknowledged PUT with shipped durability defaults".to_owned(),
-            },
+            "server-acknowledged PUT with shipped durability defaults".to_owned(),
             "se15-reference-pin-v1".to_owned(),
         ),
     };

@@ -11,7 +11,7 @@ use crate::config::LaneConfig;
 use crate::metrics;
 
 const WORKLOADS: [&str; 4] = ["read", "write", "query", "mixed"];
-const TARGETS: [&str; 3] = ["terrabase", "postgresql", "ravendb"];
+const TARGETS: [&str; 4] = ["terrabase", "postgresql", "pg-fullstack", "ravendb"];
 
 #[derive(Clone, Debug)]
 struct Sample {
@@ -242,9 +242,14 @@ pub fn run(arguments: impl Iterator<Item = String>) -> Result<PathBuf, String> {
     output.push('\n');
     if !diagnostic_rows.is_empty() {
         output.push_str("## TerraBase diagnostic trajectory (not decision-grade evidence)\n\n");
-        output.push_str("These rows come from the diagnostic single-member loopback mTLS boundary ");
-        output.push_str("(TB-17 campaign, `campaign-goal.md`). They carry no comparability contract, ");
-        output.push_str("never join the comparison table above, and are facts about this host at the ");
+        output
+            .push_str("These rows come from the diagnostic single-member loopback mTLS boundary ");
+        output.push_str(
+            "(TB-17 campaign, `campaign-goal.md`). They carry no comparability contract, ",
+        );
+        output.push_str(
+            "never join the comparison table above, and are facts about this host at the ",
+        );
         output.push_str("moment of the run.\n\n");
         for (target, identity) in diagnostic_identities {
             output.push_str(&format!("- **{target}**: {identity}\n"));

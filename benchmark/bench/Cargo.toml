@@ -15,7 +15,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
-description = "Operator-side reference drivers (PostgreSQL, RavenDB) for the TerraBase benchmark lane"
+description = "Operator-side reference drivers (PostgreSQL, PostgreSQL full-stack, RavenDB) for the TerraBase benchmark lane"
 publish = false
 
 [workspace]

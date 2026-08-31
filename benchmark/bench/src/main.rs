@@ -1,7 +1,8 @@
 //! `terrabase-bench-lane` — the operator-side reference driver of the
 //! TerraBase benchmark lane.
 //!
-//! Drives the pinned PostgreSQL and RavenDB references through the four
+//! Drives the pinned PostgreSQL, PostgreSQL full-stack, and RavenDB
+//! references through the four
 //! CRUD-class workloads of the SE-15 lane and emits each run as JSON for
 //! the engine-side adapter (`src/benchmarks/`) to classify under its own
 //! gates. This binary produces facts only: every verdict, objective
@@ -29,6 +30,7 @@ mod history;
 mod lane;
 mod metrics;
 mod pg;
+mod pg_fullstack;
 mod raven;
 mod served;
 
@@ -196,6 +198,7 @@ fn main() {
     let result = match target {
         Target::TerraBase => unreachable!("served target returned before reference dispatch"),
         Target::PostgreSql => execute::<pg::PostgreSqlBackend>(workload, lane_config),
+        Target::PgFullstack => execute::<pg_fullstack::PgFullstackBackend>(workload, lane_config),
         Target::RavenDb => execute::<raven::RavenDbBackend>(workload, lane_config),
     };
     match result {
@@ -269,6 +272,7 @@ fn endpoint_for(target: Target) -> String {
     let variable = match target {
         Target::TerraBase => "TERRABASE_BENCH_ENDPOINT",
         Target::PostgreSql => "TERRABASE_PG_REFERENCE_ENDPOINT",
+        Target::PgFullstack => "TERRABASE_PG_FULLSTACK_ENDPOINT",
         Target::RavenDb => "TERRABASE_RAVEN_REFERENCE_ENDPOINT",
     };
     std::env::var(variable).unwrap_or_else(|_| format!("{variable} is not set"))
@@ -278,6 +282,7 @@ fn transport_for(target: Target) -> &'static str {
     match target {
         Target::TerraBase => "Rust-owned served runner; network mTLS contract",
         Target::PostgreSql => "postgres reference client; identity unavailable",
+        Target::PgFullstack => "pgrest HTTP/JSON reference client; identity unavailable",
         Target::RavenDb => "RavenDB HTTP reference client; identity unavailable",
     }
 }
@@ -322,13 +327,14 @@ fn target_of(name: &str) -> Target {
     match name {
         "terrabase" => Target::TerraBase,
         "postgresql" => Target::PostgreSql,
+        "pg-fullstack" => Target::PgFullstack,
         _ => Target::RavenDb,
     }
 }
 
 fn usage() {
     eprintln!(
-        "usage: terrabase-bench-lane --target <terrabase|pg|raven> --workload <read|write|query|mixed> \
+        "usage: terrabase-bench-lane --target <terrabase|pg|pg-fullstack|raven> --workload <read|write|query|mixed> \
          [--boundary-class diagnostic-qualification|production-candidate] [--out DIR] [--seed N] \
          [--ops N] [--samples N] [--concurrency N] [--warmup N] [--noise-percent N]"
     );
