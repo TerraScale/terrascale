@@ -102,6 +102,10 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
     // Those required components remain Unknown, so readiness stays false until
     // the cluster composition supplies authoritative observations.
     metrics.transition_service(ServiceState::Serving)?;
+    // Opt-in disaster-recovery replication over this member's SQLite files.
+    // Kept out of the serving path: a start failure is logged and reflected
+    // in Backup component health but never aborts the daemon (D-29).
+    let backup_supervision = crate::backup::start(&config.engine_location, &metrics);
     wait_for_shutdown().await?;
     metrics.transition_service(ServiceState::Draining)?;
     let _ = host.begin_shutdown(&SupervisionShutdownRequest { reason: ShutdownReason::Supervisor });
@@ -136,6 +140,14 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
         Ok(Ok(())) => {}
         Ok(Err(error)) => return Err(error),
         Err(_) => return Err(Box::new(DaemonError::ShutdownTimeout)),
+    }
+    // Backup replication stays live through the drain so final WAL frames
+    // are captured, then stops with the same bounded escalation. Failures
+    // only log: shutdown must not fail because a backup child misbehaved.
+    if let Some(supervisor) = &backup_supervision {
+        if let Err(error) = supervisor.shutdown().await {
+            eprintln!("terrabase: backup supervision shutdown reported: {error}");
+        }
     }
     metrics.transition_service(ServiceState::Stopped)?;
     Ok(())
