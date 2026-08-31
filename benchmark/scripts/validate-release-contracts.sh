@@ -61,7 +61,8 @@ grep -Fq 'fipsFeatureGraph' deploy/release/package.sh
 grep -Fq 'fipsFeatureGraph' deploy/release/verify.sh
 ! grep -Fq -- '--all-features' deploy/release/package.sh
 
-grep -Fq 'GITHUB_BASE_REF' "$ci"
+! grep -Fq 'GITHUB_BASE_REF' "$ci"
+! grep -Fq 'GITHUB_EVENT_NAME' "$ci"
 grep -Fq 'git rev-parse --verify HEAD^' "$ci"
 grep -Fq 'buf lint' "$ci"
 grep -Fq 'buf breaking --against ".git#ref=$against_commit"' "$ci"
@@ -91,15 +92,135 @@ grep -Fq 'cargo doc --manifest-path deploy/release/sbom/Cargo.toml --no-deps --l
 grep -Fq 'deploy/release/test-sbom.sh' "$ci"
 grep -Fq 'gofmt -d -e' "$ci"
 grep -Fq 'go vet -mod=readonly ./...' "$ci"
+grep -Fq 'go install github.com/mikefarah/yq/v4@v4.45.1' "$ci"
 ! grep -Fq '.git#branch=${GITHUB_REF_NAME}' "$ci"
-awk '
-  /^  push:$/ { in_push = 1; next }
-  /^  [[:alnum:]_]+:$/ { in_push = 0 }
-  in_push && /branches: \[develop, main\]/ { found = 1 }
-  END { exit(found ? 0 : 1) }
-' "$ci"
+validate_trunk_ci_triggers() {
+  local document_count
+  local workflow_contents
+
+  workflow_contents="$(<"$1")" || return 1
+
+  document_count="$(
+    yq eval-all '. as $document ireduce (0; . + 1)' - \
+      <<<"$workflow_contents" 2>/dev/null
+  )" || return 1
+  [[ "$document_count" == 1 ]] || return 1
+
+  # Restrict top-level workflow keys to the canonical plain-key form and
+  # reject duplicates before yq resolves them. The YAML parser otherwise
+  # accepts a later duplicate key and can hide an invalid trigger mapping.
+  awk '
+    /^[[:space:]]*($|#)/ { next }
+    /^[^[:space:]]/ {
+      if ($0 !~ /^[A-Za-z][A-Za-z0-9_-]*:[[:space:]]*/) {
+        invalid = 1
+        exit
+      }
+      key = $0
+      sub(/:.*/, "", key)
+      if (seen[key]++) {
+        invalid = 1
+        exit
+      }
+    }
+    END {
+      exit(invalid || seen["on"] != 1 ? 1 : 0)
+    }
+  ' <<<"$workflow_contents" || return 1
+
+  yq eval --exit-status '
+    (.on | type) == "!!map" and
+    (.on | length) == 1 and
+    (.on | has("push")) and
+    (.on.push | type) == "!!map" and
+    (.on.push.branches | type) == "!!seq" and
+    (.on.push.branches | length) == 2 and
+    .on.push.branches[0] == "develop" and
+    .on.push.branches[1] == "main"
+  ' - <<<"$workflow_contents" >/dev/null 2>&1
+}
+
+validate_trunk_ci_triggers <(printf '%s\n' \
+  'on:' \
+  '  # pull_request: {}' \
+  '  push:' \
+  '    branches: [develop, main]' \
+  'env:' \
+  '  CONTRACT_TEXT: "pull_request: {}"' \
+  '  TARGET_TEXT: "pull_request_target: {}"')
+validate_trunk_ci_triggers <(printf '%s\n' \
+  'on: {push: {branches: [develop, main]}}')
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  'on:' \
+  '  push:' \
+  '    branches: [develop, main]' \
+  '  pull_request:' \
+  '    branches: [develop, main]')
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  'on:' \
+  '  push:' \
+  '    branches: [develop, main]' \
+  '  pull_request: {}')
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  'on:' \
+  '  push:' \
+  '    branches: [develop, main]' \
+  "  'pull_request': {}")
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  'on:' \
+  '  push:' \
+  '    branches: [develop, main]' \
+  '  "pull_request": {}')
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  'on:' \
+  '  push:' \
+  '    branches: [develop, main]' \
+  '  pull_request : {}')
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  'on: {push: {branches: [develop, main]}, pull_request: {}}')
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  'on:' \
+  '  push:' \
+  '    branches: [develop, main]' \
+  '  pull_request_target: {}')
+for extra_event in workflow_dispatch schedule repository_dispatch workflow_call; do
+  ! validate_trunk_ci_triggers <(printf '%s\n' \
+    'on:' \
+    '  push:' \
+    '    branches: [develop, main]' \
+    "  ${extra_event}: {}")
+done
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  'on: {push: {branches: [develop, main]}}' \
+  '---' \
+  'on: {push: {branches: [develop, main]}, schedule: []}')
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  'on: {push: {branches: [wrong]}}' \
+  'on: {push: {branches: [develop, main]}}')
+! validate_trunk_ci_triggers <(printf '%s\n' \
+  '"on": {push: {branches: [wrong]}}' \
+  'on: {push: {branches: [develop, main]}}')
+validate_trunk_ci_triggers "$ci"
+
+yq eval --exit-status '
+  .env.CC == "gcc" and
+  .env.CXX == "g++" and
+  .jobs.checks."runs-on" == "terrascale-builder" and
+  .jobs."go-client"."runs-on" == "terrascale-builder" and
+  ([.jobs.checks.steps[] | select(.name == "Select explicit GCC host linker")] | length) == 1
+' "$ci" >/dev/null
+gcc_linker_step="$(yq eval -r '.jobs.checks.steps[] | select(.name == "Select explicit GCC host linker") | .run' "$ci")"
+grep -Fq 'rustc -vV' <<<"$gcc_linker_step"
+grep -Fq 's/^host: //p' <<<"$gcc_linker_step"
+grep -Fq '*[!A-Za-z0-9._-]*)' <<<"$gcc_linker_step"
+grep -Fq '${GITHUB_ENV:?GITHUB_ENV is required}' <<<"$gcc_linker_step"
+grep -Fq 'CARGO_TARGET_$(printf' <<<"$gcc_linker_step"
+grep -Fq "LC_ALL=C tr '[:lower:]-' '[:upper:]_'" <<<"$gcc_linker_step"
+grep -Fq '%s=gcc\n' <<<"$gcc_linker_step"
+grep -Fq '"$linker_env"' <<<"$gcc_linker_step"
+grep -Fq '"$GITHUB_ENV"' <<<"$gcc_linker_step"
+! grep -Eq 'CARGO_TARGET_(X86_64|AARCH64|ARM|RISCV|S390X|POWERPC)[[:alnum:]_]*_LINKER' <<<"$gcc_linker_step"
 grep -Fq 'go test -mod=readonly -race ./...' "$ci"
-grep -Fq 'pull_request:' "$ci"
 ! grep -Fq 'python3' "$ci" deploy/release/package.sh deploy/release/reproduce.sh
 
 echo "validated immutable promotion and protobuf baseline contracts"
