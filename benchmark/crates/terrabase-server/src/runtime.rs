@@ -31,6 +31,7 @@ const MAX_PEM_BYTES_USIZE: usize = 1024 * 1024;
 ///
 /// Returns an error when TLS material, the engine, a listener, shutdown, or
 /// graceful draining fails.
+#[allow(clippy::too_many_lines, reason = "one linear composition from listeners to drain")]
 pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
     if config.mode == ServerMode::Production {
         return Err(Box::new(DaemonError::ProductionCompositionUnavailable));
@@ -102,9 +103,8 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
     // Those required components remain Unknown, so readiness stays false until
     // the cluster composition supplies authoritative observations.
     metrics.transition_service(ServiceState::Serving)?;
-    // Opt-in disaster-recovery replication over this member's SQLite files.
-    // Kept out of the serving path: a start failure is logged and reflected
-    // in Backup component health but never aborts the daemon (D-29).
+    // Opt-in disaster-recovery replication over this member's SQLite files;
+    // start failures never abort the daemon (D-29).
     let backup_supervision = crate::backup::start(&config.engine_location, &metrics);
     wait_for_shutdown().await?;
     metrics.transition_service(ServiceState::Draining)?;
@@ -142,13 +142,8 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
         Err(_) => return Err(Box::new(DaemonError::ShutdownTimeout)),
     }
     // Backup replication stays live through the drain so final WAL frames
-    // are captured, then stops with the same bounded escalation. Failures
-    // only log: shutdown must not fail because a backup child misbehaved.
-    if let Some(supervisor) = &backup_supervision {
-        if let Err(error) = supervisor.shutdown().await {
-            eprintln!("terrabase: backup supervision shutdown reported: {error}");
-        }
-    }
+    // are captured, then stops with the same bounded escalation.
+    crate::backup::stop(backup_supervision.as_ref()).await;
     metrics.transition_service(ServiceState::Stopped)?;
     Ok(())
 }

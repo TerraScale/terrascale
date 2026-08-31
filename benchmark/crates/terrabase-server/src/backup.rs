@@ -76,6 +76,15 @@ pub(crate) fn start(
     None
 }
 
+/// Stops supervision after the drain completes. Backup shutdown failures
+/// only log: shutdown must not fail because a backup child misbehaved.
+pub(crate) async fn stop(supervisor: Option<&LitestreamSupervisor>) {
+    let Some(supervisor) = supervisor else { return };
+    if let Err(error) = supervisor.shutdown().await {
+        eprintln!("terrabase: backup supervision shutdown reported: {error}");
+    }
+}
+
 fn supervisor_config(engine_location: &Path, vars: Vars<'_>) -> Result<SupervisorConfig, String> {
     let replica = replica_from_environment(vars)?;
     let mut config = SupervisorConfig::new(engine_location.to_path_buf(), replica);
