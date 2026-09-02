@@ -44,8 +44,6 @@ export type Page<TItem> = {
   readonly nextCursor?: string | null;
 };
 
-export type Int64String = `${bigint}`;
-
 export type ProjectScoped = {
   readonly projectId?: ProjectId | undefined;
 };
@@ -447,10 +445,10 @@ export type UsageSummary = {
 export type OrganizationUsageLimit = {
   readonly resource: "storage" | "database_operations" | "egress" | string;
   readonly unit: string;
-  readonly used: Int64String;
-  readonly included?: Int64String | null;
-  readonly remaining?: Int64String | null;
-  readonly excess?: Int64String | null;
+  readonly used: string;
+  readonly included?: string | null;
+  readonly remaining?: string | null;
+  readonly excess?: string | null;
   readonly status: "approaching" | "exceeded" | "normal" | "not_applicable" | "reached" | string;
   readonly provisional: boolean;
 };
@@ -458,9 +456,9 @@ export type OrganizationUsageLimit = {
 export type OrganizationProjectUsage = {
   readonly projectId: ProjectId;
   readonly projectName: string;
-  readonly storageBytes?: Int64String | null;
-  readonly operationUnits?: Int64String | null;
-  readonly egressBytes?: Int64String | null;
+  readonly storageBytes?: string | null;
+  readonly operationUnits?: string | null;
+  readonly egressBytes?: string | null;
   readonly updatedAt?: Timestamp | null;
   readonly provisional: boolean;
 };
@@ -556,9 +554,9 @@ export type UsageHistoryRange = "24h" | "7d" | "30d" | "90d" | "365d";
 
 export type ProjectUsageHistoryPoint = {
   readonly observedAt: Timestamp;
-  readonly storageBytes: Int64String;
-  readonly operationUnits: Int64String;
-  readonly egressBytes: Int64String;
+  readonly storageBytes: string;
+  readonly operationUnits: string;
+  readonly egressBytes: string;
 };
 
 export type ProjectUsageHistory = {
