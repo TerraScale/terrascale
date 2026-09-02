@@ -1640,6 +1640,7 @@ dependencies = [
  "axum",
  "blake3",
  "serde",
+ "serde_json",
  "terrabase",
  "terrabase-cluster",
  "terrabase-tbep",

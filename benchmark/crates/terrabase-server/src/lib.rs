@@ -8,6 +8,7 @@
 pub mod api;
 pub mod api_keys;
 pub mod config;
+pub mod control;
 pub mod http;
 #[cfg(feature = "production-fips")]
 pub mod production;

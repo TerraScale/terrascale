@@ -15,6 +15,7 @@
 use std::sync::Arc;
 
 use axum::Router;
+use axum::extract::Path;
 use axum::extract::Request;
 use axum::extract::State;
 use axum::http::HeaderValue;
@@ -26,6 +27,7 @@ use axum::middleware::from_fn_with_state;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::routing::get;
+use axum::routing::post;
 use terrabase::observability::MetricsRegistry;
 use terrabase::observability::ServiceState;
 use terrabase::regions::RegionCode;
@@ -130,6 +132,82 @@ impl ApiError {
         }
     }
 
+    /// The route needs the control plane, which this member has not booted
+    /// with a data root.
+    #[must_use]
+    pub fn control_unavailable() -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: "control_plane_unavailable",
+            message: "the databases registry is not available on this member".into(),
+            fix: "start the member with a data root (terrabase serve --data <dir>)".into(),
+            placement: None,
+        }
+    }
+
+    /// Maps one registry refusal to the envelope, spelling each refusal's
+    /// remedy (D-56).
+    #[must_use]
+    pub fn control(error: crate::control::ControlError) -> Self {
+        use crate::control::ControlError;
+        match error {
+            ControlError::InvalidName(_) => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                code: "invalid_database_name",
+                message: "database names are 1-63 lowercase letters, digits, or dashes,                           starting and ending with a letter or digit"
+                    .into(),
+                fix: "terrabase databases create <name> enforces the same rule".into(),
+                placement: None,
+            },
+            ControlError::InvalidPlacement(_) => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                code: "invalid_placement",
+                message: "placement must be an explicit, non-empty region list".into(),
+                fix: "pass placement as a JSON array of region codes, e.g. [\"GRU\",\"FRA\"]"
+                    .into(),
+                placement: None,
+            },
+            ControlError::InvalidResidency(constraint) => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                code: "invalid_residency",
+                message: format!("'{constraint}' is not a residency constraint this deployment knows"),
+                fix: "use eu-only, br-only, or a comma-separated region list".into(),
+                placement: None,
+            },
+            ControlError::ResidencyViolation { region, constraint } => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                code: "residency_violation",
+                message: format!("region {region} violates the residency constraint '{constraint}'"),
+                fix: "place the database only in regions the constraint admits (D-52)".into(),
+                placement: None,
+            },
+            ControlError::AlreadyExists(name) => Self {
+                status: StatusCode::CONFLICT,
+                code: "database_exists",
+                message: format!("a database named '{name}' already exists"),
+                fix: "list with GET /api/v1/databases, or pick another name".into(),
+                placement: None,
+            },
+            ControlError::SoftDeleted(name) => Self {
+                status: StatusCode::CONFLICT,
+                code: "database_soft_deleted",
+                message: format!(
+                    "'{name}' is soft-deleted inside its 7-day restore window"
+                ),
+                fix: "restore it first (POST /api/v1/databases/{name}/restore)".into(),
+                placement: None,
+            },
+            ControlError::NotFound(name) => Self::database_not_found(&name),
+            ControlError::Registry(reason) => Self {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "registry_failure",
+                message: format!("the registry engine refused the operation: {reason}"),
+                fix: "check the member's storage health, then retry once".into(),
+                placement: None,
+            },
+        }
+    }
+
     /// An unrouted path under the API prefix: the envelope names the fix.
     #[must_use]
     pub fn not_routed(path: &str) -> Self {
@@ -215,6 +293,9 @@ pub struct ApiState {
     /// without exception, which is the production default until key
     /// material is configured.
     pub keys: Option<Arc<crate::api_keys::KeyStore>>,
+    /// The databases registry (D-52). `None` until the member boots with a
+    /// data root; the database routes answer the typed unavailable error.
+    pub control: Option<Arc<crate::control::ControlPlane>>,
 }
 
 /// Builds the public `/api/v1` router. Every route except
@@ -225,6 +306,9 @@ pub fn router(state: Arc<ApiState>) -> Router {
         .route("/api/v1/health", get(health))
         .route("/api/v1/regions", get(regions))
         .route("/api/v1/openapi.json", get(openapi))
+        .route("/api/v1/databases", get(list_databases).post(create_database))
+        .route("/api/v1/databases/{name}", get(get_database).delete(delete_database))
+        .route("/api/v1/databases/{name}/restore", post(restore_database))
         .fallback(not_routed)
         .layer(from_fn_with_state(Arc::clone(&state), authenticate))
         .with_state(state)
@@ -306,6 +390,162 @@ async fn not_routed(request: Request) -> Response {
     ApiError::not_routed(request.uri().path()).into_response()
 }
 
+/// Lists every database record, deleted records included (each record's
+/// body names its state).
+async fn list_databases(State(state): State<Arc<ApiState>>) -> Response {
+    let Some(control) = state.control.clone() else {
+        return ApiError::control_unavailable().into_response();
+    };
+    match control.list() {
+        Ok(records) => {
+            let mut body = String::from("{\"databases\":[");
+            for (index, record) in records.iter().enumerate() {
+                if index > 0 {
+                    body.push(',');
+                }
+                push_record(&mut body, record);
+            }
+            body.push_str("]}");
+            json_response(StatusCode::OK, body)
+        }
+        Err(error) => ApiError::control(error).into_response(),
+    }
+}
+
+/// Creates one database from an explicit placement and optional residency
+/// constraint (D-52).
+async fn create_database(State(state): State<Arc<ApiState>>, body: String) -> Response {
+    let Some(control) = state.control.clone() else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let request: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            return ApiError {
+                status: StatusCode::BAD_REQUEST,
+                code: "invalid_json",
+                message: "the request body is not the expected JSON object".into(),
+                fix: "send {\"name\":…,\"placement\":[\"GRU\",…],\"residency\":…}".into(),
+                placement: None,
+            }
+            .into_response();
+        }
+    };
+    let Some(name) = request.get("name").and_then(serde_json::Value::as_str) else {
+        return ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "missing_name",
+            message: "the create request names no database".into(),
+            fix: "add \"name\": \"<database>\" to the request body".into(),
+            placement: None,
+        }
+        .into_response();
+    };
+    let Some(placement) = request.get("placement").and_then(|value| {
+        value.as_array().and_then(|regions| {
+            regions
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(|text| RegionCode::from_text(text).ok())
+                .collect::<Option<Vec<_>>>()
+        })
+    }) else {
+        return ApiError::control(crate::control::ControlError::InvalidPlacement(
+            "placement must be an array of region codes".into(),
+        ))
+        .into_response();
+    };
+    let residency = request.get("residency").and_then(serde_json::Value::as_str);
+    match control.create(name, &placement, residency) {
+        Ok(record) => record_response(StatusCode::CREATED, &record),
+        Err(error) => ApiError::control(error).into_response(),
+    }
+}
+
+/// Returns one database's record with the routing headers; a database this
+/// member's region does not host answers the 421 contract (D-58).
+async fn get_database(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
+    let Some(control) = state.control.clone() else {
+        return ApiError::control_unavailable().into_response();
+    };
+    match control.get(&name) {
+        Ok(Some(record)) => {
+            if !record.placement.contains(&state.region) {
+                return ApiError::misdirected(&record.placement, record.residency_header())
+                    .into_response();
+            }
+            record_response(StatusCode::OK, &record)
+        }
+        Ok(None) => ApiError::database_not_found(&name).into_response(),
+        Err(error) => ApiError::control(error).into_response(),
+    }
+}
+
+/// Soft-deletes one database: restorable for seven days.
+async fn delete_database(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
+    let Some(control) = state.control.clone() else {
+        return ApiError::control_unavailable().into_response();
+    };
+    match control.soft_delete(&name) {
+        Ok(record) => record_response(StatusCode::OK, &record),
+        Err(error) => ApiError::control(error).into_response(),
+    }
+}
+
+/// Restores one soft-deleted database inside its window.
+async fn restore_database(
+    State(state): State<Arc<ApiState>>,
+    Path(name): Path<String>,
+) -> Response {
+    let Some(control) = state.control.clone() else {
+        return ApiError::control_unavailable().into_response();
+    };
+    match control.restore(&name) {
+        Ok(record) => record_response(StatusCode::OK, &record),
+        Err(error) => ApiError::control(error).into_response(),
+    }
+}
+
+/// One record's JSON body: hand-assembled, values spliced (the record's
+/// fields are all envelope-class text and integers).
+fn push_record(body: &mut String, record: &crate::control::DatabaseRecord) {
+    body.push_str("{\"name\":\"");
+    push_json_escaped(body, &record.name);
+    body.push_str("\",\"placement\":\"");
+    push_json_escaped(body, &record.placement_header());
+    body.push_str("\",\"residency\":\"");
+    push_json_escaped(body, record.residency_header());
+    body.push_str("\",\"deleted\":");
+    body.push_str(if record.deleted { "true" } else { "false" });
+    body.push_str(",\"created_at\":");
+    body.push_str(&record.created_at.to_string());
+    body.push('}');
+}
+
+/// One record response: the body plus the routing headers every database
+/// response carries (D-58).
+fn record_response(status: StatusCode, record: &crate::control::DatabaseRecord) -> Response {
+    let mut body = String::with_capacity(192);
+    push_record(&mut body, record);
+    let mut response = json_response(status, body);
+    if let (Ok(placement), Ok(residency)) = (
+        HeaderValue::from_str(&record.placement_header()),
+        HeaderValue::from_str(record.residency_header()),
+    ) {
+        let headers = response.headers_mut();
+        headers.insert(PLACEMENT_HEADER, placement);
+        headers.insert(RESIDENCY_HEADER, residency);
+    }
+    response
+}
+
+/// A bare JSON response.
+fn json_response(status: StatusCode, body: String) -> Response {
+    let mut response = (status, body).into_response();
+    response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    response
+}
+
 #[cfg(test)]
 mod tests {
     use super::API_PREFIX;
@@ -327,6 +567,31 @@ mod tests {
             region: RegionCode::GRU,
             metrics: Arc::new(MetricsRegistry::new()),
             keys: None,
+            control: None,
+        })
+    }
+
+    fn state_with_keys_and_control() -> Arc<ApiState> {
+        use crate::api_keys::KeyStore;
+        use crate::api_keys::Scope;
+        use crate::api_keys::Verbs;
+        use crate::control::ControlPlane;
+        let dir = std::env::temp_dir().join(format!(
+            "terrabase-api-test-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&dir).expect("test root");
+        let control = ControlPlane::open(&dir).expect("control plane opens");
+        Arc::new(ApiState {
+            region: RegionCode::GRU,
+            metrics: Arc::new(MetricsRegistry::new()),
+            keys: Some(Arc::new(KeyStore::with_keys(&[(
+                "tskey_test_abcdefghijklmnop",
+                "bootstrap",
+                Scope::every_database(Verbs::ALL),
+            )]))),
+            control: Some(Arc::new(control)),
         })
     }
 
@@ -386,6 +651,89 @@ mod tests {
             )
             .await
             .expect("answers");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn databases_crud_through_the_router() {
+        use axum::body::Body;
+        use axum::http::Request;
+        let router = router(state_with_keys_and_control());
+        let create = r#"{"name":"prod","placement":["GRU"],"residency":null}"#;
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
+                    .body(Body::from(create))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(
+            response.headers().get("x-terrascale-placement").and_then(|v| v.to_str().ok()),
+            Some("GRU")
+        );
+        let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("\"name\":\"prod\""), "{body}");
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/databases/prod")
+                    .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // A database hosted only elsewhere answers the 421 contract.
+        let elsewhere = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
+                    .body(Body::from(r#"{"name":"eu","placement":["FRA"],"residency":"eu-only"}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(elsewhere.status(), StatusCode::CREATED);
+        let misdirected = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/databases/eu")
+                    .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(misdirected.status(), StatusCode::MISDIRECTED_REQUEST);
+
+        let response = router
+            .oneshot(
+                Request::delete("/api/v1/databases/prod")
+                    .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn control_routes_answer_the_typed_unavailable_without_a_root() {
+        let response = router(state())
+            .oneshot(Request::get("/api/v1/databases").body(Body::empty()).expect("request"))
+            .await
+            .expect("answers");
+        // Deny-all comes first: no credential, no route.
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 

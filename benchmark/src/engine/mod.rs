@@ -1530,7 +1530,7 @@ impl Engine {
     /// Returns the validation and storage failures of
     /// [`Engine::snapshot_documents`].
     #[allow(dead_code, reason = "compatibility collection-wide read seam")]
-    pub(crate) fn snapshot_documents_in_collection(
+    pub fn snapshot_documents_in_collection(
         &self,
         scope: &TenantScope,
         snapshot: &ReadSnapshot,
