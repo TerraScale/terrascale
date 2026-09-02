@@ -22,7 +22,6 @@ export type TerraScaleRuntimeConfig = {
   readonly idempotencyKeyFactory?: (() => string) | undefined;
   readonly preferredRegion?: TerraScaleRegionCode | undefined;
   readonly regionAffinity?: "failover" | "strict" | undefined;
-  readonly sessionConsistency?: "automatic" | "none" | undefined;
   readonly maxRetryAttempts?: number | undefined;
   readonly retryDelayMs?: number | undefined;
   readonly sqlite?: TerraScaleSqliteRuntimeConfig | undefined;
@@ -33,7 +32,6 @@ export type ResolvedTerraScaleRuntimeConfig = {
   readonly projectId?: ProjectId;
   readonly preferredRegion?: TerraScaleRegionCode | undefined;
   readonly regionAffinity: "failover" | "strict";
-  readonly sessionConsistency: "automatic" | "none";
   readonly maxRetryAttempts: number;
   readonly retryDelayMs: number;
   readonly sqlite?: TerraScaleSqliteRuntimeConfig | undefined;
@@ -66,11 +64,6 @@ export function resolveRuntimeConfig(
     throw new TypeError("Strict regional affinity requires a preferredRegion.");
   }
 
-  const sessionConsistency = config.sessionConsistency ?? "none";
-  if (sessionConsistency !== "automatic" && sessionConsistency !== "none") {
-    throw new TypeError('sessionConsistency must be either "automatic" or "none".');
-  }
-
   const maxRetryAttempts = config.maxRetryAttempts ?? 0;
   if (!Number.isInteger(maxRetryAttempts) || maxRetryAttempts < 0 || maxRetryAttempts > 8) {
     throw new TypeError("maxRetryAttempts must be an integer between 0 and 8.");
@@ -91,7 +84,6 @@ export function resolveRuntimeConfig(
     ...(config.projectId === undefined ? {} : { projectId: config.projectId }),
     preferredRegion,
     regionAffinity,
-    sessionConsistency,
     maxRetryAttempts,
     retryDelayMs,
     ...(config.sqlite === undefined ? {} : { sqlite: config.sqlite }),

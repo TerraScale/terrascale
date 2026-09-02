@@ -92,7 +92,6 @@ async function createSavedQuery(store: TerraScaleSqliteStore, context: LocalRequ
   const savedQueryId = (await nextId(store)) as Ulid;
   const item: Models.ProjectSavedQueryResponse = {
     savedQueryId, projectId: projectId as ProjectId, name, query,
-    repositoryId: text(body.repositoryId) as Models.ProjectSavedQueryResponse["repositoryId"] ?? null,
     createdAt: context.now, updatedAt: context.now, revision: "1",
   };
   await put(store, "saved-queries", queryKey(projectId, savedQueryId), item);
@@ -108,10 +107,8 @@ async function updateSavedQuery(store: TerraScaleSqliteStore, context: LocalRequ
   if (body.revision !== revision) return problemResponse(409, "conflict", "The saved query revision is stale.");
   const name = text(body.name) ?? old.name;
   const query = text(body.query) ?? old.query;
-  const normalizedRepositoryId = text(body.repositoryId);
-  const repositoryId = body.repositoryId === undefined ? old.repositoryId : normalizedRepositoryId === undefined ? null : normalizedRepositoryId as Models.ProjectSavedQueryResponse["repositoryId"];
   const nextRevision = String(Number(revision) + 1);
-  const updated = { ...old, name, query, repositoryId, updatedAt: context.now, revision: nextRevision };
+  const updated = { ...old, name, query, updatedAt: context.now, revision: nextRevision };
   await put(store, "saved-queries", queryKey(projectId, id), updated);
   await store.setMeta(`saved-query-revisions:${queryKey(projectId, id)}`, nextRevision);
   return jsonResponse(updated);

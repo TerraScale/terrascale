@@ -3,7 +3,7 @@
  *
  * This module contains only authorized query results. It has no collection
  * journal, replication identity, causal vector, or durable client write
- * queue. Checkpoints are opaque capabilities issued by the server; equality
+ * buffer. Checkpoints are opaque capabilities issued by the server; equality
  * is the only operation the client needs.
  */
 

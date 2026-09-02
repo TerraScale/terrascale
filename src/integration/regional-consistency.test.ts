@@ -22,9 +22,7 @@ const accessToken = process.env.TERRASCALE_E2E_ACCESS_TOKEN;
 const tenantId = tryUlid(process.env.TERRASCALE_E2E_TENANT_ID ?? "");
 const projectId = tryUlid(process.env.TERRASCALE_E2E_PROJECT_ID ?? "");
 const databaseId = tryUlid(process.env.TERRASCALE_E2E_DATABASE_ID ?? "");
-const repositoryId = tryUlid(process.env.TERRASCALE_E2E_REPOSITORY_ID ?? "");
-const documentId = tryUlid(process.env.TERRASCALE_E2E_DOCUMENT_ID ?? "");
-const leasePath = process.env.TERRASCALE_E2E_DOCUMENT_WRITE_LEASE;
+const leasePath = process.env.TERRASCALE_E2E_DATABASE_WRITE_LEASE;
 const routingRegion = exactRegionFromEnvironment("TERRASCALE_E2E_ROUTING_REGION");
 const strictRegion = exactRegionFromEnvironment("TERRASCALE_E2E_STRICT_REGION");
 const strictApiBaseUrl = process.env.TERRASCALE_E2E_STRICT_API_BASE_URL;
@@ -36,8 +34,8 @@ const fixtureSkipReason = missingFixtureConfiguration();
 describe("fixture lease", () => {
   test("serializes competing processes and removes only its own lock", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "terrascale-sdk-lease-"));
-    const lockPath = path.join(directory, "document.lock");
-    const scope = fixtureScope("tenant", "project", "database", "repository", "document");
+    const lockPath = path.join(directory, "database.lock");
+    const scope = fixtureScope("tenant", "project", "database");
 
     try {
       await assert.rejects(
@@ -63,86 +61,21 @@ describe("fixture lease", () => {
   });
 });
 
-describe("real regional document consistency", { skip: fixtureSkipReason }, () => {
-  test("round-trips a leased document through the real public API", async () => {
-    const client = createTerraScaleClient({
-      apiBaseUrl: apiBaseUrl!,
-      accessToken: accessToken!,
-      projectId: projectId!,
-      sessionConsistency: "automatic",
-      maxRetryAttempts: 1,
-      retryDelayMs: 0,
-    });
-    const scope = { repositoryId: repositoryId! };
-
-    await withFixtureLease(
-      leasePath!,
-      fixtureScope(tenantId!, projectId!, databaseId!, repositoryId!, documentId!),
-      async () => {
-        const before = await client.documents.get(scope, documentId!);
-        assert.equal(before.ok, true);
-        assert.notEqual(before.value.changeToken, null);
-        assert.notEqual(before.value.changeToken, undefined);
-        if (before.value.changeToken === null || before.value.changeToken === undefined) {
-          assert.fail("The leased fixture document must have a change token.");
-        }
-
-        const write = await client.documents.put(
-          scope,
-          documentId!,
-          before.value.data,
-          { expectedChangeToken: before.value.changeToken },
-        );
-        assert.equal(write.ok, true);
-        assert.notEqual(write.value.sessionConsistencyToken, null);
-        assert.notEqual(write.value.sessionConsistencyToken, undefined);
-
-        const after = await client.documents.get(scope, documentId!);
-        assert.equal(after.ok, true);
-        if (after.ok) {
-          assert.equal(after.value.id, documentId);
-          assert.deepEqual(after.value.data, before.value.data);
-        }
-      },
-    );
-  });
-
-  test("classifies a real stale document write as a conflict without a simulated response", async () => {
+describe("real regional routing consistency", { skip: fixtureSkipReason }, () => {
+  test("reads the leased database through the real public API", async () => {
     const client = createTerraScaleClient({
       apiBaseUrl: apiBaseUrl!,
       accessToken: accessToken!,
       projectId: projectId!,
     });
-    const scope = { repositoryId: repositoryId! };
 
     await withFixtureLease(
       leasePath!,
-      fixtureScope(tenantId!, projectId!, databaseId!, repositoryId!, documentId!),
+      fixtureScope(tenantId!, projectId!, databaseId!),
       async () => {
-        const before = await client.documents.get(scope, documentId!);
-        assert.equal(before.ok, true);
-        assert.notEqual(before.value.changeToken, null, "The leased fixture document must have a change token.");
-        assert.notEqual(before.value.changeToken, undefined, "The leased fixture document must have a change token.");
-        if (before.value.changeToken === null || before.value.changeToken === undefined) {
-          assert.fail("The leased fixture document must have a change token.");
-        }
-
-        const advance = await client.documents.put(
-          scope,
-          documentId!,
-          before.value.data,
-          { expectedChangeToken: before.value.changeToken },
-        );
-        assert.equal(advance.ok, true);
-
-        const stale = await client.documents.put(
-          scope,
-          documentId!,
-          before.value.data,
-          { expectedChangeToken: before.value.changeToken },
-        );
-        assert.equal(stale.ok, false);
-        if (!stale.ok) assert.equal(stale.error.kind, "conflict");
+        const result = await client.databases.get(databaseId!, projectId!);
+        assert.equal(result.ok, true);
+        if (result.ok) assert.equal(result.value.databaseId, databaseId);
       },
     );
   });
@@ -158,9 +91,9 @@ describe("real regional document consistency", { skip: fixtureSkipReason }, () =
 
     await withFixtureLease(
       leasePath!,
-      fixtureScope(tenantId!, projectId!, databaseId!, repositoryId!, documentId!),
+      fixtureScope(tenantId!, projectId!, databaseId!),
       async () => {
-        const result = await client.documents.get({ repositoryId: repositoryId! }, documentId!);
+        const result = await client.databases.get(databaseId!, projectId!);
         assert.equal(result.ok, true);
         if (result.ok) {
           assert.ok(result.routing, "The real API must return routing observations for regional qualification.");
@@ -193,9 +126,9 @@ describe("real regional document consistency", { skip: fixtureSkipReason }, () =
 
     await withFixtureLease(
       leasePath!,
-      fixtureScope(tenantId!, projectId!, databaseId!, repositoryId!, documentId!),
+      fixtureScope(tenantId!, projectId!, databaseId!),
       async () => {
-        const result = await client.documents.get({ repositoryId: repositoryId! }, documentId!);
+        const result = await client.databases.get(databaseId!, projectId!);
         assert.equal(result.ok, true);
         if (result.ok) {
           assert.ok(result.routing, "The strict endpoint must return routing observations.");
@@ -232,9 +165,13 @@ describe("real regional document consistency", { skip: fixtureSkipReason }, () =
 
     await withFixtureLease(
       leasePath!,
-      fixtureScope(tenantId!, projectId!, databaseId!, repositoryId!, documentId!),
+      fixtureScope(tenantId!, projectId!, databaseId!),
       async () => {
-        const result = await client.documents.get({ repositoryId: repositoryId! }, documentId!);
+        const result = await client.backups.executeBackup(
+          databaseId!,
+          { operationSessionId: "regional-qualification-session", confirmationToken: "regional-qualification-token" },
+          "regional-qualification-key",
+        );
         assert.equal(result.ok, false);
         if (!result.ok) {
           assert.equal(result.status, 503);
@@ -254,9 +191,7 @@ function missingFixtureConfiguration(): string | false {
     ["TERRASCALE_E2E_TENANT_ID", tenantId],
     ["TERRASCALE_E2E_PROJECT_ID", projectId],
     ["TERRASCALE_E2E_DATABASE_ID", databaseId],
-    ["TERRASCALE_E2E_REPOSITORY_ID", repositoryId],
-    ["TERRASCALE_E2E_DOCUMENT_ID", documentId],
-    ["TERRASCALE_E2E_DOCUMENT_WRITE_LEASE", leasePath],
+    ["TERRASCALE_E2E_DATABASE_WRITE_LEASE", leasePath],
     ["TERRASCALE_E2E_ROUTING_REGION", routingRegion],
     ["TERRASCALE_E2E_STRICT_REGION", strictRegion],
     ["TERRASCALE_E2E_STRICT_API_BASE_URL", strictApiBaseUrl],
@@ -278,15 +213,11 @@ function fixtureScope(
   tenantId: string,
   projectId: string,
   databaseId: string,
-  repositoryId: string,
-  documentId: string,
 ): FixtureLeaseScope {
   return {
     tenantId,
     projectId,
     databaseId,
-    repositoryId,
-    documentId,
     apiBaseUrl: apiBaseUrl ?? "test://api",
     credentialFingerprint: fixtureCredentialFingerprint(accessToken ?? "test-token"),
   };

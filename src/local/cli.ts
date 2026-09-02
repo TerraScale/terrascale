@@ -30,8 +30,8 @@ Options:
                      Default: .terrascale/local.sqlite under the current directory
   --host <host>      Listen host. Default: 127.0.0.1
   --port <port>      Listen port. Default: 0 (choose an available port)
-  --seed             Create one local organization, project, database, repository,
-                     and document before accepting requests
+  --seed             Create one local organization, project, and database
+                     before accepting requests
   --reset            Clear the selected database before optional seeding
   --require-auth     Require TERRASCALE_LOCAL_BEARER_TOKEN on protected routes
   --allow-remote     Allow a non-loopback host; requires --require-auth and a
@@ -91,7 +91,7 @@ try {
     `Database: ${databasePath}`,
     `API URL: ${address.origin}`,
     `export TERRASCALE_API_BASE_URL=${address.apiBaseUrl}`,
-    ...(seed === undefined ? [] : [`Seed project: ${seed.projectId}`, `Seed repository: ${seed.repositoryId}`]),
+    ...(seed === undefined ? [] : [`Seed project: ${seed.projectId}`]),
     "Press Ctrl-C to stop.",
     "",
   ].join("\n"));

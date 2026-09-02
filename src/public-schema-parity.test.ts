@@ -7,14 +7,9 @@ import type {
   CreateDatabaseBranchRequest,
   DatabaseBranchCapabilityResponse,
   DeleteProjectDatabaseOptions,
-  CreateProjectQueueRequest,
   ProjectSavedQueryPageRequest,
   ProjectSavedQueryPageResponse,
   ProjectSavedQueryResponse,
-  ProjectQueue,
-  ProjectQueuePeekMessage,
-  ProjectQueueReceipt,
-  QueuePurgeResult,
   TeamMember,
   Timestamp,
   UpdateProjectSavedQueryRequest,
@@ -23,9 +18,6 @@ import type {
   BackupsClient,
   DatabaseBranchesClient,
   DatabasesClient,
-  DocumentsClient,
-  QueryClient,
-  QueuesClient,
   SavedQueriesClient,
 } from "./client.js";
 import type { TerraScaleClient } from "./factory.js";
@@ -48,7 +40,6 @@ type ExpectedSavedQueryResponse = {
   readonly projectId: Ulid;
   readonly name: string;
   readonly query: string;
-  readonly repositoryId: Ulid | null;
   readonly createdAt: Timestamp;
   readonly updatedAt: Timestamp;
   readonly revision: string;
@@ -81,14 +72,6 @@ type ExpectedCreateDatabaseBranchRequest = {
   readonly sourceDatabaseId?: Ulid;
 };
 
-type ExpectedProjectQueueRetention = {
-  readonly retentionSeconds: number | null;
-};
-
-type ExpectedProjectQueuePeekCreatedAt = {
-  readonly createdAt: Timestamp | null;
-};
-
 const staticSdkParity: readonly [
   Assert<
     Equal<
@@ -113,29 +96,11 @@ const staticSdkParity: readonly [
   Assert<Equal<TeamMember, ExpectedProjectTeamMember>>,
   Assert<MissingKey<TerraScaleClient, "request">>,
   Assert<MissingKey<PublicSdk, "TerraScaleHttp">>,
-  Assert<Equal<Parameters<DocumentsClient["list"]>["length"], 1 | 2>>,
-  Assert<Equal<Parameters<QueryClient["execute"]>["length"], 2>>,
   Assert<Equal<Parameters<SavedQueriesClient["update"]>[1], UpdateProjectSavedQueryRequest>>,
   Assert<MissingKey<BackupsClient, "triggerBackup">>,
   Assert<Equal<Parameters<DatabasesClient["delete"]>["length"], 2>>,
   Assert<Equal<Parameters<DatabasesClient["delete"]>[1], DeleteProjectDatabaseOptions>>,
-  Assert<Equal<Parameters<QueuesClient["create"]>[0], CreateProjectQueueRequest>>,
-  Assert<
-    Equal<Awaited<ReturnType<QueuesClient["list"]>>, TerraScaleResult<readonly ProjectQueue[]>>
-  >,
-  Assert<Equal<Pick<ProjectQueue, "retentionSeconds">, ExpectedProjectQueueRetention>>,
-  Assert<Equal<Pick<ProjectQueuePeekMessage, "createdAt">, ExpectedProjectQueuePeekCreatedAt>>,
-  Assert<Equal<Parameters<QueuesClient["complete"]>[1], ProjectQueueReceipt>>,
-  Assert<Equal<Awaited<ReturnType<QueuesClient["purge"]>>, TerraScaleResult<QueuePurgeResult>>>,
 ] = [
-  true,
-  true,
-  true,
-  true,
-  true,
-  true,
-  true,
-  true,
   true,
   true,
   true,
@@ -187,26 +152,6 @@ describe("public schema parity", () => {
     assert.equal(clone?.pathTemplate, "/api/v1/projects/{projectId}/database-branches");
   });
 
-  test("keeps all typed project queue routes in the generated descriptor", async () => {
-    const descriptor = await readDescriptor();
-    const routes = descriptor.routes.filter(({ client }) => client === "queues");
-
-    assert.equal(routes.length, 12);
-    assert.deepEqual(routes.map(({ routeName }) => routeName).sort(), [
-      "queues.abandon",
-      "queues.complete",
-      "queues.create",
-      "queues.deadLetter",
-      "queues.delete",
-      "queues.get",
-      "queues.list",
-      "queues.peek",
-      "queues.publish",
-      "queues.purge",
-      "queues.receive",
-      "queues.renewLock",
-    ]);
-  });
 });
 
 async function readDescriptor(): Promise<{

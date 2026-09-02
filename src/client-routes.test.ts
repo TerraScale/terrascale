@@ -7,10 +7,8 @@ import { createTerraScaleClient } from "./factory.js";
 import type { TerraScaleClient } from "./factory.js";
 import { toUlid } from "./ids.js";
 import type {
-  DatabaseEnvironment,
   DatabaseBranchCapabilityResponse,
   CreateDatabaseBranchRequest,
-  DeletedProjectDatabaseEnvironmentResponse,
   JsonValue,
   ProjectSavedQueryPageResponse,
   ProjectSavedQueryResponse,
@@ -18,9 +16,6 @@ import type {
 
 const projectId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV");
 const databaseId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAW");
-const environmentId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAX");
-const repositoryId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAY");
-const documentId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAZ");
 const notificationId = toUlid("01DRZ3NDEKTSV4RRFFQ69G5FAV");
 const organizationId = toUlid("01ERZ3NDEKTSV4RRFFQ69G5FAV");
 const backupPolicyId = toUlid("01NRZ3NDEKTSV4RRFFQ69G5FAW");
@@ -28,20 +23,7 @@ const backupId = toUlid("01NRZ3NDEKTSV4RRFFQ69G5FAV");
 const restoreId = toUlid("01MRZ3NDEKTSV4RRFFQ69G5FAV");
 const restoredDatabaseId = toUlid("01QRZ3NDEKTSV4RRFFQ69G5FAV");
 const savedQueryId = toUlid("01SRZ3NDEKTSV4RRFFQ69G5FAV");
-const queueId = toUlid("01PRZ3NDEKTSV4RRFFQ69G5FAV");
 const otherProjectId = toUlid("01TRZ3NDEKTSV4RRFFQ69G5FAV");
-
-const deletingEnvironment = {
-  environmentId,
-  projectId,
-  databaseId,
-  name: "Preview",
-  kind: "Preview",
-  status: "Deleting",
-  createdAt: "2026-08-05T00:00:00Z",
-  version: 1,
-} satisfies DatabaseEnvironment;
-void deletingEnvironment;
 
 type CapturedRequest = {
   readonly method: string;
@@ -72,7 +54,7 @@ describe("TerraScaleClient route contracts", () => {
       manifest.routes.map(routeManifestCore),
       capturedRoutes.map(routeManifestCore),
     );
-    assert.equal(manifest.routeCount, 91);
+    assert.equal(manifest.routeCount, 60);
     assert.equal(manifest.routeCount, capturedRoutes.length);
     assert.equal(manifest.routes.some((route) => route.routeName === "backups.trigger"), false);
     assert.deepEqual(
@@ -112,90 +94,6 @@ describe("TerraScaleClient route contracts", () => {
     assertRequest(requests[0], "GET", "/api/v1/regions");
   });
 
-  test("pins every project queue operation to the owner-published contract", async () => {
-    const { client, requests } = createCapturingClient({});
-
-    await client.queues.list(projectId);
-    await client.queues.create({ name: "jobs", kind: "queue", fifo: true }, projectId);
-    await client.queues.get(queueId, projectId);
-    await client.queues.delete(queueId, projectId);
-    await client.queues.purge(queueId, projectId);
-    await client.queues.publish(queueId, { data: { task: "index" } }, projectId);
-    await client.queues.peek(queueId, 7, projectId);
-    await client.queues.receive(
-      queueId,
-      { consumerName: "worker", maxMessages: 2, lockSeconds: 30 },
-      projectId,
-    );
-    const receipt = { receipt: "opaque-receipt", region: "SFO" } as const;
-    await client.queues.complete(queueId, receipt, projectId);
-    await client.queues.abandon(queueId, receipt, 5, projectId);
-    await client.queues.deadLetter(queueId, receipt, projectId);
-    await client.queues.renewLock(queueId, receipt, projectId);
-
-    const root = `/api/v1/projects/${projectId}/queues`;
-    assertRequest(requests[0], "GET", root);
-    assertRequest(requests[1], "POST", root);
-    assert.deepEqual(requests[1]?.body, { name: "jobs", kind: "queue", fifo: true });
-    assertRequest(requests[2], "GET", `${root}/${queueId}`);
-    assertRequest(requests[3], "DELETE", `${root}/${queueId}`);
-    assertRequest(requests[4], "POST", `${root}/${queueId}:purge`);
-    assertRequest(requests[5], "POST", `${root}/${queueId}:publish`);
-    assert.deepEqual(requests[5]?.body, { data: { task: "index" } });
-    assertRequest(requests[6], "GET", `${root}/${queueId}:peek`);
-    assert.equal(requests[6]?.url.searchParams.get("maxMessages"), "7");
-    assertRequest(requests[7], "POST", `${root}/${queueId}:receive`);
-    assert.deepEqual(requests[7]?.body, {
-      consumerName: "worker",
-      maxMessages: 2,
-      lockSeconds: 30,
-    });
-    for (const [index, action] of [
-      "complete",
-      "abandon",
-      "dead-letter",
-      "renew-lock",
-    ].entries()) {
-      const request = requests[index + 8];
-      assertRequest(request, "POST", `${root}/${queueId}:${action}`);
-      assert.equal(request?.headers.get("x-terrascale-preferred-region"), "SFO");
-    }
-    assert.deepEqual(requests[8]?.body, { receipt: "opaque-receipt" });
-    assert.deepEqual(requests[9]?.body, { receipt: "opaque-receipt", delaySeconds: 5 });
-  });
-
-  test("uses root repository routes without environment scope", async () => {
-    const { client, requests } = createCapturingClient([]);
-
-    await client.repositories.list();
-    assertRequest(requests[0], "GET", "/api/v1/repositories");
-
-    await client.repositories.create({
-      name: "users",
-      databaseId,
-      environmentId,
-      collection: "Users",
-      schemaValidationEnabled: true,
-      schema: '{"type":"object"}',
-    });
-    assertRequest(requests[1], "POST", "/api/v1/repositories");
-    assert.deepEqual(requests[1]?.body, {
-      name: "users",
-      databaseId,
-      environmentId,
-      collection: "Users",
-      schemaValidationEnabled: true,
-      schema: '{"type":"object"}',
-    });
-
-    await client.repositories.get({ repositoryId });
-    assertRequest(requests[2], "GET", `/api/v1/repositories/${repositoryId}`);
-
-    await client.repositories.delete({ repositoryId }, { deleteDocuments: true });
-    assertRequest(requests[3], "DELETE", `/api/v1/repositories/${repositoryId}`);
-    assert.equal(requests[3]?.url.searchParams.get("deleteDocuments"), "true");
-  });
-
   test("passes the caller-owned invitation response URL template", async () => {
     const { client, requests } = createCapturingClient({});
     const responseUrlTemplate =
@@ -219,125 +117,18 @@ describe("TerraScaleClient route contracts", () => {
     });
   });
 
-  test("locks document list, get, and delete routes directly", async () => {
-    const { client, requests } = createCapturingClient({
-      items: [],
-      totalCount: 0,
-      nextCursor: "next",
-    });
-
-    await client.documents.list({ repositoryId }, { skip: 10, take: 20 });
-    assertRequest(requests[0], "GET", `/api/v1/repositories/${repositoryId}/documents`);
-    assert.equal(requests[0]?.url.searchParams.get("skip"), "10");
-    assert.equal(requests[0]?.url.searchParams.get("take"), "20");
-
-    await client.documents.get({ repositoryId }, documentId);
-    assertRequest(
-      requests[1],
-      "GET",
-      `/api/v1/repositories/${repositoryId}/documents/${documentId}`,
-    );
-
-    await client.documents.delete({ repositoryId }, documentId);
-    assertRequest(
-      requests[2],
-      "DELETE",
-      `/api/v1/repositories/${repositoryId}/documents/${documentId}`,
-    );
-  });
-
-  test("wraps document write bodies and preserves DocumentResponse shape", async () => {
-    const documentResponse = {
-      repositoryId,
-      repository: "users",
-      id: documentId,
-      data: { name: "Ada" },
-      lastModified: "2026-07-05T00:00:00Z",
-      changeToken: "A:1",
-    };
-    const { client, requests } = createCapturingClient(documentResponse);
-
-    const createResult = await client.documents.create({ repositoryId }, { name: "Ada" });
-    assert.equal(createResult.ok, true);
-    if (createResult.ok) {
-      assert.deepEqual(createResult.value, documentResponse);
-      assert.equal("documentId" in createResult.value, false);
-      assert.equal("document" in createResult.value, false);
-      assert.equal("etag" in createResult.value, false);
-    }
-    assertRequest(requests[0], "POST", `/api/v1/repositories/${repositoryId}/documents`);
-    assert.deepEqual(requests[0]?.body, { data: { name: "Ada" } });
-
-    await client.documents.put({ repositoryId }, documentId, { name: "Grace" });
-    assertRequest(requests[1], "PUT", `/api/v1/repositories/${repositoryId}/documents/${documentId}`);
-    assert.deepEqual(requests[1]?.body, { data: { name: "Grace" } });
-
-    await client.documents.patch({ repositoryId }, documentId, { title: "Engineer" });
-    assertRequest(
-      requests[2],
-      "PATCH",
-      `/api/v1/repositories/${repositoryId}/documents/${documentId}`,
-    );
-    assert.deepEqual(requests[2]?.body, { data: { title: "Engineer" } });
-    assert.equal(requests[2]?.headers.get("content-type"), "application/json");
-
-    await client.documents.batch({
-      repositoryId,
-    }, {
-      operations: [{ operation: "create", data: { name: "Katherine" } }],
-    });
-    assertRequest(requests[3], "POST", `/api/v1/repositories/${repositoryId}/documents/batch`);
-    assert.deepEqual(requests[3]?.body, {
-      operations: [{ operation: "create", data: { name: "Katherine" } }],
-    });
-  });
-
-  test("uses repository TQL and schema routes", async () => {
-    const { client, requests } = createCapturingClient({});
-
-    await client.query.execute({ repositoryId }, { query: "from users", skip: 0, take: 10 });
-    assertRequest(requests[0], "POST", `/api/v1/repositories/${repositoryId}/tql`);
-    assert.deepEqual(requests[0]?.body, { query: "from users", skip: 0, take: 10 });
-
-    await client.schema.get({ repositoryId });
-    assertRequest(requests[1], "GET", `/api/v1/repositories/${repositoryId}/schema`);
-
-    await client.schema.validate({ repositoryId }, { maxErrorMessages: 5 });
-    assertRequest(requests[2], "POST", `/api/v1/repositories/${repositoryId}/schema/validate`);
-    assert.deepEqual(requests[2]?.body, { maxErrorMessages: 5 });
-
-    await client.schema.configure({ repositoryId }, { enabled: true, schema: '{"type":"object"}' });
-    assertRequest(requests[3], "PUT", `/api/v1/repositories/${repositoryId}/schema`);
-    assert.deepEqual(requests[3]?.body, { enabled: true, schema: '{"type":"object"}' });
-  });
-
   test("uses project database routes, requires explicit deletion confirmation, and scopes its header", async () => {
     const deletedDatabase = {
       databaseId,
       projectId,
       name: "primary",
       deleted: true,
-      environmentsDeleted: 1,
       physicalDatabasesDeleted: 1,
-      repositoriesDeleted: 2,
     };
-    const retryScheduledEnvironmentDeletion = {
-      environmentId,
-      projectId,
-      databaseId,
-      name: "Preview",
-      deleted: false,
-      physicalDatabaseDeleted: false,
-      repositoriesDeleted: 0,
-      operationId: toUlid("01VRZ3NDEKTSV4RRFFQ69G5FAV"),
-      status: "RetryScheduled",
-      retryAt: "2026-08-05T00:05:00Z",
-    } satisfies DeletedProjectDatabaseEnvironmentResponse;
     const { client, requests } = createCapturingClientWithResponses([
       deletedDatabase,
       deletedDatabase,
       deletedDatabase,
-      retryScheduledEnvironmentDeletion,
     ]);
 
     await client.databases.list();
@@ -365,30 +156,6 @@ describe("TerraScaleClient route contracts", () => {
     }
     assertRequest(requests[1], "DELETE", `/api/v1/projects/${projectId}/databases/${databaseId}`);
     assert.equal(requests[1]?.headers.get("x-terrascale-delete-confirmation"), databaseId);
-
-    await client.databases.createEnvironment(databaseId, { name: "Preview", kind: "Preview" });
-    assertRequest(
-      requests[2],
-      "POST",
-      `/api/v1/projects/${projectId}/databases/${databaseId}/environments`,
-    );
-    assert.deepEqual(requests[2]?.body, { name: "Preview", kind: "Preview" });
-
-    const environmentDeleteResult = await client.databases.deleteEnvironment(databaseId, environmentId);
-    assert.equal(environmentDeleteResult.ok, true);
-    if (environmentDeleteResult.ok) {
-      assert.deepEqual(environmentDeleteResult.value, retryScheduledEnvironmentDeletion);
-      assert.equal(environmentDeleteResult.value.deleted, false);
-      assert.equal(environmentDeleteResult.value.status, "RetryScheduled");
-      assert.equal(environmentDeleteResult.value.operationId, retryScheduledEnvironmentDeletion.operationId);
-      assert.equal(environmentDeleteResult.value.retryAt, "2026-08-05T00:05:00Z");
-    }
-    assertRequest(
-      requests[3],
-      "DELETE",
-      `/api/v1/projects/${projectId}/databases/${databaseId}/environments/${environmentId}`,
-    );
-    assert.equal(requests[3]?.headers.has("x-terrascale-delete-confirmation"), false);
   });
 
   test("exposes fail-closed physical database branch capability and clone request routes", async () => {
@@ -448,7 +215,6 @@ describe("TerraScaleClient route contracts", () => {
       projectId,
       name: "Active users",
       query: "SELECT * FROM users WHERE active = true",
-      repositoryId: null,
       createdAt: "2026-08-05T00:00:00Z",
       updatedAt: "2026-08-05T00:00:00Z",
       revision: "opaque-resource-revision",
@@ -474,8 +240,6 @@ describe("TerraScaleClient route contracts", () => {
     if (defaultListResult.ok) {
       assert.deepEqual(defaultListResult.value.items, [savedQuery]);
       assert.equal(defaultListResult.value.totalCount, 1);
-      assert.equal(defaultListResult.value.items[0]?.repositoryId, null);
-      assert.equal(Object.hasOwn(defaultListResult.value.items[0]!, "repositoryId"), true);
     }
     assertRequest(requests[0], "GET", `/api/v1/projects/${projectId}/saved-queries`);
     assert.equal(requests[0]?.url.search, "?skip=0&take=100");
@@ -510,7 +274,6 @@ describe("TerraScaleClient route contracts", () => {
     const createResult = await client.savedQueries.create({
       name: savedQuery.name,
       query: savedQuery.query,
-      repositoryId,
     });
     assert.equal(createResult.ok, true);
     if (createResult.ok) {
@@ -520,7 +283,6 @@ describe("TerraScaleClient route contracts", () => {
     assert.deepEqual(requests[5]?.body, {
       name: savedQuery.name,
       query: savedQuery.query,
-      repositoryId,
     });
     assert.equal(requests[5]?.headers.get("idempotency-key"), "saved-query-replay-key");
 
@@ -560,7 +322,6 @@ describe("TerraScaleClient route contracts", () => {
       projectId,
       name: "Active users",
       query: "SELECT * FROM users WHERE active = true",
-      repositoryId: null,
       createdAt: "2026-08-05T00:00:00Z",
       updatedAt: "2026-08-05T00:00:00Z",
       revision: "opaque-resource-revision",
@@ -612,7 +373,6 @@ describe("TerraScaleClient route contracts", () => {
       projectId,
       name: "Active users",
       query: "SELECT * FROM users WHERE active = true",
-      repositoryId: null,
       createdAt: "2026-08-05T00:00:00Z",
       updatedAt: "2026-08-05T00:00:00Z",
       revision: "opaque-resource-revision",
@@ -946,7 +706,7 @@ describe("TerraScaleClient route contracts", () => {
     const notification = {
       notificationId,
       title: "Backup complete",
-      body: "Repository backup finished.",
+      body: "Database backup finished.",
       severity: "info",
       createdAt: "2026-07-05T00:00:00Z",
     };

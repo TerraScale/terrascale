@@ -10,10 +10,8 @@ import { createTerraScaleClient, type TerraScaleClient } from "../factory.js";
 import { registerLocalRuntimeFetch } from "../local-runtime-capability.js";
 import type {
   DatabaseId,
-  DocumentId,
   OrganizationId,
   ProjectId,
-  RepositoryId,
 } from "../ids.js";
 import { normalizeLocalBearerToken } from "./authentication.js";
 import { assertLocalSqliteEnvironment } from "./environment.js";
@@ -47,10 +45,8 @@ export type TerraScaleLocalClientOptions = Omit<
 
 export type TerraScaleLocalSeed = {
   readonly databaseId: DatabaseId;
-  readonly documentId: DocumentId;
   readonly organizationId: OrganizationId;
   readonly projectId: ProjectId;
-  readonly repositoryId: RepositoryId;
 };
 
 export type TerraScaleLocalResetOptions = {
@@ -185,25 +181,10 @@ export class TerraScaleSqliteRuntime {
       idempotencyKeyFactory: () => `local-seed-${this.#store.nextUlid()}`,
     });
     const database = requireValue(await scoped.databases.create({ name: "Local database" }));
-    const repository = requireValue(
-      await scoped.repositories.create({
-        name: "Local documents",
-        databaseId: database.databaseId,
-        collection: "documents",
-      }),
-    );
-    const document = requireValue(
-      await scoped.documents.create(
-        { repositoryId: repository.repositoryId },
-        { title: "SQLite development runtime", status: "ready" },
-      ),
-    );
     return {
       organizationId: organization.organizationId,
       projectId: project.projectId,
       databaseId: database.databaseId,
-      repositoryId: repository.repositoryId,
-      documentId: document.id,
     };
   }
 

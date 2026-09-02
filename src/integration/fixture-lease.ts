@@ -7,8 +7,6 @@ export type FixtureLeaseScope = {
   readonly tenantId: string;
   readonly projectId: string;
   readonly databaseId: string;
-  readonly repositoryId: string;
-  readonly documentId: string;
   readonly apiBaseUrl: string;
   readonly credentialFingerprint: string;
 };

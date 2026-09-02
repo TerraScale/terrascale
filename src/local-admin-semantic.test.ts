@@ -182,7 +182,7 @@ test("AdminClient has semantic SQLite coverage across its complete public surfac
       durable.put<Models.Notification>("notifications", "local", notificationId, {
         notificationId,
         title: "Semantic operations notice",
-        body: "A database operation is queued.",
+        body: "A database operation is pending.",
         severity: "warning",
         createdAt: "2026-08-28T00:00:00.000Z",
         category: "operations",

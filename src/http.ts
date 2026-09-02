@@ -18,16 +18,11 @@ export type TerraScaleRouteName =
   | `backups.${string}`
   | `databaseBranches.${string}`
   | `databases.${string}`
-  | `documents.${string}`
   | `notifications.${string}`
   | `onboarding.${string}`
   | `organizations.${string}`
-  | `query.${string}`
-  | `queues.${string}`
   | `regions.${string}`
-  | `repositories.${string}`
   | `savedQueries.${string}`
-  | `schema.${string}`
   | `settings.${string}`
   | `usage.${string}`;
 
@@ -45,9 +40,7 @@ export type TerraScaleRequestOptions<TBody = unknown> = {
   readonly query?: QueryRecord | undefined;
   readonly body?: TBody | undefined;
   readonly headers?: HeadersInit | undefined;
-  readonly signal?: AbortSignal | undefined;
   readonly idempotencyKey?: string | false | undefined;
-  readonly consistency?: "read" | "write" | undefined;
 };
 
 export type TerraScaleRequestMetric = {
@@ -61,7 +54,6 @@ export type TerraScaleRequestMetricRecorder = (metric: TerraScaleRequestMetric) 
 
 export class TerraScaleHttp {
   readonly config: ResolvedTerraScaleRuntimeConfig;
-  readonly #sessionConsistencyTokens = new Map<string, string>();
   readonly #fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   readonly #accessToken: TerraScaleRuntimeConfig["accessToken"];
   readonly #idempotencyKeyFactory: TerraScaleRuntimeConfig["idempotencyKeyFactory"];
@@ -99,10 +91,6 @@ export class TerraScaleHttp {
             method: options.method,
             headers,
           };
-          if (options.signal !== undefined) {
-            requestInit.signal = options.signal;
-          }
-
           if (options.body !== undefined) {
             headers.set("content-type", headers.get("content-type") ?? "application/json");
             requestInit.body = JSON.stringify(options.body);
@@ -132,16 +120,12 @@ export class TerraScaleHttp {
               );
             }
 
-            if (options.consistency === "write" && this.config.sessionConsistency === "automatic") {
-              this.captureSessionConsistencyTokens(options.path, body.value);
-            }
-
             return ok(options.routeName, response.status, response.headers, body.value as TResponse);
           }
 
           const error = errorFromResponse(response, body.ok ? body.value : body.raw);
-          if (this.canRetry(options, idempotencyKey, attempt, response.status)) {
-            await delayForRetry(retryDelay(response, this.config.retryDelayMs, attempt), options.signal);
+          if (this.canRetry(idempotencyKey, attempt, response.status)) {
+            await delayForRetry(retryDelay(response, this.config.retryDelayMs, attempt));
             attempt++;
             continue;
           }
@@ -154,8 +138,8 @@ export class TerraScaleHttp {
             body.ok ? body.value : body.raw,
           );
         } catch (error) {
-          if (fetchStarted && !responseReceived && this.canRetry(options, idempotencyKey, attempt)) {
-            await delayForRetry(retryDelay(undefined, this.config.retryDelayMs, attempt), options.signal);
+          if (fetchStarted && !responseReceived && this.canRetry(idempotencyKey, attempt)) {
+            await delayForRetry(retryDelay(undefined, this.config.retryDelayMs, attempt));
             attempt++;
             continue;
           }
@@ -200,17 +184,6 @@ export class TerraScaleHttp {
       headers.set("x-terrascale-preferred-region", this.config.preferredRegion);
     }
 
-    if (
-      options.consistency === "read" &&
-      this.config.sessionConsistency === "automatic" &&
-      this.#sessionConsistencyTokens.has(options.path)
-    ) {
-      headers.set(
-        "x-terrascale-session-consistency-token",
-        this.#sessionConsistencyTokens.get(options.path)!,
-      );
-    }
-
     const token = await resolveAccessToken(this.#accessToken);
 
     if (token !== undefined && token.length > 0) {
@@ -247,53 +220,21 @@ export class TerraScaleHttp {
     return normalized;
   }
 
-  private canRetry<TBody>(
-    options: TerraScaleRequestOptions<TBody>,
+  private canRetry(
     idempotencyKey: string | undefined,
     attempt: number,
     status?: number,
   ): boolean {
-    if (attempt >= this.config.maxRetryAttempts || options.signal?.aborted) {
+    if (attempt >= this.config.maxRetryAttempts) {
       return false;
     }
 
-    const retryableOperation = options.consistency === "read" || idempotencyKey !== undefined;
+    const retryableOperation = idempotencyKey !== undefined;
     if (!retryableOperation) {
       return false;
     }
 
     return status === undefined || retryableStatuses.has(status);
-  }
-
-  private captureSessionConsistencyTokens(requestPath: string, value: unknown): void {
-    if (!isRecord(value)) {
-      return;
-    }
-
-    const values = Array.isArray(value.results)
-      ? value.results.flatMap(result => {
-        if (!isRecord(result)) {
-          return [];
-        }
-
-        const document = isRecord(result.document) ? result.document : undefined;
-        const deleted = isRecord(result.deleted) ? result.deleted : undefined;
-        return [document, deleted].filter((item): item is Record<string, unknown> => item !== undefined);
-      })
-      : [value];
-
-    for (const result of values) {
-      const token = result.sessionConsistencyToken;
-      const scope = sessionConsistencyScope(requestPath, result);
-      if (
-        scope !== undefined &&
-        typeof token === "string" &&
-        token.length > 0 &&
-        token.length <= 4096
-      ) {
-        this.#sessionConsistencyTokens.set(scope, token);
-      }
-    }
   }
 
   private recordRequestMetric(
@@ -331,31 +272,6 @@ function validateInternalHeaders(headers: HeadersInit | undefined): void {
   }
 }
 
-function sessionConsistencyScope(requestPath: string, value: Record<string, unknown>): string | undefined {
-  const batchPath = requestPath.endsWith("/documents/batch")
-    ? requestPath.slice(0, -"/batch".length)
-    : requestPath;
-  if (batchPath !== requestPath) {
-    const documentId = value.id;
-    return typeof documentId === "string" && documentId.length > 0
-      ? `${batchPath}/${encodeURIComponent(documentId)}`
-      : undefined;
-  }
-
-  if (/\/documents\/[^/]+$/u.test(requestPath)) {
-    return requestPath;
-  }
-
-  if (!batchPath.endsWith("/documents")) {
-    return undefined;
-  }
-
-  const documentId = value.id;
-  return typeof documentId === "string" && documentId.length > 0
-    ? `${batchPath}/${encodeURIComponent(documentId)}`
-    : undefined;
-}
-
 function isMutation(method: TerraScaleHttpMethod): boolean {
   return method === "DELETE" || method === "PATCH" || method === "POST" || method === "PUT";
 }
@@ -379,42 +295,13 @@ function retryDelay(response: Response | undefined, baseDelayMs: number, attempt
   return Math.min(baseDelayMs * (2 ** attempt), 30_000);
 }
 
-async function delayForRetry(delayMs: number, signal: AbortSignal | undefined): Promise<void> {
-  signal?.throwIfAborted();
+function delayForRetry(delayMs: number): Promise<void> {
   if (delayMs === 0) {
-    return;
+    return Promise.resolve();
   }
 
-  await new Promise<void>((resolve, reject) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let settled = false;
-    const cleanup = () => {
-      if (timer !== undefined) {
-        clearTimeout(timer);
-      }
-      signal?.removeEventListener("abort", abort);
-    };
-    const abort = () => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      cleanup();
-      reject(signal?.reason ?? new DOMException("The request was aborted.", "AbortError"));
-    };
-    signal?.addEventListener("abort", abort, { once: true });
-    if (signal?.aborted) {
-      abort();
-      return;
-    }
-    timer = setTimeout(() => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      cleanup();
-      resolve();
-    }, delayMs);
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
   });
 }
 

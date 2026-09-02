@@ -296,7 +296,7 @@
       "name": "backpressure",
       "tag": 11,
       "direction": "server_to_client",
-      "doc": "Pause or resume client-to-server traffic without growing an unbounded queue.",
+      "doc": "Pause or resume client-to-server traffic without growing an unbounded buffer.",
       "fields": [{ "name": "mode", "type": { "kind": "ref", "name": "backpressure_mode" } }]
     }
   ]

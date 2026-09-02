@@ -11,14 +11,10 @@ const sampleIds = {
   auditEventId: toUlid("01FRZ3NDEKTSV4RRFFQ69G5FAV"),
   backupId: toUlid("01NRZ3NDEKTSV4RRFFQ69G5FAV"),
   databaseId: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAW"),
-  documentId: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
-  environmentId: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAX"),
   invitationId: toUlid("01GRZ3NDEKTSV4RRFFQ69G5FAV"),
   notificationId: toUlid("01DRZ3NDEKTSV4RRFFQ69G5FAV"),
   organizationId: toUlid("01ERZ3NDEKTSV4RRFFQ69G5FAV"),
   projectId: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
-  queueId: toUlid("01PRZ3NDEKTSV4RRFFQ69G5FAV"),
-  repositoryId: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAY"),
   restoreId: toUlid("01MRZ3NDEKTSV4RRFFQ69G5FAV"),
   savedQueryId: toUlid("01SRZ3NDEKTSV4RRFFQ69G5FAV"),
   userId: toUlid("01KRZ3NDEKTSV4RRFFQ69G5FAV"),
@@ -164,7 +160,7 @@ async function capturedSourceContract(request: Request): Promise<CapturedSdkRout
 }
 
 const safeContractValueNames = new Set([
-  "accept", "content-type", "cursor", "deletedocuments", "idempotency-key", "latitude", "limit", "longitude", "maxmessages", "organizationid", "range", "skip", "take", "unreadonly", "x-terrascale-delete-confirmation", "x-terrascale-preferred-region", "x-terrascale-project-id",
+  "accept", "content-type", "cursor", "idempotency-key", "latitude", "limit", "longitude", "organizationid", "range", "skip", "take", "unreadonly", "x-terrascale-delete-confirmation", "x-terrascale-project-id",
 ]);
 
 export function canonicalContractHeaders(headers: Headers): readonly { readonly name: string; readonly value: string }[] {
@@ -441,7 +437,6 @@ const captureOperations: readonly CaptureOperation[] = [
       client.savedQueries.create({
         name: "Active users",
         query: "SELECT * FROM users WHERE active = true",
-        repositoryId: sampleIds.repositoryId,
       }),
   },
   {
@@ -502,140 +497,6 @@ const captureOperations: readonly CaptureOperation[] = [
     operation: "requestClone",
     defaultProject: true,
     invoke: (client) => client.databaseBranches.requestClone({ sourceDatabaseId: sampleIds.databaseId }),
-  },
-  {
-    client: "queues",
-    operation: "list",
-    defaultProject: true,
-    invoke: (client) => client.queues.list(),
-  },
-  {
-    client: "queues",
-    operation: "create",
-    defaultProject: true,
-    invoke: (client) => client.queues.create({ name: "jobs", kind: "queue" }),
-  },
-  {
-    client: "queues",
-    operation: "get",
-    defaultProject: true,
-    invoke: (client) => client.queues.get(sampleIds.queueId),
-  },
-  {
-    client: "queues",
-    operation: "delete",
-    defaultProject: true,
-    invoke: (client) => client.queues.delete(sampleIds.queueId),
-  },
-  {
-    client: "queues",
-    operation: "purge",
-    defaultProject: true,
-    invoke: (client) => client.queues.purge(sampleIds.queueId),
-  },
-  {
-    client: "queues",
-    operation: "publish",
-    defaultProject: true,
-    invoke: (client) => client.queues.publish(sampleIds.queueId, { data: { task: "index" } }),
-  },
-  {
-    client: "queues",
-    operation: "peek",
-    defaultProject: true,
-    invoke: (client) => client.queues.peek(sampleIds.queueId),
-  },
-  {
-    client: "queues",
-    operation: "receive",
-    defaultProject: true,
-    invoke: (client) =>
-      client.queues.receive(sampleIds.queueId, { consumerName: "worker", maxMessages: 1 }),
-  },
-  {
-    client: "queues",
-    operation: "complete",
-    defaultProject: true,
-    invoke: (client) =>
-      client.queues.complete(sampleIds.queueId, { receipt: "opaque", region: "SFO" }),
-  },
-  {
-    client: "queues",
-    operation: "abandon",
-    defaultProject: true,
-    invoke: (client) =>
-      client.queues.abandon(sampleIds.queueId, { receipt: "opaque", region: "SFO" }, 1),
-  },
-  {
-    client: "queues",
-    operation: "deadLetter",
-    defaultProject: true,
-    invoke: (client) =>
-      client.queues.deadLetter(sampleIds.queueId, { receipt: "opaque", region: "SFO" }),
-  },
-  {
-    client: "queues",
-    operation: "renewLock",
-    defaultProject: true,
-    invoke: (client) =>
-      client.queues.renewLock(sampleIds.queueId, { receipt: "opaque", region: "SFO" }),
-  },
-  {
-    client: "databases",
-    operation: "listEnvironments",
-    defaultProject: true,
-    invoke: (client) => client.databases.listEnvironments(sampleIds.databaseId),
-  },
-  {
-    client: "databases",
-    operation: "createEnvironment",
-    defaultProject: true,
-    invoke: (client) =>
-      client.databases.createEnvironment(sampleIds.databaseId, {
-        name: "Preview",
-        kind: "Preview",
-      }),
-  },
-  {
-    client: "databases",
-    operation: "getEnvironment",
-    defaultProject: true,
-    invoke: (client) =>
-      client.databases.getEnvironment(sampleIds.databaseId, sampleIds.environmentId),
-  },
-  {
-    client: "databases",
-    operation: "deleteEnvironment",
-    defaultProject: true,
-    invoke: (client) =>
-      client.databases.deleteEnvironment(sampleIds.databaseId, sampleIds.environmentId),
-  },
-  {
-    client: "repositories",
-    operation: "list",
-    invoke: (client) => client.repositories.list(),
-  },
-  {
-    client: "repositories",
-    operation: "create",
-    invoke: (client) =>
-      client.repositories.create({
-        name: "users",
-        databaseId: sampleIds.databaseId,
-        environmentId: sampleIds.environmentId,
-        collection: "Users",
-      }),
-  },
-  {
-    client: "repositories",
-    operation: "get",
-    invoke: (client) => client.repositories.get({ repositoryId: sampleIds.repositoryId }),
-  },
-  {
-    client: "repositories",
-    operation: "delete",
-    invoke: (client) =>
-      client.repositories.delete({ repositoryId: sampleIds.repositoryId }, { deleteDocuments: true }),
   },
   {
     client: "backups",
@@ -711,85 +572,6 @@ const captureOperations: readonly CaptureOperation[] = [
     operation: "listRestores",
     defaultProject: true,
     invoke: (client) => client.backups.listRestores(sampleIds.databaseId, { skip: 0, take: 25 }),
-  },
-  {
-    client: "documents",
-    operation: "list",
-    invoke: (client) =>
-      client.documents.list({ repositoryId: sampleIds.repositoryId }, { skip: 0, take: 25 }),
-  },
-  {
-    client: "documents",
-    operation: "create",
-    invoke: (client) =>
-      client.documents.create({ repositoryId: sampleIds.repositoryId }, { name: "Ada" }),
-  },
-  {
-    client: "documents",
-    operation: "get",
-    invoke: (client) =>
-      client.documents.get({ repositoryId: sampleIds.repositoryId }, sampleIds.documentId),
-  },
-  {
-    client: "documents",
-    operation: "put",
-    invoke: (client) =>
-      client.documents.put(
-        { repositoryId: sampleIds.repositoryId },
-        sampleIds.documentId,
-        { name: "Grace" },
-      ),
-  },
-  {
-    client: "documents",
-    operation: "patch",
-    invoke: (client) =>
-      client.documents.patch(
-        { repositoryId: sampleIds.repositoryId },
-        sampleIds.documentId,
-        { title: "Engineer" },
-      ),
-  },
-  {
-    client: "documents",
-    operation: "batch",
-    invoke: (client) =>
-      client.documents.batch(
-        { repositoryId: sampleIds.repositoryId },
-        { operations: [{ operation: "create", data: { name: "Katherine" } }] },
-      ),
-  },
-  {
-    client: "documents",
-    operation: "delete",
-    invoke: (client) =>
-      client.documents.delete({ repositoryId: sampleIds.repositoryId }, sampleIds.documentId),
-  },
-  {
-    client: "query",
-    operation: "execute",
-    invoke: (client) =>
-      client.query.execute({ repositoryId: sampleIds.repositoryId }, { query: "from Users" }),
-  },
-  {
-    client: "schema",
-    operation: "get",
-    invoke: (client) => client.schema.get({ repositoryId: sampleIds.repositoryId }),
-  },
-  {
-    client: "schema",
-    operation: "validate",
-    invoke: (client) =>
-      client.schema.validate({ repositoryId: sampleIds.repositoryId }, { maxErrorMessages: 5 }),
-  },
-  {
-    client: "schema",
-    operation: "configure",
-    invoke: (client) =>
-      client.schema.configure(
-        { repositoryId: sampleIds.repositoryId },
-        { enabled: true, schema: "{\"type\":\"object\"}" },
-      ),
   },
   {
     client: "access",

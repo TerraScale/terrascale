@@ -3,14 +3,10 @@ import type {
   BackupId,
   BackupPolicyId,
   DatabaseId,
-  DocumentId,
-  EnvironmentId,
   InvitationId,
   NotificationId,
   OrganizationId,
   ProjectId,
-  QueueId,
-  RepositoryId,
   RestoreId,
   Ulid,
   UserId,
@@ -56,10 +52,6 @@ export type ProjectScoped = {
 
 export type DatabaseScoped = ProjectScoped & {
   readonly databaseId: DatabaseId;
-};
-
-export type EnvironmentScoped = DatabaseScoped & {
-  readonly environmentId: EnvironmentId;
 };
 
 export type Organization = {
@@ -205,7 +197,6 @@ export type DeletedProject = {
   readonly name: string;
   readonly deleted: boolean;
   readonly databasesDeleted: number;
-  readonly queuesDeleted: number;
   readonly physicalStorageDeleted: boolean;
 };
 
@@ -235,33 +226,12 @@ export type CreateInvitationRequest = {
   readonly responseUrlTemplate: string;
 };
 
-export type EnvironmentKind = "Custom" | "Dev" | "Preview" | "Prod";
-export type EnvironmentStatus =
-  | "Active"
-  | "Deleting"
-  | "Deleted"
-  | "Expired"
-  | "Merged"
-  | "Merging";
-export type EnvironmentDeletionStatus = "Completed" | "Requested" | "RetryScheduled";
-
 export type ProjectDatabase = {
   readonly databaseId: DatabaseId;
   readonly projectId: ProjectId;
   readonly name: string;
   readonly regions: readonly TerraScaleRegionCode[];
   readonly backupRegion: TerraScaleRegionCode;
-  readonly createdAt: Timestamp;
-  readonly version: number;
-};
-
-export type DatabaseEnvironment = {
-  readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
-  readonly databaseId: DatabaseId;
-  readonly name: string;
-  readonly kind: EnvironmentKind;
-  readonly status: EnvironmentStatus;
   readonly createdAt: Timestamp;
   readonly version: number;
 };
@@ -291,7 +261,6 @@ export type DeleteProjectDatabaseOptions = {
 export type ProjectSavedQueryRequest = {
   readonly name: string;
   readonly query: string;
-  readonly repositoryId?: RepositoryId | null;
 };
 
 export type ProjectSavedQueryResponse = {
@@ -299,7 +268,6 @@ export type ProjectSavedQueryResponse = {
   readonly projectId: ProjectId;
   readonly name: string;
   readonly query: string;
-  readonly repositoryId: RepositoryId | null;
   readonly createdAt: Timestamp;
   readonly updatedAt: Timestamp;
   /** Opaque resource-bound revision used for conditional updates. */
@@ -334,124 +302,7 @@ export type DeletedProjectDatabaseResponse = {
   readonly projectId: ProjectId;
   readonly name: string;
   readonly deleted: boolean;
-  readonly environmentsDeleted: number;
   readonly physicalDatabasesDeleted: number;
-  readonly repositoriesDeleted: number;
-};
-
-export type ProjectQueue = {
-  readonly queueId: QueueId;
-  readonly projectId: ProjectId;
-  readonly name: string;
-  readonly kind: "Queue" | "Topic";
-  readonly messages: number;
-  readonly storageBytes: number;
-  readonly consumerCount: number;
-  readonly replicas: number;
-  readonly fifo: boolean;
-  readonly partitionCount: number;
-  readonly retentionSeconds: number | null;
-  readonly createdAt: Timestamp;
-};
-
-export type CreateProjectQueueRequest = {
-  readonly name: string;
-  readonly kind: "queue" | "topic";
-  readonly description?: string;
-  readonly retentionSeconds?: number;
-  readonly maxMessageSizeBytes?: number;
-  readonly fifo?: boolean;
-  readonly partitionCount?: number;
-  readonly duplicateDetectionSeconds?: number;
-};
-
-export type PublishProjectQueueMessageRequest = {
-  readonly data: JsonValue;
-  readonly idempotencyKey?: string;
-  readonly partitionKey?: string;
-  readonly delaySeconds?: number;
-  readonly timeToLiveSeconds?: number;
-};
-
-export type ProjectQueuePublishResult = {
-  readonly messageId: string;
-  readonly sequence: number;
-  readonly publishedAt: Timestamp;
-  readonly duplicate: boolean;
-};
-
-export type ProjectQueuePeekMessage = {
-  readonly messageId: string;
-  readonly data: JsonValue;
-  readonly contentType: string;
-  readonly headers: Readonly<Record<string, string>>;
-  readonly sequence: number;
-  readonly createdAt: Timestamp | null;
-};
-
-export type ProjectQueueDeliveryGuarantee = "at-least-once";
-
-export type ReceiveProjectQueueMessagesRequest = {
-  readonly consumerName: string;
-  readonly maxMessages?: number;
-  readonly waitSeconds?: number;
-  readonly lockSeconds?: number;
-};
-
-export type ProjectQueueReceipt = {
-  readonly receipt: string;
-  readonly region: TerraScaleRegionCode;
-};
-
-export type ProjectQueueReceivedMessage = ProjectQueueReceipt & {
-  readonly messageId: string;
-  readonly data: JsonValue;
-  readonly contentType: string;
-  readonly headers: Readonly<Record<string, string>>;
-  readonly streamSequence: number;
-  readonly consumerSequence: number;
-  readonly deliveryAttempt: number;
-  readonly receivedAt: Timestamp;
-  readonly lockedUntil: Timestamp;
-  readonly deliveryGuarantee: ProjectQueueDeliveryGuarantee;
-};
-
-export type ProjectQueueReceiptActionResult = {
-  readonly messageId: string;
-  readonly operation: "abandon" | "complete" | "dead-letter";
-  readonly accepted: boolean;
-  readonly safeToRetry: boolean;
-  readonly region: TerraScaleRegionCode;
-  readonly deliveryGuarantee: ProjectQueueDeliveryGuarantee;
-};
-
-export type ProjectQueueRenewLockResult = ProjectQueueReceipt & {
-  readonly messageId: string;
-  readonly lockedUntil: Timestamp;
-  readonly deliveryGuarantee: ProjectQueueDeliveryGuarantee;
-};
-
-export type QueuePurgeResult = {
-  readonly queueName: string;
-  readonly purgedMessages: number;
-};
-
-export type CreateDatabaseEnvironmentRequest = {
-  readonly name: string;
-  readonly kind?: EnvironmentKind;
-};
-
-export type DeletedProjectDatabaseEnvironmentResponse = {
-  readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
-  readonly databaseId: DatabaseId;
-  readonly name: string;
-  readonly deleted: boolean;
-  readonly physicalDatabaseDeleted: boolean;
-  readonly repositoriesDeleted: number;
-  readonly operationId?: Ulid;
-  readonly status?: EnvironmentDeletionStatus;
-  readonly retryAt?: Timestamp | null;
 };
 
 export type ConfigureBackupPolicyRequest = {
@@ -545,135 +396,6 @@ export type RestoreJobResponse = {
 };
 
 export type RestoreListQuery = PageRequest;
-
-export type RepositoryScoped = {
-  readonly repositoryId: RepositoryId;
-};
-
-export type RepositoryDefinition = {
-  readonly repositoryId: RepositoryId;
-  readonly name: string;
-  readonly databaseId: DatabaseId;
-  readonly environmentId?: EnvironmentId | null;
-  readonly collection: string;
-  readonly schemaValidationEnabled: boolean;
-  readonly createdAt: Timestamp;
-  readonly updatedAt: Timestamp;
-};
-
-export type CreateRepositoryRequest = {
-  readonly name: string;
-  readonly databaseId?: DatabaseId;
-  readonly environmentId?: EnvironmentId;
-  readonly collection?: string;
-  readonly schemaValidationEnabled?: boolean;
-  readonly schema?: string;
-};
-
-export type DeletedRepositoryResponse = {
-  readonly repositoryId: RepositoryId;
-  readonly name: string;
-  readonly deleted: boolean;
-  readonly documentsDeleted: number;
-};
-
-export type DocumentResponse<TDocument extends JsonValue = JsonObject> = {
-  readonly repositoryId: RepositoryId;
-  readonly repository: string;
-  readonly id: DocumentId;
-  readonly data: TDocument;
-  readonly lastModified?: Timestamp | null;
-  readonly changeToken?: string | null;
-  readonly sessionConsistencyToken?: string | null;
-};
-
-export type DocumentReadOptions = {
-  readonly allowStale?: boolean;
-  readonly signal?: AbortSignal;
-};
-
-export type DocumentMutationOptions = {
-  readonly expectedChangeToken?: string;
-  readonly signal?: AbortSignal;
-};
-
-export type DocumentPageResponse<TDocument extends JsonValue = JsonObject> = {
-  readonly repositoryId: RepositoryId;
-  readonly repository: string;
-  readonly skip: number;
-  readonly take: number;
-  readonly total: number;
-  readonly items: readonly DocumentResponse<TDocument>[];
-};
-
-export type DocumentListQuery = PageRequest;
-
-export type DocumentBatchOperationRequest<TDocument extends JsonValue = JsonObject> = {
-  readonly operation: "create" | "delete" | "patch" | "upsert" | string;
-  readonly documentId?: DocumentId;
-  readonly data?: TDocument;
-};
-
-export type DocumentBatchRequest<TDocument extends JsonValue = JsonObject> = {
-  readonly operations: readonly DocumentBatchOperationRequest<TDocument>[];
-};
-
-export type DocumentBatchOperationResponse<TDocument extends JsonValue = JsonObject> = {
-  readonly index: number;
-  readonly operation: string;
-  readonly id: DocumentId;
-  readonly document?: DocumentResponse<TDocument> | null;
-  readonly deleted?: DeletedDocumentResponse | null;
-};
-
-export type DeletedDocumentResponse = {
-  readonly repositoryId: RepositoryId;
-  readonly repository: string;
-  readonly id: DocumentId;
-  readonly deleted: boolean;
-  readonly sessionConsistencyToken?: string | null;
-};
-
-export type DocumentBatchResponse<TDocument extends JsonValue = JsonObject> = {
-  readonly repositoryId: RepositoryId;
-  readonly repository: string;
-  readonly results: readonly DocumentBatchOperationResponse<TDocument>[];
-};
-
-export type QueryRequest = {
-  readonly query: string;
-  readonly skip?: number;
-  readonly take?: number;
-};
-
-export type RepositorySchema = {
-  readonly repositoryId: RepositoryId;
-  readonly repository: string;
-  readonly databaseId: DatabaseId;
-  readonly environmentId?: EnvironmentId | null;
-  readonly collection: string;
-  readonly enabled: boolean;
-  readonly schema: string;
-};
-
-export type ConfigureRepositorySchemaRequest = {
-  readonly enabled?: boolean;
-  readonly schema?: string | null;
-};
-
-export type ValidateRepositorySchemaRequest = {
-  readonly maxErrorMessages?: number;
-  readonly maxDocumentsToValidate?: number;
-};
-
-export type RepositorySchemaValidationResponse = {
-  readonly repositoryId: RepositoryId;
-  readonly repository: string;
-  readonly databaseId: DatabaseId;
-  readonly environmentId?: EnvironmentId | null;
-  readonly collection: string;
-  readonly operationId: Ulid;
-};
 
 export type AccessRole = "member" | "owner" | "viewer";
 

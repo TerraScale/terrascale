@@ -118,7 +118,7 @@ test("configured root and AdminClient instances share the SQLite runtime", async
   });
 });
 
-test("typed data survives SQLite close/reopen and enforces document concurrency, schema, and TQL", async () => {
+test("typed data survives SQLite close/reopen over the real HTTP server", async () => {
   await withTempRuntime(async (first, databasePath) => {
     const firstAddress = await started(first);
     const rootClient = createTerraScaleClient({
@@ -145,72 +145,13 @@ test("typed data survives SQLite close/reopen and enforces document concurrency,
       const database = expectOk(
         await scopedRoot.databases.create({ name: "HTTP seeded database" }),
       );
-      const repository = expectOk(
-        await scopedRoot.repositories.create({
-          name: "HTTP seeded repository",
-          databaseId: database.databaseId,
-          collection: "documents",
-        }),
-      );
-      const seededDocument = expectOk(
-        await scopedRoot.documents.create(
-          { repositoryId: repository.repositoryId },
-          { title: "SQLite development runtime", status: "ready" },
-        ),
-      );
       seed = {
         organizationId: organization.organizationId,
         projectId: project.projectId,
         databaseId: database.databaseId,
-        repositoryId: repository.repositoryId,
-        documentId: seededDocument.id,
       };
-      const client = createTerraScaleClient({
-        apiBaseUrl: firstAddress.apiBaseUrl,
-        projectId: seed.projectId,
-        accessToken: "local-test-token",
-      });
-      const scope = { repositoryId: seed.repositoryId };
-      const created = expectOk(
-        await client.documents.create(scope, { title: "persisted", count: 1 }),
-      );
-      const read = expectOk(await client.documents.get(scope, created.id));
-      assert.deepEqual(read.data, { title: "persisted", count: 1 });
-      assert.equal(typeof created.changeToken, "string");
-      const patched = expectOk(
-        await client.documents.patch(
-          scope,
-          created.id,
-          { title: "patched", count: 2 },
-          { expectedChangeToken: created.changeToken! },
-        ),
-      );
-      const conflict = await client.documents.patch(
-        scope,
-        created.id,
-        { title: "conflict" },
-        { expectedChangeToken: created.changeToken! },
-      );
-      assert.equal(conflict.ok, false);
-      if (!conflict.ok) assert.equal(conflict.error.code, "change_token_mismatch");
-      const schema = expectOk(
-        await client.schema.configure(scope, { enabled: true, schema: '{"type":"object"}' }),
-      );
-      assert.equal(schema.enabled, true);
-      expectOk(await client.schema.get(scope));
-      expectOk(await client.schema.validate(scope));
-      const query = expectOk(
-        await client.query.execute(scope, { query: "from documents where title = 'patched'" }),
-      );
-      assert.equal(
-        query.items.some((item) => item.id === created.id),
-        true,
-      );
-      assert.equal(typeof patched.changeToken, "string");
       expectOk(
-        await client.documents.delete(scope, created.id, {
-          expectedChangeToken: patched.changeToken!,
-        }),
+        await scopedRoot.databases.get(database.databaseId),
       );
     } finally {
       await first.stop();
@@ -230,16 +171,6 @@ test("typed data survives SQLite close/reopen and enforces document concurrency,
       assert.equal(
         expectOk(await client.databases.get(seed!.databaseId)).databaseId,
         seed!.databaseId,
-      );
-      assert.equal(
-        expectOk(await client.repositories.get({ repositoryId: seed!.repositoryId })).repositoryId,
-        seed!.repositoryId,
-      );
-      const listed = expectOk(await client.documents.list({ repositoryId: seed!.repositoryId }));
-      assert.equal(listed.total, 1);
-      assert.equal(
-        listed.items.some((item) => item.id === seed!.documentId),
-        true,
       );
     } finally {
       await reopened.close();
@@ -280,78 +211,6 @@ test("backup plan/execute/replay uses typed clients over the real server", async
       );
       assert.equal(executedReplay.backupId, executed.backupId);
       assert.equal(expectOk(await client.backups.listBackups(seed.databaseId)).length, 1);
-    } finally {
-      await runtime.stop();
-    }
-  });
-});
-
-test("project queues preserve idempotency, delivery, and receipt semantics over the real server", async () => {
-  await withTempRuntime(async (runtime) => {
-    const address = await started(runtime);
-    try {
-      const seed = await runtime.seed();
-      const client = createTerraScaleClient({
-        apiBaseUrl: address.apiBaseUrl,
-        projectId: seed.projectId,
-        accessToken: "local-test-token",
-      });
-      const queue = expectOk(await client.queues.create({ name: "jobs", kind: "queue" }));
-      assert.equal(queue.retentionSeconds, null);
-      assert.equal(Object.hasOwn(queue, "retentionSeconds"), true);
-      const published = expectOk(
-        await client.queues.publish(queue.queueId, {
-          data: { task: "index" },
-          idempotencyKey: "publish-once",
-        }),
-      );
-      const replay = expectOk(
-        await client.queues.publish(queue.queueId, {
-          data: { task: "index" },
-          idempotencyKey: "publish-once",
-        }),
-      );
-      assert.equal(replay.messageId, published.messageId);
-      assert.equal(replay.duplicate, true);
-
-      const peeked = expectOk(await client.queues.peek(queue.queueId, 1));
-      assert.equal(peeked.length, 1);
-      assert.equal(Object.hasOwn(peeked[0]!, "createdAt"), true);
-      assert.ok(Date.parse(peeked[0]!.createdAt ?? "") > 0);
-
-      const received = expectOk(
-        await client.queues.receive(queue.queueId, {
-          consumerName: "worker",
-          maxMessages: 1,
-        }),
-      );
-      assert.equal(received.length, 1);
-      assert.equal(received[0]?.messageId, published.messageId);
-      assert.equal(received[0]?.deliveryGuarantee, "at-least-once");
-      const completeResult = await client.queues.complete(queue.queueId, received[0]!);
-      assert.equal(completeResult.status, 202);
-      const completed = expectOk(completeResult);
-      assert.equal(completed.accepted, true);
-
-      for (const action of ["abandon", "dead-letter", "renew-lock"] as const) {
-        expectOk(await client.queues.publish(queue.queueId, { data: { action } }));
-      }
-      const actionMessages = expectOk(
-        await client.queues.receive(queue.queueId, {
-          consumerName: "action-worker",
-          maxMessages: 3,
-        }),
-      );
-      assert.equal(actionMessages.length, 3);
-      const abandonResult = await client.queues.abandon(queue.queueId, actionMessages[0]!, 5);
-      const deadLetterResult = await client.queues.deadLetter(queue.queueId, actionMessages[1]!);
-      const renewLockResult = await client.queues.renewLock(queue.queueId, actionMessages[2]!);
-      for (const result of [abandonResult, deadLetterResult, renewLockResult]) {
-        assert.equal(result.ok, true);
-        assert.equal(result.status, 202);
-      }
-      assert.equal(expectOk(await client.queues.list()).length, 1);
-      assert.equal(expectOk(await client.queues.delete(queue.queueId)), true);
     } finally {
       await runtime.stop();
     }
@@ -412,16 +271,6 @@ test("project deletion cascades every project-scoped core resource", async () =>
     );
     const scoped = runtime.createClient({ projectId: project.projectId });
     const database = expectOk(await scoped.databases.create({ name: "Cascade database" }));
-    const repository = expectOk(
-      await scoped.repositories.create({
-        name: "Cascade repository",
-        databaseId: database.databaseId,
-      }),
-    );
-    expectOk(
-      await scoped.documents.create({ repositoryId: repository.repositoryId }, { retained: false }),
-    );
-    const queue = expectOk(await scoped.queues.create({ name: "cascade-queue", kind: "queue" }));
     expectOk(
       await scoped.backups.planBackup(database.databaseId, { operationSessionId: "cascade-plan" }),
     );
@@ -432,13 +281,10 @@ test("project deletion cascades every project-scoped core resource", async () =>
       }),
     );
     assert.equal(deleted.databasesDeleted, 1);
-    assert.equal(deleted.queuesDeleted, 1);
     assert.equal(deleted.physicalStorageDeleted, true);
     for (const result of [
       await root.organizations.getProject(project.projectId),
       await scoped.databases.get(database.databaseId),
-      await scoped.repositories.get({ repositoryId: repository.repositoryId }),
-      await scoped.queues.get(queue.queueId),
     ]) {
       assert.equal(result.ok, false);
       if (!result.ok) assert.equal(result.error.status, 404);
@@ -488,13 +334,7 @@ test("runtime clients enforce project isolation and idempotency fingerprints", a
     const clientA = runtime.createClient({ projectId: projectA.projectId });
     const clientB = runtime.createClient({ projectId: projectB.projectId });
     const databaseB = expectOk(await clientB.databases.create({ name: "B database" }));
-    const repositoryB = expectOk(
-      await clientB.repositories.create({ name: "B repository", databaseId: databaseB.databaseId }),
-    );
-    expectOk(
-      await clientB.documents.create({ repositoryId: repositoryB.repositoryId }, { project: "B" }),
-    );
-    const crossProject = await clientA.documents.list({ repositoryId: repositoryB.repositoryId });
+    const crossProject = await clientA.databases.get(databaseB.databaseId);
     assert.equal(crossProject.ok, false);
     if (!crossProject.ok) assert.equal(crossProject.error.status, 404);
 

@@ -4,11 +4,10 @@ import { describe, test } from "node:test";
 import { createTerraScaleClient, resolveRuntimeConfig } from "./index.js";
 import { toUlid } from "./ids.js";
 
-const repositoryId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV");
-const otherRepositoryId = toUlid("01CZ5ZZKBKACTAV9WEVGEMMVRZ");
-const documentId = toUlid("01BX5ZZKBKACTAV9WEVGEMMVRZ");
+const projectId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+const databaseId = toUlid("01BX5ZZKBKACTAV9WEVGEMMVRZ");
 
-describe("regional document consistency", () => {
+describe("regional routing consistency", () => {
   test("rejects invalid or incomplete strict regional configuration", () => {
     for (const preferredRegion of ["gru", "SJC", " GRU", "GRU ", "GR", "GRUU", "京", "JFK"]) {
       assert.throws(
@@ -49,19 +48,16 @@ describe("regional document consistency", () => {
     assert.equal(strict.preferredRegion, "SFO");
   });
 
-  test("keeps session and retry policy in the resolved runtime boundary", () => {
+  test("keeps retry policy in the resolved runtime boundary", () => {
     const defaults = resolveRuntimeConfig({ fetch: globalThis.fetch });
-    assert.equal(defaults.sessionConsistency, "none");
     assert.equal(defaults.maxRetryAttempts, 0);
     assert.equal(defaults.retryDelayMs, 250);
 
     const configured = resolveRuntimeConfig({
-      sessionConsistency: "automatic",
       maxRetryAttempts: 2,
       retryDelayMs: 0,
       fetch: globalThis.fetch,
     });
-    assert.equal(configured.sessionConsistency, "automatic");
     assert.equal(configured.maxRetryAttempts, 2);
     assert.equal(configured.retryDelayMs, 0);
   });
@@ -79,7 +75,7 @@ describe("regional document consistency", () => {
       regionAffinity: "failover",
       fetch,
     });
-    await failover.documents.get({ repositoryId }, documentId);
+    await failover.databases.get(databaseId, projectId);
 
     const strict = createTerraScaleClient({
       apiBaseUrl: "https://api.terrascale.tech",
@@ -87,7 +83,7 @@ describe("regional document consistency", () => {
       regionAffinity: "strict",
       fetch,
     });
-    await strict.documents.get({ repositoryId }, documentId);
+    await strict.databases.get(databaseId, projectId);
 
     assert.equal(new URL(requests[0]!.url).hostname, "api.terrascale.tech");
     assert.equal(requests[0]!.headers.get("x-terrascale-preferred-region"), "FRA");
@@ -95,55 +91,7 @@ describe("regional document consistency", () => {
     assert.equal(requests[1]!.headers.has("x-terrascale-preferred-region"), false);
   });
 
-  test("propagates write session tokens only to the matching document scope", async () => {
-    const requests: Request[] = [];
-    const client = createTerraScaleClient({
-      apiBaseUrl: "https://api.terrascale.test",
-      sessionConsistency: "automatic",
-      fetch: async input => {
-        requests.push(input instanceof Request ? input : new Request(input));
-        return Response.json({
-          repositoryId,
-          repository: "users",
-          id: documentId,
-          data: { name: "Ada" },
-          sessionConsistencyToken: "session-document-a",
-        });
-      },
-    });
-
-    await client.documents.create({ repositoryId }, { name: "Ada" });
-    await client.documents.get({ repositoryId }, documentId);
-    await client.documents.get({ repositoryId: otherRepositoryId }, documentId);
-
-    assert.equal(requests[0]!.headers.has("x-terrascale-session-consistency-token"), false);
-    assert.equal(
-      requests[1]!.headers.get("x-terrascale-session-consistency-token"),
-      "session-document-a",
-    );
-    assert.equal(requests[2]!.headers.has("x-terrascale-session-consistency-token"), false);
-  });
-
-  test("sends AllowStale only for an opted-in single-document read", async () => {
-    const requests: Request[] = [];
-    const client = createTerraScaleClient({
-      apiBaseUrl: "https://api.terrascale.test",
-      fetch: async input => {
-        requests.push(input instanceof Request ? input : new Request(input));
-        return Response.json({});
-      },
-    });
-
-    await client.documents.get({ repositoryId }, documentId, { allowStale: true });
-    await client.documents.get({ repositoryId }, documentId, { allowStale: false });
-    await client.documents.list({ repositoryId });
-
-    assert.equal(requests[0]!.headers.get("x-terrascale-allow-stale"), "true");
-    assert.equal(requests[1]!.headers.has("x-terrascale-allow-stale"), false);
-    assert.equal(requests[2]!.headers.has("x-terrascale-allow-stale"), false);
-  });
-
-  test("preserves typed document conflicts and public degraded routing metadata", async () => {
+  test("preserves typed conflicts and public degraded routing metadata", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleClient({
       apiBaseUrl: "https://api.terrascale.test",
@@ -151,9 +99,9 @@ describe("regional document consistency", () => {
         requests.push(input instanceof Request ? input : new Request(input));
         return Response.json(
           {
-            code: "document_change_conflict",
-            message: "The document changed before this write.",
-            target: "document",
+            code: "database_change_conflict",
+            message: "The database changed before this request.",
+            target: "database",
           },
           {
             status: 409,
@@ -170,19 +118,14 @@ describe("regional document consistency", () => {
       },
     });
 
-    const result = await client.documents.put(
-      { repositoryId },
-      documentId,
-      { name: "Ada" },
-      { expectedChangeToken: "stale-change-token" },
-    );
+    const result = await client.databases.get(databaseId, projectId);
 
     assert.equal(result.ok, false);
     if (!result.ok) {
       assert.equal(result.status, 409);
       assert.equal(result.error.kind, "conflict");
-      assert.equal(result.error.code, "document_change_conflict");
-      assert.equal(result.error.target, "document");
+      assert.equal(result.error.code, "database_change_conflict");
+      assert.equal(result.error.target, "database");
       assert.equal(result.error.requestId, "request-123");
       assert.deepEqual(result.routing, {
         edgeRegion: "FRA",
@@ -193,51 +136,6 @@ describe("regional document consistency", () => {
       });
       assert.equal("operatorNode" in result.routing!, false);
     }
-    assert.equal(requests[0]!.headers.get("if-match"), "stale-change-token");
-  });
-
-  test("forwards conditional tokens for patch and delete conflicts", async () => {
-    const requests: Request[] = [];
-    const client = createTerraScaleClient({
-      apiBaseUrl: "https://api.terrascale.test",
-      fetch: async input => {
-        requests.push(input instanceof Request ? input : new Request(input));
-        return Response.json(
-          {
-            code: "document_change_conflict",
-            message: "The document changed before this mutation.",
-            target: "document",
-          },
-          { status: 409 },
-        );
-      },
-    });
-
-    const patchResult = await client.documents.patch(
-      { repositoryId },
-      documentId,
-      { name: "Ada" },
-      { expectedChangeToken: "patch-change-token" },
-    );
-    const deleteResult = await client.documents.delete(
-      { repositoryId },
-      documentId,
-      { expectedChangeToken: "delete-change-token" },
-    );
-
-    for (const result of [patchResult, deleteResult]) {
-      assert.equal(result.ok, false);
-      if (!result.ok) {
-        assert.equal(result.status, 409);
-        assert.equal(result.error.kind, "conflict");
-        assert.equal(result.error.code, "document_change_conflict");
-        assert.equal(result.error.target, "document");
-      }
-    }
-    assert.equal(requests[0]!.method, "PATCH");
-    assert.equal(requests[0]!.headers.get("if-match"), "patch-change-token");
-    assert.equal(requests[1]!.method, "DELETE");
-    assert.equal(requests[1]!.headers.get("if-match"), "delete-change-token");
   });
 
   test("keeps strict-affinity retries on the selected regional host after 503 or transport failure", async () => {
@@ -261,7 +159,12 @@ describe("regional document consistency", () => {
         },
       });
 
-      const result = await client.documents.get({ repositoryId }, documentId);
+      const result = await client.backups.executeBackup(
+        databaseId,
+        { operationSessionId: "backup-operation-session", confirmationToken: "backup-confirmation-token" },
+        "backup-execution-key",
+        projectId,
+      );
 
       assert.equal(result.ok, false);
       if (!result.ok) {
@@ -281,7 +184,7 @@ describe("regional document consistency", () => {
       apiBaseUrl: "https://api.terrascale.test",
       fetch: async () =>
         Response.json(
-          { repositoryId, repository: "users", id: documentId, data: { name: "Ada" } },
+          { databaseId, projectId, name: "primary" },
           {
             headers: {
               "x-terrascale-edge-region": "GRU",
@@ -293,7 +196,7 @@ describe("regional document consistency", () => {
         ),
     });
 
-    const result = await client.documents.get({ repositoryId }, documentId);
+    const result = await client.databases.get(databaseId, projectId);
 
     assert.equal(result.ok, true);
     if (result.ok) {
@@ -310,7 +213,7 @@ describe("regional document consistency", () => {
   test("does not normalize invalid routing RegionCode headers", async () => {
     const client = createTerraScaleClient({
       fetch: async () => Response.json(
-        { repositoryId, repository: "users", id: documentId, data: { name: "Ada" } },
+        { databaseId, projectId, name: "primary" },
         {
           headers: {
             "x-terrascale-edge-region": "gru",
@@ -322,7 +225,7 @@ describe("regional document consistency", () => {
       ),
     });
 
-    const result = await client.documents.get({ repositoryId }, documentId);
+    const result = await client.databases.get(databaseId, projectId);
 
     assert.equal(result.ok, true);
     if (result.ok) {

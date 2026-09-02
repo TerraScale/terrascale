@@ -11,8 +11,8 @@ import { localSqliteTestChildEnvironment } from "./local/test-environment.test.j
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const run = promisify(execFile);
-const forbiddenRoutePattern = /(?:\/api\/v\d+\/(?:auth|account|billing|pricing|queues|onboarding\/payment)(?:[\/"'`: ]|$)|\/api\/v\d+\/projects\/\{[^}]+\}\/(?:auth|security)(?:[\/"'`: ]|$)|\b(?:auth|apiKeys|m2m|billing|pricing|payment|security)\.[a-z])/iu;
-const forbiddenSymbolPattern = /\b(?:AuthClient|ProjectAuth\w*|authBaseUrl|ApiKey\w*|M2M\w*|GlobalQueue\w*|OnboardingPayment\w*|CreateOnboardingPayment\w*|ValidateOnboardingPayment\w*|RegisterOnboardingPayment\w*|PaymentMethod|Billing\w*|Pricing\w*|Security(?:Client|Settings\w*))\b/u;
+const forbiddenRoutePattern = /(?:\/api\/v\d+\/(?:auth|account|billing|pricing|onboarding\/payment)(?:[\/"'`: ]|$)|\/api\/v\d+\/projects\/\{[^}]+\}\/(?:auth|security)(?:[\/"'`: ]|$)|\b(?:auth|apiKeys|m2m|billing|pricing|payment|security)\.[a-z])/iu;
+const forbiddenSymbolPattern = /\b(?:AuthClient|ProjectAuth\w*|authBaseUrl|ApiKey\w*|M2M\w*|OnboardingPayment\w*|CreateOnboardingPayment\w*|ValidateOnboardingPayment\w*|RegisterOnboardingPayment\w*|PaymentMethod|Billing\w*|Pricing\w*|Security(?:Client|Settings\w*))\b/u;
 
 type PackedRouteManifest = {
   readonly routes?: readonly {
@@ -298,7 +298,7 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
       [
         "--input-type=module",
         "--eval",
-        "import { createTerraScaleClient } from '@terrascale/sdk'; import { createTerraScaleAdminClient } from '@terrascale/sdk/admin'; const client = createTerraScaleClient({ apiBaseUrl: 'https://api.example.test' }); if (typeof client.queues.list !== 'function') throw new Error('Typed project queues are missing'); for (const name of ['auth', 'apiKeys', 'm2m', 'billing', 'pricing', 'security']) { if (name in client) throw new Error(`Removed root client property remains: ${name}`); } for (const name of ['updateAccountInformation', 'createPaymentSession', 'validatePaymentMethod', 'registerOnboardingPaymentMethod', 'updateMfaDecision']) { if (name in client.onboarding) throw new Error(`Removed onboarding method remains: ${name}`); } createTerraScaleAdminClient({ apiBaseUrl: 'https://api.example.test' });",
+        "import { createTerraScaleClient } from '@terrascale/sdk'; import { createTerraScaleAdminClient } from '@terrascale/sdk/admin'; const client = createTerraScaleClient({ apiBaseUrl: 'https://api.example.test' }); if (typeof client.databases.list !== 'function') throw new Error('Typed project databases are missing'); for (const name of ['auth', 'apiKeys', 'm2m', 'billing', 'pricing', 'security']) { if (name in client) throw new Error(`Removed root client property remains: ${name}`); } for (const name of ['updateAccountInformation', 'createPaymentSession', 'validatePaymentMethod', 'registerOnboardingPaymentMethod', 'updateMfaDecision']) { if (name in client.onboarding) throw new Error(`Removed onboarding method remains: ${name}`); } createTerraScaleAdminClient({ apiBaseUrl: 'https://api.example.test' });",
       ],
       { cwd: consumer },
     );
@@ -339,9 +339,7 @@ const required = [
   "TERRASCALE_E2E_TENANT_ID",
   "TERRASCALE_E2E_PROJECT_ID",
   "TERRASCALE_E2E_DATABASE_ID",
-  "TERRASCALE_E2E_REPOSITORY_ID",
-  "TERRASCALE_E2E_DOCUMENT_ID",
-  "TERRASCALE_E2E_DOCUMENT_WRITE_LEASE",
+  "TERRASCALE_E2E_DATABASE_WRITE_LEASE",
 ];
 const missing = required.filter(name => (process.env[name] ?? "").trim().length === 0);
 if (missing.length > 0) {
@@ -352,25 +350,19 @@ if (missing.length > 0) {
 const tenantId = toUlid(process.env.TERRASCALE_E2E_TENANT_ID);
 const projectId = toUlid(process.env.TERRASCALE_E2E_PROJECT_ID);
 const databaseId = toUlid(process.env.TERRASCALE_E2E_DATABASE_ID);
-const repositoryId = toUlid(process.env.TERRASCALE_E2E_REPOSITORY_ID);
-const documentId = toUlid(process.env.TERRASCALE_E2E_DOCUMENT_ID);
-const leasePath = process.env.TERRASCALE_E2E_DOCUMENT_WRITE_LEASE.trim();
+const leasePath = process.env.TERRASCALE_E2E_DATABASE_WRITE_LEASE.trim();
 if (!path.isAbsolute(leasePath) || path.dirname(leasePath) === leasePath) {
-  throw new TypeError("TERRASCALE_E2E_DOCUMENT_WRITE_LEASE must be an absolute file path.");
+  throw new TypeError("TERRASCALE_E2E_DATABASE_WRITE_LEASE must be an absolute file path.");
 }
 const client = createTerraScaleClient({
   apiBaseUrl: process.env.TERRASCALE_API_BASE_URL,
   accessToken: process.env.TERRASCALE_E2E_ACCESS_TOKEN,
   projectId,
-  sessionConsistency: "automatic",
 });
-const scope = { repositoryId };
 const leaseScope = {
   tenantId,
   projectId,
   databaseId,
-  repositoryId,
-  documentId,
   apiBaseUrl: process.env.TERRASCALE_API_BASE_URL,
   credentialFingerprint: createHash("sha256").update(process.env.TERRASCALE_E2E_ACCESS_TOKEN).digest("hex"),
 };
@@ -380,7 +372,7 @@ try {
   lease = await open(leasePath, "wx");
 } catch (error) {
   if (error instanceof Error && "code" in error && error.code === "EEXIST") {
-    throw new Error("TERRASCALE_E2E_DOCUMENT_WRITE_LEASE is already held by another process.");
+    throw new Error("TERRASCALE_E2E_DATABASE_WRITE_LEASE is already held by another process.");
   }
   throw error;
 }
@@ -395,22 +387,10 @@ try {
   }));
   await lease.sync();
 
-  const before = await client.documents.get(scope, documentId);
-  assert.equal(before.ok, true, before.ok ? undefined : before.error.message);
-  assert.notEqual(before.value.changeToken, null);
-  assert.notEqual(before.value.changeToken, undefined);
-
-  const write = await client.documents.put(
-    scope,
-    documentId,
-    before.value.data,
-    { expectedChangeToken: before.value.changeToken },
-  );
-  assert.equal(write.ok, true, write.ok ? undefined : write.error.message);
-
-  const after = await client.documents.get(scope, documentId);
-  assert.equal(after.ok, true, after.ok ? undefined : after.error.message);
-  console.log("Packed live journey completed for /api/v1 document read/write.");
+  const read = await client.databases.get(databaseId);
+  assert.equal(read.ok, true, read.ok ? undefined : read.error.message);
+  assert.equal(read.value.databaseId, databaseId);
+  console.log("Packed live journey completed for the /api/v1 database read.");
 } finally {
   await lease.close();
   await unlink(leasePath).catch(error => {
