@@ -23,39 +23,30 @@ type PackedRouteManifest = {
   }[];
 };
 
-test("release paths clean-install, build, test, and pack the SDK independently", async () => {
-  const [deploymentJson, workflow] = await Promise.all([
-    readFile(path.join(repositoryRoot, ".terrascale", "deploy.json"), "utf8"),
+test("verification and promotion workflow follows the current delivery path", async () => {
+  const [workflow, packageJson, packageLock] = await Promise.all([
     readFile(path.join(repositoryRoot, ".forgejo", "workflows", "ci.yml"), "utf8"),
+    readFile(path.join(repositoryRoot, "package.json"), "utf8"),
+    readFile(path.join(repositoryRoot, "package-lock.json"), "utf8"),
   ]);
-  const deployment = JSON.parse(deploymentJson) as DeployConfiguration;
+  const packageMetadata = JSON.parse(packageJson) as { readonly packageManager?: string };
+  const lock = JSON.parse(packageLock) as {
+    readonly lockfileVersion?: number;
+    readonly packages?: { readonly "": { readonly name?: string; readonly version?: string } };
+  };
 
-  for (const commands of [
-    ...deployment.releaseProfiles.map((profile) => profile.commands),
-    ...deployment.buildTargets.map((target) => target.commands),
-  ]) {
-    assert.deepEqual(commands.slice(0, 2).map((command) => command.description), [
-      "Clean install",
-      "Build SDK",
-    ]);
-  }
-  assert.deepEqual(
-    deployment.buildTargets[0]?.commands.map((command) => command.description),
-    ["Clean install", "Build SDK", "Forbidden SDK surface", "Unit and contract regression", "Qualify npm release candidate"],
-  );
-  assert.equal(deployment.buildTargets[0]?.outputPath, "artifacts/candidate");
-  assert.deepEqual(deployment.buildTargets[0]?.commands.at(-1), {
-    description: "Qualify npm release candidate",
-    command: "node",
-    arguments: ["scripts/qualify-npm-artifact.mjs", "--release", "--output", "artifacts/candidate"],
-  });
-  assert.doesNotMatch(deploymentJson, /"command": "npm", "arguments": \["pack"/u);
-  assert.equal(deployment.releaseProfiles.every((profile) => profile.required), true);
-  assert.deepEqual(
-    deployment.releaseProfiles.find((profile) => profile.name === "release-e2e")?.commands.map((command) => command.description),
-    ["Clean install", "Build SDK", "Require live integration configuration", "Authenticated live API integration"],
-  );
-  assert.doesNotMatch(workflow, /^  (?:REGISTRY_TOKEN|FORGEJO_TOKEN|NPM_TOKEN):/mu);
+  assert.match(workflow, /^on:\n  push:\n    branches: \[develop, main\]/mu);
+  assert.doesNotMatch(workflow, /pull_request|dotnet|nuget|terrascale-builder:\s*\S+:/iu);
+  assert.match(workflow, /permissions:\n  contents: read/u);
+  assert.match(workflow, /repository: TerraScale-Old\/TerraScale\.Deploy/u);
+  assert.match(workflow, /ref: 9a39633f88b085a6d40090ab451b1d71c89e3712/u);
+  assert.match(workflow, /TERRASCALE_SOURCE_READ_TOKEN/u);
+  assert.match(workflow, /setup-go@40f1582b2485089dde7abd97c1529aa768e1baff/u);
+  assert.match(workflow, /GOBIN: \$\{\{ runner\.temp \}\}\/terrascale-deploy\/bin/u);
+  assert.match(workflow, /retention-days: 1/u);
+  assert.match(workflow, /buildvcs=true/u);
+  assert.match(workflow, /internal\/cli\.Version=/u);
+
   const actionReferences = [...workflow.matchAll(/^\s*- uses: \S+@(\S+)$/gmu)];
   assert.ok(actionReferences.length > 0);
   for (const reference of actionReferences) {
@@ -63,140 +54,82 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   }
   for (const action of [
     "checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
-    "download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a",
-    "upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5",
+    "setup-go@40f1582b2485089dde7abd97c1529aa768e1baff",
     "setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+    "upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5",
   ]) {
     assert.match(workflow, new RegExp(`uses: https://data\\.forgejo\\.org/actions/${action}`, "u"));
   }
-  for (const job of ["bootstrap", "plan", "release-tests", "release-e2e", "release-artifacts", "release-browser-candidate", "release-contract-fixture", "release-version-availability", "candidate", "promote"]) {
-    assert.match(jobDefinition(workflow, job), /forgejo\.event_name == 'push' && forgejo\.ref == 'refs\/heads\/main'/u);
-  }
-  assert.match(jobDefinition(workflow, "bootstrap"), /secrets\.REGISTRY_TOKEN/u);
-  assert.match(jobDefinition(workflow, "bootstrap"), /--version 1\.0\.80/u);
-  assert.doesNotMatch(jobDefinition(workflow, "bootstrap"), /newest stable/u);
-  assert.doesNotMatch(jobDefinition(workflow, "bootstrap"), /^    env:/mu);
-  for (const job of ["pr-static", "pr-build"]) {
-    assert.match(jobDefinition(workflow, job), /forgejo\.event_name == 'pull_request'/u);
-    assert.doesNotMatch(jobDefinition(workflow, job), /forgejo\.base_ref/u);
-    assert.doesNotMatch(jobSteps(workflow, job), /secrets\.[A-Z0-9_]+/u);
-    assert.doesNotMatch(jobDefinition(workflow, job), /(?:CANDIDATE_STORE_TOKEN|DEPLOY_CLI_READ_TOKEN|NPM_TOKEN|candidate-store|upload-artifact)/u);
-  }
-  for (const job of ["pr-static", "pr-build"]) {
-    assert.doesNotMatch(jobDefinition(workflow, job), /(?:needs:|download-artifact|terrascale-deploy)/u);
-    assert.doesNotMatch(jobSteps(workflow, job), /secrets\.[A-Z0-9_]+/u);
-    assert.equal((jobDefinition(workflow, job).match(/persist-credentials: false/gu) ?? []).length, 1);
-  }
-  assert.match(jobDefinition(workflow, "promotion-admission"), /name: promotion\/admission/u);
-  assert.match(jobDefinition(workflow, "promotion-admission"), /forgejo\.event_name == 'pull_request' && forgejo\.base_ref == 'main'/u);
-  assert.match(jobDefinition(workflow, "promotion-admission"), /test "\$\{\{ forgejo\.base_ref \}\}" = main/u);
-  assert.match(jobDefinition(workflow, "promotion-admission"), /test "\$\{\{ forgejo\.head_ref \}\}" = develop/u);
-  assert.match(jobDefinition(workflow, "promotion-admission"), /test "\$\{\{ forgejo\.event\.pull_request\.head\.repo\.full_name \}\}" = "\$\{\{ forgejo\.repository \}\}"/u);
-  assert.doesNotMatch(jobSteps(workflow, "promotion-admission"), /secrets\./u);
-  assert.doesNotMatch(jobDefinition(workflow, "promotion-admission"), /(?:candidate-store|upload-artifact|download-artifact|terrascale-deploy)/u);
-  assert.match(jobDefinition(workflow, "pr-static"), /git -c credential\.helper= clone --depth 1 --branch develop https:\/\/git\.terrascale\.tech\/TerraScale\/ts-dashboard\.git Dashboard/u);
-  assert.match(jobDefinition(workflow, "pr-static"), /npm ci/u);
-  assert.match(jobDefinition(workflow, "pr-static"), /npm run typecheck/u);
-  assert.match(jobDefinition(workflow, "pr-static"), /npm run build/u);
-  assert.ok(jobDefinition(workflow, "pr-static").indexOf("npm run build") < jobDefinition(workflow, "pr-static").indexOf("npm run check:route-manifest"));
-  assert.match(jobDefinition(workflow, "pr-build"), /npm ci/u);
-  assert.match(jobDefinition(workflow, "pr-build"), /npm run build/u);
-  assert.match(jobDefinition(workflow, "runtime-matrix"), /node: \["22", "24"\]/u);
-  assert.match(jobDefinition(workflow, "runtime-matrix"), /runs-on: terrascale-untrusted/u);
-  assert.match(jobDefinition(workflow, "runtime-matrix"), /node scripts\/provision-reviewed-npm\.mjs/u);
-  assert.match(jobDefinition(workflow, "runtime-matrix"), /npm run test:unit/u);
-  assert.match(jobDefinition(workflow, "runtime-matrix"), /npm run test:msgpack/u);
-  assert.match(jobDefinition(workflow, "browser-matrix"), /runs-on: terrascale-untrusted/u);
-  assert.match(jobDefinition(workflow, "browser-matrix"), /playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e/u);
-  assert.match(jobDefinition(workflow, "browser-matrix"), /npm run test:browser/u);
-  for (const job of ["pr-static", "release-contract-fixture"]) {
-    assert.match(
-      jobDefinition(workflow, job),
-      /(?:node scripts\/check-public-contract-fixture\.mjs|npm run check:public-contract-fixture(?: --)?)[ \t]+Dashboard\/docs\/product\/openapi\/server\.openapi\.json/u,
-    );
-    assert.match(jobDefinition(workflow, job), /npm run check:forbidden-surface/u);
-  }
-  assert.match(jobDefinition(workflow, "release-contract-fixture"), /check:openapi-contract-descriptor -- Dashboard\/docs\/product\/openapi\/server\.openapi\.json/u);
-  assert.ok(jobDefinition(workflow, "release-contract-fixture").indexOf("npm run build") < jobDefinition(workflow, "release-contract-fixture").indexOf("npm run check:route-manifest"));
-  assert.ok(jobDefinition(workflow, "release-contract-fixture").indexOf("npm run check:route-manifest") < jobDefinition(workflow, "release-contract-fixture").indexOf("check:openapi-contract-descriptor"));
-  assert.ok(jobDefinition(workflow, "release-contract-fixture").indexOf("check:openapi-contract-descriptor") < jobDefinition(workflow, "release-contract-fixture").indexOf("check:openapi-drift -- --strict"));
-  assert.ok(jobDefinition(workflow, "pr-static").indexOf("check:openapi-contract-descriptor") < jobDefinition(workflow, "pr-static").indexOf("check:openapi-drift -- --strict"));
-  assert.match(jobDefinition(workflow, "release-version-availability"), /--check-availability --package @terrascale\/sdk/u);
-  assert.match(jobDefinition(workflow, "release-e2e"), /secrets\.TERRASCALE_E2E_ACCESS_TOKEN/u);
-  assert.doesNotMatch(jobDefinition(workflow, "release-e2e"), /^    env:/mu);
-  assert.match(jobDefinition(workflow, "release-e2e"), /needs: \[release-artifacts\]/u);
-  assert.match(jobDefinition(workflow, "release-e2e"), /require-release-e2e-config\.mjs/u);
-  assert.match(jobDefinition(workflow, "release-e2e"), /run-packed-release-e2e\.mjs --tarball/u);
-  assert.match(jobDefinition(workflow, "release-e2e"), /npm run test:integration/u);
-  assert.match(jobDefinition(workflow, "release-e2e"), /--build-receipt artifacts\/handoff\/evidence\/npm\.build-receipt\.json/u);
-  assert.ok(jobDefinition(workflow, "release-e2e").indexOf("--verify-only") < jobDefinition(workflow, "release-e2e").indexOf("TERRASCALE_E2E_ACCESS_TOKEN"));
-  assert.match(jobDefinition(workflow, "release-tests"), /npm run test:unit/u);
-  assert.match(jobDefinition(workflow, "release-tests"), /npm run test:msgpack/u);
-  assert.doesNotMatch(jobDefinition(workflow, "release-tests"), /terrascale-deploy ci release-test/u);
-  assert.doesNotMatch(jobDefinition(workflow, "release-e2e"), /terrascale-deploy ci release-test/u);
-  const releaseArtifacts = jobDefinition(workflow, "release-artifacts");
-  assert.match(releaseArtifacts, /node-version: "22\.23\.2"/u);
-  assert.match(releaseArtifacts, /node-version: "24\.20\.0"/u);
-  assert.equal((releaseArtifacts.match(/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020/gu) ?? []).length, 2);
-  assert.match(releaseArtifacts, /--expected-tree "\$\{EXPECTED_TREE\}"/u);
-  assert.match(releaseArtifacts, /--receipt "artifacts\/evidence\/\$\{BUILD_TARGET\}\.build-receipt\.json"/u);
-  assert.match(releaseArtifacts, /path: artifacts/u);
-  assert.match(releaseArtifacts, /node scripts\/provision-reviewed-npm\.mjs/u);
-  assert.ok(releaseArtifacts.indexOf("node-version: \"24.20.0\"") < releaseArtifacts.indexOf("node scripts/provision-reviewed-npm.mjs"));
-  assert.ok(releaseArtifacts.indexOf("node scripts/provision-reviewed-npm.mjs") < releaseArtifacts.indexOf("ci build-candidate"));
-  const releaseBrowser = jobDefinition(workflow, "release-browser-candidate");
-  assert.match(releaseBrowser, /needs: \[release-artifacts\]/u);
-  assert.match(releaseBrowser, /playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e/u);
-  assert.match(releaseBrowser, /--build-receipt artifacts\/handoff\/evidence\/npm\.build-receipt\.json/u);
-  assert.match(releaseBrowser, /TERRASCALE_BROWSER_CANDIDATE_TARBALL/u);
-  assert.match(releaseBrowser, /terrascale-sdk-\$\(node -p 'require\("\.\/package\.json"\)\.version'\)\.tgz/u);
-  assert.doesNotMatch(releaseBrowser, /terrascale-sdk-\d+\.\d+\.\d+[^\s"']*\.tgz/u);
-  assert.doesNotMatch(releaseBrowser, /npm run build|npm pack/u);
-  for (const job of ["release-e2e", "release-browser-candidate", "release-version-availability", "candidate", "promote"]) {
-    const definition = jobDefinition(workflow, job);
-    assert.match(definition, /node-version: "24\.20\.0"/u);
-    assert.match(definition, /node scripts\/provision-reviewed-npm\.mjs/u);
-    assert.ok(
-      definition.indexOf("node scripts/provision-reviewed-npm.mjs") < definition.indexOf("node scripts/promote-npm-candidate.mjs"),
-      `${job} must provision reviewed npm before invoking the promotion verifier`,
-    );
-  }
-  for (const name of [
-    "TERRASCALE_API_BASE_URL",
-    "TERRASCALE_E2E_PROJECT_ID",
-    "TERRASCALE_E2E_ORGANIZATION_ID",
-    "TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID",
-  ]) {
-    assert.match(jobDefinition(workflow, "release-e2e"), new RegExp(`${name}: \\$\\{\\{ vars\\.${name} \\}\\}`, "u"));
-  }
-  for (const job of ["pr-static", "pr-build"]) {
-    assert.doesNotMatch(jobDefinition(workflow, job), /TERRASCALE_E2E_ACCESS_TOKEN/u);
-  }
-  assert.match(jobDefinition(workflow, "candidate"), /release-contract-fixture/u);
-  assert.match(jobDefinition(workflow, "candidate"), /release-e2e/u);
-  assert.match(jobDefinition(workflow, "candidate"), /release-version-availability/u);
-  assert.match(jobDefinition(workflow, "candidate"), /runtime-matrix/u);
-  assert.match(jobDefinition(workflow, "candidate"), /release-browser-candidate/u);
-  assert.doesNotMatch(jobDefinition(workflow, "candidate"), /NPM_TOKEN/u);
-  assert.match(jobDefinition(workflow, "candidate"), /name: candidate-npm/u);
-  assert.match(jobDefinition(workflow, "candidate"), /--build-receipt artifacts\/handoff\/evidence\/npm\.build-receipt\.json/u);
-  assert.match(jobDefinition(workflow, "candidate"), /--verify-only/u);
-  assert.match(jobDefinition(workflow, "candidate"), /name: admitted-npm-candidate/u);
-  assert.doesNotMatch(workflow, /ci (?:candidate-manifest|candidate-store|promote)\b/u);
-  assert.doesNotMatch(jobDefinition(workflow, "candidate"), /^    env:/mu);
-  assert.match(jobDefinition(workflow, "promote"), /promote-npm-candidate\.mjs/u);
-  assert.match(jobDefinition(workflow, "promote"), /NPM_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/u);
-  assert.doesNotMatch(jobDefinition(workflow, "promote"), /^    env:/mu);
-  assert.match(jobDefinition(workflow, "promote"), /needs: \[candidate\]/u);
-  assert.match(jobDefinition(workflow, "promote"), /name: admitted-npm-candidate/u);
-  assert.ok(jobDefinition(workflow, "promote").indexOf("--verify-only") < jobDefinition(workflow, "promote").indexOf("NPM_TOKEN:"));
-  // 0addfcf: the bootstrap env var DEPLOY_CLI_READ_TOKEN is now fed by the
-  // org registry token instead of a dedicated secret.
-  assertCredentialStepIsFinal(workflow, "bootstrap", "REGISTRY_TOKEN");
-  assertCredentialStepIsFinal(workflow, "release-e2e", "TERRASCALE_E2E_ACCESS_TOKEN");
-  assertCredentialStepIsFinal(workflow, "promote", "NPM_TOKEN");
-});
 
+  for (const job of ["static", "build", "tests", "browser"]) {
+    const definition = jobDefinition(workflow, job);
+    assert.match(definition, /needs: bootstrap/u);
+    assert.match(definition, /runs-on: terrascale-untrusted/u);
+    assert.match(definition, /image: mcr\.microsoft\.com\/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e/u);
+    assert.match(definition, /node scripts\/provision-reviewed-npm\.mjs/u);
+    assert.match(definition, /npm install/u);
+  }
+  const staticJob = jobDefinition(workflow, "static");
+  assert.match(staticJob, /repository: TerraScale\/ts-dashboard/u);
+  assert.match(staticJob, /ref: develop/u);
+  assert.match(staticJob, /path: Dashboard/u);
+  for (const command of [
+    "npm run typecheck",
+    "npm run build",
+    "npm run check:openapi-drift",
+    "npm run check:route-manifest",
+    "npm run check:forbidden-surface",
+  ]) {
+    assert.ok(staticJob.includes(command), `static job is missing ${command}`);
+  }
+  assert.match(jobDefinition(workflow, "tests"), /npm test/u);
+  assert.match(jobDefinition(workflow, "browser"), /playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e/u);
+  assert.match(jobDefinition(workflow, "browser"), /npm run test:browser/u);
+
+  const bootstrap = jobDefinition(workflow, "bootstrap");
+  assert.match(bootstrap, /ref: 9a39633f88b085a6d40090ab451b1d71c89e3712/u);
+  assert.match(bootstrap, /token: \$\{\{ secrets\.TERRASCALE_SOURCE_READ_TOKEN \}\}/u);
+  assert.match(bootstrap, /git -C deploy-source rev-parse HEAD/u);
+  assert.match(bootstrap, /git -C deploy-source status --porcelain/u);
+  assert.match(bootstrap, /upload-artifact/u);
+
+  for (const job of ["static", "build", "tests", "browser", "candidate", "browser-candidate"]) {
+    assert.match(jobDefinition(workflow, job), /image: mcr\.microsoft\.com\/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e/u);
+    assert.doesNotMatch(jobDefinition(workflow, job), /(?:NPM_TOKEN|REGISTRY_(?:USER|TOKEN)|TERRASCALE_E2E_\w+)/u);
+  }
+  const candidate = jobDefinition(workflow, "candidate");
+  assert.match(candidate, /if: \$\{\{ forgejo\.event_name == 'push' && forgejo\.ref == 'refs\/heads\/main' \}\}/u);
+  assert.match(candidate, /needs: \[bootstrap, static, build, tests, browser\]/u);
+  assert.match(candidate, /ci build-candidate/u);
+  assert.match(candidate, /--target npm/u);
+  assert.match(candidate, /--expected-tree "\$\(git rev-parse HEAD\^\{tree\}\)"/u);
+  assert.match(candidate, /--receipt artifacts\/evidence\/npm\.build-receipt\.json/u);
+  assert.match(candidate, /name: candidate-npm/u);
+  assert.match(candidate, /retention-days: 7/u);
+  assert.equal((candidate.match(/node-version: "(?:22\.23\.2|24\.20\.0)"/gu) ?? []).length, 2);
+
+  const candidateBrowser = jobDefinition(workflow, "browser-candidate");
+  assert.match(candidateBrowser, /needs: \[candidate\]/u);
+  assert.match(candidateBrowser, /TERRASCALE_BROWSER_CANDIDATE_TARBALL/u);
+  assert.match(candidateBrowser, /npm run test:browser/u);
+  assert.match(candidateBrowser, /--verify-only/u);
+  assert.match(candidateBrowser, /playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e/u);
+
+  const publish = jobDefinition(workflow, "publish");
+  assert.match(publish, /if: \$\{\{ forgejo\.event_name == 'push' && forgejo\.ref == 'refs\/heads\/main' \}\}/u);
+  assert.match(publish, /needs: \[browser-candidate\]/u);
+  assert.match(publish, /name: Publish the verified candidate/u);
+  assert.match(publish, /NPM_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/u);
+  assert.equal((workflow.match(/NPM_TOKEN/gu) ?? []).length, 2);
+  const tokenIndex = publish.indexOf("NPM_TOKEN:");
+  assert.ok(tokenIndex > publish.indexOf("Verify immutable candidate"));
+  assert.doesNotMatch(publish.slice(0, tokenIndex), /secrets\./u);
+
+  assert.equal(packageMetadata.packageManager, "npm@11.18.0");
+  assert.equal(lock.lockfileVersion, 3);
+  assert.equal(lock.packages?.[""]?.name, "@terrascale/sdk");
+  assert.equal(lock.packages?.[""]?.version, "0.3.0");
+});
 test("release E2E configuration guard fails closed before skip-capable tests", async () => {
   const guard = path.join(repositoryRoot, "scripts", "require-release-e2e-config.mjs");
   const environment = {
@@ -427,47 +360,7 @@ function jobDefinition(workflow: string, job: string): string {
   return next === -1 ? remaining : remaining.slice(0, next + 1);
 }
 
-/**
- * A job definition with its `container:` block removed: since 0addfcf every
- * container job pulls the org-registry toolbox image with
- * secrets.REGISTRY_USER/REGISTRY_TOKEN, so the no-secrets guards below hold
- * over the job's own steps, not the runner-level image pull.
- */
-function jobSteps(workflow: string, job: string): string {
-  return jobDefinition(workflow, job).replace(/\n    container:\n(?:[ ]{6,}.*\n?)+/u, "");
-}
-
-function assertCredentialStepIsFinal(workflow: string, job: string, credential: string): void {
-  // Runs over jobSteps: since 0addfcf the container image pull also
-  // references secrets.REGISTRY_USER/REGISTRY_TOKEN ahead of every step,
-  // which is runner infrastructure, not a job credential step.
-  const steps = jobSteps(workflow, job);
-  assert.doesNotMatch(steps, /^    env:/mu, `${job} must not set job-level environment variables.`);
-
-  const credentialIndex = steps.indexOf(`secrets.${credential}`);
-  assert.notEqual(credentialIndex, -1, `${job} must use ${credential}.`);
-  const stepStart = steps.lastIndexOf("\n      - ", credentialIndex);
-  assert.notEqual(stepStart, -1, `${credential} must be scoped to a shell step.`);
-  const credentialStep = steps.slice(stepStart + 1);
-  assert.match(credentialStep, /^      - (?:(?:env:)|[\s\S]*^        env:)[\s\S]*^        run:/mu, `${credential} must be scoped to a run step.`);
-  const runIndex = credentialStep.indexOf("\n        run:");
-  assert.notEqual(runIndex, -1);
-  assert.doesNotMatch(credentialStep.slice(runIndex + 1), /^      - run:/mu, `${credential} must be on the final shell step.`);
-  assert.doesNotMatch(steps.slice(0, stepStart), /secrets\./u, `${credential} must not be present before its scoped step.`);
-}
-
 async function readPackedEntry(tarball: string, entry: string): Promise<string> {
   const result = await run("tar", ["-xOf", tarball, entry]);
   return result.stdout;
 }
-
-type DeployCommand = {
-  readonly description: string;
-  readonly command: string;
-  readonly arguments: readonly string[];
-};
-
-type DeployConfiguration = {
-  readonly releaseProfiles: readonly { readonly name: string; readonly required: boolean; readonly commands: readonly DeployCommand[] }[];
-  readonly buildTargets: readonly { readonly outputPath?: string; readonly commands: readonly DeployCommand[] }[];
-};
