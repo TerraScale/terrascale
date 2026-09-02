@@ -66,11 +66,11 @@ impl NormalizedQuery {
         }
     }
 
-    /// Builds an unbound model, the shape the V1-compatible grammar produces:
-    /// the grammar has no tenant, deadline, or cancellation clause, so those
-    /// stay unbound and the snapshot supplies the tenant binding at execution.
-    /// The grammar has no include clause either, so an unbound model
-    /// materializes nothing.
+    /// Builds an unbound model, the shape the grammar-only compile seam
+    /// produces: the grammar has no tenant, deadline, or cancellation clause,
+    /// so those stay unbound and the snapshot supplies the tenant binding at
+    /// execution. The grammar has no include clause either, so an unbound
+    /// model materializes nothing.
     pub(crate) fn unbound(
         source: QuerySource,
         predicate: QueryPredicate,
@@ -93,6 +93,14 @@ impl NormalizedQuery {
             deadline: None,
             cancellation: None,
         }
+    }
+
+    /// Binds reference-resolution loads onto an unbound model — the `load`
+    /// clause the grammar carries and the serving seam's request-bound form
+    /// would otherwise supply through the typed constructor.
+    pub(crate) fn with_loads(mut self, loads: Vec<QueryLoad>) -> Self {
+        self.loads = loads;
+        self
     }
 
     /// Binds execution control to an unbound model — the deadline and

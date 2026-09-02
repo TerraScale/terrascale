@@ -31,7 +31,6 @@ pub mod optimizer;
 mod result;
 mod spec;
 mod statistics;
-mod text;
 mod vector;
 
 pub mod bulk;
@@ -87,8 +86,9 @@ pub use spec::{
 // window and its source through one vocabulary.
 pub use crate::families::{TimeSeriesPaging, TimeSeriesRange};
 pub use statistics::{DiagnosticDuration, QueryStatistics, ResultEtag};
-#[allow(unused_imports, reason = "the public TqlQueryText constructor delegates here")]
-pub(crate) use text::validate as validate_tql_text;
+// The public TqlQueryText constructor validates through the one full parser
+// (`tql`), the same grammar the compile seam lowers through.
+pub(crate) use tql::{GrammarVersion, TqlParameters};
 pub use vector::{
     DEFAULT_VECTOR_SEARCH_LIMIT, MAX_VECTOR_DIMENSIONS, MAX_VECTOR_SEARCH_LIMIT,
     MIN_VECTOR_DIMENSIONS, TqlVectorPredicate, VECTOR_PREDICATE_VERSION, VECTOR_SEARCH_WINDOW,
@@ -101,7 +101,7 @@ use crate::{
     engine::Engine,
     index::IndexCatalog,
     operations::{QueryInput, QueryInputError},
-    types::{ReadSnapshot, StorageSequence, TenantId},
+    types::{Cancellation, Deadline, ReadSnapshot, StorageSequence, TenantId},
 };
 use model::NormalizedQuery;
 
@@ -285,12 +285,13 @@ impl<'engine> QueryStore<'engine> {
         optimizer::registered_indexes_of(&self.indexes, tenant)
     }
 
-    /// Compiles typed or V1-compatible input into an immutable plan.
+    /// Compiles typed or grammar-only input into an immutable plan.
     ///
     /// Both input forms normalize through this one seam: the typed form is
-    /// re-validated as it is normalized, and the V1-compatible text is parsed
-    /// against the supported grammar subset and rejected with
-    /// [`QueryError::InvalidSpec`] for anything the subset does not define.
+    /// re-validated as it is normalized, and the TQL text is parsed by the
+    /// one full `tql/1.0` parser and lowered onto the same typed clauses.
+    /// A construct the grammar accepts but the seam cannot express exactly
+    /// fails closed with [`QueryError::InvalidSpec`], never a degraded plan.
     ///
     /// # Errors
     ///
@@ -315,32 +316,9 @@ impl<'engine> QueryStore<'engine> {
                 spec.includes().to_vec(),
                 spec.time_series_window(),
             )),
-            QueryInput::Tql(text) => {
-                let (source, predicate, ordering, paging, projection) =
-                    text::parse_clauses(text.as_str()).map_err(input_error)?;
-                self.compile_normalized(NormalizedQuery::unbound(
-                    source,
-                    predicate,
-                    ordering,
-                    projection,
-                    paging,
-                    text::default_staleness(),
-                ))
-            }
+            QueryInput::Tql(text) => self.compile_tql_unbound(text.as_str(), None),
             QueryInput::TqlBounded { text, deadline, cancellation } => {
-                let (source, predicate, ordering, paging, projection) =
-                    text::parse_clauses(text.as_str()).map_err(input_error)?;
-                self.compile_normalized(
-                    NormalizedQuery::unbound(
-                        source,
-                        predicate,
-                        ordering,
-                        projection,
-                        paging,
-                        text::default_staleness(),
-                    )
-                    .with_control(deadline, cancellation),
-                )
+                self.compile_tql_unbound(text.as_str(), Some((deadline, cancellation)))
             }
         }
     }
@@ -352,16 +330,40 @@ impl<'engine> QueryStore<'engine> {
     /// constructor validates through the same parser.
     #[cfg(test)]
     pub(crate) fn compile_tql_text(&self, text: &str) -> Result<QueryPlan, QueryError> {
-        let (source, predicate, ordering, paging, projection) =
-            text::parse_clauses(text).map_err(input_error)?;
-        self.compile_normalized(NormalizedQuery::unbound(
-            source,
-            predicate,
-            ordering,
-            projection,
-            paging,
-            text::default_staleness(),
-        ))
+        self.compile_tql_unbound(text, None)
+    }
+
+    /// Parses and lowers one TQL text into an unbound model: the grammar
+    /// carries no tenant, deadline, or cancellation clause, so the snapshot
+    /// supplies the tenant binding at execution and the optional control is
+    /// the serving seam's bound. No parameters are bound on this path, so a
+    /// `$name` reference fails closed exactly as the public constructor's
+    /// validation does; the request-bound parameterized path is
+    /// [`tql::compile`].
+    fn compile_tql_unbound(
+        &self,
+        text: &str,
+        control: Option<(Deadline, Cancellation)>,
+    ) -> Result<QueryPlan, QueryError> {
+        let query =
+            tql::parse(GrammarVersion::CURRENT, text, &TqlParameters::new()).map_err(tql_error)?;
+        let clauses = tql::lower_clauses(&query, &TqlParameters::new()).map_err(tql_error)?;
+        let staleness = StalenessPolicy::try_new(StalenessMode::Strict, Vec::new())
+            .map_err(|_| QueryError::InvalidSpec)?;
+        let model = NormalizedQuery::unbound(
+            clauses.source,
+            clauses.predicate,
+            clauses.ordering,
+            clauses.projection,
+            clauses.paging,
+            staleness,
+        )
+        .with_loads(clauses.loads);
+        let model = match control {
+            Some((deadline, cancellation)) => model.with_control(deadline, cancellation),
+            None => model,
+        };
+        self.compile_normalized(model)
     }
 
     /// Validates one normalized model and freezes it into a plan.
@@ -422,12 +424,39 @@ impl<'engine> QueryStore<'engine> {
     }
 }
 
-/// Maps a grammar rejection onto the compile error. Both input forms report
-/// unsupported text through the same typed path.
-fn input_error(error: QueryInputError) -> QueryError {
-    match error {
-        QueryInputError::EmptyText
-        | QueryInputError::UnsupportedGrammar
-        | QueryInputError::InvalidIdentifier => QueryError::InvalidSpec,
+/// Maps one typed TQL failure of the full parser onto the compile error:
+/// every class — grammar, registry, bounds, and the fail-closed
+/// lowerability classes — is an invalid specification, never a degraded plan.
+fn tql_error(_error: tql::TqlError) -> QueryError {
+    QueryError::InvalidSpec
+}
+
+/// Validates one public TQL text through the one full parser.
+///
+/// The grammar-level check the public
+/// [`TqlQueryText`](crate::operations::TqlQueryText) constructor delegates
+/// to: the text must parse and statically check under `tql/1.0` with no
+/// parameters bound (a `$name` reference is unbound exactly as it is at
+/// compile time on that path). Gated predicates — `search`, `vector.*` —
+/// fail closed until an engine reports the capability.
+///
+/// # Errors
+///
+/// Returns [`QueryInputError::EmptyText`] for empty or whitespace-only text,
+/// [`QueryInputError::InvalidIdentifier`] for a name the identifier
+/// discipline rejects, and [`QueryInputError::UnsupportedGrammar`] for every
+/// other grammar, registry, bound, or capability rejection.
+pub(crate) fn validate_tql_text(text: &str) -> Result<(), QueryInputError> {
+    if text.trim().is_empty() {
+        return Err(QueryInputError::EmptyText);
     }
+    let Err(error) = tql::parse(GrammarVersion::CURRENT, text, &TqlParameters::new()) else {
+        return Ok(());
+    };
+    Err(match error.class() {
+        tql::TqlErrorClass::InvalidIdentifier | tql::TqlErrorClass::ReservedName => {
+            QueryInputError::InvalidIdentifier
+        }
+        _ => QueryInputError::UnsupportedGrammar,
+    })
 }

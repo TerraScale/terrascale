@@ -52,6 +52,9 @@ pub use ast::{
     ProjectionKind, Quantifier, SourceKind, Span, TqlPath, TqlQuery, TqlSource, UnaryOperator,
 };
 pub use lower::{compile, lower_to_spec};
+// The grammar-only compile seam (`QueryStore::compile` for TQL text) shares
+// the one clause-lowering body with the request-bound path.
+pub(super) use lower::lower_clauses;
 
 use crate::operations::MAX_QUERY_TEXT_BYTES;
 use crate::query::spec::MAX_FIELD_BYTES;

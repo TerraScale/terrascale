@@ -244,10 +244,11 @@ fn v1_query_text_public_constructor_validates_and_rejects() {
         Err(QueryInputError::EmptyText),
         "empty text is rejected at construction"
     );
+    assert!(TqlQueryText::try_new("select * from users").is_ok());
     assert_eq!(
-        TqlQueryText::try_new("select * from users"),
+        TqlQueryText::try_new("select name, age"),
         Err(QueryInputError::UnsupportedGrammar),
-        "unsupported grammar is rejected at construction"
+        "a projection without a source is rejected at construction"
     );
     assert_eq!(
         TqlQueryText::try_new("from users where ag\u{7}e > 1"),

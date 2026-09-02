@@ -16,12 +16,13 @@ use std::{
 };
 
 use super::{
-    GenerationView, IndexNamespace, ObservedGeneration, OrderDirection, OrderingKey,
-    QueryCondition, QueryError, QueryOrdering, QueryPaging, QueryPredicate, QueryProjection,
-    QuerySource, QuerySpec, QueryStore, StalenessMode, StalenessPolicy,
+    GenerationView, GrammarVersion, IndexNamespace, ObservedGeneration, OrderDirection,
+    OrderingKey, QueryCondition, QueryError, QueryOrdering, QueryPaging, QueryPredicate,
+    QueryProjection, QuerySource, QuerySpec, QueryStore, StalenessMode, StalenessPolicy,
+    TqlParameters,
     execute::execute_with_view,
     spec::{MAX_PAGE_LIMIT, validate_field_name},
-    text,
+    tql,
 };
 use crate::{
     engine::{CommitOutcome, Engine, EngineConfig},
@@ -732,16 +733,16 @@ fn query_input_normalizes_typed_and_v1_text_through_one_compile_seam() {
         staleness(StalenessMode::Strict, Vec::new()),
     );
     let typed_plan = store.compile(QueryInput::typed(typed)).expect("compiles");
-    // The same query as supported V1-compatible text, through the same seam.
-    // The public constructor validates the text before it reaches the seam.
+    // The same query as TQL text, through the same seam. The public
+    // constructor validates the text before it reaches the seam.
     let text_plan = store
         .compile(QueryInput::tql(
             TqlQueryText::try_new(
-                "from users where age >= 30 order by age desc limit 2 offset 0 select name, age",
+                "select name, age from users where age >= 30 order by age desc limit 2 offset 0",
             )
-            .expect("public constructor accepts the supported subset"),
+            .expect("public constructor accepts the grammar"),
         ))
-        .expect("parses the supported subset");
+        .expect("parses and lowers through the one full parser");
     assert_eq!(text_plan.tenant_claim(), None, "the grammar carries no tenant claim");
 
     let typed_result = store.execute(&typed_plan, &snapshot).expect("executes");
@@ -762,13 +763,10 @@ fn query_input_normalizes_typed_and_v1_text_through_one_compile_seam() {
 fn query_input_rejects_unsupported_or_generic_query_text() {
     let (dir, engine) = open_engine("reject-text");
     let store = engine.queries();
-    let unsupported = [
-        "SELECT * FROM users",
-        "select * from users",
-        "from users where name = \"ada\"",
+    // Grammar-level rejections: the text does not parse under `tql/1.0`,
+    // so both the public constructor and the compile seam refuse it.
+    let unparsable = [
         "from users sort by age",
-        "from users where (name = 'ada')",
-        "from users where name = 'ada' or age = 2",
         "from users order by age select name limit 2",
         "from users limit 0",
         "from users offset -1",
@@ -776,14 +774,9 @@ fn query_input_rejects_unsupported_or_generic_query_text() {
         "from",
         "where name = 'ada'",
     ];
-    for text in unsupported {
+    for text in unparsable {
         assert_eq!(
-            store.compile_tql_text(text).unwrap_err(),
-            QueryError::InvalidSpec,
-            "unsupported grammar must be rejected: {text}"
-        );
-        assert_eq!(
-            text::validate(text).unwrap_err(),
+            super::validate_tql_text(text).unwrap_err(),
             QueryInputError::UnsupportedGrammar,
             "{text}"
         );
@@ -792,12 +785,50 @@ fn query_input_rejects_unsupported_or_generic_query_text() {
             QueryInputError::UnsupportedGrammar,
             "the public constructor rejects the same text before the seam: {text}"
         );
+        assert_eq!(
+            store.compile_tql_text(text).unwrap_err(),
+            QueryError::InvalidSpec,
+            "unsupported grammar must be rejected: {text}"
+        );
     }
-    assert_eq!(text::validate("   ").unwrap_err(), QueryInputError::EmptyText);
+    // Grammar-valid but seam-unlowerable: the constructor accepts the text
+    // (the grammar defines it) and the compile seam fails closed instead of
+    // degrading the plan.
+    let unlodable = [
+        "from users where name = 'ada' or age = 2",
+        "from users where name = \"ada\"",
+        "from orders include customer",
+        "select distinct status from orders",
+    ];
+    for text in unlodable {
+        assert!(super::validate_tql_text(text).is_ok(), "the full grammar defines: {text}");
+        assert_eq!(
+            store.compile_tql_text(text).unwrap_err(),
+            QueryError::InvalidSpec,
+            "the seam fails closed on: {text}"
+        );
+    }
+    assert_eq!(super::validate_tql_text("   ").unwrap_err(), QueryInputError::EmptyText);
+    // The full parser enforces the shared identifier discipline itself: an
+    // over-long collection name is a typed invalid identifier at validation
+    // and an invalid specification at compile.
+    let long_collection = format!("from {} where a = 1", "x".repeat(300));
     assert_eq!(
-        text::validate(&format!("from {} where a = 1", "x".repeat(300))).unwrap_err(),
+        super::validate_tql_text(&long_collection).unwrap_err(),
         QueryInputError::InvalidIdentifier
     );
+    assert_eq!(store.compile_tql_text(&long_collection).unwrap_err(), QueryError::InvalidSpec);
+    // The full grammar accepts strictly more than the deleted subset did:
+    // case-insensitive keywords, `select *` as the whole-document
+    // projection, and parenthesized single comparisons all compile.
+    for text in [
+        "SELECT * FROM users",
+        "select * from users",
+        "from users where (name = 'ada')",
+        "from users where name = 'o''brien'",
+    ] {
+        assert!(store.compile_tql_text(text).is_ok(), "the full grammar accepts: {text}");
+    }
     // Generic query text cannot enter through the typed form: it has no
     // free-text channel at all. Identifiers still reject control characters,
     // and the reserved family collection is not a query source.
@@ -1226,23 +1257,34 @@ fn query_rejects_a_wrong_tenant_scope() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn v1_grammar_parses_the_supported_subset_into_typed_clauses() {
-    let (source, predicate, ordering, paging, projection) = text::parse_clauses(
-        "from users where exists(flag) and age >= 30 and missing(note) order by age desc, name limit 10 offset 5 select name, age",
+fn tql_text_lowers_into_typed_clauses_through_the_one_parser() {
+    let query = tql::parse(
+        GrammarVersion::CURRENT,
+        "select name, age from users where exists(flag) and age >= 30 and missing(note) order by age desc, name limit 10 offset 5",
+        &TqlParameters::new(),
     )
-    .expect("parses the documented subset");
-    assert_eq!(source.collection().map(CollectionName::as_str), Some("users"));
-    assert_eq!(predicate.conditions().len(), 3);
-    assert_eq!(ordering.keys().len(), 2);
-    assert_eq!(ordering.keys()[0].field(), "age");
-    assert_eq!(ordering.keys()[0].direction(), OrderDirection::Descending);
-    assert_eq!(ordering.keys()[1].direction(), OrderDirection::Ascending);
-    assert_eq!(paging.offset(), 5);
-    assert_eq!(paging.limit(), Some(10));
-    assert_eq!(projection.selected(), Some(&["name".to_owned(), "age".to_owned()][..]));
-    // A `from`-only query is the minimal valid form.
-    assert!(text::parse_clauses("from users").is_ok());
-    assert!(text::parse_clauses("from users where name = 'o''brien'").is_err());
+    .expect("parses the grammar");
+    let clauses = tql::lower_clauses(&query, &TqlParameters::new()).expect("lowers");
+    assert_eq!(clauses.source.collection().map(CollectionName::as_str), Some("users"));
+    assert_eq!(clauses.predicate.conditions().len(), 3);
+    assert_eq!(clauses.ordering.keys().len(), 2);
+    assert_eq!(clauses.ordering.keys()[0].field(), "age");
+    assert_eq!(clauses.ordering.keys()[0].direction(), OrderDirection::Descending);
+    assert_eq!(clauses.ordering.keys()[1].direction(), OrderDirection::Ascending);
+    assert_eq!(clauses.paging.offset(), 5);
+    assert_eq!(clauses.paging.limit(), Some(10));
+    assert_eq!(clauses.projection.selected(), Some(&["name".to_owned(), "age".to_owned()][..]));
+    // A `from`-only query is the minimal valid form, and the doubled-quote
+    // escape is a literal quote inside the string.
+    assert!(tql::parse(GrammarVersion::CURRENT, "from users", &TqlParameters::new()).is_ok());
+    assert!(
+        tql::parse(
+            GrammarVersion::CURRENT,
+            "from users where name = 'o''brien'",
+            &TqlParameters::new()
+        )
+        .is_ok()
+    );
 }
 
 #[test]

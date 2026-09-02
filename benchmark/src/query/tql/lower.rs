@@ -63,6 +63,59 @@ fn lower_inner(
     deadline: Deadline,
     cancellation: Cancellation,
 ) -> Result<QuerySpec, TqlError> {
+    let clauses = lower_clauses(query, parameters)?;
+    let staleness = StalenessPolicy::try_new(StalenessMode::Strict, Vec::new())
+        .map_err(|_| TqlError::plain(TqlErrorClass::UnsupportedForPlanning, query.span))?;
+    let spec = QuerySpec::try_new(
+        tenant_claim,
+        clauses.source,
+        clauses.predicate,
+        clauses.ordering,
+        clauses.projection,
+        clauses.paging,
+        staleness,
+        deadline,
+        cancellation,
+    )
+    .map_err(|_| TqlError::plain(TqlErrorClass::InvalidRequest, query.span))?;
+    spec.with_loads(clauses.loads)
+        .map_err(|_| TqlError::plain(TqlErrorClass::InvalidRequest, query.span))
+}
+
+/// The lowered clauses of one checked TQL query: every grammar clause
+/// normalized onto the seam's typed form, independent of the request context
+/// (tenant claim, deadline, cancellation) the caller binds afterwards.
+pub(in crate::query) struct LoweredClauses {
+    /// The lowered single-collection source.
+    pub(in crate::query) source: QuerySource,
+    /// The reference-resolution `load` bindings.
+    pub(in crate::query) loads: Vec<QueryLoad>,
+    /// The lowered `where` conjunction.
+    pub(in crate::query) predicate: QueryPredicate,
+    /// The lowered `order by` keys.
+    pub(in crate::query) ordering: QueryOrdering,
+    /// The lowered `select` projection.
+    pub(in crate::query) projection: QueryProjection,
+    /// The lowered page bounds.
+    pub(in crate::query) paging: QueryPaging,
+}
+
+/// Lowers every clause of one checked TQL query onto the seam's typed form.
+///
+/// This is the one clause-lowering body shared by every entry: the
+/// request-bound path ([`lower_to_spec`]) and the grammar-only compile seam
+/// (`QueryStore::compile` for `TqlQueryText`) lower identically, so a text
+/// behaves the same wherever it enters.
+///
+/// # Errors
+///
+/// Returns [`TqlErrorClass::UnsupportedForPlanning`] for a construct the seam
+/// cannot express exactly and [`TqlErrorClass::InvalidIdentifier`] for a
+/// name the seam's identifier discipline rejects.
+pub(in crate::query) fn lower_clauses(
+    query: &TqlQuery,
+    parameters: &TqlParameters,
+) -> Result<LoweredClauses, TqlError> {
     let source_alias = query.source.alias.as_deref();
     let source = lower_source(query)?;
     let loads = lower_loads(query, source_alias)?;
@@ -76,21 +129,7 @@ fn lower_inner(
     let ordering = lower_ordering(query, source_alias)?;
     let projection = lower_projection(query, source_alias, &loads)?;
     let paging = lower_paging(query, parameters)?;
-    let staleness = StalenessPolicy::try_new(StalenessMode::Strict, Vec::new())
-        .map_err(|_| TqlError::plain(TqlErrorClass::UnsupportedForPlanning, query.span))?;
-    let spec = QuerySpec::try_new(
-        tenant_claim,
-        source,
-        predicate,
-        ordering,
-        projection,
-        paging,
-        staleness,
-        deadline,
-        cancellation,
-    )
-    .map_err(|_| TqlError::plain(TqlErrorClass::InvalidRequest, query.span))?;
-    spec.with_loads(loads).map_err(|_| TqlError::plain(TqlErrorClass::InvalidRequest, query.span))
+    Ok(LoweredClauses { source, loads, predicate, ordering, projection, paging })
 }
 
 /// Lowers the `load` clause into reference-resolution bindings. A load path

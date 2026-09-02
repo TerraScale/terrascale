@@ -270,15 +270,15 @@ fn caller_context_try_new_structurally_validates_and_redacts_evidence() {
 
 #[test]
 fn public_operation_constructors_reject_generic_payloads_and_permissions() {
-    // V1-compatible text is the only accepted text form; generic SQL shapes
-    // and oversized raw payloads are typed rejections, never forwarded
-    // strings.
+    // TQL text is the only accepted text form, validated by the one full
+    // parser; generic SQL shapes and oversized raw payloads are typed
+    // rejections, never forwarded strings.
     assert_eq!(TqlQueryText::try_new(""), Err(QueryInputError::EmptyText));
     assert_eq!(TqlQueryText::try_new("   "), Err(QueryInputError::EmptyText));
-    assert_eq!(
-        TqlQueryText::try_new("SELECT * FROM users"),
-        Err(QueryInputError::UnsupportedGrammar)
-    );
+    // `select *` IS the whole-document projection of the full grammar; the
+    // generic SQL shape that stays rejected is a bare table-less select.
+    assert!(TqlQueryText::try_new("SELECT * FROM users").is_ok());
+    assert_eq!(TqlQueryText::try_new("select name, age"), Err(QueryInputError::UnsupportedGrammar));
     let oversized = format!("from {}", "x".repeat(17 * 1024));
     assert_eq!(TqlQueryText::try_new(&oversized), Err(QueryInputError::UnsupportedGrammar));
     assert!(TqlQueryText::try_new("from users where name = 'ada'").is_ok());
