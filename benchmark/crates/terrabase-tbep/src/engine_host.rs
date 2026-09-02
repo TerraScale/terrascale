@@ -475,6 +475,14 @@ impl EngineHost {
         &self.location
     }
 
+    /// Returns the host's engine — the public API router (`S-03`) serves
+    /// documents through the same engine the TBEP surface does, so one
+    /// database has one storage truth per member.
+    #[must_use]
+    pub fn engine(&self) -> &Engine {
+        &self.engine
+    }
+
     /// Returns the engine-owned metrics registry shared by storage and every
     /// serving adapter for this location.
     #[must_use]

@@ -28,9 +28,17 @@ use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::routing::get;
 use axum::routing::post;
+use terrabase::CommitOutcome;
 use terrabase::observability::MetricsRegistry;
 use terrabase::observability::ServiceState;
 use terrabase::regions::RegionCode;
+use terrabase::types::CollectionName;
+use terrabase::types::Document;
+use terrabase::types::DocumentId;
+use terrabase::types::DocumentValue;
+use terrabase::types::ExpectedVersion;
+use terrabase::types::LocalDurability;
+use terrabase::types::OperationId;
 
 /// The public API's path prefix.
 pub const API_PREFIX: &str = "/api/v1";
@@ -296,6 +304,14 @@ pub struct ApiState {
     /// The databases registry (D-52). `None` until the member boots with a
     /// data root; the database routes answer the typed unavailable error.
     pub control: Option<Arc<crate::control::ControlPlane>>,
+    /// The lazy database catalog (`S-01`): tenant/project/database → one
+    /// host engine, LRU-bounded, idle-closed. `None` until the member
+    /// boots with a data root.
+    pub catalog: Option<Arc<terrabase_tbep::catalog::HostCatalog>>,
+    /// The tenant/project every hosted database serves under on this
+    /// member (the single-tenant local stack shape; the multi-project
+    /// router arrives with the ts-proxy lane).
+    pub scope: (String, String),
 }
 
 /// Builds the public `/api/v1` router. Every route except
@@ -309,6 +325,10 @@ pub fn router(state: Arc<ApiState>) -> Router {
         .route("/api/v1/databases", get(list_databases).post(create_database))
         .route("/api/v1/databases/{name}", get(get_database).delete(delete_database))
         .route("/api/v1/databases/{name}/restore", post(restore_database))
+        .route(
+            "/api/v1/databases/{name}/collections/{collection}/documents/{id}",
+            get(get_document).put(put_document).delete(delete_document),
+        )
         .fallback(not_routed)
         .layer(from_fn_with_state(Arc::clone(&state), authenticate))
         .with_state(state)
@@ -506,6 +526,317 @@ async fn restore_database(
     }
 }
 
+/// One document's route context: the host engine for the named database.
+fn document_host(
+    state: &ApiState,
+    name: &str,
+) -> Result<std::sync::Arc<terrabase_tbep::engine_host::EngineHost>, ApiError> {
+    let Some(catalog) = state.catalog.clone() else {
+        return Err(ApiError::control_unavailable());
+    };
+    catalog
+        .host_for(&state.scope.0, &state.scope.1, name)
+        .map_err(|_| ApiError::database_not_found(name))
+}
+
+/// The typed refusal for a malformed collection or identifier path.
+fn invalid_identifier(kind: &str, value: &str) -> ApiError {
+    ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "invalid_identifier",
+        message: format!("'{value}' is not a valid {kind}"),
+        fix: "collection names and identifiers match the engine's identifier rules".into(),
+        placement: None,
+    }
+}
+
+/// The typed refusal for a document the snapshot does not serve.
+fn document_not_found(collection: &str, id: &str) -> ApiError {
+    ApiError {
+        status: StatusCode::NOT_FOUND,
+        code: "document_not_found",
+        message: format!("no document '{id}' in '{collection}'"),
+        fix: "list the collection to see what exists".into(),
+        placement: None,
+    }
+}
+
+/// Returns one document with its `ETag`; `If-None-Match` is answered from
+/// the revision column alone — the body blob is never decoded on a 304.
+async fn get_document(
+    State(state): State<Arc<ApiState>>,
+    Path((name, collection, id)): Path<(String, String, String)>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    let Ok(host) = document_host(&state, &name) else {
+        return ApiError::database_not_found(&name).into_response();
+    };
+    let engine = host.engine();
+    let Ok(scope) = document_scope(engine) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let Ok(collection) = CollectionName::try_new(&collection) else {
+        return invalid_identifier("collection name", &collection).into_response();
+    };
+    let Ok(id) = DocumentId::try_new(&id) else {
+        return invalid_identifier("document identifier", &id).into_response();
+    };
+    let Ok(snapshot) = engine.read_snapshot(&scope) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let Ok(operation) = OperationId::try_new("api-read") else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let Ok(transaction) = engine.begin(&scope, snapshot, operation) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let revision = transaction.revision_in_collection(&collection, &id).unwrap_or(None);
+    let Some(revision) = revision else {
+        return document_not_found(collection.as_str(), id.as_str()).into_response();
+    };
+    let etag = format!("\"{revision}\"");
+    if headers
+        .get(axum::http::header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|present| present == etag)
+    {
+        // The 304 path read the revision column only — the body blob was
+        // never touched (S-03's gate).
+        let mut response = StatusCode::NOT_MODIFIED.into_response();
+        if let Ok(etag) = HeaderValue::from_str(&etag) {
+            response.headers_mut().insert(axum::http::header::ETAG, etag);
+        }
+        return response;
+    }
+    let Ok(Some(document)) = transaction.read_in_collection(&collection, &id) else {
+        return document_not_found(collection.as_str(), id.as_str()).into_response();
+    };
+    drop(transaction);
+    let mut body = String::with_capacity(256);
+    push_value(&mut body, document.value());
+    let mut response = json_response(StatusCode::OK, body);
+    if let Ok(etag) = HeaderValue::from_str(&etag) {
+        response.headers_mut().insert(axum::http::header::ETAG, etag);
+    }
+    response
+}
+
+/// Creates or replaces one document; the `ETag` of the result names the new
+/// revision.
+async fn put_document(
+    State(state): State<Arc<ApiState>>,
+    Path((name, collection, id)): Path<(String, String, String)>,
+    body: String,
+) -> Response {
+    let Ok(host) = document_host(&state, &name) else {
+        return ApiError::database_not_found(&name).into_response();
+    };
+    let engine = host.engine();
+    let Ok(scope) = document_scope(engine) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let Ok(collection) = CollectionName::try_new(&collection) else {
+        return invalid_identifier("collection name", &collection).into_response();
+    };
+    let Ok(id) = DocumentId::try_new(&id) else {
+        return invalid_identifier("document identifier", &id).into_response();
+    };
+    let value: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            return ApiError {
+                status: StatusCode::BAD_REQUEST,
+                code: "invalid_json",
+                message: "the request body is not JSON".into(),
+                fix: "send the document as a JSON object".into(),
+                placement: None,
+            }
+            .into_response();
+        }
+    };
+    let document = Document::new(id, collection, json_value(&value));
+    let Ok(snapshot) = engine.read_snapshot(&scope) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let Ok(operation) = OperationId::try_new(format!("api-put-{}", unix_millis_nanos()).as_str())
+    else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let expected = match transaction.read_in_collection(document.collection(), document.id()) {
+        Ok(Some(existing)) => ExpectedVersion::Exact(existing.metadata().version()),
+        Ok(None) => ExpectedVersion::New,
+        Err(_) => return ApiError::control_unavailable().into_response(),
+    };
+    if let Err(reason) = transaction.put(document, expected) {
+        return ApiError {
+            status: StatusCode::CONFLICT,
+            code: "version_conflict",
+            message: format!("the document changed under the request: {reason:?}"),
+            fix: "re-read the document, merge, and retry with the new version".into(),
+            placement: None,
+        }
+        .into_response();
+    }
+    match transaction.commit(LocalDurability::Synced) {
+        CommitOutcome::Committed(receipt) => {
+            let revision = format!("{}-1", receipt.sequence().get());
+            let mut response =
+                json_response(StatusCode::OK, format!("{{\"revision\":\"{revision}\"}}"));
+            if let Ok(etag) = HeaderValue::from_str(&format!("\"{revision}\"")) {
+                response.headers_mut().insert(axum::http::header::ETAG, etag);
+            }
+            response
+        }
+        CommitOutcome::Rejected(reason) => ApiError {
+            status: StatusCode::CONFLICT,
+            code: "commit_rejected",
+            message: format!("the engine refused the write: {reason:?}"),
+            fix: "re-read the document and retry; a rejected write stages nothing".into(),
+            placement: None,
+        }
+        .into_response(),
+        CommitOutcome::Unknown(reason) => ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "commit_unknown",
+            message: format!("the write's outcome is unknown: {reason:?}"),
+            fix: "re-read to see whether it landed, then retry with a new operation".into(),
+            placement: None,
+        }
+        .into_response(),
+    }
+}
+
+/// Deletes one document (tombstone; the history route can explain it).
+async fn delete_document(
+    State(state): State<Arc<ApiState>>,
+    Path((name, collection, id)): Path<(String, String, String)>,
+) -> Response {
+    let Ok(host) = document_host(&state, &name) else {
+        return ApiError::database_not_found(&name).into_response();
+    };
+    let engine = host.engine();
+    let Ok(scope) = document_scope(engine) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let Ok(collection) = CollectionName::try_new(&collection) else {
+        return invalid_identifier("collection name", &collection).into_response();
+    };
+    let Ok(id) = DocumentId::try_new(&id) else {
+        return invalid_identifier("document identifier", &id).into_response();
+    };
+    let Ok(snapshot) = engine.read_snapshot(&scope) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let Ok(operation) =
+        OperationId::try_new(format!("api-delete-{}", unix_millis_nanos()).as_str())
+    else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let expected = match transaction.read_in_collection(&collection, &id) {
+        Ok(Some(existing)) => ExpectedVersion::Exact(existing.metadata().version()),
+        Ok(None) => {
+            return document_not_found(collection.as_str(), id.as_str()).into_response();
+        }
+        Err(_) => return ApiError::control_unavailable().into_response(),
+    };
+    // delete_in_collection stages without a pre-read (the caller owns
+    // existence, and this route read the target above); the commit's
+    // conflict rejection is the version check.
+    transaction.delete_in_collection(&collection, id, expected);
+    match transaction.commit(LocalDurability::Synced) {
+        CommitOutcome::Committed(_) => json_response(StatusCode::NO_CONTENT, String::new()),
+        _ => ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "commit_failed",
+            message: "the engine did not commit the deletion".into(),
+            fix: "re-read to see whether it landed, then retry".into(),
+            placement: None,
+        }
+        .into_response(),
+    }
+}
+
+/// One engine's tenant scope for document operations: the member hosts
+/// each database under its stable tenant label, so one fixed label serves
+/// the local stack.
+fn document_scope(engine: &terrabase::Engine) -> Result<terrabase::types::TenantScope, ()> {
+    let tenant = terrabase::types::TenantId::try_new("terrabase-local").map_err(|_| ())?;
+    Ok(engine.scope_for(&tenant))
+}
+
+/// A monotonic-enough suffix keeping operation identities distinct.
+fn unix_millis_nanos() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos())
+}
+
+/// Renders one document value as JSON text (hand-assembled; the data path
+/// splices stored text, it never round-trips a generic value).
+fn push_value(out: &mut String, value: &DocumentValue) {
+    match value {
+        DocumentValue::Null => out.push_str("null"),
+        DocumentValue::Boolean(true) => out.push_str("true"),
+        DocumentValue::Boolean(false) => out.push_str("false"),
+        DocumentValue::Integer(number) => out.push_str(&number.to_string()),
+        DocumentValue::Number(number) => out.push_str(&number.to_string()),
+        DocumentValue::String(text) => {
+            out.push('"');
+            push_json_escaped(out, text);
+            out.push('"');
+        }
+        DocumentValue::Array(items) => {
+            out.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                push_value(out, item);
+            }
+            out.push(']');
+        }
+        DocumentValue::Object(fields) => {
+            out.push('{');
+            for (index, (name, item)) in fields.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                out.push('"');
+                push_json_escaped(out, name);
+                out.push_str("\":");
+                push_value(out, item);
+            }
+            out.push('}');
+        }
+    }
+}
+
+/// Converts one parsed JSON request value into the engine's document
+/// value.
+fn json_value(value: &serde_json::Value) -> DocumentValue {
+    match value {
+        serde_json::Value::Null => DocumentValue::Null,
+        serde_json::Value::Bool(flag) => DocumentValue::Boolean(*flag),
+        serde_json::Value::Number(number) => match number.as_i64() {
+            Some(integer) => DocumentValue::Integer(integer),
+            None => DocumentValue::Number(number.as_f64().unwrap_or(0.0)),
+        },
+        serde_json::Value::String(text) => DocumentValue::String(text.clone()),
+        serde_json::Value::Array(items) => {
+            DocumentValue::Array(items.iter().map(json_value).collect())
+        }
+        serde_json::Value::Object(fields) => DocumentValue::Object(
+            fields.iter().map(|(name, item)| (name.clone(), json_value(item))).collect(),
+        ),
+    }
+}
+
 /// One record's JSON body: hand-assembled, values spliced (the record's
 /// fields are all envelope-class text and integers).
 fn push_record(body: &mut String, record: &crate::control::DatabaseRecord) {
@@ -568,6 +899,8 @@ mod tests {
             metrics: Arc::new(MetricsRegistry::new()),
             keys: None,
             control: None,
+            catalog: None,
+            scope: ("terrabase-local".into(), "local".into()),
         })
     }
 
@@ -579,10 +912,18 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "terrabase-api-test-{}-{}",
             std::process::id(),
-            line!()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_nanos())
         ));
         std::fs::create_dir_all(&dir).expect("test root");
         let control = ControlPlane::open(&dir).expect("control plane opens");
+        let catalog = terrabase_tbep::catalog::HostCatalog::open(
+            &dir.join("data"),
+            8,
+            std::time::Duration::from_secs(3_600),
+        )
+        .expect("catalog opens");
         Arc::new(ApiState {
             region: RegionCode::GRU,
             metrics: Arc::new(MetricsRegistry::new()),
@@ -592,6 +933,8 @@ mod tests {
                 Scope::every_database(Verbs::ALL),
             )]))),
             control: Some(Arc::new(control)),
+            catalog: Some(Arc::new(catalog)),
+            scope: ("terrabase-local".into(), "local".into()),
         })
     }
 
@@ -725,6 +1068,101 @@ mod tests {
             .await
             .expect("answers");
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn documents_lifecycle_with_etag_and_304_without_reading_the_body() {
+        use axum::body::Body;
+        use axum::http::Request;
+        let auth = "authorization";
+        let key = "Bearer tskey_test_abcdefghijklmnop";
+        let document_path = "/api/v1/databases/prod/collections/users/documents/doc-1";
+        let router = router(state_with_keys_and_control());
+        // The database must exist before its documents route serves it.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header(auth, key)
+                    .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        // PUT creates.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::put(document_path)
+                    .header(auth, key)
+                    .body(Body::from(r#"{"kind":"user","name":"Ada"}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK, "the put commits");
+        let put_body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
+        let put_body = String::from_utf8(put_body.to_vec()).expect("utf-8");
+        assert!(put_body.contains("revision"), "{put_body}");
+        // GET answers with an ETag.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get(document_path).header(auth, key).body(Body::empty()).expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let etag = response
+            .headers()
+            .get("etag")
+            .and_then(|value| value.to_str().ok())
+            .expect("the etag names the revision")
+            .to_owned();
+        let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("\"kind\":\"user\""), "the body round-trips: {body}");
+        // If-None-Match with the served ETag answers 304 — the revision
+        // column answered, the body blob was never decoded (S-03 gate).
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get(document_path)
+                    .header(auth, key)
+                    .header("if-none-match", etag.as_str())
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        let not_modified_body =
+            axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
+        assert!(not_modified_body.is_empty(), "a 304 carries no body");
+        // DELETE tombstones; the GET answers 404 with the envelope.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::delete(document_path)
+                    .header(auth, key)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get(document_path).header(auth, key).body(Body::empty()).expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("\"fix\":\""), "{body}");
     }
 
     #[tokio::test]

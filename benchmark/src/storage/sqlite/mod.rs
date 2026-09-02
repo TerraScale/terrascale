@@ -1480,6 +1480,33 @@ impl StoragePort for SqliteStorage {
             .and_then(|(_, body)| decode_document_body(&body))
     }
 
+    fn document_revision_in_collection_at(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        id: &DocumentId,
+    ) -> Option<String> {
+        let reader = self.reader();
+        let connection = reader.connection();
+        connection
+            .query_row(
+                "SELECT deleted, revision FROM documents
+                 WHERE tenant = ?1 AND collection = ?2 AND id = ?3 AND commit_seq <= ?4
+                 ORDER BY commit_seq DESC LIMIT 1",
+                rusqlite::params![
+                    tenant.as_str(),
+                    collection.as_str(),
+                    id.as_str(),
+                    sequence.get() as i64
+                ],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .ok()
+            .filter(|(deleted, _)| *deleted == 0)
+            .map(|(_, revision)| revision)
+    }
+
     fn documents_at(&self, sequence: StorageSequence, tenant: &TenantId) -> Vec<Document> {
         let reader = self.reader();
         let Ok(mut statement) = connection_statement(

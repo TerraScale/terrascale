@@ -2057,6 +2057,46 @@ impl Transaction<'_> {
         ))
     }
 
+    /// Returns one document's public revision (`<seq>-<version>`) at the
+    /// read snapshot without reading its body — the `If-None-Match`
+    /// answer. The body blob is never decoded on this path (`S-03`: a 304
+    /// costs one revision-column probe). A staged write inside this
+    /// transaction answers with the staged document's would-be revision.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::StorageFailure`] when storage cannot be
+    /// reached.
+    pub fn revision_in_collection(
+        &self,
+        collection: &CollectionName,
+        id: &DocumentId,
+    ) -> Result<Option<String>, EngineError> {
+        for write in self.writes.iter().rev() {
+            if write.document_id() != id {
+                continue;
+            }
+            match write {
+                StagedWrite::Put { document, .. } if document.collection() == collection => {
+                    let version = document.metadata().version().max(1);
+                    let sequence = self.snapshot_sequence.get().saturating_add(1);
+                    return Ok(Some(format!("{sequence}-{version}")));
+                }
+                StagedWrite::Delete { collection: Some(staged), .. } if staged == collection => {
+                    return Ok(None);
+                }
+                _ => {}
+            }
+        }
+        let storage = self.engine.lock_storage()?;
+        Ok(storage.port.document_revision_in_collection_at(
+            self.snapshot_sequence,
+            self.scope.tenant(),
+            collection,
+            id,
+        ))
+    }
+
     /// Stages one document mutation.
     ///
     /// # Errors

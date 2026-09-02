@@ -179,6 +179,21 @@ pub(crate) trait StoragePort: Send {
         id: &DocumentId,
     ) -> Option<Document>;
 
+    /// Returns one document's public revision string (`seq-version`) at
+    /// the given read snapshot without reading its body — the
+    /// `If-None-Match` answer (`S-03`: a 304 must not decode the body
+    /// blob). `None` when no live version of the key exists at the
+    /// snapshot.
+    fn document_revision_in_collection_at(
+        &self,
+        _sequence: StorageSequence,
+        _tenant: &TenantId,
+        _collection: &CollectionName,
+        _id: &DocumentId,
+    ) -> Option<String> {
+        None
+    }
+
     /// Returns every document of one tenant as the given read snapshot
     /// observed them, in canonical key order.
     fn documents_at(&self, sequence: StorageSequence, tenant: &TenantId) -> Vec<Document>;
