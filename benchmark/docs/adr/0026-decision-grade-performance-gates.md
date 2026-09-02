@@ -10,7 +10,7 @@ authority: ../../../GOAL.md
 
 The Rust driver under `bench/`, its engine-side verdict code under
 `src/benchmarks/`, and the running Markdown history under
-`docs/evidence/benchmarks/` are the sole repository authority for product
+the benchmark receipts under `bench/` are the sole repository authority for product
 performance claims. A local timing, microbenchmark, profiler result, simulator
 run, development LXC run, or unreviewed receipt is diagnostic evidence only.
 

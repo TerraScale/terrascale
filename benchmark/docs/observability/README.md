@@ -31,10 +31,6 @@ private-network policy, retention, and alert delivery.
 | `terrabase_storage_errors_total` | counter | `tier`, `operation` | Storage errors classified without paths or error text. |
 | `terrabase_active_members` | gauge | `region` | Active admitted Members by Region. |
 | `terrabase_component_health` | gauge | `component` | `1` healthy, `0.5` degraded, `0` unhealthy, `-1` unknown or unconfigured. |
-| `terrabase_compaction_backlog_bytes` | gauge | `tier` | Bytes awaiting compaction. |
-| `terrabase_compaction_runs_total` | counter | `outcome` | Successful and failed compaction runs. |
-| `terrabase_compaction_input_bytes_total` | counter | none | Bytes read by compaction. |
-| `terrabase_compaction_output_bytes_total` | counter | none | Bytes written by compaction. |
 | `terrabase_backup_last_success_age_seconds` | gauge | `mode` | Age of the last verified successful backup. |
 | `terrabase_backup_runs_total` | counter | `mode`, `outcome` | Successful and failed backup runs. |
 | `terrabase_usage_export_frontier` | gauge | none | Last exported authoritative usage sequence frontier. |
@@ -45,16 +41,16 @@ aggregate for incomplete or invalid topology observations. Input is not
 normalized, so lowercase values, provider names, aliases, and malformed codes
 cannot become labels. Operations, outcomes, tiers, and components are closed
 enums in the Rust API. The values are `read`, `write`, `query`, `subscribe`,
-`backup`, `restore`, `repair`, `compaction`, `other` for operations;
+`backup`, `restore`, `repair`, `other` for operations;
 `success`, `error`, `rejected`, `timeout` for outcomes; `tier1`, `tier2`,
 `tier3` for storage; and `storage`, `replication`, `membership`,
 `control_plane`, `backup`, `metrics` for components. Admission reasons are
 `capacity`, `concurrency`, `queue_full`, `deadline`, `not_serving`, and `other`.
-Queues are `foreground`, `commit`, `replication`, `compaction`, `backup`, and
+Queues are `foreground`, `commit`, `replication`, `backup`, and
 `usage_export`. Background outcomes are `success` and `error`. Commit outcomes
 are `committed`, `refused`, `failed`, and `unknown`. Backup modes are `full`,
 `incremental`, and `continuous`. Storage operations are `read`, `write`,
-`flush`, `compaction`, and `other`.
+`flush`, and `other`.
 
 `storage`, `replication`, and `membership` are the post-admission readiness
 requirements. Control-plane loss remains visible but does not evacuate an
@@ -86,7 +82,6 @@ Prometheus calculates operator views from raw cumulative facts. A sampled
 | Storage change over 24 hours | `sum(terrabase_storage_bytes) - sum(terrabase_storage_bytes offset 24h)` |
 | Worst replication lag by Region | `max by (region) (terrabase_replication_lag_seconds)` |
 | Storage errors per second | `sum by (tier, operation) (rate(terrabase_storage_errors_total[5m]))` |
-| Compaction input rate | `rate(terrabase_compaction_input_bytes_total[5m])` |
 | Backup failures per second | `sum by (mode) (rate(terrabase_backup_runs_total{outcome="error"}[5m]))` |
 
 The checked-in Grafana dashboard uses `$__rate_interval` instead of a fixed

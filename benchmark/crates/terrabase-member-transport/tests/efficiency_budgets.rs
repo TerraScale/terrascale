@@ -6,7 +6,7 @@
 //! heap allocations, queue depths — not wall-clock timings, so a value
 //! reported twice from the same source identity is the same number.
 //! Nothing here is a performance claim; the receipts under
-//! `docs/evidence/benchmarks/` record the runs and use the charter's exact
+//! `bench/RESULTS.md/` record the runs and use the charter's exact
 //! verdict vocabulary.
 
 use std::alloc::{GlobalAlloc, Layout, System};

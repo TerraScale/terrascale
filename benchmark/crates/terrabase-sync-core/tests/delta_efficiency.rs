@@ -5,7 +5,7 @@
 //! The measured quantities are deterministic counters — batch bytes,
 //! utilization ratios, and heap-allocation counts — not wall-clock
 //! timings. Nothing here is a performance claim; the receipts under
-//! `docs/evidence/benchmarks/` record the runs and their verdicts in the
+//! `bench/benchmarks/` record the runs and their verdicts in the
 //! charter's exact vocabulary.
 
 use std::alloc::{GlobalAlloc, Layout, System};

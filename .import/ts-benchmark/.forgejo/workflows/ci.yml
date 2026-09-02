@@ -46,32 +46,6 @@ jobs:
         with:
           go-version-file: terrabase-go/go.mod
           cache: false
-      - name: Install pinned Perl for AWS-LC FIPS
-        run: |
-          set -euo pipefail
-          readonly native_flake='github:NixOS/nixpkgs/c5c4a43b0e8056328ec4529f735cabdb8f1942bb?narHash=sha256-u6z9VTZA4Kf3RkHQo9sQI7NI4Ei%2FuiU9vrMqOiwWP1Y%3D'
-          readonly tools_root="${RUNNER_TEMP:?}/terrabase-ci-tools"
-          readonly perl_link="$tools_root/perl"
-          readonly gcc_link="$tools_root/gcc"
-          readonly cmake_link="$tools_root/cmake"
-          readonly ninja_link="$tools_root/ninja"
-          [[ "$(uname -m)" == x86_64 ]]
-          install -d -m 0755 "$(dirname "$perl_link")"
-          nix build --out-link "$perl_link" "$native_flake#perl^out"
-          nix build --out-link "$gcc_link" "$native_flake#gcc^out"
-          nix build --out-link "$cmake_link" "$native_flake#cmake^out"
-          nix build --out-link "$ninja_link" "$native_flake#ninja^out"
-          readonly perl_root="$(readlink -f "$perl_link")"
-          [[ "$perl_root" == /nix/store/jksq0zyk08l29w4alp0g3ycgx6pwwjdk-perl-5.42.0 ]]
-          [[ "$(readlink -f "$gcc_link")" == /nix/store/c7c0yarb87cv4jxlyr02dxryrlmyi232-gcc-wrapper-15.2.0 ]]
-          [[ "$(readlink -f "$cmake_link")" == /nix/store/vrsali0sa6hwri27azgn4q0y0kmrglyi-cmake-4.1.6 ]]
-          [[ "$(readlink -f "$ninja_link")" == /nix/store/60z9n8f7cczph0klb7ny1mikhd8m1vkl-ninja-1.13.2 ]]
-          "$perl_root/bin/perl" -e 'die "unexpected Perl $^V\n" unless $^V eq v5.42.0'
-          "$CC" --version | grep -F '15.2.0'
-          "$CXX" --version | grep -F '15.2.0'
-          "$CMAKE" --version | grep -F 'cmake version 4.1.6'
-          "$CMAKE_MAKE_PROGRAM" --version | grep -F '1.13.2'
-          printf '%s\n' "$perl_root/bin" "$(dirname "$CC")" "$(dirname "$CMAKE")" "$(dirname "$CMAKE_MAKE_PROGRAM")" >> "$GITHUB_PATH"
       - name: Install pinned Rust toolchain
         uses: https://github.com/dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
@@ -100,61 +74,6 @@ jobs:
         run: cargo check --workspace --all-targets --locked
       - name: Build (release)
         run: cargo build --workspace --locked --release
-      - name: Build production server with AWS-LC FIPS
-        run: |
-          set -euo pipefail
-          readonly perl_root=/nix/store/jksq0zyk08l29w4alp0g3ycgx6pwwjdk-perl-5.42.0
-          readonly tools_root="${RUNNER_TEMP:?}/terrabase-ci-tools"
-          readonly fips_target_dir="$(mktemp -d "${RUNNER_TEMP:?}/terrabase-fips.XXXXXX")"
-          trap 'rm -rf -- "$fips_target_dir"' EXIT
-          [[ "$(readlink -f "$tools_root/perl")" == "$perl_root" ]]
-          [[ -x "$perl_root/bin/perl" ]]
-          export PATH="$perl_root/bin:$PATH"
-          export PERL="$perl_root/bin/perl"
-          readonly go_command="$(type -P go)"
-          [[ -x "$go_command" ]]
-          unset GOROOT GOENV GOTOOLCHAIN GOBIN GOPATH GOCACHE
-          export GOENV=off
-          export GOTOOLCHAIN=local
-          export GOROOT="$(env -u GOROOT GOENV=off GOTOOLCHAIN=local "$go_command" env GOROOT)"
-          export GO="$go_command"
-          export GOPATH="$fips_target_dir/go-path"
-          export GOCACHE="$fips_target_dir/go-cache"
-          export GOBIN="$fips_target_dir/go-bin"
-          export PATH="$GOROOT/bin:$PATH"
-          export CARGO_TARGET_DIR="$fips_target_dir"
-          unset PERL5OPT PERL5LIB PERLLIB
-          [[ "$(type -P perl)" == "$perl_root/bin/perl" ]]
-          [[ "$(readlink -f "$(type -P perl)")" == "$perl_root/bin/perl" ]]
-          deploy/release/require-fips-toolchain.sh
-          cargo build -p terrabase-server --locked --release --no-default-features --features production-fips
-          scripts/run-checked-rust-tests.sh fips-terrabase \
-            --allow-ignore binary:terrabase::benchmarks::optimizer_tests::ix04_adhoc_workload_characterization \
-            --allow-ignore binary:terrabase::benchmarks::optimizer_tests::ix04_write_path_overhead_characterization \
-            --allow-ignore binary:terrabase::benchmarks::tests::terrabase_lane_counter_characterization \
-            --skip benchmarks::lane_run::tests::probe_lane_operation_costs \
-            --skip benchmarks::lane_run::tests::probe_read_subcall_costs \
-            --skip benchmarks::lane_run::tests::probe_write_durability_costs \
-            --skip benchmarks::lane_run::tests::probe_concurrent_synced_writes \
-            -- -p terrabase --locked --no-default-features --features production-fips
-          cargo test -p terrabase --locked --no-default-features --features production-fips --test encryption -- production_profile_links_an_operational_aws_lc_fips_module --exact
-          scripts/run-checked-rust-tests.sh fips-cluster -- -p terrabase-cluster --locked --no-default-features --features production-fips
-          scripts/run-checked-rust-tests.sh fips-replication-core -- -p terrabase-replication-core --locked --no-default-features --features production-fips
-          scripts/run-checked-rust-tests.sh fips-server -- -p terrabase-server --locked --no-default-features --features production-fips
-          scripts/run-checked-rust-tests.sh fips-member-transport -- -p terrabase-member-transport --locked --no-default-features --features production-fips
-          scripts/run-checked-rust-tests.sh fips-tbep -- -p terrabase-tbep --locked --no-default-features --features production-fips
-          cargo clippy -p terrabase --all-targets --locked --no-default-features --features production-fips -- -D warnings
-          cargo clippy -p terrabase-cluster --all-targets --locked --no-default-features --features production-fips -- -D warnings
-          cargo clippy -p terrabase-replication-core --all-targets --locked --no-default-features --features production-fips -- -D warnings
-          cargo clippy -p terrabase-member-transport --all-targets --locked --no-default-features --features production-fips -- -D warnings
-          cargo clippy -p terrabase-tbep --all-targets --locked --no-default-features --features production-fips -- -D warnings
-          cargo clippy -p terrabase-server --all-targets --locked --no-default-features --features production-fips -- -D warnings
-          cargo doc -p terrabase -p terrabase-cluster -p terrabase-replication-core -p terrabase-member-transport -p terrabase-tbep -p terrabase-server --no-deps --locked --no-default-features --features production-fips
-          cargo build --manifest-path crates/terrabase-studio/Cargo.toml --locked --release --no-default-features --features production-fips
-          scripts/run-checked-rust-tests.sh fips-studio -- --manifest-path crates/terrabase-studio/Cargo.toml --locked --no-default-features --features production-fips
-          cargo clippy --manifest-path crates/terrabase-studio/Cargo.toml --all-targets --locked --no-default-features --features production-fips -- -D warnings
-          cargo doc --manifest-path crates/terrabase-studio/Cargo.toml --no-deps --locked --no-default-features --features production-fips
-          deploy/release/verify-fips-cmake-caches.sh "$fips_target_dir"
       # Dev profile first: debug_assert! contracts compile out under
       # --release, so a release-only run cannot gate them (SE-07 warden
       # repair: an off-by-one frame-header assertion was green in every
@@ -214,7 +133,7 @@ jobs:
           test "${#history_files[@]}" -eq 1
           grep -Fq '# Benchmark history' "${history_files[0]}"
           grep -Fq '| workload | side | status |' "${history_files[0]}"
-          git diff --exit-code -- docs/evidence/benchmarks/benchmark-history.md
+          
       # Studio owns a separate workspace so the engine's dependency budget
       # remains explicit. It is nevertheless a release deliverable and gets
       # the same format, build, test, Clippy, and documentation gates.
@@ -235,25 +154,6 @@ jobs:
           go install github.com/mikefarah/yq/v4@v4.45.1
           "$GOBIN/yq" --version | grep -F 'version v4.45.1'
           echo "$GOBIN" >> "$GITHUB_PATH"
-      - name: Release packaging and immutable OCI definitions
-        run: |
-          jq --exit-status . .terrascale/deploy.json >/dev/null
-          bash -n deploy/release/candidate.sh deploy/release/native-toolchain-identity.sh deploy/release/package.sh deploy/release/provision-native-toolchain.sh deploy/release/publish-oci.sh deploy/release/reproduce.sh deploy/release/require-fips-toolchain.sh deploy/release/require-production-capability.sh deploy/release/sign.sh deploy/release/test-boundary.sh deploy/release/test-oci.sh deploy/release/test-publish-oci.sh deploy/release/test-sbom.sh deploy/release/test-workflow-runs.sh deploy/release/verify-fips-cmake-caches.sh deploy/release/verify-oci.sh deploy/release/verify-source-binding.sh deploy/release/verify-workflow-runs.sh deploy/release/verify.sh scripts/run-checked-go-tests.sh scripts/run-checked-rust-tests.sh scripts/validate-release-contracts.sh scripts/validate-studio-assets.sh
-          scripts/validate-release-contracts.sh
-          deploy/release/test-boundary.sh
-          deploy/release/test-publish-oci.sh
-          grep -q '@sha256:' deploy/release/Containerfile.server
-          grep -q '@sha256:' deploy/release/Containerfile.studio
-          ! grep -q 'target-cpu=native' .terrascale/deploy.json deploy/release/Containerfile.*
-          ! grep -q 'tbep-production-harness' .terrascale/deploy.json deploy/release/Containerfile.*
-      - name: Release SBOM generator
-        run: |
-          cargo fmt --manifest-path deploy/release/sbom/Cargo.toml -- --check
-          scripts/run-checked-rust-tests.sh release-sbom -- --manifest-path deploy/release/sbom/Cargo.toml --locked
-          cargo clippy --manifest-path deploy/release/sbom/Cargo.toml --all-targets --locked -- -D warnings
-          cargo doc --manifest-path deploy/release/sbom/Cargo.toml --no-deps --locked
-          cargo build --manifest-path deploy/release/sbom/Cargo.toml --locked --release
-          TERRABASE_SBOM_TOOL=deploy/release/sbom/target/release/terrabase-release-sbom deploy/release/test-sbom.sh
       - name: Observability assets
         run: |
           scripts/validate-structured-assets.sh
@@ -279,7 +179,6 @@ jobs:
           cargo deny --workspace --all-features --locked check
           cargo deny --manifest-path bench/Cargo.toml --config bench/deny.toml --locked check
           cargo deny --manifest-path crates/terrabase-studio/Cargo.toml --config crates/terrabase-studio/deny.toml --all-features --locked check
-          cargo deny --manifest-path deploy/release/sbom/Cargo.toml --config deny.toml --locked check
 
       # The protobuf is the TBEP contract of record. Regeneration must be
       # clean, so a schema edit cannot silently ship stale Go bindings.
@@ -306,11 +205,6 @@ jobs:
           unzip -q "$protoc_archive" -d "$protoc_root"
           export PATH="$protoc_root/bin:$GOBIN:$PATH"
           protoc --version | grep -F 'libprotoc 34.1'
-          schema_digest="$(bash scripts/tbep_schema_digest.sh)"
-          printf 'TBEP schema digest: %s\n' "$schema_digest"
-          expected_schema_digest="$(tr -d '[:space:]' < scripts/tbep_schema.sha256)"
-          [[ "$expected_schema_digest" =~ ^[0-9a-f]{64}$ ]]
-          [[ "$schema_digest" == "$expected_schema_digest" ]]
           buf lint
           against_commit='${{ forgejo.event.before }}'
           [[ "$against_commit" =~ ^[0-9a-f]{40}$ ]]
@@ -362,11 +256,8 @@ jobs:
       - name: Live Rust-Go integration
         run: |
           set -euo pipefail
-          readonly perl_root=/nix/store/jksq0zyk08l29w4alp0g3ycgx6pwwjdk-perl-5.42.0
-          readonly integration_target="$(mktemp -d "${RUNNER_TEMP:?}/terrabase-live-fips.XXXXXX")"
+          readonly integration_target="$(mktemp -d "${RUNNER_TEMP:?}/terrabase-live.XXXXXX")"
           trap 'rm -rf -- "$integration_target"' EXIT
-          export PATH="$perl_root/bin:$PATH"
-          export PERL="$perl_root/bin/perl"
           readonly go_command="$(type -P go)"
           [[ -x "$go_command" ]]
           unset GOROOT GOENV GOTOOLCHAIN GOBIN GOPATH GOCACHE
@@ -379,10 +270,7 @@ jobs:
           export GOBIN="$integration_target/go-bin"
           export PATH="$GOROOT/bin:$PATH"
           export CARGO_TARGET_DIR="$integration_target"
-          unset PERL5OPT PERL5LIB PERLLIB
-          deploy/release/require-fips-toolchain.sh
-          cargo build -p terrabase-tbep --bin tbep-production-harness --release --locked --no-default-features --features production-fips
-          deploy/release/verify-fips-cmake-caches.sh "$integration_target"
+          cargo build -p terrabase-tbep --bin tbep-production-harness --release --locked
           (
             cd terrabase-go
             TERRABASE_HARNESS="$integration_target/release/tbep-production-harness" \

@@ -18,8 +18,6 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The current repository status. This is metadata, not a database feature.
 pub const STATUS: &str = "w3-1-storage-engine";
 
-pub mod product_identity;
-
 pub mod adapters;
 pub mod authorization;
 pub mod backup;

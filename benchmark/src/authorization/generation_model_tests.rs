@@ -1,6 +1,6 @@
 //! Bounded-exhaustive model of authorization GENERATION transitions
 //! — qualification gap-sweep row 19
-//! (`docs/evidence/qualification-gap-sweep.md`), GOAL.md
+//! GOAL.md
 //! "Correctness and simulation": authorization generation
 //! transitions require model-based or formal state-machine checking
 //! in addition to ordinary tests.
@@ -9,7 +9,7 @@
 //! publication, [`PrincipalContext`] verification pins, and
 //! [`evaluate`] — through every interleaving of grant/revoke
 //! publication, principal re-verification, clock ticks, and reads, up
-//! to the bounds recorded in `docs/evidence/model-checking-lane.md`.
+//! to the bounds of the model-checking corpus.
 //! The publication and read steps are the real API; only the
 //! exploration driver is local (a `src/` unit test cannot import the
 //! cluster crate's integration-test checker, so a minimal DFS lives

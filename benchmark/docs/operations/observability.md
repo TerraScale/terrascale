@@ -31,7 +31,7 @@ template. Do not route it through the public Go gateway.
 The production registry reports request counters and latency histograms,
 in-flight work, admission refusals, queue saturation, WAL and commit outcomes,
 storage usage and finite capacity, storage errors, replication lag and
-backlog, active Members, compaction, backup freshness, usage publication,
+active Members, backup freshness, usage publication,
 component health, liveness, startup, and readiness. Prometheus derives these
 operator views:
 
@@ -54,7 +54,7 @@ combining unrelated deployments makes totals misleading.
 
 The starting alerts live in
 `deploy/observability/prometheus-rules.yml`. Review their error, latency,
-saturation, durability, replication, Member, storage, compaction, backup, and
+saturation, durability, replication, Member, storage, backup, and
 usage-export thresholds against the admitted topology and ADR 0033 before
 production. A missing storage-capacity series is an instrumentation gap, not
 evidence of unlimited headroom.

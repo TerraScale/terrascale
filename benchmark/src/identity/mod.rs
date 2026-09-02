@@ -7,7 +7,7 @@
 //! engine's persisted-format migration to ULID keys: ADR 0031's activation
 //! rules govern format changes, and **no existing storage, WAL, manifest,
 //! checkpoint, or protocol format changed in this lane** — every persisted
-//! byte identity recorded in [`crate::product_identity`] is untouched. No
+//!  No
 //! existing engine call site was rewritten to the new types either: this
 //! module is the identity foundation callers adopt per the ADR, not a
 //! migration.

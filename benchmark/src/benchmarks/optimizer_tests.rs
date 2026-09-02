@@ -535,7 +535,7 @@ fn the_receipts_render_the_discipline_lines() {
 }
 
 /// The deterministic counters of the ad-hoc class, run for real and
-/// transcribed into `docs/evidence/benchmarks/ix04-auto-index-adhoc-receipt.md`.
+/// transcribed into the benchmark receipts.
 ///
 /// Ignored by default, exactly like the SE-15 characterization: it is a lane
 /// run, not a gate, and it writes enough durable data that it does not
@@ -583,7 +583,7 @@ fn ix04_adhoc_workload_characterization() {
 }
 
 /// The write-path overhead characterization, run for real and transcribed
-/// into `docs/evidence/benchmarks/ix04-write-path-overhead-receipt.md`.
+/// into `bench receipts/ix04-write-path-overhead-receipt.md`.
 #[test]
 #[ignore = "a lane characterization, not a gate; run with --ignored --nocapture"]
 fn ix04_write_path_overhead_characterization() {

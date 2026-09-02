@@ -32,7 +32,7 @@ cargo deny check
 CI owns the full gate (`.forgejo/workflows/ci.yml`). Storage, durability,
 replication, compaction, backup, and recovery changes also require the
 exclusive recovery lane and a secret-safe Recovery Receipt. Performance
-claims require a lane receipt under `docs/evidence/benchmarks/` produced by
+claims require a lane receipt under `/benchmarks/` produced by
 the engine-side adapter (`src/benchmarks/`) with both pinned references run.
 
 Production paths must support asynchronous I/O and bounded multithreaded CPU
