@@ -330,7 +330,7 @@ pub fn router(state: Arc<ApiState>) -> Router {
         .route("/api/v1/databases/{name}/collections/{collection}/documents", get(list_documents))
         .route(
             "/api/v1/databases/{name}/collections/{collection}/documents/{id}",
-            get(get_document).put(put_document).delete(delete_document),
+            get(get_document).put(put_document).patch(patch_document).delete(delete_document),
         )
         .fallback(not_routed)
         .layer(from_fn_with_state(Arc::clone(&state), authenticate))
@@ -618,6 +618,85 @@ struct DocumentPaging {
     after: Option<String>,
 }
 
+/// The request's durability class (D-34): `regional` acknowledges the
+/// local write, `global` waits for the replicated sync point. The header
+/// is optional; `regional` is the default.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Durability {
+    /// The local region's acknowledgement (`Written`).
+    Regional,
+    /// The replicated acknowledgement (`Synced`).
+    Global,
+}
+
+impl Durability {
+    /// Parses the `X-TerraScale-Durability` header, defaulting to
+    /// `regional`.
+    fn of_header(headers: &axum::http::HeaderMap) -> Result<Self, ApiError> {
+        match headers.get("x-terrascale-durability") {
+            None => Ok(Self::Regional),
+            Some(value) => match value.to_str().ok() {
+                Some("regional") => Ok(Self::Regional),
+                Some("global") => Ok(Self::Global),
+                _ => Err(ApiError {
+                    status: StatusCode::BAD_REQUEST,
+                    code: "invalid_durability",
+                    message: "X-TerraScale-Durability must be regional or global".into(),
+                    fix: "send X-TerraScale-Durability: regional or global, or omit it".into(),
+                    placement: None,
+                }),
+            },
+        }
+    }
+
+    fn level(self) -> LocalDurability {
+        match self {
+            Self::Regional => LocalDurability::Written,
+            Self::Global => LocalDurability::Synced,
+        }
+    }
+}
+
+/// The write request's operation identity. An idempotency key names the
+/// operation outright (the engine binds an operation identity durably to
+/// its write set, so a retried key replays the original receipt and a
+/// reused key with a different body is refused); without one, each
+/// request mints a fresh identity.
+fn has_idempotency_key(headers: &axum::http::HeaderMap) -> bool {
+    headers.get("idempotency-key").is_some()
+}
+
+fn write_operation(headers: &axum::http::HeaderMap, kind: &str) -> Result<OperationId, ApiError> {
+    let identity = match headers.get("idempotency-key").and_then(|value| value.to_str().ok()) {
+        Some(key) => format!("{kind}-idem-{key}"),
+        None => format!("{kind}-{}", unix_millis_nanos()),
+    };
+    OperationId::try_new(identity.as_str()).map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "invalid_idempotency_key",
+        message: "the idempotency key is not a valid operation identity".into(),
+        fix: "send a short printable key; retries must repeat it exactly".into(),
+        placement: None,
+    })
+}
+
+/// RFC 7386 JSON merge patch over the engine's value model: objects
+/// merge per field, `null` deletes a field, anything else replaces.
+fn merge_patch(base: &mut DocumentValue, patch: &DocumentValue) {
+    match (base, patch) {
+        (DocumentValue::Object(fields), DocumentValue::Object(patch_fields)) => {
+            for (name, item) in patch_fields {
+                if matches!(item, DocumentValue::Null) {
+                    fields.remove(name);
+                } else {
+                    merge_patch(fields.entry(name.clone()).or_insert(DocumentValue::Null), item);
+                }
+            }
+        }
+        (slot, patch) => *slot = patch.clone(),
+    }
+}
+
 /// One document's route context: the host engine for the named database.
 fn document_host(
     state: &ApiState,
@@ -718,6 +797,7 @@ async fn get_document(
 async fn put_document(
     State(state): State<Arc<ApiState>>,
     Path((name, collection, id)): Path<(String, String, String)>,
+    headers: axum::http::HeaderMap,
     body: String,
 ) -> Response {
     let Ok(host) = document_host(&state, &name) else {
@@ -750,17 +830,29 @@ async fn put_document(
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
         return ApiError::control_unavailable().into_response();
     };
-    let Ok(operation) = OperationId::try_new(format!("api-put-{}", unix_millis_nanos()).as_str())
-    else {
-        return ApiError::control_unavailable().into_response();
+    let operation = match write_operation(&headers, "api-put") {
+        Ok(operation) => operation,
+        Err(error) => return error.into_response(),
+    };
+    let durability = match Durability::of_header(&headers) {
+        Ok(durability) => durability.level(),
+        Err(error) => return error.into_response(),
     };
     let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
         return ApiError::control_unavailable().into_response();
     };
-    let expected = match transaction.read_in_collection(document.collection(), document.id()) {
-        Ok(Some(existing)) => ExpectedVersion::Exact(existing.metadata().version()),
-        Ok(None) => ExpectedVersion::New,
-        Err(_) => return ApiError::control_unavailable().into_response(),
+    // With an idempotency key the logical request is the body: the expected
+    // clause is Any so a retry replays the original receipt (the engine's
+    // digest binds the op id to the write set). Without a key, optimistic
+    // concurrency: the current version must still hold.
+    let expected = if has_idempotency_key(&headers) {
+        ExpectedVersion::Any
+    } else {
+        match transaction.read_in_collection(document.collection(), document.id()) {
+            Ok(Some(existing)) => ExpectedVersion::Exact(existing.metadata().version()),
+            Ok(None) => ExpectedVersion::New,
+            Err(_) => return ApiError::control_unavailable().into_response(),
+        }
     };
     if let Err(reason) = transaction.put(document, expected) {
         return ApiError {
@@ -772,7 +864,7 @@ async fn put_document(
         }
         .into_response();
     }
-    match transaction.commit(LocalDurability::Synced) {
+    match transaction.commit(durability) {
         CommitOutcome::Committed(receipt) => {
             let revision = format!("{}-1", receipt.sequence().get());
             let mut response =
@@ -801,10 +893,109 @@ async fn put_document(
     }
 }
 
+/// RFC 7386 merge patch over one document: objects merge per field,
+/// `null` deletes a field, anything else replaces the whole value. The
+/// read-modify-write is one engine transaction against the snapshot.
+async fn patch_document(
+    State(state): State<Arc<ApiState>>,
+    Path((name, collection, id)): Path<(String, String, String)>,
+    headers: axum::http::HeaderMap,
+    body: String,
+) -> Response {
+    let Ok(host) = document_host(&state, &name) else {
+        return ApiError::database_not_found(&name).into_response();
+    };
+    let engine = host.engine();
+    let Ok(scope) = document_scope(engine) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let Ok(collection) = CollectionName::try_new(&collection) else {
+        return invalid_identifier("collection name", &collection).into_response();
+    };
+    let Ok(id) = DocumentId::try_new(&id) else {
+        return invalid_identifier("document identifier", &id).into_response();
+    };
+    let value: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            return ApiError {
+                status: StatusCode::BAD_REQUEST,
+                code: "invalid_json",
+                message: "the request body is not a JSON merge patch".into(),
+                fix: "send an object whose fields merge into the document".into(),
+                placement: None,
+            }
+            .into_response();
+        }
+    };
+    let operation = match write_operation(&headers, "api-patch") {
+        Ok(operation) => operation,
+        Err(error) => return error.into_response(),
+    };
+    let durability = match Durability::of_header(&headers) {
+        Ok(durability) => durability.level(),
+        Err(error) => return error.into_response(),
+    };
+    let Ok(snapshot) = engine.read_snapshot(&scope) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let existing = match transaction.read_in_collection(&collection, &id) {
+        Ok(Some(existing)) => existing,
+        Ok(None) => {
+            return document_not_found(collection.as_str(), id.as_str()).into_response();
+        }
+        Err(_) => return ApiError::control_unavailable().into_response(),
+    };
+    let mut merged = existing.value().clone();
+    merge_patch(&mut merged, &json_value(&value));
+    let patched = Document::new(id, collection, merged);
+    // The merge base is snapshot state, not the logical request: with an
+    // idempotency key the expected clause is Any so an unchanged-state
+    // retry replays; without one the base version must hold.
+    let expected = if has_idempotency_key(&headers) {
+        ExpectedVersion::Any
+    } else {
+        ExpectedVersion::Exact(existing.metadata().version())
+    };
+    if let Err(reason) = transaction.put(patched, expected) {
+        return ApiError {
+            status: StatusCode::CONFLICT,
+            code: "version_conflict",
+            message: format!("the document changed under the request: {reason:?}"),
+            fix: "re-read the document, merge, and retry with the new version".into(),
+            placement: None,
+        }
+        .into_response();
+    }
+    match transaction.commit(durability) {
+        CommitOutcome::Committed(receipt) => {
+            let revision = format!("{}-1", receipt.sequence().get());
+            let mut response =
+                json_response(StatusCode::OK, format!("{{\"revision\":\"{revision}\"}}"));
+            if let Ok(etag) = HeaderValue::from_str(&format!("\"{revision}\"")) {
+                response.headers_mut().insert(axum::http::header::ETAG, etag);
+            }
+            response
+        }
+        _ => ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "commit_failed",
+            message: "the engine did not commit the patch".into(),
+            fix: "re-read to see whether it landed, then retry with a fresh key".into(),
+            placement: None,
+        }
+        .into_response(),
+    }
+}
+
 /// Deletes one document (tombstone; the history route can explain it).
 async fn delete_document(
     State(state): State<Arc<ApiState>>,
     Path((name, collection, id)): Path<(String, String, String)>,
+    headers: axum::http::HeaderMap,
 ) -> Response {
     let Ok(host) = document_host(&state, &name) else {
         return ApiError::database_not_found(&name).into_response();
@@ -822,26 +1013,33 @@ async fn delete_document(
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
         return ApiError::control_unavailable().into_response();
     };
-    let Ok(operation) =
-        OperationId::try_new(format!("api-delete-{}", unix_millis_nanos()).as_str())
-    else {
-        return ApiError::control_unavailable().into_response();
+    let operation = match write_operation(&headers, "api-delete") {
+        Ok(operation) => operation,
+        Err(error) => return error.into_response(),
+    };
+    let durability = match Durability::of_header(&headers) {
+        Ok(durability) => durability.level(),
+        Err(error) => return error.into_response(),
     };
     let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
         return ApiError::control_unavailable().into_response();
     };
-    let expected = match transaction.read_in_collection(&collection, &id) {
-        Ok(Some(existing)) => ExpectedVersion::Exact(existing.metadata().version()),
-        Ok(None) => {
-            return document_not_found(collection.as_str(), id.as_str()).into_response();
+    let expected = if has_idempotency_key(&headers) {
+        ExpectedVersion::Any
+    } else {
+        match transaction.read_in_collection(&collection, &id) {
+            Ok(Some(existing)) => ExpectedVersion::Exact(existing.metadata().version()),
+            Ok(None) => {
+                return document_not_found(collection.as_str(), id.as_str()).into_response();
+            }
+            Err(_) => return ApiError::control_unavailable().into_response(),
         }
-        Err(_) => return ApiError::control_unavailable().into_response(),
     };
     // delete_in_collection stages without a pre-read (the caller owns
     // existence, and this route read the target above); the commit's
     // conflict rejection is the version check.
     transaction.delete_in_collection(&collection, id, expected);
-    match transaction.commit(LocalDurability::Synced) {
+    match transaction.commit(durability) {
         CommitOutcome::Committed(_) => json_response(StatusCode::NO_CONTENT, String::new()),
         _ => ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -1333,6 +1531,123 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
         let body = String::from_utf8(body.to_vec()).expect("utf-8");
         assert!(body.contains("\"grace\"") && !body.contains("\"ada\""), "after pages: {body}");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines, reason = "one route contract, one test")]
+    async fn patch_merges_idempotency_replays_and_durability_is_validated() {
+        use axum::body::Body;
+        use axum::http::Request;
+        let auth = "authorization";
+        let key = "Bearer tskey_test_abcdefghijklmnop";
+        let path = "/api/v1/databases/prod/collections/users/documents/p-1";
+        let router = router(state_with_keys_and_control());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header(auth, key)
+                    .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let response = router
+            .clone()
+            .oneshot(
+                Request::put(path)
+                    .header(auth, key)
+                    .body(Body::from(r#"{"name":"Ada","role":"admin","flags":{"beta":true}}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        // PATCH merges top-level fields and null deletes one.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::patch(path)
+                    .header(auth, key)
+                    .body(Body::from(r#"{"role":null,"name":"Ada Lovelace"}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = router
+            .clone()
+            .oneshot(Request::get(path).header(auth, key).body(Body::empty()).expect("request"))
+            .await
+            .expect("answers");
+        let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("\"Ada Lovelace\""), "the patch replaced the field: {body}");
+        assert!(!body.contains("\"role\""), "null deleted the field: {body}");
+        assert!(body.contains("\"beta\":true"), "untouched fields survive: {body}");
+        // An idempotency key replays the same receipt, not a second write.
+        let first = router
+            .clone()
+            .oneshot(
+                Request::put(path)
+                    .header(auth, key)
+                    .header("idempotency-key", "retry-1")
+                    .header("x-terrascale-durability", "regional")
+                    .body(Body::from(r#"{"name":"Ada Lovelace","flags":{"beta":true}}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        let first_body =
+            axum::body::to_bytes(first.into_body(), 8192).await.expect("body").to_vec();
+        let first_body = String::from_utf8(first_body).expect("utf-8");
+        let replay = router
+            .clone()
+            .oneshot(
+                Request::put(path)
+                    .header(auth, key)
+                    .header("idempotency-key", "retry-1")
+                    .header("x-terrascale-durability", "regional")
+                    .body(Body::from(r#"{"name":"Ada Lovelace","flags":{"beta":true}}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(replay.status(), StatusCode::OK);
+        let replay_body =
+            axum::body::to_bytes(replay.into_body(), 8192).await.expect("body").to_vec();
+        let replay_body = String::from_utf8(replay_body).expect("utf-8");
+        assert_eq!(first_body, replay_body, "the retried key replays the same revision");
+        // The same key with a different body is refused, never applied.
+        let reuse_refused = router
+            .clone()
+            .oneshot(
+                Request::put(path)
+                    .header(auth, key)
+                    .header("idempotency-key", "retry-1")
+                    .body(Body::from(r#"{"name":"someone else"}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(reuse_refused.status(), StatusCode::CONFLICT);
+        // A bad durability header is its own typed error.
+        let refused = router
+            .clone()
+            .oneshot(
+                Request::put(path)
+                    .header(auth, key)
+                    .header("x-terrascale-durability", "quantum")
+                    .body(Body::from(r#"{"n":1}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(refused.into_body(), 4096).await.expect("body").to_vec();
+        let body = String::from_utf8(body).expect("utf-8");
+        assert!(body.contains("invalid_durability"), "{body}");
     }
 
     #[tokio::test]
