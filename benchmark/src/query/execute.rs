@@ -12,7 +12,7 @@
 use std::time::Instant;
 use std::{collections::BTreeMap, collections::BTreeSet, sync::Arc};
 
-use super::spec::StalenessPolicy;
+use super::spec::{QueryCondition, StalenessPolicy};
 use super::{
     GenerationView, NormalizedQuery, QueryError, QueryResult, QueryRow, StalenessMode, model,
     result::{IndexGenerationRef, ObservedGeneration, StaleIndexObservation, StalenessReport},
@@ -21,6 +21,7 @@ use super::{
 use crate::{
     engine::Engine,
     index::{IndexCatalog, IndexLookupBounds, IndexLookupError},
+    storage::{ScanCondition, ScanFilter, ScanOp},
     types::{
         Cancellation, Deadline, Document, DocumentId, DocumentValue, ReadSnapshot, TenantScope,
     },
@@ -554,6 +555,12 @@ fn collect_matches(
 }
 
 /// Scans one source collection in fixed-size immutable snapshot pages.
+///
+/// When the predicate lowers onto extracted index columns with active
+/// descriptors (D-42), the pages come from the pushed-down SQL scan — a
+/// sound narrowing the executor's own predicate still refines — and the
+/// scan falls back to the unfiltered page path when the backend pushes
+/// nothing.
 fn scan_collection(
     engine: &Engine,
     scope: &TenantScope,
@@ -563,6 +570,8 @@ fn scan_collection(
     indexed_ids: Option<&BTreeSet<DocumentId>>,
     retained_capacity: usize,
 ) -> Result<(Vec<Document>, u64, u64, u64), QueryError> {
+    let filter = pushdown_filter(query.predicate());
+    let mut pushdown = filter.is_some();
     let mut after = None;
     let mut matched = Vec::new();
     let mut retained_bytes = 0_usize;
@@ -571,15 +580,35 @@ fn scan_collection(
     let mut skipped = 0_u64;
     loop {
         check_bounds(query.deadline(), query.cancellation_signal())?;
-        let page = engine
-            .snapshot_documents_in_collection_from(
+        let page = if pushdown {
+            match engine.snapshot_documents_in_collection_filtered(
                 scope,
                 snapshot,
                 collection,
-                after,
+                after.clone(),
                 QUERY_SCAN_PAGE,
-            )
-            .map_err(|error| map_engine_error(&error))?;
+                filter.as_ref().expect("pushdown implies a filter"),
+            ) {
+                Ok(Some(page)) => page,
+                // The backend pushed nothing for this filter; take the
+                // unfiltered page path for the rest of the scan.
+                Ok(None) => {
+                    pushdown = false;
+                    continue;
+                }
+                Err(error) => return Err(map_engine_error(&error)),
+            }
+        } else {
+            engine
+                .snapshot_documents_in_collection_from(
+                    scope,
+                    snapshot,
+                    collection,
+                    after,
+                    QUERY_SCAN_PAGE,
+                )
+                .map_err(|error| map_engine_error(&error))?
+        };
         if page.is_empty() {
             break;
         }
@@ -613,6 +642,53 @@ fn scan_collection(
         after = page.last().map(|document| document.id().clone());
     }
     Ok((matched, matched_count, scanned, skipped))
+}
+
+/// Lowers the predicate's pushable conjuncts onto extracted index columns
+/// (D-42): the scalar comparison family over string and number values.
+/// Everything else — presence tests, patterns, membership, booleans, nulls
+/// — stays with the executor's exact predicate, so the pushed filter only
+/// ever narrows.
+fn pushdown_filter(predicate: &super::spec::QueryPredicate) -> Option<ScanFilter> {
+    fn push(conditions: &mut Vec<ScanCondition>, field: &str, op: ScanOp, value: &DocumentValue) {
+        if matches!(
+            value,
+            DocumentValue::String(_) | DocumentValue::Integer(_) | DocumentValue::Number(_)
+        ) {
+            conditions.push(ScanCondition { field: field.to_owned(), op, value: value.clone() });
+        }
+    }
+    let mut conditions = Vec::new();
+    for condition in predicate.conditions() {
+        match condition {
+            QueryCondition::Equals { field, value } => {
+                push(&mut conditions, field, ScanOp::Equals, value)
+            }
+            QueryCondition::NotEquals { field, value } => {
+                push(&mut conditions, field, ScanOp::NotEquals, value);
+            }
+            QueryCondition::LessThan { field, value } => {
+                push(&mut conditions, field, ScanOp::Less, value);
+            }
+            QueryCondition::LessOrEqual { field, value } => {
+                push(&mut conditions, field, ScanOp::LessOrEqual, value);
+            }
+            QueryCondition::GreaterThan { field, value } => {
+                push(&mut conditions, field, ScanOp::Greater, value);
+            }
+            QueryCondition::GreaterOrEqual { field, value } => {
+                push(&mut conditions, field, ScanOp::GreaterOrEqual, value);
+            }
+            QueryCondition::Between { field, low, high } => {
+                push(&mut conditions, field, ScanOp::GreaterOrEqual, low);
+                push(&mut conditions, field, ScanOp::LessOrEqual, high);
+            }
+            // Presence, patterns, and membership have no extracted-column
+            // shape; the executor's predicate is their exact filter.
+            _ => {}
+        }
+    }
+    ScanFilter::try_new(conditions)
 }
 
 /// Retains only the best candidates for the requested order. Stable sorting

@@ -536,6 +536,19 @@ pub enum EngineShutdownError {
     AlreadyClosed,
 }
 
+/// Failures registering one extracted index column descriptor (D-31/D-42).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IndexRegistrationError {
+    /// The database's extracted-column budget is exhausted.
+    BudgetExceeded,
+    /// Durable registration failed.
+    Storage,
+    /// The Engine has closed.
+    Closed,
+}
+
+pub use crate::storage::DescriptorRegistration;
+
 /// A local receipt for a commit that reached a known durability point.
 ///
 /// The receipt carries only the operation identity, the storage sequence, and
@@ -1707,6 +1720,88 @@ impl Engine {
         }
         .map_err(|_| EngineError::StorageFailure)?;
         Ok(documents)
+    }
+
+    /// Returns one bounded window of a collection at the supplied read
+    /// snapshot with the condition conjunction pushed onto the extracted
+    /// index columns (D-42), or `Ok(None)` when the storage cannot push the
+    /// filter and the caller must take the unfiltered page path.
+    ///
+    /// The pushed filter is a sound narrowing, never an exact one: the
+    /// caller still applies its full predicate over the returned page. The
+    /// validation matches [`Engine::snapshot_documents`]; crate-only, the
+    /// query executor is the consumer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::SnapshotPageLimitExceeded`] above the bounded
+    /// page ceiling, the same snapshot validation errors as
+    /// [`Engine::snapshot_documents`], or [`EngineError::StorageFailure`]
+    /// when a persisted candidate fails integrity checks.
+    #[allow(clippy::needless_pass_by_value)]
+    pub(crate) fn snapshot_documents_in_collection_filtered(
+        &self,
+        scope: &TenantScope,
+        snapshot: &ReadSnapshot,
+        collection: &CollectionName,
+        after: Option<DocumentId>,
+        limit: u32,
+        filter: &crate::storage::ScanFilter,
+    ) -> Result<Option<Vec<Document>>, EngineError> {
+        if limit > MAX_SNAPSHOT_RECORD_PAGE {
+            return Err(EngineError::SnapshotPageLimitExceeded);
+        }
+        if snapshot.engine_identity() != self.identity {
+            return Err(EngineError::SnapshotEngineMismatch);
+        }
+        self.validate_scope(scope)?;
+        if snapshot.tenant() != scope.tenant() {
+            return Err(EngineError::SnapshotTenantMismatch);
+        }
+        let documents = {
+            let storage = self.lock_storage()?;
+            storage.port.collection_scan_filtered(
+                snapshot.sequence(),
+                scope.tenant(),
+                collection,
+                after.as_ref(),
+                limit,
+                filter,
+            )
+        };
+        match documents {
+            Some(Ok(documents)) => Ok(Some(documents)),
+            Some(Err(_)) => Err(EngineError::StorageFailure),
+            None => Ok(None),
+        }
+    }
+
+    /// Registers one extracted index column descriptor for a collection
+    /// (D-31/D-42): the field gains stored columns written by the Rust
+    /// write path from the next commit on, existing rows are backfilled
+    /// inline while the collection is inside the cost cap, and ordinary
+    /// indexes cover the columns. Idempotent for an identical descriptor.
+    ///
+    /// This is the durable half of index creation; the auto-index audit and
+    /// the S-03 collections route drive it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexRegistrationError::BudgetExceeded`] past the
+    /// database's extracted-column budget, and
+    /// [`IndexRegistrationError::Storage`] when durable registration fails.
+    pub fn register_index_field(
+        &self,
+        collection: &CollectionName,
+        field: &str,
+    ) -> Result<crate::storage::DescriptorRegistration, IndexRegistrationError> {
+        let mut storage = self.lock_storage().map_err(|_| IndexRegistrationError::Storage)?;
+        storage.port.register_index_descriptor(collection, field).map_err(|error| match error {
+            crate::storage::IndexDescriptorError::ColumnBudgetExceeded => {
+                IndexRegistrationError::BudgetExceeded
+            }
+            crate::storage::IndexDescriptorError::Storage => IndexRegistrationError::Storage,
+        })
     }
 
     /// Returns one bounded page of final-state documents at an explicit

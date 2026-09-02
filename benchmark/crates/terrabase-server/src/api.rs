@@ -329,6 +329,10 @@ pub fn router(state: Arc<ApiState>) -> Router {
         .route("/api/v1/databases/{name}/collections", get(list_collections))
         .route("/api/v1/databases/{name}/collections/{collection}/documents", get(list_documents))
         .route(
+            "/api/v1/databases/{name}/collections/{collection}/documents/batch",
+            post(batch_documents),
+        )
+        .route(
             "/api/v1/databases/{name}/collections/{collection}/documents/{id}",
             get(get_document).put(put_document).patch(patch_document).delete(delete_document),
         )
@@ -697,6 +701,176 @@ fn merge_patch(base: &mut DocumentValue, patch: &DocumentValue) {
     }
 }
 
+/// One atomic batch of document mutations (create/replace, merge patch,
+/// delete) in a single engine transaction: every op commits together or
+/// the typed refusal names the offending op and nothing lands.
+async fn batch_documents(
+    State(state): State<Arc<ApiState>>,
+    Path((name, collection)): Path<(String, String, String)>,
+    headers: axum::http::HeaderMap,
+    body: String,
+) -> Response {
+    let Ok(host) = document_host(&state, &name) else {
+        return ApiError::database_not_found(&name).into_response();
+    };
+    let engine = host.engine();
+    let Ok(scope) = document_scope(engine) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let Ok(collection) = CollectionName::try_new(&collection) else {
+        return invalid_identifier("collection name", &collection).into_response();
+    };
+    let request: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            return ApiError {
+                status: StatusCode::BAD_REQUEST,
+                code: "invalid_json",
+                message: "the batch body is not JSON".into(),
+                fix: "send an object with an operations array of put/patch/delete ops".into(),
+                placement: None,
+            }
+            .into_response();
+        }
+    };
+    let Some(operations) = request.get("operations").and_then(serde_json::Value::as_array) else {
+        return ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "missing_operations",
+            message: "the batch names no operations".into(),
+            fix: "send an operations array with at least one op".into(),
+            placement: None,
+        }
+        .into_response();
+    };
+    if operations.is_empty() || operations.len() > 1000 {
+        return ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "batch_size_out_of_bounds",
+            message: "a batch is 1..=1000 operations".into(),
+            fix: "split the batch; a batch commits atomically so smaller is safer".into(),
+            placement: None,
+        }
+        .into_response();
+    }
+    let durability = match Durability::of_header(&headers) {
+        Ok(durability) => durability.level(),
+        Err(error) => return error.into_response(),
+    };
+    let operation = match write_operation(&headers, "api-batch") {
+        Ok(operation) => operation,
+        Err(error) => return error.into_response(),
+    };
+    let Ok(snapshot) = engine.read_snapshot(&scope) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    for (index, item) in operations.iter().enumerate() {
+        let id = item.get("id").and_then(serde_json::Value::as_str);
+        let Some(id) = id else {
+            return batch_refusal(index, "missing_id", "the op names no document");
+        };
+        let Ok(id) = DocumentId::try_new(id) else {
+            return batch_refusal(index, "invalid_identifier", "the op's id is not valid");
+        };
+        match item.get("op").and_then(serde_json::Value::as_str) {
+            Some("put") => {
+                let Some(value) = item.get("value") else {
+                    return batch_refusal(index, "missing_value", "the put names no value");
+                };
+                let document = Document::new(id, collection.clone(), json_value(value));
+                if transaction.put(document, ExpectedVersion::Any).is_err() {
+                    return batch_refusal(index, "staging_refused", "the put could not stage");
+                }
+            }
+            Some("patch") => {
+                let existing = transaction.read_in_collection(&collection, &id);
+                let Ok(Some(existing)) = existing else {
+                    return batch_refusal(
+                        index,
+                        "document_not_found",
+                        "the patch target is absent",
+                    );
+                };
+                let mut merged = existing.value().clone();
+                merge_patch(
+                    &mut merged,
+                    &json_value(item.get("value").unwrap_or(&serde_json::Value::Null)),
+                );
+                let patched = Document::new(id, collection.clone(), merged);
+                if transaction.put(patched, ExpectedVersion::Any).is_err() {
+                    return batch_refusal(index, "staging_refused", "the patch could not stage");
+                }
+            }
+            Some("delete") => {
+                if transaction.read_in_collection(&collection, &id).ok().flatten().is_none() {
+                    return batch_refusal(
+                        index,
+                        "document_not_found",
+                        "the delete target is absent",
+                    );
+                }
+                transaction.delete_in_collection(&collection, id, ExpectedVersion::Any);
+            }
+            _ => return batch_refusal(index, "unknown_op", "op must be put, patch, or delete"),
+        }
+    }
+    match transaction.commit(durability) {
+        CommitOutcome::Committed(receipt) => {
+            let mut response = json_response(
+                StatusCode::OK,
+                format!(
+                    "{{\"committed\":{},\"count\":{}}}",
+                    receipt.sequence().get(),
+                    operations.len()
+                ),
+            );
+            with_session(&mut response, receipt.sequence().get());
+            response
+        }
+        CommitOutcome::Rejected(reason) => ApiError {
+            status: StatusCode::CONFLICT,
+            code: "commit_rejected",
+            message: format!("the engine refused the batch: {reason:?}"),
+            fix: "a rejected batch stages nothing; fix the named op and resend".into(),
+            placement: None,
+        }
+        .into_response(),
+        CommitOutcome::Unknown(reason) => ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "commit_unknown",
+            message: format!("the batch's outcome is unknown: {reason:?}"),
+            fix: "re-read to see whether it landed, then resend with a fresh key".into(),
+            placement: None,
+        }
+        .into_response(),
+    }
+}
+
+/// One batch operation's typed refusal: the index names the offender.
+fn batch_refusal(index: usize, code: &str, message: &str) -> Response {
+    ApiError {
+        status: StatusCode::UNPROCESSABLE_ENTITY,
+        code: "batch_operation_refused",
+        message: format!("operations[{index}]: {message}"),
+        fix: format!("fix operations[{index}] ({code}); a refused batch lands nothing"),
+        placement: None,
+    }
+    .into_response()
+}
+
+/// Attaches the read-your-writes session token (`S-03`: the write's
+/// storage sequence; the SDK echoes it back, and a member's snapshots are
+/// monotonic, so the token is a routing hint for the proxy and replica
+/// lanes — `S-05` — not a local gate).
+fn with_session(response: &mut Response, sequence: u64) {
+    if let Ok(token) = HeaderValue::from_str(&sequence.to_string()) {
+        response.headers_mut().insert("x-terrascale-session", token);
+    }
+}
+
 /// One document's route context: the host engine for the named database.
 fn document_host(
     state: &ApiState,
@@ -872,6 +1046,7 @@ async fn put_document(
             if let Ok(etag) = HeaderValue::from_str(&format!("\"{revision}\"")) {
                 response.headers_mut().insert(axum::http::header::ETAG, etag);
             }
+            with_session(&mut response, receipt.sequence().get());
             response
         }
         CommitOutcome::Rejected(reason) => ApiError {
@@ -978,6 +1153,7 @@ async fn patch_document(
             if let Ok(etag) = HeaderValue::from_str(&format!("\"{revision}\"")) {
                 response.headers_mut().insert(axum::http::header::ETAG, etag);
             }
+            with_session(&mut response, receipt.sequence().get());
             response
         }
         _ => ApiError {
@@ -1648,6 +1824,76 @@ mod tests {
         let body = axum::body::to_bytes(refused.into_body(), 4096).await.expect("body").to_vec();
         let body = String::from_utf8(body).expect("utf-8");
         assert!(body.contains("invalid_durability"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn batches_commit_atomically_and_refusals_name_the_op() {
+        use axum::body::Body;
+        use axum::http::Request;
+        let auth = "authorization";
+        let key = "Bearer tskey_test_abcdefghijklmnop";
+        let router = router(state_with_keys_and_control());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header(auth, key)
+                    .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let seed = r#"{"operations":[
+            {"op":"put","id":"a","value":{"n":1}},
+            {"op":"put","id":"b","value":{"n":2}}
+        ]}"#;
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases/prod/collections/users/documents/batch")
+                    .header(auth, key)
+                    .body(Body::from(seed))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().contains_key("x-terrascale-session"));
+        // A batch with one bad op lands NOTHING (atomicity).
+        let mixed = r#"{"operations":[
+            {"op":"put","id":"c","value":{"n":3}},
+            {"op":"patch","id":"missing","value":{"n":9}}
+        ]}"#;
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases/prod/collections/users/documents/batch")
+                    .header(auth, key)
+                    .body(Body::from(mixed))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body").to_vec();
+        let body = String::from_utf8(body).expect("utf-8");
+        assert!(body.contains("operations[1]"), "the refusal names the offender: {body}");
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/databases/prod/collections/users/documents/c")
+                    .header(auth, key)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "the refused batch's other op landed nothing"
+        );
     }
 
     #[tokio::test]

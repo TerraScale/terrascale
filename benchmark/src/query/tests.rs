@@ -3085,3 +3085,90 @@ fn staleness_report_aggregates_the_is_stale_flag() {
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+// ---- S-02: the pushed-down SQL scan over extracted columns (D-42) --------
+
+#[test]
+fn extracted_columns_push_the_predicate_into_the_sql_scan() {
+    let (dir, engine) = open_engine("pushdown-scan");
+    let tenant_scope = scope(&engine, "tenant-a");
+    let users = CollectionName::try_new("users").expect("valid collection");
+    // The descriptor registers before any document exists: nothing to
+    // backfill, active at once, and the write path extracts from here on.
+    assert_eq!(
+        engine.register_index_field(&users, "status"),
+        Ok(crate::engine::DescriptorRegistration::Active),
+        "a fresh collection registers active"
+    );
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document("doc-1", "users", &[("status", DocumentValue::String("paid".into()))]),
+            object_document("doc-2", "users", &[("status", DocumentValue::String("paid".into()))]),
+            object_document(
+                "doc-3",
+                "users",
+                &[("status", DocumentValue::String("shipped".into()))],
+            ),
+            object_document("doc-4", "users", &[("note", DocumentValue::String("n/a".into()))]),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let plan = store
+        .compile(QueryInput::tql(
+            TqlQueryText::try_new("from users where status = 'paid'").expect("valid text"),
+        ))
+        .expect("compiles");
+    let result = store.execute(&plan, &snapshot).expect("executes");
+    assert_eq!(row_ids(&result), ["doc-1", "doc-2"]);
+    assert_eq!(
+        result.statistics().scanned(),
+        2,
+        "the pushed scan reads only the matching rows, not the collection"
+    );
+    // An order over the extracted column rides the same scan: the
+    // candidate set is already exact, the ordering applies in the executor.
+    let ordered = store
+        .compile(QueryInput::tql(
+            TqlQueryText::try_new("from users where status >= 'paid' limit 2").expect("valid text"),
+        ))
+        .expect("compiles");
+    let result = store.execute(&ordered, &snapshot).expect("executes");
+    assert_eq!(row_ids(&result), ["doc-1", "doc-2"]);
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_field_without_an_active_descriptor_never_pushes() {
+    let (dir, engine) = open_engine("pushdown-uncovered");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document("doc-1", "orders", &[("total", DocumentValue::Integer(10))]),
+            object_document("doc-2", "orders", &[("total", DocumentValue::Integer(90))]),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let plan = store
+        .compile(QueryInput::tql(
+            TqlQueryText::try_new("from orders where total > 20").expect("valid text"),
+        ))
+        .expect("compiles");
+    let result = store.execute(&plan, &snapshot).expect("executes");
+    assert_eq!(row_ids(&result), ["doc-2"]);
+    assert_eq!(
+        result.statistics().scanned(),
+        2,
+        "no descriptor means the unfiltered page path scans the collection"
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}

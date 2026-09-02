@@ -84,6 +84,92 @@ pub(crate) enum SnapshotReadError {
     Integrity,
 }
 
+/// One pushable condition of a collection scan filter (D-42): a scalar
+/// comparison against one field's extracted index column. The comparison
+/// semantics are `tql/1.0`'s: strings compare by code point, numbers compare
+/// numerically across int/float, and a condition whose value kind the
+/// extracted columns do not carry is never pushed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScanCondition {
+    /// The dotted field path whose extracted column the condition names.
+    pub(crate) field: String,
+    /// The comparison.
+    pub(crate) op: ScanOp,
+    /// The comparison value; a string or a number by construction.
+    pub(crate) value: crate::types::DocumentValue,
+}
+
+/// The pushable comparison family.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScanOp {
+    /// `=`
+    Equals,
+    /// `!=`
+    NotEquals,
+    /// `<`
+    Less,
+    /// `<=`
+    LessOrEqual,
+    /// `>`
+    Greater,
+    /// `>=`
+    GreaterOrEqual,
+}
+
+/// The condition conjunction pushed onto one collection scan.
+///
+/// The set is bounded: a filter beyond [`MAX_SCAN_CONDITIONS`] conditions is
+/// refused at construction rather than silently truncated.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScanFilter {
+    conditions: Vec<ScanCondition>,
+}
+
+/// The maximum number of conditions one pushed scan filter carries.
+pub const MAX_SCAN_CONDITIONS: usize = 16;
+
+impl ScanFilter {
+    /// Creates a filter from its conjuncts.
+    ///
+    /// # Errors
+    ///
+    /// Returns `None` when the condition list exceeds
+    /// [`MAX_SCAN_CONDITIONS`].
+    pub fn try_new(conditions: Vec<ScanCondition>) -> Option<Self> {
+        (conditions.len() <= MAX_SCAN_CONDITIONS).then_some(Self { conditions })
+    }
+
+    /// Returns the conjuncts in declaration order.
+    pub fn conditions(&self) -> &[ScanCondition] {
+        &self.conditions
+    }
+}
+
+/// The outcome of one index-descriptor registration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DescriptorRegistration {
+    /// The descriptor was created and every existing row already carries its
+    /// extracted values (inline backfill complete or nothing to backfill):
+    /// conditions over the field push immediately.
+    Active,
+    /// The descriptor was created but pre-existing rows still lack their
+    /// extracted values; the governed backfill pass (D-31) completes it.
+    /// Conditions over the field do not push until then — a scan over
+    /// half-extracted columns would silently miss rows.
+    Building,
+    /// An identical descriptor was already on record.
+    Unchanged,
+}
+
+/// Failures registering one extracted index-column descriptor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IndexDescriptorError {
+    /// The database's extracted-column budget is exhausted.
+    ColumnBudgetExceeded,
+    /// Durable registration failed.
+    Storage,
+}
+
 /// The total order used by usage export and its continuation cursor.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct UsageFactPosition {
@@ -228,6 +314,55 @@ pub(crate) trait StoragePort: Send {
         after: Option<&DocumentId>,
         limit: u32,
     ) -> Result<Vec<Document>, SnapshotReadError>;
+
+    /// Returns one bounded window of a collection at a fixed snapshot with
+    /// the filter pushed onto the extracted index columns (D-42): the same
+    /// page shape as [`StoragePort::documents_in_collection_at_from`] with
+    /// the condition conjunction applied in SQL over the newest version of
+    /// each key, so non-matching rows are never decoded or shipped.
+    ///
+    /// The pushed filter is a sound narrowing, never an exact one: a backend
+    /// may drop conditions it cannot express exactly (fields without an
+    /// active descriptor, value kinds the columns do not carry), and the
+    /// caller still applies its full predicate over the returned page.
+    /// `None` reports that this backend cannot push the filter at all and
+    /// the caller falls back to [`StoragePort::documents_in_collection_at_from`].
+    fn collection_scan_filtered(
+        &self,
+        _sequence: StorageSequence,
+        _tenant: &TenantId,
+        _collection: &CollectionName,
+        _after: Option<&DocumentId>,
+        _limit: u32,
+        _filter: &ScanFilter,
+    ) -> Option<Result<Vec<Document>, SnapshotReadError>> {
+        None
+    }
+
+    /// Registers one extracted index column descriptor (D-31/D-42): the
+    /// named field of the named collection gains stored columns written by
+    /// the Rust write path from the next commit on, and existing rows are
+    /// backfilled inline while the collection is inside the cost cap
+    /// (registering marks the descriptor active only when every existing
+    /// row carries its extracted values; a larger backfill is the governed
+    /// background pass's work and the descriptor stays building, its
+    /// conditions unpushed, until that pass completes).
+    ///
+    /// Registration is idempotent: an identical descriptor already on record
+    /// is a no-op.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexDescriptorError::ColumnBudgetExceeded`] past the
+    /// database's extracted-column budget, and
+    /// [`IndexDescriptorError::Storage`] when durable registration fails.
+    fn register_index_descriptor(
+        &mut self,
+        _collection: &CollectionName,
+        _field: &str,
+    ) -> Result<DescriptorRegistration, IndexDescriptorError> {
+        Err(IndexDescriptorError::Storage)
+    }
 
     /// Returns the documents the given read snapshot observed at the named
     /// exact keys of one tenant's collection, in canonical key order of the

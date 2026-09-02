@@ -977,3 +977,281 @@ fn usage_counters_flush_per_wave_and_reconcile_from_the_journal() {
     drop(reopened);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+// ---- S-02: extracted index columns (D-31/D-42) ---------------------------
+
+use crate::storage::{
+    DescriptorRegistration, IndexDescriptorError, ScanCondition, ScanFilter, ScanOp,
+};
+
+/// One object document carrying the named top-level fields.
+fn object_document(id: &str, collection: &str, fields: &[(&str, DocumentValue)]) -> Document {
+    let map = fields
+        .iter()
+        .map(|(name, value)| ((*name).to_owned(), value.clone()))
+        .collect::<std::collections::BTreeMap<String, DocumentValue>>();
+    Document::new(
+        DocumentId::try_new(id).expect("valid identifier"),
+        CollectionName::try_new(collection).expect("valid collection"),
+        DocumentValue::Object(map),
+    )
+}
+
+/// Commits one object document through the storage port.
+fn commit_object(
+    storage: &mut dyn StoragePort,
+    tenant: &TenantName,
+    operation: &str,
+    document: Document,
+) -> u64 {
+    let writes = vec![StagedWrite::Put { document, expected: ExpectedVersion::Any }];
+    let result = commit(storage, operation, writes);
+    stored_sequence(&result)
+}
+
+/// The tenant name shared by the descriptor tests.
+type TenantName = TenantId;
+
+fn scan_tenant() -> TenantId {
+    TenantId::try_new("tenant-a").expect("valid tenant")
+}
+
+fn scan_users() -> CollectionName {
+    CollectionName::try_new("users").expect("valid collection")
+}
+
+/// Runs one filtered scan and returns the documents, failing the test on a
+/// refusal.
+fn filtered(storage: &SqliteStorage, sequence: u64, filter: &ScanFilter) -> Option<Vec<Document>> {
+    storage
+        .collection_scan_filtered(
+            StorageSequence::new(sequence),
+            &scan_tenant(),
+            &scan_users(),
+            None,
+            u32::MAX,
+            filter,
+        )
+        .map(|result| result.expect("the scan reads"))
+}
+
+fn equals(field: &str, value: DocumentValue) -> ScanFilter {
+    ScanFilter::try_new(vec![ScanCondition { field: field.to_owned(), op: ScanOp::Equals, value }])
+        .expect("one condition fits the bound")
+}
+
+#[test]
+fn registration_backfills_and_the_write_path_extracts() {
+    let (_dir, mut storage) = sqlite_store("extracted-backfill");
+    let tenant = scan_tenant();
+    let users = scan_users();
+    // Rows that predate the descriptor: the inline backfill must cover
+    // them (D-31's cost-capped inline build — this collection is small).
+    let seq_a = commit_object(
+        &mut storage,
+        &tenant,
+        "op-a",
+        object_document("doc-a", "users", &[("status", DocumentValue::String("paid".into()))]),
+    );
+    commit_object(
+        &mut storage,
+        &tenant,
+        "op-b",
+        object_document("doc-b", "users", &[("status", DocumentValue::String("shipped".into()))]),
+    );
+    assert_eq!(
+        storage.register_index_descriptor(&users, "status"),
+        Ok(DescriptorRegistration::Active),
+        "a small collection backfills inline and is active at once"
+    );
+    // Rows the write path serves after registration carry their values in
+    // the same statement as the body (D-42).
+    commit_object(
+        &mut storage,
+        &tenant,
+        "op-c",
+        object_document("doc-c", "users", &[("status", DocumentValue::String("paid".into()))]),
+    );
+    commit_object(
+        &mut storage,
+        &tenant,
+        "op-d",
+        object_document("doc-d", "users", &[("other", DocumentValue::Integer(7))]),
+    );
+    let paid =
+        filtered(&storage, seq_a + 10, &equals("status", DocumentValue::String("paid".into())))
+            .expect("the filter pushes");
+    assert_eq!(
+        paid.iter().map(|document| document.id().as_str()).collect::<Vec<_>>(),
+        ["doc-a", "doc-c"],
+        "both the backfilled row and the write-path row match"
+    );
+    // A field with no descriptor never pushes: the answer is None and the
+    // caller takes the unfiltered path.
+    assert!(
+        filtered(&storage, seq_a + 10, &equals("other", DocumentValue::Integer(7.into())))
+            .is_none(),
+        "an unregistered field does not push"
+    );
+    std::fs::remove_dir_all(&_dir).ok();
+}
+
+#[test]
+fn filtered_scan_resolves_the_newest_version_and_hides_tombstones() {
+    let (_dir, mut storage) = sqlite_store("extracted-as-of");
+    let tenant = scan_tenant();
+    let users = scan_users();
+    let seq_one = commit_object(
+        &mut storage,
+        &tenant,
+        "op-1",
+        object_document("doc", "users", &[("status", DocumentValue::String("paid".into()))]),
+    );
+    assert_eq!(
+        storage.register_index_descriptor(&users, "status"),
+        Ok(DescriptorRegistration::Active)
+    );
+    let seq_two = commit_object(
+        &mut storage,
+        &tenant,
+        "op-2",
+        object_document("doc", "users", &[("status", DocumentValue::String("shipped".into()))]),
+    );
+    let paid = equals("status", DocumentValue::String("paid".into()));
+    assert_eq!(
+        filtered(&storage, seq_one, &paid).map(|documents| documents.len()),
+        Some(1),
+        "the as-of scan observes the version at its boundary"
+    );
+    assert_eq!(
+        filtered(&storage, seq_two, &paid).map(|documents| documents.len()),
+        Some(0),
+        "the newest version wins and the pushed column follows it"
+    );
+    // A tombstone hides the key from the pushed scan exactly as it does
+    // from the unfiltered one.
+    let writes = vec![StagedWrite::Delete {
+        collection: Some(users.clone()),
+        id: DocumentId::try_new("doc").expect("valid identifier"),
+        expected: ExpectedVersion::Any,
+    }];
+    let seq_three = stored_sequence(&commit(&mut storage, "op-3", writes));
+    assert_eq!(
+        filtered(&storage, seq_three, &paid).map(|documents| documents.len()),
+        Some(0),
+        "a deleted key never surfaces"
+    );
+    std::fs::remove_dir_all(&_dir).ok();
+}
+
+#[test]
+fn numeric_conditions_compare_across_integer_and_float() {
+    let (_dir, mut storage) = sqlite_store("extracted-numeric");
+    let tenant = scan_tenant();
+    let users = scan_users();
+    commit_object(
+        &mut storage,
+        &tenant,
+        "op-a",
+        object_document(
+            "doc-a",
+            "users",
+            &[("age", DocumentValue::Integer(30)), ("score", DocumentValue::Number(4.5))],
+        ),
+    );
+    commit_object(
+        &mut storage,
+        &tenant,
+        "op-b",
+        object_document("doc-b", "users", &[("age", DocumentValue::Integer(65))]),
+    );
+    assert_eq!(
+        storage.register_index_descriptor(&users, "age"),
+        Ok(DescriptorRegistration::Active)
+    );
+    assert_eq!(
+        storage.register_index_descriptor(&users, "score"),
+        Ok(DescriptorRegistration::Active)
+    );
+    let latest = storage.published_state().0.get();
+    let over = ScanFilter::try_new(vec![ScanCondition {
+        field: "age".to_owned(),
+        op: ScanOp::Greater,
+        value: DocumentValue::Number(29.5),
+    }])
+    .expect("bound");
+    assert_eq!(
+        filtered(&storage, latest, &over).map(|documents| documents.len()),
+        Some(2),
+        "a float bound matches integer-stored values numerically"
+    );
+    let exact = equals("score", DocumentValue::Number(4.5));
+    assert_eq!(
+        filtered(&storage, latest, &exact).map(|documents| documents.len()),
+        Some(1),
+        "a float condition matches a float-stored value"
+    );
+    std::fs::remove_dir_all(&_dir).ok();
+}
+
+#[test]
+fn descriptors_survive_reopen_and_registration_is_idempotent() {
+    let (dir, mut storage) = sqlite_store("extracted-reopen");
+    let tenant = scan_tenant();
+    let users = scan_users();
+    commit_object(
+        &mut storage,
+        &tenant,
+        "op-a",
+        object_document("doc-a", "users", &[("status", DocumentValue::String("paid".into()))]),
+    );
+    assert_eq!(
+        storage.register_index_descriptor(&users, "status"),
+        Ok(DescriptorRegistration::Active)
+    );
+    assert_eq!(
+        storage.register_index_descriptor(&users, "status"),
+        Ok(DescriptorRegistration::Unchanged),
+        "an identical descriptor is a no-op"
+    );
+    assert_eq!(
+        storage.register_index_descriptor(&users, "bad\u{7}field"),
+        Err(IndexDescriptorError::Storage),
+        "a field name that fails the identifier discipline refuses typed"
+    );
+    drop(storage);
+    let reopened = SqliteStorage::open(&dir).expect("reopens with the descriptors");
+    let latest = reopened.published_state().0.get();
+    assert_eq!(
+        filtered(&reopened, latest, &equals("status", DocumentValue::String("paid".into())))
+            .map(|documents| documents.len()),
+        Some(1),
+        "the reopened location pushes conditions over its loaded descriptors"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn the_extracted_column_budget_is_enforced() {
+    let (_dir, mut storage) = sqlite_store("extracted-budget");
+    let users = scan_users();
+    for position in 0..32 {
+        let field = format!("f{position}");
+        assert_eq!(
+            storage.register_index_descriptor(&users, &field),
+            Ok(DescriptorRegistration::Active),
+            "field {field} registers inside the budget"
+        );
+    }
+    assert_eq!(
+        storage.register_index_descriptor(&users, "f32"),
+        Err(IndexDescriptorError::ColumnBudgetExceeded),
+        "the thirty-third distinct field refuses typed"
+    );
+    // An already-registered field is still fine past the budget.
+    assert_eq!(
+        storage.register_index_descriptor(&users, "f0"),
+        Ok(DescriptorRegistration::Unchanged)
+    );
+    std::fs::remove_dir_all(&_dir).ok();
+}

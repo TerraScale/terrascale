@@ -107,11 +107,12 @@ use std::{
     time::Duration,
 };
 
+use rusqlite::types::Value;
 use rusqlite::{Connection, TransactionBehavior};
 
 use crate::types::{
-    CollectionName, Document, DocumentId, ExpectedVersion, LocalDurability, OperationId,
-    StorageSequence, TenantId,
+    CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
+    OperationId, StorageSequence, TenantId,
 };
 use crate::usage::{
     DurableUsageFact, MAX_ADMITTED_REQUEST_UNITS_PER_FACT, MAX_PUBLIC_EGRESS_BYTES_PER_FACT,
@@ -121,8 +122,9 @@ use crate::usage::{
 #[cfg(test)]
 use super::faults::FaultPlan;
 use super::{
-    PublishedCommit, PublishedWrite, SnapshotReadError, StorageOpenError, StoragePort,
-    StorageRootId, UsageFactPosition, UsageStorageError,
+    DescriptorRegistration, IndexDescriptorError, PublishedCommit, PublishedWrite, ScanFilter,
+    ScanOp, SnapshotReadError, StorageOpenError, StoragePort, StorageRootId, UsageFactPosition,
+    UsageStorageError,
 };
 use super::{
     codec,
@@ -164,6 +166,123 @@ const READ_POOL_WIDTH: usize = 4;
     reason = "60 seconds is the documented pairing; this toolchain has no from_minutes"
 )]
 const BUSY_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// The maximum number of distinct field names owning extracted index
+/// columns in one database (D-42's stored-column budget; two physical
+/// columns per field). Beyond it, registration refuses typed.
+const MAX_EXTRACTED_FIELDS: usize = 32;
+
+/// The maximum length of one descriptor field path, in bytes.
+const MAX_DESCRIPTOR_FIELD_BYTES: usize = 256;
+
+/// The inline backfill cost cap of registration (D-31's cost-capped inline
+/// build): a collection at or below this many live rows is backfilled
+/// synchronously inside the registration transaction and its descriptor
+/// becomes active immediately; anything larger stays building until the
+/// governed background pass completes it.
+const INLINE_BACKFILL_ROW_CAP: u64 = 10_000;
+
+/// The one-byte descriptor kind of an extracted value column.
+const DESCRIPTOR_KIND_VALUE: i64 = 1;
+
+/// The one-byte descriptor state codes.
+const DESCRIPTOR_STATE_BUILDING: i64 = 0;
+const DESCRIPTOR_STATE_ACTIVE: i64 = 1;
+
+/// The write path's view of the extracted-column descriptors (D-42): the
+/// per-collection fields whose values the document INSERT carries, the
+/// active descriptors whose conditions a scan may push, and the cached
+/// column-bearing INSERT statement.
+#[derive(Default)]
+struct ExtractedState {
+    /// Every registered descriptor, keyed `(collection, field)`; the flag
+    /// reports its activity.
+    descriptors: std::collections::BTreeMap<(String, String), bool>,
+    /// The distinct field names owning stored columns, in registration
+    /// order.
+    fields: Vec<String>,
+    /// The cached INSERT statement for puts: the base row plus every
+    /// extracted column.
+    put_insert_sql: String,
+}
+
+impl ExtractedState {
+    /// Rebuilds the cached put INSERT for the current field set.
+    fn refresh_put_sql(&mut self) {
+        let mut columns = String::new();
+        let mut placeholders = String::new();
+        for (position, field) in self.fields.iter().enumerate() {
+            columns.push_str(", ");
+            columns.push_str(&quote_identifier(&text_column(field)));
+            columns.push_str(", ");
+            columns.push_str(&quote_identifier(&numeric_column(field)));
+            placeholders.push_str(", ?");
+            placeholders.push_str(&(13 + 2 * position).to_string());
+            placeholders.push_str(", ?");
+            placeholders.push_str(&(14 + 2 * position).to_string());
+        }
+        self.put_insert_sql = format!(
+            "INSERT INTO documents
+             (tenant, collection, id, commit_seq, commit_ulid, revision, requested,
+              digest, version, deleted, committed_at, body{columns})
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12{placeholders})"
+        );
+    }
+
+    /// Reports whether one field of one collection has an active descriptor.
+    fn is_active(&self, collection: &str, field: &str) -> bool {
+        self.descriptors.get(&(collection.to_owned(), field.to_owned())).copied().unwrap_or(false)
+    }
+}
+
+/// Returns the text-column name of one extracted field: strings live here.
+fn text_column(field: &str) -> String {
+    format!("f:{field}#t")
+}
+
+/// Returns the numeric-column name of one extracted field: integers and
+/// floats live here (integers stored as INTEGER, floats as REAL — SQLite
+/// compares the two numerically, the `tql/1.0` number rule).
+fn numeric_column(field: &str) -> String {
+    format!("f:{field}#n")
+}
+
+/// Quotes one identifier for SQL, doubling embedded double quotes.
+fn quote_identifier(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// One extracted column value: the scalar kinds the stored columns carry.
+#[derive(Clone, Debug, PartialEq)]
+enum ColumnValue {
+    /// A string, in the text column.
+    Text(String),
+    /// An integer, in the numeric column.
+    Integer(i64),
+    /// A float, in the numeric column.
+    Real(f64),
+}
+
+/// Extracts one descriptor field's stored-column value from a document.
+///
+/// The path is dotted navigation over object members (D-30's write-time
+/// parse is the only extraction). Values the columns do not carry —
+/// booleans, nulls, arrays, objects, and absent fields — extract nothing:
+/// a condition over them never pushes, and the scan falls back to the
+/// executor's own predicate.
+fn extract_column_value(document: &Document, field: &str) -> Option<ColumnValue> {
+    let mut value = document.value();
+    for segment in field.split('.') {
+        let DocumentValue::Object(fields) = value else { return None };
+        value = fields.get(segment)?;
+    }
+    match value {
+        DocumentValue::String(text) => Some(ColumnValue::Text(text.clone())),
+        DocumentValue::Integer(integer) => Some(ColumnValue::Integer(*integer)),
+        DocumentValue::Number(number) => Some(ColumnValue::Real(*number)),
+        _ => None,
+    }
+}
 
 /// The schema statements every location carries.
 const SCHEMA: &str = "
@@ -223,6 +342,15 @@ CREATE TABLE IF NOT EXISTS consumer_frontiers (
     seq  INTEGER NOT NULL
 ) WITHOUT ROWID;
 
+CREATE TABLE IF NOT EXISTS index_descriptors (
+    collection TEXT    NOT NULL,
+    field      TEXT    NOT NULL,
+    kind       INTEGER NOT NULL,
+    state      INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (collection, field)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS usage_counters (
     key    TEXT    PRIMARY KEY,
     seq_hi INTEGER NOT NULL,
@@ -244,6 +372,9 @@ pub(crate) struct SqliteStorage {
     /// Idle read connections, checked out last-in-first-out and returned on
     /// drop.
     readers: Mutex<Vec<Connection>>,
+    /// The extracted-column descriptor view (D-42), refreshed on
+    /// registration and consulted by the write and scan paths.
+    extracted: Mutex<ExtractedState>,
     /// The test-only fault plan (see [`StoragePort::arm_test_fault`]).
     #[cfg(test)]
     faults: Mutex<FaultPlan>,
@@ -312,10 +443,14 @@ impl SqliteStorage {
         for _ in 0..READ_POOL_WIDTH {
             readers.push(open_connection(&database_path)?);
         }
+        let mut extracted = ExtractedState::default();
+        load_extracted_state(&writer, &mut extracted)
+            .map_err(|()| StorageOpenError::Unavailable)?;
         Ok(Self {
             database_path,
             writer: Mutex::new(writer),
             readers: Mutex::new(readers),
+            extracted: Mutex::new(extracted),
             #[cfg(test)]
             faults: Mutex::new(FaultPlan::empty()),
         })
@@ -503,9 +638,28 @@ impl SqliteStorage {
                 row.get::<_, String>(0)
             })
             .map_err(|_| ())?;
+        // The extracted-column view of this wave: one snapshot under the
+        // wave's own transaction, so a registration that commits between
+        // waves is picked up whole and never mid-wave.
+        let (fields, put_sql, descriptors) = {
+            let extracted =
+                self.extracted.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            (
+                extracted.fields.clone(),
+                extracted.put_insert_sql.clone(),
+                extracted.descriptors.clone(),
+            )
+        };
         for (index, intent) in intents.iter().enumerate() {
-            results[index] =
-                Some(stage_intent(&transaction, &mut watermark, &mut root_head, intent)?);
+            results[index] = Some(stage_intent(
+                &transaction,
+                &mut watermark,
+                &mut root_head,
+                intent,
+                &fields,
+                &put_sql,
+                &descriptors,
+            )?);
         }
         // The wave's usage counter flush: one write per wave, never per
         // op, riding the wave's own transaction so a rolled-back wave
@@ -552,6 +706,9 @@ fn stage_intent(
     watermark: &mut u64,
     root_head: &mut String,
     intent: &CommitIntent,
+    extracted_fields: &[String],
+    put_insert_sql: &str,
+    descriptors: &std::collections::BTreeMap<(String, String), bool>,
 ) -> Result<CommitResult, ()> {
     // Step 1: validation never binds the identity.
     if intent.writes.is_empty() || codec::staged_writes_have_duplicate_targets(&intent.writes) {
@@ -665,16 +822,17 @@ fn stage_intent(
                 .map_or(1, |prior| prior.saturating_add(1));
                 let mut published = document.clone();
                 published.set_version(version);
-                insert_document_row(
+                insert_put_row(
                     transaction,
                     &intent.tenant,
-                    published.collection(),
-                    published.id(),
+                    &published,
                     sequence,
                     version,
-                    false,
                     &encode_document_body(&published),
                     &commit,
+                    extracted_fields,
+                    put_insert_sql,
+                    descriptors,
                 )?;
                 published_writes.push(PublishedWrite::Put { document: published });
             }
@@ -695,8 +853,6 @@ fn stage_intent(
                             id,
                             sequence,
                             version_at_delete,
-                            true,
-                            &[],
                             &commit,
                         )?;
                     }
@@ -713,8 +869,6 @@ fn stage_intent(
                                 id,
                                 sequence,
                                 0,
-                                true,
-                                &[],
                                 &commit,
                             )?;
                         }
@@ -826,7 +980,63 @@ fn insert_rejection_row(
         .map_err(|_| ())
 }
 
-/// Writes one document version row (a tombstone carries an empty body).
+/// Writes one document put row with its extracted index columns (D-42):
+/// the values the Rust write path extracted from the one write-time parse,
+/// in the same statement as the body — index maintenance in the same
+/// transaction is the zero-stale-reads rule.
+#[allow(clippy::too_many_arguments, reason = "the folded row model's columns")]
+fn insert_put_row(
+    transaction: &rusqlite::Transaction<'_>,
+    tenant: &TenantId,
+    document: &Document,
+    sequence: u64,
+    version: u64,
+    body: &[u8],
+    commit: &FoldedCommit<'_>,
+    extracted_fields: &[String],
+    put_insert_sql: &str,
+    descriptors: &std::collections::BTreeMap<(String, String), bool>,
+) -> Result<(), ()> {
+    let committed_at = unix_millis();
+    let mut parameters: Vec<Value> = Vec::with_capacity(12 + 2 * extracted_fields.len());
+    parameters.push(Value::Text(tenant.as_str().to_owned()));
+    parameters.push(Value::Text(document.collection().as_str().to_owned()));
+    parameters.push(Value::Text(document.id().as_str().to_owned()));
+    parameters.push(Value::Integer(sequence as i64));
+    parameters.push(Value::Text(commit.operation.as_str().to_owned()));
+    parameters.push(Value::Text(revision_string(sequence, version)));
+    parameters.push(Value::Integer(i64::from(codec::durability_code(commit.requested))));
+    parameters.push(Value::Integer(commit.digest as i64));
+    parameters.push(Value::Integer(version as i64));
+    parameters.push(Value::Integer(0));
+    parameters.push(Value::Integer(committed_at));
+    parameters.push(Value::Blob(body.to_vec()));
+    // One extracted scalar per registered field of this row's collection;
+    // every other column binds NULL — the same shape a backfilled row
+    // carries. Building descriptors extract too: every row the write path
+    // touches after registration carries its values, so the backfill's
+    // remaining work only ever shrinks.
+    for field in extracted_fields {
+        let registered =
+            descriptors.contains_key(&(document.collection().as_str().to_owned(), field.clone()));
+        let (text_value, number_value) =
+            match registered.then(|| extract_column_value(document, field)).flatten() {
+                Some(ColumnValue::Text(text)) => (Value::Text(text), Value::Null),
+                Some(ColumnValue::Integer(integer)) => (Value::Null, Value::Integer(integer)),
+                Some(ColumnValue::Real(real)) => (Value::Null, Value::Real(real)),
+                None => (Value::Null, Value::Null),
+            };
+        parameters.push(text_value);
+        parameters.push(number_value);
+    }
+    transaction
+        .prepare_cached(put_insert_sql)
+        .and_then(|mut statement| statement.execute(rusqlite::params_from_iter(parameters.iter())))
+        .map(|_| ())
+        .map_err(|_| ())
+}
+
+/// Writes one tombstone row (empty body, no extracted columns).
 #[allow(clippy::too_many_arguments, reason = "the folded row model's columns")]
 fn insert_document_row(
     transaction: &rusqlite::Transaction<'_>,
@@ -835,8 +1045,6 @@ fn insert_document_row(
     id: &DocumentId,
     sequence: u64,
     version: u64,
-    deleted: bool,
-    body: &[u8],
     commit: &FoldedCommit<'_>,
 ) -> Result<(), ()> {
     let committed_at = unix_millis();
@@ -858,9 +1066,9 @@ fn insert_document_row(
                 codec::durability_code(commit.requested),
                 commit.digest as i64,
                 version as i64,
-                i64::from(deleted),
+                1,
                 committed_at,
-                body,
+                Vec::<u8>::new(),
             ])
         })
         .map(|_| ())
@@ -1550,6 +1758,33 @@ impl StoragePort for SqliteStorage {
         )
     }
 
+    fn collection_scan_filtered(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        after: Option<&DocumentId>,
+        limit: u32,
+        filter: &ScanFilter,
+    ) -> Option<Result<Vec<Document>, SnapshotReadError>> {
+        self.collection_scan_page(
+            sequence,
+            tenant,
+            collection,
+            after.map(DocumentId::as_str),
+            i64::from(limit),
+            filter,
+        )
+    }
+
+    fn register_index_descriptor(
+        &mut self,
+        collection: &CollectionName,
+        field: &str,
+    ) -> Result<DescriptorRegistration, IndexDescriptorError> {
+        self.register_descriptor(collection, field)
+    }
+
     fn read_documents_in_collection_at(
         &self,
         sequence: StorageSequence,
@@ -1981,4 +2216,312 @@ fn connection_statement<'a>(
     sql: &str,
 ) -> Result<rusqlite::CachedStatement<'a>, SnapshotReadError> {
     connection.prepare_cached(sql).map_err(|_| SnapshotReadError::Integrity)
+}
+
+// ---------------------------------------------------------------------------
+// Extracted index columns (D-31/D-42): registration, write-time extraction,
+// and the pushed-down collection scan.
+// ---------------------------------------------------------------------------
+
+impl SqliteStorage {
+    /// Registers one extracted index-column descriptor, adding the stored
+    /// columns, backfilling inline inside the cost cap, and creating the
+    /// ordinary indexes (D-42: extraction in Rust at write time, never
+    /// SQLite expression or generated columns).
+    fn register_descriptor(
+        &mut self,
+        collection: &CollectionName,
+        field: &str,
+    ) -> Result<DescriptorRegistration, IndexDescriptorError> {
+        if field.is_empty()
+            || field.len() > MAX_DESCRIPTOR_FIELD_BYTES
+            || field.chars().any(char::is_control)
+            || field != field.trim()
+        {
+            return Err(IndexDescriptorError::Storage);
+        }
+        let mut writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self
+            .extracted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .descriptors
+            .contains_key(&(collection.as_str().to_owned(), field.to_owned()))
+        {
+            return Ok(DescriptorRegistration::Unchanged);
+        }
+        let transaction = writer
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| IndexDescriptorError::Storage)?;
+        let field_is_new = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM index_descriptors WHERE field = ?1",
+                rusqlite::params![field],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|_| IndexDescriptorError::Storage)?
+            == 0;
+        if field_is_new {
+            let mut state =
+                self.extracted.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if state.fields.len() >= MAX_EXTRACTED_FIELDS {
+                return Err(IndexDescriptorError::ColumnBudgetExceeded);
+            }
+            let alter = format!(
+                "ALTER TABLE documents ADD COLUMN {text} TEXT; ALTER TABLE documents ADD COLUMN {number} NUMERIC;",
+                text = quote_identifier(&text_column(field)),
+                number = quote_identifier(&numeric_column(field)),
+            );
+            transaction.execute_batch(&alter).map_err(|_| IndexDescriptorError::Storage)?;
+        }
+        // The registration watermark: rows at or below it predate the
+        // descriptor, so the write path never gave them extracted values.
+        let watermark =
+            durable_watermark(&transaction).map_err(|_| IndexDescriptorError::Storage)?;
+        let live_rows: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM documents WHERE collection = ?1 AND commit_seq <= ?2 AND deleted = 0",
+                rusqlite::params![collection.as_str(), watermark as i64],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|_| IndexDescriptorError::Storage)?;
+        let mut state = DescriptorRegistration::Building;
+        if u64::try_from(live_rows).unwrap_or(u64::MAX) <= INLINE_BACKFILL_ROW_CAP {
+            // The cost-capped inline build: every pre-registration row of
+            // the collection gets its extracted values inside this
+            // transaction, so the descriptor is active the moment
+            // registration commits — D-31's zero-stale-reads rule.
+            backfill_collection_inline(&transaction, collection, field, watermark)
+                .map_err(|_| IndexDescriptorError::Storage)?;
+            state = DescriptorRegistration::Active;
+        }
+        transaction
+            .prepare_cached(
+                "INSERT INTO index_descriptors (collection, field, kind, state, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(collection, field) DO UPDATE SET state = excluded.state",
+            )
+            .and_then(|mut statement| {
+                statement.execute(rusqlite::params![
+                    collection.as_str(),
+                    field,
+                    DESCRIPTOR_KIND_VALUE,
+                    if state == DescriptorRegistration::Active {
+                        DESCRIPTOR_STATE_ACTIVE
+                    } else {
+                        DESCRIPTOR_STATE_BUILDING
+                    },
+                    unix_millis(),
+                ])
+            })
+            .map_err(|_| IndexDescriptorError::Storage)?;
+        let indexes = format!(
+            "CREATE INDEX IF NOT EXISTS {text_index} ON documents {text_col};
+             CREATE INDEX IF NOT EXISTS {number_index} ON documents {number_col};",
+            text_index = quote_identifier(&format!("i:{}#t", field)),
+            text_col = format!("({})", quote_identifier(&text_column(field))),
+            number_index = quote_identifier(&format!("i:{}#n", field)),
+            number_col = format!("({})", quote_identifier(&numeric_column(field))),
+        );
+        transaction.execute_batch(&indexes).map_err(|_| IndexDescriptorError::Storage)?;
+        transaction.commit().map_err(|_| IndexDescriptorError::Storage)?;
+        let mut extracted =
+            self.extracted.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        extracted.descriptors.insert(
+            (collection.as_str().to_owned(), field.to_owned()),
+            state == DescriptorRegistration::Active,
+        );
+        if field_is_new {
+            extracted.fields.push(field.to_owned());
+            extracted.refresh_put_sql();
+        }
+        Ok(state)
+    }
+
+    /// Serves one filtered collection page with the conditions pushed onto
+    /// the active descriptors' stored columns (D-42). Conditions over
+    /// inactive or unregistered fields drop out of the SQL — a sound
+    /// narrowing, never an exact filter — and when nothing pushes the
+    /// answer is `None` so the caller takes the unfiltered path.
+    fn collection_scan_page(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        after: Option<&str>,
+        limit: i64,
+        filter: &ScanFilter,
+    ) -> Option<Result<Vec<Document>, SnapshotReadError>> {
+        let extracted = self.extracted.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut conditions: Vec<String> = Vec::new();
+        let mut values: Vec<rusqlite::types::Value> = Vec::new();
+        for condition in filter.conditions() {
+            if !extracted.is_active(collection.as_str(), &condition.field) {
+                continue;
+            }
+            let (column, value) = match &condition.value {
+                DocumentValue::String(text) => {
+                    (text_column(&condition.field), Value::Text(text.clone()))
+                }
+                DocumentValue::Integer(integer) => {
+                    (numeric_column(&condition.field), Value::Integer(*integer))
+                }
+                DocumentValue::Number(number) => {
+                    (numeric_column(&condition.field), Value::Real(*number))
+                }
+                // Booleans, nulls, and structured values never push: the
+                // columns do not carry them, and the executor's own
+                // predicate stays the exact filter.
+                _ => continue,
+            };
+            let column = quote_identifier(&column);
+            conditions.push(match condition.op {
+                ScanOp::Equals => format!("{column} = ?"),
+                // A NULL column (absent field, structured value) must
+                // survive a negation: SQL's three-valued logic would drop
+                // it, the executor's predicate may keep it.
+                ScanOp::NotEquals => format!("({column} IS NULL OR {column} <> ?)"),
+                ScanOp::Less => format!("{column} < ?"),
+                ScanOp::LessOrEqual => format!("{column} <= ?"),
+                ScanOp::Greater => format!("{column} > ?"),
+                ScanOp::GreaterOrEqual => format!("{column} >= ?"),
+            });
+            values.push(value);
+        }
+        if conditions.is_empty() {
+            return None;
+        }
+        let sql = format!(
+            "SELECT id, deleted, body, MAX(commit_seq) FROM documents
+             WHERE tenant = ?1 AND collection = ?2 AND commit_seq <= ?3
+               AND id > COALESCE(?4, '')
+             GROUP BY id
+             HAVING deleted = 0 AND {}
+             ORDER BY id LIMIT ?",
+            conditions.join(" AND ")
+        );
+        let mut parameters: Vec<rusqlite::types::Value> = Vec::with_capacity(values.len() + 5);
+        parameters.push(Value::Text(tenant.as_str().to_owned()));
+        parameters.push(Value::Text(collection.as_str().to_owned()));
+        parameters.push(Value::Integer(sequence.get() as i64));
+        parameters.push(after.map(|after| Value::Text(after.to_owned())).unwrap_or(Value::Null));
+        parameters.extend(values);
+        parameters.push(Value::Integer(limit));
+        let reader = self.reader();
+        let connection = reader.connection();
+        let mut statement = connection.prepare_cached(&sql).ok()?;
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(parameters.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?))
+            })
+            .ok()?;
+        let rows = rows.collect::<Result<Vec<_>, _>>().ok()?;
+        let mut documents = Vec::with_capacity(rows.len());
+        for (id, deleted, body) in rows {
+            if deleted != 0 {
+                continue;
+            }
+            let Some(document) = decode_document_body(&body) else {
+                return Some(Err(SnapshotReadError::Integrity));
+            };
+            if document.collection() != collection || document.id().as_str() != id {
+                // A sound narrowing may over-match, never mis-decode: a
+                // body that contradicts its key is an integrity failure.
+                return Some(Err(SnapshotReadError::Integrity));
+            }
+            documents.push(document);
+        }
+        Some(Ok(documents))
+    }
+}
+
+/// Loads the descriptor view from the durable table at open.
+fn load_extracted_state(connection: &Connection, state: &mut ExtractedState) -> Result<(), ()> {
+    let mut statement = connection
+        .prepare(
+            "SELECT collection, field, state FROM index_descriptors ORDER BY collection, field",
+        )
+        .map_err(|_| ())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
+        })
+        .map_err(|_| ())?;
+    for row in rows {
+        let (collection, field, active) = row.map_err(|_| ())?;
+        state
+            .descriptors
+            .insert((collection.clone(), field.clone()), active == DESCRIPTOR_STATE_ACTIVE);
+        if !state.fields.contains(&field) {
+            state.fields.push(field);
+        }
+    }
+    state.refresh_put_sql();
+    Ok(())
+}
+
+/// Backfills one descriptor's extracted columns over a collection's
+/// pre-registration rows, inside the registration transaction.
+fn backfill_collection_inline(
+    transaction: &rusqlite::Transaction<'_>,
+    collection: &CollectionName,
+    field: &str,
+    watermark: u64,
+) -> Result<(), ()> {
+    let text = quote_identifier(&text_column(field));
+    let number = quote_identifier(&numeric_column(field));
+    let update = format!(
+        "UPDATE documents SET {text} = ?5, {number} = ?6
+         WHERE tenant = ?1 AND collection = ?2 AND id = ?3 AND commit_seq = ?4"
+    );
+    let mut statement = transaction
+        .prepare_cached(
+            "SELECT tenant, id, commit_seq, deleted, body FROM documents
+             WHERE collection = ?1 AND commit_seq <= ?2",
+        )
+        .map_err(|_| ())?;
+    let rows = statement
+        .query_map(rusqlite::params![collection.as_str(), watermark as i64], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, Vec<u8>>(4)?,
+            ))
+        })
+        .map_err(|_| ())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| ())?;
+    drop(statement);
+    for (tenant, id, commit_seq, deleted, body) in rows {
+        // A tombstone row carries no document body to extract; its columns
+        // stay NULL and never surface (the scan's `deleted = 0` filter).
+        if deleted != 0 {
+            continue;
+        }
+        let Some(document) = decode_document_body(&body) else { continue };
+        // One extracted scalar lands in its own column; the other stays
+        // NULL, exactly as the write path binds a fresh put.
+        let (text_value, number_value) = match extract_column_value(&document, field) {
+            Some(ColumnValue::Text(text)) => (Value::Text(text), Value::Null),
+            Some(ColumnValue::Integer(integer)) => (Value::Null, Value::Integer(integer)),
+            Some(ColumnValue::Real(real)) => (Value::Null, Value::Real(real)),
+            None => (Value::Null, Value::Null),
+        };
+        transaction
+            .prepare_cached(&update)
+            .and_then(|mut statement| {
+                statement.execute(rusqlite::params![
+                    tenant,
+                    collection.as_str(),
+                    id,
+                    commit_seq,
+                    text_value,
+                    number_value,
+                ])
+            })
+            .map_err(|_| ())?;
+    }
+    Ok(())
 }
