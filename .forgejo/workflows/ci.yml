@@ -1,231 +1,234 @@
-name: TerraScale delivery
+name: TypeScript SDK checks and npm release
 
 on:
-  pull_request:
-    branches: [develop, main]
   push:
-    branches: [main]
+    branches: [develop, main]
+
+permissions:
+  contents: read
 
 concurrency:
-  group: ${{ forgejo.event_name == 'pull_request' && format('pr-{0}-{1}', forgejo.repository, forgejo.event.pull_request.number) || format('delivery-{0}-{1}', forgejo.repository, forgejo.ref) }}
+  group: ${{ forgejo.workflow }}-${{ forgejo.repository }}-${{ forgejo.ref }}
   cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
 
+# DEP-1 must provide an independently accepted replacement before this can run.
+# These sentinels keep the bootstrap fail-closed until that review is complete.
 env:
-  TERRASCALE_TOOLBOX_REVISION: "2026.08.26"
+  TS_DEPLOY_REPOSITORY: "TerraScale-Old/TerraScale.Deploy"
+  TS_DEPLOY_REVISION: "PENDING_DEP1_GREEN_COMMIT"
+  TS_DEPLOY_EXPECTED_TREE: "PENDING_DEP1_GREEN_TREE"
 
 jobs:
   bootstrap:
-    if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
-    timeout-minutes: 30
+    name: deploy-cli
     runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
-    outputs:
-      version: ${{ steps.cli.outputs.version }}
+    timeout-minutes: 30
+    permissions: { contents: read }
     steps:
-      - name: Resolve approved Deploy CLI pin
-        id: cli
+      - name: Require the least-privileged Deploy repository token
         shell: bash
         env:
-          DEPLOY_CLI_READ_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN: ${{ secrets.TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN }}
         run: |
           set -euo pipefail
-          config="$(mktemp -d)"
-          trap 'rm -rf -- "${config}"' EXIT
-          dotnet new nugetconfig --output "${config}" --force >/dev/null
-          dotnet nuget add source https://git.terrascale.tech/api/packages/TerraScale/nuget/index.json --name terrascale --username forgejo-actions --password "${DEPLOY_CLI_READ_TOKEN}" --store-password-in-clear-text --configfile "${config}/nuget.config" >/dev/null
-          dotnet tool install TerraScale.Deploy.Cli --version 1.0.80 --tool-path .tools --configfile "${config}/nuget.config"
-          .tools/terrascale-deploy ci resolve-cli
+          if [[ -z "${TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN:-}" ]]; then
+            echo "X-10 is blocked: TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN is not configured." >&2
+            exit 1
+          fi
+
+      - name: Require the accepted Deploy commit and tree pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${TS_DEPLOY_REVISION}" =~ ^[0-9a-f]{40}$ || ! "${TS_DEPLOY_EXPECTED_TREE}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "X-10 fail-closed: DEP-1 is reopened and no ts-deploy commit is authorized for consumers. Replace TS_DEPLOY_REVISION and TS_DEPLOY_EXPECTED_TREE only after the replacement commit and tree pass independent review and Forgejo." >&2
+            exit 1
+          fi
+
+      - name: Check out the exact reviewed Deploy source
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          repository: ${{ env.TS_DEPLOY_REPOSITORY }}
+          ref: ${{ env.TS_DEPLOY_REVISION }}
+          token: ${{ secrets.TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: ts-deploy
+
+      - uses: https://data.forgejo.org/actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: ts-deploy/go.mod
+          cache: false
+
+      - name: Build the exact reviewed Deploy CLI
+        shell: bash
+        working-directory: ts-deploy
+        env:
+          CGO_ENABLED: "0"
+          GOBIN: ${{ runner.temp }}/terrascale-deploy/bin
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${TS_DEPLOY_REVISION}"
+          test "$(git rev-parse HEAD^{tree})" = "${TS_DEPLOY_EXPECTED_TREE}"
+          mkdir -p "${GOBIN}"
+          go build -trimpath -o "${GOBIN}/terrascale-deploy" ./cmd/terrascale-deploy
+          chmod 0755 "${GOBIN}/terrascale-deploy"
+
       - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
-        with: { name: deploy-cli, path: .tools }
+        with:
+          name: deploy-cli
+          path: ${{ runner.temp }}/terrascale-deploy/bin
+          if-no-files-found: error
+          retention-days: 1
 
   plan:
-    if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
-    timeout-minutes: 30
-    runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
+    name: plan
     needs: bootstrap
+    runs-on: terrascale-builder
+    timeout-minutes: 30
     outputs:
-      test_matrix: ${{ steps.plan.outputs.test_matrix }}
-      build_matrix: ${{ steps.plan.outputs.build_matrix }}
       tree: ${{ steps.plan.outputs.tree }}
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0 }
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          fetch-depth: 0
+          token: ""
+          persist-credentials: false
+          path: ts-typescript
       - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with: { name: deploy-cli, path: .tools }
       - id: plan
-        run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci plan --repository-root . --output artifacts/plan.json
+        name: Plan SDK verification and candidate profiles
+        run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci plan --repository-root ts-typescript --require-clean-source --output ts-typescript/artifacts/plan.json
 
-  pr-static:
-    name: pr/static
-    if: ${{ forgejo.event_name == 'pull_request' }}
-    runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
-    steps:
-      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          github-server-url: "https://git.terrascale.tech"
-          persist-credentials: false
-      - run: node --test test/product-name-check.test.mjs
-      - run: node scripts/check-product-name.mjs --tracked-only
-      - run: git -c credential.helper= clone --depth 1 --branch develop https://git.terrascale.tech/TerraScale/ts-dashboard.git Dashboard
-      - run: node scripts/check-public-contract-fixture.mjs Dashboard/docs/product/openapi/server.openapi.json
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npm run check:forbidden-surface
-      - run: npm run check:route-manifest
-      - run: npm run check:openapi-contract-descriptor -- Dashboard/docs/product/openapi/server.openapi.json
-      - run: npm run check:openapi-drift -- --strict Dashboard/docs/product/openapi/server.openapi.json
-
-  pr-build:
-    name: pr/build
-    if: ${{ forgejo.event_name == 'pull_request' }}
-    runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
-    steps:
-      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          github-server-url: "https://git.terrascale.tech"
-          persist-credentials: false
-      - run: npm ci
-      - run: npm run build
-
-  runtime-matrix:
-    name: runtime/node-${{ matrix.node }}
-    if: ${{ forgejo.event_name == 'pull_request' || (forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main') }}
-    strategy:
-      fail-fast: true
-      matrix:
-        node: ["22", "24"]
+  verify-static:
+    name: verify/static
+    needs: [bootstrap, plan]
     runs-on: terrascale-untrusted
-    container: { image: "node:${{ matrix.node }}-bookworm-slim" }
+    timeout-minutes: 45
+    container:
+      image: mcr.microsoft.com/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           github-server-url: "https://git.terrascale.tech"
+          fetch-depth: 0
+          token: ""
           persist-credentials: false
-      - name: Provision reviewed npm 11.18.0
-        run: node scripts/provision-reviewed-npm.mjs
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npm run test:unit
-      - run: npm run test:msgpack
-
-  browser-matrix:
-    name: source/browser-smoke-current-engines
-    if: ${{ forgejo.event_name == 'pull_request' || (forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main') }}
-    runs-on: terrascale-untrusted
-    container: { image: "mcr.microsoft.com/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e" }
-    steps:
-      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          github-server-url: "https://git.terrascale.tech"
-          persist-credentials: false
-      - run: npm ci
-      - run: npm run build
-      - run: npm run test:browser
-
-  promotion-admission:
-    name: promotion/admission
-    if: ${{ forgejo.event_name == 'pull_request' && forgejo.base_ref == 'main' }}
-    runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
-    steps:
-      - run: |
-          test "${{ forgejo.base_ref }}" = main
-          test "${{ forgejo.head_ref }}" = develop
-          test "${{ forgejo.event.pull_request.head.repo.full_name }}" = "${{ forgejo.repository }}"
-
-  release-tests:
-    name: release/tests
-    if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
-    needs: [plan]
-    runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
-    steps:
-      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: { github-server-url: "https://git.terrascale.tech", persist-credentials: false }
-      - run: npm ci
-      - run: npm run build
-      - run: npm run check:forbidden-surface
-      - run: npm run test:unit
-      - run: npm run test:msgpack
-
-  release-e2e:
-    name: release/e2e
-    if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
-    needs: [release-artifacts]
-    runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
-    steps:
-      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: { github-server-url: "https://git.terrascale.tech", persist-credentials: false }
+          path: ts-typescript
       - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: { node-version: "24.20.0", check-latest: false }
       - name: Provision reviewed npm 11.18.0
+        working-directory: ts-typescript
         run: node scripts/provision-reviewed-npm.mjs
-      - run: npm ci
-      - run: npm run build
+      - name: Check out the current public API contract
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          repository: TerraScale/ts-dashboard
+          ref: develop
+          path: ts-typescript/Dashboard
+          fetch-depth: 0
+          token: ${{ secrets.TERRASCALE_DASHBOARD_REPOSITORY_READ_TOKEN }}
+          persist-credentials: false
       - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with: { name: candidate-npm, path: artifacts/handoff }
-      - run: node scripts/promote-npm-candidate.mjs --build-receipt artifacts/handoff/evidence/npm.build-receipt.json --artifacts artifacts/handoff/candidate --registry https://registry.npmjs.org/ --verify-only
-      - env:
-          TERRASCALE_API_BASE_URL: ${{ vars.TERRASCALE_API_BASE_URL }}
-          TERRASCALE_E2E_ACCESS_TOKEN: ${{ secrets.TERRASCALE_E2E_ACCESS_TOKEN }}
-          TERRASCALE_E2E_PROJECT_ID: ${{ vars.TERRASCALE_E2E_PROJECT_ID }}
-          TERRASCALE_E2E_ORGANIZATION_ID: ${{ vars.TERRASCALE_E2E_ORGANIZATION_ID }}
-          TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID: ${{ vars.TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID }}
-        run: |
-          node scripts/require-release-e2e-config.mjs
-          node scripts/run-packed-release-e2e.mjs --tarball "artifacts/handoff/candidate/terrascale-sdk-$(node -p 'require(\"./package.json\").version').tgz"
-          npm run test:integration
+        with: { name: deploy-cli, path: .tools }
+      - name: Run the static SDK profile
+        run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci pr --repository-root ts-typescript --profile static
 
-  release-artifacts:
-    name: release/artifacts (${{ matrix.profile }})
-    if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
+  verify-node-22:
+    name: verify/node-22
     needs: [bootstrap, plan]
-    strategy:
-      fail-fast: true
-      matrix: { include: "${{ fromJSON(needs.plan.outputs.build_matrix) }}" }
-    runs-on: terrascale-builder
+    runs-on: terrascale-untrusted
+    timeout-minutes: 45
     container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
+      image: mcr.microsoft.com/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0, persist-credentials: false }
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          fetch-depth: 0
+          token: ""
+          persist-credentials: false
+          path: ts-typescript
+      - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: "22.23.2", check-latest: false }
+      - name: Provision reviewed npm 11.18.0
+        working-directory: ts-typescript
+        run: node scripts/provision-reviewed-npm.mjs
+      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        with: { name: deploy-cli, path: .tools }
+      - name: Run the complete SDK test profile on Node 22
+        run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci pr --repository-root ts-typescript --profile tests
+
+  verify-node-24:
+    name: verify/node-24
+    needs: [bootstrap, plan]
+    runs-on: terrascale-untrusted
+    timeout-minutes: 45
+    container:
+      image: mcr.microsoft.com/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          fetch-depth: 0
+          token: ""
+          persist-credentials: false
+          path: ts-typescript
+      - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: "24.20.0", check-latest: false }
+      - name: Provision reviewed npm 11.18.0
+        working-directory: ts-typescript
+        run: node scripts/provision-reviewed-npm.mjs
+      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        with: { name: deploy-cli, path: .tools }
+      - name: Run the complete SDK test profile on Node 24
+        run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci pr --repository-root ts-typescript --profile tests
+
+  verify-browser:
+    name: verify/browser-current-engines
+    needs: [bootstrap, plan]
+    runs-on: terrascale-untrusted
+    timeout-minutes: 60
+    container:
+      image: mcr.microsoft.com/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          fetch-depth: 0
+          token: ""
+          persist-credentials: false
+          path: ts-typescript
+      - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: "24.20.0", check-latest: false }
+      - name: Provision reviewed npm 11.18.0
+        working-directory: ts-typescript
+        run: node scripts/provision-reviewed-npm.mjs
+      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        with: { name: deploy-cli, path: .tools }
+      - name: Run the browser SDK profile
+        run: chmod +x .tools/terrascale-deploy && .tools/terrascale-deploy ci pr --repository-root ts-typescript --profile browser
+
+  candidate-build:
+    name: candidate/build
+    if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
+    needs: [bootstrap, plan, verify-static, verify-node-22, verify-node-24, verify-browser]
+    runs-on: terrascale-untrusted
+    timeout-minutes: 60
+    container:
+      image: mcr.microsoft.com/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          fetch-depth: 0
+          token: ""
+          persist-credentials: false
+          path: ts-typescript
       - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: { node-version: "22.23.2", check-latest: false }
       - name: Bind exact Node 22 executable
@@ -239,132 +242,175 @@ jobs:
           test "$(node --version)" = v24.20.0
           printf 'TERRASCALE_NODE_24=%s\n' "$(node -p 'process.execPath')" >> "${GITHUB_ENV}"
       - name: Provision reviewed npm 11.18.0
+        working-directory: ts-typescript
         run: node scripts/provision-reviewed-npm.mjs
       - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with: { name: deploy-cli, path: .tools }
-      - name: Build exact npm candidate and receipt
+      - name: Build the exact npm candidate and receipt
         env:
-          BUILD_TARGET: ${{ matrix.profile }}
           EXPECTED_TREE: ${{ needs.plan.outputs.tree }}
         run: |
           chmod +x .tools/terrascale-deploy
-          .tools/terrascale-deploy ci build-candidate --repository-root . --target "${BUILD_TARGET}" --expected-tree "${EXPECTED_TREE}" --receipt "artifacts/evidence/${BUILD_TARGET}.build-receipt.json"
+          .tools/terrascale-deploy ci build-candidate --repository-root ts-typescript --target npm --expected-tree "${EXPECTED_TREE}" --receipt ts-typescript/artifacts/evidence/npm.build-receipt.json
       - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
-        with: { name: "candidate-${{ matrix.profile }}", path: artifacts }
+        with:
+          name: candidate-npm
+          path: ts-typescript/artifacts
+          if-no-files-found: error
+          retention-days: 7
 
-  release-browser-candidate:
-    name: release/candidate-browser-engines
+  candidate-browser:
+    name: candidate/browser-current-engines
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
-    needs: [release-artifacts]
-    runs-on: terrascale-builder
+    needs: [candidate-build]
+    runs-on: terrascale-untrusted
+    timeout-minutes: 60
     container:
       image: mcr.microsoft.com/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0, persist-credentials: false }
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          fetch-depth: 0
+          token: ""
+          persist-credentials: false
+          path: ts-typescript
       - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: { node-version: "24.20.0", check-latest: false }
       - name: Provision reviewed npm 11.18.0
+        working-directory: ts-typescript
         run: node scripts/provision-reviewed-npm.mjs
-      - run: npm ci
+      - name: Install browser test dependencies
+        working-directory: ts-typescript
+        run: npm ci
       - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with: { name: candidate-npm, path: artifacts/handoff }
-      - run: node scripts/promote-npm-candidate.mjs --build-receipt artifacts/handoff/evidence/npm.build-receipt.json --artifacts artifacts/handoff/candidate --registry https://registry.npmjs.org/ --verify-only
-      - name: Test the verified candidate tarball
-        shell: bash
+        with: { name: candidate-npm, path: ts-typescript/artifacts/handoff }
+      - name: Verify and test the immutable npm candidate
+        working-directory: ts-typescript
         run: |
-          set -euo pipefail
+          node scripts/promote-npm-candidate.mjs --build-receipt artifacts/handoff/evidence/npm.build-receipt.json --artifacts artifacts/handoff/candidate --registry https://registry.npmjs.org/ --verify-only
           candidate="artifacts/handoff/candidate/terrascale-sdk-$(node -p 'require("./package.json").version').tgz"
           test -f "${candidate}"
           TERRASCALE_BROWSER_CANDIDATE_TARBALL="${candidate}" npm run test:browser
 
-  release-contract-fixture:
-    name: release/contract-fixture
+  candidate-e2e:
+    name: candidate/live-api
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
-    needs: [bootstrap, plan]
+    needs: [candidate-build]
     runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
+    timeout-minutes: 60
     steps:
-      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: { github-server-url: "https://git.terrascale.tech" }
-      - run: node --test test/product-name-check.test.mjs
-      - run: node scripts/check-product-name.mjs --tracked-only
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           github-server-url: "https://git.terrascale.tech"
-          repository: TerraScale/ts-dashboard
-          ref: develop
-          path: Dashboard
-      - run: node scripts/check-public-contract-fixture.mjs Dashboard/docs/product/openapi/server.openapi.json
-      - run: npm ci && npm run build && npm run check:forbidden-surface && npm run check:route-manifest && npm run check:openapi-contract-descriptor -- Dashboard/docs/product/openapi/server.openapi.json
-      - run: npm run check:openapi-drift -- --strict Dashboard/docs/product/openapi/server.openapi.json
-
-  release-version-availability:
-    name: release/version-availability
-    if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
-    needs: [bootstrap, plan]
-    runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
-    steps:
-      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: { github-server-url: "https://git.terrascale.tech" }
+          fetch-depth: 0
+          token: ""
+          persist-credentials: false
+          path: ts-typescript
       - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: { node-version: "24.20.0", check-latest: false }
       - name: Provision reviewed npm 11.18.0
+        working-directory: ts-typescript
         run: node scripts/provision-reviewed-npm.mjs
-      - run: |
+      - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        with: { name: candidate-npm, path: ts-typescript/artifacts/handoff }
+      - name: Verify the immutable npm candidate
+        working-directory: ts-typescript
+        run: node scripts/promote-npm-candidate.mjs --build-receipt artifacts/handoff/evidence/npm.build-receipt.json --artifacts artifacts/handoff/candidate --registry https://registry.npmjs.org/ --verify-only
+      - name: Run the packed live API journey
+        working-directory: ts-typescript
+        env:
+          TERRASCALE_API_BASE_URL: ${{ vars.TERRASCALE_API_BASE_URL }}
+          TERRASCALE_E2E_ACCESS_TOKEN: ${{ secrets.TERRASCALE_E2E_ACCESS_TOKEN }}
+          TERRASCALE_E2E_PROJECT_ID: ${{ vars.TERRASCALE_E2E_PROJECT_ID }}
+          TERRASCALE_E2E_ORGANIZATION_ID: ${{ vars.TERRASCALE_E2E_ORGANIZATION_ID }}
+          TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID: ${{ vars.TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID }}
+        run: |
+          node scripts/require-release-e2e-config.mjs
+          node scripts/run-packed-release-e2e.mjs --tarball "artifacts/handoff/candidate/terrascale-sdk-$(node -p 'require("./package.json").version').tgz"
+
+  candidate-version:
+    name: candidate/version-availability
+    if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
+    needs: [candidate-build]
+    runs-on: terrascale-builder
+    timeout-minutes: 30
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          fetch-depth: 0
+          token: ""
+          persist-credentials: false
+          path: ts-typescript
+      - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: "24.20.0", check-latest: false }
+      - name: Provision reviewed npm 11.18.0
+        working-directory: ts-typescript
+        run: node scripts/provision-reviewed-npm.mjs
+      - name: Refuse an already-published version
+        working-directory: ts-typescript
+        run: |
           version="$(node -p 'require("./package.json").version')"
           node scripts/promote-npm-candidate.mjs --check-availability --package @terrascale/sdk --version "${version}" --registry https://registry.npmjs.org/
 
   candidate:
+    name: candidate/admit
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
-    needs: [bootstrap, plan, runtime-matrix, release-tests, release-e2e, release-artifacts, release-browser-candidate, release-contract-fixture, release-version-availability]
+    needs: [candidate-build, candidate-browser, candidate-e2e, candidate-version]
     runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
+    timeout-minutes: 30
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0, persist-credentials: false }
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          fetch-depth: 0
+          token: ""
+          persist-credentials: false
+          path: ts-typescript
       - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: { node-version: "24.20.0", check-latest: false }
       - name: Provision reviewed npm 11.18.0
+        working-directory: ts-typescript
         run: node scripts/provision-reviewed-npm.mjs
       - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with: { name: candidate-npm, path: artifacts/handoff }
-      - run: node scripts/promote-npm-candidate.mjs --build-receipt artifacts/handoff/evidence/npm.build-receipt.json --artifacts artifacts/handoff/candidate --registry https://registry.npmjs.org/ --verify-only
+        with: { name: candidate-npm, path: ts-typescript/artifacts/handoff }
+      - name: Admit the unchanged candidate
+        working-directory: ts-typescript
+        run: node scripts/promote-npm-candidate.mjs --build-receipt artifacts/handoff/evidence/npm.build-receipt.json --artifacts artifacts/handoff/candidate --registry https://registry.npmjs.org/ --verify-only
       - uses: https://data.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
-        with: { name: admitted-npm-candidate, path: artifacts/handoff }
+        with:
+          name: admitted-npm-candidate
+          path: ts-typescript/artifacts/handoff
+          if-no-files-found: error
+          retention-days: 1
 
-  promote:
+  publish:
+    name: npm/publish
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
     needs: [candidate]
     runs-on: terrascale-builder
-    container:
-      image: git.terrascale.tech/terrascale/terrascale-builder:2026.08.26
-      credentials:
-        username: ${{ secrets.REGISTRY_USER }}
-        password: ${{ secrets.REGISTRY_TOKEN }}
+    timeout-minutes: 30
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with: { github-server-url: "https://git.terrascale.tech", fetch-depth: 0, persist-credentials: false }
+        with:
+          github-server-url: "https://git.terrascale.tech"
+          fetch-depth: 0
+          token: ""
+          persist-credentials: false
+          path: ts-typescript
       - uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: { node-version: "24.20.0", check-latest: false }
       - name: Provision reviewed npm 11.18.0
+        working-directory: ts-typescript
         run: node scripts/provision-reviewed-npm.mjs
       - uses: https://data.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with: { name: admitted-npm-candidate, path: artifacts/handoff }
-      - run: node scripts/promote-npm-candidate.mjs --build-receipt artifacts/handoff/evidence/npm.build-receipt.json --artifacts artifacts/handoff/candidate --registry https://registry.npmjs.org/ --verify-only
-      - env:
+        with: { name: admitted-npm-candidate, path: ts-typescript/artifacts/handoff }
+      - name: Reverify the admitted candidate
+        working-directory: ts-typescript
+        run: node scripts/promote-npm-candidate.mjs --build-receipt artifacts/handoff/evidence/npm.build-receipt.json --artifacts artifacts/handoff/candidate --registry https://registry.npmjs.org/ --verify-only
+      - name: Publish the admitted candidate to npm
+        working-directory: ts-typescript
+        env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: node scripts/promote-npm-candidate.mjs --build-receipt artifacts/handoff/evidence/npm.build-receipt.json --artifacts artifacts/handoff/candidate --registry https://registry.npmjs.org/

@@ -62,9 +62,14 @@ test("configured OpenAPI drift profile runs against the checked-out Dashboard sn
       .find((profile) => profile.name === "static")
       ?.commands.find((candidate) => candidate.description === "OpenAPI drift");
     assert.ok(command);
+    assert.deepEqual(command.arguments, ["run", "check:openapi-drift", "--", "--strict"]);
     assert.match(workflow, /repository: TerraScale\/ts-dashboard/u);
+    assert.match(workflow, /path: ts-typescript\/Dashboard/u);
+    const dashboardCheckout = workflow.match(/repository: TerraScale\/ts-dashboard[\s\S]*?persist-credentials: false/u)?.[0] ?? "";
+    assert.match(dashboardCheckout, /ref: develop/u);
+    assert.match(dashboardCheckout, /token: \$\{\{ secrets\.TERRASCALE_DASHBOARD_REPOSITORY_READ_TOKEN \}\}/u);
+    assert.doesNotMatch(dashboardCheckout, /TERRASCALE_DEPLOY_REPOSITORY_READ_TOKEN|TERRASCALE_SOURCE_READ_TOKEN|(?:github|forgejo|gitea)\.token/u);
     assert.doesNotMatch(workflow, /TerraScale\.Dashboard/u);
-    assert.match(workflow, /path: Dashboard/u);
 
     await mkdir(path.join(workspace, "scripts"), { recursive: true });
     await mkdir(path.join(workspace, "Dashboard", "docs", "product", "openapi"), { recursive: true });
