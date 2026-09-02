@@ -586,6 +586,7 @@ fn pruning_requires_every_consumer_frontier() {
         );
     }
     assert_eq!(storage.journal_records(), 3);
+    backdate_all_rows(&storage);
     // Both consumers exist, pinned at zero. One advancing prunes nothing:
     // the other still needs every row.
     storage.advance_consumer_frontier("fast", 3).expect("frontier advances");
@@ -610,6 +611,44 @@ fn pruning_requires_every_consumer_frontier() {
     );
 }
 
+/// Backdates every row past the D-42 history floor so a sweep is bounded
+/// only by the consumer frontiers.
+#[allow(dead_code)]
+fn backdate_all_rows(storage: &SqliteStorage) {
+    let connection = storage.raw_writer_connection();
+    connection.execute("UPDATE documents SET committed_at = 0", []).expect("rows backdate");
+}
+
+#[test]
+fn fresh_rows_survive_the_sweep_regardless_of_frontiers() {
+    // The D-42 history floor: within thirty days of their commit, rows are
+    // reachable even when every consumer frontier has passed them.
+    let (_dir, mut storage) = sqlite_store("prune-history-floor");
+    for index in 1..=5 {
+        commit(
+            &mut storage,
+            &format!("op-{index}"),
+            vec![put(document(&format!("doc-{index}"), "users", "value"), ExpectedVersion::New)],
+        );
+    }
+    let head = storage.published_state().0;
+    storage.advance_consumer_frontier("solo", head.get()).expect("frontier passes everything");
+    let pruned = storage.prune_below_consumer_frontiers().expect("prune runs");
+    assert_eq!(pruned, 0, "nothing inside the history floor is prunable");
+    assert_eq!(storage.journal_records(), 5, "every fresh row is still reachable");
+    // A mid-window backdate prunes exactly the rows older than the floor.
+    // The writer guard is scoped so the sweep below can take the writer.
+    {
+        let connection = storage.raw_writer_connection();
+        connection
+            .execute("UPDATE documents SET committed_at = 0 WHERE commit_seq <= 3", [])
+            .expect("rows backdate");
+    }
+    let pruned = storage.prune_below_consumer_frontiers().expect("prune runs");
+    assert_eq!(pruned, 3, "only the backdated rows leave the journal");
+    assert_eq!(storage.journal_records(), 2, "the rows inside the floor stay");
+}
+
 #[test]
 fn pruning_keeps_each_keys_newest_version() {
     let (_dir, mut storage) = sqlite_store("prune-versions");
@@ -626,6 +665,9 @@ fn pruning_keeps_each_keys_newest_version() {
         vec![put(document("fresh", "users", "new"), ExpectedVersion::New)],
     );
     storage.advance_consumer_frontier("solo", 4).expect("frontier advances");
+    // Backdate the rows past the 30-day history floor so the sweep is
+    // frontier-bounded (fresh rows are inside the floor by construction).
+    backdate_all_rows(&storage);
     let pruned = storage.prune_below_consumer_frontiers().expect("prune runs");
     assert_eq!(pruned, 3);
     // Each key's newest version survives so above-floor snapshots resolve;
@@ -656,6 +698,7 @@ fn sustained_writes_with_advancing_consumers_keep_the_journal_bounded() {
         let head = storage.published_state().0.get();
         storage.advance_consumer_frontier("replication", head).expect("frontier advances");
         storage.advance_consumer_frontier("sync", head).expect("frontier advances");
+        backdate_all_rows(&storage);
         storage.prune_below_consumer_frontiers().expect("prune runs");
     }
     assert!(
@@ -690,8 +733,9 @@ fn compact_sweeps_the_pruning_floor() {
             vec![put(document(&format!("doc-{index}"), "users", "value"), ExpectedVersion::New)],
         );
     }
-    // The lifecycle sweep: advancing the frontier and sweeping bounds the
-    // journal with no other call.
+    // The lifecycle sweep: backdating past the D-42 history floor and
+    // advancing the frontier bounds the journal with no other call.
+    backdate_all_rows(&storage);
     storage.advance_consumer_frontier("solo", 3).expect("frontier advances");
     storage.run_retention_sweep().expect("sweep runs");
     assert_eq!(storage.journal_records(), 1, "the sweep pruned below the floor");

@@ -132,6 +132,18 @@ use super::{
     },
 };
 
+/// The wall-clock commit time of a row, in Unix milliseconds (the D-42
+/// 30-day history floor is evaluated against it).
+fn unix_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(i64::MAX, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))
+}
+
+/// The D-42 history floor: superseded rows stay reachable for at least
+/// thirty days regardless of consumer frontiers.
+const HISTORY_FLOOR_MILLIS: i64 = 30 * 24 * 60 * 60 * 1000;
+
 /// Magic bytes prefixing the `SQLite` location's `format` marker.
 const SQLITE_FORMAT_MAGIC: &[u8; 10] = b"TBV3SQLITE";
 
@@ -161,13 +173,14 @@ CREATE TABLE IF NOT EXISTS meta (
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS documents (
-    tenant     TEXT    NOT NULL,
-    collection TEXT    NOT NULL,
-    id         TEXT    NOT NULL,
-    commit_seq INTEGER NOT NULL,
-    version    INTEGER NOT NULL,
-    deleted    INTEGER NOT NULL,
-    body       BLOB    NOT NULL,
+    tenant      TEXT    NOT NULL,
+    collection  TEXT    NOT NULL,
+    id          TEXT    NOT NULL,
+    commit_seq  INTEGER NOT NULL,
+    version     INTEGER NOT NULL,
+    deleted     INTEGER NOT NULL,
+    committed_at INTEGER NOT NULL DEFAULT 0,
+    body        BLOB    NOT NULL,
     PRIMARY KEY (tenant, collection, id, commit_seq)
 ) WITHOUT ROWID;
 
@@ -280,6 +293,13 @@ impl SqliteStorage {
         }
         let writer = open_connection(&database_path)?;
         writer.execute_batch(SCHEMA).map_err(|_| StorageOpenError::Unavailable)?;
+        // Open-time migration: locations created before the D-42 history
+        // floor carry no `committed_at`; the column's zero default marks
+        // those rows as maximally old, which is the honest reading (their
+        // real commit time is unknown but in the past).
+        let _ = writer.execute_batch(
+            "ALTER TABLE documents ADD COLUMN committed_at INTEGER NOT NULL DEFAULT 0",
+        );
         // Seed the identity rows idempotently: `INSERT OR IGNORE` keeps an
         // existing location's root chain and format version untouched.
         let seed = format!(
@@ -337,6 +357,13 @@ impl SqliteStorage {
 
     // ---- Journal-pruning lifecycle (TB-20's bounded-journal invariant) ---
 
+    /// Hands a test the writer connection (the sweep's backdating helper
+    /// and the crash tests assert against raw rows).
+    #[cfg(test)]
+    pub(crate) fn raw_writer_connection(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Records or advances one consumer's journal frontier. The frontier is
     /// monotonic: a lower sequence never moves it back.
     ///
@@ -378,10 +405,32 @@ impl SqliteStorage {
         let mut writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let transaction =
             writer.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| ())?;
-        let Some(floor) = history_floor_on(&transaction)? else {
+        let Some(frontier) = history_floor_on(&transaction)? else {
             transaction.commit().map_err(|_| ())?;
             return Ok(0);
         };
+        // The D-42 history floor: a row is prunable only when every
+        // consumer frontier has passed it AND it is older than the floor's
+        // 30-day retention. The cutoff rises with the sweep's own clock, so
+        // a fresh row is never prunable regardless of frontiers.
+        let cutoff = unix_millis().saturating_sub(HISTORY_FLOOR_MILLIS);
+        // The OLDEST row still inside the floor's window: sequences are
+        // allocated in commit order under the one writer, so every row at
+        // or below it is inside the window too and only older rows may
+        // leave. Zero means every row is older than the floor and only the
+        // frontiers bound the sweep.
+        let oldest_retained = u64::try_from(
+            transaction
+                .query_row(
+                    "SELECT COALESCE(MIN(commit_seq), 0) FROM documents
+                     WHERE committed_at >= ?1",
+                    rusqlite::params![cutoff],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|_| ())?,
+        )
+        .unwrap_or(0);
+        let floor = if oldest_retained == 0 { frontier } else { frontier.min(oldest_retained) };
         let pruned = transaction
             .execute("DELETE FROM journal WHERE sequence < ?1", rusqlite::params![floor as i64])
             .map_err(|_| ())?;
@@ -790,11 +839,12 @@ fn insert_document_row(
     deleted: bool,
     body: &[u8],
 ) -> Result<(), ()> {
+    let committed_at = unix_millis();
     transaction
         .prepare_cached(
             "INSERT INTO documents
-             (tenant, collection, id, commit_seq, version, deleted, body)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             (tenant, collection, id, commit_seq, version, deleted, committed_at, body)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         )
         .and_then(|mut statement| {
             statement.execute(rusqlite::params![
@@ -804,6 +854,7 @@ fn insert_document_row(
                 sequence as i64,
                 version as i64,
                 i64::from(deleted),
+                committed_at,
                 body,
             ])
         })

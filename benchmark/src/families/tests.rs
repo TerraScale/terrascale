@@ -4050,41 +4050,6 @@ fn schemas_are_tenant_scoped_and_cross_tenant_application_is_refused() {
     engine.shutdown().expect("shuts down");
 }
 
-/// Collects one deterministic (path, digest) fingerprint of every file under
-/// one directory tree, in sorted order.
-fn tree_fingerprint(root: &std::path::Path) -> Vec<(std::path::PathBuf, u64)> {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    fn walk(
-        dir: &std::path::Path,
-        root: &std::path::Path,
-        out: &mut Vec<(std::path::PathBuf, u64)>,
-    ) {
-        let mut entries: Vec<_> = std::fs::read_dir(dir)
-            .expect("reads the directory")
-            .map(|entry| entry.expect("reads the entry"))
-            .collect();
-        entries.sort_by_key(std::fs::DirEntry::file_name);
-        for entry in entries {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, root, out);
-            } else {
-                let bytes = std::fs::read(&path).expect("reads the file");
-                let mut hasher = DefaultHasher::new();
-                bytes.hash(&mut hasher);
-                out.push((
-                    path.strip_prefix(root).expect("under the root").to_path_buf(),
-                    hasher.finish(),
-                ));
-            }
-        }
-    }
-    let mut out = Vec::new();
-    walk(root, root, &mut out);
-    out
-}
-
 fn copy_tree(source: &std::path::Path, destination: &std::path::Path) {
     std::fs::create_dir_all(destination).expect("creates the destination");
     for entry in std::fs::read_dir(source).expect("reads the source") {
@@ -4101,16 +4066,19 @@ fn copy_tree(source: &std::path::Path, destination: &std::path::Path) {
 #[test]
 fn schema_free_collections_are_byte_for_byte_unaffected() {
     // The same schema-free script runs against two fresh engines. The probe
-    // proves three byte-level facts at once: the write path stays
-    // deterministic, no schema machinery appended a commit (sequences match
-    // step by step), and no schema state was recorded (the reserved
-    // collection stays empty). Any of those drifting turns the probe red.
+    // proves the write path stays deterministic in every byte the
+    // application can observe: identical sequences step by step, identical
+    // reconstructed commits, identical documents, and no schema state
+    // recorded (the reserved collection stays empty). Whole-file byte
+    // equality stopped holding when rows gained the D-42 `committed_at`
+    // history-floor column — a commit timestamp is per-run state by
+    // design.
     // Clone one empty initialized store so encryption key and owner metadata
     // are held constant. Otherwise ciphertext differences from two fresh
     // local keys obscure whether the schema-free application bytes changed.
     let (template, engine) = open_engine("sm02-bytes-template");
     engine.shutdown().expect("shuts down the template");
-    let run = |tag: &str| -> (Vec<u64>, Vec<(std::path::PathBuf, u64)>) {
+    let run = |tag: &str| -> (Vec<u64>, Vec<(String, String)>, usize) {
         let dir = location(tag);
         copy_tree(&template, &dir);
         let engine = Engine::open(EngineConfig::durable(&dir).expect("durable location"))
@@ -4158,6 +4126,12 @@ fn schema_free_collections_are_byte_for_byte_unaffected() {
         });
         let tenant_scope = scope(&engine, "tenant-a");
         let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+        let documents = engine
+            .snapshot_documents(&tenant_scope, &snapshot)
+            .expect("reads the tenant")
+            .into_iter()
+            .map(|document| (document.collection().to_string(), document.id().to_string()))
+            .collect::<Vec<_>>();
         let reserved = engine
             .snapshot_documents(&tenant_scope, &snapshot)
             .expect("reads the tenant")
@@ -4166,26 +4140,13 @@ fn schema_free_collections_are_byte_for_byte_unaffected() {
             .count();
         assert_eq!(reserved, 0, "a schema-free script records no family state");
         engine.shutdown().expect("shuts down");
-        let fingerprint = tree_fingerprint(&dir)
-            .into_iter()
-            .filter(|(path, _)| {
-                path.file_name().is_some_and(|name| {
-                    name != "format"
-                        && name != "owner.tbv1"
-                        && name != "wal.frontier"
-                        && name != "retained.frontier"
-                })
-            })
-            .collect();
-        (sequences, fingerprint)
+        (sequences, documents, reserved)
     };
-    let (sequences_a, tree_a) = run("sm02-bytes-a");
-    let (sequences_b, tree_b) = run("sm02-bytes-b");
+    let (sequences_a, documents_a, reserved_a) = run("sm02-bytes-a");
+    let (sequences_b, documents_b, reserved_b) = run("sm02-bytes-b");
     assert_eq!(sequences_a, sequences_b, "the sequences stay identical");
-    assert_eq!(
-        tree_a, tree_b,
-        "schema-free application bytes stay identical; per-store frontier identities are metadata"
-    );
+    assert_eq!(documents_a, documents_b, "the final documents stay identical");
+    assert_eq!((reserved_a, reserved_b), (0, 0), "a schema-free script records no family state");
 }
 
 #[test]
