@@ -10,21 +10,21 @@
 // the SDK's own writer) so the corpus of attacks is independent of the
 // encoder under test.
 //
-// Run (imports the built SDK tree):
+// Run (imports the SDK source tree):
 //
-//   npm run build && node --test test/msgpack-hostile-decode.test.mjs
+//   npm test
 
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { describe, test } from "node:test";
+import { describe, test } from "vitest";
 
-import { TerrascaleMsgpackError } from "../dist/msgpack/runtime/bounded-msgpack.js";
+import { TerrascaleMsgpackError } from "../src/msgpack/runtime/bounded-msgpack.js";
 import {
   decodeTerrascaleSyncV2MsgpackEnvelope,
   encodeTerrascaleSyncV2MsgpackEnvelope,
   terrascaleSyncV2MsgpackManifestSha256,
   terrascaleSyncV2MsgpackMaxMessageBytes,
-} from "../dist/msgpack/generated/terrascale-sync-v2-msgpack.js";
+} from "../src/msgpack/generated/terrascale-sync-v2-msgpack.js";
 
 const encoder = new TextEncoder();
 const goldenHostileFixture = JSON.parse(await readFile(

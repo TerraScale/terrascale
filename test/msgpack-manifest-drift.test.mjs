@@ -6,9 +6,9 @@
 // manifests (duplicate tags, undeclared refs, bounds above the scan ceilings)
 // instead of emitting anything.
 //
-// Run (imports the built SDK tree):
+// Run (imports the SDK source tree):
 //
-//   npm run build && node --test test/msgpack-manifest-drift.test.mjs
+//   npm test
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -16,7 +16,7 @@ import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { describe, test } from "node:test";
+import { describe, test } from "vitest";
 
 const repositoryRoot = new URL("..", import.meta.url).pathname;
 const generatorPath = path.join(repositoryRoot, "scripts", "generate-msgpack-protocol.mjs");

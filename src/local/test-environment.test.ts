@@ -1,4 +1,4 @@
-import { after } from "node:test";
+import { after } from "vitest";
 
 import {
   localSqlitePresenceIndicators,

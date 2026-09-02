@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vitest";
 
 import { createTerraScaleAdminClient } from "./admin.js";
 import * as sdk from "./index.js";

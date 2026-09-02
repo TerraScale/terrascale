@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, test } from "node:test";
+import { describe, test } from "vitest";
 
 import {
   createTerraScaleClient,
@@ -61,7 +61,9 @@ describe("fixture lease", () => {
   });
 });
 
-describe("real regional routing consistency", { skip: fixtureSkipReason }, () => {
+describe.skipIf(Boolean(fixtureSkipReason))(
+  "real regional routing consistency",
+() => {
   test("reads the leased database through the real public API", async () => {
     const client = createTerraScaleClient({
       apiBaseUrl: apiBaseUrl!,

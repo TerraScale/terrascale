@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { test } from "node:test";
+import { test } from "vitest";
 
 import { localSqliteTestChildEnvironment } from "./local/test-environment.test.js";
 

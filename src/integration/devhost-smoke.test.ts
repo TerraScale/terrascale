@@ -1,4 +1,4 @@
-import { describe, test } from "node:test";
+import { describe, test } from "vitest";
 import assert from "node:assert/strict";
 
 import { createTerraScaleClient } from "../factory.js";
@@ -16,16 +16,12 @@ const savedQueriesSkipReason =
       ? "Set TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID to a dedicated disposable DevHost project with saved-query permissions."
       : false;
 
-describe(
-  "AppHost authenticated contracts",
-  {
-    skip:
-      apiBaseUrl === undefined ||
+describe.skipIf(Boolean(apiBaseUrl === undefined ||
       accessToken === undefined ||
       projectId === undefined ||
-      organizationId === undefined,
-  },
-  () => {
+      organizationId === undefined))(
+  "AppHost authenticated contracts",
+() => {
     test("round-trips organization, placement, usage, and notification contracts", async () => {
       const client = createTerraScaleClient({
         apiBaseUrl: apiBaseUrl!,
@@ -69,7 +65,9 @@ describe(
   },
 );
 
-describe("DevHost saved-query CRUD", { skip: savedQueriesSkipReason }, () => {
+describe.skipIf(Boolean(savedQueriesSkipReason))(
+  "DevHost saved-query CRUD",
+() => {
   test("uses the public SDK against a dedicated opt-in project", async () => {
     const suffix = crypto.randomUUID();
     const client = createTerraScaleClient({

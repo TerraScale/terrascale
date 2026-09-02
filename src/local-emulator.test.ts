@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test } from "vitest";
 
 import { exercisePublicClientRoutes } from "./client-route-capture.js";
 import type { FetchLike } from "./config.js";

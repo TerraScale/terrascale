@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { describe, test } from "node:test";
+import { describe, test } from "vitest";
 
-import { TerrascaleMsgpackError } from "../dist/msgpack/runtime/bounded-msgpack.js";
+import { TerrascaleMsgpackError } from "../src/msgpack/runtime/bounded-msgpack.js";
 import {
   decodeTerrascaleSyncV2MsgpackEnvelope,
   encodeTerrascaleSyncV2MsgpackEnvelope,
@@ -11,7 +11,7 @@ import {
   validateTerrascaleSyncV2MsgpackMessage,
   validateTerrascaleSyncV2MsgpackProjectedField,
   validateTerrascaleSyncV2MsgpackResultItem,
-} from "../dist/msgpack/generated/terrascale-sync-v2-msgpack.js";
+} from "../src/msgpack/generated/terrascale-sync-v2-msgpack.js";
 import { encodeReferenceMessagePack } from "./support/reference-msgpack.mjs";
 
 const encoder = new TextEncoder();
