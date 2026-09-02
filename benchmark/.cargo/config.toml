@@ -1,0 +1,6 @@
+# ARM-first build profile (SHORT_GOAL S-01): production targets Neoverse N1
+# (Graviton3/C7g class); x86_64 remains the unmodified dev fallback, so this
+# file changes nothing for local development and CI on x86.
+# ponytail: add aarch64 musl + LTO bench matrix when the ARM hardware lane lands.
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=neoverse-n1"]

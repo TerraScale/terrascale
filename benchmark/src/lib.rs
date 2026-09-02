@@ -12,6 +12,12 @@
 #![deny(missing_docs)]
 #![warn(clippy::all, clippy::pedantic)]
 
+// ARM-first allocator (SHORT_GOAL S-01): mimalloc on aarch64 Linux, the
+// system allocator everywhere else.
+#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// The crate version selected by Cargo for evidence and artifact identity.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

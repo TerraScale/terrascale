@@ -54,6 +54,7 @@ path = "tests/member/main.rs"
 
 [dependencies]
 aws-lc-rs = { version = "1.18.0", default-features = false }
+
 blake3 = "1.8.2"
 zeroize = "1.9.0"
 # ADR 0027 'Libraries and evidence': Rust uses the `ulid` crate behind a
@@ -70,6 +71,11 @@ ulid = { version = "1", default-features = false }
 # native bundled engine and prepared-statement cache explicitly; rusqlite's
 # default wasm VFS is not part of this native server product.
 rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "cache"] }
+
+
+[target.'cfg(all(target_arch = "aarch64", target_os = "linux"))'.dependencies]
+# ARM-first allocator (SHORT_GOAL S-01); x86 dev builds never compile it.
+mimalloc = "0.1"
 
 [profile.release]
 codegen-units = 1

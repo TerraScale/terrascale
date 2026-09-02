@@ -222,6 +222,12 @@ CREATE TABLE IF NOT EXISTS consumer_frontiers (
     name TEXT    PRIMARY KEY,
     seq  INTEGER NOT NULL
 ) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS usage_counters (
+    key    TEXT    PRIMARY KEY,
+    seq_hi INTEGER NOT NULL,
+    ops    INTEGER NOT NULL
+) WITHOUT ROWID;
 ";
 
 /// The zero root head a fresh location records, before any commit chains it.
@@ -296,6 +302,12 @@ impl SqliteStorage {
                 ('root_head', '{INITIAL_ROOT_HEAD}');"
         );
         writer.execute_batch(&seed).map_err(|_| StorageOpenError::Unavailable)?;
+        // Usage-counter reconciliation (D-42): the counter is a cache of
+        // the journal, never an independent source of truth. On open, a
+        // counter whose high-water trails the folded rows — or no counter
+        // at all — is recomputed from the journal itself, so a torn WAL
+        // tail or a lost wave leaves the counter honest.
+        reconcile_usage_counters(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         let mut readers = Vec::with_capacity(READ_POOL_WIDTH);
         for _ in 0..READ_POOL_WIDTH {
             readers.push(open_connection(&database_path)?);
@@ -494,6 +506,27 @@ impl SqliteStorage {
         for (index, intent) in intents.iter().enumerate() {
             results[index] =
                 Some(stage_intent(&transaction, &mut watermark, &mut root_head, intent)?);
+        }
+        // The wave's usage counter flush: one write per wave, never per
+        // op, riding the wave's own transaction so a rolled-back wave
+        // counts nothing (D-42). ops counts committed publications only;
+        // rejections bind identities but publish nothing.
+        let committed_ops = results
+            .iter()
+            .filter(|result| matches!(result, Some(CommitResult::Committed(_))))
+            .count();
+        if committed_ops > 0 {
+            transaction
+                .prepare_cached(
+                    "INSERT INTO usage_counters (key, seq_hi, ops) VALUES ('ops', ?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET
+                        seq_hi = excluded.seq_hi,
+                        ops = usage_counters.ops + excluded.ops",
+                )
+                .and_then(|mut statement| {
+                    statement.execute(rusqlite::params![watermark as i64, committed_ops as i64])
+                })
+                .map_err(|_| ())?;
         }
         // The test fault aborts between the staged rows and the commit: the
         // guard's drop rolls the transaction back, which is exactly the
@@ -855,6 +888,42 @@ fn update_root_head(transaction: &rusqlite::Transaction<'_>, root: &str) -> Resu
         .map_err(|_| ())
 }
 
+/// Rebuilds the usage counter from the folded journal when it trails the
+/// journal's own high-water — the counter is a cache, the journal is the
+/// truth.
+fn reconcile_usage_counters(connection: &Connection) -> Result<(), ()> {
+    let recorded =
+        connection.query_row("SELECT seq_hi FROM usage_counters WHERE key = 'ops'", [], |row| {
+            row.get::<_, i64>(0)
+        });
+    let high_water = connection
+        .query_row("SELECT COALESCE(MAX(commit_seq), 0) FROM documents", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map_err(|_| ())?;
+    let rebuild = match recorded {
+        Ok(seq_hi) => seq_hi < high_water,
+        Err(rusqlite::Error::QueryReturnedNoRows) => true,
+        Err(_) => return Err(()),
+    };
+    if rebuild {
+        let ops = connection
+            .query_row("SELECT COUNT(DISTINCT commit_seq) FROM documents", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map_err(|_| ())?;
+        connection
+            .prepare_cached(
+                "INSERT INTO usage_counters (key, seq_hi, ops) VALUES ('ops', ?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET seq_hi = excluded.seq_hi, ops = excluded.ops",
+            )
+            .and_then(|mut statement| statement.execute(rusqlite::params![high_water, ops]))
+            .map(|_| ())
+            .map_err(|_| ())?;
+    }
+    Ok(())
+}
+
 /// The highest sequence any durable row names. Commits' folded document
 /// rows and usage facts share one sequence space, exactly the reference
 /// engines' watermark rule.
@@ -1071,8 +1140,19 @@ fn configure_connection(connection: &Connection) -> Result<(), StorageOpenError>
         .query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))
         .map_err(|_| StorageOpenError::Unavailable)?;
     connection.busy_timeout(BUSY_TIMEOUT).map_err(|_| StorageOpenError::Unavailable)?;
+    // wal_autocheckpoint=0: auto-checkpoints fire inside the committing
+    // transaction and would put checkpoint latency on the write path. The
+    // group-commit leader checkpoints passively between waves instead
+    // (`flush_pending_flips`). cache_size and mmap_size stay at SQLite's
+    // defaults until the member budget exists (S-05) — a per-connection
+    // cache multiplied by the read pool would outweigh the RSS-sized
+    // catalog LRU.
+    // ponytail: member-budget pragmas when S-05 lands.
     connection
-        .execute_batch("PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL;")
+        .execute_batch(
+            "PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL;
+             PRAGMA wal_autocheckpoint = 0; PRAGMA temp_store = MEMORY;",
+        )
         .map_err(|_| StorageOpenError::Unavailable)?;
     Ok(())
 }
@@ -1791,6 +1871,14 @@ impl StoragePort for SqliteStorage {
         self.prune_below_consumer_frontiers()?;
         let writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         writer.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).map_err(|_| ())
+    }
+
+    fn flush_pending_flips(&mut self) {
+        // The between-waves checkpoint: the group-commit leader calls this
+        // off the commit path once it goes quiet, so with
+        // `wal_autocheckpoint = 0` this passive checkpoint is what keeps
+        // the WAL bounded between retention sweeps' truncating ones.
+        let _ = self.flush();
     }
 
     fn flush(&mut self) -> Result<(), ()> {

@@ -899,3 +899,81 @@ fn foreign_and_stranded_locations_fail_closed() {
         "a fresh location may not sit beside foreign artifacts"
     );
 }
+
+// ---- S-01 gates: one row, the counter cache -------------------------------
+
+#[test]
+fn write_then_read_shows_the_journal_row_is_the_document_row() {
+    let (dir, mut storage) = sqlite_store("fold-one-row");
+    commit(
+        &mut storage,
+        "op-fold",
+        vec![put(document("folded", "users", "value"), ExpectedVersion::New)],
+    );
+    {
+        let connection = storage.raw_writer_connection();
+        let rows: i64 = connection
+            .query_row("SELECT COUNT(*) FROM documents", [], |row| row.get(0))
+            .expect("counts rows");
+        assert_eq!(rows, 1, "one op wrote exactly one row");
+        let bound: (i64, String, i64) = connection
+            .query_row("SELECT deleted, commit_ulid, requested FROM documents", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .expect("reads the row");
+        assert_eq!(bound.0, 0, "the row is a put");
+        assert_eq!(bound.1, "op-fold", "the row carries its own commit binding");
+        assert_eq!(bound.2, 1, "the row carries the requested durability (Written)");
+        let journal: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('journal', 'ledger')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("inspects the schema");
+        assert_eq!(journal, 0, "no journal or ledger table exists");
+    }
+    drop(storage);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn usage_counters_flush_per_wave_and_reconcile_from_the_journal() {
+    let (dir, mut storage) = sqlite_store("usage-counters");
+    for index in 1..=3 {
+        commit(
+            &mut storage,
+            &format!("op-{index}"),
+            vec![put(
+                document("doc", "users", &format!("v{index}")),
+                if index == 1 { ExpectedVersion::New } else { ExpectedVersion::Exact(index - 1) },
+            )],
+        );
+    }
+    {
+        let connection = storage.raw_writer_connection();
+        let counted: (i64, i64) = connection
+            .query_row("SELECT seq_hi, ops FROM usage_counters WHERE key = 'ops'", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .expect("reads the counter");
+        assert_eq!(counted, (3, 3), "three single-op waves counted three ops");
+        // A lost or torn counter is a cache miss, never lost truth.
+        connection
+            .execute("UPDATE usage_counters SET seq_hi = 0, ops = 0 WHERE key = 'ops'", [])
+            .expect("tamper lands");
+    }
+    drop(storage);
+    let reopened = SqliteStorage::open(&dir).expect("reopens");
+    {
+        let connection = reopened.raw_writer_connection();
+        let reconciled: (i64, i64) = connection
+            .query_row("SELECT seq_hi, ops FROM usage_counters WHERE key = 'ops'", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .expect("reads the reconciled counter");
+        assert_eq!(reconciled, (3, 3), "open reconciles the counter from the journal");
+    }
+    drop(reopened);
+    std::fs::remove_dir_all(&dir).ok();
+}
