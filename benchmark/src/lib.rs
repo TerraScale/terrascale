@@ -37,7 +37,6 @@ pub mod regions;
 pub mod relationships;
 pub mod replication;
 pub mod session;
-pub mod sharding;
 pub mod storage;
 pub mod streaming;
 pub mod tiers;

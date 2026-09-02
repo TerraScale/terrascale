@@ -113,25 +113,9 @@ use crate::{
     engine::Engine,
     index::IndexCatalog,
     operations::{QueryInput, QueryInputError},
-    types::{Document, ReadSnapshot, StorageSequence, TenantId},
+    types::{ReadSnapshot, StorageSequence, TenantId},
 };
 use model::NormalizedQuery;
-
-/// Compares two documents under one typed ordering, by the seam's total
-/// document order over the ordering's key fields.
-///
-/// Crate-only: the sharded fan-out (`crate::sharding`) merges per-shard
-/// pages with exactly the ordering comparison the single-shard execution
-/// applies, so a fanned-out result and a single-shard result over the same
-/// documents are one order. This is SH-04's one additive hook into this
-/// seam; it delegates to the existing comparison and changes no behavior.
-pub(crate) fn compare_documents_under_ordering(
-    ordering: &QueryOrdering,
-    left: &Document,
-    right: &Document,
-) -> std::cmp::Ordering {
-    model::compare_documents(ordering, left, right)
-}
 
 /// Query planning or execution failures.
 ///

@@ -50,7 +50,7 @@ src/storage/file.rs	1	9118c25b18e2ded928c75638a98aea70f0039853c543fa46889e201ee1
 src/storage/lsm/mod.rs	1	033b593158cf207e53493c0aa78aee78bbb35dd1a9b5e051e540f50d83f0a519	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 src/storage/lsm/tests.rs	4	cc57a626f4cfc92b97f67b07fe34c8a47ec14c37c0b200d78b065f35410241ed	persisted	Persisted LSM marker compatibility assertions for N-1 directories and readers.
 src/storage/ownership.rs	2	8d92f87becb2d77a78a196496c8796db2ecd043ed1ad67b5ac8bb4a0445d6996	persisted	Persisted storage marker compatibility check.
-src/storage/sqlite/tests.rs	1	8251b08e36779060f228cae546b031a372b9f6ddab62ea2d437b237fd4f465ec	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
+src/storage/sqlite/tests.rs	1	b1c3f9631fa2116c5b54dbf22c9753679b224190736f1b8b419cc9eb21fb1082	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 src/storage/root.rs	2	2950cfb5ebe7c023098162c84ee98d722720ee4100a907b5e9d158b4a9defe4a	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 src/storage/tests.rs	1	a9f8ff69c1cb6e9050b2f4d42281b53ed8e73175905190f40762f74ce393943f	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 tests/index/static_index_definitions.rs	1	c03b5b6819947ef07926cde799e0e46b5641f62d35f6a0205596aa5be0fc1021	historical	Exact historical issue or ticket identifier retained as source provenance.

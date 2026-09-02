@@ -4,9 +4,8 @@
 //! WAL mode with a single writer connection and a small read pool. Every
 //! commit — documents, operation-ledger row, and publication-history journal
 //! row — rides one `SQLite` transaction, so a crash can never leave a document
-//! without its journal record or the reverse;
-//! [`StoragePort::journal_divergence`] is structurally zero by
-//! construction, not by repair.
+//! without its journal record or the reverse: a published commit without its
+//! journal record is structurally impossible by construction, not by repair.
 //!
 //! Reads resolve as-of a storage sequence the same way the LSM engine's
 //! versioned keys do: `documents` is an append-only version table keyed
@@ -1702,13 +1701,6 @@ impl StoragePort for SqliteStorage {
             .flatten()
             .and_then(|sequence| u64::try_from(sequence).ok())
             .map(StorageSequence::new)
-    }
-
-    fn journal_divergence(&self) -> u64 {
-        // Documents, ledger row, and journal row commit in one `SQLite`
-        // transaction: a published commit without its journal record is
-        // structurally impossible.
-        0
     }
 
     fn published_state(&self) -> (StorageSequence, StorageRootId) {

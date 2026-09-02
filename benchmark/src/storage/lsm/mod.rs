@@ -2873,13 +2873,6 @@ impl StoragePort for LsmStorage {
         self.history_index.keys().next_back().map(|sequence| StorageSequence::new(*sequence))
     }
 
-    fn journal_divergence(&self) -> u64 {
-        // The LSM writes the history record inside the same atomic commit
-        // batch as the documents and ledger record, so a published commit
-        // with a missing history record is structurally impossible.
-        0
-    }
-
     fn published_state(&self) -> (StorageSequence, StorageRootId) {
         (
             StorageSequence::new(self.sequence_watermark),

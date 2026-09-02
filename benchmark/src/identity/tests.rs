@@ -412,13 +412,14 @@ fn concurrent_generation_is_unique_and_per_thread_increasing() {
 
 #[test]
 fn placement_digest_and_bucket_are_stable_and_in_range() {
+    const BUCKET_SPACE: u32 = 1 << 20;
     let example = Ulid::from_text(SPEC_EXAMPLE).expect("the canonical example parses");
     let identities = [example.to_bytes(), [0; ULID_BINARY_BYTES], [0xFF; ULID_BINARY_BYTES]];
 
     // Golden digests and buckets: the placement identity is a contract, so
-    // the corpus anchors it exactly as `src/sharding/tests.rs` anchors the
-    // XXH64 reference vectors. Changing these bytes re-places every entity,
-    // which is a placement-format decision, not an implementation detail.
+    // the corpus anchors it exactly as the XXH64 reference vectors. Changing
+    // these bytes re-places every entity, which is a placement-format
+    // decision, not an implementation detail.
     let pinned = [
         ("3b00de85b434eb2680e97ad8b59ead977a1ba1a922aa2a3c213a384786bf5a97", 241_677),
         ("1a63dba61d8da9bec6ce195d31ec7ad199f227c55fc89053ff1a7a9ab90c3f89", 108_093),
@@ -427,16 +428,13 @@ fn placement_digest_and_bucket_are_stable_and_in_range() {
     for (identity, (digest, bucket)) in identities.iter().zip(pinned) {
         assert_eq!(hex(&placement_digest(identity)), digest, "the placement digest is pinned");
         assert_eq!(
-            placement_bucket(identity, crate::sharding::BUCKET_SPACE),
+            placement_bucket(identity, BUCKET_SPACE),
             Ok(bucket),
             "the placement bucket is pinned",
         );
         // Determinism: the same identity always places identically.
         assert_eq!(placement_digest(identity), placement_digest(identity));
-        assert!(
-            placement_bucket(identity, crate::sharding::BUCKET_SPACE).expect("non-empty")
-                < crate::sharding::BUCKET_SPACE
-        );
+        assert!(placement_bucket(identity, BUCKET_SPACE).expect("non-empty") < BUCKET_SPACE);
     }
 
     // Distinct identities place independently: no shared digest.
@@ -447,7 +445,7 @@ fn placement_digest_and_bucket_are_stable_and_in_range() {
 
     // Hashed placement spreads identities instead of clustering them on the
     // timestamp prefix, which is the ADR's reason for hashing at all.
-    let bucket_space = crate::sharding::BUCKET_SPACE;
+    let bucket_space = BUCKET_SPACE;
     let mut occupied = HashSet::new();
     let generator = MonotonicGenerator::new();
     for _ in 0..1024 {

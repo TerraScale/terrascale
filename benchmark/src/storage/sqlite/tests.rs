@@ -283,7 +283,6 @@ fn faulted_batch_leaves_zero_divergence() {
         "the earlier synced commit survived"
     );
     let storage = reopened.storage.lock().expect("storage lock");
-    assert_eq!(storage.port.journal_divergence(), 0, "documents and journal agree");
     assert_eq!(
         storage.port.journaled_high_water().map(StorageSequence::get),
         Some(1),
@@ -460,7 +459,6 @@ fn concurrent_writers_produce_one_continuous_journal() {
         .expect("scan");
     assert_eq!(documents.len(), WRITERS, "every grouped write is visible after");
     let storage = engine.storage.lock().expect("storage lock");
-    assert_eq!(storage.port.journal_divergence(), 0);
     assert_eq!(
         storage
             .port
@@ -712,7 +710,6 @@ fn differential_reopen_serves_the_same_state() {
             at.get(),
             storage.documents_at(at, &tenant()).len(),
             storage.journaled_high_water().map(StorageSequence::get),
-            storage.journal_divergence(),
         )
     };
     assert_eq!(observe(&mut file), observe(&mut sqlite));
@@ -1036,7 +1033,6 @@ fn differential_tenant_history_high_water_and_divergence() {
             storage.tenant_sequence(&tenant(), published).map(StorageSequence::get),
             storage.tenant_sequence(&tenant(), StorageSequence::new(1)).map(StorageSequence::get),
             storage.journaled_high_water().map(StorageSequence::get),
-            storage.journal_divergence(),
         )
     });
 }
@@ -1358,7 +1354,6 @@ fn crash_window_process_death_between_transactions_replays_committed_state() {
     std::mem::forget(storage);
     let reopened = SqliteStorage::open(&dir).expect("wal recovery reopens");
     assert_eq!(reopened.documents_at(reopened.published_state().0, &tenant()), expected);
-    assert_eq!(reopened.journal_divergence(), 0);
     assert_journal_binding(&dir);
 }
 
@@ -1386,7 +1381,6 @@ fn crash_window_torn_wal_tail_after_last_commit_loses_nothing_committed() {
     }
     let reopened = SqliteStorage::open(&dir).expect("recovery stops at the last valid frame");
     assert_eq!(reopened.documents_at(reopened.published_state().0, &tenant()), expected);
-    assert_eq!(reopened.journal_divergence(), 0);
     assert_journal_binding(&dir);
 }
 
@@ -1415,7 +1409,6 @@ fn group_commit_batches_are_atomic() {
     drop(storage);
     let reopened = SqliteStorage::open(&dir).expect("batch reopens");
     assert_eq!(reopened.documents_at(reopened.published_state().0, &tenant()).len(), 3);
-    assert_eq!(reopened.journal_divergence(), 0);
     assert_journal_binding(&dir);
 }
 

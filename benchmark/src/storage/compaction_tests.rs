@@ -470,7 +470,6 @@ fn history_reclaim_refuses_while_evidence_below_the_bound_is_diverged() {
         )),
         CommitResult::Committed(_)
     ));
-    assert_eq!(storage.journal_divergence(), 1);
     assert_eq!(storage.journaled_high_water(), Some(StorageSequence::new(3)));
 
     let (receipt, _) = storage

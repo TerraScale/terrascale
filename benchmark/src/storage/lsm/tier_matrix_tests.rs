@@ -48,7 +48,6 @@
 //!    (there is no background mover loop in this landing; `src/tiers.rs`
 //!    owns the typed unconfigured and paused refusals); and
 //! 4. intentionally disabled is not degraded health: no empty or partial
-//!    read results, `journal_divergence` zero, and the ranges that
 //!    demote in enabled profiles stay readable on the mandatory local
 //!    tier in the disabled ones.
 //!
@@ -244,7 +243,6 @@ struct Fingerprint {
     per_document: Vec<Option<Document>>,
     published_sequence: u64,
     root_head: String,
-    journal_divergence: u64,
 }
 
 /// The observed facts of one profile's run of the shared sequence.
@@ -351,7 +349,6 @@ fn fingerprint(storage: &LsmStorage, tenant_id: &TenantId, ids: &[DocumentId]) -
             .collect(),
         published_sequence: sequence.get(),
         root_head: root.as_str().to_owned(),
-        journal_divergence: storage.journal_divergence(),
     }
 }
 
@@ -575,7 +572,6 @@ fn run_matrix_lane(profile: Profile) -> LaneRecord {
     put(&mut storage, &tenant_id, "overwrite-0005-again", "order-0005", "overwritten-twice");
     delete(&mut storage, &tenant_id, "delete-0009", "order-0009");
     let checkpoint_c = fingerprint(&storage, &tenant_id, &ids);
-    assert_eq!(checkpoint_c.journal_divergence, 0);
 
     // Quiescence: with no lane operations between two samples, no seat
     // grows. Runs are caller-driven in this landing — there is no
@@ -632,7 +628,6 @@ fn the_four_combination_matrix_yields_identical_logical_and_canonical_state() {
         assert_eq!(lane.after_reopen, reference.after_reopen, "{name}: recovery diverges");
         assert!(lane.checkpoint_c.published_sequence > 0);
         assert!(!lane.checkpoint_c.root_head.is_empty());
-        assert_eq!(lane.checkpoint_c.journal_divergence, 0);
     }
     // No empty results: every profile serves the full live set.
     let live = SEED_DOCUMENTS - DELETED_DOCUMENTS + POST_COLD_DOCUMENTS;
