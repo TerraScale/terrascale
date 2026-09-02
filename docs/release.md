@@ -11,9 +11,7 @@ Run these checks from the repository root:
 npm ci
 npm run typecheck
 npm run build
-npm run test:unit
-npm run test:msgpack
-npm run test:integration
+npm test
 npm run test:browser
 npm run qualify:artifact -- --node /path/to/node22 --node /path/to/node24
 ```
@@ -36,13 +34,9 @@ integrity, CLI entrypoint digest, package manifest digest, and a digest of every
 regular file in the npm package tree. `.tools/` is explicitly ignored and
 recorded as workflow tooling; it is never classified as candidate source.
 
-The generated public MessagePack binding is qualified by the named test script:
-
-```bash
-npm run test:msgpack
-```
-
-`npm test` and both protected Node runtime lanes run this script, so drift,
+The generated public MessagePack binding is qualified inside the single
+Vitest suite (`test/msgpack-*-test.mjs` and the result-view suites). `npm
+test` and both protected Node runtime lanes run the whole suite, so drift,
 hostile decoding, corpus round trips, and result-view semantics cannot be
 omitted from a candidate test run.
 

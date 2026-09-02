@@ -1,10 +1,9 @@
 # Product-name migration check
 
-`scripts/check-product-name.mjs` scans every tracked or non-ignored worktree
-path and bounded UTF-8 text file for retired version-suffixed product names. It
-covers joined, hyphenated, underscored, spaced, dotted, and mixed-case forms.
-The default local mode includes non-ignored untracked files. CI uses
-`--tracked-only` before checking out any consumer repository.
+`test/product-name.test.mjs` (part of `npm test`) scans every tracked
+worktree path and bounded UTF-8 text file for retired version-suffixed
+product names. It covers joined, hyphenated, underscored, spaced, dotted,
+and mixed-case forms.
 
 `legacy-name-allowlist.tsv` is limited to immutable evidence or files that the
 repository rules reserve for human owners. Each entry binds its path, exact

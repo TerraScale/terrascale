@@ -728,7 +728,7 @@ function generate(manifestText, manifestSha256, generatorSha256) {
     "//",
     "// Regenerate: node scripts/generate-msgpack-protocol.mjs",
     "// Drift gate:  node scripts/generate-msgpack-protocol.mjs --check",
-    "// Drift test:  node --test test/msgpack-manifest-drift.test.mjs",
+    "// Drift test:  npm test (test/msgpack-manifest-drift.test.mjs)",
     "",
   );
 

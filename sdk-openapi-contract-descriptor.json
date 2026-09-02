@@ -531,14 +531,6 @@
                         "deleted": {
                           "type": "boolean"
                         },
-                        "environmentsDeleted": {
-                          "format": "int32",
-                          "pattern": "^-?(?:0|[1-9]\\d*)$",
-                          "type": [
-                            "integer",
-                            "string"
-                          ]
-                        },
                         "name": {
                           "type": "string"
                         },
@@ -562,14 +554,6 @@
                             "format": "ulid",
                             "type": "string"
                           }
-                        },
-                        "repositoriesDeleted": {
-                          "format": "int32",
-                          "pattern": "^-?(?:0|[1-9]\\d*)$",
-                          "type": [
-                            "integer",
-                            "string"
-                          ]
                         }
                       },
                       "required": [
@@ -577,9 +561,7 @@
                         "projectId",
                         "name",
                         "deleted",
-                        "environmentsDeleted",
-                        "physicalDatabasesDeleted",
-                        "repositoriesDeleted"
+                        "physicalDatabasesDeleted"
                       ],
                       "type": "object"
                     },
@@ -607,14 +589,6 @@
                           },
                           "deleted": {
                             "type": "boolean"
-                          },
-                          "environmentsDeleted": {
-                            "format": "int32",
-                            "pattern": "^-?(?:0|[1-9]\\d*)$",
-                            "type": [
-                              "integer",
-                              "string"
-                            ]
                           },
                           "name": {
                             "type": "string"
@@ -645,14 +619,6 @@
                               "format": "ulid",
                               "type": "string"
                             }
-                          },
-                          "repositoriesDeleted": {
-                            "format": "int32",
-                            "pattern": "^-?(?:0|[1-9]\\d*)$",
-                            "type": [
-                              "integer",
-                              "string"
-                            ]
                           }
                         },
                         "required": [
@@ -660,9 +626,7 @@
                           "projectId",
                           "name",
                           "deleted",
-                          "environmentsDeleted",
-                          "physicalDatabasesDeleted",
-                          "repositoriesDeleted"
+                          "physicalDatabasesDeleted"
                         ],
                         "type": "object"
                       }
@@ -679,14 +643,6 @@
                       },
                       "deleted": {
                         "type": "boolean"
-                      },
-                      "environmentsDeleted": {
-                        "format": "int32",
-                        "pattern": "^-?(?:0|[1-9]\\d*)$",
-                        "type": [
-                          "integer",
-                          "string"
-                        ]
                       },
                       "name": {
                         "type": "string"
@@ -705,14 +661,6 @@
                           "format": "ulid",
                           "type": "string"
                         }
-                      },
-                      "repositoriesDeleted": {
-                        "format": "int32",
-                        "pattern": "^-?(?:0|[1-9]\\d*)$",
-                        "type": [
-                          "integer",
-                          "string"
-                        ]
                       }
                     },
                     "required": [
@@ -720,9 +668,7 @@
                       "projectId",
                       "name",
                       "deleted",
-                      "environmentsDeleted",
-                      "physicalDatabasesDeleted",
-                      "repositoriesDeleted"
+                      "physicalDatabasesDeleted"
                     ],
                     "type": "object"
                   }
@@ -9520,26 +9466,6 @@
                                   "query": {
                                     "type": "string"
                                   },
-                                  "repositoryId": {
-                                    "oneOf": [
-                                      {
-                                        "type": "null"
-                                      },
-                                      {
-                                        "$ref": "#/components/schemas/Ulid",
-                                        "siblings": {
-                                          "resolved": {
-                                            "format": "ulid",
-                                            "type": "string"
-                                          }
-                                        },
-                                        "resolved": {
-                                          "format": "ulid",
-                                          "type": "string"
-                                        }
-                                      }
-                                    ]
-                                  },
                                   "revision": {
                                     "minLength": 1,
                                     "type": "string"
@@ -9567,7 +9493,6 @@
                                   "projectId",
                                   "name",
                                   "query",
-                                  "repositoryId",
                                   "createdAt",
                                   "updatedAt",
                                   "revision"
@@ -9594,20 +9519,6 @@
                                 "query": {
                                   "type": "string"
                                 },
-                                "repositoryId": {
-                                  "oneOf": [
-                                    {
-                                      "type": "null"
-                                    },
-                                    {
-                                      "$ref": "#/components/schemas/Ulid",
-                                      "resolved": {
-                                        "format": "ulid",
-                                        "type": "string"
-                                      }
-                                    }
-                                  ]
-                                },
                                 "revision": {
                                   "minLength": 1,
                                   "type": "string"
@@ -9629,7 +9540,6 @@
                                 "projectId",
                                 "name",
                                 "query",
-                                "repositoryId",
                                 "createdAt",
                                 "updatedAt",
                                 "revision"
@@ -9691,26 +9601,6 @@
                                     "query": {
                                       "type": "string"
                                     },
-                                    "repositoryId": {
-                                      "oneOf": [
-                                        {
-                                          "type": "null"
-                                        },
-                                        {
-                                          "$ref": "#/components/schemas/Ulid",
-                                          "siblings": {
-                                            "resolved": {
-                                              "format": "ulid",
-                                              "type": "string"
-                                            }
-                                          },
-                                          "resolved": {
-                                            "format": "ulid",
-                                            "type": "string"
-                                          }
-                                        }
-                                      ]
-                                    },
                                     "revision": {
                                       "minLength": 1,
                                       "type": "string"
@@ -9738,7 +9628,6 @@
                                     "projectId",
                                     "name",
                                     "query",
-                                    "repositoryId",
                                     "createdAt",
                                     "updatedAt",
                                     "revision"
@@ -9777,32 +9666,6 @@
                                       "query": {
                                         "type": "string"
                                       },
-                                      "repositoryId": {
-                                        "oneOf": [
-                                          {
-                                            "type": "null"
-                                          },
-                                          {
-                                            "$ref": "#/components/schemas/Ulid",
-                                            "siblings": {
-                                              "resolved": {
-                                                "format": "ulid",
-                                                "type": "string"
-                                              },
-                                              "siblings": {
-                                                "resolved": {
-                                                  "format": "ulid",
-                                                  "type": "string"
-                                                }
-                                              }
-                                            },
-                                            "resolved": {
-                                              "format": "ulid",
-                                              "type": "string"
-                                            }
-                                          }
-                                        ]
-                                      },
                                       "revision": {
                                         "minLength": 1,
                                         "type": "string"
@@ -9836,7 +9699,6 @@
                                       "projectId",
                                       "name",
                                       "query",
-                                      "repositoryId",
                                       "createdAt",
                                       "updatedAt",
                                       "revision"
@@ -9864,20 +9726,6 @@
                                   "query": {
                                     "type": "string"
                                   },
-                                  "repositoryId": {
-                                    "oneOf": [
-                                      {
-                                        "type": "null"
-                                      },
-                                      {
-                                        "$ref": "#/components/schemas/Ulid",
-                                        "resolved": {
-                                          "format": "ulid",
-                                          "type": "string"
-                                        }
-                                      }
-                                    ]
-                                  },
                                   "revision": {
                                     "minLength": 1,
                                     "type": "string"
@@ -9899,7 +9747,6 @@
                                   "projectId",
                                   "name",
                                   "query",
-                                  "repositoryId",
                                   "createdAt",
                                   "updatedAt",
                                   "revision"
@@ -9955,20 +9802,6 @@
                               "query": {
                                 "type": "string"
                               },
-                              "repositoryId": {
-                                "oneOf": [
-                                  {
-                                    "type": "null"
-                                  },
-                                  {
-                                    "$ref": "#/components/schemas/Ulid",
-                                    "resolved": {
-                                      "format": "ulid",
-                                      "type": "string"
-                                    }
-                                  }
-                                ]
-                              },
                               "revision": {
                                 "minLength": 1,
                                 "type": "string"
@@ -9990,7 +9823,6 @@
                               "projectId",
                               "name",
                               "query",
-                              "repositoryId",
                               "createdAt",
                               "updatedAt",
                               "revision"
@@ -10138,26 +9970,6 @@
                         "query": {
                           "type": "string"
                         },
-                        "repositoryId": {
-                          "oneOf": [
-                            {
-                              "type": "null"
-                            },
-                            {
-                              "$ref": "#/components/schemas/Ulid",
-                              "siblings": {
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              },
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            }
-                          ]
-                        },
                         "revision": {
                           "minLength": 1,
                           "type": "string"
@@ -10185,7 +9997,6 @@
                         "projectId",
                         "name",
                         "query",
-                        "repositoryId",
                         "createdAt",
                         "updatedAt",
                         "revision"
@@ -10224,32 +10035,6 @@
                           "query": {
                             "type": "string"
                           },
-                          "repositoryId": {
-                            "oneOf": [
-                              {
-                                "type": "null"
-                              },
-                              {
-                                "$ref": "#/components/schemas/Ulid",
-                                "siblings": {
-                                  "resolved": {
-                                    "format": "ulid",
-                                    "type": "string"
-                                  },
-                                  "siblings": {
-                                    "resolved": {
-                                      "format": "ulid",
-                                      "type": "string"
-                                    }
-                                  }
-                                },
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              }
-                            ]
-                          },
                           "revision": {
                             "minLength": 1,
                             "type": "string"
@@ -10283,7 +10068,6 @@
                           "projectId",
                           "name",
                           "query",
-                          "repositoryId",
                           "createdAt",
                           "updatedAt",
                           "revision"
@@ -10311,20 +10095,6 @@
                       "query": {
                         "type": "string"
                       },
-                      "repositoryId": {
-                        "oneOf": [
-                          {
-                            "type": "null"
-                          },
-                          {
-                            "$ref": "#/components/schemas/Ulid",
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
                       "revision": {
                         "minLength": 1,
                         "type": "string"
@@ -10346,7 +10116,6 @@
                       "projectId",
                       "name",
                       "query",
-                      "repositoryId",
                       "createdAt",
                       "updatedAt",
                       "revision"
@@ -24352,26 +24121,6 @@
                         "query": {
                           "type": "string"
                         },
-                        "repositoryId": {
-                          "oneOf": [
-                            {
-                              "type": "null"
-                            },
-                            {
-                              "$ref": "#/components/schemas/Ulid",
-                              "siblings": {
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              },
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            }
-                          ]
-                        },
                         "revision": {
                           "minLength": 1,
                           "type": "string"
@@ -24399,7 +24148,6 @@
                         "projectId",
                         "name",
                         "query",
-                        "repositoryId",
                         "createdAt",
                         "updatedAt",
                         "revision"
@@ -24438,32 +24186,6 @@
                           "query": {
                             "type": "string"
                           },
-                          "repositoryId": {
-                            "oneOf": [
-                              {
-                                "type": "null"
-                              },
-                              {
-                                "$ref": "#/components/schemas/Ulid",
-                                "siblings": {
-                                  "resolved": {
-                                    "format": "ulid",
-                                    "type": "string"
-                                  },
-                                  "siblings": {
-                                    "resolved": {
-                                      "format": "ulid",
-                                      "type": "string"
-                                    }
-                                  }
-                                },
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              }
-                            ]
-                          },
                           "revision": {
                             "minLength": 1,
                             "type": "string"
@@ -24497,7 +24219,6 @@
                           "projectId",
                           "name",
                           "query",
-                          "repositoryId",
                           "createdAt",
                           "updatedAt",
                           "revision"
@@ -24525,20 +24246,6 @@
                       "query": {
                         "type": "string"
                       },
-                      "repositoryId": {
-                        "oneOf": [
-                          {
-                            "type": "null"
-                          },
-                          {
-                            "$ref": "#/components/schemas/Ulid",
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
                       "revision": {
                         "minLength": 1,
                         "type": "string"
@@ -24560,7 +24267,6 @@
                       "projectId",
                       "name",
                       "query",
-                      "repositoryId",
                       "createdAt",
                       "updatedAt",
                       "revision"
@@ -25713,26 +25419,6 @@
                       "minLength": 1,
                       "type": "string"
                     },
-                    "repositoryId": {
-                      "oneOf": [
-                        {
-                          "type": "null"
-                        },
-                        {
-                          "$ref": "#/components/schemas/Ulid",
-                          "siblings": {
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          },
-                          "resolved": {
-                            "format": "ulid",
-                            "type": "string"
-                          }
-                        }
-                      ]
-                    },
                     "revision": {
                       "minLength": 1,
                       "type": "string"
@@ -25757,32 +25443,6 @@
                         "maxLength": 8000,
                         "minLength": 1,
                         "type": "string"
-                      },
-                      "repositoryId": {
-                        "oneOf": [
-                          {
-                            "type": "null"
-                          },
-                          {
-                            "$ref": "#/components/schemas/Ulid",
-                            "siblings": {
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              },
-                              "siblings": {
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              }
-                            },
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          }
-                        ]
                       },
                       "revision": {
                         "minLength": 1,
@@ -25809,20 +25469,6 @@
                     "maxLength": 8000,
                     "minLength": 1,
                     "type": "string"
-                  },
-                  "repositoryId": {
-                    "oneOf": [
-                      {
-                        "type": "null"
-                      },
-                      {
-                        "$ref": "#/components/schemas/Ulid",
-                        "resolved": {
-                          "format": "ulid",
-                          "type": "string"
-                        }
-                      }
-                    ]
                   },
                   "revision": {
                     "minLength": 1,
@@ -25857,26 +25503,6 @@
                         "minLength": 1,
                         "type": "string"
                       },
-                      "repositoryId": {
-                        "oneOf": [
-                          {
-                            "type": "null"
-                          },
-                          {
-                            "$ref": "#/components/schemas/Ulid",
-                            "siblings": {
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            },
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
                       "revision": {
                         "minLength": 1,
                         "type": "string"
@@ -25901,32 +25527,6 @@
                           "maxLength": 8000,
                           "minLength": 1,
                           "type": "string"
-                        },
-                        "repositoryId": {
-                          "oneOf": [
-                            {
-                              "type": "null"
-                            },
-                            {
-                              "$ref": "#/components/schemas/Ulid",
-                              "siblings": {
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                },
-                                "siblings": {
-                                  "resolved": {
-                                    "format": "ulid",
-                                    "type": "string"
-                                  }
-                                }
-                              },
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            }
-                          ]
                         },
                         "revision": {
                           "minLength": 1,
@@ -25953,20 +25553,6 @@
                       "maxLength": 8000,
                       "minLength": 1,
                       "type": "string"
-                    },
-                    "repositoryId": {
-                      "oneOf": [
-                        {
-                          "type": "null"
-                        },
-                        {
-                          "$ref": "#/components/schemas/Ulid",
-                          "resolved": {
-                            "format": "ulid",
-                            "type": "string"
-                          }
-                        }
-                      ]
                     },
                     "revision": {
                       "minLength": 1,
@@ -26020,26 +25606,6 @@
                         "query": {
                           "type": "string"
                         },
-                        "repositoryId": {
-                          "oneOf": [
-                            {
-                              "type": "null"
-                            },
-                            {
-                              "$ref": "#/components/schemas/Ulid",
-                              "siblings": {
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              },
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            }
-                          ]
-                        },
                         "revision": {
                           "minLength": 1,
                           "type": "string"
@@ -26067,7 +25633,6 @@
                         "projectId",
                         "name",
                         "query",
-                        "repositoryId",
                         "createdAt",
                         "updatedAt",
                         "revision"
@@ -26106,32 +25671,6 @@
                           "query": {
                             "type": "string"
                           },
-                          "repositoryId": {
-                            "oneOf": [
-                              {
-                                "type": "null"
-                              },
-                              {
-                                "$ref": "#/components/schemas/Ulid",
-                                "siblings": {
-                                  "resolved": {
-                                    "format": "ulid",
-                                    "type": "string"
-                                  },
-                                  "siblings": {
-                                    "resolved": {
-                                      "format": "ulid",
-                                      "type": "string"
-                                    }
-                                  }
-                                },
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              }
-                            ]
-                          },
                           "revision": {
                             "minLength": 1,
                             "type": "string"
@@ -26165,7 +25704,6 @@
                           "projectId",
                           "name",
                           "query",
-                          "repositoryId",
                           "createdAt",
                           "updatedAt",
                           "revision"
@@ -26193,20 +25731,6 @@
                       "query": {
                         "type": "string"
                       },
-                      "repositoryId": {
-                        "oneOf": [
-                          {
-                            "type": "null"
-                          },
-                          {
-                            "$ref": "#/components/schemas/Ulid",
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          }
-                        ]
-                      },
                       "revision": {
                         "minLength": 1,
                         "type": "string"
@@ -26228,7 +25752,6 @@
                       "projectId",
                       "name",
                       "query",
-                      "repositoryId",
                       "createdAt",
                       "updatedAt",
                       "revision"
@@ -26274,7 +25797,7 @@
     }
   ],
   "sources": {
-    "openApiSha256": "22fa3152be0d52e36d658674099f21b6769a240b29dde41976103d8bc8f3428c",
+    "openApiSha256": "878e305177a79576ec4f6413071107d2906557d83217e123b193135b38781b38",
     "routeManifestSha256": "1e3ccb971f04e6cf39527af01147b63c65ac23d466c6fcde7148512c6713a142"
   }
 }

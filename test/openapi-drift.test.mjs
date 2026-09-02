@@ -20,17 +20,12 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const descriptorPath = path.join(repositoryRoot, "sdk-openapi-contract-descriptor.json");
 const manifestPath = path.join(repositoryRoot, "sdk-route-manifest.json");
 
-async function specAvailable() {
-  try {
-    await access(canonicalDashboardOpenApiSpec);
-    return true;
-  } catch {
-    return false;
-  }
-}
+const specAvailable = await access(canonicalDashboardOpenApiSpec)
+  .then(() => true)
+  .catch(() => false);
 
 describe("OpenAPI drift", () => {
-  test.skipIf(!(await specAvailable()))(
+  test.skipIf(!specAvailable)(
     "committed descriptor matches regeneration from the manifest and owner spec",
     async () => {
       const { generateOpenApiContractDescriptor } = await import(

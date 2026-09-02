@@ -78,17 +78,11 @@ jobs:
         with:
           github-server-url: "https://git.terrascale.tech"
           persist-credentials: false
-      - run: node --test test/product-name-check.test.mjs
-      - run: node scripts/check-product-name.mjs --tracked-only
       - run: git -c credential.helper= clone --depth 1 --branch develop https://git.terrascale.tech/TerraScale/ts-dashboard.git Dashboard
-      - run: node scripts/check-public-contract-fixture.mjs Dashboard/docs/product/openapi/server.openapi.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
-      - run: npm run check:forbidden-surface
-      - run: npm run check:route-manifest
-      - run: npm run check:openapi-contract-descriptor -- Dashboard/docs/product/openapi/server.openapi.json
-      - run: npm run check:openapi-drift -- --strict Dashboard/docs/product/openapi/server.openapi.json
+      - run: npm test
 
   pr-build:
     name: pr/build
@@ -126,8 +120,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
-      - run: npm run test:unit
-      - run: npm run test:msgpack
+      - run: npm test
 
   browser-matrix:
     name: source/browser-smoke-current-engines
@@ -173,9 +166,7 @@ jobs:
         with: { github-server-url: "https://git.terrascale.tech", persist-credentials: false }
       - run: npm ci
       - run: npm run build
-      - run: npm run check:forbidden-surface
-      - run: npm run test:unit
-      - run: npm run test:msgpack
+      - run: npm test
 
   release-e2e:
     name: release/e2e
@@ -208,7 +199,7 @@ jobs:
         run: |
           node scripts/require-release-e2e-config.mjs
           node scripts/run-packed-release-e2e.mjs --tarball "artifacts/handoff/candidate/terrascale-sdk-$(node -p 'require(\"./package.json\").version').tgz"
-          npm run test:integration
+          npm test
 
   release-artifacts:
     name: release/artifacts (${{ matrix.profile }})
@@ -291,17 +282,13 @@ jobs:
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with: { github-server-url: "https://git.terrascale.tech" }
-      - run: node --test test/product-name-check.test.mjs
-      - run: node scripts/check-product-name.mjs --tracked-only
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           github-server-url: "https://git.terrascale.tech"
           repository: TerraScale/ts-dashboard
           ref: develop
           path: Dashboard
-      - run: node scripts/check-public-contract-fixture.mjs Dashboard/docs/product/openapi/server.openapi.json
-      - run: npm ci && npm run build && npm run check:forbidden-surface && npm run check:route-manifest && npm run check:openapi-contract-descriptor -- Dashboard/docs/product/openapi/server.openapi.json
-      - run: npm run check:openapi-drift -- --strict Dashboard/docs/product/openapi/server.openapi.json
+      - run: npm ci && npm run typecheck && npm run build && npm test
 
   release-version-availability:
     name: release/version-availability

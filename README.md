@@ -197,30 +197,25 @@ Node.js 22 and 24 are the supported server runtimes. Browser qualification
 covers the current stable major versions of Chrome, Firefox, Safari, and Edge through the repository
 release gates.
 
-Generate and verify route contracts with:
+Generate route contracts with:
 
 ~~~bash
 npm run generate:route-manifest
-npm run check:openapi-drift
 npm run generate:openapi-contract-descriptor
-npm run check:openapi-contract-descriptor
 ~~~
 
-The MessagePack generator and its qualification suites are separate from
-`npm test`:
-
-~~~bash
-node scripts/generate-msgpack-protocol.mjs --check
-node --test test/msgpack-manifest-drift.test.mjs
-node --test test/msgpack-hostile-decode.test.mjs
-node --test test/msgpack-corpus-roundtrip.test.mjs
-~~~
+`npm test` is the single Vitest suite. It carries the drift gates the old
+standalone check scripts performed: the committed OpenAPI descriptor and
+public-contract fixture must match the owner-published Dashboard snapshot,
+the generated route manifest must match the captured client routes, the
+forbidden-surface and retired product-name sweeps must stay clean, and the
+MessagePack corpus, hostile-decode, and manifest-drift suites run in the
+same pass. The snapshot-dependent gates skip when the Dashboard checkout is
+absent; CI clones it before `npm test`.
 
 Integration tests target the fixed DevHost public routes. When the required
 base URLs or credentials are absent, they skip instead of using mocked HTTP.
-The new Database API needs fixed DevHost routes before its live tests can be
-current. OpenAPI drift and descriptor checks must use the owner-published
-Dashboard snapshot. A local emulator cannot substitute for that evidence.
+A local emulator cannot substitute for that evidence.
 
 ## Releases
 

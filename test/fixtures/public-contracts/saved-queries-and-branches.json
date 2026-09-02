@@ -137,7 +137,6 @@
         "projectId",
         "name",
         "query",
-        "repositoryId",
         "createdAt",
         "updatedAt",
         "revision"
