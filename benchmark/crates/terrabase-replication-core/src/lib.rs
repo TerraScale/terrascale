@@ -68,6 +68,7 @@ use terrabase_crdt::{Candidate, DecodeError, DecodeLimits, LwwRegister, Register
 pub mod anti_entropy;
 pub mod compose;
 pub mod durable;
+pub mod membership;
 pub mod progress;
 
 pub use progress::{
@@ -435,7 +436,7 @@ struct DocState {
 /// [`ReplicaDoc`]: it applies accepted writes, answers frontier
 /// summaries, exports deltas, and absorbs peers' deltas. Nothing here
 /// distinguishes a coordinator — coordination is request-scoped in the
-/// engine-side leaderless core (`terrabase::replication::leaderless`).
+/// the composed-member coordination in `compose`.
 pub struct ReplicaDoc {
     actor: ActorId,
     next_counter: u64,

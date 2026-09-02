@@ -190,64 +190,6 @@ fn durable_fact_identities_are_scoped_and_do_not_collide_across_tenants() {
 }
 
 #[test]
-fn admitted_usage_context_builds_only_a_real_scoped_request_unit_fact() {
-    let context = UsageAdmissionContext::try_new(
-        "project-a",
-        "database-a",
-        "partition-a",
-        RegionCode::GRU,
-        UsageFactId::try_new("request-1").expect("id"),
-        1_788_105_600_000,
-        1,
-        7,
-    )
-    .expect("context");
-    let fact = context.fact_for(TenantId::try_new("tenant-a").expect("tenant")).expect("fact");
-    assert_eq!(fact.meter(), MeterKind::AdmittedRequestUnits);
-    assert_eq!(fact.scope(), &scope());
-    assert_eq!(fact.window(), MeasurementWindow::instant(1_788_105_600_000));
-    assert_eq!(fact.delta(), 7);
-    assert!(
-        matches!(fact.identity(), MintingIdentity::StableAdmittedRequest(id) if id.as_str() == "request-1")
-    );
-    assert!(!context.digest_bytes().is_empty());
-
-    let invalid = |timestamp, units, version| {
-        UsageAdmissionContext::try_new(
-            "project-a",
-            "database-a",
-            "partition-a",
-            RegionCode::GRU,
-            UsageFactId::try_new("request-1").expect("id"),
-            timestamp,
-            version,
-            units,
-        )
-    };
-    assert_eq!(invalid(0, 1, 1), Err(UsageError::InvalidTimestamp));
-    assert_eq!(invalid(1, 0, 1), Err(UsageError::InvalidIntegerUnits));
-    assert_eq!(invalid(1, -1, 1), Err(UsageError::InvalidIntegerUnits));
-    assert_eq!(invalid(1, 1, 2), Err(UsageError::UnknownMeterDefinition));
-    assert_eq!(
-        invalid(1, MAX_ADMITTED_REQUEST_UNITS_PER_FACT + 1, 1),
-        Err(UsageError::UsageUnitsExceeded)
-    );
-    assert_eq!(
-        UsageAdmissionContext::try_new(
-            "project-a",
-            "database-a",
-            "partition-a",
-            RegionCode::from_text("JFK").expect("shaped code"),
-            UsageFactId::try_new("request-1").expect("id"),
-            1,
-            1,
-            1,
-        ),
-        Err(UsageError::InvalidUsageRegion)
-    );
-}
-
-#[test]
 fn standalone_usage_record_is_closed_bounded_and_tenant_bound() {
     for (meter, expected_kind, expected_rule) in [
         (

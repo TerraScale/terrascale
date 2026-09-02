@@ -11,10 +11,12 @@
 #![allow(clippy::cast_possible_truncation)]
 
 use crate::types::{
-    CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, TenantId,
+    CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
+    OperationId, StorageSequence, TenantId,
 };
 
-use super::{PublishedWrite, intent::StagedWrite};
+use super::intent::CommitRejection;
+use super::{PublishedCommit, PublishedWrite, intent::StagedWrite};
 
 /// Maximum nesting depth accepted for one document value.
 pub(super) const MAX_VALUE_DEPTH: usize = 64;
@@ -44,11 +46,6 @@ pub(super) fn fnv1a(bytes: &[u8]) -> u64 {
 /// Appends a single byte in little-endian order.
 pub(super) fn push_u8(out: &mut Vec<u8>, value: u8) {
     out.push(value);
-}
-
-/// Appends a `u16` in little-endian order.
-pub(super) fn push_u16(out: &mut Vec<u8>, value: u16) {
-    out.extend_from_slice(&value.to_le_bytes());
 }
 
 /// Appends a `u32` in little-endian order.
@@ -99,11 +96,6 @@ impl<'a> Reader<'a> {
         self.take(1).map(|slice| slice[0])
     }
 
-    /// Reads one `u16` in little-endian order.
-    pub(super) fn read_u16(&mut self) -> Option<u16> {
-        self.take(2).map(|slice| u16::from_le_bytes(slice.try_into().expect("two bytes")))
-    }
-
     /// Reads one `u32` in little-endian order.
     pub(super) fn read_u32(&mut self) -> Option<u32> {
         self.take(4).map(|slice| u32::from_le_bytes(slice.try_into().expect("four bytes")))
@@ -122,68 +114,6 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// The private physical key of one stored document.
-///
-/// The key orders by tenant, then collection, then document identifier, so
-/// tenant data clusters together and iteration is deterministic.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) struct StorageKey {
-    tenant: String,
-    collection: String,
-    document: String,
-}
-
-impl StorageKey {
-    /// Builds the key of one document within a tenant.
-    pub(super) fn new(
-        tenant: &TenantId,
-        collection: &CollectionName,
-        document: &DocumentId,
-    ) -> Self {
-        Self {
-            tenant: tenant.as_str().to_owned(),
-            collection: collection.as_str().to_owned(),
-            document: document.as_str().to_owned(),
-        }
-    }
-
-    /// Returns the owning tenant text.
-    pub(super) fn tenant(&self) -> &str {
-        &self.tenant
-    }
-
-    /// Returns the collection component of this canonical key.
-    pub(super) fn collection(&self) -> &str {
-        &self.collection
-    }
-
-    /// Returns the document identifier text.
-    pub(super) fn document(&self) -> &str {
-        &self.document
-    }
-
-    /// Appends the encoded key.
-    pub(super) fn encode(&self, out: &mut Vec<u8>) {
-        push_str(out, &self.tenant);
-        push_str(out, &self.collection);
-        push_str(out, &self.document);
-    }
-
-    /// Reads one encoded key.
-    pub(super) fn decode(reader: &mut Reader<'_>) -> Option<Self> {
-        let tenant = reader.read_string()?;
-        let collection = reader.read_string()?;
-        let document = reader.read_string()?;
-        if TenantId::try_new(&tenant).is_err()
-            || CollectionName::try_new(&collection).is_err()
-            || crate::types::DocumentId::try_new(&document).is_err()
-        {
-            return None;
-        }
-        Some(Self { tenant, collection, document })
-    }
-}
-
 /// Appends the encoded expected-version clause.
 pub(super) fn encode_expected(out: &mut Vec<u8>, expected: ExpectedVersion) {
     match expected {
@@ -193,16 +123,6 @@ pub(super) fn encode_expected(out: &mut Vec<u8>, expected: ExpectedVersion) {
             push_u8(out, 2);
             push_u64(out, version);
         }
-    }
-}
-
-/// Reads one encoded expected-version clause.
-pub(super) fn decode_expected(reader: &mut Reader<'_>) -> Option<ExpectedVersion> {
-    match reader.read_u8()? {
-        0 => Some(ExpectedVersion::Any),
-        1 => Some(ExpectedVersion::New),
-        2 => Some(ExpectedVersion::Exact(reader.read_u64()?)),
-        _ => None,
     }
 }
 
@@ -345,56 +265,6 @@ pub(super) fn decode_document(reader: &mut Reader<'_>) -> Option<Document> {
     let mut document = Document::new(id, collection, value);
     document.set_version(version);
     Some(document)
-}
-
-/// Appends one encoded staged write.
-pub(super) fn encode_staged_write(out: &mut Vec<u8>, write: &StagedWrite) {
-    match write {
-        StagedWrite::Put { document, expected } => {
-            push_u8(out, 1);
-            push_str(out, document.collection().as_str());
-            push_str(out, document.id().as_str());
-            encode_expected(out, *expected);
-            encode_document(out, document);
-        }
-        StagedWrite::Delete { collection: Some(collection), id, expected } => {
-            push_u8(out, 2);
-            push_str(out, collection.as_str());
-            push_str(out, id.as_str());
-            encode_expected(out, *expected);
-        }
-        StagedWrite::Delete { collection: None, id, expected } => {
-            push_u8(out, 3);
-            push_str(out, id.as_str());
-            encode_expected(out, *expected);
-        }
-    }
-}
-
-/// Reads one encoded staged write.
-pub(super) fn decode_staged_write(reader: &mut Reader<'_>) -> Option<StagedWrite> {
-    match reader.read_u8()? {
-        1 => {
-            let collection = CollectionName::try_new(&reader.read_string()?).ok()?;
-            let id = DocumentId::try_new(&reader.read_string()?).ok()?;
-            let expected = decode_expected(reader)?;
-            let document = decode_document(reader)?;
-            (document.collection() == &collection && document.id() == &id)
-                .then_some(StagedWrite::Put { document, expected })
-        }
-        2 => {
-            let collection = CollectionName::try_new(&reader.read_string()?).ok()?;
-            let id = DocumentId::try_new(&reader.read_string()?).ok()?;
-            let expected = decode_expected(reader)?;
-            Some(StagedWrite::Delete { collection: Some(collection), id, expected })
-        }
-        3 => {
-            let id = DocumentId::try_new(&reader.read_string()?).ok()?;
-            let expected = decode_expected(reader)?;
-            Some(StagedWrite::Delete { collection: None, id, expected })
-        }
-        _ => None,
-    }
 }
 
 /// Reports whether two writes can address the same logical document.
@@ -542,4 +412,114 @@ fn value_depth(value: &DocumentValue, depth: usize) -> usize {
         }
         _ => depth,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Shared durability / expectation / ledger-frame helpers
+//
+// These spellings predate the storage consolidation; the
+// `SQLite` engine persists and reads the same bytes, so they live here now.
+// ---------------------------------------------------------------------------
+
+/// Reports whether a stored version satisfies one expected-version rule.
+pub(crate) fn matches_expectation(version: Option<u64>, expected: ExpectedVersion) -> bool {
+    match expected {
+        ExpectedVersion::Any => true,
+        ExpectedVersion::New => version.is_none(),
+        ExpectedVersion::Exact(exact) => version == Some(exact),
+    }
+}
+
+/// The weaker of two durability levels (what a receipt may honestly claim).
+pub(crate) fn min_level(first: LocalDurability, second: LocalDurability) -> LocalDurability {
+    use LocalDurability::{Buffered, Synced, Written};
+    match (first, second) {
+        (Buffered, _) | (_, Buffered) => Buffered,
+        (Written, _) | (_, Written) => Written,
+        (Synced, Synced) => Synced,
+    }
+}
+
+/// Maps a durability level to its one-byte code.
+pub(crate) fn durability_code(level: LocalDurability) -> u8 {
+    match level {
+        LocalDurability::Buffered => 0,
+        LocalDurability::Written => 1,
+        LocalDurability::Synced => 2,
+    }
+}
+
+/// Maps a durability code back to the level.
+pub(crate) fn durability_of(code: u8) -> Option<LocalDurability> {
+    match code {
+        0 => Some(LocalDurability::Buffered),
+        1 => Some(LocalDurability::Written),
+        2 => Some(LocalDurability::Synced),
+        _ => None,
+    }
+}
+
+/// Maps a rejection to its one-byte code.
+pub(crate) fn rejection_code(reason: CommitRejection) -> u8 {
+    match reason {
+        CommitRejection::Validation => 1,
+        CommitRejection::Conflict => 2,
+        CommitRejection::OperationIdReuse => 3,
+        CommitRejection::Storage => 4,
+    }
+}
+
+/// Maps a rejection code back to the rejection.
+pub(crate) fn decode_rejection(code: u8) -> Option<CommitRejection> {
+    match code {
+        1 => Some(CommitRejection::Validation),
+        2 => Some(CommitRejection::Conflict),
+        3 => Some(CommitRejection::OperationIdReuse),
+        4 => Some(CommitRejection::Storage),
+        _ => None,
+    }
+}
+
+/// The record-kind byte prefixing one operation-ledger commit payload.
+const COMMIT_RECORD: u8 = 1;
+
+/// Encodes one publication record's full checksummed frame.
+#[allow(clippy::cast_possible_truncation)]
+pub(crate) fn encode_commit_frame(commit: &PublishedCommit) -> Vec<u8> {
+    let mut payload = Vec::new();
+    push_u8(&mut payload, COMMIT_RECORD);
+    push_str(&mut payload, commit.tenant().as_str());
+    push_str(&mut payload, commit.operation_id().as_str());
+    push_u64(&mut payload, commit.sequence().get());
+    encode_durability(&mut payload, LocalDurabilityCode::of(commit.durability()));
+    push_u32(&mut payload, commit.writes().len() as u32);
+    for write in commit.writes() {
+        encode_published_write(&mut payload, write);
+    }
+    let mut frame = Vec::with_capacity(payload.len().saturating_add(12));
+    push_u32(&mut frame, payload.len() as u32);
+    push_u64(&mut frame, fnv1a(&payload));
+    frame.extend_from_slice(&payload);
+    frame
+}
+
+/// Decodes one commit-record payload into its commit.
+pub(crate) fn decode_commit_payload(payload: &[u8]) -> Option<PublishedCommit> {
+    let mut reader = Reader::new(payload);
+    if reader.read_u8()? != COMMIT_RECORD {
+        return None;
+    }
+    let tenant = TenantId::try_new(&reader.read_string()?).ok()?;
+    let operation_id = OperationId::try_new(&reader.read_string()?).ok()?;
+    let sequence = StorageSequence::new(reader.read_u64()?);
+    let durability = decode_durability(&mut reader)?.to_level();
+    let count = usize::try_from(reader.read_u32()?).ok()?;
+    let mut writes = Vec::with_capacity(count.min(1024));
+    for _ in 0..count {
+        writes.push(decode_published_write(&mut reader)?);
+    }
+    if reader.remaining() != 0 {
+        return None;
+    }
+    Some(PublishedCommit::new(tenant, operation_id, sequence, durability, writes))
 }

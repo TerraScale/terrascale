@@ -35,7 +35,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::state::{Records, TimeSeriesRecord, record_id};
 use super::{Aggregation, FamilyError, TimeSeriesAppend, TimeSeriesPolicy};
 use crate::engine::{CommitOutcome, DurableResolution, Engine, EngineError, Transaction};
-use crate::types::{DocumentId, LocalDurability, OperationId, StorageSequence, TenantScope};
+use crate::types::{DocumentId, LocalDurability, OperationId, TenantScope};
 
 /// The receipt of one series' rollup run.
 #[derive(Clone, Debug, Eq, PartialEq)]

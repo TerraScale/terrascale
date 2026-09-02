@@ -11,7 +11,7 @@ use crate::engine::{
     CommitOutcome, ConditionalLoadError, DocumentHead, DocumentVersionContract, Engine,
     EngineConfig, HeadCondition, Transaction,
 };
-use crate::replication::ReplicationClockStamp;
+use crate::types::ReplicationClockStamp;
 use crate::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
     OperationId, StorageSequence, TenantId, TenantScope,

@@ -5,14 +5,12 @@
 //! replication or backup behavior exists.
 
 use terrabase::{
-    AcknowledgementLevel, AcknowledgementReport, BackupArchive, BackupError, BackupKind,
-    BackupManifest, BackupPlan, BackupProgress, BackupResult, ChangeEvent, ChangeFilter,
-    ChangeKind, CommitReceipt, ConflictRecord, Convergence, DocumentStreamSelector, Engine,
-    MemberId, RegionId, ReplicationConfig, ReplicationCursor, ReplicationError, ReplicationOutcome,
-    ReplicationReceipt, ReplicationStatus, RestorePlan, RestoreResult, StreamBatch,
-    StreamCompletion, StreamCursor, StreamError, StreamItem, StreamPosition, StreamSource,
-    StreamStore, SubscriptionAcknowledgement, SubscriptionBatch, SubscriptionCheckpoint,
-    SubscriptionSpec, SubscriptionStatus, TopologyView, backup, replication, streaming,
+    BackupArchive, BackupError, BackupKind, BackupManifest, BackupPlan, BackupProgress,
+    BackupResult, ChangeEvent, ChangeFilter, ChangeKind, CommitReceipt, ConflictRecord,
+    DocumentStreamSelector, Engine, MemberId, RegionId, StreamBatch, StreamCompletion,
+    StreamCursor, StreamError, StreamItem, StreamPosition, StreamSource, StreamStore,
+    SubscriptionAcknowledgement, SubscriptionBatch, SubscriptionCheckpoint, SubscriptionSpec,
+    SubscriptionStatus, backup, streaming,
 };
 
 #[test]
@@ -40,20 +38,11 @@ fn w4_public_exports_compile_with_declaration_only_tree() {
         // root re-exports.
         std::any::type_name::<streaming::TimeSeriesStreamRange>(),
         std::any::type_name::<streaming::FamilyStreamSelector>(),
-        // Replication root re-exports.
+        // Conflict-observation and identity re-exports (their owning modules
+        // are streaming and types; the replication runtime is deleted).
         std::any::type_name::<RegionId>(),
         std::any::type_name::<MemberId>(),
-        std::any::type_name::<TopologyView>(),
-        std::any::type_name::<AcknowledgementLevel>(),
-        std::any::type_name::<AcknowledgementReport>(),
-        std::any::type_name::<Convergence>(),
-        std::any::type_name::<ReplicationOutcome>(),
-        std::any::type_name::<ReplicationStatus>(),
-        std::any::type_name::<ReplicationReceipt>(),
         std::any::type_name::<ConflictRecord>(),
-        std::any::type_name::<ReplicationCursor>(),
-        std::any::type_name::<ReplicationConfig>(),
-        std::any::type_name::<ReplicationError>(),
         // Backup root re-exports.
         std::any::type_name::<BackupManifest>(),
         std::any::type_name::<BackupArchive>(),
@@ -61,12 +50,9 @@ fn w4_public_exports_compile_with_declaration_only_tree() {
         std::any::type_name::<BackupPlan>(),
         std::any::type_name::<BackupProgress>(),
         std::any::type_name::<BackupResult>(),
-        std::any::type_name::<RestorePlan>(),
-        std::any::type_name::<RestoreResult>(),
         std::any::type_name::<BackupError>(),
-        // The three W4 module roots are public.
+        // The W4 module roots are public.
         std::any::type_name::<streaming::StreamStore<'static>>(),
-        std::any::type_name::<replication::AcknowledgementLevel>(),
         std::any::type_name::<backup::BackupManifest>(),
     );
 }
@@ -92,25 +78,14 @@ fn streaming_store_borrows_the_engine_and_prevents_shutdown_while_live() {
 #[test]
 fn commit_receipt_stays_local_only_in_the_w4_surface() {
     // `CommitReceipt` remains the engine-local publication fact: operation
-    // identity, storage sequence, and local durability only. No W4 type may
-    // add a Region, Member, `AcknowledgementLevel`, `Convergence`, or
-    // `ReplicationReceipt` fact to it, no W4 code may imply remote
-    // acknowledgement from a local commit, and the acknowledgement
-    // vocabulary lives only in the replication module.
+    // identity, storage sequence, and local durability only. No type may
+    // add a Region or Member fact to it and no code may imply remote
+    // acknowledgement from a local commit.
     assert_eq!(std::any::type_name::<CommitReceipt>(), "terrabase::engine::CommitReceipt");
-    for remote_fact_type in [
-        std::any::type_name::<RegionId>(),
-        std::any::type_name::<MemberId>(),
-        std::any::type_name::<TopologyView>(),
-        std::any::type_name::<AcknowledgementLevel>(),
-        std::any::type_name::<AcknowledgementReport>(),
-        std::any::type_name::<Convergence>(),
-        std::any::type_name::<ReplicationOutcome>(),
-        std::any::type_name::<ReplicationReceipt>(),
-    ] {
+    for identity_type in [std::any::type_name::<RegionId>(), std::any::type_name::<MemberId>()] {
         assert!(
-            remote_fact_type.starts_with("terrabase::replication::"),
-            "remote acknowledgement fact outside replication: {remote_fact_type}"
+            identity_type.starts_with("terrabase::types::"),
+            "identity fact outside types: {identity_type}"
         );
     }
 }
@@ -131,21 +106,9 @@ fn w4_roots_reexport_no_transport_codec_or_leader_state() {
         (std::any::type_name::<BackupPlan>(), "terrabase::backup::"),
         (std::any::type_name::<BackupProgress>(), "terrabase::backup::"),
         (std::any::type_name::<BackupResult>(), "terrabase::backup::"),
-        (std::any::type_name::<RestorePlan>(), "terrabase::backup::"),
-        (std::any::type_name::<RestoreResult>(), "terrabase::backup::"),
-        (std::any::type_name::<AcknowledgementLevel>(), "terrabase::replication::"),
-        (std::any::type_name::<AcknowledgementReport>(), "terrabase::replication::"),
-        (std::any::type_name::<ConflictRecord>(), "terrabase::replication::"),
-        (std::any::type_name::<Convergence>(), "terrabase::replication::"),
-        (std::any::type_name::<MemberId>(), "terrabase::replication::"),
-        (std::any::type_name::<RegionId>(), "terrabase::replication::"),
-        (std::any::type_name::<ReplicationConfig>(), "terrabase::replication::"),
-        (std::any::type_name::<ReplicationCursor>(), "terrabase::replication::"),
-        (std::any::type_name::<ReplicationError>(), "terrabase::replication::"),
-        (std::any::type_name::<ReplicationOutcome>(), "terrabase::replication::"),
-        (std::any::type_name::<ReplicationReceipt>(), "terrabase::replication::"),
-        (std::any::type_name::<ReplicationStatus>(), "terrabase::replication::"),
-        (std::any::type_name::<TopologyView>(), "terrabase::replication::"),
+        (std::any::type_name::<ConflictRecord>(), "terrabase::streaming::"),
+        (std::any::type_name::<MemberId>(), "terrabase::types::"),
+        (std::any::type_name::<RegionId>(), "terrabase::types::"),
         (std::any::type_name::<ChangeEvent>(), "terrabase::streaming::"),
         (std::any::type_name::<ChangeFilter>(), "terrabase::streaming::"),
         (std::any::type_name::<ChangeKind>(), "terrabase::streaming::"),

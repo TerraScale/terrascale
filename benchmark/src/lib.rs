@@ -38,7 +38,6 @@ pub mod relationships;
 pub mod session;
 pub mod storage;
 pub mod streaming;
-pub mod tiers;
 pub mod types;
 pub mod usage;
 
@@ -53,7 +52,7 @@ pub use adapters::protocol::{
 pub use adapters::protocol::{ProtocolAdapter, ProtocolError};
 pub use backup::{
     BackupArchive, BackupError, BackupKind, BackupManifest, BackupPlan, BackupProgress,
-    BackupResult, RestorePlan, RestoreResult,
+    BackupResult,
 };
 pub use engine::{
     AuthorizedEngine, AuthorizedEngineError, AuthorizedSession, BulkIngestRequest, CommitError,
@@ -91,27 +90,23 @@ pub use query::{
 pub use regions::{
     REGION_CEILING, RegionAdmissionError, RegionCatalog, RegionCode, RegionCodeError,
 };
-pub use types::{MemberId, RegionId, ReplicationClockStamp};
 pub use session::{
     AfterSaveEvent, BeforeDeleteEvent, BeforeDeleteHook, BeforeStoreEvent, BeforeStoreHook,
     DocumentChanges, FieldChange, FieldChangeKind, Session, SessionCommand, SessionError,
     SessionHookVeto, SessionOptions, SessionStream, SessionTracking, SessionTransactionMode,
 };
-pub use storage::{
-    CompactionError, CompactionPhase, CompactionPolicy, CompactionProgress, CompactionProgressSink,
-    CompactionReceipt, CompactionRequest, HistoryReclaimOutcome,
-};
 pub use streaming::{
-    ChangeEvent, ChangeFilter, ChangeKind, DocumentStreamSelector, StreamBatch, StreamCompletion,
-    StreamCursor, StreamError, StreamItem, StreamPosition, StreamSource, StreamStore,
-    SubscriptionAcknowledgement, SubscriptionBatch, SubscriptionCheckpoint, SubscriptionSpec,
-    SubscriptionStatus,
+    ChangeEvent, ChangeFilter, ChangeKind, ConflictRecord, DocumentStreamSelector, StreamBatch,
+    StreamCompletion, StreamCursor, StreamError, StreamItem, StreamPosition, StreamSource,
+    StreamStore, SubscriptionAcknowledgement, SubscriptionBatch, SubscriptionCheckpoint,
+    SubscriptionSpec, SubscriptionStatus,
 };
 pub use types::{
     Cancellation, Deadline, Document, DocumentId, DocumentMetadata, DocumentValue, ExpectedVersion,
     IndexGeneration, IndexGenerationSet, LocalDurability, OperationId, ReadSnapshot,
     RetryDisposition, StorageSequence, TenantId, TenantScope,
 };
+pub use types::{MemberId, RegionId, ReplicationClockStamp};
 pub use usage::{
     ChargeScope, CorrectionProcedure, MeasurementCadence, MeasurementWindow, MeterCatalog,
     MeterDefinition, MeterKind, MeterUnit, MintingIdentity, MintingRule, SegmentId,

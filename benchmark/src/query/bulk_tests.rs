@@ -27,7 +27,7 @@ use super::{
     QueryProjection, QuerySource, QuerySpec, StalenessMode, StalenessPolicy,
 };
 use crate::engine::{
-    CommitError, DocumentPatch, Engine, EngineConfig, PatchOperation, PatchPath, PatchPathSegment,
+    DocumentPatch, Engine, EngineConfig, PatchOperation, PatchPath, PatchPathSegment,
 };
 use crate::operations::RequestValidationError;
 use crate::types::{
@@ -561,46 +561,6 @@ fn bulk_details_window_is_bounded_and_dropped_count_discloses() {
     );
     assert!(receipt.details().iter().all(|detail| detail.outcome() == BulkDetailOutcome::Patched));
     assert!(receipt.details().iter().all(|detail| detail.collection().as_str() == "orders"));
-    drop(engine);
-    std::fs::remove_dir_all(&dir).ok();
-}
-
-#[test]
-fn delete_by_query_rejected_page_commit_claims_nothing() {
-    let (dir, engine) = open_engine("delete-rejected-page");
-    let scope = scope(&engine, "tenant-a");
-    let documents: Vec<Document> = (1..=5)
-        .map(|index| {
-            document(&format!("doc-{index}"), &[("tenant-visible", DocumentValue::Boolean(true))])
-        })
-        .collect();
-    commit_documents(&engine, &scope, "seed", documents);
-
-    // The injected pointer-publication fault rejects the first page's commit:
-    // the run stops, earlier committed batches stay honest (here: none), and
-    // the failed page's documents are accounted unattempted, never claimed.
-    engine.arm_storage_fault(crate::storage::FaultPoint::PointerPublish);
-    let options = BulkByQueryOptions::new().try_with_page_documents(2).expect("valid bound");
-    let request = confirmed_delete(
-        selection_spec(
-            &tenant("tenant-a"),
-            QueryPaging::try_new(0, None).expect("valid paging"),
-            strict_fresh(),
-        ),
-        options,
-    )
-    .expect("valid request");
-    let receipt = engine.queries().delete_by_query(&scope, request, &Cancellation::new());
-    match receipt.termination() {
-        BulkTermination::Rejected { error, .. } => {
-            assert_eq!(*error, CommitError::StorageFailure);
-        }
-        other => panic!("a rejected page commit stops the run: {other:?}"),
-    }
-    assert_eq!(receipt.processed(), 0);
-    assert_eq!(receipt.unattempted(), 5);
-    assert!(receipt.reconciles());
-    assert_eq!(remaining_documents(&engine, &scope).len(), 5, "nothing was published");
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();
 }

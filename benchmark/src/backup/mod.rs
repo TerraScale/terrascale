@@ -89,13 +89,11 @@
 
 mod manifest;
 mod records;
-mod restore;
 mod sha256;
 #[cfg(test)]
 mod tests;
 
 pub use manifest::{BackupManifest, BackupMember, BackupTenantCount};
-pub use restore::{RecoveryReceipt, verify_latest_chain_encrypted};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -501,31 +499,7 @@ impl BackupResult {
     }
 }
 
-/// A validated restore request: manifest identity, clean target location,
-/// and verification options (PB-6016).
-///
-/// Restore refuses a non-empty or unrelated target and consumes the complete
-/// ordered incremental chain, rejecting a missing, reordered, truncated, or
-/// corrupt member before materializing anything. Restore selection and
-/// execution belong to BK-02; this declaration stays contract-only.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RestorePlan {
-    plan: std::marker::PhantomData<()>,
-}
-
-/// The terminal result of one restore run.
-///
-/// Carries the restored identity, counts, checksum verdicts, and explicit
-/// limits. Verification reopens the target as a real durable `Engine` and
-/// reads back representative and boundary values — a clean-restore
-/// verification, not a trust-me copy. Restore execution belongs to BK-02;
-/// this declaration stays contract-only.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RestoreResult {
-    result: std::marker::PhantomData<()>,
-}
-
-/// Typed backup and restore failure categories.
+/// Typed backup failure categories.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BackupError {
     /// The manifest failed validation before any target was created.
@@ -535,8 +509,6 @@ pub enum BackupError {
     /// The incremental chain is missing, reordered, truncated, or otherwise
     /// incomplete.
     ChainIncomplete,
-    /// The restore target is non-empty or unrelated.
-    TargetNotEmpty,
     /// The backup source is unavailable, cannot serve the requested
     /// boundary, or no provable history exists for the requested range.
     SourceUnavailable,
@@ -732,7 +704,7 @@ fn execute(
     state.observe(BackupStep::Admitted)?;
 
     let tenants = selected_tenants(engine, &mut state, plan)?;
-    let boundary = resolve_boundary(engine, &mut state, plan, destination, &tenants)?;
+    let boundary = resolve_boundary(engine, &mut state, plan, destination)?;
 
     let mut writer = match &plan.encryption {
         Some(cipher) => MemberWriter::new_encrypted(
@@ -796,7 +768,6 @@ fn resolve_boundary(
     state: &mut RunState,
     plan: &BackupPlan,
     destination: &Path,
-    tenants: &[TenantId],
 ) -> Result<StorageSequence, BackupError> {
     let unavailable = |_| BackupError::SourceUnavailable;
     state.spend_read()?;
@@ -822,9 +793,8 @@ fn resolve_boundary(
         BackupKind::Incremental { base } => {
             // The base must be a sealed recovery-point boundary in this
             // destination, and the range must be provable.
-            let anchored = discover_points(destination)?
-                .iter()
-                .any(|point| point.boundary_sequence() == base);
+            let anchored =
+                discover_points(destination)?.iter().any(|point| point.boundary_sequence() == base);
             if !anchored {
                 return Err(BackupError::ChainIncomplete);
             }
@@ -901,19 +871,6 @@ fn archive_journal_range(
         state.observe(BackupStep::ReadingJournal)?;
     }
     Ok(())
-}
-
-/// Archives the retained deletion evidence of one below-bound window
-/// (GAP-R02 decision D4).
-///
-/// Returns the effective history bound the run serves against: the
-/// journal's own servable bound.
-fn effective_history_start(
-    engine: &Engine,
-) -> Result<Option<StorageSequence>, BackupError> {
-    engine
-        .servable_history_start()
-        .map_err(|_| BackupError::SourceUnavailable)
 }
 
 /// Archives the source state at `boundary` for a full or snapshot run by

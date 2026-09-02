@@ -1,10 +1,10 @@
 //! Public construction tests for native document-version contracts.
 
+use terrabase::ReplicationClockStamp;
 use terrabase::engine::{
     ConditionalLoadError, DocumentHead, DocumentVersionContract, DocumentVersionContractError,
     HeadCondition,
 };
-use terrabase::replication::ReplicationClockStamp;
 
 fn contract(version: u64, sequence: u64) -> DocumentVersionContract {
     DocumentVersionContract::try_new(version, sequence, ReplicationClockStamp::new(0, 0))

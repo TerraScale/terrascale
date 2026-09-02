@@ -946,23 +946,3 @@ fn parse_envelope(envelope: &[u8]) -> Result<(u128, &[u8], Vec<u8>), EncryptionE
     let aad_end = HEADER_LEN + aad_len;
     Ok((ordinal, &envelope[HEADER_LEN..aad_end], envelope[aad_end..].to_vec()))
 }
-
-/// Returns the complete byte length of an envelope from its fixed prefix.
-/// Storage journals use this bounded parser to split concatenated envelopes;
-/// authentication remains the responsibility of [`ArtifactCipher::open`].
-pub(crate) fn envelope_length_prefix(bytes: &[u8]) -> Result<usize, EncryptionError> {
-    const HEADER_LEN: usize = 29;
-    if bytes.len() < HEADER_LEN || bytes[..4] != ENVELOPE_MAGIC || bytes[4] != ENVELOPE_VERSION {
-        return Err(EncryptionError::MalformedEnvelope);
-    }
-    let aad_len =
-        usize::try_from(u32::from_be_bytes(bytes[17..21].try_into().expect("aad length")))
-            .map_err(|_| EncryptionError::SizeLimit)?;
-    let ciphertext_len =
-        usize::try_from(u64::from_be_bytes(bytes[21..29].try_into().expect("ciphertext length")))
-            .map_err(|_| EncryptionError::SizeLimit)?;
-    HEADER_LEN
-        .checked_add(aad_len)
-        .and_then(|length| length.checked_add(ciphertext_len))
-        .ok_or(EncryptionError::SizeLimit)
-}

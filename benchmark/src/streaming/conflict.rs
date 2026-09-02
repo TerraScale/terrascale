@@ -27,6 +27,7 @@ pub struct ConflictRecord {
 
 impl ConflictRecord {
     /// Creates one conflict record from its content-free facts.
+    #[cfg(test)]
     pub(crate) fn new(
         tenant: TenantId,
         operations: Vec<OperationId>,

@@ -1836,20 +1836,20 @@ fn engine_bound_subscriptions_are_bounded_and_refused() {
 
 /// Builds one synthetic conflict record: two conflicting operations, two
 /// members, two clock stamps, and a recorded winner.
-fn conflict_record(tag: &str) -> crate::replication::ConflictRecord {
-    crate::replication::ConflictRecord::new(
+fn conflict_record(tag: &str) -> crate::streaming::ConflictRecord {
+    crate::streaming::ConflictRecord::new(
         tenant("tenant-a"),
         vec![operation(&format!("op-local-{tag}")), operation(&format!("op-remote-{tag}"))],
         vec![
-            crate::replication::MemberId::try_new("member-a").expect("valid member"),
-            crate::replication::MemberId::try_new("member-b").expect("valid member"),
+            crate::types::MemberId::try_new("member-a").expect("valid member"),
+            crate::types::MemberId::try_new("member-b").expect("valid member"),
         ],
         vec![
-            crate::replication::ReplicationClockStamp::new(10, 1),
-            crate::replication::ReplicationClockStamp::new(10, 2),
+            crate::types::ReplicationClockStamp::new(10, 1),
+            crate::types::ReplicationClockStamp::new(10, 2),
         ],
-        crate::replication::ConflictOutcome::Winner(
-            crate::replication::MemberId::try_new("member-a").expect("valid member"),
+        crate::streaming::ConflictOutcome::Winner(
+            crate::types::MemberId::try_new("member-a").expect("valid member"),
         ),
     )
 }

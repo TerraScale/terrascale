@@ -922,28 +922,6 @@ impl UsageAdmissionContext {
         self.integer_units
     }
 
-    /// Builds the tenant-bound domain fact after the Engine validates scope.
-    pub(crate) fn fact_for(&self, tenant: TenantId) -> Result<UsageFact, UsageError> {
-        let definition = MeterCatalog::initial()
-            .get(MeterKind::AdmittedRequestUnits, self.meter_version)
-            .copied()
-            .ok_or(UsageError::UnknownMeterDefinition)?;
-        let scope = UsageScope {
-            tenant_id: tenant,
-            project_id: self.project_id.clone(),
-            database_id: self.database_id.clone(),
-            partition_id: self.partition_id.clone(),
-            region_id: self.origin_region,
-        };
-        UsageFact::try_new(
-            definition,
-            scope,
-            MintingIdentity::StableAdmittedRequest(self.request_id.clone()),
-            MeasurementWindow::instant(self.accepted_at_millis),
-            self.integer_units,
-        )
-    }
-
     /// Returns canonical bytes used to bind this context into an operation
     /// digest. Tenant is added by the caller's existing request digest.
     pub(crate) fn digest_bytes(&self) -> Vec<u8> {

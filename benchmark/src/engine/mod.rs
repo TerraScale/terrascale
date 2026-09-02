@@ -8,7 +8,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
@@ -52,14 +52,12 @@ pub use patch::{
 
 use crate::{
     families::FamilyStore,
-    observability::{CommitResult as MetricCommitResult, MetricsRegistry, TaskOutcome},
+    observability::{CommitResult as MetricCommitResult, MetricsRegistry},
     operations::{EngineRequest, EngineResponse},
     query::QueryStore,
     storage::{
-        self, CommitIntent, CommitPublicationEvent, CommitResult, CompactionError,
-        CompactionReceipt, CompactionRequest, LedgerFrontierActivationError,
-        LedgerFrontierActivationReceipt, LedgerFrontierActivationRequest, LedgerFrontierStatus,
-        PublishedCommit, StagedWrite, StoragePort, UsageFactPosition, UsageStorageError,
+        self, CommitIntent, CommitPublicationEvent, CommitResult, PublishedCommit, StagedWrite,
+        StoragePort, UsageFactPosition, UsageStorageError,
     },
     streaming::StreamStore,
     types::{
@@ -260,7 +258,6 @@ fn decode_usage_continuation(
 const fn map_usage_storage_error(error: UsageStorageError) -> UsageCommandError {
     match error {
         UsageStorageError::UnsupportedBackend => UsageCommandError::UnsupportedBackend,
-        UsageStorageError::UsageUnavailable => UsageCommandError::UsageUnavailable,
         UsageStorageError::Corrupt => UsageCommandError::CorruptStorage,
         UsageStorageError::IdentityConflict => UsageCommandError::IdentityConflict,
         UsageStorageError::Unavailable => UsageCommandError::StorageUnavailable,
@@ -401,55 +398,7 @@ impl Drop for SubscriptionGuard {
 pub struct EngineConfig {
     location: PathBuf,
     lifecycle_thresholds: crate::query::optimizer::LifecycleThresholds,
-    storage_backend: StorageBackend,
     owner: Option<crate::storage::DatabaseOwner>,
-}
-
-/// Which storage engine backs a durable Engine location (P1, ADR 0016).
-///
-/// The default selects the LSM engine for new locations. A location that
-/// already carries the root-file format marker opens on the root-file
-/// engine — locations self-describe, so restored and migrated locations
-/// keep opening — and the crate-private selector lets the root store's own
-/// suites pin their backend explicitly.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum StorageBackend {
-    /// The ZoneTree-inspired LSM engine: WAL-backed memtable, immutable
-    /// segments, crash-safe manifest, atomic commit batches.
-    #[default]
-    Lsm,
-    /// The W3-1 root-file engine with full-root rewrites per commit.
-    RootFiles,
-    /// The `SQLite` engine (D-27): one WAL-mode database file per location,
-    /// documents, ledger, and journal committed in one transaction. New
-    /// locations select it through the crate-private selector or the
-    /// `TERRABASE_STORAGE_BACKEND=sqlite` override; existing locations
-    /// self-describe through the `TBV3SQLITE` format marker.
-    Sqlite,
-}
-
-/// Reads a durable location's self-describing format marker, then applies
-/// the environment override for fresh locations.
-fn backend_of_location(location: &Path, configured: StorageBackend) -> StorageBackend {
-    if configured != StorageBackend::Lsm {
-        return configured;
-    }
-    match std::fs::read(location.join("format")) {
-        Ok(bytes) if bytes.starts_with(b"TBV2FORMAT") => StorageBackend::RootFiles,
-        Ok(bytes) if bytes.starts_with(b"TBV3SQLITE") => StorageBackend::Sqlite,
-        // A location without a marker is fresh: the environment override
-        // lets the bench harness and tests select the `SQLite` engine without
-        // configuration plumbing. The override never converts a location
-        // that already carries another format's marker.
-        _ if env_selects_sqlite() => StorageBackend::Sqlite,
-        _ => configured,
-    }
-}
-
-/// Reports whether the environment requests the `SQLite` backend by name.
-fn env_selects_sqlite() -> bool {
-    std::env::var_os("TERRABASE_STORAGE_BACKEND")
-        .is_some_and(|value| value == std::ffi::OsStr::new("sqlite"))
 }
 
 impl EngineConfig {
@@ -477,7 +426,6 @@ impl EngineConfig {
         Ok(Self {
             location,
             lifecycle_thresholds: crate::query::optimizer::LifecycleThresholds::DEFAULT,
-            storage_backend: StorageBackend::default(),
             owner: None,
         })
     }
@@ -490,16 +438,6 @@ impl EngineConfig {
     #[must_use]
     pub fn with_owner(mut self, owner: crate::storage::DatabaseOwner) -> Self {
         self.owner = Some(owner);
-        self
-    }
-
-    /// Selects the storage backend of the durable location. Crate-private
-    /// by design: the backend is a development and qualification knob, not
-    /// a public contract.
-    #[allow(dead_code, reason = "selected by the LSM test matrix; the default is the LSM backend")]
-    #[must_use]
-    pub(crate) const fn with_storage_backend(mut self, backend: StorageBackend) -> Self {
-        self.storage_backend = backend;
         self
     }
 
@@ -832,7 +770,6 @@ pub struct Engine {
     bulk_audit: Arc<crate::query::bulk::BulkAuditJournal>,
     /// The Storage Tier Mover's control state (P4): the configured
     /// policy and the pause gate. The handle is [`Engine::tiers`].
-    pub(crate) tier_control: Arc<Mutex<crate::tiers::TierControlState>>,
     /// The group-commit mailbox: waiting intents and the leader flag.
     /// Shared through the [`Arc`] so cloned engines form one group.
     pub(crate) commit_mailbox: Arc<Mutex<CommitMailbox>>,
@@ -842,13 +779,6 @@ pub struct Engine {
     /// state, because the leader hands its guard to the wait and the
     /// condvar must outlive that move.
     commit_arrivals: std::sync::Condvar,
-    /// The pipelined group-commit witness: a shareable sync handle to the
-    /// LSM location's WAL, held by the Engine so a batch leader can
-    /// `fdatasync` its batch's bytes **outside** the storage lock while the
-    /// next batch's prepare and append take the lock. `None` (any non-LSM
-    /// backend, or an unopenable WAL) keeps every batch on the fully
-    /// synchronous publication order.
-    wal_sync: Option<crate::storage::lsm::wal::WalSyncHandle>,
 }
 
 /// The group-commit mailbox state.
@@ -860,7 +790,6 @@ pub(crate) struct CommitMailbox {
     /// evidence that it is serving a group and the next narrow batch is a
     /// between-waves leader, not a serial caller. A batch of one may take
     /// the pipelined shape only inside this window.
-    last_group_at: Option<std::time::Instant>,
     /// Whether a leader is currently driving batches.
     leader_active: bool,
 }
@@ -912,75 +841,19 @@ impl Engine {
             | crate::storage::OwnershipError::Mismatch
             | crate::storage::OwnershipError::ModeMismatch => EngineOpenError::FormatMismatch,
         })?;
-        let backend = backend_of_location(&location, config.storage_backend);
         let metrics = Arc::new(MetricsRegistry::new());
-        let storage: Box<dyn storage::StoragePort> = match backend {
-            StorageBackend::Lsm => {
-                let result = if config.owner.is_some() {
-                    // The OCI Vault adapter is intentionally not configured
-                    // in this crate. An empty production location may be
-                    // catalogued read-only, but no plaintext artifact is
-                    // accepted and every write is refused by the LSM seam.
-                    storage::lsm::LsmStorage::open_production_unavailable(
-                        &location,
-                        Arc::clone(&metrics),
-                    )
-                } else {
-                    storage::lsm::LsmStorage::open_with_local_encryption(
-                        &location,
-                        Arc::clone(&metrics),
-                        owner.clone(),
-                    )
-                };
-                let engine = result.map_err(|error| match error {
-                    storage::lsm::LsmOpenError::FormatMismatch => EngineOpenError::FormatMismatch,
-                    storage::lsm::LsmOpenError::Unavailable => EngineOpenError::StorageUnavailable,
-                })?;
-                Box::new(engine)
-            }
-            StorageBackend::RootFiles => {
-                if config.owner.is_some() {
-                    return Err(EngineOpenError::StorageUnavailable);
-                }
-                let engine =
-                    storage::FileStorage::open(&location).map_err(|error| match error {
-                        storage::StorageOpenError::FormatMismatch => {
-                            EngineOpenError::FormatMismatch
-                        }
-                        storage::StorageOpenError::Unavailable => {
-                            EngineOpenError::StorageUnavailable
-                        }
-                    })?;
-                Box::new(engine)
-            }
-            // The `SQLite` backend has no production-owner (encryption)
-            // integration yet, so an owner-scoped open answers the typed
-            // refusal the root-file engine gives.
-            StorageBackend::Sqlite => {
-                if config.owner.is_some() {
-                    return Err(EngineOpenError::StorageUnavailable);
-                }
-                let engine =
-                    storage::SqliteStorage::open(&location).map_err(|error| match error {
-                        storage::StorageOpenError::FormatMismatch => {
-                            EngineOpenError::FormatMismatch
-                        }
-                        storage::StorageOpenError::Unavailable => {
-                            EngineOpenError::StorageUnavailable
-                        }
-                    })?;
-                Box::new(engine)
-            }
-        };
+        // The storage is `SQLite` and only `SQLite` (D-27/D-42): one
+        // WAL-mode database file per location. Owner-scoped (production)
+        // locations open with the ownership tuple enforced but without
+        // encryption at rest until M2-1 lands the per-database key on this
+        // substrate.
+        let storage: Box<dyn storage::StoragePort> = storage::SqliteStorage::open(&location)
+            .map(|engine| Box::new(engine) as Box<dyn storage::StoragePort>)
+            .map_err(|error| match error {
+                storage::StorageOpenError::FormatMismatch => EngineOpenError::FormatMismatch,
+                storage::StorageOpenError::Unavailable => EngineOpenError::StorageUnavailable,
+            })?;
         let subscriptions = Arc::new(PublicationRegistry::new());
-        // The pipelined witness handle exists only on the LSM backend: the
-        // location's WAL is open by now, and `fdatasync` through this second
-        // descriptor covers every byte the storage port appended to the same
-        // file. A missing handle simply keeps the synchronous shape.
-        let wal_sync = match backend {
-            StorageBackend::Lsm => storage::lsm::wal::WalSyncHandle::try_open(&location),
-            StorageBackend::RootFiles | StorageBackend::Sqlite => None,
-        };
         // W4-CA-3: register the Engine-owned index catalog's sink through the
         // production registry so index maintenance observes every publication.
         let indexes = Arc::new(crate::index::IndexCatalog::new());
@@ -998,10 +871,8 @@ impl Engine {
             indexes,
             _index_subscription: index_subscription,
             bulk_audit: Arc::new(crate::query::bulk::BulkAuditJournal::new()),
-            tier_control: Arc::new(Mutex::new(crate::tiers::TierControlState::default())),
             commit_mailbox: Arc::new(Mutex::new(CommitMailbox::default())),
             commit_arrivals: std::sync::Condvar::new(),
-            wal_sync,
         })
     }
 
@@ -1074,9 +945,6 @@ impl Engine {
         /// arrivals carry the deferred flips in the next batch's append),
         /// while a quiet engine pays at most one flush.
         const GROUP_LINGER_WINDOW: std::time::Duration = std::time::Duration::from_millis(2);
-        /// How long a recent group keeps qualifying a between-waves solo
-        /// batch for the pipelined shape.
-        const GROUP_ACTIVE_WINDOW: std::time::Duration = std::time::Duration::from_millis(100);
         // The wave width to gather toward. It starts at the harvest width
         // and grows with every committed wave, so a saturated run's next
         // wave coalesces to full width instead of splitting at the floor —
@@ -1139,21 +1007,15 @@ impl Engine {
             // — a between-waves leader, not a serial caller. A serial
             // caller on a quiescent engine keeps the synchronous order,
             // byte-identical to a direct storage commit.
-            let group_active = batch.len() >= 2 || self.group_served_within(GROUP_ACTIVE_WINDOW);
-            let pipelined = group_active && self.wal_sync.is_some();
-            if batch.len() >= 2 {
-                self.note_group_served();
-            }
-            carry_pending = pipelined;
+            carry_pending = false;
             wave_width = wave_width.max(batch.len().saturating_add(1));
             let results = match self.lock_storage() {
-                Ok(mut storage) => storage.port.commit_batch(intents, pipelined),
+                Ok(mut storage) => storage.port.commit_batch(intents, false),
                 Err(_) => vec![
                     storage::CommitResult::Rejected(storage::CommitRejection::Storage);
                     batch.len()
                 ],
             };
-            let results = if pipelined { self.witness_pipelined_batch(results) } else { results };
             for ((_, sender), result) in batch.into_iter().zip(results) {
                 let _ = sender.send(result);
             }
@@ -1210,22 +1072,6 @@ impl Engine {
                     }
                 }
             }
-        }
-    }
-
-    /// Records that a group of two or more intents just committed.
-    fn note_group_served(&self) {
-        if let Ok(mut mailbox) = self.commit_mailbox.lock() {
-            mailbox.last_group_at = Some(std::time::Instant::now());
-        }
-    }
-
-    /// Whether a group committed within `window`, so a narrow batch now is
-    /// a between-waves leader rather than a serial caller.
-    fn group_served_within(&self, window: std::time::Duration) -> bool {
-        match self.commit_mailbox.lock() {
-            Ok(mailbox) => mailbox.last_group_at.is_some_and(|served| served.elapsed() < window),
-            Err(_) => false,
         }
     }
 
@@ -1295,96 +1141,11 @@ impl Engine {
         batch
     }
 
-    /// Witnesses one pipelined batch outside the storage lock and returns
-    /// the results its waiters may receive.
-    ///
-    /// The batch's bytes are already appended — the storage lock is
-    /// released — so reading the WAL length now, then `fdatasync`ing
-    /// through the Engine's handle, proves every byte up to that length
-    /// durable: any sync that starts after an append returns proves that
-    /// append, and this is one. Batches whose results claim no `Synced`
-    /// durability need no witness at all and answer immediately, exactly
-    /// as the in-lock path always skipped the sync for them.
-    ///
-    /// A failed sync mirrors the in-lock witness failure: every outcome in
-    /// the batch becomes the honest uncertain resolution, and the flush
-    /// attempt tells storage its durable tail is broken.
-    fn witness_pipelined_batch(
-        &self,
-        results: Vec<storage::CommitResult>,
-    ) -> Vec<storage::CommitResult> {
-        let Some(handle) = &self.wal_sync else {
-            return results;
-        };
-        let claims_synced = results.iter().any(|result| {
-            matches!(
-                result,
-                storage::CommitResult::Committed(receipt) if receipt.durability == LocalDurability::Synced
-            )
-        });
-        if !claims_synced {
-            return results;
-        }
-        // The batch's append completed before the storage lock released,
-        // and this leader is the only appender — it appends nothing else
-        // before this sync returns — so the sync that starts here covers
-        // exactly the wave's bytes and everything appended before them.
-        let started = Instant::now();
-        let sync = handle.sync();
-        let outcome = if sync.is_ok() { TaskOutcome::Success } else { TaskOutcome::Error };
-        self.metrics.record_wal_fsync(outcome, started.elapsed());
-        if sync.is_ok() {
-            return results;
-        }
-        if let Ok(mut storage) = self.lock_storage() {
-            let _ = storage.port.flush();
-        }
-        vec![
-            storage::CommitResult::Unknown(storage::UnknownCause::ResponseInterrupted);
-            results.len()
-        ]
-    }
-
-    /// Returns the Storage Tier Mover's typed administration handle
-    /// (P4): configure, explain, dry-run, run, pause, resume, inspect.
-    #[must_use]
-    pub fn tiers(&self) -> crate::tiers::TierAdministration {
-        crate::tiers::TierAdministration::new(self)
-    }
-
     /// Returns the never-reused identity of this Engine instance. Tests
     /// and crate-internal callers — the index store's rebuild step among
     /// them — read it to forge scopes and snapshots.
     pub(crate) fn identity(&self) -> u128 {
         self.identity
-    }
-
-    /// Returns the root backend's coordinated storage-frontier status.
-    #[allow(dead_code, reason = "consumed by the authenticated activation handoff")]
-    pub(crate) fn ledger_frontier_status(
-        &self,
-    ) -> Result<LedgerFrontierStatus, LedgerFrontierActivationError> {
-        let storage =
-            self.storage.lock().map_err(|_| LedgerFrontierActivationError::StorageUnavailable)?;
-        Ok(storage.port.ledger_frontier_status())
-    }
-
-    /// Activates the root storage frontier while holding the transaction
-    /// reservation gate and storage lock. No new transaction can start until
-    /// the format marker has been published or the operation has refused.
-    #[allow(dead_code, reason = "consumed by the authenticated activation handoff")]
-    pub(crate) fn activate_ledger_frontier(
-        &self,
-        request: &LedgerFrontierActivationRequest,
-    ) -> Result<LedgerFrontierActivationReceipt, LedgerFrontierActivationError> {
-        let in_flight =
-            self.in_flight.lock().map_err(|_| LedgerFrontierActivationError::StorageUnavailable)?;
-        if !in_flight.is_empty() {
-            return Err(LedgerFrontierActivationError::NotQuiescent);
-        }
-        let mut storage =
-            self.storage.lock().map_err(|_| LedgerFrontierActivationError::StorageUnavailable)?;
-        storage.port.activate_ledger_frontier(request)
     }
 
     /// Mints the tenant scope bound to this Engine.
@@ -1680,8 +1441,20 @@ impl Engine {
             Some(storage::OperationResolution::Rejected(reason)) => {
                 DurableResolution::Rejected(reason.to_commit_error())
             }
-            Some(storage::OperationResolution::Pending) | None => DurableResolution::Pending,
+            None => DurableResolution::Pending,
         })
+    }
+
+    /// Runs one storage retention sweep: prune publication history every
+    /// consumer frontier has passed, then fold the WAL back into the
+    /// database file. Crate-private: the maintenance loop owns the cadence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::StorageFailure`] when storage fails the sweep.
+    pub(crate) fn run_retention_sweep(&self) -> Result<(), EngineError> {
+        let mut storage = self.lock_storage()?;
+        storage.port.run_retention_sweep().map_err(|()| EngineError::StorageFailure)
     }
 
     /// Closes the Engine and its durable storage.
@@ -1693,6 +1466,10 @@ impl Engine {
     /// unreachable through this consuming path and exists for the frozen
     /// contract only.
     pub fn shutdown(self) -> Result<(), EngineShutdownError> {
+        // The shutdown lifecycle: prune publication history below every
+        // consumer frontier (a no-op while no consumer is registered), fold
+        // the WAL back into the database file, then flush.
+        let _ = self.run_retention_sweep();
         let mut storage = self.storage.lock().map_err(|_| EngineShutdownError::StorageFailure)?;
         storage.port.flush().map_err(|()| EngineShutdownError::StorageFailure)
     }
@@ -2139,33 +1916,6 @@ impl Engine {
     /// Engine call, and never touches an explicit index.
     pub fn maintain_indexes(&self) {
         crate::query::optimizer::lifecycle::maintain(self, &self.indexes, self.identity);
-    }
-
-    /// Runs one storage compaction pass (GAP-S1, decision record
-    /// `docs/storage/gaps1-storage-compaction.md` D1 and D2).
-    ///
-    /// The pass is an in-band, caller-driven maintenance operation on this
-    /// open Engine, exactly like [`Engine::maintain_indexes`]: the host owns
-    /// the cadence, the Engine owns the body. It checkpoints the published
-    /// root, truncates the write-ahead log the checkpoint replaces, and
-    /// reclaims superseded root files; under
-    /// [`CompactionPolicy::ReclaimHistory`](crate::storage::CompactionPolicy::ReclaimHistory)
-    /// it also gives up publication history below the journal's durable
-    /// head after the window's deletion evidence is durably held — or
-    /// refuses and discloses, per the decision record's gates. A failed
-    /// pass leaves the kill-point state the record's D4 table names:
-    /// reopening loses nothing and the pass may be retried.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CompactionError::Storage`] when durable storage failed
-    /// inside the pass.
-    pub fn compact(
-        &self,
-        request: CompactionRequest,
-    ) -> Result<CompactionReceipt, CompactionError> {
-        let mut storage = self.lock_storage().map_err(|_| CompactionError::Storage)?;
-        storage.port.compact(request.lower(None)).map(|(receipt, _)| receipt)
     }
 
     /// Arms one storage fault inside the publication order. Test-only.

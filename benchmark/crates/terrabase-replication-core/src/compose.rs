@@ -26,7 +26,9 @@ use std::path::{Path, PathBuf};
 use terrabase::CommitReceipt;
 use terrabase::engine::{CommitOutcome, Engine, EngineConfig};
 use terrabase::families::modes::{self, AdmissionError, CollectionPolicy, KnownKinds};
-use terrabase::replication::{LeaderlessLevel, MemberId, RegionId, ReplicaSet};
+use terrabase::types::{MemberId, RegionId};
+
+use crate::membership::{LeaderlessLevel, ReplicaSet};
 use terrabase::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
     OperationId, TenantId,
@@ -1187,7 +1189,7 @@ pub fn accept_epoch(
         let union: BTreeSet<_> = old_voters
             .iter()
             .chain(new_voters.iter())
-            .map(terrabase::replication::MemberId::as_str)
+            .map(terrabase::types::MemberId::as_str)
             .collect();
         let overlaps = old_voters.is_empty()
             || new_voters.is_empty()

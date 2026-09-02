@@ -6,7 +6,7 @@ use crate::types::{
 };
 use crate::usage::UsageAdmissionContext;
 
-use super::root::StorageRootId;
+use super::StorageRootId;
 
 /// One staged document mutation inside a transaction.
 #[derive(Clone, Debug, PartialEq)]
@@ -101,12 +101,6 @@ impl CommitRejection {
 pub(crate) enum UnknownCause {
     /// A prepared operation is not published yet, so its outcome is unknown.
     ResponseInterrupted,
-    /// The post-publication pointer sync failed.
-    PostPublicationPointerSync,
-    /// The post-publication containing-directory sync failed.
-    PostPublicationDirectorySync,
-    /// The post-publication published-ledger sync failed.
-    PublishedLedgerSync,
 }
 
 impl UnknownCause {
@@ -114,13 +108,6 @@ impl UnknownCause {
     pub(crate) fn to_unknown_reason(self) -> crate::engine::UnknownReason {
         match self {
             Self::ResponseInterrupted => crate::engine::UnknownReason::ResponseInterrupted,
-            Self::PostPublicationPointerSync => {
-                crate::engine::UnknownReason::PostPublicationPointerSync
-            }
-            Self::PostPublicationDirectorySync => {
-                crate::engine::UnknownReason::PostPublicationDirectorySync
-            }
-            Self::PublishedLedgerSync => crate::engine::UnknownReason::PublishedLedgerSync,
         }
     }
 }
@@ -148,6 +135,4 @@ pub(crate) enum OperationResolution {
     },
     /// A durable rejection record exists for the operation.
     Rejected(CommitRejection),
-    /// The operation is recorded but its publication is not yet decided.
-    Pending,
 }

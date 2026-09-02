@@ -46,12 +46,12 @@ use crate::{
     },
 };
 
-pub use conflict::{ConflictOutcome, ConflictRecord};
 pub use backbone::{
     ChangeCheckpoint, ChangeNotification, ChangeNotificationTap, ChangeReplayBatch,
     ChangeReplayRequest, MAX_CHANGE_NOTIFICATION_CAPACITY, SyncJournalBatch, SyncJournalMutation,
     SyncJournalRecord,
 };
+pub use conflict::{ConflictOutcome, ConflictRecord};
 pub use payloads::{
     AttachmentChangeEntry, AttachmentChangePayload, CHANGE_PAYLOAD_DIGEST_BYTES,
     CounterChangeEntry, CounterChangePayload, FamilyChangePayload, MAX_CHANGE_PAYLOAD_ENTRIES,

@@ -7,16 +7,13 @@
 //! without its journal record or the reverse: a published commit without its
 //! journal record is structurally impossible by construction, not by repair.
 //!
-//! Reads resolve as-of a storage sequence the same way the LSM engine's
-//! versioned keys do: `documents` is an append-only version table keyed
-//! `(tenant, collection, identifier, commit sequence)`, so a read at `seq`
-//! selects each key's newest row at or below `seq`, and a tombstone row
-//! hides the key exactly as an LSM deletion marker does. While no pruning
-//! floor exists, [`StoragePort::snapshot_boundary_available`] holds for
-//! every boundary at or below the published sequence — the same contract an
-//! un-compacted LSM location gives. Document bodies and journal frames
-//! reuse the crate's private codec bytes, so structural limits and decode
-//! semantics stay identical to the other backends.
+//! Reads resolve as-of a storage sequence: `documents` is an append-only
+//! version table keyed `(tenant, collection, identifier, commit sequence)`,
+//! so a read at `seq` selects each key's newest row at or below `seq`, and
+//! a tombstone row hides the key. While no pruning floor exists,
+//! [`StoragePort::snapshot_boundary_available`] holds for every boundary at
+//! or below the published sequence. Document bodies and journal frames
+//! reuse the crate's private codec bytes.
 //!
 //! Sequence, version, and limit values cross the SQL boundary as `SQLite`'s
 //! signed 64-bit integers. Sequences come from a `checked_add` chain that
@@ -56,9 +53,9 @@
 //! `usage_facts` rows name — one shared space, exactly the reference
 //! engines' rule. A conflict rejection binds the operation identity durably
 //! (ledger row, `committed=0`, `rejection` code) but consumes no sequence
-//! and writes no journal row — the `FileStorage` rule, so published
-//! sequences stay dense and [`StoragePort::journaled_high_water`] never
-//! trails [`StoragePort::published_state`] behind a non-publishing record.
+//! and writes no journal row, so published sequences stay dense and
+//! [`StoragePort::journaled_high_water`] never trails
+//! [`StoragePort::published_state`] behind a non-publishing record.
 //!
 //! ## Journal pruning (the bounded-journal invariant)
 //!
@@ -88,15 +85,12 @@
 //! as checksummed envelopes keyed by the complete fact identity, with
 //! `(seq, rule, fact_id)` SQL order equal to `UsageFactPosition` order
 //! (`rule` is stored as the `MintingRule` discriminant, whose integer
-//! order is the type's `Ord`). The surface matches the LSM engine's and
-//! is pinned against it by a differential test.
+//! order is the type's `Ord`).
 //!
 //! ## Detection and wiring
 //!
 //! A location self-describes through its `format` marker (magic
-//! `TBV3SQLITE` + schema version); the engine's `backend_of_location`
-//! sniffs the marker, `TERRABASE_STORAGE_BACKEND=sqlite` selects the
-//! backend for fresh locations, and ownership validation recognizes the
+//! `TBV3SQLITE` + schema version); ownership validation recognizes the
 //! marker. A marker naming another format never converts, a missing
 //! marker beside durable artifacts is loss (not a fresh location), and a
 //! marker without its database file is loss too — `Connection::open`
@@ -132,13 +126,10 @@ use super::{
 };
 use super::{
     codec,
-    compaction::{CompactionDriverFacts, CompactionError, CompactionReceipt, StorageCompaction},
-    file::min_level,
     intent::{
         CommitIntent, CommitRejection, CommitResult, OperationResolution, StagedWrite,
         StorageReceipt,
     },
-    ledger, lsm,
 };
 
 /// Magic bytes prefixing the `SQLite` location's `format` marker.
@@ -478,13 +469,10 @@ impl SqliteStorage {
     }
 }
 
-/// Stages one intent inside the open transaction, mirroring the LSM
+/// Stages one intent inside the open transaction
 /// `prepare_commit` order: validate, resolve a retried identity durably,
 /// conflict-check, then write documents, ledger row, and journal row.
-#[allow(
-    clippy::too_many_lines,
-    reason = "one intent's full publication order, mirroring the LSM's prepare_commit"
-)]
+#[allow(clippy::too_many_lines, reason = "one intent's full publication order")]
 fn stage_intent(
     transaction: &rusqlite::Transaction<'_>,
     watermark: &mut u64,
@@ -515,12 +503,12 @@ fn stage_intent(
         return Ok(CommitResult::Committed(StorageReceipt {
             sequence: StorageSequence::new(entry.sequence),
             root: StorageRootId::from_recorded(entry.root),
-            durability: min_level(entry.requested, proven),
+            durability: codec::min_level(entry.requested, proven),
         }));
     }
     // Step 3: conflict-check every write against the snapshot and the
     // published view. The published watermark already includes every
-    // earlier intent of this batch, exactly as the LSM's does.
+    // earlier intent of this batch.
     let snapshot_sequence = intent.snapshot_sequence.get();
     for write in &intent.writes {
         if let StagedWrite::Put { document, .. } = write
@@ -747,13 +735,17 @@ fn ledger_entry(
         Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
         Err(_) => return Err(()),
     };
+    // The digest is a full `u64`; `SQLite` integers are signed, so the
+    // write side stores the bit pattern and this read restores it.
+    #[allow(clippy::cast_sign_loss)]
+    let digest = digest as u64;
     Ok(Some(LedgerEntryView {
-        digest: u64::try_from(digest).map_err(|_| ())?,
+        digest,
         sequence: u64::try_from(sequence).map_err(|_| ())?,
         root,
-        requested: lsm::durability_of(requested).ok_or(())?,
+        requested: codec::durability_of(requested).ok_or(())?,
         synced: synced != 0,
-        rejection: (rejection != 0).then(|| lsm::decode_rejection(rejection)).flatten(),
+        rejection: (rejection != 0).then(|| codec::decode_rejection(rejection)).flatten(),
     }))
 }
 
@@ -776,10 +768,10 @@ fn insert_ledger_row(
                 row.digest as i64,
                 row.sequence as i64,
                 row.root,
-                lsm::durability_code(row.requested),
+                codec::durability_code(row.requested),
                 i64::from(row.committed),
                 i64::from(row.synced),
-                row.rejection.map_or(0, lsm::rejection_code),
+                row.rejection.map_or(0, codec::rejection_code),
             ])
         })
         .map(|_| ())
@@ -826,7 +818,7 @@ fn insert_journal_row(
     sequence: u64,
     commit: &PublishedCommit,
 ) -> Result<(), ()> {
-    let frame = ledger::encode_commit_frame(commit);
+    let frame = codec::encode_commit_frame(commit);
     transaction
         .prepare_cached(
             "INSERT INTO journal (sequence, tenant, operation, frame) VALUES (?1, ?2, ?3, ?4)",
@@ -1009,7 +1001,7 @@ fn conflict_between(
     let snapshot_version = version_at(transaction, tenant, collection, id, snapshot_sequence)?;
     let published_version = version_at(transaction, tenant, collection, id, published_sequence)?;
     Ok(snapshot_version != published_version
-        || !lsm::matches_expectation(snapshot_version, expected))
+        || !codec::matches_expectation(snapshot_version, expected))
 }
 
 /// Checks a delete of an identifier the snapshot does not contain.
@@ -1024,7 +1016,7 @@ fn conflict_for_absent_document(
     let in_snapshot = first_collection_of_id(transaction, tenant, id, snapshot_sequence)?.is_some();
     let in_published =
         first_collection_of_id(transaction, tenant, id, published_sequence)?.is_some();
-    Ok(in_snapshot != in_published || in_published || !lsm::matches_expectation(None, expected))
+    Ok(in_snapshot != in_published || in_published || !codec::matches_expectation(None, expected))
 }
 
 /// Encodes one document body with the shared private codec.
@@ -1047,7 +1039,7 @@ fn decode_journal_frame(frame: &[u8]) -> Option<PublishedCommit> {
     let length = usize::try_from(reader.read_u32()?).ok()?;
     let checksum = reader.read_u64()?;
     let payload = reader.take(length)?;
-    (codec::fnv1a(payload) == checksum).then(|| ledger::decode_commit_payload(payload)).flatten()
+    (codec::fnv1a(payload) == checksum).then(|| codec::decode_commit_payload(payload)).flatten()
 }
 
 /// Derives the next root-chain identity from the current head.
@@ -1222,14 +1214,14 @@ impl StoragePort for SqliteStorage {
                 },
             )
             .ok()?;
-        let requested = lsm::durability_of(requested)?;
+        let requested = codec::durability_of(requested)?;
         if rejection != 0 {
-            return Some(OperationResolution::Rejected(lsm::decode_rejection(rejection)?));
+            return Some(OperationResolution::Rejected(codec::decode_rejection(rejection)?));
         }
         let proven = if synced != 0 { LocalDurability::Synced } else { LocalDurability::Written };
         Some(OperationResolution::Committed {
             sequence: StorageSequence::new(u64::try_from(sequence).ok()?),
-            durability: min_level(requested, proven),
+            durability: codec::min_level(requested, proven),
         })
     }
 
@@ -1734,79 +1726,10 @@ impl StoragePort for SqliteStorage {
             )
     }
 
-    fn compact(
-        &mut self,
-        _request: StorageCompaction,
-    ) -> Result<(CompactionReceipt, CompactionDriverFacts), CompactionError> {
-        // The lifecycle sweep first (the bounded-journal invariant): prune
-        // what every consumer frontier has passed, so the receipt below
-        // measures the reclaimed state. With no consumer registered the
-        // sweep is a no-op.
-        self.prune_below_consumer_frontiers().map_err(|()| CompactionError::Storage)?;
-        // Then the reclaim this backend owns: checkpoint the WAL back into
-        // the database file. Policy-gated history reclaim has no analogue
-        // here — journal bounding is the consumer-frontier lifecycle's.
-        let wal_before = wal_file_bytes(&self.database_path);
+    fn run_retention_sweep(&mut self) -> Result<(), ()> {
+        self.prune_below_consumer_frontiers()?;
         let writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        writer
-            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
-            .map_err(|_| CompactionError::Storage)?;
-        let wal_after = wal_file_bytes(&self.database_path);
-        let journal_bytes = journal_length(&writer)?;
-        let journal_records = journal_count(&writer)?;
-        let servable_start = journal_min(&writer)?;
-        let journaled_head = journal_max(&writer)?;
-        let sequence = durable_watermark(&writer).map_err(|()| CompactionError::Storage)?;
-        let journal_bytes = u64::try_from(journal_bytes).unwrap_or(0);
-        let records = u64::try_from(journal_records).unwrap_or(0);
-        let boundary = |value: i64| StorageSequence::new(u64::try_from(value).unwrap_or(0));
-        Ok((
-            CompactionReceipt::from_parts(
-                Some(StorageSequence::new(sequence)),
-                wal_before,
-                wal_after,
-                journal_bytes,
-                journal_bytes,
-                records,
-                records,
-                0,
-                0,
-                0,
-                servable_start.map(boundary),
-                servable_start.map(boundary),
-                journaled_head.map(boundary),
-                0,
-                0,
-                0,
-                0,
-                super::HistoryReclaimOutcome::NotRequested,
-                vec![super::CompactionPhase::Checkpoint, super::CompactionPhase::WalReclaim],
-            ),
-            CompactionDriverFacts::from_parts(Vec::new(), None, journaled_head.map(boundary)),
-        ))
-    }
-
-    fn retained_state(&self) -> super::compaction::RetainedState {
-        super::compaction::RetainedState {
-            bound: None,
-            facts: Vec::new(),
-            non_deletion: Vec::new(),
-        }
-    }
-
-    // The `SQLite` backend carries no tiers: P4's tier administration is the
-    // LSM engine's surface, and this backend answers the typed refusal
-    // (the root-file engine's stub shape).
-    fn mover_pass(
-        &mut self,
-        _policy: &lsm::tier::TierMovePolicy,
-        _home_region: &str,
-    ) -> Result<lsm::tier::MoverOutcome, lsm::tier::TierUnsupported> {
-        Err(lsm::tier::TierUnsupported)
-    }
-
-    fn tier_snapshot(&self) -> Option<lsm::tier::TierSnapshot> {
-        None
+        writer.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())).map_err(|_| ())
     }
 
     fn flush(&mut self) -> Result<(), ()> {
@@ -1882,41 +1805,4 @@ fn connection_statement<'a>(
     sql: &str,
 ) -> Result<rusqlite::CachedStatement<'a>, SnapshotReadError> {
     connection.prepare_cached(sql).map_err(|_| SnapshotReadError::Integrity)
-}
-
-/// Reads the WAL sidecar's current byte length.
-fn wal_file_bytes(database_path: &Path) -> u64 {
-    let mut wal_path = database_path.as_os_str().to_owned();
-    wal_path.push("-wal");
-    std::fs::metadata(std::path::PathBuf::from(wal_path)).map_or(0, |metadata| metadata.len())
-}
-
-/// The journal's encoded byte length.
-fn journal_length(connection: &Connection) -> Result<i64, CompactionError> {
-    connection
-        .query_row("SELECT COALESCE(SUM(LENGTH(frame)), 0) FROM journal", [], |row| {
-            row.get::<_, i64>(0)
-        })
-        .map_err(|_| CompactionError::Storage)
-}
-
-/// The journal's record count.
-fn journal_count(connection: &Connection) -> Result<i64, CompactionError> {
-    connection
-        .query_row("SELECT COUNT(*) FROM journal", [], |row| row.get::<_, i64>(0))
-        .map_err(|_| CompactionError::Storage)
-}
-
-/// The journal's oldest sequence.
-fn journal_min(connection: &Connection) -> Result<Option<i64>, CompactionError> {
-    connection
-        .query_row("SELECT MIN(sequence) FROM journal", [], |row| row.get::<_, Option<i64>>(0))
-        .map_err(|_| CompactionError::Storage)
-}
-
-/// The journal's newest sequence.
-fn journal_max(connection: &Connection) -> Result<Option<i64>, CompactionError> {
-    connection
-        .query_row("SELECT MAX(sequence) FROM journal", [], |row| row.get::<_, Option<i64>>(0))
-        .map_err(|_| CompactionError::Storage)
 }

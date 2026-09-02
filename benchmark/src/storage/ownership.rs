@@ -264,10 +264,7 @@ fn validate_location(location: &Path) -> Result<(), OwnershipError> {
         }
         if name == "format" {
             let bytes = fs::read(entry.path()).map_err(|_| OwnershipError::ForeignLocation)?;
-            if bytes.starts_with(b"TBV2LSM1")
-                || bytes.starts_with(b"TBV2FORMAT")
-                || bytes.starts_with(b"TBV3SQLITE")
-            {
+            if bytes.starts_with(b"TBV3SQLITE") {
                 has_format = true;
                 continue;
             }

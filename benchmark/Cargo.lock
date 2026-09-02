@@ -1656,7 +1656,6 @@ dependencies = [
  "rcgen",
  "rustls-pki-types",
  "terrabase",
- "terrabase-cluster",
  "terrabase-sync-core",
  "tokio",
  "tokio-rustls",

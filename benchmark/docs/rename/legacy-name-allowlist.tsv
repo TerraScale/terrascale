@@ -30,31 +30,20 @@ docs/evidence/tier-combination-matrix.md	4	99c952b5baf8018aece045f674ca67778aa17
 docs/rename/README.md	6	66ca12cc8456ca8f8630d8e1ef5a881a650e5574294166809dd11b44944f4a67	policy	Migration policy names retired source identities explicitly.
 docs/replication/se06-member-transport-nats.md	2	d125bd5c23d36afd5a336f2d1d11329aa9512c249008f3362e5976ee25b5ca67	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
 docs/spike/se02-prototype-evidence.md	2	52bfdae866a3ed81da008c3b97a5f8ec7faffc79abe96d946d3a99d7a641eca7	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
-docs/storage/lsm-engine.md	2	9817545ad6688056779fbba65a569d5f13e9a50abad170bf56d1501c38a6671b	persisted	Format design records the persisted marker required by existing directories.
 docs/sync/terrascale-sync-v2-conformance.md	1	1ae8cce926247e3a75146a73235e4a32720a4fc9e0522ebd2478e8a43c1abfe8	historical	Exact historical evidence, command, checkout, candidate, or issue provenance.
 src/backup/manifest.rs	1	0fb61a5d4adaa4c201be21ea788f7bde53ee938ffbcf38f66ff132977d8888d0	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
-src/backup/restore/mod.rs	1	6ada2f5459cb2b1f77b09a7b27c0acb3594e08c227b9e0df26d35d08e2909885	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
-src/backup/restore/tests.rs	1	6ead86d9ec3852df3e80b7bf76beace9b6d926651a6359dd55d13e2c0fbabf7c	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
-src/backup/tests.rs	4	02fb728d4bc1212012802b0efd70d873a1083a8c2679b7246c29762aa0dc2eef	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
+src/backup/tests.rs	3	47ee8ed41a2021d7a4d976b8185914599d6907d204637191e18a0c667fbba554	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 src/benchmarks/tests.rs	1	ecfefac1500a30be3da7ad2880fc8812ac3a6d49ae72f38957b6a710b0db191e	historical	Exact historical benchmark receipt filename retained in its characterization note.
-src/engine/mod.rs	1	6fd405ada71b13dfce36a170d37f16fb035968628a6d08bd20435a32b0d41606	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 src/families/compare_exchange.rs	1	000cb554465c778c361792b987a26e9f412a890aa69e9afcee7a7a951ccc11e0	historical	Exact historical issue or ticket identifier retained as source provenance.
-src/families/lifecycle.rs	2	945cb5b315f6c33d26b9e7e99f6dde44bbe5fb0c786e52d48aba84a586474ecf	historical	Exact historical issue or ticket identifier retained as source provenance.
+src/families/lifecycle.rs	2	d5bc8ca5ce2e0c9a7e69cf6807225ea287df156781526212f1c0a57dcdd14bc3	historical	Exact historical issue or ticket identifier retained as source provenance.
 src/families/revisions.rs	1	214518e3ed066f6c897d126163b175981db046a553766d8f456f259570253d8d	historical	Exact historical issue or ticket identifier retained as source provenance.
-src/product_identity.rs	10	8fa5402b4ff83e1be1e3e8f6ba04a0a4528c2545c1d451f98e1993d5c0638481	persisted	Executable registry and assertions for reviewed compatibility identities.
+src/product_identity.rs	6	f3c2c7d35d9745cb6561993d89ea36d3c31b46a1b08cecbe951ad0637d2c7d0c	persisted	Executable registry and assertions for reviewed compatibility identities.
 src/query/analyzer.rs	1	3375cd02d596e445a398716794429fde639ec86de3d44dd68c6843dd54afd30d	historical	Exact historical issue or ticket identifier retained as source provenance.
 src/query/mod.rs	1	9074b9fa07820dbe4bc9c5d67c93e6f7e1d711b4a4e8be3bcf2b9e54b1bc063f	historical	Exact historical issue or ticket identifier retained as source provenance.
 src/query/spatial.rs	1	8db854c624a3a95f84968c2b708db44465fab5f2bb2b1a64699442709f7c9fd6	historical	Exact historical issue or ticket identifier retained as source provenance.
 src/query/vector.rs	1	3207e228f95f329183b39e3922fbc435438d52ae8fad35cc750b7e62e921b5c4	historical	Exact historical issue or ticket identifier retained as source provenance.
-src/storage/file.rs	1	9118c25b18e2ded928c75638a98aea70f0039853c543fa46889e201ee181aba2	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
-src/storage/lsm/mod.rs	1	033b593158cf207e53493c0aa78aee78bbb35dd1a9b5e051e540f50d83f0a519	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
-src/storage/lsm/tests.rs	4	cc57a626f4cfc92b97f67b07fe34c8a47ec14c37c0b200d78b065f35410241ed	persisted	Persisted LSM marker compatibility assertions for N-1 directories and readers.
-src/storage/ownership.rs	2	8d92f87becb2d77a78a196496c8796db2ecd043ed1ad67b5ac8bb4a0445d6996	persisted	Persisted storage marker compatibility check.
-src/storage/sqlite/tests.rs	1	b1c3f9631fa2116c5b54dbf22c9753679b224190736f1b8b419cc9eb21fb1082	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
-src/storage/root.rs	2	2950cfb5ebe7c023098162c84ee98d722720ee4100a907b5e9d158b4a9defe4a	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
-src/storage/tests.rs	1	a9f8ff69c1cb6e9050b2f4d42281b53ed8e73175905190f40762f74ce393943f	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
+src/storage/sqlite/tests.rs	1	163425972247fc66b6e8f79408938a0b7a8069c7b8ab4e1f5e313429dea26b8b	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 tests/index/static_index_definitions.rs	1	c03b5b6819947ef07926cde799e0e46b5641f62d35f6a0205596aa5be0fc1021	historical	Exact historical issue or ticket identifier retained as source provenance.
 tests/query/vector_conformance_vectors.rs	1	f39e5de7832918c50e9f5c26ccc5074de818ce516d28793d09f9c4c3bb7a05bf	historical	Exact historical issue or ticket identifier retained as source provenance.
 tests/query/vector_search.rs	1	d107e11326b35ee8fb66661160ffa2f1e1958616949d2ff9cd102a563b24d199	historical	Exact historical issue or ticket identifier retained as source provenance.
 tests/recovery/backup_public_construction.rs	3	2956891100287d4fa155973589e7e2c0966b186d964c1746caca42331dbf8ed6	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
-tests/recovery/restore_public.rs	1	b46f4395ca6b23678cb7af8cc1646139426d418992995004632a9611cfc3c07f	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.

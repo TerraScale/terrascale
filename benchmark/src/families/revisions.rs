@@ -2455,7 +2455,7 @@ mod tests {
         RevisionPolicy, RevisionRead, RevisionWrite,
     };
     use crate::operations::RequestValidationError;
-use crate::types::ReplicationClockStamp;
+    use crate::types::ReplicationClockStamp;
     use crate::types::{
         Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue,
         ExpectedVersion, LocalDurability, OperationId, TenantId, TenantScope,
@@ -3272,12 +3272,9 @@ use crate::types::ReplicationClockStamp;
         put_user_document(&engine, "t1", "put-1", "doc-1", user_value("one"));
         snapshot_op(&engine, "t1", "doc-1", ExpectedVersion::Any).expect("records");
 
-        let unknown = crate::engine::DocumentVersionContract::try_new(
-            7,
-            7,
-            ReplicationClockStamp::new(0, 0),
-        )
-        .expect("a well-formed but unknown contract");
+        let unknown =
+            crate::engine::DocumentVersionContract::try_new(7, 7, ReplicationClockStamp::new(0, 0))
+                .expect("a well-formed but unknown contract");
         let tenant_scope = scope(&engine, "t1");
         let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
         let identity = operation("revert-unknown");

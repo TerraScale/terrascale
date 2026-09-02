@@ -438,11 +438,8 @@ pub(crate) struct CounterRecord {
 /// Why two counter records could not merge (decision record D1/D3).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FamilyMergeError {
-    /// A record value does not decode as counter state, or carries an
-    /// entry one engine could not have minted.
-    RecordInvalid,
-    /// The merged total of one counter does not fit the signed 64-bit
-    /// range, so the merge fails closed instead of truncating.
+    /// The total of one counter does not fit the signed 64-bit range, so
+    /// the read fails closed instead of truncating.
     TotalOverflow,
 }
 
@@ -617,64 +614,6 @@ impl CounterRecord {
         state.buckets.clear();
         state.tombstone = Some(CounterTombstone { writer: writer.to_owned(), seq });
     }
-
-    /// Merges another record into this one (decision record D1/D2).
-    ///
-    /// Per counter name: per writer, the entry with the greater sequence
-    /// wins — two entries with one writer and sequence but different
-    /// contributions cannot be minted by one engine and fail closed — and
-    /// any tombstone dominates every bucket for the name. The merge is
-    /// commutative, associative, and idempotent.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`FamilyMergeError::RecordInvalid`] for an entry one engine
-    /// could not have minted and [`FamilyMergeError::TotalOverflow`] when a
-    /// merged total leaves the signed 64-bit range.
-    pub(crate) fn merge(&self, other: &CounterRecord) -> Result<CounterRecord, FamilyMergeError> {
-        let mut merged = self.clone();
-        for (name, other_state) in &other.counters {
-            let state = merged.counters.entry(name.clone()).or_default();
-            for (writer, other_bucket) in &other_state.buckets {
-                match state.buckets.get(writer) {
-                    Some(local) if local.seq == other_bucket.seq => {
-                        if local != other_bucket {
-                            return Err(FamilyMergeError::RecordInvalid);
-                        }
-                    }
-                    Some(local) if local.seq > other_bucket.seq => {}
-                    _ => {
-                        state.buckets.insert(writer.clone(), *other_bucket);
-                    }
-                }
-            }
-            if let Some(other_tombstone) = &other_state.tombstone {
-                let stronger = match &state.tombstone {
-                    None => Some(other_tombstone.clone()),
-                    Some(local) => {
-                        if (other_tombstone.seq, &other_tombstone.writer)
-                            > (local.seq, &local.writer)
-                        {
-                            Some(other_tombstone.clone())
-                        } else {
-                            Some(local.clone())
-                        }
-                    }
-                };
-                state.tombstone = stronger;
-            }
-        }
-        // Delete wins over concurrent increments: a tombstoned name drops
-        // every bucket (D2), and every live total must still fit.
-        for state in merged.counters.values_mut() {
-            if state.tombstone.is_some() {
-                state.buckets.clear();
-            } else if !state.buckets.is_empty() {
-                total_of(state)?;
-            }
-        }
-        Ok(merged)
-    }
 }
 
 /// Encodes one bucket entry.
@@ -751,38 +690,6 @@ fn decode_counter_state(
     Ok(CounterState { buckets, tombstone })
 }
 
-/// Reports whether one document identifier is a counter family record.
-///
-/// The namespace check is the reserved record prefix; a non-reserved
-/// document occupying the same identifier is the recorded namespace
-/// collision, never a mergeable record.
-pub(crate) fn is_counter_record(id: &DocumentId) -> bool {
-    id.as_str().starts_with("family:counters/")
-}
-
-/// Merges one incoming counter-record value into a local value (decision
-/// record D1/D3): the replication apply path stages the merged value, and
-/// a missing local record merges as the incoming state alone.
-///
-/// # Errors
-///
-/// Returns the typed merge failure of [`CounterRecord::merge`].
-pub(crate) fn merge_counter_values(
-    local: Option<&DocumentValue>,
-    incoming: &DocumentValue,
-) -> Result<DocumentValue, FamilyMergeError> {
-    let incoming_record =
-        CounterRecord::decode(incoming).map_err(|_| FamilyMergeError::RecordInvalid)?;
-    let merged = match local {
-        None => incoming_record,
-        Some(value) => {
-            let local_record =
-                CounterRecord::decode(value).map_err(|_| FamilyMergeError::RecordInvalid)?;
-            local_record.merge(&incoming_record)?
-        }
-    };
-    Ok(merged.encode())
-}
 // ---------------------------------------------------------------------------
 // Time-series records
 // ---------------------------------------------------------------------------

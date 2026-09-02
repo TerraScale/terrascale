@@ -16,9 +16,7 @@
 //! [`ConditionalLoadError::Stale`] carrying the current contract).
 
 use crate::storage::PublishedWrite;
-use crate::types::{
-    CollectionName, Document, DocumentId, ReplicationClockStamp, StorageSequence,
-};
+use crate::types::{CollectionName, Document, DocumentId, ReplicationClockStamp, StorageSequence};
 
 use super::{EngineError, Transaction};
 

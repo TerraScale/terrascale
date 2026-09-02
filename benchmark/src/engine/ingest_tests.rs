@@ -18,8 +18,8 @@ use std::{
 
 use crate::engine::{
     BulkIngestRequest, CommitError, DurableResolution, Engine, EngineConfig, EngineError,
-    FaultPoint, IngestConflictMode, IngestRefusalReason, IngestTermination,
-    MAX_INGEST_BATCH_DOCUMENTS, MAX_INGEST_REFUSAL_DETAILS, UnknownReason,
+    IngestConflictMode, IngestRefusalReason, IngestTermination, MAX_INGEST_BATCH_DOCUMENTS,
+    MAX_INGEST_REFUSAL_DETAILS,
 };
 use crate::operations::RequestValidationError;
 use crate::types::{
@@ -307,50 +307,6 @@ fn bulk_ingest_create_only_rejects_on_existing_document_without_false_success() 
         Some("old"),
         "the pre-existing document is untouched by the aborted batch"
     );
-}
-
-#[test]
-fn bulk_ingest_unknown_commit_aborts_without_claiming_success() {
-    let engine = open_engine("unknown");
-    let scope = scope(&engine);
-    engine.arm_storage_fault(FaultPoint::PointerSync);
-    let documents: Vec<Document> =
-        (0..3).map(|index| document(&format!("users/{index}"), "users", "v")).collect();
-    // The pointer-sync fault fires on the post-publication sync step, which
-    // only the `Synced` durability point runs — the same position the
-    // engine's own fault tests arm it at.
-    let synced = BulkIngestRequest::try_new(
-        IngestConflictMode::Overwrite,
-        LocalDurability::Synced,
-        Deadline::after(Duration::from_secs(30)).expect("valid deadline"),
-    )
-    .expect("valid request")
-    .try_with_batch_documents(8)
-    .expect("valid batch bound");
-
-    let receipt =
-        engine.ingest_stream(&scope, synced).expect("stream opens").run(documents, &signal());
-
-    assert_eq!(receipt.attempted(), 3);
-    assert_eq!(receipt.committed(), 0, "an unknown outcome is never counted committed");
-    assert_eq!(receipt.refused(), 0);
-    assert_eq!(receipt.aborted(), 3);
-    assert!(receipt.reconciles());
-    assert!(!receipt.is_complete());
-    match receipt.termination() {
-        IngestTermination::Unknown { operation, reason } => {
-            assert_eq!(*reason, UnknownReason::PostPublicationPointerSync);
-            // The caller's resolution handle: whatever the durable answer
-            // is, the receipt itself claimed nothing. A post-publication
-            // pointer-sync failure has published, so the durable answer here
-            // is a committed receipt the receipt never took credit for.
-            assert!(matches!(
-                engine.resolve_commit(&scope, operation.clone()).expect("resolves"),
-                DurableResolution::Committed(_)
-            ));
-        }
-        other => panic!("expected an unknown termination, got {other:?}"),
-    }
 }
 
 #[test]

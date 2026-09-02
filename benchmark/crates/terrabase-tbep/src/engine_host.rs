@@ -394,34 +394,6 @@ fn wire_usage_fact(
 /// `already_complete` cancel answers — bounded, drop-oldest.
 const COMPLETED_QUERY_HORIZON: usize = 256;
 
-/// Maps one tier administration failure onto the wire's typed refusal.
-fn tier_error(error: terrabase::tiers::TierAdminError) -> HostingError {
-    match error {
-        terrabase::tiers::TierAdminError::InvalidPolicy => {
-            HostingError::Invalid("the tier policy is not valid".into())
-        }
-        terrabase::tiers::TierAdminError::NotConfigured => {
-            HostingError::Refused("no tier policy is configured".into())
-        }
-        terrabase::tiers::TierAdminError::Paused => {
-            HostingError::Refused("tier runs are paused".into())
-        }
-        terrabase::tiers::TierAdminError::UnsupportedBackend => {
-            HostingError::Refused("this backend carries no tiers".into())
-        }
-        terrabase::tiers::TierAdminError::MoveFailed(receipt) => {
-            HostingError::EngineFailure(format!(
-                "the mover run failed at segment {} (policy {}, manifest {}->{}, decision {:?})",
-                receipt.segment_id(),
-                receipt.policy_id(),
-                receipt.manifest_epoch_before(),
-                receipt.manifest_epoch_after(),
-                receipt.decision()
-            ))
-        }
-    }
-}
-
 /// The standalone engine cannot honestly satisfy any replicated write
 /// acknowledgement exposed by TBEP.  Keep this refusal centralized so a
 /// caller cannot accidentally turn a local sync into a quorum claim.
@@ -435,37 +407,6 @@ fn standalone_ack_refusal(ack: crate::registry::Acknowledgement) -> Result<(), H
     Err(HostingError::Refused(format!(
         "{requested} acknowledgement is unavailable on the standalone engine host; the protocol needs a local-synced acknowledgement or replication host"
     )))
-}
-
-/// Maps one engine tier receipt onto the wire's.
-fn wire_receipt(
-    receipt: &terrabase::tiers::TierMoveRunReceipt,
-) -> crate::registry::TierMoveReceipt {
-    crate::registry::TierMoveReceipt {
-        policy_id: receipt.policy_id().to_owned(),
-        policy_version: receipt.policy_version(),
-        decision: match receipt.decision() {
-            terrabase::tiers::TierDecision::Promote => crate::registry::TierDecision::Promote,
-            terrabase::tiers::TierDecision::Demote => crate::registry::TierDecision::Demote,
-            terrabase::tiers::TierDecision::Split => crate::registry::TierDecision::Split,
-            terrabase::tiers::TierDecision::None => crate::registry::TierDecision::None,
-            terrabase::tiers::TierDecision::Refused => crate::registry::TierDecision::Refused,
-        },
-        reasons: receipt
-            .reasons()
-            .iter()
-            .map(|reason| crate::registry::TierMoveReason {
-                fact: reason.fact().to_owned(),
-                observed: reason.observed().to_owned(),
-            })
-            .collect(),
-        segment_id: receipt.segment_id(),
-        bytes: receipt.bytes(),
-        manifest_before: receipt.manifest_epoch_before(),
-        manifest_after: receipt.manifest_epoch_after(),
-        dry_run: receipt.dry_run(),
-        manifest_accepted: receipt.manifest_accepted(),
-    }
 }
 
 /// The TBEP host backed by one durable Engine.
@@ -1683,31 +1624,13 @@ impl TbepHost for EngineHost {
     fn tier_configure(
         &self,
         scope: &BoundScope,
-        request: &crate::registry::TierConfigureRequest,
+        _request: &crate::registry::TierConfigureRequest,
         _idempotency_key: &str,
     ) -> Result<crate::registry::TierConfigureResponse, HostingError> {
         self.count_frame();
         self.ensure_serving()?;
         self.admit_scope(scope)?;
-        let policy = terrabase::tiers::TierPolicy::try_new(
-            &request.policy_id,
-            request.version,
-            request.nvme_budget_bytes,
-            request.min_residence_moves,
-            request.promotion_threshold,
-            request.pinned_segment_ids.clone(),
-        )
-        .map_err(|_| HostingError::Invalid("the tier policy is not valid".into()))?;
-        let tiers = self.engine.tiers();
-        let policy = tiers
-            .configure(policy)
-            .map_err(|_| HostingError::Invalid("the tier policy was refused".into()))?;
-        Ok(crate::registry::TierConfigureResponse {
-            policy_id: policy.policy_id().to_owned(),
-            version: policy.version(),
-            // configure is fresh control: never paused afterwards.
-            paused: false,
-        })
+        Err(HostingError::Refused("the storage tier mover is deleted with the LSM engine (D-49); the RPC surface retires with the M1 TBEP refresh".into()))
     }
 
     fn tier_inspect(
@@ -1717,14 +1640,7 @@ impl TbepHost for EngineHost {
         self.count_frame();
         self.ensure_serving()?;
         self.admit_scope(scope)?;
-        let view = self.engine.tiers().inspect();
-        Ok(crate::registry::TierInspectResponse {
-            configured: view.configured(),
-            paused: view.paused(),
-            manifest_epoch: view.manifest_epoch(),
-            object_count: u32::try_from(view.object_count()).unwrap_or(u32::MAX),
-            nvme_bytes: view.nvme_bytes(),
-        })
+        Err(HostingError::Refused("the storage tier mover is deleted with the LSM engine (D-49); the RPC surface retires with the M1 TBEP refresh".into()))
     }
 
     fn tier_explain(
@@ -1734,8 +1650,7 @@ impl TbepHost for EngineHost {
         self.count_frame();
         self.ensure_serving()?;
         self.admit_scope(scope)?;
-        let receipt = self.engine.tiers().dry_run().map_err(tier_error)?;
-        Ok(crate::registry::TierExplainResponse { receipt: wire_receipt(&receipt) })
+        Err(HostingError::Refused("the storage tier mover is deleted with the LSM engine (D-49); the RPC surface retires with the M1 TBEP refresh".into()))
     }
 
     fn tier_dry_run(
@@ -1745,8 +1660,7 @@ impl TbepHost for EngineHost {
         self.count_frame();
         self.ensure_serving()?;
         self.admit_scope(scope)?;
-        let receipt = self.engine.tiers().dry_run().map_err(tier_error)?;
-        Ok(crate::registry::TierDryRunResponse { receipt: wire_receipt(&receipt) })
+        Err(HostingError::Refused("the storage tier mover is deleted with the LSM engine (D-49); the RPC surface retires with the M1 TBEP refresh".into()))
     }
 
     fn tier_run(
@@ -1757,8 +1671,7 @@ impl TbepHost for EngineHost {
         self.count_frame();
         self.ensure_serving()?;
         self.admit_scope(scope)?;
-        let receipt = self.engine.tiers().run().map_err(tier_error)?;
-        Ok(crate::registry::TierRunResponse { receipt: wire_receipt(&receipt) })
+        Err(HostingError::Refused("the storage tier mover is deleted with the LSM engine (D-49); the RPC surface retires with the M1 TBEP refresh".into()))
     }
 
     fn tier_pause(
@@ -1769,7 +1682,7 @@ impl TbepHost for EngineHost {
         self.count_frame();
         self.ensure_serving()?;
         self.admit_scope(scope)?;
-        Ok(crate::registry::TierPauseResponse { paused: self.engine.tiers().pause() })
+        Err(HostingError::Refused("the storage tier mover is deleted with the LSM engine (D-49); the RPC surface retires with the M1 TBEP refresh".into()))
     }
 
     fn tier_resume(
@@ -1780,7 +1693,7 @@ impl TbepHost for EngineHost {
         self.count_frame();
         self.ensure_serving()?;
         self.admit_scope(scope)?;
-        Ok(crate::registry::TierResumeResponse { paused: self.engine.tiers().resume() })
+        Err(HostingError::Refused("the storage tier mover is deleted with the LSM engine (D-49); the RPC surface retires with the M1 TBEP refresh".into()))
     }
 
     fn topology_read(

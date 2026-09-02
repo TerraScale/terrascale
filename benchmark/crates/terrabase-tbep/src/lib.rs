@@ -44,7 +44,6 @@ compile_error!("select exactly one of `local-crypto` or `production-fips`");
 #[cfg(not(any(feature = "local-crypto", feature = "production-fips")))]
 compile_error!("select one of `local-crypto` or `production-fips`");
 
-pub mod cluster_host;
 pub mod engine_host;
 pub mod family_codec;
 pub mod grpc;

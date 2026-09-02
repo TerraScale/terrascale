@@ -1,59 +1,63 @@
-//! Private storage, write-ahead log, operation ledger, and recovery.
+//! Private storage: one `SQLite` file per database (D-27/D-42).
 //!
 //! This module owns the durable representation of accepted writes. It exposes
 //! one crate-private port (`StoragePort`) that the Engine calls, one
-//! file-backed implementation of that port, and one immutable
+//! implementation of that port (`SqliteStorage`), and one immutable
 //! `CommitPublicationEvent` emitted after storage locks release. Raw bytes,
-//! frames, manifests, and lock state never leave this module: the Engine
-//! receives typed intents, receipts, and resolutions only.
-//!
-//! The publication order implemented here is the one mandated by the W3 core
-//! contract: validate, encode frames, append the prepare record, apply to a
-//! new private root with a commit marker, apply the requested local durability
-//! action, durably append the `ReadyToPublish` ledger record, atomically
-//! publish the root pointer, durably append the `Published` ledger record,
-//! release locks, and emit the publication event.
+//! pages, and lock state never leave this module: the Engine receives typed
+//! intents, receipts, and resolutions only. Documents, operation-ledger row,
+//! and publication-history journal row commit in one `SQLite` transaction.
 
 mod codec;
+#[cfg(test)]
 mod faults;
-mod file;
-mod frontier;
 mod intent;
-mod ledger;
 mod ownership;
-mod retained;
-mod root;
-mod wal;
-
-mod compaction;
-pub(crate) mod lsm;
 mod sqlite;
 
 #[cfg(test)]
-mod compaction_tests;
-
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
 pub(crate) use faults::FaultPoint;
-pub(crate) use file::{FileStorage, StorageOpenError};
-pub(crate) use frontier::{
-    LedgerFrontierActivationError, LedgerFrontierActivationReceipt,
-    LedgerFrontierActivationRequest, LedgerFrontierStatus,
-};
 pub(crate) use intent::{
     CommitIntent, CommitRejection, CommitResult, OperationResolution, StagedWrite, UnknownCause,
 };
 pub use ownership::{DatabaseOwner, EnvironmentName, OwnershipError};
 pub(crate) use ownership::{OwnershipMode, load_or_create};
-pub(crate) use root::StorageRootId;
 pub(crate) use sqlite::SqliteStorage;
 
-pub use compaction::{
-    CompactionError, CompactionPhase, CompactionPolicy, CompactionProgress, CompactionProgressSink,
-    CompactionReceipt, CompactionRequest, HistoryReclaimOutcome,
-};
+/// Failures opening one durable location.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StorageOpenError {
+    /// The location holds a format this build does not serve.
+    FormatMismatch,
+    /// The location cannot be opened or recovered.
+    Unavailable,
+}
+
+/// The identity of one published storage state.
+///
+/// One opaque head string the implementation chains on publish; consumers
+/// treat it as an opaque publication identity, never a path or a format.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct StorageRootId(String);
+
+impl StorageRootId {
+    /// Wraps one recorded publication-identity string.
+    pub(crate) fn from_recorded(value: String) -> Self {
+        Self(value)
+    }
+
+    /// Returns the recorded identity text.
+    #[cfg(test)]
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for StorageRootId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
 
 use crate::types::{
     CollectionName, Document, DocumentId, LocalDurability, OperationId, StorageSequence, TenantId,
@@ -65,8 +69,6 @@ use crate::usage::{DurableUsageFact, MeasurementWindow, MintingRule, UsageFact, 
 pub(crate) enum UsageStorageError {
     /// The selected storage backend predates durable usage facts.
     UnsupportedBackend,
-    /// The location contains legacy facts that cannot be billed truthfully.
-    UsageUnavailable,
     /// Persisted usage is malformed or contradicts its durable binding.
     Corrupt,
     /// One scoped fact identity is already bound to different content.
@@ -102,9 +104,9 @@ impl UsageFactPosition {
 
 /// The private storage adapter seam the Engine depends on.
 ///
-/// The production implementation is [`FileStorage`]. The trait exists so the
+/// The production implementation is [`SqliteStorage`]. The trait exists so the
 /// storage seam stays substitutable behind one typed contract instead of
-/// leaking file, codec, or WAL details into the Engine.
+/// leaking file, codec, or page details into the Engine.
 pub(crate) trait StoragePort: Send {
     /// Runs the publication order for one validated commit intent.
     fn commit(&mut self, intent: CommitIntent) -> CommitResult;
@@ -186,9 +188,8 @@ pub(crate) trait StoragePort: Send {
     ///
     /// A query whose source is one collection needs no other collection's
     /// documents, and this read stops at the collection's key range instead
-    /// of materializing (and in the LSM engine, decoding) the rest of the
-    /// tenant. Canonical order is the order of [`StoragePort::documents_at`]
-    /// restricted to the collection.
+    /// of materializing the rest of the tenant. Canonical order is the
+    /// order of [`StoragePort::documents_at`] restricted to the collection.
     #[allow(dead_code, reason = "compatibility collection-wide read seam")]
     fn documents_in_collection_at(
         &self,
@@ -308,63 +309,12 @@ pub(crate) trait StoragePort: Send {
     /// of assuming completeness.
     fn journaled_high_water(&self) -> Option<StorageSequence>;
 
-    /// Returns the number of published commits the publication-history
-    /// journal does not serve (W4-CA-4 repair F2's divergence, as a
-    /// count).
-    ///
     /// Returns the currently published sequence and root identity.
     fn published_state(&self) -> (StorageSequence, StorageRootId);
 
-    /// Reports whether the root-file operation-ledger frontier is inactive or
-    /// has crossed its coordinated activation boundary. Other backends do not
-    /// claim this root-format feature.
-    fn ledger_frontier_status(&self) -> LedgerFrontierStatus {
-        LedgerFrontierStatus::UnsupportedBackend
-    }
-
-    /// Activates the required root-file ledger frontier after an external
-    /// coordinator has fenced every old writer. The raw seam stays private
-    /// until the authenticated administration operation is integrated.
-    fn activate_ledger_frontier(
-        &mut self,
-        _request: &LedgerFrontierActivationRequest,
-    ) -> Result<LedgerFrontierActivationReceipt, LedgerFrontierActivationError> {
-        Err(LedgerFrontierActivationError::UnsupportedBackend)
-    }
-
-    /// Runs one compaction pass (GAP-S1): checkpoint, write-ahead log
-    /// reclaim, gated history reclaim with durable retained evidence, and
-    /// superseded-root reclamation.
-    fn compact(
-        &mut self,
-        request: crate::storage::compaction::StorageCompaction,
-    ) -> Result<
-        (
-            crate::storage::compaction::CompactionReceipt,
-            crate::storage::compaction::CompactionDriverFacts,
-        ),
-        crate::storage::compaction::CompactionError,
-    >;
-
-    /// Returns the durable retained-evidence state (GAP-S1 D3): the
-    /// declared bound, the retained deletion facts, and the per-tenant
-    /// non-deletion facts, as the store holds them.
-    fn retained_state(&self) -> crate::storage::compaction::RetainedState;
-
-    /// Runs one bounded tier-mover pass (P4's tier administration): the
-    /// LSM engine's demotion of the coldest over-budget segment to the
-    /// object-store tier. The root-file engine has no tiers and answers
-    /// [`lsm::tier::TierUnsupported`].
-    fn mover_pass(
-        &mut self,
-        policy: &lsm::tier::TierMovePolicy,
-        home_region: &str,
-    ) -> Result<lsm::tier::MoverOutcome, lsm::tier::TierUnsupported>;
-
-    /// Returns the raw tier snapshot — the manifest epoch, the number of
-    /// verified objects it names, and the resident `NVMe` bytes. `None`
-    /// means this backend has no tiers.
-    fn tier_snapshot(&self) -> Option<lsm::tier::TierSnapshot>;
+    /// Runs one retention sweep: prune publication history below every
+    /// consumer frontier, then checkpoint the WAL.
+    fn run_retention_sweep(&mut self) -> Result<(), ()>;
 
     /// Flushes appended durable bytes on shutdown.
     fn flush(&mut self) -> Result<(), ()>;

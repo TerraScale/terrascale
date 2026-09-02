@@ -4,6 +4,3 @@
 //! focused files in this directory are declared as modules here.
 
 mod backup_public_construction;
-mod compaction_public;
-mod restore_public;
-mod tombstone_retention_public;

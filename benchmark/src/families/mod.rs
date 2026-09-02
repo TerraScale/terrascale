@@ -89,13 +89,8 @@ pub use schemas::{SchemaFormatError, violations};
 
 // The counter merge seam of the GAP-F07 decision record
 // (`docs/families/counter-merge-encoding.md`): counter records replicate as
-// merged state, so the replication apply path consumes the record
-// predicate and the value merge at this crate-private surface instead of
-// re-deriving the reserved layout.
-pub(crate) use state::FamilyMergeError;
-pub(crate) use state::{
-    RESERVED_COLLECTION, is_counter_record, merge_counter_values, time_series_record_owner,
-};
+// merged state; the M1 replication apply path re-derives this seam.
+pub(crate) use state::{RESERVED_COLLECTION, time_series_record_owner};
 
 // The family record decoders the streaming change-payload mint (GAP-F02)
 // reads: the mint derives bounded payloads from published record values

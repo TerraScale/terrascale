@@ -793,7 +793,7 @@ mod tests {
     //! against a naive baseline (an empty pass and no visibility
     //! filtering); every behavioral test below discriminates that baseline.
 
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::sync::mpsc;
     use std::time::Duration;
 
@@ -804,9 +804,7 @@ mod tests {
         FamilyReadResult, FamilyWriteRequest, LifecycleCommand, LifecycleRead,
     };
     use super::{VisibilityRead, VisibilityState};
-    use crate::backup::{BackupPlan, RestorePlan, run_backup};
     use crate::engine::{CommitOutcome, Engine, EngineConfig, Transaction};
-    use crate::operations::RequestValidationError;
     use crate::types::{
         Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue,
         ExpectedVersion, LocalDurability, OperationId, TenantId, TenantScope,
@@ -836,12 +834,8 @@ mod tests {
 
     fn open_engine(tag: &str) -> (PathBuf, Engine) {
         let dir = fresh_dir(tag);
-        let engine = Engine::open(
-            EngineConfig::durable(&dir)
-                .expect("durable location")
-                .with_storage_backend(crate::engine::StorageBackend::RootFiles),
-        )
-        .expect("engine");
+        let engine =
+            Engine::open(EngineConfig::durable(&dir).expect("durable location")).expect("engine");
         (dir, engine)
     }
 
@@ -1547,168 +1541,5 @@ mod tests {
         assert!(!record_present(&engine, "archival", "doc-1"));
         assert!(!record_present(&engine, "archival", "doc-2"));
         engine.shutdown().expect("shuts down");
-    }
-
-    // ------------------------------------------------------------------
-    // Backup and restore interactions (BK wave)
-    // ------------------------------------------------------------------
-
-    /// Opens a restored engine and reads the tenant's documents at the
-    /// newest snapshot.
-    fn restored_documents(target: &Path, tenant_name: &str) -> Vec<(String, DocumentValue)> {
-        let engine = Engine::open(
-            EngineConfig::durable(target)
-                .expect("durable location")
-                .with_storage_backend(crate::engine::StorageBackend::RootFiles),
-        )
-        .expect("engine");
-        let tenant_scope = scope(&engine, tenant_name);
-        let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
-        let documents = engine.snapshot_documents(&tenant_scope, &snapshot).expect("documents");
-        let named = documents
-            .into_iter()
-            .map(|document| (document.id().as_str().to_owned(), document.value().clone()))
-            .collect::<Vec<_>>();
-        engine.shutdown().expect("shuts down");
-        named
-    }
-
-    #[test]
-    fn full_backup_and_restore_reproduce_archived_state_and_expired_deletions() {
-        let (_dir, engine) = open_engine("bk-full");
-        let now = now_millis();
-        put_user_document(&engine, "tenant-a", "put-live", "doc-live", user_value(&[("n", "v")]));
-        put_user_document(
-            &engine,
-            "tenant-a",
-            "put-expired",
-            "doc-expired",
-            user_value(&[("n", "v")]),
-        );
-        put_user_document(
-            &engine,
-            "tenant-a",
-            "put-archived",
-            "doc-archived",
-            user_value(&[("n", "v")]),
-        );
-        commit(&engine, "tenant-a", "configure", |store, transaction, ts, id| {
-            stage_expiration(store, transaction, ts, id, "doc-expired", Some(now - 1));
-            stage_expiration(store, transaction, ts, id, "doc-live", Some(now + 3_600_000));
-            store
-                .stage(
-                    transaction,
-                    FamilyWriteRequest::archival_update(
-                        ArchivalWrite::try_new(
-                            ts.clone(),
-                            document_id("doc-archived"),
-                            ArchivalCommand::Archive { at: now },
-                            id.clone(),
-                            deadline(),
-                            cancellation(),
-                        )
-                        .expect("valid archival write"),
-                    ),
-                )
-                .expect("stages the archival mark");
-        });
-        run_pass(&engine, "tenant-a", "pass-1");
-
-        let destination = fresh_dir("bk-full-dest");
-        let result = run_backup(&engine, BackupPlan::full(), &destination).expect("backs up");
-        // A full backup archives live state, not history: the deleted
-        // document is simply absent, and no delete record exists.
-        assert_eq!(result.manifest().deletes(), 0);
-        assert_eq!(
-            result.manifest().documents(),
-            2,
-            "only the live and archived documents remain in the state archive"
-        );
-        assert!(
-            result.manifest().family_records() >= 1,
-            "family records — including the archived state — ride the archive"
-        );
-
-        let target = fresh_dir("bk-full-target");
-        RestorePlan::restore_latest(&destination, &target).expect("restores");
-        let documents = restored_documents(&target, "tenant-a");
-        let ids = documents.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>();
-        assert!(ids.contains(&"doc-live"), "the live document restores");
-        assert!(
-            !ids.contains(&"doc-expired"),
-            "the expired document deleted by the pass does not restore"
-        );
-        assert!(
-            ids.contains(&"doc-archived"),
-            "an archived document is retained state, not deleted state"
-        );
-        engine.shutdown().expect("shuts down");
-    }
-
-    #[test]
-    fn an_incremental_chain_replays_the_pass_deletions_on_restore() {
-        let (_dir, engine) = open_engine("bk-inc");
-        let now = now_millis();
-        put_user_document(&engine, "tenant-a", "put-live", "doc-live", user_value(&[("n", "v")]));
-        put_user_document(
-            &engine,
-            "tenant-a",
-            "put-expired",
-            "doc-expired",
-            user_value(&[("n", "v")]),
-        );
-        commit(&engine, "tenant-a", "configure", |store, transaction, ts, id| {
-            stage_expiration(store, transaction, ts, id, "doc-expired", Some(now - 1));
-        });
-
-        // The base is taken while the expired document still exists.
-        let destination = fresh_dir("bk-inc-dest");
-        let base = run_backup(&engine, BackupPlan::full(), &destination).expect("base backup");
-        let boundary = base.manifest().boundary_sequence();
-
-        run_pass(&engine, "tenant-a", "pass-1");
-
-        let incremental =
-            run_backup(&engine, BackupPlan::incremental_since(boundary), &destination)
-                .expect("incremental backup");
-        assert!(
-            incremental.manifest().deletes() >= 1,
-            "the pass's delete publications ride the incremental link"
-        );
-
-        let target = fresh_dir("bk-inc-target");
-        RestorePlan::restore_latest(&destination, &target).expect("restores the chain");
-        let documents = restored_documents(&target, "tenant-a");
-        let ids = documents.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>();
-        assert!(ids.contains(&"doc-live"));
-        assert!(
-            !ids.contains(&"doc-expired"),
-            "restoring the chain applies the pass deletions exactly"
-        );
-        engine.shutdown().expect("shuts down");
-    }
-
-    // ------------------------------------------------------------------
-    // Pass vocabulary construction
-    // ------------------------------------------------------------------
-
-    #[test]
-    fn visibility_reads_validate_typed_fields_before_observation() {
-        assert_eq!(
-            VisibilityRead::try_new(Vec::new(), deadline(), cancellation()).err(),
-            Some(RequestValidationError::InvalidFamilyPayload)
-        );
-        let elapsed = Deadline::after(Duration::from_millis(1)).expect("valid deadline");
-        std::thread::sleep(Duration::from_millis(40));
-        assert_eq!(
-            VisibilityRead::try_new(vec![document_id("doc-1")], elapsed, cancellation()).err(),
-            Some(RequestValidationError::InvalidDeadline)
-        );
-        let cancelled = Cancellation::new();
-        cancelled.cancel();
-        assert_eq!(
-            VisibilityRead::try_new(vec![document_id("doc-1")], deadline(), cancelled).err(),
-            Some(RequestValidationError::InvalidCancellation)
-        );
     }
 }

@@ -22,13 +22,11 @@ publish = false
 default = ["local-crypto"]
 local-crypto = [
   "terrabase/local-crypto",
-  "terrabase-cluster/local-crypto",
   "tonic/tls-ring",
   "tokio-rustls/ring",
 ]
 production-fips = [
   "terrabase/production-fips",
-  "terrabase-cluster/production-fips",
   "tonic/tls-aws-lc",
   "tokio-rustls/fips",
 ]
@@ -73,7 +71,6 @@ tokio-stream = { version = "0.1", default-features = false, features = [
 terrabase-sync-core = { path = "../terrabase-sync-core" }
 # The engine this host serves (P4): the real durable engine behind the
 # document spine.
-terrabase-cluster = { path = "../terrabase-cluster", default-features = false }
 terrabase = { path = "../..", default-features = false }
 
 [build-dependencies]

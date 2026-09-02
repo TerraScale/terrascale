@@ -1,11 +1,9 @@
-//! In-crate tests for the `SQLite` storage backend (D-27, TB-20).
+//! In-crate tests for the `SQLite` storage (D-27, TB-20).
 //!
 //! The engine-level suite drives the real `Engine` API so the port contract
 //! is proven behind the same seam production uses. The storage-level suite
-//! differentials the backend against the `FileStorage` reference (and the
-//! usage surface against the LSM reference), pins the journal-pruning
-//! floor's semantics, and exercises the crash windows against the database
-//! file itself.
+//! pins the journal-pruning floor's semantics and exercises the crash
+//! windows against the database file itself.
 
 use std::{
     path::{Path, PathBuf},
@@ -17,22 +15,12 @@ use std::{
 
 use rusqlite::Connection;
 
-use crate::RegionCode;
-use crate::engine::{
-    CommitError, CommitOutcome, DurableResolution, Engine, EngineConfig, StorageBackend,
-};
+use crate::engine::{CommitError, CommitOutcome, DurableResolution, Engine, EngineConfig};
 use crate::storage::intent::{CommitIntent, CommitResult, StagedWrite};
-use crate::storage::lsm::LsmStorage;
-use crate::storage::{CompactionPhase, CompactionPolicy, CompactionRequest, FaultPoint};
-use crate::storage::{FileStorage, StoragePort, write_set_digest};
-use crate::storage::{StorageOpenError, UsageFactPosition};
+use crate::storage::{FaultPoint, StorageOpenError, StoragePort, write_set_digest};
 use crate::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
     OperationId, StorageSequence, TenantId, TenantScope,
-};
-use crate::usage::{
-    DurableUsageFact, MeasurementWindow, MeterCatalog, MeterKind, MintingIdentity, UsageFact,
-    UsageFactId,
 };
 
 use super::SqliteStorage;
@@ -46,23 +34,14 @@ fn location(tag: &str) -> PathBuf {
 /// Opens a location on the `SQLite` backend explicitly.
 fn open_sqlite_engine(tag: &str) -> (PathBuf, Engine) {
     let dir = location(tag);
-    let engine = Engine::open(
-        EngineConfig::durable(&dir)
-            .expect("durable location")
-            .with_storage_backend(StorageBackend::Sqlite),
-    )
-    .expect("sqlite engine opens");
+    let engine =
+        Engine::open(EngineConfig::durable(&dir).expect("durable location")).expect("engine opens");
     (dir, engine)
 }
 
-/// Reopens a `SQLite` location through the explicit selector.
+/// Reopens a `SQLite` location.
 fn reopen_sqlite_engine(dir: &PathBuf) -> Engine {
-    Engine::open(
-        EngineConfig::durable(dir)
-            .expect("durable location")
-            .with_storage_backend(StorageBackend::Sqlite),
-    )
-    .expect("sqlite engine reopens")
+    Engine::open(EngineConfig::durable(dir).expect("durable location")).expect("engine reopens")
 }
 
 fn tenant_scope(engine: &Engine, tenant_name: &str) -> TenantScope {
@@ -493,12 +472,10 @@ fn sqlite_marker_is_sniffed_without_the_selector() {
         std::fs::read(dir.join("format")).expect("format marker exists").starts_with(b"TBV3SQLITE")
     );
     drop(engine);
-    // No crate-private selector and no environment override: the location's
-    // own marker must select the backend that created it. An LSM open of
-    // this marker would refuse the location, so reading the document back
-    // proves the sniff chose `SQLite`.
-    let reopened = Engine::open(EngineConfig::durable(&dir).expect("durable location"))
-        .expect("marker selects the sqlite backend");
+    // The location's own marker self-describes the storage: reopening
+    // reads the document back through it.
+    let reopened =
+        Engine::open(EngineConfig::durable(&dir).expect("durable location")).expect("reopens");
     assert_eq!(
         read_document(&reopened, "tenant-a", "doc-1").expect("persisted").value(),
         &DocumentValue::String("marked".to_owned())
@@ -508,7 +485,7 @@ fn sqlite_marker_is_sniffed_without_the_selector() {
 }
 
 #[test]
-fn compact_checkpoints_the_wal() {
+fn retention_sweep_checkpoints_the_wal() {
     let (dir, engine) = open_sqlite_engine("compact");
     committed_sequence(commit_put(
         &engine,
@@ -520,16 +497,11 @@ fn compact_checkpoints_the_wal() {
         ExpectedVersion::New,
         LocalDurability::Synced,
     ));
-    let receipt =
-        engine.compact(CompactionRequest::new(CompactionPolicy::Reclaim)).expect("compaction pass");
-    assert!(
-        receipt.phases().contains(&CompactionPhase::Checkpoint),
-        "the pass reports its checkpoint phase"
-    );
+    engine.run_retention_sweep().expect("sweep runs");
     assert_eq!(
         read_document(&engine, "tenant-a", "doc-1").expect("readable").value(),
         &DocumentValue::String("checkpointed".to_owned()),
-        "a checkpointed location still reads"
+        "a swept location still reads"
     );
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();
@@ -591,582 +563,6 @@ fn stored_sequence(result: &CommitResult) -> u64 {
         CommitResult::Committed(receipt) => receipt.sequence.get(),
         other => panic!("expected a commit, got {other:?}"),
     }
-}
-
-/// Runs one scenario against the `FileStorage` reference and the `SQLite`
-/// backend and asserts the observable results are identical.
-fn differential<T: PartialEq + std::fmt::Debug>(
-    tag: &str,
-    scenario: impl Fn(&mut dyn StoragePort) -> T,
-) {
-    let file_dir = location(&format!("{tag}-file"));
-    let sqlite_dir = location(&format!("{tag}-sqlite"));
-    let mut file = FileStorage::open(&file_dir).expect("file reference opens");
-    let mut sqlite = SqliteStorage::open(&sqlite_dir).expect("sqlite backend opens");
-    let file_result = scenario(&mut file);
-    let sqlite_result = scenario(&mut sqlite);
-    assert_eq!(file_result, sqlite_result, "differential mismatch in {tag}");
-    drop(file);
-    drop(sqlite);
-    std::fs::remove_dir_all(&file_dir).ok();
-    std::fs::remove_dir_all(&sqlite_dir).ok();
-}
-
-// ---- Differential against the FileStorage reference ----------------------
-
-#[test]
-fn differential_write_read_delete_and_current_state() {
-    differential("write-read-delete", |storage| {
-        let first = commit(
-            storage,
-            "op-1",
-            vec![put(document("doc-1", "users", "one"), ExpectedVersion::New)],
-        );
-        let second = commit(
-            storage,
-            "op-2",
-            vec![put(document("doc-2", "users", "two"), ExpectedVersion::New)],
-        );
-        let at = storage.published_state().0;
-        let ids = storage
-            .documents_at(at, &tenant())
-            .into_iter()
-            .map(|document| document.id().as_str().to_owned())
-            .collect::<Vec<_>>();
-        let point = storage
-            .read_document_in_collection_at(
-                at,
-                &tenant(),
-                &CollectionName::try_new("users").unwrap(),
-                &DocumentId::try_new("doc-1").unwrap(),
-            )
-            .map(|document| document.metadata().version());
-        let replace = commit(
-            storage,
-            "op-3",
-            vec![put(document("doc-1", "users", "replaced"), ExpectedVersion::Exact(1))],
-        );
-        let at_after = storage.published_state().0;
-        let version_after = storage
-            .read_document_at(at_after, &tenant(), &DocumentId::try_new("doc-1").unwrap())
-            .map(|document| document.metadata().version());
-        let gone = commit(
-            storage,
-            "op-4",
-            vec![delete(Some("users"), "doc-2", ExpectedVersion::Exact(1))],
-        );
-        let at_deleted = storage.published_state().0;
-        let absent = storage
-            .read_document_in_collection_at(
-                at_deleted,
-                &tenant(),
-                &CollectionName::try_new("users").unwrap(),
-                &DocumentId::try_new("doc-2").unwrap(),
-            )
-            .is_none();
-        // A delete hides the key, so the next put restarts at version 1.
-        let restart = commit(
-            storage,
-            "op-5",
-            vec![put(document("doc-2", "users", "again"), ExpectedVersion::New)],
-        );
-        let at_restart = storage.published_state().0;
-        let restarted_version = storage
-            .read_document_at(at_restart, &tenant(), &DocumentId::try_new("doc-2").unwrap())
-            .map(|document| document.metadata().version());
-        (
-            stored_sequence(&first),
-            stored_sequence(&second),
-            ids,
-            point,
-            stored_sequence(&replace),
-            version_after,
-            stored_sequence(&gone),
-            absent,
-            stored_sequence(&restart),
-            restarted_version,
-        )
-    });
-}
-
-#[test]
-fn differential_reopen_serves_the_same_state() {
-    let file_dir = location("reopen-file");
-    let sqlite_dir = location("reopen-sqlite");
-    let mut file = FileStorage::open(&file_dir).expect("file reference opens");
-    let mut sqlite = SqliteStorage::open(&sqlite_dir).expect("sqlite backend opens");
-    for storage in [&mut file as &mut dyn StoragePort, &mut sqlite as &mut dyn StoragePort] {
-        commit(storage, "op-1", vec![put(document("doc-1", "users", "one"), ExpectedVersion::New)]);
-        commit(storage, "op-2", vec![put(document("doc-2", "users", "two"), ExpectedVersion::New)]);
-        commit(storage, "op-3", vec![delete(Some("users"), "doc-1", ExpectedVersion::Exact(1))]);
-    }
-    drop(file);
-    drop(sqlite);
-    let mut file = FileStorage::open(&file_dir).expect("file reference reopens");
-    let mut sqlite = SqliteStorage::open(&sqlite_dir).expect("sqlite backend reopens");
-    let observe = |storage: &mut dyn StoragePort| {
-        let at = storage.published_state().0;
-        (
-            at.get(),
-            storage.documents_at(at, &tenant()).len(),
-            storage.journaled_high_water().map(StorageSequence::get),
-        )
-    };
-    assert_eq!(observe(&mut file), observe(&mut sqlite));
-    drop(file);
-    drop(sqlite);
-    std::fs::remove_dir_all(&file_dir).ok();
-    std::fs::remove_dir_all(&sqlite_dir).ok();
-}
-
-#[test]
-fn differential_snapshot_reads_on_and_across_boundaries() {
-    differential("snapshot-boundaries", |storage| {
-        commit(storage, "op-1", vec![put(document("doc-1", "users", "one"), ExpectedVersion::New)]);
-        let first = storage.published_state().0;
-        commit(storage, "op-2", vec![put(document("doc-2", "users", "two"), ExpectedVersion::New)]);
-        let second = storage.published_state().0;
-        commit(
-            storage,
-            "op-3",
-            vec![put(document("doc-1", "users", "replaced"), ExpectedVersion::Exact(1))],
-        );
-        let third = storage.published_state().0;
-        let ids_at = |sequence| {
-            storage
-                .documents_at(sequence, &tenant())
-                .into_iter()
-                .map(|document| (document.id().as_str().to_owned(), document.metadata().version()))
-                .collect::<Vec<_>>()
-        };
-        (
-            ids_at(first),
-            ids_at(second),
-            ids_at(third),
-            storage
-                .read_document_at(first, &tenant(), &DocumentId::try_new("doc-1").unwrap())
-                .map(|document| document.metadata().version()),
-            storage
-                .read_document_at(second, &tenant(), &DocumentId::try_new("doc-1").unwrap())
-                .map(|document| document.metadata().version()),
-            storage.snapshot_boundary_available(first),
-            storage.snapshot_boundary_available(second),
-        )
-    });
-}
-
-#[test]
-fn differential_snapshot_below_first_commit_serves_empty_state() {
-    differential("snapshot-empty", |storage| {
-        commit(storage, "op-1", vec![put(document("doc-1", "users", "one"), ExpectedVersion::New)]);
-        let zero = StorageSequence::new(0);
-        (
-            storage.documents_at(zero, &tenant()).len(),
-            storage
-                .read_document_at(zero, &tenant(), &DocumentId::try_new("doc-1").unwrap())
-                .is_none(),
-        )
-    });
-}
-
-#[test]
-fn differential_pagination_edges() {
-    differential("pagination", |storage| {
-        let users = CollectionName::try_new("users").unwrap();
-        commit(storage, "op-1", vec![put(document("doc-c", "users", "c"), ExpectedVersion::New)]);
-        commit(storage, "op-2", vec![put(document("doc-a", "users", "a"), ExpectedVersion::New)]);
-        commit(storage, "op-3", vec![put(document("doc-b", "orders", "b"), ExpectedVersion::New)]);
-        commit(storage, "op-4", vec![put(document("doc-d", "users", "d"), ExpectedVersion::New)]);
-        let at = storage.published_state().0;
-        let ids = |documents: Vec<Document>| {
-            documents
-                .into_iter()
-                .map(|document| document.id().as_str().to_owned())
-                .collect::<Vec<_>>()
-        };
-        let tenant_from = |after: Option<&str>, limit: u32| {
-            storage.documents_at_from(
-                at,
-                &tenant(),
-                after.map(|cursor| DocumentId::try_new(cursor).unwrap()).as_ref(),
-                limit,
-            )
-        };
-        let tenant_from_key = |after: Option<(&str, &str)>, limit: u32| {
-            let owned = after.map(|(collection, id)| {
-                (CollectionName::try_new(collection).unwrap(), DocumentId::try_new(id).unwrap())
-            });
-            storage
-                .documents_at_from_key(
-                    at,
-                    &tenant(),
-                    owned.as_ref().map(|(collection, id)| (collection, id)),
-                    limit,
-                )
-                .expect("keyed page serves")
-        };
-        let collection_from = |after: Option<&str>, limit: u32| {
-            storage
-                .documents_in_collection_at_from(
-                    at,
-                    &tenant(),
-                    &users,
-                    after.map(|cursor| DocumentId::try_new(cursor).unwrap()).as_ref(),
-                    limit,
-                )
-                .expect("collection page serves")
-        };
-        vec![
-            ids(tenant_from(None, 10)),
-            ids(tenant_from(None, 2)),
-            ids(tenant_from(None, 0)),
-            ids(tenant_from(Some("doc-a"), 10)),
-            ids(tenant_from(Some("doc-missing"), 10)),
-            ids(tenant_from(Some("doc-d"), 10)),
-            ids(tenant_from_key(None, 10)),
-            ids(tenant_from_key(Some(("users", "doc-a")), 10)),
-            ids(tenant_from_key(Some(("users", "doc-d")), 10)),
-            ids(tenant_from_key(Some(("orders", "doc-b")), 10)),
-            ids(tenant_from_key(Some(("users", "doc-missing")), 10)),
-            ids(storage.documents_in_collection_at(at, &tenant(), &users)),
-            ids(collection_from(None, 10)),
-            ids(collection_from(Some("doc-a"), 1)),
-            ids(collection_from(Some("doc-missing"), 10)),
-        ]
-    });
-}
-
-#[test]
-fn differential_identifier_cursor_across_reused_identifiers() {
-    differential("id-cursor-reuse", |storage| {
-        commit(storage, "op-1", vec![put(document("shared", "alpha", "a"), ExpectedVersion::New)]);
-        commit(storage, "op-2", vec![put(document("shared", "zeta", "z"), ExpectedVersion::New)]);
-        commit(storage, "op-3", vec![put(document("tail", "zeta", "t"), ExpectedVersion::New)]);
-        let at = storage.published_state().0;
-        let page = storage.documents_at_from(
-            at,
-            &tenant(),
-            Some(&DocumentId::try_new("shared").unwrap()),
-            10,
-        );
-        let ids = page
-            .into_iter()
-            .map(|document| {
-                (document.collection().as_str().to_owned(), document.id().as_str().to_owned())
-            })
-            .collect::<Vec<_>>();
-        let by_identifier = storage
-            .read_document_at(at, &tenant(), &DocumentId::try_new("shared").unwrap())
-            .map(|document| document.collection().as_str().to_owned());
-        (
-            ids,
-            by_identifier,
-            storage
-                .read_documents_in_collection_at(
-                    at,
-                    &tenant(),
-                    &CollectionName::try_new("zeta").unwrap(),
-                    &[
-                        DocumentId::try_new("tail").unwrap(),
-                        DocumentId::try_new("shared").unwrap(),
-                        DocumentId::try_new("missing").unwrap(),
-                    ],
-                )
-                .into_iter()
-                .map(|document| document.id().as_str().to_owned())
-                .collect::<Vec<_>>(),
-        )
-    });
-}
-
-#[test]
-fn differential_collection_isolation_of_one_identifier() {
-    differential("collection-isolation", |storage| {
-        commit(
-            storage,
-            "op-1",
-            vec![put(document("doc-1", "users", "user"), ExpectedVersion::New)],
-        );
-        commit(
-            storage,
-            "op-2",
-            vec![put(document("doc-1", "archive", "archived"), ExpectedVersion::New)],
-        );
-        let at = storage.published_state().0;
-        let users = CollectionName::try_new("users").unwrap();
-        let archive = CollectionName::try_new("archive").unwrap();
-        let id = DocumentId::try_new("doc-1").unwrap();
-        (
-            storage
-                .read_document_in_collection_at(at, &tenant(), &users, &id)
-                .map(|document| document.value().clone()),
-            storage
-                .read_document_in_collection_at(at, &tenant(), &archive, &id)
-                .map(|document| document.value().clone()),
-            // A delete of one collection's copy leaves the other intact.
-            {
-                let outcome = commit(
-                    storage,
-                    "op-3",
-                    vec![delete(Some("users"), "doc-1", ExpectedVersion::Exact(1))],
-                );
-                let after = storage.published_state().0;
-                (
-                    stored_sequence(&outcome),
-                    storage.read_document_in_collection_at(after, &tenant(), &users, &id).is_none(),
-                    storage
-                        .read_document_in_collection_at(after, &tenant(), &archive, &id)
-                        .is_some(),
-                )
-            },
-        )
-    });
-}
-
-#[test]
-fn differential_replay_conflict_and_operation_reuse() {
-    differential("replay-conflict-reuse", |storage| {
-        let first = commit(
-            storage,
-            "op-1",
-            vec![put(document("doc-1", "users", "one"), ExpectedVersion::New)],
-        );
-        // A retried identity with the same write set replays the receipt.
-        let replay = commit(
-            storage,
-            "op-1",
-            vec![put(document("doc-1", "users", "one"), ExpectedVersion::New)],
-        );
-        // The same identity bound to a different write set is reuse.
-        let reuse = commit(
-            storage,
-            "op-1",
-            vec![put(document("doc-1", "users", "other"), ExpectedVersion::New)],
-        );
-        // A stale snapshot conflicts.
-        let stale = storage.commit(intent(
-            "op-2",
-            vec![put(document("doc-1", "users", "stale"), ExpectedVersion::New)],
-            LocalDurability::Written,
-        ));
-        // A retried conflict keeps its durable rejection.
-        let stale_retry = storage.commit(intent(
-            "op-2",
-            vec![put(document("doc-1", "users", "stale"), ExpectedVersion::New)],
-            LocalDurability::Written,
-        ));
-        // An expectation mismatch conflicts.
-        let mismatch = commit(
-            storage,
-            "op-3",
-            vec![put(document("doc-1", "users", "wrong"), ExpectedVersion::Exact(7))],
-        );
-        // A collection-less delete of an absent identifier is the provable
-        // no-op commit.
-        let noop = commit(storage, "op-4", vec![delete(None, "ghost", ExpectedVersion::Any)]);
-        let after = storage.published_state().0;
-        // Root identities encode backend-specific physical state. Compare
-        // the portable result contract here: outcome, sequence, and reason.
-        let normalize = |result: CommitResult| match result {
-            CommitResult::Committed(receipt) => ("committed", Some(receipt.sequence.get()), None),
-            CommitResult::Rejected(reason) => ("rejected", None, Some(reason)),
-            CommitResult::Unknown(_) => ("unknown", None, None),
-        };
-        (
-            stored_sequence(&first),
-            normalize(replay),
-            normalize(reuse),
-            normalize(stale),
-            normalize(stale_retry),
-            normalize(mismatch),
-            stored_sequence(&noop),
-            storage
-                .read_document_at(after, &tenant(), &DocumentId::try_new("doc-1").unwrap())
-                .map(|document| document.metadata().version()),
-        )
-    });
-}
-
-#[test]
-fn differential_tenant_history_high_water_and_divergence() {
-    differential("tenant-history", |storage| {
-        let other = TenantId::try_new("tenant-b").expect("tenant");
-        let commit_as = |storage: &mut dyn StoragePort, tenant: &TenantId, operation: &str| {
-            let mut request = intent(operation, vec![], LocalDurability::Written);
-            request.tenant = tenant.clone();
-            request.snapshot_sequence = storage.published_state().0;
-            request.writes = vec![put(
-                Document::new(
-                    DocumentId::try_new(operation).unwrap(),
-                    CollectionName::try_new("users").unwrap(),
-                    DocumentValue::String(operation.to_owned()),
-                ),
-                ExpectedVersion::New,
-            )];
-            request.digest = write_set_digest(tenant, &request.writes);
-            storage.commit(request)
-        };
-        commit_as(storage, &tenant(), "op-a1");
-        commit_as(storage, &other, "op-b1");
-        commit_as(storage, &tenant(), "op-a2");
-        let published = storage.published_state().0;
-        let commits = |tenant: &TenantId, after: u64| {
-            storage
-                .tenant_commits(tenant, StorageSequence::new(after), 10)
-                .into_iter()
-                .map(|commit| (commit.sequence().get(), commit.operation_id().as_str().to_owned()))
-                .collect::<Vec<_>>()
-        };
-        let tenants = storage
-            .committed_tenants()
-            .into_iter()
-            .map(|tenant| tenant.as_str().to_owned())
-            .collect::<Vec<_>>();
-        let first_tenant_commit = storage.tenant_commits(&tenant(), StorageSequence::new(0), 1);
-        (
-            published.get(),
-            commits(&tenant(), 0),
-            commits(&tenant(), 1),
-            commits(&other, 0),
-            tenants,
-            first_tenant_commit.iter().map(|commit| commit.writes().len()).collect::<Vec<_>>(),
-            storage.tenant_sequence(&tenant(), published).map(StorageSequence::get),
-            storage.tenant_sequence(&tenant(), StorageSequence::new(1)).map(StorageSequence::get),
-            storage.journaled_high_water().map(StorageSequence::get),
-        )
-    });
-}
-
-#[test]
-fn differential_winning_durabilities() {
-    differential("winning-durabilities", |storage| {
-        commit(storage, "op-1", vec![put(document("doc-1", "users", "one"), ExpectedVersion::New)]);
-        let durable = {
-            let request = fresh_intent(
-                storage,
-                "op-2",
-                vec![put(document("doc-2", "users", "two"), ExpectedVersion::New)],
-                LocalDurability::Synced,
-            );
-            storage.commit(request)
-        };
-        let at = storage.published_state().0;
-        let keys = [("users", "doc-1"), ("users", "doc-2")];
-        (
-            matches!(durable, CommitResult::Committed(_)),
-            storage.winning_durabilities_at(&tenant(), at, &keys),
-            storage.winning_durabilities_at(&tenant(), StorageSequence::new(1), &keys),
-            // A key no retained write names makes the answer unprovable.
-            storage.winning_durabilities_at(
-                &tenant(),
-                at,
-                &[("users", "doc-1"), ("users", "never-written")],
-            ),
-        )
-    });
-}
-
-// ---- Usage differential against the LSM reference ------------------------
-
-fn standalone_fact(tenant: &TenantId, fact_id: &str, at_millis: u64, delta: i128) -> UsageFact {
-    let definition =
-        *MeterCatalog::initial().get(MeterKind::PublicEgressBytes, 1).expect("public egress meter");
-    let scope = crate::usage::UsageScope::try_new(
-        tenant.clone(),
-        "project-a",
-        "database-a",
-        "partition-a",
-        RegionCode::GRU,
-    )
-    .expect("scope");
-    UsageFact::try_new(
-        definition,
-        scope,
-        MintingIdentity::PublicResponse(UsageFactId::try_new(fact_id).expect("fact id")),
-        MeasurementWindow::instant(at_millis),
-        delta,
-    )
-    .expect("fact")
-}
-
-#[test]
-fn usage_pages_match_the_lsm_reference() {
-    let lsm_dir = location("usage-lsm");
-    let sqlite_dir = location("usage-sqlite");
-    let mut lsm = LsmStorage::open(&lsm_dir).expect("lsm reference opens");
-    let mut sqlite = SqliteStorage::open(&sqlite_dir).expect("sqlite backend opens");
-    let scenario = |storage: &mut dyn StoragePort| {
-        let first =
-            storage.record_usage(&tenant(), standalone_fact(&tenant(), "fact-1", 1_000, 128));
-        let replay =
-            storage.record_usage(&tenant(), standalone_fact(&tenant(), "fact-1", 1_000, 128));
-        let rebind =
-            storage.record_usage(&tenant(), standalone_fact(&tenant(), "fact-1", 1_000, 256));
-        let _ = storage.record_usage(&tenant(), standalone_fact(&tenant(), "fact-2", 2_000, 64));
-        let _ = storage.record_usage(&tenant(), standalone_fact(&tenant(), "fact-3", 3_000, 32));
-        let snapshot = storage.published_state().0;
-        let summarize = |facts: &[DurableUsageFact]| {
-            facts
-                .iter()
-                .map(|fact| {
-                    (
-                        fact.sequence(),
-                        fact.fact().identity().id().as_str().to_owned(),
-                        fact.fact().delta(),
-                    )
-                })
-                .collect::<Vec<_>>()
-        };
-        let page = storage.usage_facts_page(&tenant(), snapshot, None, None, 10);
-        let limited = storage.usage_facts_page(&tenant(), snapshot, None, None, 2);
-        let after_page = storage.usage_facts_page(
-            &tenant(),
-            snapshot,
-            limited
-                .as_ref()
-                .ok()
-                .and_then(|facts| facts.last())
-                .map(UsageFactPosition::of)
-                .as_ref(),
-            None,
-            10,
-        );
-        let windowed = storage.usage_facts_page(
-            &tenant(),
-            snapshot,
-            None,
-            Some(MeasurementWindow::interval(1_500, 2_500).expect("window")),
-            10,
-        );
-        let below_snapshot =
-            storage.usage_facts_page(&tenant(), StorageSequence::new(1), None, None, 10);
-        let foreign = storage.usage_facts_page(
-            &TenantId::try_new("tenant-b").unwrap(),
-            snapshot,
-            None,
-            None,
-            10,
-        );
-        (
-            first.map(|(fact, replayed)| (fact.sequence(), replayed)),
-            replay.map(|(fact, replayed)| (fact.sequence(), replayed)),
-            rebind.err(),
-            summarize(&page.clone().expect("page")),
-            summarize(&limited.expect("limited page")),
-            summarize(&after_page.expect("continuation page")),
-            summarize(&windowed.expect("windowed page")),
-            summarize(&below_snapshot.expect("snapshot-bounded page")),
-            summarize(&foreign.expect("foreign tenant page")),
-            page.expect("page").iter().map(UsageFactPosition::of).collect::<Vec<_>>(),
-        )
-    };
-    let lsm_result = scenario(&mut lsm);
-    let sqlite_result = scenario(&mut sqlite);
-    assert_eq!(lsm_result, sqlite_result);
-    drop(lsm);
-    drop(sqlite);
-    std::fs::remove_dir_all(&lsm_dir).ok();
-    std::fs::remove_dir_all(&sqlite_dir).ok();
 }
 
 // ---- SQLite-focused: the journal-pruning floor ---------------------------
@@ -1294,20 +690,15 @@ fn compact_sweeps_the_pruning_floor() {
             vec![put(document(&format!("doc-{index}"), "users", "value"), ExpectedVersion::New)],
         );
     }
-    // `compact` is the lifecycle sweep: advancing the frontier and
-    // compacting bounds the journal with no other call.
+    // The lifecycle sweep: advancing the frontier and sweeping bounds the
+    // journal with no other call.
     storage.advance_consumer_frontier("solo", 3).expect("frontier advances");
-    let request = crate::storage::compaction::StorageCompaction {
-        policy: CompactionPolicy::Reclaim,
-        floor: None,
-        progress: None,
-    };
-    let (receipt, _facts) = storage.compact(request).expect("compaction sweeps");
+    storage.run_retention_sweep().expect("sweep runs");
     assert_eq!(storage.journal_records(), 1, "the sweep pruned below the floor");
     assert_eq!(
-        receipt.servable_start_after().map(StorageSequence::get),
-        Some(3),
-        "the receipt reports the floor as the servable bound"
+        storage.servable_history_start(),
+        Some(StorageSequence::new(3)),
+        "the floor is the servable bound"
     );
 }
 

@@ -79,6 +79,13 @@ form; the member form exists for probes and `terrascale doctor`.
    otherwise ignored with a debug log, never an error.
 7. Reactive connections are opened against the pinned region hostname with
    `?db=`; a `421` on the upgrade is handled like any other.
+8. Transport is injectable: `createClient({ fetch, WebSocket })`. The
+   dashboard Worker (GOAL D-59) passes a `fetch` that sends `api.*` requests
+   through its `ts-proxy` service binding (same-zone Worker→Worker `fetch` is
+   refused by Cloudflare) with `X-TerraScale-Client-Loc` from the browser
+   request's `cf`, and sends pinned `<region>.api.*` requests with the global
+   `fetch`. Steps 1–7 are unchanged by the transport. The SDK imports no
+   Node-only modules so the same build runs in browsers, Node, and workerd.
 
 ## Consequences
 

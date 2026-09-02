@@ -32,15 +32,17 @@ One A1 per region is the development shape. Production needs, per region:
   the loss of either member host.
 
 Three hosts per region is therefore the floor. Nothing else needs its own
-machine at launch: the dashboard, the GRU global authority, Prometheus,
-Grafana, and Alertmanager run as containers under the orchestrator on the
-GRU hosts.
+machine at launch: the GRU global authority, Prometheus, Grafana, and
+Alertmanager run as containers under the orchestrator on the GRU hosts. The
+dashboard does **not** run on OCI at all: it is a Cloudflare Worker (GOAL
+D-59) whose only state is a TerraScale database placed in every region, so
+the member hosts carry nothing but terrabase.
 
 ## Compute estate (per region)
 
 | Role | Count | Shape (start) | Storage | Notes |
 | --- | --- | --- | --- | --- |
-| Member host | 2 | A1 Flex, 4 OCPU / 24 GiB | 200–500 GiB block volume, Balanced or Higher Performance | Writer + follower for each database placed here; distinct fault domains; also hosts dashboard (GRU only, 2 replicas) and Postgres-wire listener |
+| Member host | 2 | A1 Flex, 4 OCPU / 24 GiB | 200–500 GiB block volume, Balanced or Higher Performance | Writer + follower for each database placed here; distinct fault domains; also the Postgres-wire listener. Nothing else (no dashboard, D-59) |
 | Control host | 1 | A1 Flex, 1 OCPU / 6 GiB | 50 GiB boot | Third JetStream replica, regional control group; in GRU also the global authority, Prometheus, Grafana, Alertmanager |
 
 Total at launch: 6 member hosts + 3 control hosts = **9 instances**. Scaling
@@ -59,9 +61,9 @@ against OCI NTP (HLC skew guard), no password login, no public SSH.
 | Vault + Key | Per-database encryption keys (M2-1, ADR 0030) | One master key per region; keys never leave their region |
 | OCIR (tenancy-wide) | Image registry | Immutable tags by digest; the orchestrator deploys digests only |
 | IAM (tenancy-wide) | Least privilege | One compartment per region; **instance principals** for members and control hosts; no API keys on disk; CI gets a scoped user per secret (GOAL O-3) |
-| VCN + NSG | Network | Public ingress only on 443 (API/dashboard), the QUIC replication port (member ↔ member, source-restricted to the other regions' public IPs), and the Postgres-wire port; everything else via Tailscale |
+| VCN + NSG | Network | Public ingress only on 443 (API), the QUIC replication port (member ↔ member, source-restricted to the other regions' public IPs), and the Postgres-wire port; everything else via Tailscale |
 | Budgets | Cost cap | Monthly budget with alert at 80 % and 100 %, alert routed to paging |
-| Email Delivery (GRU) | Transactional email (D-26) | Approved sender domain, SPF/DKIM/DMARC records in Cloudflare |
+| Email Delivery (GRU) | Transactional email (D-26) | Approved sender domain, SPF/DKIM/DMARC records in Cloudflare. Submitted over the **HTTPS Email Submission API** (the dashboard Worker cannot open SMTP), authenticated with a dedicated IAM user whose key is a Worker secret |
 
 São Paulo has a single availability domain: members there use distinct
 **fault domains**. Frankfurt uses distinct availability domains (ADR 0033).
@@ -70,7 +72,7 @@ São Paulo has a single availability domain: members there use distinct
 
 | Piece | Purpose | Notes |
 | --- | --- | --- |
-| Cloudflare zone `terrascale.tech` (Pro) + Workers Paid | DNS, TLS, WAF, rate rules; `ts-proxy` Worker + KV as the global load balancer (D-58); later the edge cache (D-55) | Origin certificates on members; `api.` → Worker; `gru|sfo|fra.api.` proxied A records straight to member hosts (pinned SDK traffic); `app.`, `docs.`, `status.` (D-24). No Cloudflare Load Balancing product. Turnstile on signup. |
+| Cloudflare zone `terrascale.tech` (Pro) + Workers Paid | DNS, TLS, WAF, rate rules; `ts-proxy` Worker + KV as the global load balancer (D-58); the **dashboard Worker** on `app.` (D-59); later the edge cache (D-55) | Origin certificates on members; `api.` → `ts-proxy` Worker; `gru|sfo|fra.api.` proxied A records straight to member hosts (pinned SDK traffic); `app.` → dashboard Worker (Workers Assets for static files, service binding to `ts-proxy`, secrets via `wrangler secret`); `*.preview.app.` → per-branch preview deployments; `docs.`, `status.` (D-24). No Cloudflare Load Balancing product. Turnstile on signup. |
 | Postgres-wire exposure (D-54) | BI tools over TCP | **Direct**: `pg.<region>.api.terrascale.tech` resolves to the member hosts' public IPs (DNS-only, grey-cloud); TLS terminated by the member with a Let's Encrypt certificate; NSG allows the port from anywhere; per-key connection limits apply. Cloudflare Spectrum is not used at launch. |
 | Forgejo Actions runner | Native ARM builds and `make check` in CI | One A1 Flex (2 OCPU / 12 GiB) in GRU outside the orchestrator's control, or the GRU control host if capacity allows |
 | Paging | Alerts to a phone | Grafana OnCall or PagerDuty free tier; primary + escalation contact; OCI budget alerts and external probe route here too |
@@ -83,7 +85,9 @@ São Paulo has a single availability domain: members there use distinct
 At A1 Flex list prices (≈ $0.01 per OCPU-hour and ≈ $0.0015 per GiB-hour):
 six member hosts ≈ $330/month, three control hosts ≈ $45, block volumes and
 backups ≈ $60–100, Object Storage < $10 at launch volumes, Cloudflare Pro
-≈ $20 if WAF rules are wanted, paging/uptime/email ≈ $30. **Roughly
+≈ $20 if WAF rules are wanted plus Workers Paid $5 (covers both `ts-proxy`
+and the dashboard; both are far inside the included requests),
+paging/uptime/email ≈ $30. **Roughly
 $500–650 per month** for three regions at RF=2, before egress (OCI includes
 10 TB/month). A fourth region adds ≈ $130/month. These are estimates for
 budgeting; the OCI budget alert is the enforcement.

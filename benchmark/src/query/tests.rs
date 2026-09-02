@@ -24,7 +24,7 @@ use super::{
     text,
 };
 use crate::{
-    engine::{CommitOutcome, Engine, EngineConfig, StorageBackend},
+    engine::{CommitOutcome, Engine, EngineConfig},
     operations::{QueryInput, QueryInputError, RequestValidationError, TqlQueryText},
     types::{
         Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue,
@@ -513,21 +513,18 @@ fn query_store_compiles_and_executes_against_supplied_snapshot() {
 /// collection of 5,000 documents answers an equality query whose posting list
 /// names two candidates by reading exactly those candidates, and the scanned
 /// count reports the candidate set, never the collection size a scan would
-/// have evaluated. Both storage backends run the same proof, because the
-/// keyed candidate fetch is a storage-port contract each backend implements.
+/// have evaluated.
 #[test]
 fn an_indexed_equality_query_reads_only_its_named_candidates() {
-    keyed_candidate_fetch_on_backend(StorageBackend::Lsm, "indexed-keyed-fetch-lsm");
-    keyed_candidate_fetch_on_backend(StorageBackend::RootFiles, "indexed-keyed-fetch-root");
+    keyed_candidate_fetch("indexed-keyed-fetch");
 }
 
-/// Opens one engine on the named backend and proves the keyed candidate
-/// fetch of the index-narrowed path (see the test above).
-fn keyed_candidate_fetch_on_backend(backend: StorageBackend, tag: &str) {
+/// Opens one engine and proves the keyed candidate fetch of the
+/// index-narrowed path (see the test above).
+fn keyed_candidate_fetch(tag: &str) {
     let dir = location(tag);
     std::fs::remove_dir_all(&dir).ok();
-    let config =
-        EngineConfig::durable(&dir).expect("durable location").with_storage_backend(backend);
+    let config = EngineConfig::durable(&dir).expect("durable location");
     let engine = Engine::open(config).expect("engine opens");
     let tenant_scope = scope(&engine, "tenant-a");
     let total = 5_000_usize;

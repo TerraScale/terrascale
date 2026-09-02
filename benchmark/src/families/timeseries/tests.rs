@@ -4,7 +4,7 @@
 //! Each test drives the engine's family seams exactly as a host-driven
 //! maintenance tick would: series state is established through committed
 //! family writes, a run is one module step (`rollup_series`,
-//! `enforce_retention`, or `run_series` with the tombstone watermark
+//! `enforce_retention`, or `run_series`
 //! handle), and the observable outcomes are the public read seam (pages,
 //! cursors) and the typed receipts. The V1-observable semantics these tests
 //! pin carry their pinned-commit citations in
@@ -29,10 +29,9 @@ use crate::families::{
     FamilyWriteRequest,
 };
 use crate::operations::RequestValidationError;
-use crate::replication::{DeletionEvidence, ReplicationClockStamp, SharedTombstoneRetention};
 use crate::types::{
     Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue, ExpectedVersion,
-    LocalDurability, OperationId, StorageSequence, TenantId, TenantScope,
+    LocalDurability, OperationId, TenantId, TenantScope,
 };
 
 // ---------------------------------------------------------------------------
@@ -242,20 +241,6 @@ fn series_with_rollup(engine: &Engine, scope: &TenantScope, aggregation: Aggrega
         vec![],
         Some(policy(Some(100), &[("five", aggregation, 5)])),
     );
-}
-
-/// One deletion-evidence fact for one owning document, held by a watermark.
-fn evidence_for(scope: &TenantScope, document: &str, sequence: u64) -> DeletionEvidence {
-    DeletionEvidence::new(
-        scope.tenant().clone(),
-        Some(CollectionName::try_new("users").expect("valid collection")),
-        document_id(document),
-        3,
-        StorageSequence::new(sequence),
-        operation("gapf04-delete-evidence"),
-        ReplicationClockStamp::new(1, 0),
-        LocalDurability::Synced,
-    )
 }
 
 // ---------------------------------------------------------------------------
@@ -469,15 +454,8 @@ fn retention_drops_pre_horizon_entries_and_trims_rollups() {
         Some(policy(Some(10), &[("fifty", Aggregation::Sum, 50)])),
     );
     rollup_series(&engine, &scope, &document_id("doc-1"), "cpu", 100).expect("rollups first");
-    let receipt = enforce_retention(
-        &engine,
-        &scope,
-        &document_id("doc-1"),
-        "cpu",
-        100,
-        &SharedTombstoneRetention::new(),
-    )
-    .expect("retention run succeeds");
+    let receipt = enforce_retention(&engine, &scope, &document_id("doc-1"), "cpu", 100)
+        .expect("retention run succeeds");
     assert!(receipt.changed(), "the run dropped pre-horizon entries");
     assert_eq!(receipt.entries_deleted(), 2, "80 and 85 precede the horizon 90");
     assert_eq!(raw_timestamps(&engine, &scope, "doc-1", "cpu"), vec![90, 95, 100]);
@@ -509,15 +487,8 @@ fn retention_keeps_points_whose_windows_are_incomplete() {
         vec![],
         Some(policy(Some(30), &[("fifty", Aggregation::Sum, 50)])),
     );
-    let receipt = enforce_retention(
-        &engine,
-        &scope,
-        &document_id("doc-1"),
-        "cpu",
-        99,
-        &SharedTombstoneRetention::new(),
-    )
-    .expect("retention run succeeds");
+    let receipt = enforce_retention(&engine, &scope, &document_id("doc-1"), "cpu", 99)
+        .expect("retention run succeeds");
     assert_eq!(
         receipt.entries_deleted(),
         0,
@@ -527,15 +498,8 @@ fn retention_keeps_points_whose_windows_are_incomplete() {
     // storage proof is the next pass: at now=100 the window [50,100) is
     // complete and the same points become deletable — they survived only
     // because the first pass kept them.
-    let next = enforce_retention(
-        &engine,
-        &scope,
-        &document_id("doc-1"),
-        "cpu",
-        100,
-        &SharedTombstoneRetention::new(),
-    )
-    .expect("the follow-up run succeeds");
+    let next = enforce_retention(&engine, &scope, &document_id("doc-1"), "cpu", 100)
+        .expect("the follow-up run succeeds");
     assert_eq!(next.entries_deleted(), 2, "55 and 60 were still stored after the guarded pass");
     assert_eq!(raw_timestamps(&engine, &scope, "doc-1", "cpu"), vec![95, 100]);
     engine.shutdown().expect("shuts down");
@@ -556,182 +520,10 @@ fn retention_without_a_policy_is_a_no_op() {
         vec![],
         None,
     );
-    let receipt = enforce_retention(
-        &engine,
-        &scope,
-        &document_id("doc-1"),
-        "cpu",
-        1000,
-        &SharedTombstoneRetention::new(),
-    )
-    .expect("retention run succeeds");
+    let receipt = enforce_retention(&engine, &scope, &document_id("doc-1"), "cpu", 1000)
+        .expect("retention run succeeds");
     assert!(!receipt.changed(), "a series without retention policy is untouched");
     assert_eq!(raw_timestamps(&engine, &scope, "doc-1", "cpu"), vec![1, 2]);
-    engine.shutdown().expect("shuts down");
-}
-
-// ---------------------------------------------------------------------------
-// Retention x GAP-R02 tombstone watermark
-// ---------------------------------------------------------------------------
-
-#[test]
-fn retention_skips_a_series_a_tombstones_evidence_window_still_covers() {
-    let engine = open_engine("retention-watermark-skip");
-    let scope = scope(&engine);
-    put_user_document(&engine, &scope, "doc-1");
-    commit_series_write(
-        &engine,
-        &scope,
-        "gapf04-establish",
-        "doc-1",
-        "cpu",
-        vec![(10, vec![1.0]), (20, vec![2.0]), (100, vec![3.0])],
-        vec![],
-        Some(policy(Some(30), &[])),
-    );
-    // The watermark holds deletion evidence for doc-1 (its owner was deleted
-    // somewhere a consumer still needs): the evidence window covers the
-    // series' record, so the pass must not delete from it.
-    let watermark = SharedTombstoneRetention::new();
-    watermark.with_lock(|retention| retention.hold(&[evidence_for(&scope, "doc-1", 5)]));
-
-    let receipt = enforce_retention(&engine, &scope, &document_id("doc-1"), "cpu", 100, &watermark)
-        .expect("retention run succeeds");
-    assert!(!receipt.changed(), "the covered series is not touched");
-    assert!(
-        receipt.skipped_document_evidence(),
-        "the skip is disclosed: the tombstone's evidence window still covers the owner"
-    );
-    // The read seam's own horizon hides pre-horizon points either way, so
-    // the storage proof is the next pass with an empty watermark: the
-    // covered pass deleted nothing, and this pass reports both pre-horizon
-    // entries still stored.
-    let after = enforce_retention(
-        &engine,
-        &scope,
-        &document_id("doc-1"),
-        "cpu",
-        100,
-        &SharedTombstoneRetention::new(),
-    )
-    .expect("the uncovered follow-up run succeeds");
-    assert_eq!(after.entries_deleted(), 2, "the covered pass left both pre-horizon entries stored");
-    assert_eq!(raw_timestamps(&engine, &scope, "doc-1", "cpu"), vec![100]);
-    engine.shutdown().expect("shuts down");
-}
-
-#[test]
-fn retention_proceeds_once_the_evidence_window_no_longer_covers_the_document() {
-    let engine = open_engine("retention-watermark-pass");
-    let scope = scope(&engine);
-    put_user_document(&engine, &scope, "doc-1");
-    commit_series_write(
-        &engine,
-        &scope,
-        "gapf04-establish",
-        "doc-1",
-        "cpu",
-        vec![(10, vec![1.0]), (20, vec![2.0]), (100, vec![3.0])],
-        vec![],
-        Some(policy(Some(30), &[])),
-    );
-    let watermark = SharedTombstoneRetention::new();
-    watermark.with_lock(|retention| retention.hold(&[evidence_for(&scope, "doc-1", 5)]));
-    // Every consumer passed the fact: the floor advances past its sequence
-    // and the retained set drops it, so the evidence window no longer covers
-    // the document and the pass proceeds.
-    watermark.with_lock(|retention| {
-        retention.advance_floor(StorageSequence::new(6)).expect("floor advances past the fact");
-    });
-
-    let receipt = enforce_retention(&engine, &scope, &document_id("doc-1"), "cpu", 100, &watermark)
-        .expect("retention run succeeds");
-    assert!(receipt.changed(), "the uncovered series is cleaned");
-    assert!(!receipt.skipped_document_evidence());
-    assert_eq!(raw_timestamps(&engine, &scope, "doc-1", "cpu"), vec![100]);
-    engine.shutdown().expect("shuts down");
-}
-
-#[test]
-fn retention_evidence_for_another_document_or_tenant_does_not_bind_the_series() {
-    let engine = open_engine("retention-watermark-scope");
-    let scope = scope(&engine);
-    put_user_document(&engine, &scope, "doc-1");
-    put_user_document(&engine, &scope, "doc-2");
-    commit_series_write(
-        &engine,
-        &scope,
-        "gapf04-establish",
-        "doc-1",
-        "cpu",
-        vec![(10, vec![1.0]), (100, vec![3.0])],
-        vec![],
-        Some(policy(Some(30), &[])),
-    );
-    let watermark = SharedTombstoneRetention::new();
-    watermark.with_lock(|retention| {
-        retention.hold(&[
-            evidence_for(&scope, "doc-2", 5),
-            DeletionEvidence::new(
-                TenantId::try_new("tenant-other").expect("valid tenant"),
-                None,
-                document_id("doc-1"),
-                1,
-                StorageSequence::new(7),
-                operation("gapf04-other-tenant"),
-                ReplicationClockStamp::new(1, 0),
-                LocalDurability::Synced,
-            ),
-        ])
-    });
-
-    let receipt = enforce_retention(&engine, &scope, &document_id("doc-1"), "cpu", 100, &watermark)
-        .expect("retention run succeeds");
-    assert!(receipt.changed(), "foreign evidence does not hold this series");
-    assert_eq!(raw_timestamps(&engine, &scope, "doc-1", "cpu"), vec![100]);
-    engine.shutdown().expect("shuts down");
-}
-
-#[test]
-fn retention_never_transitions_the_watermark() {
-    let engine = open_engine("retention-watermark-inert");
-    let scope = scope(&engine);
-    put_user_document(&engine, &scope, "doc-1");
-    commit_series_write(
-        &engine,
-        &scope,
-        "gapf04-establish",
-        "doc-1",
-        "cpu",
-        vec![(10, vec![1.0]), (100, vec![3.0])],
-        vec![],
-        Some(policy(Some(30), &[("fifty", Aggregation::Sum, 50)])),
-    );
-    let watermark = SharedTombstoneRetention::new();
-    watermark.with_lock(|retention| retention.hold(&[evidence_for(&scope, "doc-9", 5)]));
-    let before = watermark.snapshot();
-
-    run_series(&engine, &scope, &document_id("doc-1"), "cpu", 100, &watermark)
-        .expect("the drive succeeds");
-    let after = watermark.snapshot();
-    assert_eq!(after.retention_floor(), before.retention_floor(), "the floor is untouched");
-    assert_eq!(after.history_bound(), before.history_bound(), "the bound is untouched");
-    assert_eq!(
-        after
-            .deletion_evidence_above(
-                &TenantId::try_new("tenant-gapf04").expect("valid tenant"),
-                StorageSequence::new(0)
-            )
-            .len(),
-        before
-            .deletion_evidence_above(
-                &TenantId::try_new("tenant-gapf04").expect("valid tenant"),
-                StorageSequence::new(0)
-            )
-            .len(),
-        "no evidence is minted or dropped by the pass"
-    );
-    assert_eq!(after.refusals().len(), before.refusals().len(), "no refusal is recorded");
     engine.shutdown().expect("shuts down");
 }
 
@@ -768,8 +560,7 @@ fn run_tenant_drives_every_series_of_the_tenant() {
         vec![],
         Some(policy(None, &[("ten", Aggregation::Max, 10)])),
     );
-    let receipt = run_tenant(&engine, &scope, 20, &SharedTombstoneRetention::new())
-        .expect("the tenant drive succeeds");
+    let receipt = run_tenant(&engine, &scope, 20).expect("the tenant drive succeeds");
     assert_eq!(receipt.len(), 2, "both series of the tenant are driven");
     assert_eq!(
         rollup_points(&engine, &scope, "doc-1", "cpu", "ten"),
@@ -804,15 +595,8 @@ fn run_series_rolls_up_before_retaining() {
         vec![],
         Some(policy(Some(40), &[("ten", Aggregation::Sum, 10)])),
     );
-    let receipt = run_series(
-        &engine,
-        &scope,
-        &document_id("doc-1"),
-        "cpu",
-        100,
-        &SharedTombstoneRetention::new(),
-    )
-    .expect("the drive succeeds");
+    let receipt =
+        run_series(&engine, &scope, &document_id("doc-1"), "cpu", 100).expect("the drive succeeds");
     assert!(receipt.rollups().changed(), "the rollup half ran");
     assert!(receipt.retention().changed(), "the retention half ran");
     assert_eq!(
@@ -970,8 +754,7 @@ fn paging_applies_to_rollup_reads_and_unknown_rollups_refuse() {
     let engine = open_engine("paging-rollup");
     let scope = scope(&engine);
     series_with_rollup(&engine, &scope, Aggregation::Sum);
-    run_series(&engine, &scope, &document_id("doc-1"), "cpu", 15, &SharedTombstoneRetention::new())
-        .expect("drive runs");
+    run_series(&engine, &scope, &document_id("doc-1"), "cpu", 15).expect("drive runs");
 
     let page = read_page(
         &engine,

@@ -22,10 +22,6 @@ pub const RENAME_CUTOVER_COMPLETED: &str = "2026-08-30";
 /// Persisted identifiers whose bytes remain stable through the product rename.
 pub const LEGACY_PERSISTED_IDENTIFIERS: &[&str] = &[
     "TerraBaseV2\\0 canonical-hash prefix",
-    "TBV2FORMAT storage format magic",
-    "TBV2ROOT root-file magic",
-    "TBV2MANI root manifest magic",
-    "TBV2LSM1 LSM format marker",
     "TBV2MLJ1 member-lane journal magic",
     "manifest.tbv2m backup manifest filename",
 ];
