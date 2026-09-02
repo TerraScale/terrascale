@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "vitest";
 
 import { createTerraScaleAdminClient } from "./admin.js";
@@ -55,8 +56,14 @@ test("built package keeps all public clients on typed operations without a runti
   assert.equal(result.ok, true);
   assert.equal(requests[0]?.pathname, "/api/v1/regions");
 
-  const internalHttpEntrypoint = "@terrascale/sdk/http";
-  await assert.rejects(import(internalHttpEntrypoint), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });
+  // The packed package must not export an http escape hatch; the exports
+  // map is the publish-time contract (the live packed-import rejection is
+  // exercised by the release-package suite against the real tarball).
+  const packageManifest = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  ) as { readonly exports: Record<string, unknown> };
+  assert.equal("http" in packageManifest.exports, false);
+  assert.deepEqual(Object.keys(packageManifest.exports), [".", "./admin", "./better-auth", "./local"]);
 });
 
 test("root clients reject SQLite, private service origins, and arbitrary default headers", () => {

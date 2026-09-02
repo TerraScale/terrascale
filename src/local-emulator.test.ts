@@ -16,7 +16,7 @@ import {
 } from "./local/index.js";
 import { localManifestRoutes } from "./local/route-manifest.generated.js";
 import { TerraScaleSqliteStore } from "./local/store.js";
-import { installLocalSqliteTestEnvironment } from "./local/test-environment.test.js";
+import { installLocalSqliteTestEnvironment } from "./local/test-environment.js";
 import type { TerraScaleResult } from "./result.js";
 
 installLocalSqliteTestEnvironment();

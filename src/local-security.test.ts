@@ -12,7 +12,7 @@ import {
   localSqliteStageIndicators,
 } from "./local/environment.js";
 import { createTerraScaleSqliteRuntime } from "./local/index.js";
-import { localSqliteTestChildEnvironment } from "./local/test-environment.test.js";
+import { localSqliteTestChildEnvironment } from "./local/test-environment.js";
 
 const run = promisify(execFile);
 const bearerToken = "local-security-token-0123456789-abcdefghijk";
@@ -187,7 +187,7 @@ test("remote binding authorizes only the configured bearer token", async () => {
 });
 
 test("the CLI refuses remote binding without explicit strong authentication", async () => {
-  const cli = fileURLToPath(new URL("./local/cli.js", import.meta.url));
+  const cli = fileURLToPath(new URL("../dist/local/cli.js", import.meta.url));
   await withDatabasePath(async (databasePath) => {
     const common = [cli, "--allow-remote", "--database", databasePath];
     await assert.rejects(

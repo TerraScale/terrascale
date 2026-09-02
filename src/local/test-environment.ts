@@ -1,4 +1,4 @@
-import { after } from "vitest";
+import { afterAll } from "vitest";
 
 import {
   localSqlitePresenceIndicators,
@@ -18,7 +18,7 @@ export function installLocalSqliteTestEnvironment(): void {
     delete process.env[name];
   }
   process.env.NODE_ENV = "test";
-  after(() => {
+  afterAll(() => {
     for (const [name, value] of previous) {
       if (value === undefined) {
         delete process.env[name];

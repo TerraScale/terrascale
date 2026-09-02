@@ -11,7 +11,7 @@ import {
   type TerraScaleSqliteRuntime,
 } from "./local/index.js";
 import { TerraScaleSqliteStore } from "./local/store.js";
-import { installLocalSqliteTestEnvironment } from "./local/test-environment.test.js";
+import { installLocalSqliteTestEnvironment } from "./local/test-environment.js";
 
 installLocalSqliteTestEnvironment();
 

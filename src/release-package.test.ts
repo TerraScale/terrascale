@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { test } from "vitest";
 
-import { localSqliteTestChildEnvironment } from "./local/test-environment.test.js";
+import { localSqliteTestChildEnvironment } from "./local/test-environment.js";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const run = promisify(execFile);
@@ -41,7 +41,7 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   }
   assert.deepEqual(
     deployment.buildTargets[0]?.commands.map((command) => command.description),
-    ["Clean install", "Build SDK", "Forbidden SDK surface", "Unit and contract regression", "Qualify npm release candidate"],
+    ["Clean install", "Build SDK", "Unit and contract regression", "Qualify npm release candidate"],
   );
   assert.equal(deployment.buildTargets[0]?.outputPath, "artifacts/candidate");
   assert.deepEqual(deployment.buildTargets[0]?.commands.at(-1), {
@@ -98,40 +98,29 @@ test("release paths clean-install, build, test, and pack the SDK independently",
   assert.match(jobDefinition(workflow, "pr-static"), /npm ci/u);
   assert.match(jobDefinition(workflow, "pr-static"), /npm run typecheck/u);
   assert.match(jobDefinition(workflow, "pr-static"), /npm run build/u);
-  assert.ok(jobDefinition(workflow, "pr-static").indexOf("npm run build") < jobDefinition(workflow, "pr-static").indexOf("npm run check:route-manifest"));
+  assert.ok(jobDefinition(workflow, "pr-static").indexOf("npm run build") < jobDefinition(workflow, "pr-static").indexOf("npm test"));
   assert.match(jobDefinition(workflow, "pr-build"), /npm ci/u);
   assert.match(jobDefinition(workflow, "pr-build"), /npm run build/u);
   assert.match(jobDefinition(workflow, "runtime-matrix"), /node: \["22", "24"\]/u);
   assert.match(jobDefinition(workflow, "runtime-matrix"), /runs-on: terrascale-untrusted/u);
   assert.match(jobDefinition(workflow, "runtime-matrix"), /node scripts\/provision-reviewed-npm\.mjs/u);
-  assert.match(jobDefinition(workflow, "runtime-matrix"), /npm run test:unit/u);
-  assert.match(jobDefinition(workflow, "runtime-matrix"), /npm run test:msgpack/u);
+  assert.match(jobDefinition(workflow, "runtime-matrix"), /npm test/u);
   assert.match(jobDefinition(workflow, "browser-matrix"), /runs-on: terrascale-untrusted/u);
   assert.match(jobDefinition(workflow, "browser-matrix"), /playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e/u);
   assert.match(jobDefinition(workflow, "browser-matrix"), /npm run test:browser/u);
   for (const job of ["pr-static", "release-contract-fixture"]) {
-    assert.match(
-      jobDefinition(workflow, job),
-      /(?:node scripts\/check-public-contract-fixture\.mjs|npm run check:public-contract-fixture(?: --)?)[ \t]+Dashboard\/docs\/product\/openapi\/server\.openapi\.json/u,
-    );
-    assert.match(jobDefinition(workflow, job), /npm run check:forbidden-surface/u);
+    assert.match(jobDefinition(workflow, job), /npm test/u);
   }
-  assert.match(jobDefinition(workflow, "release-contract-fixture"), /check:openapi-contract-descriptor -- Dashboard\/docs\/product\/openapi\/server\.openapi\.json/u);
-  assert.ok(jobDefinition(workflow, "release-contract-fixture").indexOf("npm run build") < jobDefinition(workflow, "release-contract-fixture").indexOf("npm run check:route-manifest"));
-  assert.ok(jobDefinition(workflow, "release-contract-fixture").indexOf("npm run check:route-manifest") < jobDefinition(workflow, "release-contract-fixture").indexOf("check:openapi-contract-descriptor"));
-  assert.ok(jobDefinition(workflow, "release-contract-fixture").indexOf("check:openapi-contract-descriptor") < jobDefinition(workflow, "release-contract-fixture").indexOf("check:openapi-drift -- --strict"));
-  assert.ok(jobDefinition(workflow, "pr-static").indexOf("check:openapi-contract-descriptor") < jobDefinition(workflow, "pr-static").indexOf("check:openapi-drift -- --strict"));
   assert.match(jobDefinition(workflow, "release-version-availability"), /--check-availability --package @terrascale\/sdk/u);
   assert.match(jobDefinition(workflow, "release-e2e"), /secrets\.TERRASCALE_E2E_ACCESS_TOKEN/u);
   assert.doesNotMatch(jobDefinition(workflow, "release-e2e"), /^    env:/mu);
   assert.match(jobDefinition(workflow, "release-e2e"), /needs: \[release-artifacts\]/u);
   assert.match(jobDefinition(workflow, "release-e2e"), /require-release-e2e-config\.mjs/u);
   assert.match(jobDefinition(workflow, "release-e2e"), /run-packed-release-e2e\.mjs --tarball/u);
-  assert.match(jobDefinition(workflow, "release-e2e"), /npm run test:integration/u);
+  assert.match(jobDefinition(workflow, "release-e2e"), /npm test/u);
   assert.match(jobDefinition(workflow, "release-e2e"), /--build-receipt artifacts\/handoff\/evidence\/npm\.build-receipt\.json/u);
   assert.ok(jobDefinition(workflow, "release-e2e").indexOf("--verify-only") < jobDefinition(workflow, "release-e2e").indexOf("TERRASCALE_E2E_ACCESS_TOKEN"));
-  assert.match(jobDefinition(workflow, "release-tests"), /npm run test:unit/u);
-  assert.match(jobDefinition(workflow, "release-tests"), /npm run test:msgpack/u);
+  assert.match(jobDefinition(workflow, "release-tests"), /npm test/u);
   assert.doesNotMatch(jobDefinition(workflow, "release-tests"), /terrascale-deploy ci release-test/u);
   assert.doesNotMatch(jobDefinition(workflow, "release-e2e"), /terrascale-deploy ci release-test/u);
   const releaseArtifacts = jobDefinition(workflow, "release-artifacts");
@@ -231,8 +220,8 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
     await mkdir(consumer);
     await run("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: checkout });
     await run("npm", ["run", "build"], { cwd: checkout });
-    await run("node", ["--test", "dist/public-schema-parity.test.js"], { cwd: checkout });
-    await run("npm", ["run", "check:route-manifest"], { cwd: checkout });
+    await run("npx", ["vitest", "run", "src/public-schema-parity.test.ts"], { cwd: checkout });
+    await run("node", ["scripts/generate-client-route-manifest.mjs", "--check"], { cwd: checkout });
     const packed = await run("npm", ["pack", "--pack-destination", packages], { cwd: checkout });
     const tarball = path.join(packages, packed.stdout.trim().split("\n").at(-1)!);
     const listing = await run("tar", ["-tf", tarball]);

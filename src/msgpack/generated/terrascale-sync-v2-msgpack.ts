@@ -7,11 +7,11 @@
 // exact-shape validators, and public types for @terrascale/sdk).
 //
 // manifest sha256:   7ecc582d87d405baecf9ac801452f16d8feead7d43302d665fd150a4542087c4
-// generator sha256:  49d508d153637bd3c623e70f3310d3c22f8578a1b46331b4da229ff01619ea6e
+// generator sha256:  9c0a2c65e331a1ca8a012b3394df927d3c807797fc4ed04d09a38996c1692ee0
 //
 // Regenerate: node scripts/generate-msgpack-protocol.mjs
 // Drift gate:  node scripts/generate-msgpack-protocol.mjs --check
-// Drift test:  node --test test/msgpack-manifest-drift.test.mjs
+// Drift test:  npm test (test/msgpack-manifest-drift.test.mjs)
 
 import {
   MsgpackReader,

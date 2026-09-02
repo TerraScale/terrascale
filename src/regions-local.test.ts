@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "vitest";
 
 import { createTerraScaleSqliteRuntime } from "./local/index.js";
-import { installLocalSqliteTestEnvironment } from "./local/test-environment.test.js";
+import { installLocalSqliteTestEnvironment } from "./local/test-environment.js";
 
 installLocalSqliteTestEnvironment();
 
