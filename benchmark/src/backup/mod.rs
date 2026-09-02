@@ -108,7 +108,6 @@ use sha256::digest_file;
 
 use crate::encryption::ArtifactCipher;
 use crate::engine::{Engine, MAX_SNAPSHOT_RECORD_PAGE};
-use crate::replication::SharedTombstoneRetention;
 use crate::storage::{PublishedCommit, PublishedWrite};
 use crate::types::{Cancellation, LocalDurability, StorageSequence, TenantId};
 
@@ -177,7 +176,6 @@ pub struct BackupPlan {
     tenants: Option<Vec<TenantId>>,
     progress: Option<Arc<dyn Fn(BackupProgress) + Send + Sync>>,
     cancellation: Option<Arc<Cancellation>>,
-    retention: Option<SharedTombstoneRetention>,
     /// Explicit opt-in encryption for the current backup format. Plaintext
     /// output remains available only through the legacy-compatible builder.
     encryption: Option<Arc<Mutex<ArtifactCipher>>>,
@@ -196,7 +194,6 @@ impl BackupPlan {
             tenants: None,
             progress: None,
             cancellation: None,
-            retention: None,
             encryption: None,
         }
     }
@@ -261,24 +258,6 @@ impl BackupPlan {
     #[must_use]
     pub fn with_cancellation(mut self, cancellation: Arc<Cancellation>) -> Self {
         self.cancellation = Some(cancellation);
-        self
-    }
-
-    /// Carries the tombstone retention watermark the run serves retained
-    /// deletion evidence from (GAP-R02).
-    ///
-    /// The handle is the engine's one watermark: an incremental run whose
-    /// base falls below the source's effective history bound archives the
-    /// retained `Delete` records of `(base, bound)` before the journal
-    /// range, so the chain restores without resurrecting a deleted
-    /// document, and records its base boundary as the chain's consumer
-    /// floor so the watermark holds that evidence for the chain. Without a
-    /// watermark the run keeps its pre-GAP-R02 behavior: a base below the
-    /// journal's servable bound fails closed with
-    /// [`BackupError::SourceUnavailable`].
-    #[must_use]
-    pub fn with_retention(mut self, retention: SharedTombstoneRetention) -> Self {
-        self.retention = Some(retention);
         self
     }
 
@@ -755,7 +734,6 @@ fn execute(
     let tenants = selected_tenants(engine, &mut state, plan)?;
     let boundary = resolve_boundary(engine, &mut state, plan, destination, &tenants)?;
 
-    let effective_start = effective_history_start(engine, plan)?;
     let mut writer = match &plan.encryption {
         Some(cipher) => MemberWriter::new_encrypted(
             staging.path().to_owned(),
@@ -773,24 +751,10 @@ fn execute(
         tenants.iter().cloned().map(|tenant| (tenant, (0, 0))).collect();
     match plan.kind {
         BackupKind::Incremental { base } => {
-            // The tombstone half of an incremental below the history bound
-            // (GAP-R02 decision D4): the retained deletion evidence of
-            // `(base, bound)` is archived first, and the journal range
-            // starts at the bound — the discarded window is proved by
-            // evidence, never re-read from a journal that no longer holds
-            // it.
-            let retained_from = effective_start.filter(|start| start.get() > base.get());
-            if let Some(start) = retained_from {
-                let retention = plan.retention.clone().ok_or(BackupError::SourceUnavailable)?;
-                archive_retained_evidence(
-                    &mut state,
-                    &mut writer,
-                    &retention,
-                    &tenants,
-                    base,
-                    start,
-                )?;
-            }
+            // The journal range below the effective history bound is no
+            // longer provable once the journal has given it up: the run
+            // fails closed from `effective_start` (M0-2 deleted the
+            // retained-evidence store that proved discarded windows).
             archive_journal_range(
                 engine,
                 &mut state,
@@ -799,7 +763,6 @@ fn execute(
                 &tenants,
                 base,
                 boundary,
-                retained_from,
             )?;
         }
         BackupKind::Full | BackupKind::Snapshot => {
@@ -859,26 +822,9 @@ fn resolve_boundary(
         BackupKind::Incremental { base } => {
             // The base must be a sealed recovery-point boundary in this
             // destination, and the range must be provable.
-            let anchored = discover_points(destination)?.iter().any(|point| {
-                if point.boundary_sequence() == base {
-                    if let Some(retention) = &plan.retention {
-                        // The chain's base is a retention consumer (GAP-R02
-                        // decision D3): the watermark holds the chain's
-                        // deletion evidence from this boundary on.
-                        retention.with_lock(|watermark| {
-                            watermark.observe_consumer(
-                                crate::replication::RetentionConsumer::BackupChain {
-                                    identity: point.identity().to_owned(),
-                                },
-                                Some(base),
-                            );
-                        });
-                    }
-                    true
-                } else {
-                    false
-                }
-            });
+            let anchored = discover_points(destination)?
+                .iter()
+                .any(|point| point.boundary_sequence() == base);
             if !anchored {
                 return Err(BackupError::ChainIncomplete);
             }
@@ -887,59 +833,10 @@ fn resolve_boundary(
                 return Err(BackupError::ChainIncomplete);
             }
             // The effective history bound is the journal's own servable
-            // bound raised by anything the watermark declared given up
-            // (GAP-R02 decision D2). A base below it is provable only from
-            // the retained deletion evidence, and only when the watermark
-            // holds it above the base and the discarded window holds no put
-            // the chain would miss.
-            //
-            // Decision D2.4 gates it first: a declared bound may not exceed
-            // the journal's durable head — the window must fully exist. A
-            // watermark declared against another engine's journal (or a
-            // stale one) would otherwise make this run serve from a phantom
-            // bound whose `(head, bound)` range is in neither the journal
-            // nor the retained evidence, and the chain would silently miss
-            // it. The refusal is recorded on the watermark's bounded log
-            // exactly as a declaration refusal is.
-            let declared = plan
-                .retention
-                .as_ref()
-                .map(|retention| retention.with_lock(|watermark| watermark.history_bound()));
-            if let Some(bound) = declared.flatten()
-                && bound.get() > proven.get()
-            {
-                if let Some(retention) = &plan.retention {
-                    retention.with_lock(|watermark| {
-                        watermark.observe_refusal(
-                            crate::replication::RetentionRefusal::BoundBeyondWindow {
-                                head: proven,
-                                candidate: bound,
-                            },
-                        );
-                    });
-                }
-                return Err(BackupError::SourceUnavailable);
-            }
-            let effective = match (servable_start, declared.flatten()) {
-                (Some(journal), Some(bound)) => Some(journal.max(bound)),
-                (Some(journal), None) => Some(journal),
-                (None, Some(bound)) => Some(bound),
-                (None, None) => None,
-            };
-            match effective {
-                Some(start) if base.get() < start.get() => {
-                    let provable = plan.retention.as_ref().is_some_and(|retention| {
-                        retention.with_lock(|watermark| {
-                            watermark.retention_floor().get() <= base.get()
-                                && tenants.iter().all(|tenant| {
-                                    watermark
-                                        .non_deletion_through(tenant)
-                                        .is_none_or(|through| through.get() <= base.get())
-                                })
-                        })
-                    });
-                    if provable { Ok(proven) } else { Err(BackupError::SourceUnavailable) }
-                }
+            // bound. A base below it is not provable: the run fails closed
+            // rather than silently skipping the given-up window.
+            match servable_start {
+                Some(start) if base.get() < start.get() => Err(BackupError::SourceUnavailable),
                 None if base.get() > 0 => Err(BackupError::SourceUnavailable),
                 _ => Ok(proven),
             }
@@ -977,7 +874,6 @@ fn archive_journal_range(
     tenants: &[TenantId],
     base: StorageSequence,
     boundary: StorageSequence,
-    retained_from: Option<StorageSequence>,
 ) -> Result<(), BackupError> {
     let unavailable = |_| BackupError::SourceUnavailable;
     for tenant in tenants {
@@ -995,13 +891,6 @@ fn archive_journal_range(
                 if commit.sequence().get() > boundary.get() {
                     continue;
                 }
-                // A commit below the effective history bound belongs to the
-                // discarded window: its deletion evidence was archived from
-                // the watermark, and re-reading it here would depend on a
-                // journal that no longer holds it.
-                if retained_from.is_some_and(|start| commit.sequence().get() < start.get()) {
-                    continue;
-                }
                 archive_commit(state, writer, tenant_counts, commit)?;
             }
             after = page.last().map_or(after, PublishedCommit::sequence);
@@ -1017,73 +906,14 @@ fn archive_journal_range(
 /// Archives the retained deletion evidence of one below-bound window
 /// (GAP-R02 decision D4).
 ///
-/// Every retained fact of `(base, bound)` the watermark still holds is
-/// written as the archive's delete record — the same record shape a
-/// journaled delete archives, with the same durability disclosure — in
-/// sequence order per tenant, before the journal range. The run spends one
-/// read per tenant's evidence window and observes the phase, exactly as
-/// the journal read does.
-fn archive_retained_evidence(
-    state: &mut RunState,
-    writer: &mut MemberWriter,
-    retention: &SharedTombstoneRetention,
-    tenants: &[TenantId],
-    base: StorageSequence,
-    bound: StorageSequence,
-) -> Result<(), BackupError> {
-    for tenant in tenants {
-        state.spend_read()?;
-        let evidence =
-            retention.with_lock(|watermark| watermark.deletion_evidence_above(tenant, base));
-        for fact in evidence {
-            if fact.sequence().get() >= bound.get() {
-                continue;
-            }
-            // A retained fact is disclosed exactly as the journaled delete
-            // it stands in for: below-`Synced` durability is reported, and
-            // the tenant's document and family-record counts are untouched
-            // — a delete counts as a delete, never as a document.
-            if matches!(fact.durability(), LocalDurability::Buffered | LocalDurability::Written) {
-                state.skipped.push(BackupSkip::new(
-                    fact.tenant().clone(),
-                    fact.id().clone(),
-                    BackupSkipReason::DurabilityBelowSynced,
-                ));
-            }
-            state.deletes += 1;
-            let record = Record::Delete {
-                tenant: fact.tenant().clone(),
-                collection: fact.collection().map(|name| name.as_str().to_owned()),
-                id: fact.id().as_str().to_owned(),
-                version_at_delete: fact.version_at_delete(),
-                durability: fact.durability(),
-            };
-            writer.write(&record).map_err(|_| BackupError::DestinationUnavailable)?;
-        }
-        state.observe(BackupStep::ReadingJournal)?;
-    }
-    Ok(())
-}
-
 /// Returns the effective history bound the run serves against: the
-/// journal's own servable bound raised by anything the plan's watermark
-/// declared given up (GAP-R02 decision D2).
+/// journal's own servable bound.
 fn effective_history_start(
     engine: &Engine,
-    plan: &BackupPlan,
 ) -> Result<Option<StorageSequence>, BackupError> {
-    let unavailable = |_| BackupError::SourceUnavailable;
-    let journal_start = engine.servable_history_start().map_err(unavailable)?;
-    let declared = plan
-        .retention
-        .as_ref()
-        .map(|retention| retention.with_lock(|watermark| watermark.history_bound()));
-    Ok(match (journal_start, declared.flatten()) {
-        (Some(journal), Some(bound)) => Some(journal.max(bound)),
-        (Some(journal), None) => Some(journal),
-        (None, Some(bound)) => Some(bound),
-        (None, None) => None,
-    })
+    engine
+        .servable_history_start()
+        .map_err(|_| BackupError::SourceUnavailable)
 }
 
 /// Archives the source state at `boundary` for a full or snapshot run by

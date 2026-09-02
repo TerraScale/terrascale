@@ -50,9 +50,9 @@ use std::{
     },
 };
 
+use super::conflict::ConflictRecord;
 use crate::{
     engine::{CommitPublicationSink, Engine, SubscriptionGuard},
-    replication::ConflictRecord,
     storage::{CommitPublicationEvent, PublishedWrite},
     types::{
         Cancellation, CollectionName, DocumentId, DocumentValue, OperationId, StorageSequence,

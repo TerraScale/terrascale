@@ -44,7 +44,7 @@ use std::{
     fmt,
 };
 
-use crate::{replication::RegionId, types::TenantId};
+use crate::types::{RegionId, TenantId};
 
 /// The canonical version of the deletion workflow encoding.
 pub const DELETION_FORMAT_VERSION: u16 = 1;

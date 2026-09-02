@@ -71,6 +71,40 @@ logical_identifier!(TenantId, InvalidIdentifier, "A validated tenant identifier.
 logical_identifier!(DocumentId, InvalidIdentifier, "A validated document identifier.");
 logical_identifier!(CollectionName, InvalidIdentifier, "A validated collection name.");
 logical_identifier!(OperationId, InvalidOperationIdentity, "A stable operation identity.");
+logical_identifier!(RegionId, InvalidIdentifier, "A validated logical Region identifier.");
+logical_identifier!(MemberId, InvalidIdentifier, "A validated logical Member identifier.");
+
+/// One stamp of a Member's bounded hybrid logical clock.
+///
+/// The stamp pairs the physical component — ticks observed from the shared
+/// transport clock or an injected instant — with a logical counter that
+/// orders writes inside one tick. Stamps order by physical time first and
+/// the counter second. Lane-scoped: no wall-clock claim.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ReplicationClockStamp {
+    ticks: u64,
+    counter: u64,
+}
+
+impl ReplicationClockStamp {
+    /// Creates one stamp from its physical ticks and logical counter.
+    #[must_use]
+    pub const fn new(ticks: u64, counter: u64) -> Self {
+        Self { ticks, counter }
+    }
+
+    /// Returns the physical component, in lane ticks.
+    #[must_use]
+    pub const fn ticks(self) -> u64 {
+        self.ticks
+    }
+
+    /// Returns the logical counter within the physical tick.
+    #[must_use]
+    pub const fn counter(self) -> u64 {
+        self.counter
+    }
+}
 
 /// A validated tenant and engine pairing accepted by the Engine seam.
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -49,7 +49,7 @@ use crate::families::state::{
 };
 use crate::families::{FamilyError, FamilyReadContext};
 use crate::operations::RequestValidationError;
-use crate::replication::ReplicationClockStamp;
+use crate::types::ReplicationClockStamp;
 use crate::types::{
     Cancellation, CollectionName, Deadline, DocumentId, DocumentValue, ExpectedVersion,
     OperationId, TenantScope,
@@ -2455,6 +2455,7 @@ mod tests {
         RevisionPolicy, RevisionRead, RevisionWrite,
     };
     use crate::operations::RequestValidationError;
+use crate::types::ReplicationClockStamp;
     use crate::types::{
         Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue,
         ExpectedVersion, LocalDurability, OperationId, TenantId, TenantScope,
@@ -3274,7 +3275,7 @@ mod tests {
         let unknown = crate::engine::DocumentVersionContract::try_new(
             7,
             7,
-            crate::replication::ReplicationClockStamp::new(0, 0),
+            ReplicationClockStamp::new(0, 0),
         )
         .expect("a well-formed but unknown contract");
         let tenant_scope = scope(&engine, "t1");

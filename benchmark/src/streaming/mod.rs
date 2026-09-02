@@ -29,6 +29,7 @@
 //! `docs/streaming/w4-stream.md`.
 
 mod backbone;
+mod conflict;
 mod payloads;
 mod sources;
 mod subscription;
@@ -39,13 +40,13 @@ use crate::{
     engine::Engine,
     families::{FamilyReadResult, TimeSeriesEntry, TimeSeriesRange},
     query::{QueryPlan, QueryRow},
-    replication::ConflictRecord,
     types::{
         Cancellation, CollectionName, Deadline, Document, DocumentId, OperationId, ReadSnapshot,
         StorageSequence, TenantScope,
     },
 };
 
+pub use conflict::{ConflictOutcome, ConflictRecord};
 pub use backbone::{
     ChangeCheckpoint, ChangeNotification, ChangeNotificationTap, ChangeReplayBatch,
     ChangeReplayRequest, MAX_CHANGE_NOTIFICATION_CAPACITY, SyncJournalBatch, SyncJournalMutation,

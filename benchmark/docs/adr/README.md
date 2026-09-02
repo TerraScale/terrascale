@@ -34,6 +34,8 @@ material choice and must not be treated as release authorization.
 - [0038 — Unified multi-database Member process](0038-unified-multi-database-member-process.md)
 - [0039 — Multi-tenant authorization and isolation](0039-multi-tenant-authorization-and-isolation.md)
 - [0040 — SQLite storage, parse-once byte pipeline, and auto-indexing](0040-sqlite-storage-parse-once-and-auto-indexing.md) — supersedes the storage-engine portions of 0010, 0016, and 0023; their optimizer, tiering-intent, and replication/repair semantics survive where the workspace goal keeps them.
+- [0042 — Production estate and launch prerequisites](0042-production-estate-and-launch-prerequisites.md) — the nine-instance OCI estate, managed services, Postgres-wire exposure, cost envelope, and the non-hardware launch checklist; supersedes the release-posture, licence, and soak paragraphs of 0033.
+- [0043 — Edge routing contract](0043-edge-routing-contract.md) — `X-TerraScale-Placement`/`Residency` headers on every database-scoped response, `421 Misdirected Request` for databases a region does not host, `GET /regions`; the member side of GOAL D-58 (`ts-proxy`).
 
 ## Authoring and release rules
 

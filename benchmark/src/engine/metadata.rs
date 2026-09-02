@@ -15,9 +15,10 @@
 //! loads the document; a stale vector is rejected with
 //! [`ConditionalLoadError::Stale`] carrying the current contract).
 
-use crate::replication::ReplicationClockStamp;
 use crate::storage::PublishedWrite;
-use crate::types::{CollectionName, Document, DocumentId, StorageSequence};
+use crate::types::{
+    CollectionName, Document, DocumentId, ReplicationClockStamp, StorageSequence,
+};
 
 use super::{EngineError, Transaction};
 

@@ -18,10 +18,7 @@
 //!   series' own record as a `rollups` section keyed by rollup name. A run
 //!   recomputes every complete window deterministically and replaces the
 //!   section, so a re-run without new raw points stages nothing.
-//! - **D3 (retention x the tombstone watermark).** Retention observes the
-//!   GAP-R02 watermark and never advances it: a series whose owning
-//!   document's deletion evidence the watermark still retains is skipped
-//!   and the skip is disclosed, raw points survive while their rollup
+//! - **D3 (retention horizon).** Raw points survive while their rollup
 //!   window is incomplete, and the horizon is the read path's own
 //!   `newest − retention_ms`.
 //! - **D4 (paging).** The family read seam's bounded cursor-stable paging
@@ -38,7 +35,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::state::{Records, TimeSeriesRecord, record_id};
 use super::{Aggregation, FamilyError, TimeSeriesAppend, TimeSeriesPolicy};
 use crate::engine::{CommitOutcome, DurableResolution, Engine, EngineError, Transaction};
-use crate::replication::SharedTombstoneRetention;
 use crate::types::{DocumentId, LocalDurability, OperationId, StorageSequence, TenantScope};
 
 /// The receipt of one series' rollup run.
@@ -122,10 +118,8 @@ impl RetentionReceipt {
         self.entries_deleted
     }
 
-    /// Returns whether the run skipped the series because the tombstone
-    /// watermark still retains deletion evidence for the owning document
-    /// (decision D3): the evidence window covers the series, so the pass
-    /// touched nothing and this flag discloses it.
+    /// Returns whether the run skipped the series without staging anything
+    /// (decision D3): the pass touched nothing and this flag discloses it.
     #[must_use]
     pub const fn skipped_document_evidence(&self) -> bool {
         self.skipped_document_evidence
@@ -220,11 +214,7 @@ pub fn rollup_series(
 /// The horizon is the read path's own `newest raw timestamp − retention_ms`;
 /// raw entries strictly below it are dropped and every rollup section is
 /// trimmed to it — but a raw entry survives while any configured rollup
-/// policy's window containing it is incomplete, and the whole series is
-/// skipped (nothing staged, the receipt discloses it) while the tombstone
-/// watermark still retains deletion evidence for the owning document. The
-/// run never transitions the watermark: it reads the retained evidence set
-/// and nothing else.
+/// policy's window containing it is incomplete.
 ///
 /// # Errors
 ///
@@ -236,22 +226,7 @@ pub fn enforce_retention(
     document: &DocumentId,
     name: &str,
     now_ms: i64,
-    watermark: &SharedTombstoneRetention,
 ) -> Result<RetentionReceipt, FamilyError> {
-    // D3.3: the retained evidence set is the tombstone's evidence window —
-    // the watermark itself discards below-floor facts, so a fact present in
-    // the set is a fact whose window still covers its document. The read is
-    // strictly-above sequence zero, matching the watermark's own serving
-    // query.
-    let covered = watermark.with_lock(|retention| {
-        retention
-            .deletion_evidence_above(scope.tenant(), StorageSequence::default())
-            .iter()
-            .any(|fact| fact.id() == document)
-    });
-    if covered {
-        return Ok(RetentionReceipt::new(name, None, 0, true, false));
-    }
     let snapshot = engine.read_snapshot(scope).map_err(|error| map_engine_error(&error))?;
     let operation = unique_operation("timeseries-retention");
     let mut transaction = engine
@@ -324,10 +299,9 @@ pub fn run_series(
     document: &DocumentId,
     name: &str,
     now_ms: i64,
-    watermark: &SharedTombstoneRetention,
 ) -> Result<SeriesRunReceipt, FamilyError> {
     let rollups = rollup_series(engine, scope, document, name, now_ms)?;
-    let retention = enforce_retention(engine, scope, document, name, now_ms, watermark)?;
+    let retention = enforce_retention(engine, scope, document, name, now_ms)?;
     Ok(SeriesRunReceipt::new(rollups, retention))
 }
 
@@ -351,7 +325,6 @@ pub fn run_tenant(
     engine: &Engine,
     scope: &TenantScope,
     now_ms: i64,
-    watermark: &SharedTombstoneRetention,
 ) -> Result<Vec<SeriesRunReceipt>, FamilyError> {
     let snapshot = engine.read_snapshot(scope).map_err(|error| map_engine_error(&error))?;
     let records = engine.families().snapshot_family_records(scope, &snapshot)?;
@@ -368,7 +341,7 @@ pub fn run_tenant(
         };
         let document =
             DocumentId::try_new(document).map_err(|_| FamilyError::ReservedStateInvalid)?;
-        receipts.push(run_series(engine, scope, &document, series, now_ms, watermark)?);
+        receipts.push(run_series(engine, scope, &document, series, now_ms)?);
     }
     Ok(receipts)
 }

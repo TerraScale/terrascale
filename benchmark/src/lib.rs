@@ -35,7 +35,6 @@ pub mod operations;
 pub mod query;
 pub mod regions;
 pub mod relationships;
-pub mod replication;
 pub mod session;
 pub mod storage;
 pub mod streaming;
@@ -92,11 +91,7 @@ pub use query::{
 pub use regions::{
     REGION_CEILING, RegionAdmissionError, RegionCatalog, RegionCode, RegionCodeError,
 };
-pub use replication::{
-    AcknowledgementLevel, AcknowledgementReport, ConflictRecord, Convergence, MemberId, RegionId,
-    ReplicationConfig, ReplicationCursor, ReplicationError, ReplicationOutcome, ReplicationReceipt,
-    ReplicationStatus, TopologyView,
-};
+pub use types::{MemberId, RegionId, ReplicationClockStamp};
 pub use session::{
     AfterSaveEvent, BeforeDeleteEvent, BeforeDeleteHook, BeforeStoreEvent, BeforeStoreHook,
     DocumentChanges, FieldChange, FieldChangeKind, Session, SessionCommand, SessionError,
