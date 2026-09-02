@@ -381,6 +381,11 @@ impl PublishedCommit {
     pub(crate) fn writes(&self) -> &[PublishedWrite] {
         &self.writes
     }
+
+    /// Appends one write to the reconstructable write set.
+    pub(crate) fn writes_mut(&mut self) -> &mut Vec<PublishedWrite> {
+        &mut self.writes
+    }
 }
 
 /// One reconstructable write of a published commit (W4-CA-4).

@@ -148,7 +148,7 @@ const HISTORY_FLOOR_MILLIS: i64 = 30 * 24 * 60 * 60 * 1000;
 const SQLITE_FORMAT_MAGIC: &[u8; 10] = b"TBV3SQLITE";
 
 /// The `SQLite` storage schema version written after the marker magic.
-const SQLITE_FORMAT_VERSION: u64 = 1;
+const SQLITE_FORMAT_VERSION: u64 = 2;
 
 /// The database file name inside one location directory.
 const DATABASE_FILE: &str = "terrabase.sqlite3";
@@ -177,6 +177,10 @@ CREATE TABLE IF NOT EXISTS documents (
     collection  TEXT    NOT NULL,
     id          TEXT    NOT NULL,
     commit_seq  INTEGER NOT NULL,
+    commit_ulid TEXT    NOT NULL,
+    revision    TEXT    NOT NULL,
+    requested   INTEGER NOT NULL,
+    digest      INTEGER NOT NULL,
     version     INTEGER NOT NULL,
     deleted     INTEGER NOT NULL,
     committed_at INTEGER NOT NULL DEFAULT 0,
@@ -184,27 +188,18 @@ CREATE TABLE IF NOT EXISTS documents (
     PRIMARY KEY (tenant, collection, id, commit_seq)
 ) WITHOUT ROWID;
 
-CREATE TABLE IF NOT EXISTS ledger (
+CREATE INDEX IF NOT EXISTS documents_seq ON documents (commit_seq);
+
+CREATE INDEX IF NOT EXISTS documents_commit_ulid
+    ON documents (tenant, commit_ulid);
+
+CREATE TABLE IF NOT EXISTS rejections (
     tenant     TEXT    NOT NULL,
     operation  TEXT    NOT NULL,
     digest     INTEGER NOT NULL,
-    sequence   INTEGER NOT NULL,
-    root       TEXT    NOT NULL,
-    requested  INTEGER NOT NULL,
-    committed  INTEGER NOT NULL,
-    synced     INTEGER NOT NULL,
     rejection  INTEGER NOT NULL,
     PRIMARY KEY (tenant, operation)
 ) WITHOUT ROWID;
-
-CREATE TABLE IF NOT EXISTS journal (
-    sequence  INTEGER PRIMARY KEY,
-    tenant    TEXT NOT NULL,
-    operation TEXT NOT NULL,
-    frame     BLOB NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS journal_tenant_sequence ON journal (tenant, sequence);
 
 CREATE TABLE IF NOT EXISTS usage_facts (
     tenant       TEXT    NOT NULL,
@@ -293,13 +288,6 @@ impl SqliteStorage {
         }
         let writer = open_connection(&database_path)?;
         writer.execute_batch(SCHEMA).map_err(|_| StorageOpenError::Unavailable)?;
-        // Open-time migration: locations created before the D-42 history
-        // floor carry no `committed_at`; the column's zero default marks
-        // those rows as maximally old, which is the honest reading (their
-        // real commit time is unknown but in the past).
-        let _ = writer.execute_batch(
-            "ALTER TABLE documents ADD COLUMN committed_at INTEGER NOT NULL DEFAULT 0",
-        );
         // Seed the identity rows idempotently: `INSERT OR IGNORE` keeps an
         // existing location's root chain and format version untouched.
         let seed = format!(
@@ -431,24 +419,26 @@ impl SqliteStorage {
         )
         .unwrap_or(0);
         let floor = if oldest_retained == 0 { frontier } else { frontier.min(oldest_retained) };
-        let pruned = transaction
-            .execute("DELETE FROM journal WHERE sequence < ?1", rusqlite::params![floor as i64])
-            .map_err(|_| ())?;
-        // Version-row retention: a below-floor row survives only when it is
-        // the newest version of its key — the row an above-floor snapshot
-        // resolves when no later write exists. Everything else below the
-        // floor is shadowed by a newer version, tombstone or not, and a
-        // shadowed row cannot change any above-floor answer. The MAX
+        // Whole-commit retention: a below-floor commit survives only when
+        // one of its rows is the newest version of its key — the row an
+        // above-floor snapshot resolves when no later write exists. Every
+        // other below-floor commit is fully shadowed, and pruning takes
+        // whole commits only (never some of a commit's rows), so the
+        // folded journal never serves a partial publication. The shadow
         // witness is stable through the statement (a key's newest row is
         // never itself deleted), so the sweep does not depend on scan
         // order.
-        transaction
+        let pruned = transaction
             .execute(
-                "DELETE FROM documents WHERE commit_seq < ?1 AND commit_seq < (
-                   SELECT MAX(newer.commit_seq) FROM documents newer
-                   WHERE newer.tenant = documents.tenant
-                     AND newer.collection = documents.collection
-                     AND newer.id = documents.id
+                "DELETE FROM documents WHERE commit_seq < ?1 AND commit_seq NOT IN (
+                   SELECT pin.commit_seq FROM documents pin
+                   WHERE NOT EXISTS (
+                     SELECT 1 FROM documents newer
+                     WHERE newer.tenant = pin.tenant
+                       AND newer.collection = pin.collection
+                       AND newer.id = pin.id
+                       AND newer.commit_seq > pin.commit_seq
+                   )
                  )",
                 rusqlite::params![floor as i64],
             )
@@ -464,13 +454,15 @@ impl SqliteStorage {
         history_floor_on(reader.connection()).ok().flatten()
     }
 
-    /// The journal's record count — the bounded-journal invariant's measure.
+    /// The retained-commit count — the bounded-journal invariant's measure.
     #[cfg(test)]
     fn journal_records(&self) -> u64 {
         let reader = self.reader();
-        let count = reader
-            .connection()
-            .query_row("SELECT COUNT(*) FROM journal", [], |row| row.get::<_, i64>(0));
+        let count = reader.connection().query_row(
+            "SELECT COUNT(DISTINCT commit_seq) FROM documents",
+            [],
+            |row| row.get::<_, i64>(0),
+        );
         u64::try_from(count.unwrap_or(0)).unwrap_or(0)
     }
 }
@@ -538,8 +530,9 @@ fn stage_intent(
     if intent.usage_admission.is_some() {
         return Ok(CommitResult::Rejected(CommitRejection::Storage));
     }
-    // Step 2: a retried identity resolves from the durable ledger.
-    if let Some(entry) = ledger_entry(transaction, &intent.tenant, &intent.operation)? {
+    // Step 2: a retried identity resolves from its folded rows (or its
+    // rejection record).
+    if let Some(entry) = operation_view(transaction, &intent.tenant, &intent.operation)? {
         if entry.digest != intent.digest {
             return Ok(CommitResult::Rejected(CommitRejection::OperationIdReuse));
         }
@@ -548,11 +541,10 @@ fn stage_intent(
             // publication — the reference engines' retry rule.
             return Ok(CommitResult::Rejected(reason));
         }
-        let proven = if entry.synced { LocalDurability::Synced } else { LocalDurability::Written };
         return Ok(CommitResult::Committed(StorageReceipt {
             sequence: StorageSequence::new(entry.sequence),
-            root: StorageRootId::from_recorded(entry.root),
-            durability: codec::min_level(entry.requested, proven),
+            root: StorageRootId::from_recorded(root_head.clone()),
+            durability: entry.requested,
         }));
     }
     // Step 3: conflict-check every write against the snapshot and the
@@ -603,19 +595,12 @@ fn stage_intent(
             // failure drops the record too; the conflict check is
             // deterministic against the same rolled-back state, so a
             // replay converges to the same rejection either way.
-            insert_ledger_row(
+            insert_rejection_row(
                 transaction,
-                &LedgerRow {
-                    tenant: intent.tenant.as_str(),
-                    operation: intent.operation.as_str(),
-                    digest: intent.digest,
-                    sequence: 0,
-                    root: "",
-                    requested: intent.durability,
-                    committed: false,
-                    synced: false,
-                    rejection: Some(CommitRejection::Conflict),
-                },
+                &intent.tenant,
+                &intent.operation,
+                intent.digest,
+                CommitRejection::Conflict,
             )?;
             return Ok(CommitResult::Rejected(CommitRejection::Conflict));
         }
@@ -626,7 +611,13 @@ fn stage_intent(
     };
     *watermark = sequence;
     let root = chained_root(root_head, sequence, intent.digest);
-    // Step 5: documents, ledger row, and journal row ride one transaction.
+    // Step 5: documents rows ride one transaction, and every row of the
+    // commit carries the commit's own identity — the journal is the table.
+    let commit = FoldedCommit {
+        operation: &intent.operation,
+        requested: intent.durability,
+        digest: intent.digest,
+    };
     let mut published_writes: Vec<PublishedWrite> = Vec::with_capacity(intent.writes.len());
     for write in &intent.writes {
         match write {
@@ -650,6 +641,7 @@ fn stage_intent(
                     version,
                     false,
                     &encode_document_body(&published),
+                    &commit,
                 )?;
                 published_writes.push(PublishedWrite::Put { document: published });
             }
@@ -672,6 +664,7 @@ fn stage_intent(
                             version_at_delete,
                             true,
                             &[],
+                            &commit,
                         )?;
                     }
                     None => {
@@ -689,6 +682,7 @@ fn stage_intent(
                                 0,
                                 true,
                                 &[],
+                                &commit,
                             )?;
                         }
                     }
@@ -701,31 +695,14 @@ fn stage_intent(
             }
         }
     }
-    insert_ledger_row(
-        transaction,
-        &LedgerRow {
-            tenant: intent.tenant.as_str(),
-            operation: intent.operation.as_str(),
-            digest: intent.digest,
-            sequence,
-            root: root.as_str(),
-            requested: intent.durability,
-            committed: true,
-            // A `synchronous=FULL` commit is durable before it returns, so
-            // the ledger records the flip at write time: there is no
-            // published-but-unsynced window for a crash to expose.
-            synced: intent.durability == LocalDurability::Synced,
-            rejection: None,
-        },
-    )?;
-    let commit = PublishedCommit::new(
+    let published = PublishedCommit::new(
         intent.tenant.clone(),
         intent.operation.clone(),
         StorageSequence::new(sequence),
         intent.durability,
         published_writes,
     );
-    insert_journal_row(transaction, sequence, &commit)?;
+    let _ = &published;
     update_root_head(transaction, root.as_str())?;
     root.clone_into(root_head);
     Ok(CommitResult::Committed(StorageReceipt {
@@ -735,92 +712,81 @@ fn stage_intent(
     }))
 }
 
-/// The durable ledger view of one operation identity.
-struct LedgerEntryView {
+/// The durable resolution of one operation identity: a committed commit
+/// resolves from its folded rows; a rejection resolves from the rejections
+/// table.
+struct OperationView {
     digest: u64,
     sequence: u64,
-    root: String,
     requested: LocalDurability,
-    synced: bool,
     rejection: Option<CommitRejection>,
 }
 
-/// One ledger row's columns, borrowed from the intent being staged.
-struct LedgerRow<'a> {
-    tenant: &'a str,
-    operation: &'a str,
-    digest: u64,
-    sequence: u64,
-    root: &'a str,
-    requested: LocalDurability,
-    committed: bool,
-    synced: bool,
-    rejection: Option<CommitRejection>,
-}
-
-/// Reads one operation's durable ledger row.
-fn ledger_entry(
+/// Reads one operation's durable resolution from the folded rows and the
+/// rejections table.
+fn operation_view(
     transaction: &rusqlite::Transaction<'_>,
     tenant: &TenantId,
     operation: &OperationId,
-) -> Result<Option<LedgerEntryView>, ()> {
-    let row = transaction.query_row(
-        "SELECT digest, sequence, root, requested, synced, rejection FROM ledger
-         WHERE tenant = ?1 AND operation = ?2",
+) -> Result<Option<OperationView>, ()> {
+    if let Ok(row) = transaction.query_row(
+        "SELECT digest, MIN(commit_seq), MIN(requested) FROM documents
+         WHERE tenant = ?1 AND commit_ulid = ?2",
         rusqlite::params![tenant.as_str(), operation.as_str()],
-        |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, u8>(3)?,
-                row.get::<_, i64>(4)?,
-                row.get::<_, u8>(5)?,
-            ))
-        },
-    );
-    let (digest, sequence, root, requested, synced, rejection) = match row {
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
+    ) {
+        let (digest, sequence, requested) = row;
+        return Ok(Some(OperationView {
+            #[allow(clippy::cast_sign_loss)]
+            digest: digest as u64,
+            sequence: u64::try_from(sequence).map_err(|_| ())?,
+            requested: codec::durability_of(u8::try_from(requested).map_err(|_| ())?).ok_or(())?,
+            rejection: None,
+        }));
+    }
+    let rejection = match transaction.query_row(
+        "SELECT digest, rejection FROM rejections WHERE tenant = ?1 AND operation = ?2",
+        rusqlite::params![tenant.as_str(), operation.as_str()],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+    ) {
         Ok(row) => row,
+        // No folded rows and no rejection record: the identity is unknown.
         Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
         Err(_) => return Err(()),
     };
-    // The digest is a full `u64`; `SQLite` integers are signed, so the
-    // write side stores the bit pattern and this read restores it.
-    #[allow(clippy::cast_sign_loss)]
-    let digest = digest as u64;
-    Ok(Some(LedgerEntryView {
-        digest,
-        sequence: u64::try_from(sequence).map_err(|_| ())?,
-        root,
-        requested: codec::durability_of(requested).ok_or(())?,
-        synced: synced != 0,
-        rejection: (rejection != 0).then(|| codec::decode_rejection(rejection)).flatten(),
+    let (digest, code) = rejection;
+    let rejection = match u8::try_from(code) {
+        Ok(code) if code > 0 => codec::decode_rejection(code),
+        _ => None,
+    };
+    Ok(Some(OperationView {
+        #[allow(clippy::cast_sign_loss)]
+        digest: digest as u64,
+        sequence: 0,
+        requested: LocalDurability::Written,
+        rejection,
     }))
 }
 
-/// Writes one ledger row.
-#[allow(clippy::too_many_arguments, reason = "the ledger row columns")]
-fn insert_ledger_row(
+/// Writes one rejection record: the durable binding that makes a retried
+/// identity replay its rejection.
+fn insert_rejection_row(
     transaction: &rusqlite::Transaction<'_>,
-    row: &LedgerRow<'_>,
+    tenant: &TenantId,
+    operation: &OperationId,
+    digest: u64,
+    rejection: CommitRejection,
 ) -> Result<(), ()> {
     transaction
         .prepare_cached(
-            "INSERT INTO ledger
-             (tenant, operation, digest, sequence, root, requested, committed, synced, rejection)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO rejections (tenant, operation, digest, rejection) VALUES (?1, ?2, ?3, ?4)",
         )
         .and_then(|mut statement| {
             statement.execute(rusqlite::params![
-                row.tenant,
-                row.operation,
-                row.digest as i64,
-                row.sequence as i64,
-                row.root,
-                codec::durability_code(row.requested),
-                i64::from(row.committed),
-                i64::from(row.synced),
-                row.rejection.map_or(0, codec::rejection_code),
+                tenant.as_str(),
+                operation.as_str(),
+                digest as i64,
+                codec::rejection_code(rejection),
             ])
         })
         .map(|_| ())
@@ -828,7 +794,7 @@ fn insert_ledger_row(
 }
 
 /// Writes one document version row (a tombstone carries an empty body).
-#[allow(clippy::too_many_arguments, reason = "one version row columns")]
+#[allow(clippy::too_many_arguments, reason = "the folded row model's columns")]
 fn insert_document_row(
     transaction: &rusqlite::Transaction<'_>,
     tenant: &TenantId,
@@ -838,13 +804,15 @@ fn insert_document_row(
     version: u64,
     deleted: bool,
     body: &[u8],
+    commit: &FoldedCommit<'_>,
 ) -> Result<(), ()> {
     let committed_at = unix_millis();
     transaction
         .prepare_cached(
             "INSERT INTO documents
-             (tenant, collection, id, commit_seq, version, deleted, committed_at, body)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             (tenant, collection, id, commit_seq, commit_ulid, revision, requested,
+              digest, version, deleted, committed_at, body)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         )
         .and_then(|mut statement| {
             statement.execute(rusqlite::params![
@@ -852,6 +820,10 @@ fn insert_document_row(
                 collection.as_str(),
                 id.as_str(),
                 sequence as i64,
+                commit.operation.as_str(),
+                revision_string(sequence, version),
+                codec::durability_code(commit.requested),
+                commit.digest as i64,
                 version as i64,
                 i64::from(deleted),
                 committed_at,
@@ -862,28 +834,16 @@ fn insert_document_row(
         .map_err(|_| ())
 }
 
-/// Writes one publication-history journal row (the checksummed commit frame
-/// the LSM history keyspace stores).
-fn insert_journal_row(
-    transaction: &rusqlite::Transaction<'_>,
-    sequence: u64,
-    commit: &PublishedCommit,
-) -> Result<(), ()> {
-    let frame = codec::encode_commit_frame(commit);
-    transaction
-        .prepare_cached(
-            "INSERT INTO journal (sequence, tenant, operation, frame) VALUES (?1, ?2, ?3, ?4)",
-        )
-        .and_then(|mut statement| {
-            statement.execute(rusqlite::params![
-                sequence as i64,
-                commit.tenant().as_str(),
-                commit.operation_id().as_str(),
-                frame,
-            ])
-        })
-        .map(|_| ())
-        .map_err(|_| ())
+/// The per-commit facts every row of one commit carries (the D-42 fold).
+struct FoldedCommit<'a> {
+    operation: &'a OperationId,
+    requested: LocalDurability,
+    digest: u64,
+}
+
+/// The public revision string of one row: the sequence it committed at.
+fn revision_string(sequence: u64, version: u64) -> String {
+    format!("{sequence}-{version}")
 }
 
 /// Advances the recorded root chain head.
@@ -895,14 +855,14 @@ fn update_root_head(transaction: &rusqlite::Transaction<'_>, root: &str) -> Resu
         .map_err(|_| ())
 }
 
-/// The highest sequence any durable row names. Commits' ledger rows and
-/// usage facts share one sequence space, exactly the reference engines'
-/// watermark rule.
+/// The highest sequence any durable row names. Commits' folded document
+/// rows and usage facts share one sequence space, exactly the reference
+/// engines' watermark rule.
 fn durable_watermark(connection: &Connection) -> Result<u64, ()> {
     let watermark = connection
         .query_row(
             "SELECT COALESCE(MAX(sequence), 0) FROM (
-                 SELECT MAX(sequence) AS sequence FROM ledger
+                 SELECT MAX(commit_seq) AS sequence FROM documents
                  UNION ALL
                  SELECT MAX(seq) AS sequence FROM usage_facts
              )",
@@ -1084,15 +1044,6 @@ fn decode_document_body(bytes: &[u8]) -> Option<Document> {
     (reader.remaining() == 0).then_some(document)
 }
 
-/// Decodes one checksummed journal frame into its commit.
-fn decode_journal_frame(frame: &[u8]) -> Option<PublishedCommit> {
-    let mut reader = codec::Reader::new(frame);
-    let length = usize::try_from(reader.read_u32()?).ok()?;
-    let checksum = reader.read_u64()?;
-    let payload = reader.take(length)?;
-    (codec::fnv1a(payload) == checksum).then(|| codec::decode_commit_payload(payload)).flatten()
-}
-
 /// Derives the next root-chain identity from the current head.
 ///
 /// The identity keeps the LSM chain's shape — sequence and a chained
@@ -1248,32 +1199,37 @@ impl StoragePort for SqliteStorage {
         tenant: &TenantId,
         operation: &OperationId,
     ) -> Option<OperationResolution> {
-        let reader = self.reader();
-        let connection = reader.connection();
-        let (requested, rejection, sequence, synced) = connection
+        self.reader()
+            .connection()
             .query_row(
-                "SELECT requested, rejection, sequence, synced FROM ledger
-                 WHERE tenant = ?1 AND operation = ?2",
+                "SELECT MIN(commit_seq), MIN(requested) FROM documents
+                 WHERE tenant = ?1 AND commit_ulid = ?2",
                 rusqlite::params![tenant.as_str(), operation.as_str()],
-                |row| {
-                    Ok((
-                        row.get::<_, u8>(0)?,
-                        row.get::<_, u8>(1)?,
-                        row.get::<_, i64>(2)?,
-                        row.get::<_, i64>(3)?,
-                    ))
-                },
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
             )
-            .ok()?;
-        let requested = codec::durability_of(requested)?;
-        if rejection != 0 {
-            return Some(OperationResolution::Rejected(codec::decode_rejection(rejection)?));
-        }
-        let proven = if synced != 0 { LocalDurability::Synced } else { LocalDurability::Written };
-        Some(OperationResolution::Committed {
-            sequence: StorageSequence::new(u64::try_from(sequence).ok()?),
-            durability: codec::min_level(requested, proven),
-        })
+            .ok()
+            .and_then(|(sequence, requested)| {
+                let requested = codec::durability_of(u8::try_from(requested).ok()?)?;
+                Some(OperationResolution::Committed {
+                    sequence: StorageSequence::new(u64::try_from(sequence).ok()?),
+                    durability: requested,
+                })
+            })
+            .or_else(|| {
+                // A rejected identity replays its rejection from the
+                // rejections table.
+                let connection = self.reader();
+                let connection = connection.connection();
+                let rejected = connection
+                    .query_row(
+                        "SELECT rejection FROM rejections WHERE tenant = ?1 AND operation = ?2",
+                        rusqlite::params![tenant.as_str(), operation.as_str()],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .ok()?;
+                let rejection = codec::decode_rejection(u8::try_from(rejected).ok()?)?;
+                Some(OperationResolution::Rejected(rejection))
+            })
     }
 
     fn record_usage(
@@ -1628,34 +1584,29 @@ impl StoragePort for SqliteStorage {
         let mut winners = vec![None; keys.len()];
         let mut statement = connection
             .prepare_cached(
-                "SELECT frame FROM journal WHERE tenant = ?1 AND sequence <= ?2
-                 ORDER BY sequence",
+                "SELECT collection, id, deleted, requested FROM documents
+                 WHERE tenant = ?1 AND commit_seq <= ?2
+                 ORDER BY commit_seq",
             )
             .ok()?;
-        let rows = statement
-            .query_map(rusqlite::params![tenant.as_str(), sequence.get() as i64], |row| {
-                row.get::<_, Vec<u8>>(0)
-            })
-            .ok()?;
+        let rows =
+            statement.query_map(rusqlite::params![tenant.as_str(), sequence.get() as i64], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            });
         // ponytail: O(retained history) per call, matching the LSM's
-        // history_index walk; index the journal by key when bulk export on
+        // history_index walk; index the rows by key when bulk export on
         // this backend gets hot.
-        for frame in rows.flatten() {
-            let commit = decode_journal_frame(&frame)?;
-            for write in commit.writes() {
-                let (collection, identifier, put) = match write {
-                    PublishedWrite::Put { document } => {
-                        (document.collection().as_str(), document.id().as_str(), true)
-                    }
-                    PublishedWrite::Delete { collection: Some(collection), id, .. } => {
-                        (collection.as_str(), id.as_str(), false)
-                    }
-                    PublishedWrite::Delete { collection: None, .. } => continue,
-                };
-                for (index, (key_collection, key_identifier)) in keys.iter().enumerate() {
-                    if *key_collection == collection && *key_identifier == identifier {
-                        winners[index] = put.then_some(commit.durability());
-                    }
+        for row in rows.ok()?.flatten() {
+            let (collection, identifier, deleted, requested) = row;
+            let durability = codec::durability_of(u8::try_from(requested).ok()?)?;
+            for (index, (key_collection, key_identifier)) in keys.iter().enumerate() {
+                if *key_collection == collection && *key_identifier == identifier {
+                    winners[index] = (deleted == 0).then_some(durability);
                 }
             }
         }
@@ -1671,25 +1622,82 @@ impl StoragePort for SqliteStorage {
         let reader = self.reader();
         let connection = reader.connection();
         let Ok(mut statement) = connection.prepare_cached(
-            "SELECT frame FROM journal WHERE tenant = ?1 AND sequence > ?2
-             ORDER BY sequence LIMIT ?3",
+            "SELECT commit_seq, commit_ulid, collection, id, deleted, version,
+                    requested, body
+             FROM documents WHERE tenant = ?1 AND commit_seq > ?2 AND commit_seq IN (
+                 SELECT commit_seq FROM documents WHERE tenant = ?1 AND commit_seq > ?2
+                 ORDER BY commit_seq LIMIT ?3
+             )
+             ORDER BY commit_seq, collection, id",
         ) else {
             return Vec::new();
         };
         let Ok(rows) = statement.query_map(
             rusqlite::params![tenant.as_str(), after.get() as i64, i64::from(limit)],
-            |row| row.get::<_, Vec<u8>>(0),
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, Vec<u8>>(7)?,
+                ))
+            },
         ) else {
             return Vec::new();
         };
-        rows.flatten().filter_map(|frame| decode_journal_frame(&frame)).collect()
+        // Group the rows of one commit_seq into one PublishedCommit — the
+        // journal rebuilt from the folded rows. The inner LIMIT bounds
+        // commits (not rows), so no publication is ever served partial.
+        let mut commits: Vec<PublishedCommit> = Vec::new();
+        for row in rows.flatten() {
+            let (sequence, operation, collection, id, deleted, version, requested, body) = row;
+            let write = if deleted == 0 {
+                let Some(document) = decode_document_body(&body) else { continue };
+                PublishedWrite::Put { document }
+            } else {
+                let Some(collection) = CollectionName::try_new(&collection).ok() else { continue };
+                let Some(id) = DocumentId::try_new(&id).ok() else { continue };
+                PublishedWrite::Delete {
+                    collection: Some(collection),
+                    id,
+                    version_at_delete: u64::try_from(version).unwrap_or(0),
+                }
+            };
+            let Some(sequence) = u64::try_from(sequence).ok() else { continue };
+            match commits.last_mut() {
+                Some(last) if last.sequence().get() == sequence => {
+                    let writes = last.writes_mut();
+                    writes.push(write);
+                }
+                _ => {
+                    let Some(durability) =
+                        u8::try_from(requested).ok().and_then(codec::durability_of)
+                    else {
+                        continue;
+                    };
+                    let Some(operation) = OperationId::try_new(&operation).ok() else { continue };
+                    commits.push(PublishedCommit::new(
+                        tenant.clone(),
+                        operation,
+                        StorageSequence::new(sequence),
+                        durability,
+                        vec![write],
+                    ));
+                }
+            }
+        }
+        commits
     }
 
     fn committed_tenants(&self) -> Vec<TenantId> {
         let reader = self.reader();
         let connection = reader.connection();
         let Ok(mut statement) =
-            connection.prepare_cached("SELECT DISTINCT tenant FROM journal ORDER BY tenant")
+            connection.prepare_cached("SELECT DISTINCT tenant FROM documents ORDER BY tenant")
         else {
             return Vec::new();
         };
@@ -1704,7 +1712,7 @@ impl StoragePort for SqliteStorage {
         let connection = reader.connection();
         connection
             .query_row(
-                "SELECT MAX(sequence) FROM journal WHERE tenant = ?1 AND sequence <= ?2",
+                "SELECT MAX(commit_seq) FROM documents WHERE tenant = ?1 AND commit_seq <= ?2",
                 rusqlite::params![tenant.as_str(), at.get() as i64],
                 |row| row.get::<_, Option<i64>>(0),
             )
@@ -1717,15 +1725,15 @@ impl StoragePort for SqliteStorage {
     fn servable_history_start(&self) -> Option<StorageSequence> {
         let reader = self.reader();
         let connection = reader.connection();
-        // The pruning floor bounds what the journal can still serve; with
-        // no consumer registered, the oldest retained journal row is the
+        // The pruning floor bounds what the folded rows can still serve;
+        // with no consumer registered, the oldest retained row is the
         // bound.
         history_floor_on(connection)
             .ok()
             .flatten()
             .or_else(|| {
                 connection
-                    .query_row("SELECT MIN(sequence) FROM journal", [], |row| {
+                    .query_row("SELECT MIN(commit_seq) FROM documents", [], |row| {
                         row.get::<_, Option<i64>>(0)
                     })
                     .ok()
@@ -1739,7 +1747,9 @@ impl StoragePort for SqliteStorage {
         let reader = self.reader();
         let connection = reader.connection();
         connection
-            .query_row("SELECT MAX(sequence) FROM journal", [], |row| row.get::<_, Option<i64>>(0))
+            .query_row("SELECT MAX(commit_seq) FROM documents", [], |row| {
+                row.get::<_, Option<i64>>(0)
+            })
             .ok()
             .flatten()
             .and_then(|sequence| u64::try_from(sequence).ok())
@@ -1751,13 +1761,13 @@ impl StoragePort for SqliteStorage {
         let connection = reader.connection();
         // One statement keeps the sequence and the root head on one read
         // snapshot. The watermark is the shared sequence space's maximum —
-        // commits' ledger rows and usage facts — matching the reference
+        // commits' folded rows and usage facts — matching the reference
         // engines (with rejections consuming no sequence, an empty
         // usage table leaves it exactly the last commit's sequence).
         connection
             .query_row(
                 "SELECT (SELECT COALESCE(MAX(sequence), 0) FROM (
-                            SELECT MAX(sequence) AS sequence FROM ledger
+                            SELECT MAX(commit_seq) AS sequence FROM documents
                             UNION ALL
                             SELECT MAX(seq) AS sequence FROM usage_facts)),
                         (SELECT value FROM meta WHERE key = 'root_head')",

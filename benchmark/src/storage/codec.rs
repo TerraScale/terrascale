@@ -11,12 +11,11 @@
 #![allow(clippy::cast_possible_truncation)]
 
 use crate::types::{
-    CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
-    OperationId, StorageSequence, TenantId,
+    CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability, TenantId,
 };
 
 use super::intent::CommitRejection;
-use super::{PublishedCommit, PublishedWrite, intent::StagedWrite};
+use super::intent::StagedWrite;
 
 /// Maximum nesting depth accepted for one document value.
 pub(super) const MAX_VALUE_DEPTH: usize = 64;
@@ -122,52 +121,6 @@ pub(super) fn encode_expected(out: &mut Vec<u8>, expected: ExpectedVersion) {
         ExpectedVersion::Exact(version) => {
             push_u8(out, 2);
             push_u64(out, version);
-        }
-    }
-}
-
-/// Encodes one local durability level.
-pub(super) fn encode_durability(out: &mut Vec<u8>, durability: LocalDurabilityCode) {
-    push_u8(out, durability as u8);
-}
-
-/// Reads one local durability level.
-pub(super) fn decode_durability(reader: &mut Reader<'_>) -> Option<LocalDurabilityCode> {
-    match reader.read_u8()? {
-        0 => Some(LocalDurabilityCode::Buffered),
-        1 => Some(LocalDurabilityCode::Written),
-        2 => Some(LocalDurabilityCode::Synced),
-        _ => None,
-    }
-}
-
-/// The wire spelling of [`crate::types::LocalDurability`] inside private bytes.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum LocalDurabilityCode {
-    /// Buffered only.
-    Buffered,
-    /// Written to the operating system.
-    Written,
-    /// Written and synchronized after publication.
-    Synced,
-}
-
-impl LocalDurabilityCode {
-    /// Converts the public durability level into its private code.
-    pub(super) fn of(durability: crate::types::LocalDurability) -> Self {
-        match durability {
-            crate::types::LocalDurability::Buffered => Self::Buffered,
-            crate::types::LocalDurability::Written => Self::Written,
-            crate::types::LocalDurability::Synced => Self::Synced,
-        }
-    }
-
-    /// Converts the private code back into the public durability level.
-    pub(super) fn to_level(self) -> crate::types::LocalDurability {
-        match self {
-            Self::Buffered => crate::types::LocalDurability::Buffered,
-            Self::Written => crate::types::LocalDurability::Written,
-            Self::Synced => crate::types::LocalDurability::Synced,
         }
     }
 }
@@ -299,45 +252,7 @@ pub(crate) fn staged_writes_have_duplicate_targets(writes: &[StagedWrite]) -> bo
 /// stores. The delete form is its exact key — the collection (an explicit
 /// flag, absent exactly for the provable no-op delete), the identifier, and
 /// the version that existed at that key.
-pub(super) fn encode_published_write(out: &mut Vec<u8>, write: &PublishedWrite) {
-    match write {
-        PublishedWrite::Put { document } => {
-            push_u8(out, 1);
-            encode_document(out, document);
-        }
-        PublishedWrite::Delete { collection, id, version_at_delete } => {
-            push_u8(out, 2);
-            match collection {
-                Some(collection) => {
-                    push_u8(out, 1);
-                    push_str(out, collection.as_str());
-                }
-                None => push_u8(out, 0),
-            }
-            push_str(out, id.as_str());
-            push_u64(out, *version_at_delete);
-        }
-    }
-}
-
 /// Reads one encoded reconstructable publication write.
-pub(super) fn decode_published_write(reader: &mut Reader<'_>) -> Option<PublishedWrite> {
-    match reader.read_u8()? {
-        1 => Some(PublishedWrite::Put { document: decode_document(reader)? }),
-        2 => {
-            let collection = match reader.read_u8()? {
-                0 => None,
-                1 => Some(CollectionName::try_new(&reader.read_string()?).ok()?),
-                _ => return None,
-            };
-            let id = DocumentId::try_new(&reader.read_string()?).ok()?;
-            let version_at_delete = reader.read_u64()?;
-            Some(PublishedWrite::Delete { collection, id, version_at_delete })
-        }
-        _ => None,
-    }
-}
-
 /// Orders staged writes canonically so a digest is independent of staging order.
 fn sort_key(write: &StagedWrite) -> (u8, String, String) {
     match write {
@@ -431,15 +346,6 @@ pub(crate) fn matches_expectation(version: Option<u64>, expected: ExpectedVersio
 }
 
 /// The weaker of two durability levels (what a receipt may honestly claim).
-pub(crate) fn min_level(first: LocalDurability, second: LocalDurability) -> LocalDurability {
-    use LocalDurability::{Buffered, Synced, Written};
-    match (first, second) {
-        (Buffered, _) | (_, Buffered) => Buffered,
-        (Written, _) | (_, Written) => Written,
-        (Synced, Synced) => Synced,
-    }
-}
-
 /// Maps a durability level to its one-byte code.
 pub(crate) fn durability_code(level: LocalDurability) -> u8 {
     match level {
@@ -478,48 +384,4 @@ pub(crate) fn decode_rejection(code: u8) -> Option<CommitRejection> {
         4 => Some(CommitRejection::Storage),
         _ => None,
     }
-}
-
-/// The record-kind byte prefixing one operation-ledger commit payload.
-const COMMIT_RECORD: u8 = 1;
-
-/// Encodes one publication record's full checksummed frame.
-#[allow(clippy::cast_possible_truncation)]
-pub(crate) fn encode_commit_frame(commit: &PublishedCommit) -> Vec<u8> {
-    let mut payload = Vec::new();
-    push_u8(&mut payload, COMMIT_RECORD);
-    push_str(&mut payload, commit.tenant().as_str());
-    push_str(&mut payload, commit.operation_id().as_str());
-    push_u64(&mut payload, commit.sequence().get());
-    encode_durability(&mut payload, LocalDurabilityCode::of(commit.durability()));
-    push_u32(&mut payload, commit.writes().len() as u32);
-    for write in commit.writes() {
-        encode_published_write(&mut payload, write);
-    }
-    let mut frame = Vec::with_capacity(payload.len().saturating_add(12));
-    push_u32(&mut frame, payload.len() as u32);
-    push_u64(&mut frame, fnv1a(&payload));
-    frame.extend_from_slice(&payload);
-    frame
-}
-
-/// Decodes one commit-record payload into its commit.
-pub(crate) fn decode_commit_payload(payload: &[u8]) -> Option<PublishedCommit> {
-    let mut reader = Reader::new(payload);
-    if reader.read_u8()? != COMMIT_RECORD {
-        return None;
-    }
-    let tenant = TenantId::try_new(&reader.read_string()?).ok()?;
-    let operation_id = OperationId::try_new(&reader.read_string()?).ok()?;
-    let sequence = StorageSequence::new(reader.read_u64()?);
-    let durability = decode_durability(&mut reader)?.to_level();
-    let count = usize::try_from(reader.read_u32()?).ok()?;
-    let mut writes = Vec::with_capacity(count.min(1024));
-    for _ in 0..count {
-        writes.push(decode_published_write(&mut reader)?);
-    }
-    if reader.remaining() != 0 {
-        return None;
-    }
-    Some(PublishedCommit::new(tenant, operation_id, sequence, durability, writes))
 }

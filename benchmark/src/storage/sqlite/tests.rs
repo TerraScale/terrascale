@@ -578,11 +578,17 @@ fn pruning_requires_every_consumer_frontier() {
     let (_dir, mut storage) = sqlite_store("prune-frontiers");
     storage.advance_consumer_frontier("fast", 0).expect("fast frontier registers");
     storage.advance_consumer_frontier("slow", 0).expect("slow frontier registers");
+    // One key rewritten each commit: older commits are shadowed history the
+    // frontiers bound (the newest version is current state and pins its
+    // own commit).
     for index in 1..=3 {
         commit(
             &mut storage,
             &format!("op-{index}"),
-            vec![put(document(&format!("doc-{index}"), "users", "value"), ExpectedVersion::New)],
+            vec![put(
+                document("doc", "users", &format!("v{index}")),
+                if index == 1 { ExpectedVersion::New } else { ExpectedVersion::Exact(index - 1) },
+            )],
         );
     }
     assert_eq!(storage.journal_records(), 3);
@@ -603,10 +609,10 @@ fn pruning_requires_every_consumer_frontier() {
     assert!(storage.snapshot_boundary_available(StorageSequence::new(2)));
     // Above-floor snapshots still answer exactly.
     let at = storage.published_state().0;
-    assert_eq!(storage.documents_at(at, &tenant()).len(), 3);
+    assert_eq!(storage.documents_at(at, &tenant()).len(), 1);
     assert_eq!(
         storage.documents_at(StorageSequence::new(2), &tenant()).len(),
-        2,
+        1,
         "the version history below the floor was pruned without changing answers above it"
     );
 }
@@ -628,7 +634,10 @@ fn fresh_rows_survive_the_sweep_regardless_of_frontiers() {
         commit(
             &mut storage,
             &format!("op-{index}"),
-            vec![put(document(&format!("doc-{index}"), "users", "value"), ExpectedVersion::New)],
+            vec![put(
+                document("doc", "users", &format!("v{index}")),
+                if index == 1 { ExpectedVersion::New } else { ExpectedVersion::Exact(index - 1) },
+            )],
         );
     }
     let head = storage.published_state().0;
@@ -636,8 +645,9 @@ fn fresh_rows_survive_the_sweep_regardless_of_frontiers() {
     let pruned = storage.prune_below_consumer_frontiers().expect("prune runs");
     assert_eq!(pruned, 0, "nothing inside the history floor is prunable");
     assert_eq!(storage.journal_records(), 5, "every fresh row is still reachable");
-    // A mid-window backdate prunes exactly the rows older than the floor.
-    // The writer guard is scoped so the sweep below can take the writer.
+    // A mid-window backdate prunes exactly the shadowed commits older than
+    // the floor. The writer guard is scoped so the sweep below can take
+    // the writer.
     {
         let connection = storage.raw_writer_connection();
         connection
@@ -668,8 +678,12 @@ fn pruning_keeps_each_keys_newest_version() {
     // Backdate the rows past the 30-day history floor so the sweep is
     // frontier-bounded (fresh rows are inside the floor by construction).
     backdate_all_rows(&storage);
+    // Whole-commit retention: only op-1 (fully shadowed by op-2) leaves.
+    // The tombstone at op-3 and the fresh put at op-4 pin their commits —
+    // each key's newest version must survive so above-floor snapshots
+    // resolve.
     let pruned = storage.prune_below_consumer_frontiers().expect("prune runs");
-    assert_eq!(pruned, 3);
+    assert_eq!(pruned, 1);
     // Each key's newest version survives so above-floor snapshots resolve;
     // the shadowed older version is gone, and the tombstone still hides
     // its key.
@@ -689,11 +703,17 @@ fn sustained_writes_with_advancing_consumers_keep_the_journal_bounded() {
     let (_dir, mut storage) = sqlite_store("prune-bounded");
     storage.advance_consumer_frontier("replication", 0).expect("frontier registers");
     storage.advance_consumer_frontier("sync", 0).expect("frontier registers");
+    // One hot key: each round's commit shadows the last, so an advancing
+    // consumer fleet bounds the retained history (the newest version is
+    // current state and pins its own commit).
     for round in 1..=50 {
         commit(
             &mut storage,
             &format!("op-{round}"),
-            vec![put(document(&format!("doc-{round}"), "users", "value"), ExpectedVersion::New)],
+            vec![put(
+                document("hot", "users", &format!("v{round}")),
+                if round == 1 { ExpectedVersion::New } else { ExpectedVersion::Exact(round - 1) },
+            )],
         );
         let head = storage.published_state().0.get();
         storage.advance_consumer_frontier("replication", head).expect("frontier advances");
@@ -712,7 +732,7 @@ fn sustained_writes_with_advancing_consumers_keep_the_journal_bounded() {
     commit(
         &mut storage,
         "op-51",
-        vec![put(document("doc-51", "users", "value"), ExpectedVersion::New)],
+        vec![put(document("hot", "users", "v51"), ExpectedVersion::Exact(50))],
     );
     storage.advance_consumer_frontier("metering", 50).expect("frontier registers at the head");
     storage.advance_consumer_frontier("replication", 51).expect("frontier advances");
@@ -730,7 +750,10 @@ fn compact_sweeps_the_pruning_floor() {
         commit(
             &mut storage,
             &format!("op-{index}"),
-            vec![put(document(&format!("doc-{index}"), "users", "value"), ExpectedVersion::New)],
+            vec![put(
+                document("doc", "users", &format!("v{index}")),
+                if index == 1 { ExpectedVersion::New } else { ExpectedVersion::Exact(index - 1) },
+            )],
         );
     }
     // The lifecycle sweep: backdating past the D-42 history floor and
@@ -748,28 +771,22 @@ fn compact_sweeps_the_pruning_floor() {
 
 // ---- SQLite-focused: crash atomicity against the file --------------------
 
-/// Asserts the crash invariant directly against the database file: no
-/// document row without its journal row, and no journal row without its
-/// committed ledger row.
+/// Asserts the folded row model's crash invariant directly against the
+/// database file: every document row carries its commit binding (the
+/// columns that make the row its own journal record) and no tombstone
+/// carries a body.
 fn assert_journal_binding(dir: &Path) {
     let connection = Connection::open(dir.join(super::DATABASE_FILE)).expect("raw connection");
     let unbonded: i64 = connection
         .query_row(
-            "SELECT COUNT(*) FROM documents WHERE commit_seq NOT IN (SELECT sequence FROM journal)",
+            "SELECT COUNT(*) FROM documents
+             WHERE commit_ulid = '' OR revision = '' OR requested NOT BETWEEN 0 AND 2
+                OR (deleted = 1 AND body != X'')",
             [],
             |row| row.get(0),
         )
-        .expect("documents bind");
-    assert_eq!(unbonded, 0, "a document row exists without its journal row");
-    let orphan: i64 = connection
-        .query_row(
-            "SELECT COUNT(*) FROM journal WHERE sequence NOT IN (
-               SELECT sequence FROM ledger WHERE committed = 1)",
-            [],
-            |row| row.get(0),
-        )
-        .expect("journal binds");
-    assert_eq!(orphan, 0, "a journal row exists without its committed ledger row");
+        .expect("rows bind");
+    assert_eq!(unbonded, 0, "a document row exists without its commit binding");
 }
 
 #[test]
