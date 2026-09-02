@@ -31,6 +31,7 @@ const MAX_PEM_BYTES_USIZE: usize = 1024 * 1024;
 ///
 /// Returns an error when TLS material, the engine, a listener, shutdown, or
 /// graceful draining fails.
+#[allow(clippy::too_many_lines, reason = "one listener per block, one drain")]
 pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
     if config.mode == ServerMode::Production {
         return Err(Box::new(DaemonError::ProductionCompositionUnavailable));
@@ -87,6 +88,14 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
         None
     };
 
+    let (api_task, api_stop) = serve_public_api(
+        &config,
+        Arc::clone(&metrics),
+        config.tenant.clone(),
+        config.project.clone(),
+    )
+    .await?;
+
     let observability = tokio::net::TcpListener::bind(config.observability_listen).await?;
     let (http_stop, http_signal) = oneshot::channel::<()>();
     let app = crate::http::router(Arc::clone(&metrics));
@@ -112,6 +121,7 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
         handle.begin_drain();
     }
     let _ = http_stop.send(());
+    let _ = api_stop.send(());
     let grpc_shutdown = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
         network_handle.shutdown_and_wait()?;
         if let Some(handle) = &mut uds_handle {
@@ -129,6 +139,11 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
                 result.map_err(|error| -> Box<dyn Error + Send + Sync> { Box::new(error) })?;
             }
             Err(error) => return Err(Box::new(error) as Box<dyn Error + Send + Sync>),
+        }
+        if let Some(task) = api_task {
+            task.await
+                .map_err(|error| -> Box<dyn Error + Send + Sync> { Box::new(error) })?
+                .map_err(|error| -> Box<dyn Error + Send + Sync> { Box::new(error) })?;
         }
         Ok::<(), Box<dyn Error + Send + Sync>>(())
     };
@@ -155,6 +170,80 @@ async fn wait_for_shutdown() -> Result<(), std::io::Error> {
     {
         tokio::signal::ctrl_c().await
     }
+}
+
+/// Binds and serves the public `/api/v1` surface when the configuration
+/// names it. The data root carries the control-plane engine and the
+/// database catalog; the bootstrap key file, when present, registers one
+/// all-verbs credential (the CLI that wrote it is the only other holder),
+/// and an absent file leaves the surface deny-all.
+///
+/// Returns the serve task and its drain signal; both `None` when the
+/// deployment binds no public surface.
+async fn serve_public_api(
+    config: &ServerConfig,
+    metrics: Arc<terrabase::observability::MetricsRegistry>,
+    tenant: String,
+    project: String,
+) -> Result<
+    (Option<tokio::task::JoinHandle<Result<(), std::io::Error>>>, oneshot::Sender<()>),
+    Box<dyn Error + Send + Sync>,
+> {
+    let (stop, signal) = oneshot::channel::<()>();
+    let Some(public) = config.public_api.clone() else {
+        return Ok((None, stop));
+    };
+    std::fs::create_dir_all(&public.data_root)?;
+    let control = crate::control::ControlPlane::open(&public.data_root)
+        .map_err(|error| DaemonError::Engine(format!("{error:?}")))?;
+    // ponytail: fixed catalog bounds (64 open databases, 5-minute idle
+    // close) until the member budget exists (S-05).
+    let catalog = terrabase_tbep::catalog::HostCatalog::open(
+        &public.data_root,
+        64,
+        std::time::Duration::from_secs(300),
+    )
+    .map_err(|error| DaemonError::Engine(error.to_string()))?;
+    let keys = crate::api_keys::KeyStore::empty();
+    if let Some(key_file) = &public.bootstrap_key_file {
+        let key = std::fs::read_to_string(key_file)?.trim().to_owned();
+        if key.is_empty() {
+            return Err(Box::new(DaemonError::Engine("the bootstrap key file is empty".into())));
+        }
+        keys.register(
+            &key,
+            "bootstrap",
+            crate::api_keys::Scope::every_database(crate::api_keys::Verbs::ALL),
+        );
+    }
+    let region = match config.region {
+        terrabase::observability::Region::Gru => terrabase::regions::RegionCode::GRU,
+        terrabase::observability::Region::Sfo => terrabase::regions::RegionCode::SFO,
+        terrabase::observability::Region::Fra => terrabase::regions::RegionCode::FRA,
+        terrabase::observability::Region::Unknown => {
+            return Err(Box::new(DaemonError::Engine(
+                "the public API needs the member's own region".into(),
+            )));
+        }
+    };
+    let state = Arc::new(crate::api::ApiState {
+        region,
+        metrics,
+        keys: Some(Arc::new(keys)),
+        control: Some(Arc::new(control)),
+        catalog: Some(Arc::new(catalog)),
+        scope: (tenant, project),
+    });
+    let listener = tokio::net::TcpListener::bind(public.listen).await?;
+    let router = crate::api::router(state);
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async {
+                let _ = signal.await;
+            })
+            .await
+    });
+    Ok((Some(task), stop))
 }
 
 fn read_pem(path: &Path, private: bool) -> Result<String, DaemonError> {
@@ -414,6 +503,7 @@ mod tests {
                     .to_owned(),
             ]),
             uds: None,
+            public_api: None,
             observability_listen: SocketAddr::from(([127, 0, 0, 1], 9464)),
             max_message_bytes: terrabase_tbep::registry::MAX_FRAME_BYTES,
             max_inflight: terrabase_tbep::grpc::MAX_INFLIGHT_OPERATIONS,
@@ -443,6 +533,7 @@ mod tests {
             client_ca: "/missing/client-ca.crt".into(),
             gateway_principals: BTreeSet::new(),
             uds: None,
+            public_api: None,
             observability_listen: SocketAddr::from(([127, 0, 0, 1], 0)),
             max_message_bytes: terrabase_tbep::registry::MAX_FRAME_BYTES,
             max_inflight: 1,

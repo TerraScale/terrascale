@@ -162,6 +162,20 @@ pub struct ProductionPlacement {
     pub regions: BTreeMap<RegionCode, [MemberUlid; 2]>,
 }
 
+/// The resolved public `/api/v1` listener configuration.
+#[derive(Clone, Debug)]
+pub struct PublicApiConfig {
+    /// The listener address.
+    pub listen: SocketAddr,
+    /// The member's data root: the control-plane engine and the database
+    /// catalog both live under it.
+    pub data_root: PathBuf,
+    /// A file holding one bootstrap API key, when the deployment mints
+    /// one. Absent means deny-all: the surface answers, nothing is
+    /// admitted.
+    pub bootstrap_key_file: Option<PathBuf>,
+}
+
 /// Fully validated production server configuration.
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
@@ -193,6 +207,9 @@ pub struct ServerConfig {
     pub gateway_principals: BTreeSet<String>,
     /// Optional local UDS configuration.
     pub uds: Option<UdsConfig>,
+    /// Public `/api/v1` listener and its data root; `None` leaves the
+    /// public surface unbound (the standalone TBEP-only shape).
+    pub public_api: Option<PublicApiConfig>,
     /// Private Prometheus and probe listen address.
     pub observability_listen: SocketAddr,
     /// Maximum protobuf message size.
@@ -224,6 +241,8 @@ struct FileConfig {
     engine: FileEngine,
     tbep: FileTbep,
     observability: FileObservability,
+    #[serde(default)]
+    public_api: Option<FilePublicApi>,
 }
 
 #[derive(Deserialize)]
@@ -268,6 +287,19 @@ struct FileObservability {
     listen: String,
     #[serde(default)]
     allow_wildcard: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FilePublicApi {
+    listen: String,
+    #[serde(default)]
+    allow_wildcard: bool,
+    data_root: PathBuf,
+    /// A file holding one bootstrap API key (printed once by the CLI that
+    /// wrote it).
+    #[serde(default)]
+    bootstrap_key_file: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -467,6 +499,8 @@ impl ServerConfig {
         ] {
             absolute(path)?;
         }
+        let public_api =
+            parse_public_api(file.public_api.as_ref(), tbep_listen, observability_listen)?;
         let region = match file.engine.region.as_str() {
             "GRU" => Region::Gru,
             "SFO" => Region::Sfo,
@@ -535,6 +569,7 @@ impl ServerConfig {
             client_ca: file.tbep.client_ca,
             gateway_principals,
             uds,
+            public_api,
             observability_listen,
             max_message_bytes: file.tbep.max_message_bytes,
             max_inflight: file.tbep.max_inflight,
@@ -675,6 +710,7 @@ impl ServerConfig {
             client_ca: production.transport.client_ca.clone(),
             gateway_principals: production.transport.gateway_principals.clone(),
             uds,
+            public_api: None,
             observability_listen: metrics_listen,
             max_message_bytes: file.transport.max_message_bytes,
             max_inflight: file.transport.max_inflight,
@@ -989,6 +1025,33 @@ fn read_configuration(path: &Path) -> Result<String, ConfigError> {
             "configuration is not UTF-8",
         ))
     })
+}
+
+fn parse_public_api(
+    section: Option<&FilePublicApi>,
+    tbep_listen: SocketAddr,
+    observability_listen: SocketAddr,
+) -> Result<Option<PublicApiConfig>, ConfigError> {
+    let Some(section) = section else {
+        return Ok(None);
+    };
+    let listen = socket(&section.listen, "public_api.listen")?;
+    if listen.port() == 0
+        || listen == tbep_listen
+        || listen == observability_listen
+        || (listen.ip().is_unspecified() && !section.allow_wildcard)
+    {
+        return Err(ConfigError::InvalidListenAddress);
+    }
+    absolute(&section.data_root)?;
+    if let Some(key_file) = &section.bootstrap_key_file {
+        absolute(key_file)?;
+    }
+    Ok(Some(PublicApiConfig {
+        listen,
+        data_root: section.data_root.clone(),
+        bootstrap_key_file: section.bootstrap_key_file.clone(),
+    }))
 }
 
 fn socket(value: &str, _field: &'static str) -> Result<SocketAddr, ConfigError> {
