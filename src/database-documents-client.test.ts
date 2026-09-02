@@ -16,16 +16,16 @@ describe("DatabaseDocumentsClient", () => {
         database: scope.database,
         collection: scope.collection,
         id: documentId,
-        version: Number.MAX_SAFE_INTEGER,
+        version: "18446744073709551615",
         body: { name: "Ada" },
-        position: Number.MAX_SAFE_INTEGER,
+        position: "18446744073709551615",
       },
       ...Array.from({ length: 3 }, (_, index) => ({
         database: scope.database,
         collection: scope.collection,
         id: documentId,
-        version: index + 2,
-        sequence: index === 0 ? Number.MAX_SAFE_INTEGER : index + 10,
+        version: String(index + 2),
+        sequence: index === 0 ? "18446744073709551615" : String(index + 10),
         operationId: `operation-${index + 1}`,
         acknowledgement: index === 0 ? "global" : "regional",
         backup: "full",
@@ -61,11 +61,11 @@ describe("DatabaseDocumentsClient", () => {
     });
 
     assert.equal(read.ok && read.value.body.name, "Ada");
-    assert.equal(read.ok && read.value.version, Number.MAX_SAFE_INTEGER);
-    assert.equal(read.ok && read.value.position, Number.MAX_SAFE_INTEGER);
+    assert.equal(read.ok && read.value.version, "18446744073709551615");
+    assert.equal(read.ok && read.value.position, "18446744073709551615");
     assert.equal(created.ok && created.value.acknowledgement, "global");
-    assert.equal(created.ok && created.value.sequence, Number.MAX_SAFE_INTEGER);
-    assert.equal(patched.ok && patched.value.version, 3);
+    assert.equal(created.ok && created.value.sequence, "18446744073709551615");
+    assert.equal(patched.ok && patched.value.version, "3");
     assert.equal(deleted.ok && deleted.value.operationId, "operation-3");
 
     const expectedPath = "/api/v1/databases/customer%20database/collections/users%2Fv1/documents/user%20%231";
@@ -94,6 +94,92 @@ describe("DatabaseDocumentsClient", () => {
     }
   });
 
+  test("preserves exact uint64 boundaries across all four document routes", async () => {
+    const boundaries = {
+      safeMaximum: "9007199254740991",
+      firstUnsafe: "9007199254740992",
+      uint64Maximum: "18446744073709551615",
+    } as const;
+    const responses = [
+      {
+        database: scope.database,
+        collection: scope.collection,
+        id: documentId,
+        version: boundaries.safeMaximum,
+        body: { name: "Ada" },
+        position: boundaries.firstUnsafe,
+      },
+      {
+        database: scope.database,
+        collection: scope.collection,
+        id: documentId,
+        version: boundaries.firstUnsafe,
+        sequence: boundaries.uint64Maximum,
+        operationId: "operation-create",
+        acknowledgement: "regional",
+        backup: "none",
+      },
+      {
+        database: scope.database,
+        collection: scope.collection,
+        id: documentId,
+        version: boundaries.uint64Maximum,
+        sequence: boundaries.safeMaximum,
+        operationId: "operation-patch",
+        acknowledgement: "global",
+        backup: "full",
+      },
+      {
+        database: scope.database,
+        collection: scope.collection,
+        id: documentId,
+        version: boundaries.safeMaximum,
+        sequence: boundaries.firstUnsafe,
+        operationId: "operation-delete",
+        acknowledgement: "backup",
+        backup: "partial",
+      },
+    ];
+    const client = createTerraScaleClient({
+      apiBaseUrl: "https://api.terrascale.test",
+      fetch: async () => {
+        const response = responses.shift();
+        assert.notEqual(response, undefined);
+        return Response.json(response);
+      },
+    });
+
+    const read = await client.databaseDocuments.read(scope, documentId);
+    const created = await client.databaseDocuments.create(
+      scope,
+      documentId,
+      { body: { name: "Ada" } },
+      { idempotencyKey },
+    );
+    const patched = await client.databaseDocuments.patch(
+      scope,
+      documentId,
+      { body: { name: "Ada" } },
+      { idempotencyKey },
+    );
+    const deleted = await client.databaseDocuments.delete(scope, documentId, { idempotencyKey });
+
+    assert.equal(read.ok, true);
+    assert.equal(created.ok, true);
+    assert.equal(patched.ok, true);
+    assert.equal(deleted.ok, true);
+    if (read.ok && created.ok && patched.ok && deleted.ok) {
+      assert.equal(read.value.version, boundaries.safeMaximum);
+      assert.equal(read.value.position, boundaries.firstUnsafe);
+      assert.equal(created.value.version, boundaries.firstUnsafe);
+      assert.equal(created.value.sequence, boundaries.uint64Maximum);
+      assert.equal(patched.value.version, boundaries.uint64Maximum);
+      assert.equal(patched.value.sequence, boundaries.safeMaximum);
+      assert.equal(deleted.value.version, boundaries.safeMaximum);
+      assert.equal(deleted.value.sequence, boundaries.firstUnsafe);
+    }
+  });
+
   test("reuses the explicit mutation ULID across documented transient retries", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleClient({
@@ -108,8 +194,8 @@ describe("DatabaseDocumentsClient", () => {
             database: scope.database,
             collection: scope.collection,
             id: documentId,
-            version: 1,
-            sequence: 1,
+            version: "1",
+            sequence: "1",
             operationId: "operation-1",
             acknowledgement: "regional",
             backup: "none",
@@ -130,6 +216,29 @@ describe("DatabaseDocumentsClient", () => {
       requests.map(request => request.headers.get("idempotency-key")),
       [idempotencyKey, idempotencyKey],
     );
+  });
+
+  test("accepts zero and nullable position in a valid read response", async () => {
+    const client = createTerraScaleClient({
+      apiBaseUrl: "https://api.terrascale.test",
+      fetch: async () => Response.json({
+        database: scope.database,
+        collection: scope.collection,
+        id: documentId,
+        version: "0",
+        body: { name: "Ada", count: 0 },
+        position: null,
+      }),
+    });
+
+    const result = await client.databaseDocuments.read(scope, documentId);
+
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.equal(result.value.version, "0");
+      assert.equal(result.value.position, null);
+      assert.deepEqual(result.value.body, { name: "Ada", count: 0 });
+    }
   });
 
   test("projects the standardized Database API error without conflating request and trace IDs", async () => {
@@ -183,12 +292,12 @@ describe("DatabaseDocumentsClient", () => {
     assert.deepEqual(result.error.details, responseBody);
   });
 
-  test("rejects unsafe or malformed successful metadata instead of losing identity precision", async () => {
+  test("rejects noncanonical or overflowing successful metadata", async () => {
     const validRead = {
       database: scope.database,
       collection: scope.collection,
       id: documentId,
-      version: 1,
+      version: "1",
       body: { name: "Ada" },
       position: null,
     };
@@ -196,19 +305,38 @@ describe("DatabaseDocumentsClient", () => {
       database: scope.database,
       collection: scope.collection,
       id: documentId,
-      version: 1,
-      sequence: 1,
+      version: "1",
+      sequence: "1",
       operationId: "operation-1",
       acknowledgement: "regional",
       backup: "none",
     };
     const cases = [
-      { operation: "read", body: { ...validRead, version: Number.MAX_SAFE_INTEGER + 1 } },
-      { operation: "read", body: { ...validRead, position: -1 } },
+      { operation: "read", body: { ...validRead, version: 0 } },
+      { operation: "read", body: { ...validRead, version: "" } },
+      { operation: "read", body: { ...validRead, version: "00" } },
+      { operation: "read", body: { ...validRead, version: "01" } },
+      { operation: "read", body: { ...validRead, version: "-1" } },
+      { operation: "read", body: { ...validRead, version: "+1" } },
+      { operation: "read", body: { ...validRead, version: "1.0" } },
+      { operation: "read", body: { ...validRead, version: "1e3" } },
+      { operation: "read", body: { ...validRead, version: " 1" } },
+      { operation: "read", body: { ...validRead, version: "1 " } },
+      { operation: "read", body: { ...validRead, version: null } },
+      { operation: "read", body: { ...validRead, version: "18446744073709551616" } },
+      { operation: "read", body: { ...validRead, version: "184467440737095516150" } },
+      { operation: "read", body: { ...validRead, position: 0 } },
+      { operation: "read", body: { ...validRead, position: "18446744073709551616" } },
+      { operation: "read", body: { ...validRead, position: "01" } },
       { operation: "read", body: { ...validRead, database: "other" } },
       { operation: "read", body: { ...validRead, unexpected: true } },
-      { operation: "create", body: { ...validWrite, sequence: Number.MAX_SAFE_INTEGER + 1 } },
+      { operation: "create", body: { ...validWrite, sequence: 0 } },
+      { operation: "create", body: { ...validWrite, sequence: "18446744073709551616" } },
+      { operation: "create", body: { ...validWrite, sequence: "00" } },
+      { operation: "create", body: { ...validWrite, sequence: " 1" } },
+      { operation: "create", body: { ...validWrite, sequence: null } },
       { operation: "create", body: { ...validWrite, version: 1.5 } },
+      { operation: "create", body: { ...validWrite, version: "-1" } },
       { operation: "create", body: { ...validWrite, acknowledgement: "eventual" } },
       { operation: "create", body: { ...validWrite, backup: "unknown" } },
     ] as const;

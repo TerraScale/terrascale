@@ -73,11 +73,13 @@ The current gateway has a configurable request-body ceiling. It does not yet
 publish the launch 1 MiB document limit or an attachment route, so this SDK
 does not promise a large-value upload operation.
 
-The current gateway publishes document `version`, journal `sequence`, and
-nullable journal `position` as JSON integers. The SDK accepts only nonnegative
-safe integers and returns `invalid_response` outside that range instead of
-silently corrupting an identity. Full unsigned 64-bit support requires a
-coordinated gateway and SDK change to decimal strings.
+The Database API publishes document `version`, journal `sequence`, and nullable
+journal `position` as canonical unsigned 64-bit decimal strings. A value is
+`"0"` or a nonzero decimal string without leading zeroes, has at most 20
+digits, and is no greater than `"18446744073709551615"`; `position` may also
+be `null`. The SDK rejects numeric JSON values, malformed decimal text, and
+overflow as `invalid_response` without converting the metadata to JavaScript
+numbers.
 
 Database API failures expose the standard `TERRASCALE-####` code, category,
 detail, suggested action, documentation URL, trace ID, and field errors through

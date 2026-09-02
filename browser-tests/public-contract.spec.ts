@@ -71,7 +71,7 @@ test("the browser entrypoint exposes the published Database API document operati
             database: "customer database",
             collection: "users/v1",
             id: "user #1",
-            version: Number.MAX_SAFE_INTEGER,
+            version: "18446744073709551615",
             body: { name: "Ada" },
             position: null,
           }
@@ -79,8 +79,8 @@ test("the browser entrypoint exposes the published Database API document operati
             database: "customer database",
             collection: "users/v1",
             id: "user #1",
-            version: 2,
-            sequence: Number.MAX_SAFE_INTEGER,
+            version: "2",
+            sequence: "18446744073709551615",
             operationId: "operation-1",
             acknowledgement: "global",
             backup: "full",
@@ -117,8 +117,8 @@ test("the browser entrypoint exposes the published Database API document operati
   });
 
   expect(observation.readBody).toEqual({ name: "Ada" });
-  expect(observation.readVersion).toBe(Number.MAX_SAFE_INTEGER);
-  expect(observation.createSequence).toBe(Number.MAX_SAFE_INTEGER);
+  expect(observation.readVersion).toBe("18446744073709551615");
+  expect(observation.createSequence).toBe("18446744073709551615");
   expect(observation.requests.map(request => request.method)).toEqual([
     "GET",
     "PUT",

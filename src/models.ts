@@ -2,6 +2,7 @@ import type {
   AuditEventId,
   BackupId,
   BackupPolicyId,
+  Brand,
   DatabaseId,
   DocumentId,
   EnvironmentId,
@@ -49,6 +50,9 @@ export type Page<TItem> = {
 };
 
 export type Int64String = `${bigint}`;
+
+/** Canonical unsigned 64-bit decimal text returned by the Database API. */
+export type Uint64String = Brand<string, "Uint64String">;
 
 export type ProjectScoped = {
   readonly projectId?: ProjectId | undefined;
@@ -672,11 +676,11 @@ export type DatabaseDocumentReadResponse<
   readonly database: string;
   readonly collection: string;
   readonly id: string;
-  /** A gateway JSON integer. The client rejects values outside JavaScript's safe range. */
-  readonly version: number;
+  /** A canonical unsigned 64-bit decimal string. */
+  readonly version: Uint64String;
   readonly body: TDocument;
-  /** A gateway JSON integer. The client rejects values outside JavaScript's safe range. */
-  readonly position: number | null;
+  /** A canonical unsigned 64-bit decimal string, or null when unavailable. */
+  readonly position: Uint64String | null;
 };
 
 /** The exact successful body returned by Database API document mutations. */
@@ -684,10 +688,10 @@ export type DatabaseDocumentWriteResponse = {
   readonly database: string;
   readonly collection: string;
   readonly id: string;
-  /** A gateway JSON integer. The client rejects values outside JavaScript's safe range. */
-  readonly version: number;
-  /** A gateway JSON integer. The client rejects values outside JavaScript's safe range. */
-  readonly sequence: number;
+  /** A canonical unsigned 64-bit decimal string. */
+  readonly version: Uint64String;
+  /** A canonical unsigned 64-bit decimal string. */
+  readonly sequence: Uint64String;
   readonly operationId: string;
   readonly acknowledgement: "regional" | "global" | "backup" | null;
   readonly backup: "none" | "full" | "partial" | null;

@@ -1608,12 +1608,12 @@ function decodeDatabaseDocumentReadResponse<TDocument extends Models.JsonValue>(
     database: scope.database,
     collection: scope.collection,
     id: documentId,
-    version: requireSafeUnsignedInteger(response.version, "response.version"),
+    version: requireUint64String(response.version, "response.version"),
     body: requireJsonValue(response.body, "response.body") as TDocument,
     position:
       response.position === null
         ? null
-        : requireSafeUnsignedInteger(response.position, "response.position"),
+        : requireUint64String(response.position, "response.position"),
   };
 }
 
@@ -1641,8 +1641,8 @@ function decodeDatabaseDocumentWriteResponse(
     database: scope.database,
     collection: scope.collection,
     id: documentId,
-    version: requireSafeUnsignedInteger(response.version, "response.version"),
-    sequence: requireSafeUnsignedInteger(response.sequence, "response.sequence"),
+    version: requireUint64String(response.version, "response.version"),
+    sequence: requireUint64String(response.sequence, "response.sequence"),
     operationId: requireString(response.operationId, "response.operationId"),
     acknowledgement: requireNullableEnum(
       response.acknowledgement,
@@ -1694,11 +1694,17 @@ function requireExactRecord(
   return record;
 }
 
-function requireSafeUnsignedInteger(value: unknown, path: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw new TypeError(`${path} must be an unsigned safe JSON integer.`);
+const uint64StringPattern = /^(0|[1-9][0-9]{0,19})$/u;
+const maxUint64 = 18446744073709551615n;
+
+function requireUint64String(value: unknown, path: string): Models.Uint64String {
+  if (typeof value !== "string" || !uint64StringPattern.test(value)) {
+    throw new TypeError(`${path} must be a canonical unsigned 64-bit decimal string.`);
   }
-  return value;
+  if (BigInt(value) > maxUint64) {
+    throw new TypeError(`${path} exceeds the unsigned 64-bit maximum.`);
+  }
+  return value as Models.Uint64String;
 }
 
 function requireNullableEnum<TValue extends string>(
