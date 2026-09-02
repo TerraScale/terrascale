@@ -1638,6 +1638,7 @@ name = "terrabase-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "blake3",
  "serde",
  "terrabase",
  "terrabase-cluster",

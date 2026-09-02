@@ -5,6 +5,8 @@
 //! and publishes private Prometheus and lifecycle probes. It contains no
 //! database or protocol implementation of its own.
 
+pub mod api;
+pub mod api_keys;
 pub mod config;
 pub mod http;
 #[cfg(feature = "production-fips")]
