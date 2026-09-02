@@ -1497,7 +1497,7 @@ impl Engine {
     /// scope name different tenants, and
     /// [`EngineError::StorageFailure`] when storage cannot be reached.
     #[allow(dead_code, reason = "consumed by the query module in W3-2")]
-    pub(crate) fn snapshot_documents(
+    pub fn snapshot_documents(
         &self,
         scope: &TenantScope,
         snapshot: &ReadSnapshot,
@@ -1514,6 +1514,31 @@ impl Engine {
             storage.port.documents_at(snapshot.sequence(), scope.tenant())
         };
         Ok(documents)
+    }
+
+    /// Lists the distinct collection names a tenant's documents occupy at
+    /// the read snapshot, in canonical order.
+    ///
+    /// # Errors
+    ///
+    /// Returns the validation and storage failures of
+    /// [`Engine::snapshot_documents`].
+    pub fn collections_at(
+        &self,
+        scope: &TenantScope,
+        snapshot: &ReadSnapshot,
+    ) -> Result<Vec<CollectionName>, EngineError> {
+        let documents = self.snapshot_documents(scope, snapshot)?;
+        let mut names: Vec<CollectionName> = Vec::new();
+        for document in &documents {
+            let collection = document.collection().clone();
+            if !names.contains(&collection) {
+                names.push(collection);
+            }
+        }
+        names.sort();
+        names.dedup();
+        Ok(names)
     }
 
     /// Returns every document of one tenant's collection as the supplied read

@@ -15,6 +15,7 @@
 use std::sync::Arc;
 
 use axum::Router;
+use axum::extract;
 use axum::extract::Path;
 use axum::extract::Request;
 use axum::extract::State;
@@ -325,6 +326,8 @@ pub fn router(state: Arc<ApiState>) -> Router {
         .route("/api/v1/databases", get(list_databases).post(create_database))
         .route("/api/v1/databases/{name}", get(get_database).delete(delete_database))
         .route("/api/v1/databases/{name}/restore", post(restore_database))
+        .route("/api/v1/databases/{name}/collections", get(list_collections))
+        .route("/api/v1/databases/{name}/collections/{collection}/documents", get(list_documents))
         .route(
             "/api/v1/databases/{name}/collections/{collection}/documents/{id}",
             get(get_document).put(put_document).delete(delete_document),
@@ -524,6 +527,95 @@ async fn restore_database(
         Ok(record) => record_response(StatusCode::OK, &record),
         Err(error) => ApiError::control(error).into_response(),
     }
+}
+
+/// Lists the distinct collections a database's documents occupy.
+async fn list_collections(
+    State(state): State<Arc<ApiState>>,
+    Path(name): Path<String>,
+) -> Response {
+    let Ok(host) = document_host(&state, &name) else {
+        return ApiError::database_not_found(&name).into_response();
+    };
+    let engine = host.engine();
+    let Ok(scope) = document_scope(engine) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let Ok(snapshot) = engine.read_snapshot(&scope) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    match engine.collections_at(&scope, &snapshot) {
+        Ok(collections) => {
+            let mut body = String::from("{\"collections\":[");
+            for (index, collection) in collections.iter().enumerate() {
+                if index > 0 {
+                    body.push(',');
+                }
+                body.push('"');
+                push_json_escaped(&mut body, collection.as_str());
+                body.push('"');
+            }
+            body.push_str("]}");
+            json_response(StatusCode::OK, body)
+        }
+        Err(_) => ApiError::control_unavailable().into_response(),
+    }
+}
+
+/// Lists one collection's documents in canonical key order, with bounded
+/// paging (`?limit=`, `?after=` by identifier).
+async fn list_documents(
+    State(state): State<Arc<ApiState>>,
+    Path((name, collection)): Path<(String, String)>,
+    extract::Query(paging): extract::Query<DocumentPaging>,
+) -> Response {
+    let Ok(host) = document_host(&state, &name) else {
+        return ApiError::database_not_found(&name).into_response();
+    };
+    let engine = host.engine();
+    let Ok(scope) = document_scope(engine) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let Ok(collection) = CollectionName::try_new(&collection) else {
+        return invalid_identifier("collection name", &collection).into_response();
+    };
+    let Ok(snapshot) = engine.read_snapshot(&scope) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let limit = paging.limit.unwrap_or(100).clamp(1, 1000);
+    let documents =
+        engine.snapshot_documents_in_collection(&scope, &snapshot, &collection).unwrap_or_default();
+    let mut body = String::from("{\"documents\":[");
+    let paged: Vec<_> = documents
+        .iter()
+        .skip_while(|document| {
+            paging.after.as_deref().is_some_and(|after| document.id().as_str() <= after)
+        })
+        .take(limit)
+        .collect();
+    for (count, document) in paged.iter().enumerate() {
+        if count > 0 {
+            body.push(',');
+        }
+        body.push_str("{\"id\":\"");
+        push_json_escaped(&mut body, document.id().as_str());
+        // ponytail: the version renders as the metadata version; the
+        // full seq-qualified revision rides the per-document GET's ETag.
+        body.push_str("\",\"version\":");
+        body.push_str(&document.metadata().version().to_string());
+        body.push_str(",\"value\":");
+        push_value(&mut body, document.value());
+        body.push('}');
+    }
+    body.push_str("]}");
+    json_response(StatusCode::OK, body)
+}
+
+/// The documents list's paging parameters.
+#[derive(serde::Deserialize)]
+struct DocumentPaging {
+    limit: Option<usize>,
+    after: Option<String>,
 }
 
 /// One document's route context: the host engine for the named database.
@@ -1163,6 +1255,84 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
         let body = String::from_utf8(body.to_vec()).expect("utf-8");
         assert!(body.contains("\"fix\":\""), "{body}");
+    }
+
+    #[tokio::test]
+    async fn collections_and_documents_list() {
+        use axum::body::Body;
+        use axum::http::Request;
+        let auth = "authorization";
+        let key = "Bearer tskey_test_abcdefghijklmnop";
+        let router = router(state_with_keys_and_control());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header(auth, key)
+                    .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        for (collection, id) in [("users", "ada"), ("users", "grace"), ("orders", "o-1")] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::put(format!(
+                        "/api/v1/databases/prod/collections/{collection}/documents/{id}"
+                    ))
+                    .header(auth, key)
+                    .body(Body::from(r#"{"n":1}"#))
+                    .expect("request"),
+                )
+                .await
+                .expect("answers");
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/databases/prod/collections")
+                    .header(auth, key)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("\"orders\"") && body.contains("\"users\""), "{body}");
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/databases/prod/collections/users/documents?limit=1")
+                    .header(auth, key)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("\"ada\"") && !body.contains("\"grace\""), "limit pages: {body}");
+        // The after-cursor returns exactly the remainder.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/databases/prod/collections/users/documents?after=ada")
+                    .header(auth, key)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("\"grace\"") && !body.contains("\"ada\""), "after pages: {body}");
     }
 
     #[tokio::test]
