@@ -8,6 +8,9 @@
 //!
 //! Layout:
 //!
+//! - [`catalog`]: the database catalog (S-01) — lazy open of one
+//!   [`engine_host::EngineHost`] per `tenant`/`project`/`database`
+//!   under a root, with an RSS-sized LRU bound and idle-close.
 //! - [`registry`]: the hand-maintained domain types and closed
 //!   vocabularies the hosting seam exchanges (bounds stay fail-closed).
 //! - [`value`]: the recursive document value and the shared bounds
@@ -44,6 +47,7 @@ compile_error!("select exactly one of `local-crypto` or `production-fips`");
 #[cfg(not(any(feature = "local-crypto", feature = "production-fips")))]
 compile_error!("select one of `local-crypto` or `production-fips`");
 
+pub mod catalog;
 pub mod engine_host;
 pub mod family_codec;
 pub mod grpc;
