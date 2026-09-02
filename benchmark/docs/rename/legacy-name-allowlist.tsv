@@ -39,8 +39,7 @@ src/families/lifecycle.rs	2	d5bc8ca5ce2e0c9a7e69cf6807225ea287df156781526212f1c0
 src/families/revisions.rs	1	214518e3ed066f6c897d126163b175981db046a553766d8f456f259570253d8d	historical	Exact historical issue or ticket identifier retained as source provenance.
 src/product_identity.rs	6	f3c2c7d35d9745cb6561993d89ea36d3c31b46a1b08cecbe951ad0637d2c7d0c	persisted	Executable registry and assertions for reviewed compatibility identities.
 src/query/analyzer.rs	1	3375cd02d596e445a398716794429fde639ec86de3d44dd68c6843dd54afd30d	historical	Exact historical issue or ticket identifier retained as source provenance.
-src/query/mod.rs	1	9074b9fa07820dbe4bc9c5d67c93e6f7e1d711b4a4e8be3bcf2b9e54b1bc063f	historical	Exact historical issue or ticket identifier retained as source provenance.
-src/query/spatial.rs	1	8db854c624a3a95f84968c2b708db44465fab5f2bb2b1a64699442709f7c9fd6	historical	Exact historical issue or ticket identifier retained as source provenance.
+src/query/mod.rs	1	9d82dbff2017f74629afab87200363a33fba1341a765d870a189ba47906d339e	historical	Exact historical issue or ticket identifier retained as source provenance.
 src/query/vector.rs	1	3207e228f95f329183b39e3922fbc435438d52ae8fad35cc750b7e62e921b5c4	historical	Exact historical issue or ticket identifier retained as source provenance.
 src/storage/sqlite/tests.rs	1	163425972247fc66b6e8f79408938a0b7a8069c7b8ab4e1f5e313429dea26b8b	persisted	Persisted-format identity or its exact reader, writer, vector, or hostile test.
 tests/index/static_index_definitions.rs	1	c03b5b6819947ef07926cde799e0e46b5641f62d35f6a0205596aa5be0fc1021	historical	Exact historical issue or ticket identifier retained as source provenance.

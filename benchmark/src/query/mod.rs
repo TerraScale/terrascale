@@ -29,7 +29,6 @@ pub mod includes;
 mod model;
 pub mod optimizer;
 mod result;
-mod spatial;
 mod spec;
 mod statistics;
 mod text;
@@ -82,17 +81,6 @@ pub use spec::{
     MAX_PAGE_LIMIT, MAX_PROJECTION_FIELDS, MAX_STALENESS_INDEXES, NullsPlacement, OrderDirection,
     OrderingKey, QueryCondition, QueryLoad, QueryOrdering, QueryPaging, QueryPredicate,
     QueryProjection, QuerySource, QuerySourceKind, QuerySpec, StalenessMode, StalenessPolicy,
-};
-// GAP-Q14 collision action: the spatial foundation types are defined in
-// the private `spatial` module the integrator wired; this re-export is the
-// minimal module-root edit that makes them the query seam's public
-// vocabulary. Everything else in that module stays private.
-pub use spatial::{
-    DEFAULT_DISTANCE_ERROR_PCT, DEFAULT_PRECISION_DECIMALS, EARTH_MEAN_RADIUS_KM, Latitude,
-    Longitude, MAX_DISTANCE_ERROR_PCT, MAX_POLYGON_RINGS, MAX_PRECISION_DECIMALS, MAX_SHAPE_POINTS,
-    MAX_WKT_BYTES, MILES_TO_KM, QuantizedCell, SpatialFieldEncoding, SpatialPolygon,
-    SpatialPrecision, SpatialPredicate, SpatialRelation, SpatialShape, SpatialShapeError,
-    SpatialUnits, Wgs84Point,
 };
 // The GAP-F04 window values a time-series source query binds (GAP-Q19):
 // re-exported beside the seam that consumes them so callers reach the

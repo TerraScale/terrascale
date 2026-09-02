@@ -569,72 +569,6 @@ fn vectors() -> Vec<Vector> {
                  (limit -) (offset -) (include))",
             ),
         },
-        Vector {
-            name: "spatial-predicates-with-capability",
-            version: Some("tql/1.0"),
-            text: "select @id from venues \
-                   where spatial.within(loc, spatial.circle(10, 59.9, 10.7, 'km')) \
-                   order by spatial.distance(loc, spatial.point(59.9, 10.7)) limit 5",
-            parameters: vec![],
-            capabilities: TqlCapabilities::none().with(Capability::Spatial),
-            expected: Expected::Outline(
-                "(query tql/1.0 (select plain @id) (from venues) (load) \
-                 (where spatial.within(loc,spatial.circle(int:10,num:59.9,num:10.7,str:'km'))) \
-                 (group) (order spatial.distance(loc,spatial.point(num:59.9,num:10.7))) \
-                 (limit 5) (offset -) (include))",
-            ),
-        },
-        Vector {
-            name: "spatial-contains-with-capability",
-            version: Some("tql/1.0"),
-            text: "from venues where spatial.contains(area, spatial.circle(25, 59.9, 10.7, 'km')) \
-                   limit 5",
-            parameters: vec![],
-            capabilities: TqlCapabilities::none().with(Capability::Spatial),
-            expected: Expected::Outline(
-                "(query tql/1.0 (select plain *) (from venues) (load) \
-                 (where spatial.contains(area,spatial.circle(int:25,num:59.9,num:10.7,str:'km'))) \
-                 (group) (order) (limit 5) (offset -) (include))",
-            ),
-        },
-        Vector {
-            name: "spatial-disjoint-with-capability",
-            version: Some("tql/1.0"),
-            text: "from venues where spatial.disjoint(area, spatial.point(59.9, 10.7))",
-            parameters: vec![],
-            capabilities: TqlCapabilities::none().with(Capability::Spatial),
-            expected: Expected::Outline(
-                "(query tql/1.0 (select plain *) (from venues) (load) \
-                 (where spatial.disjoint(area,spatial.point(num:59.9,num:10.7))) (group) (order) \
-                 (limit -) (offset -) (include))",
-            ),
-        },
-        Vector {
-            name: "spatial-intersects-with-capability",
-            version: Some("tql/1.0"),
-            text: "from zones where spatial.intersects(coverage, spatial.wkt($shape))",
-            parameters: vec![("shape", string("POLYGON((10.6 59.9,10.8 60.0,10.6 59.9))"))],
-            capabilities: TqlCapabilities::none().with(Capability::Spatial),
-            expected: Expected::Outline(
-                "(query tql/1.0 (select plain *) (from zones) (load) \
-                 (where spatial.intersects(coverage,spatial.wkt($shape))) (group) (order) \
-                 (limit -) (offset -) (include))",
-            ),
-        },
-        Vector {
-            name: "spatial-wkt-shape-with-capability",
-            version: Some("tql/1.0"),
-            text: "select @id from zones \
-                   where spatial.within(centroid, spatial.wkt('LINESTRING(10.6 59.9,10.8 60.0)'))",
-            parameters: vec![],
-            capabilities: TqlCapabilities::none().with(Capability::Spatial),
-            expected: Expected::Outline(
-                "(query tql/1.0 (select plain @id) (from zones) (load) \
-                 (where spatial.within(centroid,spatial.wkt(\
-                 str:'LINESTRING(10.6 59.9,10.8 60.0)'))) (group) (order) (limit -) (offset -) \
-                 (include))",
-            ),
-        },
         // -------------------------------------------------------------------
         // Fail-closed outcomes
         // -------------------------------------------------------------------
@@ -807,14 +741,6 @@ fn vectors() -> Vec<Vector> {
             expected: Expected::Error(TqlErrorClass::CapabilityUnavailable, Some("search")),
         },
         Vector {
-            name: "spatial-capability-unavailable",
-            version: Some("tql/1.0"),
-            text: "from p where spatial.within(loc, spatial.point(1.0, 2.0))",
-            parameters: vec![],
-            capabilities: NONE,
-            expected: Expected::Error(TqlErrorClass::CapabilityUnavailable, Some("spatial.within")),
-        },
-        Vector {
             name: "limit-zero",
             version: Some("tql/1.0"),
             text: "from t limit 0",
@@ -888,12 +814,13 @@ fn vectors() -> Vec<Vector> {
 #[test]
 fn golden_query_vectors_cover_every_grammar_construct() {
     let corpus = vectors();
-    // The exact counts keep the packet's quantitative claims derived from this
-    // artifact: 45 parse vectors and 30 error vectors, 75 in total.
+    // The exact counts keep the packet's quantitative claims derived from
+    // this artifact: 40 parse vectors and 29 error vectors, 69 in total
+    // (M0-5 removed the spatial function vectors).
     let errors =
         corpus.iter().filter(|vector| matches!(vector.expected, Expected::Error(..))).count();
-    assert_eq!(corpus.len(), 75, "the corpus must stay complete");
-    assert_eq!(errors, 30, "the corpus keeps its error vectors");
+    assert_eq!(corpus.len(), 69, "the corpus must stay complete");
+    assert_eq!(errors, 29, "the corpus keeps its error vectors");
     for vector in &corpus {
         let parameters =
             TqlParameters::try_new(&vector.parameters).expect("vector parameters are valid");
@@ -1033,9 +960,9 @@ fn the_corpus_invokes_every_function_of_the_closed_registry() {
         }
     }
     let registry: Vec<&str> = tql::registry_function_names().collect();
-    // The closed `tql/1.0` registry holds exactly 31 functions; a registry
+    // The closed `tql/1.0` registry holds exactly 23 functions; a registry
     // change is a grammar-version change and moves this count with it.
-    assert_eq!(registry.len(), 31, "the closed registry enumeration: {registry:?}");
+    assert_eq!(registry.len(), 23, "the closed registry enumeration: {registry:?}");
     for name in &registry {
         assert!(
             invoked.contains(*name),

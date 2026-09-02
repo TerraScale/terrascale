@@ -3,7 +3,7 @@
 //! The registry is closed and part of the grammar version (Section 7.5 of
 //! `docs/tql/spec.md`): calls outside it are `UnknownFunction`, wrong arities
 //! and statically detectable argument-type mismatches are `InvalidArgument`,
-//! and the gated search, vector, and spatial functions fail closed with
+//! and the gated search and vector functions fail closed with
 //! `CapabilityUnavailable` until the engine reports the capability. The
 //! checker additionally enforces parameter pairing, page bounds, identifier
 //! discipline, reserved names, alias resolution, aggregate placement, and
@@ -242,70 +242,6 @@ const REGISTRY: &[Descriptor] = &[
         max_args: None,
         aggregate: false,
         gated: Some(Capability::Vector),
-        arg_shape: ArgShape::Any,
-    },
-    Descriptor {
-        name: "spatial.within",
-        min_args: 2,
-        max_args: Some(2),
-        aggregate: false,
-        gated: Some(Capability::Spatial),
-        arg_shape: ArgShape::Any,
-    },
-    Descriptor {
-        name: "spatial.contains",
-        min_args: 2,
-        max_args: Some(2),
-        aggregate: false,
-        gated: Some(Capability::Spatial),
-        arg_shape: ArgShape::Any,
-    },
-    Descriptor {
-        name: "spatial.disjoint",
-        min_args: 2,
-        max_args: Some(2),
-        aggregate: false,
-        gated: Some(Capability::Spatial),
-        arg_shape: ArgShape::Any,
-    },
-    Descriptor {
-        name: "spatial.intersects",
-        min_args: 2,
-        max_args: Some(2),
-        aggregate: false,
-        gated: Some(Capability::Spatial),
-        arg_shape: ArgShape::Any,
-    },
-    Descriptor {
-        name: "spatial.circle",
-        min_args: 4,
-        max_args: Some(4),
-        aggregate: false,
-        gated: Some(Capability::Spatial),
-        arg_shape: ArgShape::Any,
-    },
-    Descriptor {
-        name: "spatial.point",
-        min_args: 2,
-        max_args: Some(2),
-        aggregate: false,
-        gated: Some(Capability::Spatial),
-        arg_shape: ArgShape::Any,
-    },
-    Descriptor {
-        name: "spatial.wkt",
-        min_args: 1,
-        max_args: Some(1),
-        aggregate: false,
-        gated: Some(Capability::Spatial),
-        arg_shape: ArgShape::Any,
-    },
-    Descriptor {
-        name: "spatial.distance",
-        min_args: 2,
-        max_args: Some(2),
-        aggregate: false,
-        gated: Some(Capability::Spatial),
         arg_shape: ArgShape::Any,
     },
 ];

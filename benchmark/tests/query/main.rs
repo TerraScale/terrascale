@@ -9,7 +9,6 @@ mod family_sources_contract;
 mod includes_contract;
 mod query_public_construction;
 mod result_statistics;
-mod spatial_foundation;
 mod tql_golden_vectors;
 mod tql_public;
 mod vector_conformance_vectors;

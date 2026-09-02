@@ -30,7 +30,7 @@
 //! and `load` bindings with alias-qualified projections; extending the seam
 //! for the remaining constructs is recorded work for the seam owner.
 //!
-//! The search, vector, and spatial predicates are in the grammar now and
+//! The search and vector predicates are in the grammar now and
 //! gated on [`TqlCapabilities`]: against an engine that does not report the
 //! capability they fail closed with
 //! [`TqlErrorClass::CapabilityUnavailable`] and never degrade to a different
@@ -129,8 +129,6 @@ pub enum Capability {
     Search,
     /// Vector search: `vector.search`, `vector.of`.
     Vector,
-    /// Spatial predicates and shapes: the `spatial.*` family.
-    Spatial,
 }
 
 /// The capabilities the engine reports to the TQL parser.
@@ -142,14 +140,13 @@ pub enum Capability {
 pub struct TqlCapabilities {
     search: bool,
     vector: bool,
-    spatial: bool,
 }
 
 impl TqlCapabilities {
     /// Reports no capability: every gated predicate fails closed.
     #[must_use]
     pub const fn none() -> Self {
-        Self { search: false, vector: false, spatial: false }
+        Self { search: false, vector: false }
     }
 
     /// Returns the set with one more capability available.
@@ -158,7 +155,6 @@ impl TqlCapabilities {
         match capability {
             Capability::Search => Self { search: true, ..self },
             Capability::Vector => Self { vector: true, ..self },
-            Capability::Spatial => Self { spatial: true, ..self },
         }
     }
 
@@ -168,7 +164,6 @@ impl TqlCapabilities {
         match capability {
             Capability::Search => self.search,
             Capability::Vector => self.vector,
-            Capability::Spatial => self.spatial,
         }
     }
 }

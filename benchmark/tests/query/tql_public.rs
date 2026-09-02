@@ -346,17 +346,6 @@ fn capability_gated_predicates_fail_closed_until_the_capability_ships() {
         ("from p where search(body, $terms)", &term_parameters),
         ("from p where boost(search(title, $terms), 3)", &term_parameters),
         ("from p order by score()", &empty_parameters),
-        (
-            "from p where spatial.within(loc, spatial.circle(10, 59.9, 10.7, 'km'))",
-            &empty_parameters,
-        ),
-        ("from p where spatial.intersects(area, spatial.wkt($terms))", &term_parameters),
-        (
-            "from p where spatial.contains(area, spatial.circle(10, 59.9, 10.7, 'km'))",
-            &empty_parameters,
-        ),
-        ("from p where spatial.disjoint(area, spatial.point(59.9, 10.7))", &empty_parameters),
-        ("from p order by spatial.distance(loc, spatial.point(59.9, 10.7))", &empty_parameters),
     ];
     for (text, parameters) in gated {
         let error = tql::parse(GrammarVersion::CURRENT, text, parameters)
@@ -382,16 +371,6 @@ fn capability_gated_predicates_fail_closed_until_the_capability_ships() {
             "from p order by score() limit 2",
             &TqlParameters::new(),
             &search_ready
-        )
-        .is_ok()
-    );
-    let spatial_ready = TqlCapabilities::none().with(Capability::Spatial);
-    assert!(
-        tql::parse_with(
-            GrammarVersion::CURRENT,
-            "from p where spatial.within(loc, spatial.point(59.9, 10.7))",
-            &empty_parameters,
-            &spatial_ready
         )
         .is_ok()
     );
