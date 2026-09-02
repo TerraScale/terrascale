@@ -170,6 +170,34 @@ pub enum IndexDescriptorError {
     Storage,
 }
 
+/// One durable index descriptor as the audit and the collections route see
+/// it: its identity, its activity, and the rows its governed backfill still
+/// owes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DescriptorListing {
+    /// The descriptor's collection.
+    pub collection: String,
+    /// The descriptor's field path.
+    pub field: String,
+    /// Whether conditions over the field push.
+    pub active: bool,
+    /// The number of rows the governed backfill has not covered yet.
+    pub backfill_remaining: u64,
+}
+
+/// The durable progress of one governed backfill batch.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BackfillProgress {
+    /// The descriptor's collection.
+    pub collection: String,
+    /// The descriptor's field path.
+    pub field: String,
+    /// The rows still owed after this batch.
+    pub remaining: u64,
+    /// Whether the descriptor completed with this batch.
+    pub active: bool,
+}
+
 /// The total order used by usage export and its continuation cursor.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct UsageFactPosition {
@@ -362,6 +390,23 @@ pub(crate) trait StoragePort: Send {
         _field: &str,
     ) -> Result<DescriptorRegistration, IndexDescriptorError> {
         Err(IndexDescriptorError::Storage)
+    }
+
+    /// Lists the durable index descriptors with their activity and
+    /// remaining governed-backfill work. The default reports none.
+    fn index_descriptors(&self) -> Result<Vec<DescriptorListing>, ()> {
+        Err(())
+    }
+
+    /// Advances every building descriptor's governed backfill by one
+    /// bounded batch of rows (D-31), completing a descriptor when its
+    /// cursor reaches its registration watermark. The default owes nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(())` when the durable pass fails.
+    fn pump_index_backfills(&mut self, _batch: u64) -> Result<Vec<BackfillProgress>, ()> {
+        Ok(Vec::new())
     }
 
     /// Returns the documents the given read snapshot observed at the named

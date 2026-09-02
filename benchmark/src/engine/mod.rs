@@ -89,6 +89,12 @@ pub(crate) const MAX_PUBLICATION_SINKS: usize = 64;
 /// Maximum rows in one boundary-pinned final-state snapshot page.
 pub(crate) const MAX_SNAPSHOT_RECORD_PAGE: u32 = 256;
 
+/// The row budget of one governed index-backfill batch (D-31): each
+/// [`Engine::maintain_index_backfills`] call covers at most this many rows
+/// per building descriptor, so the host cadence — not the pass — owns how
+/// much write-path time the backfill takes.
+pub const INDEX_BACKFILL_BATCH: u64 = 4096;
+
 const USAGE_CONTINUATION_MAGIC: &[u8; 8] = b"TBUCUR01";
 const USAGE_CONTINUATION_DOMAIN: &[u8] = b"terrascale.usage.continuation.v1\0";
 
@@ -1802,6 +1808,39 @@ impl Engine {
             }
             crate::storage::IndexDescriptorError::Storage => IndexRegistrationError::Storage,
         })
+    }
+
+    /// Lists the database's durable index descriptors with their activity
+    /// and remaining governed-backfill work (D-31): the collections route's
+    /// index listing and the audit's coverage input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::StorageFailure`] when the durable listing
+    /// fails.
+    pub fn index_descriptors(&self) -> Result<Vec<crate::storage::DescriptorListing>, EngineError> {
+        let storage = self.lock_storage()?;
+        storage.port.index_descriptors().map_err(|_| EngineError::StorageFailure)
+    }
+
+    /// Advances every building descriptor's governed backfill by one
+    /// bounded batch of rows (D-31), completing a descriptor — backfill
+    /// done, ordinary indexes created, conditions pushing — when its cursor
+    /// reaches its registration watermark. A host schedules this on its own
+    /// timer, the same cadence as [`Engine::maintain_indexes`]; the pass is
+    /// idempotent and resumable through its durable cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::StorageFailure`] when the durable pass fails.
+    pub fn maintain_index_backfills(
+        &self,
+    ) -> Result<Vec<crate::storage::BackfillProgress>, EngineError> {
+        let mut storage = self.lock_storage()?;
+        storage
+            .port
+            .pump_index_backfills(INDEX_BACKFILL_BATCH)
+            .map_err(|_| EngineError::StorageFailure)
     }
 
     /// Returns one bounded page of final-state documents at an explicit

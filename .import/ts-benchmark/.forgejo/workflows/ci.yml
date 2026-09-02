@@ -133,19 +133,7 @@ jobs:
           test "${#history_files[@]}" -eq 1
           grep -Fq '# Benchmark history' "${history_files[0]}"
           grep -Fq '| workload | side | status |' "${history_files[0]}"
-          
-      # Studio owns a separate workspace so the engine's dependency budget
-      # remains explicit. It is nevertheless a release deliverable and gets
-      # the same format, build, test, Clippy, and documentation gates.
-      - name: Standalone Studio
-        run: |
-          scripts/validate-studio-assets.sh
-          cargo fmt --manifest-path crates/terrabase-studio/Cargo.toml -- --check
-          cargo check --manifest-path crates/terrabase-studio/Cargo.toml --locked
-          cargo build --manifest-path crates/terrabase-studio/Cargo.toml --locked --release
-          scripts/run-checked-rust-tests.sh studio-default -- --manifest-path crates/terrabase-studio/Cargo.toml --locked
-          cargo clippy --manifest-path crates/terrabase-studio/Cargo.toml --all-targets --locked -- -D warnings
-          cargo doc --manifest-path crates/terrabase-studio/Cargo.toml --no-deps --locked
+
       - name: Install pinned yq
         env:
           GOBIN: ${{ runner.temp }}/terrabase-ci-bin
@@ -178,7 +166,6 @@ jobs:
         run: |
           cargo deny --workspace --all-features --locked check
           cargo deny --manifest-path bench/Cargo.toml --config bench/deny.toml --locked check
-          cargo deny --manifest-path crates/terrabase-studio/Cargo.toml --config crates/terrabase-studio/deny.toml --all-features --locked check
 
       # The protobuf is the TBEP contract of record. Regeneration must be
       # clean, so a schema edit cannot silently ship stale Go bindings.

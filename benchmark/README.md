@@ -59,8 +59,6 @@ participate.
   runtime bound is enforced and the complete clustered host replaces the
   standalone engine host.
 - `terrabase-go/` contains generated bindings and the sole network client.
-- `crates/terrabase-studio/` contains the owner-only loopback Studio. It uses
-  Axum, Datastar, Basecoat, and a vendored Monaco JSON editor with linting.
 - `bench/` is the benchmark driver. Markdown history under
   `docs/evidence/benchmarks/` is the repository's comparison authority.
 - `deploy/observability/` contains the private Prometheus template, alert
@@ -69,11 +67,6 @@ participate.
   lifecycle, and restore runbook.
 - `docs/adr/` contains accepted architecture decisions.
 - `docs/evidence/` separates local lane facts from production qualification.
-
-The Studio binds only to loopback, has no authentication, and opens one engine
-location in process. It is an owner diagnostic tool, not a customer or
-production metrics boundary. Monaco and Basecoat assets are served locally, so
-opening Studio does not contact a public CDN.
 
 ## Development gates
 
@@ -92,7 +85,6 @@ Standalone deliverables:
 
 ```sh
 cargo test --manifest-path bench/Cargo.toml --locked
-cargo test --manifest-path crates/terrabase-studio/Cargo.toml --locked
 cd terrabase-go && go vet -mod=readonly ./... && go test -mod=readonly ./...
 ```
 

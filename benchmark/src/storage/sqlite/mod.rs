@@ -122,9 +122,9 @@ use crate::usage::{
 #[cfg(test)]
 use super::faults::FaultPlan;
 use super::{
-    DescriptorRegistration, IndexDescriptorError, PublishedCommit, PublishedWrite, ScanFilter,
-    ScanOp, SnapshotReadError, StorageOpenError, StoragePort, StorageRootId, UsageFactPosition,
-    UsageStorageError,
+    BackfillProgress, DescriptorListing, DescriptorRegistration, IndexDescriptorError,
+    PublishedCommit, PublishedWrite, ScanFilter, ScanOp, SnapshotReadError, StorageOpenError,
+    StoragePort, StorageRootId, UsageFactPosition, UsageStorageError,
 };
 use super::{
     codec,
@@ -343,11 +343,13 @@ CREATE TABLE IF NOT EXISTS consumer_frontiers (
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS index_descriptors (
-    collection TEXT    NOT NULL,
-    field      TEXT    NOT NULL,
-    kind       INTEGER NOT NULL,
-    state      INTEGER NOT NULL,
-    created_at INTEGER NOT NULL,
+    collection       TEXT    NOT NULL,
+    field            TEXT    NOT NULL,
+    kind             INTEGER NOT NULL,
+    state            INTEGER NOT NULL,
+    created_at       INTEGER NOT NULL,
+    backfill_below   INTEGER NOT NULL DEFAULT 0,
+    backfill_cursor  INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (collection, field)
 ) WITHOUT ROWID;
 
@@ -1785,6 +1787,14 @@ impl StoragePort for SqliteStorage {
         self.register_descriptor(collection, field)
     }
 
+    fn index_descriptors(&self) -> Result<Vec<DescriptorListing>, ()> {
+        self.list_descriptors()
+    }
+
+    fn pump_index_backfills(&mut self, batch: u64) -> Result<Vec<BackfillProgress>, ()> {
+        self.pump_backfills(batch)
+    }
+
     fn read_documents_in_collection_at(
         &self,
         sequence: StorageSequence,
@@ -2295,11 +2305,25 @@ impl SqliteStorage {
                 .map_err(|_| IndexDescriptorError::Storage)?;
             state = DescriptorRegistration::Active;
         }
+        // The governed backfill's window: rows at or below the watermark
+        // predate the descriptor. An inline build leaves no window (the
+        // cursor starts at the watermark); a larger collection leaves the
+        // whole window to the bounded pass, which advances the cursor one
+        // batch at a time.
+        let (backfill_below, backfill_cursor) = if state == DescriptorRegistration::Active {
+            (watermark, watermark)
+        } else {
+            (watermark, 0)
+        };
         transaction
             .prepare_cached(
-                "INSERT INTO index_descriptors (collection, field, kind, state, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(collection, field) DO UPDATE SET state = excluded.state",
+                "INSERT INTO index_descriptors
+                 (collection, field, kind, state, created_at, backfill_below, backfill_cursor)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(collection, field) DO UPDATE SET
+                    state = excluded.state,
+                    backfill_below = excluded.backfill_below,
+                    backfill_cursor = excluded.backfill_cursor",
             )
             .and_then(|mut statement| {
                 statement.execute(rusqlite::params![
@@ -2312,18 +2336,18 @@ impl SqliteStorage {
                         DESCRIPTOR_STATE_BUILDING
                     },
                     unix_millis(),
+                    backfill_below as i64,
+                    backfill_cursor as i64,
                 ])
             })
             .map_err(|_| IndexDescriptorError::Storage)?;
-        let indexes = format!(
-            "CREATE INDEX IF NOT EXISTS {text_index} ON documents {text_col};
-             CREATE INDEX IF NOT EXISTS {number_index} ON documents {number_col};",
-            text_index = quote_identifier(&format!("i:{}#t", field)),
-            text_col = format!("({})", quote_identifier(&text_column(field))),
-            number_index = quote_identifier(&format!("i:{}#n", field)),
-            number_col = format!("({})", quote_identifier(&numeric_column(field))),
-        );
-        transaction.execute_batch(&indexes).map_err(|_| IndexDescriptorError::Storage)?;
+        // The ordinary indexes cover the columns from the moment the
+        // descriptor is active. A building descriptor takes its indexes
+        // only when the governed backfill completes it — creating them
+        // earlier would index a half-empty column while rows still miss.
+        if state == DescriptorRegistration::Active {
+            create_descriptor_indexes(&transaction, field).map_err(|_| IndexDescriptorError::Storage)?;
+        }
         transaction.commit().map_err(|_| IndexDescriptorError::Storage)?;
         let mut extracted =
             self.extracted.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -2336,6 +2360,31 @@ impl SqliteStorage {
             extracted.refresh_put_sql();
         }
         Ok(state)
+    }
+
+    /// Lists the durable index descriptors with their activity and
+    /// remaining governed-backfill work.
+    fn list_descriptors(&self) -> Result<Vec<DescriptorListing>, ()> {
+        let reader = self.reader();
+        list_descriptors_on(reader.connection())
+    }
+
+    /// Advances every building descriptor's governed backfill by one
+    /// bounded batch of rows.
+    fn pump_backfills(&mut self, batch: u64) -> Result<Vec<BackfillProgress>, ()> {
+        let mut writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let progress = pump_backfills_on(&mut writer, batch)?;
+        // The in-memory view follows the durable state: a descriptor the
+        // pass completed pushes from now on.
+        let mut extracted = self.extracted.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for step in &progress {
+            if step.active {
+                extracted
+                    .descriptors
+                    .insert((step.collection.clone(), step.field.clone()), true);
+            }
+        }
+        Ok(progress)
     }
 
     /// Serves one filtered collection page with the conditions pushed onto
@@ -2435,6 +2484,181 @@ impl SqliteStorage {
     }
 }
 
+/// Lists the durable index descriptors with their activity and remaining
+/// governed-backfill work.
+fn list_descriptors_on(connection: &Connection) -> Result<Vec<DescriptorListing>, ()> {
+    let mut statement = connection
+        .prepare(
+            "SELECT collection, field, state, backfill_below, backfill_cursor
+             FROM index_descriptors ORDER BY collection, field",
+        )
+        .map_err(|_| ())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })
+        .map_err(|_| ())?;
+    let mut listings = Vec::new();
+    for row in rows {
+        let (collection, field, state, below, cursor) = row.map_err(|_| ())?;
+        let below = u64::try_from(below).unwrap_or(0);
+        let cursor = u64::try_from(cursor).unwrap_or(0);
+        listings.push(DescriptorListing {
+            collection,
+            field,
+            active: state == DESCRIPTOR_STATE_ACTIVE,
+            backfill_remaining: below.saturating_sub(cursor),
+        });
+    }
+    Ok(listings)
+}
+
+/// Advances every building descriptor's governed backfill by one bounded
+/// batch of rows (D-31), completing a descriptor — backfill done, state
+/// active, ordinary indexes created — when its cursor reaches its
+/// watermark. Idempotent and resumable: the cursor is durable state.
+fn pump_backfills_on(writer: &mut Connection, batch: u64) -> Result<Vec<BackfillProgress>, ()> {
+    let building = {
+        let transaction = writer
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(|_| ())?;
+        let mut statement = transaction
+            .prepare(
+                "SELECT collection, field, backfill_below, backfill_cursor
+                 FROM index_descriptors WHERE state = ?1 ORDER BY collection, field",
+            )
+            .map_err(|_| ())?;
+        let rows = statement
+            .query_map(rusqlite::params![DESCRIPTOR_STATE_BUILDING], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(|_| ())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| ())?;
+        drop(statement);
+        transaction.commit().map_err(|_| ())?;
+        rows
+    };
+    let mut progress = Vec::new();
+    for (collection_name, field, below, cursor) in building {
+        let collection = CollectionName::try_new(&collection_name).map_err(|_| ())?;
+        let below = u64::try_from(below).unwrap_or(0);
+        let mut cursor = u64::try_from(cursor).unwrap_or(0);
+        if below > cursor {
+            let transaction = writer
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(|_| ())?;
+            cursor = backfill_batch(&transaction, &collection, &field, cursor, below, batch)?;
+            let active = cursor >= below;
+            transaction
+                .prepare_cached(
+                    "UPDATE index_descriptors SET state = ?3, backfill_cursor = ?4
+                     WHERE collection = ?1 AND field = ?2",
+                )
+                .and_then(|mut statement| {
+                    statement.execute(rusqlite::params![
+                        collection_name,
+                        field,
+                        if active { DESCRIPTOR_STATE_ACTIVE } else { DESCRIPTOR_STATE_BUILDING },
+                        cursor as i64,
+                    ])
+                })
+                .map_err(|_| ())?;
+            if active {
+                create_descriptor_indexes(&transaction, &field).map_err(|_| ())?;
+            }
+            transaction.commit().map_err(|_| ())?;
+        }
+        progress.push(BackfillProgress {
+            collection: collection_name,
+            field,
+            remaining: below.saturating_sub(cursor),
+            active: cursor >= below,
+        });
+    }
+    Ok(progress)
+}
+
+/// Backfills one bounded batch of a descriptor's window and returns the
+/// advanced cursor.
+fn backfill_batch(
+    transaction: &rusqlite::Transaction<'_>,
+    collection: &CollectionName,
+    field: &str,
+    cursor: u64,
+    below: u64,
+    batch: u64,
+) -> Result<u64, ()> {
+    let text = quote_identifier(&text_column(field));
+    let number = quote_identifier(&numeric_column(field));
+    let mut statement = transaction
+        .prepare_cached(
+            "SELECT tenant, id, commit_seq, deleted, body FROM documents
+             WHERE collection = ?1 AND commit_seq > ?2 AND commit_seq <= ?3
+             ORDER BY commit_seq LIMIT ?4",
+        )
+        .map_err(|_| ())?;
+    let rows = statement
+        .query_map(
+            rusqlite::params![collection.as_str(), cursor as i64, below as i64, batch as i64],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, Vec<u8>>(4)?,
+                ))
+            },
+        )
+        .map_err(|_| ())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| ())?;
+    drop(statement);
+    let mut advanced = cursor;
+    for (tenant, id, commit_seq, deleted, body) in rows {
+        advanced = advanced.max(u64::try_from(commit_seq).unwrap_or(advanced));
+        if deleted != 0 {
+            continue;
+        }
+        let Some(document) = decode_document_body(&body) else { continue };
+        let (text_value, number_value) = match extract_column_value(&document, field) {
+            Some(ColumnValue::Text(text)) => (Value::Text(text), Value::Null),
+            Some(ColumnValue::Integer(integer)) => (Value::Null, Value::Integer(integer)),
+            Some(ColumnValue::Real(real)) => (Value::Null, Value::Real(real)),
+            None => (Value::Null, Value::Null),
+        };
+        transaction
+            .prepare_cached(&format!(
+                "UPDATE documents SET {text} = ?5, {number} = ?6
+                 WHERE tenant = ?1 AND collection = ?2 AND id = ?3 AND commit_seq = ?4"
+            ))
+            .and_then(|mut statement| {
+                statement.execute(rusqlite::params![
+                    tenant,
+                    collection.as_str(),
+                    id,
+                    commit_seq,
+                    text_value,
+                    number_value,
+                ])
+            })
+            .map_err(|_| ())?;
+    }
+    Ok(advanced)
+}
+
 /// Loads the descriptor view from the durable table at open.
 fn load_extracted_state(connection: &Connection, state: &mut ExtractedState) -> Result<(), ()> {
     let mut statement = connection
@@ -2458,6 +2682,22 @@ fn load_extracted_state(connection: &Connection, state: &mut ExtractedState) -> 
     }
     state.refresh_put_sql();
     Ok(())
+}
+
+/// Creates the ordinary indexes covering one descriptor's stored columns.
+fn create_descriptor_indexes(
+    connection: &Connection,
+    field: &str,
+) -> Result<(), rusqlite::Error> {
+    let indexes = format!(
+        "CREATE INDEX IF NOT EXISTS {text_index} ON documents {text_col};
+         CREATE INDEX IF NOT EXISTS {number_index} ON documents {number_col};",
+        text_index = quote_identifier(&format!("i:{}#t", field)),
+        text_col = format!("({})", quote_identifier(&text_column(field))),
+        number_index = quote_identifier(&format!("i:{}#n", field)),
+        number_col = format!("({})", quote_identifier(&numeric_column(field))),
+    );
+    connection.execute_batch(&indexes)
 }
 
 /// Backfills one descriptor's extracted columns over a collection's
