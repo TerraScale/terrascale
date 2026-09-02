@@ -28,12 +28,11 @@ public operation stays missing until its owning service publishes the contract.
 
 Typed route capture and OpenAPI descriptor/drift checks are part of release
 admission. A successful TypeScript build alone does not prove parity. The
-current package implements 91 captured routes, and the current Dashboard
-snapshot covers all 91. The saved-query CRUD operations use the owner-published
+current package implements 60 captured routes, and the current Dashboard
+snapshot covers all 60. The saved-query CRUD operations use the owner-published
 v1 paths, page envelope, continuation offset, and revision-protected update
-contract. Project queue operations use the Dashboard-owned project-scoped
-OpenAPI contract and retain typed receipts plus explicit regional affinity for
-acknowledgement operations. The legacy global queue API remains excluded.
+contract. The retired D-40 product surfaces and their repository-scoped data
+clients are deleted; the data path returns with the Rust public API.
 
 ## Evidence and follow-up
 

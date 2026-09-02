@@ -1,7 +1,7 @@
 {
   "protocol": "terrascale.sync.v2.msgpack",
   "version": "2.1",
-  "manifestSha256": "a37d091583ce8dd6f9aa979ad617dde51abab81a1f81446077dadd94c8f34ace",
+  "manifestSha256": "7ecc582d87d405baecf9ac801452f16d8feead7d43302d665fd150a4542087c4",
   "vectors": [
     {
       "name": "whole message above 8 MiB",

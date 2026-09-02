@@ -124,10 +124,6 @@ A database selects one through twenty active Regions, initially GRU, SFO, and
 FRA. A preferred Region is a failover-capable hint. Strict affinity fails
 rather than silently serving from another Region.
 
-Automatic session consistency retains the latest opaque causal token inside
-one client instance and sends it on later eligible reads. A caller can request
-an explicitly stale read where the public contract allows it.
-
 `RegionalDurable` avoids WAN acknowledgement and requires both active local
 Members. `GlobalDurable` pays WAN latency and requires every selected active
 Region. Backup is an independent opt-in.

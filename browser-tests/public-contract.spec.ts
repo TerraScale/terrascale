@@ -1,51 +1,30 @@
 import { expect, test } from "@playwright/test";
 
-test("the browser entrypoint keeps regional and conditional document behavior", async ({ page }) => {
+test("the browser entrypoint keeps regional routing behavior", async ({ page }) => {
   await page.goto("/browser-tests/fixture.html");
 
   const observation = await page.evaluate(async () => {
     const sdk = await import("/candidate/dist/index.js");
     const requests: { url: string; headers: Record<string, string> }[] = [];
-    const responses = [
-      {
-        repositoryId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        repository: "users",
-        id: "01BX5ZZKBKACTAV9WEVGEMMVRZ",
-        data: { name: "Ada" },
-        changeToken: "change-2",
-        sessionConsistencyToken: "session-2",
-      },
-      {
-        repositoryId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        repository: "users",
-        id: "01BX5ZZKBKACTAV9WEVGEMMVRZ",
-        data: { name: "Ada" },
-        changeToken: "change-2",
-      },
-    ];
     const client = sdk.createTerraScaleClient({
       preferredRegion: "FRA",
-      sessionConsistency: "automatic",
+      projectId: sdk.toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
       fetch: async (input: RequestInfo | URL) => {
         const request = input instanceof Request ? input : new Request(input);
         requests.push({ url: request.url, headers: Object.fromEntries(request.headers) });
-        return Response.json(responses.shift());
+        return Response.json({});
       },
     });
-    const scope = { repositoryId: sdk.toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV") };
-    const id = sdk.toUlid("01BX5ZZKBKACTAV9WEVGEMMVRZ");
+    const databaseId = sdk.toUlid("01BX5ZZKBKACTAV9WEVGEMMVRZ");
 
-    await client.documents.put(scope, id, { name: "Ada" }, { expectedChangeToken: "change-1" });
-    await client.documents.get(scope, id);
-
-    return requests;
+    const result = await client.databases.get(databaseId);
+    return { requests, ok: result.ok };
   });
 
-  expect(observation).toHaveLength(2);
-  expect(observation[0]?.url).toBe("https://api.terrascale.tech/api/v1/repositories/01ARZ3NDEKTSV4RRFFQ69G5FAV/documents/01BX5ZZKBKACTAV9WEVGEMMVRZ");
-  expect(observation[0]?.headers["if-match"]).toBe("change-1");
-  expect(observation[0]?.headers["x-terrascale-preferred-region"]).toBe("FRA");
-  expect(observation[1]?.headers["x-terrascale-session-consistency-token"]).toBe("session-2");
+  expect(observation.ok).toBe(true);
+  expect(observation.requests).toHaveLength(1);
+  expect(observation.requests[0]?.url).toBe("https://api.terrascale.tech/api/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAV/databases/01BX5ZZKBKACTAV9WEVGEMMVRZ");
+  expect(observation.requests[0]?.headers["x-terrascale-preferred-region"]).toBe("FRA");
 });
 
 test("the packed browser client decodes the generated reactive protocol", async ({ page }) => {

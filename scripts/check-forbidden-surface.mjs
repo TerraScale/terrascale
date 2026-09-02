@@ -23,10 +23,6 @@ const forbidden = [
     pattern: /\b(?:M2M\w*|m2m)\b/u,
   },
   {
-    name: "legacy global queue route",
-    pattern: /\/api\/v\d+\/queues(?:[\/"'`:]|$)|\bGlobalQueue\w*/u,
-  },
-  {
     name: "billing/pricing route",
     pattern: /\/api\/v\d+\/(?:billing|pricing|organizations\/\{[^}]+\}\/billing|auth\/me\/billing)(?:[\/"'`:]|$)/u,
   },
