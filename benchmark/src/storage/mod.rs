@@ -187,6 +187,17 @@ pub struct DescriptorListing {
     pub backfill_remaining: u64,
 }
 
+/// One retained revision of a document: the history view of the folded
+/// journal (D-42 — superseded rows stay reachable until the pruner passes
+/// every consumer frontier and the 30-day floor).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocumentRevisionEntry {
+    /// The revision string (`seq-version`).
+    pub revision: String,
+    /// Whether this revision is the tombstone.
+    pub deleted: bool,
+}
+
 /// The durable progress of one governed backfill batch.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BackfillProgress {
@@ -294,6 +305,20 @@ pub(crate) trait StoragePort: Send {
         collection: &CollectionName,
         id: &DocumentId,
     ) -> Option<Document>;
+
+    /// Returns one document's retained revision history, newest first:
+    /// one row per committed mutation (put or tombstone) that retention
+    /// has not pruned yet (D-42: history is journal retention). The
+    /// default serves no history; the SQLite storage overrides it.
+    fn document_history_in_collection(
+        &self,
+        _tenant: &TenantId,
+        _collection: &CollectionName,
+        _id: &DocumentId,
+        _limit: u32,
+    ) -> Vec<DocumentRevisionEntry> {
+        Vec::new()
+    }
 
     /// Returns one document's public revision string (`seq-version`) at
     /// the given read snapshot without reading its body — the

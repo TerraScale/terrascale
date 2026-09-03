@@ -487,6 +487,10 @@ pub fn router(state: Arc<ApiState>) -> Router {
             "/api/v1/databases/{name}/collections/{collection}/documents/{id}",
             get(get_document).put(put_document).patch(patch_document).delete(delete_document),
         )
+        .route(
+            "/api/v1/databases/{name}/collections/{collection}/documents/{id}/history",
+            get(document_history),
+        )
         .route("/api/v1/databases/{name}/tql", post(execute_tql))
         .fallback(not_routed)
         .layer(from_fn_with_state(Arc::clone(&state), authenticate))
@@ -1490,6 +1494,50 @@ async fn patch_document(
             placement: None,
         }
         .into_response(),
+    }
+}
+
+/// One document's retained revision history, newest first (D-42: history
+/// is journal retention). Conflict explanations — "why this version won" —
+/// ride the S-05 replication lane; a single-region document has no
+/// conflicts to explain yet.
+async fn document_history(
+    State(state): State<Arc<ApiState>>,
+    Path((name, collection, id)): Path<(String, String, String)>,
+    extract::Query(paging): extract::Query<DocumentPaging>,
+) -> Response {
+    let Ok(host) = document_host(&state, &name) else {
+        return ApiError::database_not_found(&name).into_response();
+    };
+    let engine = host.engine();
+    let Ok(scope) = document_scope(engine) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let Ok(collection) = CollectionName::try_new(&collection) else {
+        return invalid_identifier("collection name", &collection).into_response();
+    };
+    let Ok(id) = DocumentId::try_new(&id) else {
+        return invalid_identifier("document identifier", &id).into_response();
+    };
+    let limit = paging.limit.unwrap_or(100).clamp(1, 1000);
+    let limit = u32::try_from(limit).unwrap_or(100);
+    match engine.document_history_in_collection(&scope, &collection, &id, limit) {
+        Ok(entries) => {
+            let mut body = String::from("{\"history\":[");
+            for (index, entry) in entries.iter().enumerate() {
+                if index > 0 {
+                    body.push(',');
+                }
+                body.push_str("{\"revision\":\"");
+                push_json_escaped(&mut body, &entry.revision);
+                body.push_str("\",\"deleted\":");
+                body.push_str(if entry.deleted { "true" } else { "false" });
+                body.push('}');
+            }
+            body.push_str("]}");
+            json_response(StatusCode::OK, body)
+        }
+        Err(_) => ApiError::control_unavailable().into_response(),
     }
 }
 
@@ -2566,6 +2614,64 @@ mod tests {
             assert!(body.contains("surface_pending"), "{method} {path}: {body}");
             assert!(body.contains("\"fix\":"), "{method} {path}: {body}");
         }
+    }
+
+    #[tokio::test]
+    async fn history_lists_every_retained_revision() {
+        use axum::body::Body;
+        use axum::http::Request;
+        let auth = "authorization";
+        let key = "Bearer tskey_test_abcdefghijklmnop";
+        let path = "/api/v1/databases/prod/collections/users/documents/h-1";
+        let router = router(state_with_keys_and_control());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header(auth, key)
+                    .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        // Three committed mutations: put, patch, delete.
+        for (method, body) in
+            [("PUT", r#"{"name":"Ada"}"#), ("PATCH", r#"{"name":"Ada Lovelace"}"#), ("DELETE", "")]
+        {
+            let request = match method {
+                "PUT" => Request::put(path),
+                "PATCH" => Request::patch(path),
+                _ => Request::delete(path),
+            };
+            let response = router
+                .clone()
+                .oneshot(request.header(auth, key).body(Body::from(body)).expect("request"))
+                .await
+                .expect("answers");
+            let expected = if method == "DELETE" { StatusCode::NO_CONTENT } else { StatusCode::OK };
+            assert_eq!(response.status(), expected, "{method} commits");
+        }
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get(format!("{path}/history"))
+                    .header(auth, key)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("\"revision\""), "{body}");
+        let revisions = body.matches("\"revision\"").count();
+        assert_eq!(revisions, 3, "every committed mutation is retained: {body}");
+        assert!(body.contains("\"deleted\":true"), "the tombstone is the newest: {body}");
+        // The newest entry is listed first.
+        let tombstone = body.find("\"deleted\":true").expect("tombstone");
+        assert!(body[..tombstone].matches("\"revision\"").count() == 1, "newest first: {body}");
     }
 
     #[tokio::test]

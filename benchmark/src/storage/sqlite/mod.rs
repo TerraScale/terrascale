@@ -1690,6 +1690,36 @@ impl StoragePort for SqliteStorage {
             .and_then(|(_, body)| decode_document_body(&body))
     }
 
+    fn document_history_in_collection(
+        &self,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        id: &DocumentId,
+        limit: u32,
+    ) -> Vec<crate::storage::DocumentRevisionEntry> {
+        let reader = self.reader();
+        let connection = reader.connection();
+        let Ok(mut statement) = connection.prepare(
+            "SELECT revision, deleted FROM documents
+             WHERE tenant = ?1 AND collection = ?2 AND id = ?3
+             ORDER BY commit_seq DESC LIMIT ?4",
+        ) else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map(
+            rusqlite::params![tenant.as_str(), collection.as_str(), id.as_str(), i64::from(limit)],
+            |row| {
+                Ok(crate::storage::DocumentRevisionEntry {
+                    revision: row.get::<_, String>(0)?,
+                    deleted: row.get::<_, i64>(1)? != 0,
+                })
+            },
+        ) else {
+            return Vec::new();
+        };
+        rows.filter_map(Result::ok).collect()
+    }
+
     fn document_revision_in_collection_at(
         &self,
         sequence: StorageSequence,

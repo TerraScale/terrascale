@@ -1823,6 +1823,26 @@ impl Engine {
         storage.port.index_descriptors().map_err(|()| EngineError::StorageFailure)
     }
 
+    /// Returns one document's retained revision history, newest first
+    /// (D-42: history is journal retention — the pruner's consumer
+    /// frontiers and the 30-day floor bound what is still servable).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::StorageFailure`] when the durable read
+    /// fails.
+    pub fn document_history_in_collection(
+        &self,
+        scope: &TenantScope,
+        collection: &CollectionName,
+        id: &DocumentId,
+        limit: u32,
+    ) -> Result<Vec<crate::storage::DocumentRevisionEntry>, EngineError> {
+        self.validate_scope(scope)?;
+        let storage = self.lock_storage()?;
+        Ok(storage.port.document_history_in_collection(scope.tenant(), collection, id, limit))
+    }
+
     /// Advances every building descriptor's governed backfill by one
     /// bounded batch of rows (D-31), completing a descriptor — backfill
     /// done, ordinary indexes created, conditions pushing — when its cursor
