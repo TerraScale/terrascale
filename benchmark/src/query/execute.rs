@@ -662,7 +662,7 @@ fn pushdown_filter(predicate: &super::spec::QueryPredicate) -> Option<ScanFilter
     for condition in predicate.conditions() {
         match condition {
             QueryCondition::Equals { field, value } => {
-                push(&mut conditions, field, ScanOp::Equals, value)
+                push(&mut conditions, field, ScanOp::Equals, value);
             }
             QueryCondition::NotEquals { field, value } => {
                 push(&mut conditions, field, ScanOp::NotEquals, value);

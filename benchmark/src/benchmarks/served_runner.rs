@@ -939,12 +939,19 @@ mod tests {
     use super::*;
 
     fn config(workload: Workload) -> ServedRunnerConfig {
+        // The Go adapter tree is deleted (D-34 removed the gateway; the
+        // benchmark client regenerates from the reduced proto at S-12), so
+        // the config-mechanics tests point the workdir at a directory they
+        // create: validate() checks mechanics, not the adapter's presence.
+        let go_workdir =
+            std::env::temp_dir().join(format!("terrabase-served-runner-go-{}", std::process::id()));
+        std::fs::create_dir_all(&go_workdir).expect("test go workdir");
         ServedRunnerConfig {
             lane: LaneConfig::COMMISSIONING_TRIAL,
             workload,
             qualification_harness_executable: std::env::current_exe().expect("test executable"),
             go_executable: PathBuf::from("go"),
-            go_workdir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("terrabase-go"),
+            go_workdir,
             adapter_executable: std::env::current_exe().ok(),
             output_directory: std::env::temp_dir().join("terrabase-served-runner-tests"),
             timeout: Duration::from_secs(1),

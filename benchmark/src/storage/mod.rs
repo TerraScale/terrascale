@@ -135,11 +135,13 @@ impl ScanFilter {
     ///
     /// Returns `None` when the condition list exceeds
     /// [`MAX_SCAN_CONDITIONS`].
+    #[must_use]
     pub fn try_new(conditions: Vec<ScanCondition>) -> Option<Self> {
         (conditions.len() <= MAX_SCAN_CONDITIONS).then_some(Self { conditions })
     }
 
     /// Returns the conjuncts in declaration order.
+    #[must_use]
     pub fn conditions(&self) -> &[ScanCondition] {
         &self.conditions
     }

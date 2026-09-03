@@ -1820,7 +1820,7 @@ impl Engine {
     /// fails.
     pub fn index_descriptors(&self) -> Result<Vec<crate::storage::DescriptorListing>, EngineError> {
         let storage = self.lock_storage()?;
-        storage.port.index_descriptors().map_err(|_| EngineError::StorageFailure)
+        storage.port.index_descriptors().map_err(|()| EngineError::StorageFailure)
     }
 
     /// Advances every building descriptor's governed backfill by one
@@ -1840,7 +1840,7 @@ impl Engine {
         storage
             .port
             .pump_index_backfills(INDEX_BACKFILL_BATCH)
-            .map_err(|_| EngineError::StorageFailure)
+            .map_err(|()| EngineError::StorageFailure)
     }
 
     /// Returns one bounded page of final-state documents at an explicit

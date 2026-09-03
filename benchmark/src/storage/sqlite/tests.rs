@@ -1000,7 +1000,7 @@ fn object_document(id: &str, collection: &str, fields: &[(&str, DocumentValue)])
 /// Commits one object document through the storage port.
 fn commit_object(
     storage: &mut dyn StoragePort,
-    tenant: &TenantName,
+    _tenant: &TenantName,
     operation: &str,
     document: Document,
 ) -> u64 {
@@ -1042,7 +1042,7 @@ fn equals(field: &str, value: DocumentValue) -> ScanFilter {
 
 #[test]
 fn registration_backfills_and_the_write_path_extracts() {
-    let (_dir, mut storage) = sqlite_store("extracted-backfill");
+    let (dir, mut storage) = sqlite_store("extracted-backfill");
     let tenant = scan_tenant();
     let users = scan_users();
     // Rows that predate the descriptor: the inline backfill must cover
@@ -1093,12 +1093,12 @@ fn registration_backfills_and_the_write_path_extracts() {
             .is_none(),
         "an unregistered field does not push"
     );
-    std::fs::remove_dir_all(&_dir).ok();
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
 fn filtered_scan_resolves_the_newest_version_and_hides_tombstones() {
-    let (_dir, mut storage) = sqlite_store("extracted-as-of");
+    let (dir, mut storage) = sqlite_store("extracted-as-of");
     let tenant = scan_tenant();
     let users = scan_users();
     let seq_one = commit_object(
@@ -1141,12 +1141,12 @@ fn filtered_scan_resolves_the_newest_version_and_hides_tombstones() {
         Some(0),
         "a deleted key never surfaces"
     );
-    std::fs::remove_dir_all(&_dir).ok();
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
 fn numeric_conditions_compare_across_integer_and_float() {
-    let (_dir, mut storage) = sqlite_store("extracted-numeric");
+    let (dir, mut storage) = sqlite_store("extracted-numeric");
     let tenant = scan_tenant();
     let users = scan_users();
     commit_object(
@@ -1191,7 +1191,7 @@ fn numeric_conditions_compare_across_integer_and_float() {
         Some(1),
         "a float condition matches a float-stored value"
     );
-    std::fs::remove_dir_all(&_dir).ok();
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -1233,7 +1233,7 @@ fn descriptors_survive_reopen_and_registration_is_idempotent() {
 
 #[test]
 fn the_extracted_column_budget_is_enforced() {
-    let (_dir, mut storage) = sqlite_store("extracted-budget");
+    let (dir, mut storage) = sqlite_store("extracted-budget");
     let users = scan_users();
     for position in 0..32 {
         let field = format!("f{position}");
@@ -1253,5 +1253,5 @@ fn the_extracted_column_budget_is_enforced() {
         storage.register_index_descriptor(&users, "f0"),
         Ok(DescriptorRegistration::Unchanged)
     );
-    std::fs::remove_dir_all(&_dir).ok();
+    std::fs::remove_dir_all(&dir).ok();
 }

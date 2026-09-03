@@ -2238,6 +2238,7 @@ impl SqliteStorage {
     /// columns, backfilling inline inside the cost cap, and creating the
     /// ordinary indexes (D-42: extraction in Rust at write time, never
     /// SQLite expression or generated columns).
+    #[allow(clippy::too_many_lines, reason = "one registration transaction, start to finish")]
     fn register_descriptor(
         &mut self,
         collection: &CollectionName,
@@ -2272,8 +2273,7 @@ impl SqliteStorage {
             .map_err(|_| IndexDescriptorError::Storage)?
             == 0;
         if field_is_new {
-            let mut state =
-                self.extracted.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let state = self.extracted.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if state.fields.len() >= MAX_EXTRACTED_FIELDS {
                 return Err(IndexDescriptorError::ColumnBudgetExceeded);
             }
@@ -2287,7 +2287,7 @@ impl SqliteStorage {
         // The registration watermark: rows at or below it predate the
         // descriptor, so the write path never gave them extracted values.
         let watermark =
-            durable_watermark(&transaction).map_err(|_| IndexDescriptorError::Storage)?;
+            durable_watermark(&transaction).map_err(|()| IndexDescriptorError::Storage)?;
         let live_rows: i64 = transaction
             .query_row(
                 "SELECT COUNT(*) FROM documents WHERE collection = ?1 AND commit_seq <= ?2 AND deleted = 0",
@@ -2302,7 +2302,7 @@ impl SqliteStorage {
             // transaction, so the descriptor is active the moment
             // registration commits — D-31's zero-stale-reads rule.
             backfill_collection_inline(&transaction, collection, field, watermark)
-                .map_err(|_| IndexDescriptorError::Storage)?;
+                .map_err(|()| IndexDescriptorError::Storage)?;
             state = DescriptorRegistration::Active;
         }
         // The governed backfill's window: rows at or below the watermark
@@ -2346,7 +2346,8 @@ impl SqliteStorage {
         // only when the governed backfill completes it — creating them
         // earlier would index a half-empty column while rows still miss.
         if state == DescriptorRegistration::Active {
-            create_descriptor_indexes(&transaction, field).map_err(|_| IndexDescriptorError::Storage)?;
+            create_descriptor_indexes(&transaction, field)
+                .map_err(|_| IndexDescriptorError::Storage)?;
         }
         transaction.commit().map_err(|_| IndexDescriptorError::Storage)?;
         let mut extracted =
@@ -2376,12 +2377,11 @@ impl SqliteStorage {
         let progress = pump_backfills_on(&mut writer, batch)?;
         // The in-memory view follows the durable state: a descriptor the
         // pass completed pushes from now on.
-        let mut extracted = self.extracted.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut extracted =
+            self.extracted.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         for step in &progress {
             if step.active {
-                extracted
-                    .descriptors
-                    .insert((step.collection.clone(), step.field.clone()), true);
+                extracted.descriptors.insert((step.collection.clone(), step.field.clone()), true);
             }
         }
         Ok(progress)
@@ -2453,7 +2453,7 @@ impl SqliteStorage {
         parameters.push(Value::Text(tenant.as_str().to_owned()));
         parameters.push(Value::Text(collection.as_str().to_owned()));
         parameters.push(Value::Integer(sequence.get() as i64));
-        parameters.push(after.map(|after| Value::Text(after.to_owned())).unwrap_or(Value::Null));
+        parameters.push(after.map_or(Value::Null, |after| Value::Text(after.to_owned())));
         parameters.extend(values);
         parameters.push(Value::Integer(limit));
         let reader = self.reader();
@@ -2525,9 +2525,8 @@ fn list_descriptors_on(connection: &Connection) -> Result<Vec<DescriptorListing>
 /// watermark. Idempotent and resumable: the cursor is durable state.
 fn pump_backfills_on(writer: &mut Connection, batch: u64) -> Result<Vec<BackfillProgress>, ()> {
     let building = {
-        let transaction = writer
-            .transaction_with_behavior(TransactionBehavior::Deferred)
-            .map_err(|_| ())?;
+        let transaction =
+            writer.transaction_with_behavior(TransactionBehavior::Deferred).map_err(|_| ())?;
         let mut statement = transaction
             .prepare(
                 "SELECT collection, field, backfill_below, backfill_cursor
@@ -2556,9 +2555,8 @@ fn pump_backfills_on(writer: &mut Connection, batch: u64) -> Result<Vec<Backfill
         let below = u64::try_from(below).unwrap_or(0);
         let mut cursor = u64::try_from(cursor).unwrap_or(0);
         if below > cursor {
-            let transaction = writer
-                .transaction_with_behavior(TransactionBehavior::Immediate)
-                .map_err(|_| ())?;
+            let transaction =
+                writer.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| ())?;
             cursor = backfill_batch(&transaction, &collection, &field, cursor, below, batch)?;
             let active = cursor >= below;
             transaction
@@ -2685,17 +2683,14 @@ fn load_extracted_state(connection: &Connection, state: &mut ExtractedState) -> 
 }
 
 /// Creates the ordinary indexes covering one descriptor's stored columns.
-fn create_descriptor_indexes(
-    connection: &Connection,
-    field: &str,
-) -> Result<(), rusqlite::Error> {
+fn create_descriptor_indexes(connection: &Connection, field: &str) -> Result<(), rusqlite::Error> {
+    let text_index = quote_identifier(&format!("i:{field}#t"));
+    let text_col = format!("({})", quote_identifier(&text_column(field)));
+    let number_index = quote_identifier(&format!("i:{field}#n"));
+    let number_col = format!("({})", quote_identifier(&numeric_column(field)));
     let indexes = format!(
         "CREATE INDEX IF NOT EXISTS {text_index} ON documents {text_col};
          CREATE INDEX IF NOT EXISTS {number_index} ON documents {number_col};",
-        text_index = quote_identifier(&format!("i:{}#t", field)),
-        text_col = format!("({})", quote_identifier(&text_column(field))),
-        number_index = quote_identifier(&format!("i:{}#n", field)),
-        number_col = format!("({})", quote_identifier(&numeric_column(field))),
     );
     connection.execute_batch(&indexes)
 }
