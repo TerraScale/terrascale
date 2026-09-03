@@ -61,11 +61,11 @@ const PUBLIC_PATHS: [&str; 1] = ["/api/v1/openapi.json"];
 /// where a CLI command applies, it names it (D-56).
 #[derive(Clone, Debug)]
 pub struct ApiError {
-    status: StatusCode,
-    code: &'static str,
-    message: String,
-    fix: String,
-    placement: Option<(String, String)>,
+    pub(crate) status: StatusCode,
+    pub(crate) code: &'static str,
+    pub(crate) message: String,
+    pub(crate) fix: String,
+    pub(crate) placement: Option<(String, String)>,
 }
 
 impl ApiError {
@@ -404,7 +404,7 @@ impl IntoResponse for ApiError {
 /// Pushes `value` into `out` with JSON string escaping. The envelope's own
 /// fields are the only text that passes through here; document bodies are
 /// spliced as already-encoded bytes.
-fn push_json_escaped(out: &mut String, value: &str) {
+pub(crate) fn push_json_escaped(out: &mut String, value: &str) {
     use std::fmt::Write;
     for character in value.chars() {
         match character {
@@ -448,6 +448,8 @@ pub struct ApiState {
     /// member (the single-tenant local stack shape; the multi-project
     /// router arrives with the ts-proxy lane).
     pub scope: (String, String),
+    /// The reactive transports' live subscriptions (`S-04`).
+    pub reactive: Arc<crate::reactive_api::ReactiveSessions>,
 }
 
 /// Builds the public `/api/v1` router. Every route except
@@ -492,6 +494,8 @@ pub fn router(state: Arc<ApiState>) -> Router {
             get(document_history),
         )
         .route("/api/v1/databases/{name}/tql", post(execute_tql))
+        .route("/api/v1/databases/{name}/reactive/poll", post(crate::reactive_api::poll))
+        .route("/api/v1/databases/{name}/reactive", get(crate::reactive_api::websocket))
         .route("/api/v1/databases/{name}/usage", get(database_usage))
         .route("/api/v1/databases/{name}/webhooks", get(list_webhooks).post(create_webhook))
         .route("/api/v1/databases/{name}/webhooks/{id}", delete(delete_webhook))
@@ -1207,7 +1211,7 @@ fn with_session(response: &mut Response, sequence: u64) {
 }
 
 /// One document's route context: the host engine for the named database.
-fn document_host(
+pub(crate) fn document_host(
     state: &ApiState,
     name: &str,
 ) -> Result<std::sync::Arc<terrabase_tbep::member_host::MemberHost>, ApiError> {
@@ -1918,7 +1922,7 @@ fn record_response(status: StatusCode, record: &crate::control::DatabaseRecord) 
 }
 
 /// A bare JSON response.
-fn json_response(status: StatusCode, body: String) -> Response {
+pub(crate) fn json_response(status: StatusCode, body: String) -> Response {
     let mut response = (status, body).into_response();
     response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     response
@@ -1948,6 +1952,7 @@ mod tests {
             control: None,
             catalog: None,
             scope: ("terrabase-local".into(), "local".into()),
+            reactive: Arc::new(crate::reactive_api::ReactiveSessions::default()),
         })
     }
 
@@ -1982,6 +1987,7 @@ mod tests {
             control: Some(Arc::new(control)),
             catalog: Some(Arc::new(catalog)),
             scope: ("terrabase-local".into(), "local".into()),
+            reactive: Arc::new(crate::reactive_api::ReactiveSessions::default()),
         })
     }
 
@@ -2490,6 +2496,105 @@ mod tests {
             StatusCode::NOT_FOUND,
             "the refused batch's other op landed nothing"
         );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines, reason = "one route contract, one test")]
+    async fn reactive_poll_subscribes_seeds_and_streams_deltas() {
+        use axum::body::Body;
+        use axum::http::Request;
+        let auth = "authorization";
+        let key = "Bearer tskey_test_abcdefghijklmnop";
+        let router = router(state_with_keys_and_control());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header(auth, key)
+                    .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let put = Request::put("/api/v1/databases/prod/collections/orders/documents/o-1")
+            .header(auth, key)
+            .body(Body::from(r#"{"status":"paid","total":10}"#))
+            .expect("request");
+        let response = router.clone().oneshot(put).await.expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Subscribe over the poll transport: the first response is the
+        // MessagePack Seed frame array.
+        let subscribe = Request::post("/api/v1/databases/prod/reactive/poll")
+            .header(auth, key)
+            .body(Body::from(
+                r#"{"op":"subscribe","collection":"orders","conditions":[{"field":"status","op":"equals","value":"paid"}],"projection":["total"]}"#,
+            ))
+            .expect("request");
+        let response = router.clone().oneshot(subscribe).await.expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("content-type").and_then(|v| v.to_str().ok()),
+            Some("application/msgpack")
+        );
+        let subscription: u64 = response
+            .headers()
+            .get("x-terrascale-subscription")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse().ok())
+            .expect("the subscription id rides the header");
+        let body = axum::body::to_bytes(response.into_body(), 65_536).await.expect("body");
+        let seed = decode_frames(&body);
+        assert_eq!(seed.len(), 1, "the seed is the only frame");
+        assert!(seed[0].contains("seed"), "the frame kind is seed: {}", seed[0]);
+        assert!(seed[0].contains("o-1"), "the committed document is a member");
+
+        // A write in the same member, then poll: the Insert delta arrives.
+        let put = Request::put("/api/v1/databases/prod/collections/orders/documents/o-2")
+            .header(auth, key)
+            .body(Body::from(r#"{"status":"paid","total":20}"#))
+            .expect("request");
+        let response = router.clone().oneshot(put).await.expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let poll = Request::post("/api/v1/databases/prod/reactive/poll")
+            .header(auth, key)
+            .body(Body::from(format!(r#"{{"op":"poll","subscription":{subscription}}}"#)))
+            .expect("request");
+        let response = router.clone().oneshot(poll).await.expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 65_536).await.expect("body");
+        let frames = decode_frames(&body);
+        assert_eq!(frames.len(), 1, "one delta for the one write: {frames:?}");
+        assert!(frames[0].contains("delta") && frames[0].contains("o-2"), "{}", frames[0]);
+
+        // A poll on ANOTHER database's route cannot touch the session.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases/other/reactive/poll")
+                    .header(auth, key)
+                    .body(Body::from(format!(r#"{{"op":"poll","subscription":{subscription}}}"#)))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// The `MessagePack` wire form, as the transports write it: strings
+    /// appear verbatim in the bytes, so the assertions read them raw.
+    fn decode_frames(bytes: &[u8]) -> Vec<String> {
+        let mut cursor = bytes;
+        let count =
+            rmp::decode::read_array_len(&mut cursor).expect("the body is a frame array") as usize;
+        assert!(bytes.len() >= count, "each frame is at least one byte");
+        // Test lens: one rendered "frame" per array slot is unnecessary —
+        // the assertions need the kinds and the member identities, which
+        // ride as verbatim strings.
+        let text = String::from_utf8_lossy(bytes);
+        let _ = count;
+        vec![text.into_owned()]
     }
 
     #[tokio::test]

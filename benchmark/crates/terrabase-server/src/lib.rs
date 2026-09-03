@@ -12,6 +12,7 @@ pub mod control;
 pub mod http;
 #[cfg(feature = "production-fips")]
 pub mod production;
+pub mod reactive_api;
 pub mod runtime;
 
 pub use config::ServerConfig;

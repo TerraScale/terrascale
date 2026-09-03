@@ -233,6 +233,7 @@ async fn serve_public_api(
         control: Some(Arc::new(control)),
         catalog: Some(Arc::new(catalog)),
         scope: (tenant, project),
+        reactive: Arc::new(crate::reactive_api::ReactiveSessions::default()),
     });
     let listener = tokio::net::TcpListener::bind(public.listen).await?;
     let router = crate::api::router(state);

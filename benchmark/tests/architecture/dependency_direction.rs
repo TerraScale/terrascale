@@ -69,6 +69,12 @@ const LAYERS: &[(&str, u32)] = &[
 /// `terrabase-sync-conformance` crate was deleted with the S-04/D-38
 /// reduction — the per-field CRDT materialization is gone and the crate
 /// owns result views only.
+///
+/// Review note (2026-09-03, issue #129): `terrabase-server` gained its
+/// edge onto `terrabase-sync-core` — the S-04 reactive transports
+/// (WebSocket + HTTP poll) serve the result-view subscription engine's
+/// frames (D-38/D-46). The edge points strictly down the frozen layer
+/// order (7 -> 3).
 const ALLOWED_EDGES: &[(&str, &str)] = &[
     ("terrabase-crdt", "terrabase-causal"),
     ("terrabase-replication-core", "terrabase-causal"),
@@ -83,6 +89,7 @@ const ALLOWED_EDGES: &[(&str, &str)] = &[
     ("terrabase-server", "terrabase"),
     ("terrabase-server", "terrabase-cluster"),
     ("terrabase-server", "terrabase-tbep"),
+    ("terrabase-server", "terrabase-sync-core"),
 ];
 
 /// The engine-core package (`terrabase`) must stay dependency-minimal:
