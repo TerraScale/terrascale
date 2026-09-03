@@ -36,6 +36,7 @@
 
 pub mod native;
 pub mod protocol;
+pub mod subscription;
 
 /// The correlation or causation identity of one protocol frame.
 /// Monotonic per sender; opaque here.
