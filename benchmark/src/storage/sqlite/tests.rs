@@ -1256,3 +1256,97 @@ fn the_extracted_column_budget_is_enforced() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn governed_backfill_completes_a_building_descriptor_without_stranding_a_sequence() {
+    let (dir, mut storage) = sqlite_store("governed-backfill");
+    let users = scan_users();
+    // Phase one: a window spanning many small sequences advances one whole
+    // sequence set per pass, reporting shrinking remainders until it
+    // completes.
+    for wave in 0..12 {
+        let group = if wave % 2 == 0 { "even" } else { "odd" };
+        let writes = (0..1000)
+            .map(|index: u32| {
+                put(
+                    object_document(
+                        &format!("m{wave:02}-{index:04}"),
+                        "users",
+                        &[("grp", DocumentValue::String(group.into()))],
+                    ),
+                    ExpectedVersion::Any,
+                )
+            })
+            .collect::<Vec<_>>();
+        commit(&mut storage, &format!("op-m{wave:02}"), writes);
+    }
+    assert_eq!(
+        storage.register_index_descriptor(&users, "grp"),
+        Ok(DescriptorRegistration::Building),
+        "twelve thousand rows register building"
+    );
+    let mut previous = u64::MAX;
+    let mut completed = false;
+    for _ in 0..10 {
+        let progress = storage.pump_index_backfills(5000).expect("the pass pumps");
+        assert_eq!(progress.len(), 1, "one building descriptor owes work");
+        if progress[0].active {
+            assert_eq!(progress[0].remaining, 0);
+            completed = true;
+            break;
+        }
+        assert!(progress[0].remaining < previous, "each pass covers whole sequences and owes less");
+        previous = progress[0].remaining;
+    }
+    assert!(completed, "bounded passes complete the descriptor");
+    let latest = storage.published_state().0.get();
+    let evens = filtered(&storage, latest, &equals("grp", DocumentValue::String("even".into())))
+        .expect("conditions push once active");
+    assert_eq!(evens.len(), 6000, "every wave's rows backfilled across passes");
+    let writes = (0..10_001)
+        .map(|index: u32| {
+            let tag = if index.is_multiple_of(1000) { "needle" } else { "bulk" };
+            put(
+                object_document(
+                    &format!("doc-{index:05}"),
+                    "users",
+                    &[("tag", DocumentValue::String(tag.into()))],
+                ),
+                ExpectedVersion::Any,
+            )
+        })
+        .collect::<Vec<_>>();
+    commit(&mut storage, "op-bulk", writes);
+    assert_eq!(
+        storage.register_index_descriptor(&users, "tag"),
+        Ok(DescriptorRegistration::Building),
+        "a collection past the inline cap registers building"
+    );
+    let mut completed = false;
+    for _ in 0..20 {
+        let progress = storage.pump_index_backfills(1000).expect("the pass pumps");
+        assert_eq!(progress.len(), 1, "one building descriptor owes work");
+        assert_eq!(progress[0].collection, "users");
+        assert_eq!(progress[0].field, "tag");
+        if progress[0].active {
+            assert_eq!(progress[0].remaining, 0);
+            completed = true;
+            break;
+        }
+    }
+    assert!(completed, "bounded passes complete the descriptor");
+    assert!(
+        storage.pump_index_backfills(1000).expect("the idle pass pumps").is_empty(),
+        "a completed descriptor owes no further pass"
+    );
+    let latest = storage.published_state().0.get();
+    let needles =
+        filtered(&storage, latest, &equals("tag", DocumentValue::String("needle".into())))
+            .expect("conditions push once active");
+    assert_eq!(
+        needles.iter().map(|document| document.id().as_str().to_owned()).collect::<Vec<_>>(),
+        (0..10_001).step_by(1000).map(|index| format!("doc-{index:05}")).collect::<Vec<_>>(),
+        "every same-sequence row backfilled: no strand, no miss"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

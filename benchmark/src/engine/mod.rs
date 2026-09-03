@@ -557,6 +557,44 @@ pub enum IndexRegistrationError {
 
 pub use crate::storage::DescriptorRegistration;
 
+/// How one observed query field is covered by a durable extracted-column
+/// descriptor (D-31): the auto-index audit's per-shape verdict.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DescriptorCoverage {
+    /// An active descriptor covers the field; conditions over it push.
+    Active,
+    /// The descriptor is building; its governed backfill still owes rows.
+    Building {
+        /// The commit-sequence span the governed backfill has not covered
+        /// yet (registration watermark minus durable cursor).
+        backfill_remaining: u64,
+    },
+    /// No descriptor covers the field; the first query registers one
+    /// (inline when the collection is inside the cost cap, building
+    /// otherwise).
+    Absent,
+}
+
+/// One auto-index audit entry: an observed `(collection, field)` query shape
+/// with its demand count and its durable-descriptor coverage (D-31).
+///
+/// The audit joins the optimizer's selection records (observed demand, this
+/// tenant) with the durable descriptor table (coverage, whole database), so
+/// one read serves both directions: uncovered shapes worth registering, and
+/// registered descriptors with no observed demand worth retiring. The S-03
+/// collections route serves this as the index listing/recommendation read.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AutoIndexRecommendation {
+    /// The queried collection.
+    pub collection: String,
+    /// The queried field path.
+    pub field: String,
+    /// How many recorded selections demanded this shape.
+    pub observed_queries: u64,
+    /// The shape's durable-descriptor coverage.
+    pub coverage: DescriptorCoverage,
+}
+
 /// A local receipt for a commit that reached a known durability point.
 ///
 /// The receipt carries only the operation identity, the storage sequence, and
@@ -2016,8 +2054,9 @@ impl Engine {
     /// inline while the collection is inside the cost cap, and ordinary
     /// indexes cover the columns. Idempotent for an identical descriptor.
     ///
-    /// This is the durable half of index creation; the auto-index audit and
-    /// the S-03 collections route drive it.
+    /// This is the durable half of index creation; the query path's
+    /// first-query policy, the auto-index audit, and the S-03 collections
+    /// route drive it.
     ///
     /// # Errors
     ///
@@ -2049,6 +2088,75 @@ impl Engine {
     pub fn index_descriptors(&self) -> Result<Vec<crate::storage::DescriptorListing>, EngineError> {
         let storage = self.lock_storage()?;
         storage.port.index_descriptors().map_err(|()| EngineError::StorageFailure)
+    }
+
+    /// Reports one collection field's durable descriptor state without
+    /// registering anything: `Some(true)` pushes, `Some(false)` is building,
+    /// `None` is absent. Crate-only: the query path's first-query policy is
+    /// the only reader.
+    pub(crate) fn pushdown_field_state(
+        &self,
+        collection: &CollectionName,
+        field: &str,
+    ) -> Option<bool> {
+        let storage = self.lock_storage().ok()?;
+        storage.port.index_descriptor_state(collection, field)
+    }
+
+    /// Audits observed query shapes against durable descriptor coverage
+    /// (D-31): every `(collection, field)` shape the optimizer's selection
+    /// records observed for this tenant, joined with the descriptor table,
+    /// plus every registered descriptor even when nothing observed it (an
+    /// idle descriptor is a retirement candidate). Entries sort by
+    /// `(collection, field)`.
+    ///
+    /// This is the durable half's read for the S-03 collections route: the
+    /// route registers missing shapes through
+    /// [`Engine::register_index_field`] and pumps large ones through
+    /// [`Engine::maintain_index_backfills`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::StorageFailure`] when the durable listing
+    /// fails.
+    pub fn auto_index_audit(
+        &self,
+        tenant: &TenantId,
+    ) -> Result<Vec<AutoIndexRecommendation>, EngineError> {
+        let listings = self.index_descriptors()?;
+        let mut observed: BTreeMap<(String, String), u64> = BTreeMap::new();
+        for record in self.indexes.selection_records(tenant) {
+            for field in record.query_fields() {
+                *observed
+                    .entry((record.collection().to_owned(), field.name().to_owned()))
+                    .or_default() += 1;
+            }
+        }
+        for listing in &listings {
+            observed.entry((listing.collection.clone(), listing.field.clone())).or_default();
+        }
+        let mut entries = Vec::with_capacity(observed.len());
+        for ((collection, field), count) in observed {
+            let coverage = listings
+                .iter()
+                .find(|listing| listing.collection == collection && listing.field == field)
+                .map_or(DescriptorCoverage::Absent, |listing| {
+                    if listing.active {
+                        DescriptorCoverage::Active
+                    } else {
+                        DescriptorCoverage::Building {
+                            backfill_remaining: listing.backfill_remaining,
+                        }
+                    }
+                });
+            entries.push(AutoIndexRecommendation {
+                collection,
+                field,
+                observed_queries: count,
+                coverage,
+            });
+        }
+        Ok(entries)
     }
 
     /// Returns one document's retained revision history, newest first

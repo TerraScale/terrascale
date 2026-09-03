@@ -108,7 +108,7 @@ use std::{
 };
 
 use rusqlite::types::Value;
-use rusqlite::{Connection, TransactionBehavior};
+use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior};
 
 use crate::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
@@ -157,6 +157,7 @@ const DATABASE_FILE: &str = "terrabase.sqlite3";
 
 /// The database file's path inside one location directory — the file
 /// Litestream streams per database (D-29).
+#[must_use]
 pub fn database_file(location: &Path) -> PathBuf {
     location.join(DATABASE_FILE)
 }
@@ -257,7 +258,7 @@ fn text_column(field: &str) -> String {
 }
 
 /// Returns the numeric-column name of one extracted field: integers and
-/// floats live here (integers stored as INTEGER, floats as REAL — SQLite
+/// floats live here (integers stored as INTEGER, floats as REAL — `SQLite`
 /// compares the two numerically, the `tql/1.0` number rule).
 fn numeric_column(field: &str) -> String {
     format!("f:{field}#n")
@@ -1992,6 +1993,11 @@ impl StoragePort for SqliteStorage {
         self.list_descriptors()
     }
 
+    fn index_descriptor_state(&self, collection: &CollectionName, field: &str) -> Option<bool> {
+        let extracted = self.extracted.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        extracted.descriptors.get(&(collection.as_str().to_owned(), field.to_owned())).copied()
+    }
+
     fn pump_index_backfills(&mut self, batch: u64) -> Result<Vec<BackfillProgress>, ()> {
         self.pump_backfills(batch)
     }
@@ -2464,7 +2470,7 @@ impl SqliteStorage {
     /// Registers one extracted index-column descriptor, adding the stored
     /// columns, backfilling inline inside the cost cap, and creating the
     /// ordinary indexes (D-42: extraction in Rust at write time, never
-    /// SQLite expression or generated columns).
+    /// `SQLite` expression or generated columns).
     #[allow(clippy::too_many_lines, reason = "one registration transaction, start to finish")]
     fn register_descriptor(
         &mut self,
@@ -2817,6 +2823,14 @@ fn pump_backfills_on(writer: &mut Connection, batch: u64) -> Result<Vec<Backfill
 
 /// Backfills one bounded batch of a descriptor's window and returns the
 /// advanced cursor.
+///
+/// Batches are sequence-atomic: one intent writes all its rows under one
+/// `commit_seq`, so stopping mid-sequence and advancing the cursor past it
+/// would strand the sequence's remaining rows with NULL columns behind an
+/// active descriptor — a silent-miss stale read. The frontier probe finds
+/// the batch-th row's sequence and the pass drains every row at or below
+/// it: the batch bound holds exactly for many small intents and softens by
+/// one over-large sequence, which correctness requires.
 fn backfill_batch(
     transaction: &rusqlite::Transaction<'_>,
     collection: &CollectionName,
@@ -2825,35 +2839,48 @@ fn backfill_batch(
     below: u64,
     batch: u64,
 ) -> Result<u64, ()> {
+    let batch = batch.max(1);
+    let frontier: u64 = transaction
+        .query_row(
+            "SELECT commit_seq FROM documents
+             WHERE collection = ?1 AND commit_seq > ?2 AND commit_seq <= ?3
+             ORDER BY commit_seq LIMIT 1 OFFSET ?4",
+            rusqlite::params![
+                collection.as_str(),
+                cursor as i64,
+                below as i64,
+                (batch.saturating_sub(1)) as i64,
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|_| ())?
+        .map_or(below, |sequence| u64::try_from(sequence).unwrap_or(below).min(below));
+    let frontier = frontier.max(cursor);
     let text = quote_identifier(&text_column(field));
     let number = quote_identifier(&numeric_column(field));
     let mut statement = transaction
         .prepare_cached(
             "SELECT tenant, id, commit_seq, deleted, body FROM documents
              WHERE collection = ?1 AND commit_seq > ?2 AND commit_seq <= ?3
-             ORDER BY commit_seq LIMIT ?4",
+             ORDER BY commit_seq",
         )
         .map_err(|_| ())?;
     let rows = statement
-        .query_map(
-            rusqlite::params![collection.as_str(), cursor as i64, below as i64, batch as i64],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, Vec<u8>>(4)?,
-                ))
-            },
-        )
+        .query_map(rusqlite::params![collection.as_str(), cursor as i64, frontier as i64], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, Vec<u8>>(4)?,
+            ))
+        })
         .map_err(|_| ())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| ())?;
     drop(statement);
-    let mut advanced = cursor;
     for (tenant, id, commit_seq, deleted, body) in rows {
-        advanced = advanced.max(u64::try_from(commit_seq).unwrap_or(advanced));
         if deleted != 0 {
             continue;
         }
@@ -2881,7 +2908,9 @@ fn backfill_batch(
             })
             .map_err(|_| ())?;
     }
-    Ok(advanced)
+    // The drain above covers whole sequences only, so the frontier is the
+    // honest cursor: every row at or below it carries extracted values.
+    Ok(frontier)
 }
 
 /// Loads the descriptor view from the durable table at open.

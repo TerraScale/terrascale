@@ -128,7 +128,9 @@ pub enum QueryError {
     /// is disabled, or a creation refused by the identity guard — the query
     /// fails rather than silently scanning without its index. A bounded
     /// posting-list row or byte refusal also uses this fail-closed error so a
-    /// partial index result is never returned.
+    /// partial index result is never returned. A durable extracted-column
+    /// descriptor that is still building refuses here too, until its
+    /// governed backfill completes it.
     IndexNotReady,
     /// The request deadline expired.
     Deadline,

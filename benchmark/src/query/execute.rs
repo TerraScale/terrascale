@@ -148,6 +148,16 @@ pub(crate) fn execute(
         // The optimizer may build an index by reading this snapshot, so reject
         // forged engine/tenant bindings before it can perform any catalog work.
         validate_bindings(engine, plan.model(), snapshot)?;
+        // Derive durable descriptors from the query shape up front (D-31):
+        // registration rides every dynamic query no matter which serving
+        // path answers it, so the extracted-column coverage converges even
+        // when the catalog segment serves. Refusal stays with the scan path,
+        // the only one a building descriptor could starve.
+        if let (Some(collection), Some(filter)) =
+            (plan.model().source().collection(), pushdown_filter(plan.model().predicate()))
+        {
+            register_pushdown_fields(engine, collection, &filter);
+        }
         super::optimizer::run(engine, indexes.as_ref(), plan, snapshot)?
     } else {
         // Explicitly named plans bypass optimizer selection (AX-26), but may
@@ -560,7 +570,11 @@ fn collect_matches(
 /// descriptors (D-42), the pages come from the pushed-down SQL scan — a
 /// sound narrowing the executor's own predicate still refines — and the
 /// scan falls back to the unfiltered page path when the backend pushes
-/// nothing.
+/// nothing. Before paging, the first-query auto-index policy
+/// ([`ensure_pushdown_fields`]) covers every pushable field: small
+/// collections register inline and the same scan already pushes, while a
+/// field whose descriptor is still building fails the query closed with
+/// [`QueryError::IndexNotReady`] until the governed backfill completes it.
 fn scan_collection(
     engine: &Engine,
     scope: &TenantScope,
@@ -571,6 +585,9 @@ fn scan_collection(
     retained_capacity: usize,
 ) -> Result<(Vec<Document>, u64, u64, u64), QueryError> {
     let filter = pushdown_filter(query.predicate());
+    if let Some(filter) = filter.as_ref() {
+        ensure_pushdown_fields(engine, collection, filter)?;
+    }
     let mut pushdown = filter.is_some();
     let mut after = None;
     let mut matched = Vec::new();
@@ -644,6 +661,64 @@ fn scan_collection(
     Ok((matched, matched_count, scanned, skipped))
 }
 
+/// Applies the first-query auto-index policy (D-31, ADR 0040): every
+/// pushable field of the filter is covered by an active descriptor before
+/// the scan pages. An absent field registers on the spot — a collection
+/// inside the inline cost cap goes active at once and the same scan already
+/// pushes; a larger collection goes building and the query fails closed with
+/// [`QueryError::IndexNotReady`] (the API renders the retry fix) until the
+/// governed backfill completes it. A building field refuses the same way: a
+/// scan over half-extracted columns would silently miss rows, so the SQL
+/// layer never pushes over one. A registration that leaves coverage
+/// unchanged (column budget, storage, close) degrades to the executor's
+/// exact scan instead: reads stay available and the audit keeps reporting
+/// the shape uncovered.
+///
+/// Registration also rides [`execute`] up front for every dynamic collection
+/// query, so shapes the catalog segment serves still derive their durable
+/// descriptors; this seam adds the refusal the scan path needs.
+fn ensure_pushdown_fields(
+    engine: &Engine,
+    collection: &crate::types::CollectionName,
+    filter: &ScanFilter,
+) -> Result<(), QueryError> {
+    register_pushdown_fields(engine, collection, filter);
+    for field in pushdown_fields(filter) {
+        if engine.pushdown_field_state(collection, field) == Some(false) {
+            return Err(QueryError::IndexNotReady);
+        }
+    }
+    Ok(())
+}
+
+/// Registers the filter's pushable fields without refusing anything:
+/// absent fields derive their durable descriptors (inline or building),
+/// every other outcome leaves serving to the caller. The scan seam
+/// ([`ensure_pushdown_fields`]) layers the building refusal on top.
+fn register_pushdown_fields(
+    engine: &Engine,
+    collection: &crate::types::CollectionName,
+    filter: &ScanFilter,
+) {
+    for field in pushdown_fields(filter) {
+        if engine.pushdown_field_state(collection, field).is_none() {
+            let _ = engine.register_index_field(collection, field);
+        }
+    }
+}
+
+/// The filter's pushable fields in first-use order.
+fn pushdown_fields(filter: &ScanFilter) -> Vec<&str> {
+    let mut fields: Vec<&str> = Vec::new();
+    for condition in filter.conditions() {
+        let field: &str = &condition.field;
+        if !fields.contains(&field) {
+            fields.push(field);
+        }
+    }
+    fields
+}
+
 /// Lowers the predicate's pushable conjuncts onto extracted index columns
 /// (D-42): the scalar comparison family over string and number values.
 /// Everything else — presence tests, patterns, membership, booleans, nulls
@@ -679,12 +754,23 @@ fn pushdown_filter(predicate: &super::spec::QueryPredicate) -> Option<ScanFilter
             QueryCondition::GreaterOrEqual { field, value } => {
                 push(&mut conditions, field, ScanOp::GreaterOrEqual, value);
             }
-            QueryCondition::Between { field, low, high } => {
+            QueryCondition::Between { field, low, high }
+                if !matches!(high, DocumentValue::Null) =>
+            {
+                // A null upper bound is unbounded AND admits explicit nulls,
+                // which a pushed lower comparison would silently drop under
+                // SQL's three-valued logic: the whole range stays with the
+                // executor's exact predicate. Every other shape lowers per
+                // side — a null lower bound is unbounded and contributes no
+                // conjunct — because the exact rule excludes nulls and
+                // absence exactly where the pushed comparison drops NULL
+                // columns.
                 push(&mut conditions, field, ScanOp::GreaterOrEqual, low);
                 push(&mut conditions, field, ScanOp::LessOrEqual, high);
             }
-            // Presence, patterns, and membership have no extracted-column
-            // shape; the executor's predicate is their exact filter.
+            // Presence, patterns, membership, and a range with a null
+            // upper bound have no extracted-column shape; the executor's
+            // predicate is their exact filter.
             _ => {}
         }
     }

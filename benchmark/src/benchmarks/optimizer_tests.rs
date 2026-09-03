@@ -131,8 +131,9 @@ fn no_worse_than_available_selection_without_a_recorded_reason() {
 
 /// SQ-B2 and OH-B1 — a first sighting that nothing serves creates exactly
 /// one auto index; a shape the union already serves is served, not
-/// re-created; every triggering query still answers; and the whole creation
-/// stream appends no durable bytes.
+/// re-created; every triggering query still answers; the creation stream
+/// appends only the bounded descriptor bytes (D-42); and a re-run over the
+/// same shapes appends no durable bytes at all.
 ///
 /// The canonical four-field stream converges the way V1's AX-16 widening
 /// converges it: the single-field shapes each widen the union once (four
@@ -162,10 +163,19 @@ fn the_first_sighting_of_each_shape_creates_exactly_one_index() {
         "the triggering query still answers"
     );
     assert_eq!(window.refusals, 0);
+    // D-42 supersedes the memory-only half of OH-B1: the first sighting of
+    // a field durably registers its extracted-column descriptor (one ALTER
+    // pair, one descriptor row, covering indexes per field), so the creation
+    // stream appends descriptor bytes — bounded, one registration per field,
+    // then `Unchanged`. Steady-state serving still appends nothing: the same
+    // shapes re-run choose their indexes without writing a byte.
+    assert!(window.durable_bytes_written > 0, "the first sighting registers durable descriptors");
+    let steady = optimizer::run_single_collection(&lane, "adhoc", &["f0", "f1", "f2", "f3"]);
+    assert_eq!(steady.creations, 0, "the re-run creates nothing");
     assert_eq!(
-        window.durable_bytes_written,
+        steady.durable_bytes_written,
         budgets::DURABLE_BYTES_PER_CREATION * u64::try_from(shapes.len()).unwrap_or(0),
-        "OH-B1: the whole creation stream appends no durable bytes"
+        "OH-B1: served shapes append no durable bytes"
     );
 
     lane.remove();

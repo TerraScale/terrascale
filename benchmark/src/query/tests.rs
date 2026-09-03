@@ -25,7 +25,7 @@ use super::{
     tql,
 };
 use crate::{
-    engine::{CommitOutcome, Engine, EngineConfig},
+    engine::{AutoIndexRecommendation, CommitOutcome, DescriptorCoverage, Engine, EngineConfig},
     operations::{QueryInput, QueryInputError, RequestValidationError, TqlQueryText},
     types::{
         Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue,
@@ -682,8 +682,10 @@ fn automatic_index_reads_are_collection_scoped_and_fall_back_for_an_uncovered_sn
     assert_eq!(row_ids(&fallback), ["late-user", "new-user", "user"]);
     assert_eq!(
         fallback.statistics().scanned(),
-        4,
-        "an uncovered segment falls back to the full collection scan"
+        3,
+        "the named segment still misses the late write, so the executor scans; \
+         the durable extracted column for `name` (auto-registered by the first \
+         query) narrows that scan to the three matches"
     );
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();
@@ -2880,11 +2882,13 @@ fn result_statistics_report_the_scan_accounting() {
     // The scan accounting is the FILTER accounting of V1's statistics: the
     // candidates examined, and the candidates examined but rejected. Only
     // documents of the source collection are candidates; the `cities`
-    // document is neither scanned nor skipped.
+    // document is neither scanned nor skipped. The first query
+    // auto-registers `age` inline (D-31), so the pushed scan hands the
+    // executor exactly the three matches: the two rejects never surface.
     assert_eq!(result.matched(), 3);
     assert_eq!(result.rows().len(), 3);
-    assert_eq!(result.statistics().scanned(), 5);
-    assert_eq!(result.statistics().skipped(), 2);
+    assert_eq!(result.statistics().scanned(), 3);
+    assert_eq!(result.statistics().skipped(), 0);
     // With no limit requested, the capped count is the matched count.
     assert_eq!(result.statistics().capped_matched(), 3);
     // An index-less query has no namespace observation to be stale about.
@@ -3142,10 +3146,17 @@ fn extracted_columns_push_the_predicate_into_the_sql_scan() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+// ---- S-02 slice C: the first-query auto-index policy (D-31) -------------
+//
+// An uncovered pushable field registers on the first query that needs it: a
+// small collection backfills inline, so the triggering query already pushes
+// and the descriptor is active the moment registration commits.
+
 #[test]
-fn a_field_without_an_active_descriptor_never_pushes() {
-    let (dir, engine) = open_engine("pushdown-uncovered");
+fn first_query_registers_pushdown_fields_inline() {
+    let (dir, engine) = open_engine("pushdown-first-query");
     let tenant_scope = scope(&engine, "tenant-a");
+    let orders = CollectionName::try_new("orders").expect("valid collection");
     commit_documents(
         &engine,
         &tenant_scope,
@@ -3166,8 +3177,202 @@ fn a_field_without_an_active_descriptor_never_pushes() {
     assert_eq!(row_ids(&result), ["doc-2"]);
     assert_eq!(
         result.statistics().scanned(),
-        2,
-        "no descriptor means the unfiltered page path scans the collection"
+        1,
+        "the first query registers inline and already pushes"
+    );
+    assert!(
+        engine.index_descriptors().expect("lists descriptors").iter().any(|listing| listing
+            .collection
+            == orders.as_str()
+            && listing.field == "total"
+            && listing.active),
+        "the first query leaves an active descriptor behind"
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn auto_index_audit_joins_observed_shapes_with_descriptor_coverage() {
+    let (dir, engine) = open_engine("auto-index-audit");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document(
+                "doc-1",
+                "users",
+                &[
+                    ("status", DocumentValue::String("paid".into())),
+                    ("flag", DocumentValue::Boolean(true)),
+                ],
+            ),
+            object_document(
+                "doc-2",
+                "users",
+                &[
+                    ("status", DocumentValue::String("free".into())),
+                    ("flag", DocumentValue::Boolean(false)),
+                ],
+            ),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    // A scalar predicate auto-registers its field inline.
+    let plan = store
+        .compile(QueryInput::tql(
+            TqlQueryText::try_new("from users where status = 'paid'").expect("valid text"),
+        ))
+        .expect("compiles");
+    assert_eq!(row_ids(&store.execute(&plan, &snapshot).expect("executes")), ["doc-1"]);
+    // A boolean equality is observed but never pushable: the columns do not
+    // carry booleans, so no descriptor registers for it.
+    let booleans = spec(
+        "tenant-a",
+        "users",
+        predicate(vec![QueryCondition::Equals {
+            field: "flag".to_owned(),
+            value: DocumentValue::Boolean(true),
+        }]),
+        QueryOrdering::default(),
+        QueryProjection::whole_document(),
+        paging(0, None),
+        staleness(StalenessMode::Strict, Vec::new()),
+    );
+    let boolean_plan = store.compile(QueryInput::typed(booleans)).expect("compiles");
+    assert_eq!(row_ids(&store.execute(&boolean_plan, &snapshot).expect("executes")), ["doc-1"]);
+    let audit = |entries: &[AutoIndexRecommendation], field: &str| {
+        entries.iter().find(|entry| entry.field == field).cloned().expect("shape audited")
+    };
+    let entries = engine.auto_index_audit(&tenant("tenant-a")).expect("the audit reads");
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| (entry.collection.as_str(), entry.field.as_str()))
+            .collect::<Vec<_>>(),
+        [("users", "flag"), ("users", "status")],
+        "the audit is deterministic (collection, field) order"
+    );
+    let status = audit(&entries, "status");
+    assert_eq!(status.observed_queries, 1);
+    assert_eq!(status.coverage, DescriptorCoverage::Active);
+    let flag = audit(&entries, "flag");
+    assert_eq!(flag.observed_queries, 1);
+    assert_eq!(flag.coverage, DescriptorCoverage::Absent);
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn large_collection_first_query_is_not_ready_until_the_governed_backfill_completes() {
+    let (dir, engine) = open_engine("governed-backfill-lifecycle");
+    let tenant_scope = scope(&engine, "tenant-a");
+    // One wave past the inline cost cap: every row shares the wave's single
+    // commit sequence, which is exactly the shape that must never strand.
+    // Eleven evenly spaced needles plus one the next commit retracts.
+    let bulk = (0..10_001u32)
+        .map(|index| {
+            let tag = if index.is_multiple_of(1000) || index == 500 { "needle" } else { "bulk" };
+            object_document(
+                &format!("bulk-{index:05}"),
+                "events",
+                &[("tag", DocumentValue::String(tag.into()))],
+            )
+        })
+        .collect::<Vec<_>>();
+    commit_documents(&engine, &tenant_scope, "op-bulk", bulk);
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let plan = store
+        .compile(QueryInput::tql(
+            TqlQueryText::try_new("from events where tag = 'needle' limit 20").expect("valid text"),
+        ))
+        .expect("compiles");
+    assert_eq!(
+        store.execute(&plan, &snapshot).expect("the segment serves").matched(),
+        12,
+        "the catalog segment serves the equality shape exactly"
+    );
+    // A range shape no segment covers exactly takes the scan path, and the
+    // scan fails closed while the descriptor builds: a scan over
+    // half-extracted columns would silently miss rows.
+    let range = store
+        .compile(QueryInput::tql(
+            TqlQueryText::try_new("from events where tag >= 'n' limit 20").expect("valid text"),
+        ))
+        .expect("compiles");
+    assert_eq!(
+        store.execute(&range, &snapshot),
+        Err(QueryError::IndexNotReady),
+        "a building descriptor fails the scan closed with the retryable error"
+    );
+    let building = engine
+        .auto_index_audit(&tenant("tenant-a"))
+        .expect("the audit reads")
+        .into_iter()
+        .find(|entry| entry.field == "tag")
+        .expect("the shape is audited");
+    assert!(
+        matches!(building.coverage, DescriptorCoverage::Building { backfill_remaining } if backfill_remaining > 0),
+        "the audit reports the building descriptor and its owed rows"
+    );
+    // Writes that land while the descriptor builds carry extracted values on
+    // the write path: a new match and the retraction of an old one.
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-during",
+        vec![
+            object_document(
+                "late-needle",
+                "events",
+                &[("tag", DocumentValue::String("needle".into()))],
+            ),
+            object_document(
+                "bulk-00500",
+                "events",
+                &[("tag", DocumentValue::String("bulk".into()))],
+            ),
+        ],
+    );
+    let mut active = false;
+    for _ in 0..10 {
+        let progress = engine.maintain_index_backfills().expect("the governed pass pumps");
+        if progress.iter().any(|step| step.active) {
+            active = true;
+            break;
+        }
+    }
+    assert!(active, "the bounded pass completes the descriptor");
+    let fresh = engine.read_snapshot(&tenant_scope).expect("fresh snapshot");
+    let result = store.execute(&plan, &fresh).expect("the query serves once active");
+    assert_eq!(
+        row_ids(&result),
+        [
+            "bulk-00000",
+            "bulk-01000",
+            "bulk-02000",
+            "bulk-03000",
+            "bulk-04000",
+            "bulk-05000",
+            "bulk-06000",
+            "bulk-07000",
+            "bulk-08000",
+            "bulk-09000",
+            "bulk-10000",
+            "late-needle",
+        ]
+    );
+    let ranged = store.execute(&range, &fresh).expect("the range serves once active");
+    assert_eq!(row_ids(&ranged), row_ids(&result));
+    assert_eq!(
+        ranged.statistics().scanned(),
+        12,
+        "the pushed scan reads exactly the live matches: backfilled rows, \
+         write-path rows, and the retraction all resolve — zero stale reads"
     );
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();

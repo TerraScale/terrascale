@@ -184,7 +184,8 @@ pub struct DescriptorListing {
     pub field: String,
     /// Whether conditions over the field push.
     pub active: bool,
-    /// The number of rows the governed backfill has not covered yet.
+    /// The commit-sequence span the governed backfill has not covered yet
+    /// (registration watermark minus durable cursor).
     pub backfill_remaining: u64,
 }
 
@@ -322,7 +323,7 @@ pub(crate) trait StoragePort: Send {
     /// Returns one document's retained revision history, newest first:
     /// one row per committed mutation (put or tombstone) that retention
     /// has not pruned yet (D-42: history is journal retention). The
-    /// default serves no history; the SQLite storage overrides it.
+    /// default serves no history; the `SQLite` storage overrides it.
     fn document_history_in_collection(
         &self,
         _tenant: &TenantId,
@@ -436,6 +437,18 @@ pub(crate) trait StoragePort: Send {
     /// remaining governed-backfill work. The default reports none.
     fn index_descriptors(&self) -> Result<Vec<DescriptorListing>, ()> {
         Err(())
+    }
+
+    /// Reports one field's durable descriptor state without registering
+    /// anything: `Some(true)` is an active descriptor whose conditions push,
+    /// `Some(false)` is a building descriptor whose backfill still owes rows,
+    /// and `None` is no descriptor (or a backend that does not report).
+    ///
+    /// The read is lock-light (in-memory state, no transaction): the query
+    /// path calls it per pushable field to decide between pushing,
+    /// registering, and refusing with `IndexNotReady`.
+    fn index_descriptor_state(&self, _collection: &CollectionName, _field: &str) -> Option<bool> {
+        None
     }
 
     /// Advances every building descriptor's governed backfill by one
