@@ -534,6 +534,7 @@ fn intent(operation: &str, writes: Vec<StagedWrite>, durability: LocalDurability
         snapshot_sequence: StorageSequence::new(0),
         durability,
         usage_admission: None,
+        hlc: 0,
         writes,
     }
 }

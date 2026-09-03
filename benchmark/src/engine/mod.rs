@@ -62,8 +62,8 @@ use crate::{
     streaming::StreamStore,
     types::{
         CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, IndexGenerationSet,
-        LocalDurability, OperationId, ReadSnapshot, RetryDisposition, StorageSequence, TenantId,
-        TenantScope,
+        LocalDurability, OperationId, ReadSnapshot, ReplicationClockStamp, RetryDisposition,
+        StorageSequence, TenantId, TenantScope,
     },
     usage::{
         MeasurementWindow, MintingRule, UsageAdmissionContext, UsageCommandError,
@@ -649,21 +649,28 @@ pub struct ReplicatedRecord {
 /// or replayed an already-applied record.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppliedReplication {
-    receipt: CommitReceipt,
+    receipt: Option<CommitReceipt>,
     replayed: bool,
+    superseded: bool,
 }
 
 impl AppliedReplication {
     /// Assembles one apply outcome. Crate-only.
     pub(crate) fn new(receipt: CommitReceipt, replayed: bool) -> Self {
-        Self { receipt, replayed }
+        Self { receipt: Some(receipt), replayed, superseded: false }
+    }
+
+    /// The superseded outcome: the deterministic merge kept the current
+    /// row and the incoming record published nothing. Crate-only.
+    pub(crate) fn lost_merge() -> Self {
+        Self { receipt: None, replayed: false, superseded: true }
     }
 
     /// Returns the local receipt of the apply (or of the original apply a
-    /// replay resolved to).
+    /// replay resolved to). `None` when the record was superseded.
     #[must_use]
-    pub const fn receipt(&self) -> &CommitReceipt {
-        &self.receipt
+    pub const fn receipt(&self) -> Option<&CommitReceipt> {
+        self.receipt.as_ref()
     }
 
     /// Reports whether the record had already been applied: the
@@ -673,6 +680,24 @@ impl AppliedReplication {
     pub const fn replayed(&self) -> bool {
         self.replayed
     }
+
+    /// Reports whether the deterministic merge superseded the record:
+    /// the current row's `(hlc, origin)` won, nothing published, and
+    /// every region reaches the same verdict.
+    #[must_use]
+    pub const fn superseded(&self) -> bool {
+        self.superseded
+    }
+}
+
+/// The deterministic merge's verdict (D-36): which side of a replicated
+/// apply the `(hlc, origin)` total order keeps.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MergeVerdict {
+    /// The incoming record wins and publishes.
+    IncomingWins,
+    /// The current row wins; the incoming record publishes nothing.
+    CurrentWins,
 }
 
 /// A rejected local commit.
@@ -808,6 +833,17 @@ impl EngineIdentity {
     }
 }
 
+/// Folds one hybrid stamp into the comparable u64 the provenance column
+/// carries: physical millis in the high bits, the logical counter low.
+fn fold_stamp(ticks: u64, counter: u64) -> u64 {
+    (ticks << 16) | (counter & 0xFFFF)
+}
+
+/// Unfolds a stored stamp into its physical and logical parts.
+fn unfold_stamp(hlc: u64) -> (u64, u64) {
+    (hlc >> 16, hlc & 0xFFFF)
+}
+
 /// The locked storage state of one Engine.
 pub(crate) struct StorageState {
     pub(crate) port: Box<dyn StoragePort>,
@@ -822,6 +858,10 @@ pub(crate) struct StorageState {
 pub struct Engine {
     identity: u128,
     durable_owner: crate::storage::DatabaseOwner,
+    /// The engine's replication clock (D-36): one hybrid stamp per
+    /// database. Origin commits tick it; replicated applies witness it.
+    /// The deterministic merge compares `(hlc, origin)` totals.
+    replication_clock: Mutex<crate::types::ReplicationClockStamp>,
     pub(crate) storage: Arc<Mutex<StorageState>>,
     /// One bounded registry shared by the engine, storage, TBEP, probes, and
     /// Prometheus adapter for this process-local engine instance.
@@ -940,6 +980,7 @@ impl Engine {
         Ok(Self {
             identity: EngineIdentity::next().0,
             durable_owner: owner,
+            replication_clock: Mutex::new(ReplicationClockStamp::new(Self::now_millis(), 0)),
             storage: Arc::new(Mutex::new(StorageState { port: storage })),
             metrics,
             in_flight: Mutex::new(BTreeSet::new()),
@@ -1539,6 +1580,75 @@ impl Engine {
     /// Returns [`EngineError::InvalidDocument`] when the record's body is
     /// outside the structural limits, and the transaction path's typed
     /// failures otherwise.
+    /// The wall-clock milliseconds of the replication clock's epoch.
+    fn now_millis() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(0))
+    }
+
+    /// Ticks the replication clock for one origin commit: physical
+    /// millis advance, ties increment the logical counter.
+    fn tick_replication_clock(&self) -> u64 {
+        let mut clock = self.replication_clock.lock().expect("the clock is not poisoned");
+        let ticks = Self::now_millis();
+        let stamp = if ticks > clock.ticks() {
+            *clock = ReplicationClockStamp::new(ticks, 0);
+            ticks
+        } else {
+            let counter = clock.counter().saturating_add(1);
+            *clock = ReplicationClockStamp::new(clock.ticks(), counter);
+            clock.ticks()
+        };
+        let _ = stamp;
+        fold_stamp(clock.ticks(), clock.counter())
+    }
+
+    /// Witnesses a remote stamp: the clock advances to cover it without
+    /// ever moving backwards.
+    fn witness_replication_clock(&self, hlc: u64) {
+        let (ticks, counter) = unfold_stamp(hlc);
+        let mut clock = self.replication_clock.lock().expect("the clock is not poisoned");
+        if ticks > clock.ticks() || (ticks == clock.ticks() && counter > clock.counter()) {
+            *clock = ReplicationClockStamp::new(ticks, counter);
+        }
+    }
+
+    /// The deterministic merge's verdict for one incoming record.
+    fn merge_verdict(&self, scope: &TenantScope, record: &ReplicatedRecord) -> MergeVerdict {
+        let storage = self.lock_storage().expect("the storage lock is live");
+        let Some((current_hlc, current_origin, current_deleted)) =
+            storage.port.document_provenance_at(scope.tenant(), &record.collection, &record.id)
+        else {
+            return MergeVerdict::IncomingWins;
+        };
+        let incoming = (record.hlc, record.origin.as_str());
+        let current = (current_hlc, current_origin.as_str());
+        match incoming.cmp(&current) {
+            std::cmp::Ordering::Greater => MergeVerdict::IncomingWins,
+            std::cmp::Ordering::Less => MergeVerdict::CurrentWins,
+            // An exact tie resolves remove-wins (D-36): a tombstone
+            // beats a live value, and two tombstones agree.
+            std::cmp::Ordering::Equal => {
+                if record.deleted || !current_deleted {
+                    MergeVerdict::IncomingWins
+                } else {
+                    MergeVerdict::CurrentWins
+                }
+            }
+        }
+    }
+
+    /// Applies one replicated record with the deterministic merge
+    /// (D-36): the incoming `(hlc, origin)` total order decides against
+    /// the current row's stamp — remove-wins on ties — and the clock
+    /// witnesses the remote stamp either way. A superseded record (the
+    /// current row wins) publishes nothing; the source region's history
+    /// keeps the loser and every region picks the same winner.
+    ///
+    /// # Errors
+    ///
+    /// Returns the engine's typed failure when the apply cannot run.
     pub fn apply_replicated(
         &self,
         scope: &TenantScope,
@@ -1546,6 +1656,15 @@ impl Engine {
     ) -> Result<AppliedReplication, EngineError> {
         let operation = OperationId::try_new(&format!("repl-{}", record.commit_ulid))
             .map_err(|_| EngineError::InvalidDocument)?;
+        // The deterministic merge (D-36): the clock always witnesses the
+        // remote stamp, then the `(hlc, origin)` total order decides —
+        // remove-wins on equal stamps. A superseded record publishes
+        // nothing: every region reaches the same verdict, so convergence
+        // needs no coordination.
+        self.witness_replication_clock(record.hlc);
+        if self.merge_verdict(scope, record) == MergeVerdict::CurrentWins {
+            return Ok(AppliedReplication::lost_merge());
+        }
         let snapshot = self.read_snapshot(scope)?;
         let snapshot_sequence = snapshot.sequence();
         let mut transaction = self.begin(scope, snapshot, operation.clone())?;
@@ -2529,6 +2648,12 @@ impl Transaction<'_> {
             return CommitOutcome::Rejected(CommitError::UsageRequiresSynced);
         }
         let write_digest = storage::write_set_digest(self.scope.tenant(), &writes);
+        // An origin commit stamps the replication clock (the hybrid
+        // logical clock the deterministic merge compares); a replicated
+        // intent carries its source stamp on the staged variant.
+        let replicated =
+            writes.iter().any(|write| matches!(write, storage::StagedWrite::ReplicatedPut { .. }));
+        let hlc = if replicated { 0 } else { self.engine.tick_replication_clock() };
         let intent = CommitIntent {
             tenant: self.scope.tenant().clone(),
             operation: self.operation.clone(),
@@ -2536,6 +2661,7 @@ impl Transaction<'_> {
             snapshot_sequence: self.snapshot_sequence,
             durability,
             usage_admission,
+            hlc,
             writes,
         };
         let engine = self.engine;

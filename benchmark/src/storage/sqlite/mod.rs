@@ -1070,7 +1070,10 @@ fn commit_identity_of(intent: &CommitIntent) -> Result<(OperationId, JournalProv
             _ => {}
         }
     }
-    Ok((intent.operation.clone(), JournalProvenance::origin_commit()))
+    Ok((
+        intent.operation.clone(),
+        JournalProvenance::new(JournalKind::Origin, String::new(), intent.hlc),
+    ))
 }
 
 /// Writes one rejection record: the durable binding that makes a retried
@@ -1825,6 +1828,31 @@ impl StoragePort for SqliteStorage {
             .ok()
             .filter(|(deleted, _)| *deleted == 0)
             .and_then(|(_, body)| decode_document_body(&body))
+    }
+
+    fn document_provenance_at(
+        &self,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        id: &DocumentId,
+    ) -> Option<(u64, String, bool)> {
+        let reader = self.reader();
+        let connection = reader.connection();
+        connection
+            .query_row(
+                "SELECT hlc, origin, deleted FROM documents
+                 WHERE tenant = ?1 AND collection = ?2 AND id = ?3
+                 ORDER BY commit_seq DESC LIMIT 1",
+                rusqlite::params![tenant.as_str(), collection.as_str(), id.as_str()],
+                |row| {
+                    Ok((
+                        u64::try_from(row.get::<_, i64>(0)?).unwrap_or(0),
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)? != 0,
+                    ))
+                },
+            )
+            .ok()
     }
 
     fn document_history_in_collection(

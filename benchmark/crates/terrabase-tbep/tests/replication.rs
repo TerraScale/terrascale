@@ -71,8 +71,11 @@ fn put(host: &MemberHost, id: &str, value: i64) {
     let tenant = TenantId::try_new("tenant-a").expect("the tenant parses");
     let engine_scope = engine.scope_for(&tenant);
     let snapshot = engine.read_snapshot(&engine_scope).expect("the engine serves a snapshot");
+    // Operation identities are unique per call: a replicated row's
+    // identity (the source's operation id) shares the target's ledger
+    // binding space, so a colliding local id would read as reuse.
     let operation =
-        OperationId::try_new(&format!("put-{id}")).expect("the operation identity parses");
+        OperationId::try_new(&format!("put-{id}-{value}")).expect("the operation identity parses");
     let mut transaction =
         engine.begin(&engine_scope, snapshot, operation).expect("the write begins");
     transaction
@@ -224,4 +227,62 @@ fn the_target_never_re_ships_its_replicated_rows() {
     let shipped = replicate_once(source.engine_host(), target.engine_host(), &scope, &mut cursor)
         .expect("the drained tail is a no-op");
     assert_eq!(shipped, 0);
+}
+
+/// The deterministic merge (D-36): concurrent writes to the same
+/// document in two members converge to identical bytes in both, the
+/// `(hlc, origin)` total order picks the same winner everywhere, and a
+/// superseded record never overwrites the winner.
+#[test]
+fn concurrent_writes_converge_deterministically() {
+    let (source_location, source) = member("converge-a");
+    let (target_location, target) = member("converge-b");
+    let scope = scope();
+
+    // Region A writes v1; it replicates to B (B's clock witnesses A's
+    // stamp, so B's next origin tick is strictly greater).
+    put(&source, "orders/race", 1);
+    let mut cursor = None;
+    let shipped = replicate_once(source.engine_host(), target.engine_host(), &scope, &mut cursor)
+        .expect("the first replication runs");
+    assert_eq!(shipped, 1);
+
+    // Region B — its clock now ahead of the witnessed stamp — writes v2.
+    put(&target, "orders/race", 2);
+    let mut back = None;
+    let shipped = replicate_once(target.engine_host(), source.engine_host(), &scope, &mut back)
+        .expect("the reverse replication runs");
+    assert_eq!(shipped, 1);
+
+    // Both members serve v2: the same winner, identical bytes.
+    for (label, host) in [("A", &source), ("B", &target)] {
+        let documents = orders(host);
+        assert_eq!(documents.len(), 1, "one live document in {label}");
+        let DocumentValue::Object(fields) = documents[0].value() else {
+            panic!("an object body in {label}");
+        };
+        let value = fields.get("value").expect("the field survives");
+        assert_eq!(value, &DocumentValue::Integer(2), "{label} serves the winner");
+    }
+
+    // The superseded v1 cannot come back: re-shipping A's journal from
+    // the start replays the already-applied v1 (identity replay) and
+    // the merge would refuse it anyway.
+    let mut replay = None;
+    let shipped = replicate_once(source.engine_host(), target.engine_host(), &scope, &mut replay)
+        .expect("the replay replication runs");
+    assert!(shipped <= 1, "the replayed record replays or is superseded: {shipped}");
+    let documents = orders(&target);
+    let DocumentValue::Object(fields) = documents[0].value() else {
+        panic!("an object body after the replay");
+    };
+    assert_eq!(
+        fields.get("value").expect("the field survives"),
+        &DocumentValue::Integer(2),
+        "the winner survives the loser's replay"
+    );
+
+    drop(source);
+    drop(target);
+    let _ = (source_location, target_location);
 }

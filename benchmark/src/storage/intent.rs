@@ -86,6 +86,10 @@ pub(crate) struct CommitIntent {
     /// Trusted usage admission bound atomically to this origin mutation.
     /// Replication, repair, and internal writes carry `None` and never mint.
     pub(crate) usage_admission: Option<UsageAdmissionContext>,
+    /// The engine's replication clock stamp for an origin commit (the
+    /// hybrid stamp the deterministic merge compares). A replicated
+    /// intent carries `0` here — its stamp rides the staged variant.
+    pub(crate) hlc: u64,
     /// The staged writes to publish atomically.
     pub(crate) writes: Vec<StagedWrite>,
 }

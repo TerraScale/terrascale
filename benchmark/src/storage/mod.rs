@@ -306,6 +306,18 @@ pub(crate) trait StoragePort: Send {
         id: &DocumentId,
     ) -> Option<Document>;
 
+    /// Returns one document's current replication stamp: the newest
+    /// row's `hlc`, `origin`, and tombstone flag — the deterministic
+    /// merge's comparison input. `None` when the key has no row.
+    fn document_provenance_at(
+        &self,
+        _tenant: &TenantId,
+        _collection: &CollectionName,
+        _id: &DocumentId,
+    ) -> Option<(u64, String, bool)> {
+        None
+    }
+
     /// Returns one document's retained revision history, newest first:
     /// one row per committed mutation (put or tombstone) that retention
     /// has not pruned yet (D-42: history is journal retention). The
@@ -577,11 +589,6 @@ impl JournalProvenance {
     /// recorded by the storage write path, never minted by a consumer.
     pub(crate) fn new(kind: JournalKind, origin: String, hlc: u64) -> Self {
         Self { kind, origin, hlc }
-    }
-
-    /// The provenance of a locally written row.
-    pub(crate) fn origin_commit() -> Self {
-        Self { kind: JournalKind::Origin, origin: String::new(), hlc: 0 }
     }
 
     /// Returns whether the row was written by this region.
