@@ -236,6 +236,13 @@ impl SubscriptionEngine {
         self.subscriptions.get(&id).map(|state| &state.members)
     }
 
+    /// One subscription's specification (resume checks the view did not
+    /// change across a reconnect).
+    #[must_use]
+    pub fn specification_of(&self, id: u64) -> Option<&SubscriptionSpec> {
+        self.subscriptions.get(&id).map(|state| &state.spec)
+    }
+
     /// Seeds one subscription's result from a consistent scan taken at
     /// subscribe time: each member enters the result state (and the
     /// holders map) directly. Records the tailer replays afterwards

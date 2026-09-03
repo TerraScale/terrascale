@@ -30,6 +30,9 @@ use terrabase_sync_core::subscription::FieldValue;
 /// The bounded capacity of one subscription's delivery channel.
 const REACTIVE_CHANNEL_CAPACITY: usize = 1024;
 
+/// How many recent revisions each subscription retains for resume.
+const REVISION_RING: usize = 256;
+
 /// One seed's members: document → projected fields, in document order.
 pub type ProjectedMembers = Vec<(String, Vec<(String, FieldValue)>)>;
 
@@ -67,15 +70,26 @@ pub struct ReactiveState {
     /// Subscriptions whose backlog was dropped: further deltas coalesce
     /// away until the consumer re-bootstraps through a fresh seed.
     reset_pending: BTreeSet<u64>,
+    /// Each subscription's retained revisions, for checkpoint resume:
+    /// the newest [`REVISION_RING`] deltas, contiguous. A coalesced
+    /// backlog breaks contiguity and forces Reset semantics on resume.
+    rings: BTreeMap<u64, std::collections::VecDeque<Delta>>,
     /// The fields to extract per collection: every registered
     /// subscription's dependency and projection fields.
     fields: BTreeMap<String, BTreeSet<String>>,
+    /// Subscriptions whose transport closed but whose state is retained
+    /// for checkpoint resume. The retention window ends when the
+    /// delivery channel fills (the backlog coalesces away, the revision
+    /// ring is dropped) — a reaped subscription's resume is a plain
+    /// fresh seed (Reset semantics), never a wrong replay.
+    detached: BTreeSet<u64>,
 }
 
 impl ReactiveState {
     /// Registers one subscription and opens its bounded delivery
     /// channel. The caller seeds it before the first pump.
     pub(crate) fn subscribe(&mut self, spec: SubscriptionSpec) -> (u64, Receiver<ReactiveFrame>) {
+        self.reap();
         let fields = self.fields.entry(spec.collection.clone()).or_default();
         for condition in &spec.conditions {
             fields.insert(condition.field.clone());
@@ -104,8 +118,29 @@ impl ReactiveState {
 
     /// Retracts one subscription.
     pub(crate) fn unsubscribe(&mut self, id: u64) {
+        self.detached.remove(&id);
+        self.rings.remove(&id);
         self.engine.unregister(id);
         self.feeds.remove(&id);
+    }
+
+    /// Marks one subscription's transport closed while retaining its
+    /// state for resume: the engine keeps updating, the ring keeps
+    /// growing, until the abandoned channel fills.
+    pub(crate) fn detach(&mut self, id: u64) {
+        self.detached.insert(id);
+    }
+
+    /// Reaps detached subscriptions whose retention window closed (the
+    /// backlog coalesced away): their resume is already Reset semantics.
+    fn reap(&mut self) {
+        let dead: Vec<u64> = self.detached.intersection(&self.reset_pending).copied().collect();
+        for id in dead {
+            self.detached.remove(&id);
+            self.rings.remove(&id);
+            self.engine.unregister(id);
+            self.feeds.remove(&id);
+        }
     }
 
     /// The live subscription count.
@@ -157,14 +192,58 @@ impl ReactiveState {
     /// coalesce away until the consumer re-seeds.
     fn deliver(&mut self, id: u64, frame: ReactiveFrame) {
         if self.reset_pending.contains(&id) {
+            // The backlog was dropped: the ring is no longer contiguous,
+            // so resume must reset.
+            self.rings.remove(&id);
             return;
         }
         let Some(sender) = self.feeds.get(&id) else {
             return;
         };
+        if let ReactiveFrame::Delta { delta, .. } = &frame {
+            let ring = self.rings.entry(id).or_default();
+            ring.push_back(delta.clone());
+            while ring.len() > REVISION_RING {
+                ring.pop_front();
+            }
+        }
         if sender.try_send(frame).is_err() {
             self.reset_pending.insert(id);
+            self.rings.remove(&id);
         }
+    }
+
+    /// Resumes one subscription from a checkpoint: when the previous
+    /// subscription's ring still holds every revision past the
+    /// checkpoint, the new subscription inherits its members and the
+    /// missed revisions replay — the client keeps its state. Anything
+    /// else (unknown subscription, coalesced backlog, revision below
+    /// the retained floor, changed specification) answers `None` and
+    /// the caller seeds fresh (Reset semantics).
+    pub(crate) fn resume(
+        &mut self,
+        previous: u64,
+        revision: u64,
+        spec: &SubscriptionSpec,
+    ) -> Option<(u64, Receiver<ReactiveFrame>, Vec<Delta>)> {
+        let ring = self.rings.get(&previous).cloned()?; // coalesced or never retained: Reset
+        let head = ring.back().map(|delta| delta.revision)?; // nothing retained: Reset
+        let _ = head;
+        let oldest = ring.front().map(|delta| delta.revision)?;
+        if revision + 1 < oldest {
+            return None; // below the retained floor: Reset
+        }
+        if !self.engine.specification_of(previous).is_some_and(|held| held == spec) {
+            return None; // the view changed: Reset
+        }
+        let members: ProjectedMembers =
+            self.engine.members(previous)?.clone().into_iter().collect();
+        let missed: Vec<Delta> =
+            ring.iter().filter(|delta| delta.revision > revision).cloned().collect();
+        let (id, receiver) = self.subscribe(spec.clone());
+        self.engine.seed(id, members);
+        self.rings.insert(id, ring);
+        Some((id, receiver, missed))
     }
 }
 

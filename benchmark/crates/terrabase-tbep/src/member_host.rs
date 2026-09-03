@@ -30,6 +30,16 @@ impl MemberHostOptions {
     }
 }
 
+/// One opened reactive subscription: its identity, its delivery feed,
+/// and — on a checkpoint resume that the retained revisions covered —
+/// the exact missed revisions (a fresh subscription carries `None` and
+/// a Seed frame instead).
+pub type ReactiveOpen = (
+    u64,
+    Receiver<crate::reactive::ReactiveFrame>,
+    Option<Vec<terrabase_sync_core::server::Delta>>,
+);
+
 /// One TBEP host over a single engine and its durable publication journal.
 pub struct MemberHost {
     engine: EngineHost,
@@ -90,12 +100,19 @@ impl MemberHost {
         &self,
         scope: &registry::BoundScope,
         spec: &terrabase_sync_core::server::SubscriptionSpec,
-    ) -> Result<(u64, Receiver<crate::reactive::ReactiveFrame>), HostingError> {
+        resume: Option<(u64, u64)>,
+    ) -> Result<ReactiveOpen, HostingError> {
         self.synchronize(scope)?;
+        if let Some((previous, revision)) = resume
+            && let Some((id, receiver, missed)) =
+                self.delivery.reactive_resume(previous, revision, spec)
+        {
+            return Ok((id, receiver, Some(missed)));
+        }
         let (id, receiver) = self.delivery.reactive_subscribe(scope, spec.clone())?;
         let members = self.scan_members(scope, spec)?;
         self.delivery.reactive_seed(id, members);
-        Ok((id, receiver))
+        Ok((id, receiver, None))
     }
 
     /// Pumps the journal: new commits flow to every delivery plane,
@@ -113,6 +130,13 @@ impl MemberHost {
     /// Retracts one reactive subscription.
     pub fn reactive_unsubscribe(&self, id: u64) {
         self.delivery.reactive_unsubscribe(id);
+    }
+
+    /// Marks one reactive subscription's transport closed while
+    /// retaining its state for checkpoint resume (the retention window
+    /// ends when the abandoned delivery channel fills).
+    pub fn reactive_detach(&self, id: u64) {
+        self.delivery.reactive_detach(id);
     }
 
     /// One subscription's seed members from a consistent engine scan:

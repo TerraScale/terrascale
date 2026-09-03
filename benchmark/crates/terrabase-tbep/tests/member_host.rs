@@ -166,7 +166,8 @@ fn reactive_subscriptions_seed_then_delta_on_commit() {
         }],
         projection: vec!["value".into()],
     };
-    let (_id, feed) = host.reactive_subscribe(&scope, &spec).expect("the subscription opens");
+    let (_id, feed, _missed) =
+        host.reactive_subscribe(&scope, &spec, None).expect("the subscription opens");
     let ReactiveFrame::Seed { members, .. } = feed.recv().expect("the seed arrives") else {
         panic!("the first frame is the seed");
     };
@@ -184,4 +185,113 @@ fn reactive_subscriptions_seed_then_delta_on_commit() {
         terrabase_sync_core::server::DeltaOp::Insert { ref document, .. } if document == "orders/2"
     ));
     assert_eq!(delta.revision, 1, "the subscription's first revision");
+}
+
+/// The local reactive visibility gate (`S-04` done-when): a committed
+/// write is visible to a subscribed result view within 50 ms p99 on the
+/// same member. The M1 pump is pull-per-tick; the clock covers commit →
+/// pump → delta arrival.
+#[test]
+fn reactive_local_visibility_stays_under_50ms_p99() {
+    use std::time::Instant;
+    use terrabase_sync_core::server::{Comparison, Condition, FieldValue, SubscriptionSpec};
+    use terrabase_tbep::reactive::ReactiveFrame;
+
+    let location = TestLocation::new("reactive-latency");
+    let host = open(location.path());
+    let scope = scope();
+    bind(&host, &scope);
+
+    let spec = SubscriptionSpec {
+        collection: "orders".into(),
+        conditions: vec![Condition {
+            field: "value".into(),
+            op: Comparison::GreaterOrEqual,
+            value: FieldValue::Number(0.0),
+        }],
+        projection: vec!["value".into()],
+    };
+    let (_id, feed, _missed) =
+        host.reactive_subscribe(&scope, &spec, None).expect("the subscription opens");
+    let _ = feed.recv().expect("the seed arrives");
+
+    let mut samples = Vec::with_capacity(200);
+    for round in 0..200_u64 {
+        let started = Instant::now();
+        put(&host, &format!("orders/{round}"), i64::try_from(round).unwrap_or(0));
+        host.reactive_pump(&scope).expect("the pump advances");
+        let ReactiveFrame::Delta { .. } = feed.recv().expect("the delta arrives") else {
+            panic!("round {round}: the write is visible as a delta");
+        };
+        samples.push(started.elapsed());
+    }
+    samples.sort();
+    let p99 = samples[(samples.len() * 99) / 100];
+    assert!(p99 < std::time::Duration::from_millis(50), "p99 was {p99:?}");
+}
+
+/// Checkpoint resume (`S-04` done-when): a detached subscription's
+/// missed revisions replay exactly; a resume the ring cannot cover
+/// seeds fresh (Reset semantics).
+#[test]
+fn reactive_resume_replays_exactly_the_missed_revisions() {
+    use terrabase_sync_core::server::{Comparison, Condition, FieldValue, SubscriptionSpec};
+    use terrabase_tbep::reactive::ReactiveFrame;
+
+    let location = TestLocation::new("reactive-resume");
+    let host = open(location.path());
+    let scope = scope();
+    bind(&host, &scope);
+    put(&host, "orders/1", 1);
+
+    let spec = SubscriptionSpec {
+        collection: "orders".into(),
+        conditions: vec![Condition {
+            field: "value".into(),
+            op: Comparison::GreaterOrEqual,
+            value: FieldValue::Number(0.0),
+        }],
+        projection: vec!["value".into()],
+    };
+    let (first, feed, _missed) =
+        host.reactive_subscribe(&scope, &spec, None).expect("the subscription opens");
+    let ReactiveFrame::Seed { .. } = feed.recv().expect("the seed") else {
+        panic!("the first frame seeds");
+    };
+
+    // Two writes the client never sees (it detached after revision 0).
+    put(&host, "orders/2", 2);
+    put(&host, "orders/3", 3);
+    host.reactive_pump(&scope).expect("the pump advances");
+    let _first_delta = feed.recv().expect("rev 1");
+    let _second_delta = feed.recv().expect("rev 2");
+
+    // The transport closed: the subscription detaches, retaining state.
+    host.reactive_detach(first);
+
+    // Resume from revision 1: exactly revision 2 replays, in order.
+    let (resumed, feed, missed) =
+        host.reactive_subscribe(&scope, &spec, Some((first, 1))).expect("the resume opens");
+    assert_eq!(missed.as_deref().map(<[_]>::len), Some(1), "one missed revision");
+    assert!(
+        matches!(
+            &missed.as_deref().map(|d| &d[0]),
+            Some(delta) if delta.revision == 2
+        ),
+        "the replay is revision 2"
+    );
+    drop(feed);
+    host.reactive_unsubscribe(resumed);
+
+    // A resume naming a subscription whose ring no longer covers the
+    // checkpoint (an unknown or reaped id) seeds fresh: the Seed frame
+    // answers, never a guess.
+    let (_fresh, feed, missed) = host
+        .reactive_subscribe(&scope, &spec, Some((999_999, 0)))
+        .expect("the fresh subscription opens");
+    assert!(missed.is_none(), "an uncoverable checkpoint resets");
+    assert!(
+        matches!(feed.recv().expect("the seed"), ReactiveFrame::Seed { .. }),
+        "the reset path seeds"
+    );
 }

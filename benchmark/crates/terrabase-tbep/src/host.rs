@@ -803,6 +803,28 @@ impl SyncDeliveryHost {
         self.lock().reactive.unsubscribe(id);
     }
 
+    /// Resumes one reactive subscription from a checkpoint: replays the
+    /// retained revisions when the ring still covers them (`None` means
+    /// the caller seeds fresh — Reset semantics).
+    pub(crate) fn reactive_resume(
+        &self,
+        previous: u64,
+        revision: u64,
+        spec: &terrabase_sync_core::server::SubscriptionSpec,
+    ) -> Option<(
+        u64,
+        Receiver<crate::reactive::ReactiveFrame>,
+        Vec<terrabase_sync_core::server::Delta>,
+    )> {
+        self.lock().reactive.resume(previous, revision, spec)
+    }
+
+    /// Marks one reactive subscription's transport closed while
+    /// retaining its state for resume.
+    pub(crate) fn reactive_detach(&self, id: u64) {
+        self.lock().reactive.detach(id);
+    }
+
     /// Applies records pulled from the engine's durable publication journal.
     ///
     /// This is the only composition path that advances a `MemberHost` sync

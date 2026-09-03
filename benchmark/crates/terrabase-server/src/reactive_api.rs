@@ -325,7 +325,14 @@ pub async fn poll(
                 Err(error) => return error.into_response(),
             };
             let scope = bound_scope(&state, &name);
-            let (subscription, receiver) = match host.reactive_subscribe(&scope, &spec) {
+            let resume = request.get("resume").and_then(|value| {
+                let subscription = value.get("subscription").and_then(serde_json::Value::as_u64)?;
+                let revision = value.get("revision").and_then(serde_json::Value::as_u64)?;
+                Some((subscription, revision))
+            });
+            let (subscription, receiver, missed) = match host
+                .reactive_subscribe(&scope, &spec, resume)
+            {
                 Ok(opened) => opened,
                 Err(error) => {
                     return ApiError {
@@ -339,7 +346,14 @@ pub async fn poll(
                 }
             };
             state.reactive.insert(subscription, name.clone(), receiver);
-            let frames = drain(subscription, &state);
+            // A resume replays exactly the missed revisions as its first
+            // frames (no Seed — the client kept its state); everything
+            // else seeds.
+            let mut frames = Vec::new();
+            for delta in missed.unwrap_or_default() {
+                frames.push(terrabase_tbep::reactive::ReactiveFrame::Delta { subscription, delta });
+            }
+            frames.extend(drain(subscription, &state));
             respond_frames(subscription, &frames)
         }
         Some("poll") => {
@@ -526,7 +540,10 @@ async fn serve_socket(
         return Ok(());
     };
     let scope = bound_scope(state, name);
-    let Ok((subscription, receiver)) = host.reactive_subscribe(&scope, &spec) else {
+    // ponytail: the WS first-frame subscribe carries no resume; a
+    // reconnecting client resumes through the poll transport until the
+    // frame manifest grows a resume frame (S-10).
+    let Ok((subscription, receiver, _missed)) = host.reactive_subscribe(&scope, &spec, None) else {
         socket
             .send(Message::Text(
                 "{\"error\":{\"code\":\"reactive_refused\",\"fix\":\"retry the subscription\"}}"
@@ -546,7 +563,7 @@ async fn serve_socket(
             match encode_frame(&frame) {
                 Ok(bytes) => {
                     if socket.send(Message::Binary(bytes.into())).await.is_err() {
-                        host.reactive_unsubscribe(subscription);
+                        host.reactive_detach(subscription);
                         state.reactive.remove(subscription);
                         return Ok(());
                     }
@@ -559,14 +576,14 @@ async fn serve_socket(
             () = tokio::time::sleep(PUMP_TICK) => {}
             closed = socket.recv() => {
                 if closed.is_none() {
-                    host.reactive_unsubscribe(subscription);
+                    host.reactive_detach(subscription);
                     state.reactive.remove(subscription);
                     return Ok(());
                 }
             }
         }
     }
-    host.reactive_unsubscribe(subscription);
+    host.reactive_detach(subscription);
     state.reactive.remove(subscription);
     Ok(())
 }
