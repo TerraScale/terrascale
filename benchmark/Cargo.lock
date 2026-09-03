@@ -1691,21 +1691,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "terrabase-sync-conformance"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "terrabase-sync-core",
-]
-
-[[package]]
 name = "terrabase-sync-core"
 version = "0.1.0"
-dependencies = [
- "serde_json",
- "terrabase-causal",
- "terrabase-crdt",
-]
 
 [[package]]
 name = "terrabase-tbep"

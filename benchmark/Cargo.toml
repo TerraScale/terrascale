@@ -15,7 +15,6 @@ members = [
   "crates/terrabase-causal",
   "crates/terrabase-crdt",
   "crates/terrabase-sync-core",
-  "crates/terrabase-sync-conformance",
   "crates/terrabase-member-transport",
   "crates/terrabase-cluster",
   "crates/terrabase-replication-core",

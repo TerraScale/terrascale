@@ -1,6 +1,8 @@
-# `terrabase-sync-core` — the engine-side sync-core seam over
-# TerraBase-native CRDT types (per ADR 0024 and the sync-v2 replacement
-# contract: no external CRDT engine is a dependency of this crate).
+# `terrabase-sync-core` — the owner of the TerraBase sync result views
+# (S-04, D-38): the transport-independent result-view state machine and
+# the `terrascale.sync.v2` frame-envelope discipline. The per-field CRDT
+# materialization and its `SERVER_PEER_ID` actor model were deleted; no
+# CRDT or causal datatype is a dependency of this crate.
 #
 # Workspace member of the engine root (see the root `Cargo.toml`).
 
@@ -10,7 +12,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
-description = "TerraBase sync-core seam: server-authoritative journal materialization over native CRDTs, checkpoints, budgeted deltas, frames"
+description = "TerraBase sync result views: authorized ordered results, revisions, checkpoints, and the sync.v2 frame envelope"
 publish = false
 
 [lints.rust]
@@ -19,15 +21,3 @@ missing_docs = "deny"
 
 [lints.clippy]
 pedantic = "warn"
-
-[dependencies]
-# The datatypes are TerraBase-native: LWW registers from `terrabase-crdt`
-# joined over the dotted version vectors, causal contexts, and hybrid
-# logical clocks of `terrabase-causal`.
-terrabase-causal = { path = "../terrabase-causal" }
-terrabase-crdt = { path = "../terrabase-crdt" }
-
-[dev-dependencies]
-# The golden conformance corpus is JSON so every SDK CI can consume the
-# same data files; the runner parses it with serde_json.
-serde_json = "1.0.150"

@@ -5,62 +5,22 @@
 //! the shared discipline the ticket fixes — version, frame kind,
 //! correlation/causation identity, an idempotency key exactly where
 //! mutation is possible, and a content digest — and every decode path
-//! fails closed.
-
-use std::collections::BTreeMap;
+//! fails closed. The CRDT-era frame kinds were deleted with the
+//! per-field materialization (S-04, D-38); their wire codes fail
+//! closed until the result-view delivery vocabulary replaces them.
 
 use terrabase_sync_core::FrameId;
-use terrabase_sync_core::JournalChange;
-use terrabase_sync_core::JournalCommit;
-use terrabase_sync_core::SyncBatch;
-use terrabase_sync_core::SyncCheckpoint;
-use terrabase_sync_core::SyncCore;
-use terrabase_sync_core::SyncCoreConfig;
-use terrabase_sync_core::SyncCoreError;
-use terrabase_sync_core::SyncScope;
-use terrabase_sync_core::SyncValue;
 use terrabase_sync_core::protocol::Direction;
-use terrabase_sync_core::protocol::DocumentWrite;
 use terrabase_sync_core::protocol::ErrorCode;
 use terrabase_sync_core::protocol::FrameClass;
 use terrabase_sync_core::protocol::FrameKind;
 use terrabase_sync_core::protocol::IdempotencyKey;
-use terrabase_sync_core::protocol::MutationOutcome;
-use terrabase_sync_core::protocol::PayloadCodec;
 use terrabase_sync_core::protocol::ProtocolError;
-use terrabase_sync_core::protocol::ResyncReason;
 use terrabase_sync_core::protocol::SYNC_PROTOCOL_CONTRACT;
 use terrabase_sync_core::protocol::SYNC_PROTOCOL_VERSION;
 use terrabase_sync_core::protocol::SyncV2Body;
 use terrabase_sync_core::protocol::SyncV2Frame;
-use terrabase_sync_core::protocol::serve_delta;
-use terrabase_sync_core::protocol::serve_snapshot;
 use terrabase_sync_core::protocol::trigger_frame;
-
-fn scope() -> SyncScope {
-    SyncScope::new("tenant-a", "orders")
-}
-
-fn config() -> SyncCoreConfig {
-    SyncCoreConfig { batch_byte_budget: 8 * 1024, checkpoint_window: 128 }
-}
-
-fn put(sequence: u64, document: &str, fields: usize) -> JournalCommit {
-    let mut body = BTreeMap::new();
-    for field in 0..fields {
-        body.insert(format!("f{field:03}"), SyncValue::Str(format!("v{sequence:04}-{field:02}")));
-    }
-    JournalCommit {
-        storage_sequence: sequence,
-        operation_id: format!("op-{sequence:06}"),
-        document_id: document.to_string(),
-        change: JournalChange::Put { body },
-    }
-}
-
-fn checkpoint(end: u64, sequence: u64) -> SyncCheckpoint {
-    SyncCheckpoint::from_ends(vec![(terrabase_sync_core::SERVER_PEER_ID, end)], sequence)
-}
 
 #[test]
 fn contract_identity_and_version_are_fixed_and_fail_closed() {
@@ -94,16 +54,10 @@ fn every_frame_kind_has_a_stable_code_class_and_direction() {
         (FrameKind::SessionAccepted, 0x0002, Direction::ServerToClient),
         (FrameKind::SubscriptionModify, 0x0003, Direction::ClientToServer),
         (FrameKind::SubscriptionChanged, 0x0004, Direction::ServerToClient),
-        (FrameKind::CheckpointAck, 0x0005, Direction::ClientToServer),
         (FrameKind::Heartbeat, 0x0006, Direction::Both),
-        (FrameKind::DeltaBatch, 0x0007, Direction::ServerToClient),
-        (FrameKind::SnapshotAnswer, 0x0008, Direction::ServerToClient),
         (FrameKind::Trigger, 0x0009, Direction::ServerToClient),
-        (FrameKind::ResyncRequired, 0x000A, Direction::ServerToClient),
         (FrameKind::RegionRouteChange, 0x000B, Direction::ServerToClient),
         (FrameKind::Error, 0x000C, Direction::ServerToClient),
-        (FrameKind::MutationRequest, 0x000D, Direction::ClientToServer),
-        (FrameKind::MutationAck, 0x000E, Direction::ServerToClient),
     ];
     for (kind, code, direction) in expected {
         assert_eq!(kind.code(), *code, "{kind:?} code");
@@ -116,42 +70,39 @@ fn every_frame_kind_has_a_stable_code_class_and_direction() {
 }
 
 #[test]
-fn envelope_carries_identity_idempotency_and_digest() {
-    let key = IdempotencyKey::new("idem-000042").expect("key builds");
-    let body = SyncV2Body::MutationRequest {
-        collection: "orders".to_string(),
-        document: "d-07".to_string(),
-        write: DocumentWrite::Put {
-            body: BTreeMap::from([("f000".to_string(), SyncValue::Str("v0007".to_string()))]),
-        },
-    };
-    let frame = SyncV2Frame::seal(body, FrameId::new(11), FrameId::new(4), Some(key.clone()))
-        .expect("mutation seals");
+fn the_deleted_crdt_era_frame_codes_fail_closed() {
+    // The checkpoint, delivery, resync, and mutation kinds carried the
+    // deleted per-field CRDT state (S-04, D-38). Their wire codes are
+    // withdrawn: none decodes as a kind.
+    for code in [0x0005u16, 0x0007, 0x0008, 0x000A, 0x000D, 0x000E] {
+        assert_eq!(FrameKind::from_code(code), None, "code {code:#06x} is withdrawn");
+    }
+}
+
+#[test]
+fn envelope_carries_identity_and_digest() {
+    let body = SyncV2Body::SessionSetup { collections: vec!["orders".to_string()] };
+    let frame = SyncV2Frame::seal(body, FrameId::new(11), FrameId::new(4), None)
+        .expect("session setup seals");
     assert_eq!(frame.correlation(), FrameId::new(11));
     assert_eq!(frame.causation(), FrameId::new(4));
-    assert_eq!(frame.idempotency(), Some(key));
+    assert_eq!(frame.idempotency(), None);
     assert!(frame.verify(), "a sealed frame verifies");
 
     let wire = frame.to_bytes();
     let decoded = SyncV2Frame::from_bytes(&wire).expect("round trips");
     assert!(decoded.verify());
-    assert_eq!(decoded.kind(), FrameKind::MutationRequest);
+    assert_eq!(decoded.kind(), FrameKind::SessionSetup);
     assert_eq!(decoded.correlation(), frame.correlation());
     assert_eq!(decoded.causation(), frame.causation());
-    assert_eq!(
-        decoded.idempotency().map(|k| k.as_str().to_string()),
-        Some("idem-000042".to_string())
-    );
     match decoded.body() {
-        SyncV2Body::MutationRequest { collection, document, write } => {
-            assert_eq!(collection, "orders");
-            assert_eq!(document, "d-07");
-            assert!(matches!(write, DocumentWrite::Put { .. }));
+        SyncV2Body::SessionSetup { collections } => {
+            assert_eq!(collections, &["orders".to_string()]);
         }
         other => panic!("wrong body {other:?}"),
     }
 
-    // Tamper one payload byte: the frame may decode but never verifies.
+    // Tamper one body byte: the frame may decode but never verifies.
     let mut tampered = wire.clone();
     let last = tampered.len() - 1;
     tampered[last] ^= 0xFF;
@@ -161,40 +112,24 @@ fn envelope_carries_identity_idempotency_and_digest() {
 }
 
 #[test]
-fn idempotency_keys_pair_exactly_with_mutation_frames() {
+fn no_frame_kind_carries_an_idempotency_key() {
+    // The mutation family was deleted with the per-field write model
+    // (S-04, D-38): the pairing rule fails closed in both directions
+    // until new mutation kinds land.
     let key = IdempotencyKey::new("idem-1").expect("key builds");
-    let mutation = SyncV2Body::MutationRequest {
-        collection: "orders".to_string(),
-        document: "d-1".to_string(),
-        write: DocumentWrite::Delete,
-    };
-    let ack = SyncV2Body::MutationAck {
-        outcome: MutationOutcome::Applied {
-            storage_sequence: 7,
-            operation_id: "op-000007".to_string(),
-        },
-    };
+    for kind in ALL_KINDS {
+        let body = sample_body(*kind);
+        assert!(!body.is_mutation(), "{kind:?} is not a mutation kind");
+        assert!(
+            matches!(
+                SyncV2Frame::seal(body, FrameId::new(1), FrameId::new(0), Some(key.clone())),
+                Err(ProtocolError::IdempotencyPairing(_))
+            ),
+            "{kind:?} must not carry an idempotency key"
+        );
+    }
 
-    // A mutation without a key cannot be sealed…
-    assert!(matches!(
-        SyncV2Frame::seal(mutation.clone(), FrameId::new(1), FrameId::new(0), None),
-        Err(ProtocolError::IdempotencyPairing(_))
-    ));
-    // …and no non-mutation frame may carry one.
-    assert!(matches!(
-        SyncV2Frame::seal(
-            SyncV2Body::Heartbeat,
-            FrameId::new(1),
-            FrameId::new(0),
-            Some(key.clone())
-        ),
-        Err(ProtocolError::IdempotencyPairing(_))
-    ));
-    // The ack is the mutation-family frame that may echo the key.
-    assert!(SyncV2Frame::seal(ack, FrameId::new(2), FrameId::new(1), Some(key)).is_ok());
-
-    // The wire pairing is enforced on decode, fail closed: a key on a
-    // heartbeat body is rejected before any body field is read.
+    // The wire pairing is enforced on decode, fail closed.
     let good = SyncV2Frame::seal(SyncV2Body::Heartbeat, FrameId::new(1), FrameId::new(0), None)
         .expect("seals")
         .to_bytes();
@@ -239,122 +174,9 @@ fn trigger_notifications_are_small_typed_and_content_free() {
 }
 
 #[test]
-fn only_named_payload_codecs_carry_bytes_and_only_server_delivery_uses_them() {
-    // The closed registry: the only bodies that carry a byte payload are
-    // the delivery frames, and their codec identity is fixed by the kind.
-    let body = SyncV2Body::DeltaBatch {
-        codec: PayloadCodec::NativeDelta1,
-        payload: vec![1, 2, 3],
-        next: checkpoint(3, 2),
-        within_budget: true,
-        single_commit_oversize: false,
-        commits: 2,
-    };
-    assert_eq!(body.direction(), Direction::ServerToClient);
-    assert_eq!(body.frame_class(), FrameClass::Delivery);
-
-    let snapshot = SyncV2Body::SnapshotAnswer {
-        codec: PayloadCodec::NativeSnapshot1,
-        payload: vec![9, 9],
-        checkpoint: checkpoint(3, 2),
-    };
-    assert_eq!(snapshot.frame_class(), FrameClass::Delivery);
-
-    // Codec and kind must agree: a snapshot codec on a delta body is
-    // malformed, at seal time and on the wire.
-    let mismatched = SyncV2Body::DeltaBatch {
-        codec: PayloadCodec::NativeSnapshot1,
-        payload: vec![1],
-        next: checkpoint(1, 1),
-        within_budget: true,
-        single_commit_oversize: false,
-        commits: 1,
-    };
-    assert!(matches!(
-        SyncV2Frame::seal(mismatched, FrameId::new(1), FrameId::new(0), None),
-        Err(ProtocolError::MalformedFrame(_))
-    ));
-
-    // No client-to-server frame carries a payload: mutations carry typed
-    // document bodies, never encoded deltas — the server is the single
-    // writer of record (PD-2026-08-26-12).
-    for kind in ALL_KINDS {
-        let body = sample_body(*kind);
-        if body.direction() == Direction::ClientToServer {
-            assert!(!body.carries_payload(), "{kind:?} must not carry payload bytes");
-        }
-    }
-}
-
-#[test]
-fn mutations_are_server_ack_only() {
-    // The v2 client mutation shape: a typed request with an idempotency
-    // key, answered only by the server's acknowledgement. No frame kind
-    // carries an optimistic patch or a client-side delta.
-    let request = SyncV2Body::MutationRequest {
-        collection: "orders".to_string(),
-        document: "d-07".to_string(),
-        write: DocumentWrite::Put {
-            body: BTreeMap::from([
-                ("f000".to_string(), SyncValue::Str("v7".to_string())),
-                ("f001".to_string(), SyncValue::Int(7)),
-                ("f002".to_string(), SyncValue::Bool(true)),
-                ("f003".to_string(), SyncValue::Float(1.5)),
-                ("f004".to_string(), SyncValue::Null),
-            ]),
-        },
-    };
-    let frame = SyncV2Frame::seal(
-        request,
-        FrameId::new(21),
-        FrameId::new(3),
-        Some(IdempotencyKey::new("idem-7").expect("key")),
-    )
-    .expect("seals");
-    let wire = frame.to_bytes();
-    let decoded = SyncV2Frame::from_bytes(&wire).expect("decodes");
-    match decoded.body() {
-        SyncV2Body::MutationRequest { write: DocumentWrite::Put { body }, .. } => {
-            // The typed value model round-trips every scalar kind.
-            assert_eq!(body.len(), 5);
-            assert_eq!(body.get("f001"), Some(&SyncValue::Int(7)));
-            assert_eq!(body.get("f002"), Some(&SyncValue::Bool(true)));
-            assert_eq!(body.get("f003"), Some(&SyncValue::Float(1.5)));
-            assert_eq!(body.get("f004"), Some(&SyncValue::Null));
-        }
-        other => panic!("wrong body {other:?}"),
-    }
-
-    // The acknowledgement vocabulary is closed: applied carries the
-    // durable identities, rejected carries a typed reason.
-    let applied = SyncV2Body::MutationAck {
-        outcome: MutationOutcome::Applied {
-            storage_sequence: 9,
-            operation_id: "op-000009".to_string(),
-        },
-    };
-    let rejected = SyncV2Body::MutationAck {
-        outcome: MutationOutcome::Rejected { reason: ErrorCode::ScopeRefused },
-    };
-    for body in [applied, rejected] {
-        let frame = SyncV2Frame::seal(
-            body,
-            FrameId::new(22),
-            FrameId::new(21),
-            Some(IdempotencyKey::new("idem-7").expect("key")),
-        )
-        .expect("ack seals");
-        assert!(SyncV2Frame::from_bytes(&frame.to_bytes()).is_ok());
-    }
-}
-
-#[test]
 fn malformed_frames_are_rejected_with_typed_errors() {
     let frame = SyncV2Frame::seal(
-        SyncV2Body::SessionSetup {
-            collections: vec!["orders".to_string()],
-            resume: Some(checkpoint(2, 1)),
-        },
+        SyncV2Body::SessionSetup { collections: vec!["orders".to_string()] },
         FrameId::new(5),
         FrameId::new(1),
         None,
@@ -395,45 +217,15 @@ fn malformed_frames_are_rejected_with_typed_errors() {
 }
 
 #[test]
-fn session_setup_resume_and_acks_round_trip() {
-    let setup = SyncV2Body::SessionSetup {
-        collections: vec!["orders".to_string(), "items".to_string()],
-        resume: None,
-    };
-    let resume = SyncV2Body::SessionSetup {
-        collections: vec!["orders".to_string()],
-        resume: Some(checkpoint(5, 4)),
-    };
-    for (body, is_resume) in [(setup, false), (resume, true)] {
-        let frame = SyncV2Frame::seal(body, FrameId::new(1), FrameId::new(0), None).expect("seals");
-        let decoded = SyncV2Frame::from_bytes(&frame.to_bytes()).expect("decodes");
-        let SyncV2Body::SessionSetup { collections, resume } = decoded.body() else {
-            panic!("setup body");
-        };
-        assert!(!collections.is_empty());
-        assert_eq!(resume.is_some(), is_resume);
-    }
-
+fn session_and_subscription_bodies_round_trip() {
     let bodies: Vec<SyncV2Body> = vec![
-        SyncV2Body::SessionAccepted {
-            session: 77,
-            server: checkpoint(9, 8),
-            collections: vec!["orders".to_string()],
-        },
+        SyncV2Body::SessionSetup { collections: vec!["orders".to_string(), "items".to_string()] },
+        SyncV2Body::SessionAccepted { session: 77, collections: vec!["orders".to_string()] },
         SyncV2Body::SubscriptionModify {
             add: vec!["items".to_string()],
             remove: vec!["orders".to_string()],
         },
         SyncV2Body::SubscriptionChanged { active: vec!["items".to_string()] },
-        SyncV2Body::CheckpointAck { checkpoint: checkpoint(6, 5) },
-        SyncV2Body::ResyncRequired {
-            floor: checkpoint(4, 3),
-            reason: ResyncReason::BehindRetainedFloor,
-        },
-        SyncV2Body::ResyncRequired {
-            floor: checkpoint(8, 7),
-            reason: ResyncReason::HistoryCompacted,
-        },
         SyncV2Body::RegionRouteChange { region: "eu-1".to_string() },
         SyncV2Body::Error {
             code: ErrorCode::UnsupportedVersion,
@@ -451,93 +243,9 @@ fn session_setup_resume_and_acks_round_trip() {
 }
 
 #[test]
-fn serving_glue_maps_the_core_answers_to_protocol_frames() {
-    let mut core = SyncCore::new(scope(), config()).expect("core builds");
-    for sequence in 1..=6u64 {
-        core.apply(&put(sequence, &format!("d-{sequence:02}"), 4)).expect("applies");
-    }
-
-    // A delta answer becomes a DeltaBatch frame.
-    let from = checkpoint(2, 2);
-    let frame = serve_delta(&core, &from, FrameId::new(31), FrameId::new(1))
-        .expect("serves")
-        .expect("a delta answer");
-    assert_eq!(frame.kind(), FrameKind::DeltaBatch);
-    match frame.body() {
-        SyncV2Body::DeltaBatch { codec, payload, next, commits, within_budget, .. } => {
-            assert_eq!(*codec, PayloadCodec::NativeDelta1);
-            assert!(!payload.is_empty());
-            assert!(next.end_for(terrabase_sync_core::SERVER_PEER_ID).unwrap_or(0) > 2);
-            assert!(*commits >= 1);
-            assert!(*within_budget);
-        }
-        other => panic!("wrong body {other:?}"),
-    }
-    assert!(frame.verify());
-
-    // Up to date answers nothing: triggers are the pull hint, not a frame.
-    let current = core.checkpoint();
-    assert!(
-        serve_delta(&core, &current, FrameId::new(32), FrameId::new(1)).expect("serves").is_none()
-    );
-
-    // A checkpoint ahead of the server surfaces the core's typed error.
-    let ahead = checkpoint(999, 999);
-    assert!(matches!(
-        serve_delta(&core, &ahead, FrameId::new(33), FrameId::new(1)),
-        Err(terrabase_sync_core::protocol::ServeError::Core(
-            SyncCoreError::CheckpointAheadOfServer { .. }
-        ))
-    ));
-
-    // The snapshot answer frame.
-    let snapshot = serve_snapshot(&core, FrameId::new(34), FrameId::new(1)).expect("serves");
-    assert_eq!(snapshot.kind(), FrameKind::SnapshotAnswer);
-    match snapshot.body() {
-        SyncV2Body::SnapshotAnswer { codec, payload, checkpoint: at } => {
-            assert_eq!(*codec, PayloadCodec::NativeSnapshot1);
-            assert!(!payload.is_empty());
-            assert_eq!(*at, core.checkpoint());
-        }
-        other => panic!("wrong body {other:?}"),
-    }
-}
-
-#[test]
-fn a_consumer_behind_the_floor_is_answered_with_resync_required() {
-    let mut core = SyncCore::new(scope(), config()).expect("core builds");
-    for sequence in 1..=8u64 {
-        core.apply(&put(sequence, &format!("d-{sequence:02}"), 4)).expect("applies");
-    }
-    let stalled = {
-        let mut consumer_checkpoint = SyncCheckpoint::initial();
-        match core.delta_since(&consumer_checkpoint).expect("delta") {
-            SyncBatch::Delta { next, .. } => consumer_checkpoint = next,
-            other => panic!("unexpected {other:?}"),
-        }
-        consumer_checkpoint
-    };
-    // Overflow the window so the stalled checkpoint falls below the floor.
-    for sequence in 9..=300u64 {
-        core.apply(&put(sequence, &format!("d-{:02}", sequence % 8), 2)).expect("applies");
-    }
-    let frame = serve_delta(&core, &stalled, FrameId::new(41), FrameId::new(1))
-        .expect("serves")
-        .expect("the resync answer");
-    assert_eq!(frame.kind(), FrameKind::ResyncRequired);
-    match frame.body() {
-        SyncV2Body::ResyncRequired { floor, reason } => {
-            assert_eq!(*reason, ResyncReason::BehindRetainedFloor);
-            assert!(floor.storage_sequence >= stalled.storage_sequence);
-        }
-        other => panic!("wrong body {other:?}"),
-    }
-}
-
-#[test]
 fn frame_budgets_are_written_definitions_with_exact_envelope_overhead() {
     // The fixed envelope overhead is a definition: the bytes every frame
-    // spends before any payload — version, kind, correlation, causation,
+    // spends before any body — version, kind, correlation, causation,
     // idempotency presence, digest, body length, and the body's kind tag.
     let heartbeat =
         SyncV2Frame::seal(SyncV2Body::Heartbeat, FrameId::new(1), FrameId::new(0), None)
@@ -552,51 +260,16 @@ fn frame_budgets_are_written_definitions_with_exact_envelope_overhead() {
         "heartbeat fits its class budget"
     );
 
-    // Every budget definition is positive and the delivery budget covers
-    // the default batch budget of the core.
+    // Every budget definition is positive.
     for class in [
         FrameClass::Session,
         FrameClass::Subscription,
-        FrameClass::Acknowledgement,
         FrameClass::Heartbeat,
-        FrameClass::Delivery,
         FrameClass::Trigger,
         FrameClass::Control,
-        FrameClass::Mutation,
     ] {
         assert!(class.budget_bytes() > 0);
     }
-    assert!(
-        FrameClass::Delivery.budget_bytes() >= SyncCoreConfig::default().batch_byte_budget,
-        "the written delivery budget covers the default batch budget"
-    );
-
-    // The oversized single-commit exception is flagged, never silent.
-    let oversize = SyncV2Body::DeltaBatch {
-        codec: PayloadCodec::NativeDelta1,
-        payload: vec![0xAB; FrameClass::Delivery.budget_bytes() + 1],
-        next: checkpoint(1, 1),
-        within_budget: false,
-        single_commit_oversize: true,
-        commits: 1,
-    };
-    let frame = SyncV2Frame::seal(oversize, FrameId::new(1), FrameId::new(0), None)
-        .expect("a flagged oversize single-commit batch seals");
-    assert!(frame.to_bytes().len() > FrameClass::Delivery.budget_bytes());
-
-    // An oversize flag on a multi-commit batch is malformed.
-    let lying = SyncV2Body::DeltaBatch {
-        codec: PayloadCodec::NativeDelta1,
-        payload: vec![1],
-        next: checkpoint(1, 1),
-        within_budget: false,
-        single_commit_oversize: true,
-        commits: 3,
-    };
-    assert!(matches!(
-        SyncV2Frame::seal(lying, FrameId::new(1), FrameId::new(0), None),
-        Err(ProtocolError::MalformedFrame(_))
-    ));
 }
 
 /// Every kind in the registry, in code order.
@@ -605,70 +278,36 @@ const ALL_KINDS: &[FrameKind] = &[
     FrameKind::SessionAccepted,
     FrameKind::SubscriptionModify,
     FrameKind::SubscriptionChanged,
-    FrameKind::CheckpointAck,
     FrameKind::Heartbeat,
-    FrameKind::DeltaBatch,
-    FrameKind::SnapshotAnswer,
     FrameKind::Trigger,
-    FrameKind::ResyncRequired,
     FrameKind::RegionRouteChange,
     FrameKind::Error,
-    FrameKind::MutationRequest,
-    FrameKind::MutationAck,
 ];
 
 /// A structurally valid body for every kind (budget/direction probes).
 fn sample_body(kind: FrameKind) -> SyncV2Body {
     match kind {
         FrameKind::SessionSetup => {
-            SyncV2Body::SessionSetup { collections: vec!["orders".to_string()], resume: None }
+            SyncV2Body::SessionSetup { collections: vec!["orders".to_string()] }
         }
-        FrameKind::SessionAccepted => SyncV2Body::SessionAccepted {
-            session: 1,
-            server: checkpoint(1, 1),
-            collections: vec!["orders".to_string()],
-        },
+        FrameKind::SessionAccepted => {
+            SyncV2Body::SessionAccepted { session: 1, collections: vec!["orders".to_string()] }
+        }
         FrameKind::SubscriptionModify => {
             SyncV2Body::SubscriptionModify { add: vec!["items".to_string()], remove: Vec::new() }
         }
         FrameKind::SubscriptionChanged => {
             SyncV2Body::SubscriptionChanged { active: vec!["items".to_string()] }
         }
-        FrameKind::CheckpointAck => SyncV2Body::CheckpointAck { checkpoint: checkpoint(1, 1) },
         FrameKind::Heartbeat => SyncV2Body::Heartbeat,
-        FrameKind::DeltaBatch => SyncV2Body::DeltaBatch {
-            codec: PayloadCodec::NativeDelta1,
-            payload: vec![1],
-            next: checkpoint(1, 1),
-            within_budget: true,
-            single_commit_oversize: false,
-            commits: 1,
-        },
-        FrameKind::SnapshotAnswer => SyncV2Body::SnapshotAnswer {
-            codec: PayloadCodec::NativeSnapshot1,
-            payload: vec![1],
-            checkpoint: checkpoint(1, 1),
-        },
         FrameKind::Trigger => SyncV2Body::Trigger {
             collection: "orders".to_string(),
             storage_sequence: 1,
             operation_id: "op-000001".to_string(),
         },
-        FrameKind::ResyncRequired => SyncV2Body::ResyncRequired {
-            floor: checkpoint(1, 1),
-            reason: ResyncReason::BehindRetainedFloor,
-        },
         FrameKind::RegionRouteChange => {
             SyncV2Body::RegionRouteChange { region: "eu-1".to_string() }
         }
         FrameKind::Error => SyncV2Body::Error { code: ErrorCode::SessionClosed, detail: None },
-        FrameKind::MutationRequest => SyncV2Body::MutationRequest {
-            collection: "orders".to_string(),
-            document: "d-1".to_string(),
-            write: DocumentWrite::Delete,
-        },
-        FrameKind::MutationAck => SyncV2Body::MutationAck {
-            outcome: MutationOutcome::Rejected { reason: ErrorCode::ScopeRefused },
-        },
     }
 }

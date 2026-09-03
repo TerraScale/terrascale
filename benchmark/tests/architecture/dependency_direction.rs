@@ -46,7 +46,6 @@ const LAYERS: &[(&str, u32)] = &[
     ("terrabase", 2),
     ("terrabase-sync-core", 3),
     ("terrabase-member-transport", 3),
-    ("terrabase-sync-conformance", 4),
     ("terrabase-replication-core", 4),
     ("terrabase-cluster", 5),
     ("terrabase-tbep", 6),
@@ -58,18 +57,20 @@ const LAYERS: &[(&str, u32)] = &[
 /// review note; new members may join the workspace freely but their first
 /// internal edge must be added to this list with the layer check satisfied.
 ///
-/// Review note (2026-08-29): the `terrabase-sync-core` and
-/// `terrabase-replication-core` edges onto `terrabase-causal` and
-/// `terrabase-crdt` record the landed native causal migrations (their
-/// manifests replaced `loro` with the foundational crates). All four edges
-/// point strictly down the frozen layer order, and GOAL.md
+/// Review note (2026-08-29): the `terrabase-replication-core` edges onto
+/// `terrabase-causal` and `terrabase-crdt` record the landed native causal
+/// migrations (its manifest replaced `loro` with the foundational crates).
+/// Both edges point strictly down the frozen layer order, and GOAL.md
 /// (AC-3, "No product crate or supported codec depends on Loro") is the
 /// accepting record for that transition.
+///
+/// Review note (2026-09-02, issue #129): `terrabase-sync-core` lost its
+/// `terrabase-causal`/`terrabase-crdt` edges and the
+/// `terrabase-sync-conformance` crate was deleted with the S-04/D-38
+/// reduction — the per-field CRDT materialization is gone and the crate
+/// owns result views only.
 const ALLOWED_EDGES: &[(&str, &str)] = &[
     ("terrabase-crdt", "terrabase-causal"),
-    ("terrabase-sync-core", "terrabase-causal"),
-    ("terrabase-sync-core", "terrabase-crdt"),
-    ("terrabase-sync-conformance", "terrabase-sync-core"),
     ("terrabase-replication-core", "terrabase-causal"),
     ("terrabase-replication-core", "terrabase-crdt"),
     ("terrabase-replication-core", "terrabase"),

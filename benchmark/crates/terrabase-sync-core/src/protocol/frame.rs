@@ -8,7 +8,6 @@ use super::body::FrameKind;
 use super::body::SyncV2Body;
 use crate::FrameDigest;
 use crate::FrameId;
-use crate::SyncCoreError;
 
 /// The closed error vocabulary of the protocol codec.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -173,14 +172,6 @@ impl SyncV2Frame {
         &self.body
     }
 
-    /// The length of the encoded payload this frame carries, `0` when
-    /// the frame class carries no payload — the input to the per-frame
-    /// envelope-overhead accounting (`wire bytes minus payload bytes`).
-    #[must_use]
-    pub fn payload_len(&self) -> usize {
-        self.body.payload_len()
-    }
-
     /// Whether the sealed digest still matches the body.
     #[must_use]
     pub fn verify(&self) -> bool {
@@ -300,13 +291,7 @@ impl SyncV2Frame {
         }
         let decoded_kind =
             FrameKind::from_code(kind).ok_or_else(|| malformed("unknown frame kind"))?;
-        let body = SyncV2Body::from_body_bytes(body_bytes).map_err(|error| match error {
-            SyncCoreError::InvalidFrame(reason) => malformed(reason),
-            SyncCoreError::UnknownCheckpointVersion(_) => {
-                malformed("unknown checkpoint encoding version")
-            }
-            _ => malformed("the body did not decode"),
-        })?;
+        let body = SyncV2Body::from_body_bytes(body_bytes)?;
         if body.kind() != decoded_kind {
             return Err(malformed("the body kind disagrees with the envelope kind"));
         }

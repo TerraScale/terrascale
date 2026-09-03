@@ -9,13 +9,14 @@
 //!
 //! - [`crate::member_host::MemberHost`] — the opt-in TB-1a composition of one
 //!   engine with journal-derived sync and backbone delivery.
-//! - [`SyncDeliveryHost`] — the real serving half over the adopted sync
-//!   core (`terrabase-sync-core`, the SE-02 GO decision): the
-//!   journal-backed backbone streams with content-free trigger
-//!   notifications (PD-2026-08-26-13 D3), durable-journal materialization,
-//!   and supervision. The document/query/sync-session data-plane RPCs were
+//! - [`SyncDeliveryHost`] — the real serving half: the journal-backed
+//!   backbone streams with content-free trigger notifications
+//!   (PD-2026-08-26-13 D3), durable-journal materialization, and
+//!   supervision. The document/query/sync-session data-plane RPCs were
 //!   deleted with the S-03 TBEP reduction: the public API owns the data
-//!   plane now.
+//!   plane now, and the per-field CRDT materialization was deleted with
+//!   the S-04 reduction (D-38): delivery serves the journal's change
+//!   events, and `terrabase-sync-core` owns the result views.
 //!
 //! [`crate::engine_host::EngineHost`] remains the production harness during
 //! this staged landing. `MemberHost` is available only through its explicit
@@ -29,15 +30,7 @@ use std::sync::mpsc::Receiver;
 use std::sync::mpsc::SyncSender;
 use std::sync::mpsc::sync_channel;
 
-use terrabase_sync_core::JournalChange;
-use terrabase_sync_core::JournalCommit;
-use terrabase_sync_core::SyncCore;
-use terrabase_sync_core::SyncCoreConfig;
-use terrabase_sync_core::SyncScope;
-use terrabase_sync_core::SyncValue;
-
 use terrabase::streaming::{ChangeCheckpoint, SyncJournalMutation, SyncJournalRecord};
-use terrabase::types::DocumentValue;
 
 use crate::registry::AdminStatusResponse;
 use crate::registry::BackboneAcknowledgeRequest;
@@ -74,10 +67,6 @@ use crate::registry::SupervisionShutdownRequest;
 use crate::registry::SupervisionShutdownResponse;
 use crate::registry::TopologyReadResponse;
 
-/// The batch byte budget the serving core configures (the SE-04 corpus
-/// default); a single oversize commit rides alone, flagged.
-pub const BATCH_BYTE_BUDGET: usize = 8192;
-
 /// The checkpoint window the serving core retains.
 pub const CHECKPOINT_WINDOW: usize = 128;
 
@@ -89,9 +78,6 @@ const JOURNAL_BOUND: usize = CHECKPOINT_WINDOW;
 /// callers must refuse new resources once a cap is reached.
 const SUBSCRIPTION_QUEUE_BOUND: usize = 64;
 const MAX_SCOPES: usize = 4096;
-/// Engine-owned family records participate in the durable backbone, but they
-/// are not a customer sync-session collection.
-const RESERVED_FAMILY_COLLECTION: &str = "terrabase.families";
 const MAX_SUBSCRIPTIONS: usize = 1024;
 const MAX_SUBSCRIPTIONS_PER_TENANT: usize = 128;
 
@@ -598,9 +584,7 @@ impl DeliveryScope {
 
 /// The serving state of one tenant collection scope.
 struct ScopeState {
-    core: SyncCore,
     journal: VecDeque<JournalRecord>,
-    next_sequence: u64,
 }
 
 impl ScopeState {
@@ -629,13 +613,15 @@ struct HostState {
     health: HealthState,
 }
 
-/// The real sync-delivery host over the adopted sync core.
+/// The real sync-delivery host.
 ///
 /// Serves the journal-backed backbone streams with content-free trigger
 /// notifications, durable-journal materialization, topology/admin reads,
 /// and the supervision contract. The sync-session data plane was deleted
-/// with the S-03 TBEP reduction; delivery state now advances only through
-/// [`SyncDeliveryHost::apply_durable_records`].
+/// with the S-03 TBEP reduction and the per-field CRDT materialization
+/// with the S-04 reduction (D-38); delivery state now advances only
+/// through [`SyncDeliveryHost::apply_durable_records`], which records the
+/// journal's change events directly.
 pub struct SyncDeliveryHost {
     state: Mutex<HostState>,
     instance: u64,
@@ -707,20 +693,9 @@ impl SyncDeliveryHost {
         bound_scope: &BoundScope,
         collection: &str,
     ) -> &'a mut ScopeState {
-        scopes.entry((DeliveryScope::of(bound_scope), collection.to_string())).or_insert_with(
-            || ScopeState {
-                core: SyncCore::new(
-                    SyncScope::new(&bound_scope.tenant, collection),
-                    SyncCoreConfig {
-                        batch_byte_budget: BATCH_BYTE_BUDGET,
-                        checkpoint_window: CHECKPOINT_WINDOW,
-                    },
-                )
-                .expect("the sync core constructs for valid scopes"),
-                journal: VecDeque::new(),
-                next_sequence: 1,
-            },
-        )
+        scopes
+            .entry((DeliveryScope::of(bound_scope), collection.to_string()))
+            .or_insert_with(|| ScopeState { journal: VecDeque::new() })
     }
 
     /// Looks up one subscription for its owning tenant.
@@ -818,25 +793,6 @@ impl SyncDeliveryHost {
             {
                 let scope =
                     Self::scope(&mut state.scopes, bound_scope, record.collection().as_str());
-                if record.collection().as_str() != RESERVED_FAMILY_COLLECTION {
-                    let change = match record.mutation() {
-                        SyncJournalMutation::Put(value) => {
-                            JournalChange::Put { body: sync_body(value)? }
-                        }
-                        SyncJournalMutation::Delete => JournalChange::Delete,
-                    };
-                    let sequence = scope.next_sequence;
-                    scope
-                        .core
-                        .apply(&JournalCommit {
-                            storage_sequence: sequence,
-                            operation_id: record.operation_id().as_str().to_owned(),
-                            document_id: record.document().as_str().to_owned(),
-                            change,
-                        })
-                        .map_err(|error| HostingError::EngineFailure(error.to_string()))?;
-                    scope.next_sequence = scope.next_sequence.saturating_add(1);
-                }
                 scope.record(JournalRecord {
                     sequence: record.storage_sequence(),
                     write_index: record.position().write_index(),
@@ -925,28 +881,6 @@ impl SyncDeliveryHost {
         for id in failed {
             state.subscriptions.remove(&id);
         }
-    }
-}
-
-fn sync_body(value: &DocumentValue) -> Result<BTreeMap<String, SyncValue>, HostingError> {
-    let DocumentValue::Object(fields) = value else {
-        return Err(HostingError::EngineFailure(
-            "durable sync requires an object document body".into(),
-        ));
-    };
-    fields.iter().map(|(name, value)| Ok((name.clone(), sync_value(value)?))).collect()
-}
-
-fn sync_value(value: &DocumentValue) -> Result<SyncValue, HostingError> {
-    match value {
-        DocumentValue::Null => Ok(SyncValue::Null),
-        DocumentValue::Boolean(value) => Ok(SyncValue::Bool(*value)),
-        DocumentValue::Integer(value) => Ok(SyncValue::Int(*value)),
-        DocumentValue::Number(value) => Ok(SyncValue::Float(*value)),
-        DocumentValue::String(value) => Ok(SyncValue::Str(value.clone())),
-        DocumentValue::Array(_) | DocumentValue::Object(_) => Err(HostingError::EngineFailure(
-            "durable sync cannot materialize a composite document field".into(),
-        )),
     }
 }
 
