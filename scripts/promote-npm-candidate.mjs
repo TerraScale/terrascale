@@ -379,7 +379,6 @@ function verifyQualificationReceipt(context) {
   requireExactKeys(receipt.boundaries, [
     "exports",
     "browserEntrypointGraphs",
-    "localSqliteExport",
     "betterAuthExport",
     "packedSecretScan",
   ], "npm qualification boundaries");
@@ -391,7 +390,6 @@ function verifyQualificationReceipt(context) {
   }
   if (
     JSON.stringify(receipt.boundaries.exports) !== JSON.stringify(packageJson.exports) ||
-    receipt.boundaries.localSqliteExport !== "node-only" ||
     receipt.boundaries.betterAuthExport !== "node-only" ||
     receipt.boundaries.packedSecretScan !== "passed"
   ) {

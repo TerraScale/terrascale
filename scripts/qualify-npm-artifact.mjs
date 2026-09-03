@@ -31,7 +31,6 @@ const options = { apiBaseUrl: "https://api.example.test" };
 assert.equal(typeof createTerraScaleClient(options), "object");
 assert.equal(typeof createTerraScaleAdminClient(options), "object");
 assert.equal(typeof createTerraScaleBetterAuthAdapter, "function");
-await assert.rejects(import("@terrascale/sdk/local").then(({ createTerraScaleSqliteRuntime }) => createTerraScaleSqliteRuntime({ sqlite: { enabled: true, databasePath: "/tmp/qualification.sqlite" } })), /disabled/u);
 `;
 
 try {
@@ -153,7 +152,6 @@ try {
     boundaries: {
       exports: manifest.exports,
       browserEntrypointGraphs: graphs,
-      localSqliteExport: "node-only",
       betterAuthExport: "node-only",
       packedSecretScan: "passed",
     },
@@ -223,7 +221,7 @@ function qualifyManifest(manifest) {
     if (typeof entry?.import !== "string" || typeof entry?.types !== "string") throw new Error(`${name} must expose import and types conditions.`);
     if ("node" in entry || "default" in entry) throw new Error(`${name} unexpectedly has a Node-only/default condition.`);
   }
-  for (const name of ["./better-auth", "./local"]) {
+  for (const name of ["./better-auth"]) {
     const entry = manifest.exports?.[name];
     if (typeof entry?.node !== "string" || typeof entry?.types !== "string") throw new Error(`${name} must be explicitly Node-only.`);
     if ("import" in entry || "browser" in entry || "default" in entry) throw new Error(`${name} is reachable without the Node condition.`);
@@ -233,7 +231,7 @@ function qualifyManifest(manifest) {
 function qualifyContents(files) {
   const forbidden = [/(^|\/)node_modules\//u, /(^|\/)src\//u, /(^|\/)test(?:s)?\//u, /\.env(?:\.|$)/u, /\.map$/u, /\.test\./u, /capture/iu];
   for (const file of files) for (const pattern of forbidden) if (pattern.test(file)) throw new Error(`Forbidden packed path: ${file}`);
-  for (const required of ["LICENSE", "README.md", "package.json", "sdk-route-manifest.json", "dist/index.js", "dist/index.d.ts", "dist/admin.js", "dist/admin.d.ts", "dist/better-auth.js", "dist/local/index.js"]) {
+  for (const required of ["LICENSE", "README.md", "package.json", "sdk-route-manifest.json", "dist/index.js", "dist/index.d.ts", "dist/admin.js", "dist/admin.d.ts", "dist/better-auth.js"]) {
     if (!files.includes(required)) throw new Error(`Required packed path is missing: ${required}`);
   }
 }
@@ -266,7 +264,7 @@ async function browserGraph(directory, entry) {
       if (specifier.startsWith("node:") || specifier === "better-sqlite3") throw new Error(`${entry} browser graph imports ${specifier} through ${relative}.`);
       if (!specifier.startsWith(".")) continue;
       const target = path.posix.normalize(path.posix.join(path.posix.dirname(relative), specifier));
-      if (target.startsWith("../") || target.includes("/local/") || target.startsWith("dist/local/")) throw new Error(`${entry} reaches local-only module ${target}.`);
+      if (target.startsWith("../")) throw new Error(`${entry} reaches a module outside the browser graph at ${target}.`);
       pending.push(target);
     }
   }
