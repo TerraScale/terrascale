@@ -236,6 +236,12 @@ async fn serve_public_api(
             )));
         }
     };
+    let backups = Arc::new(crate::backup::BackupStreams::open_member());
+    let backup_root = public.data_root.join("backup");
+    let timetravel = Arc::new(crate::backup::TimeTravelCache::new(
+        Arc::clone(&backups),
+        backup_root.join("timetravel"),
+    ));
     let state = Arc::new(crate::api::ApiState {
         region,
         metrics,
@@ -244,8 +250,9 @@ async fn serve_public_api(
         catalog: Some(Arc::new(catalog)),
         scope: (tenant, project),
         reactive: Arc::new(crate::reactive_api::ReactiveSessions::default()),
-        backups: Arc::new(crate::backup::BackupStreams::open_member()),
-        backup_root: public.data_root.join("backup"),
+        backups,
+        backup_root,
+        timetravel,
         active_regions: public.active_regions,
     });
     let listener = tokio::net::TcpListener::bind(public.listen).await?;

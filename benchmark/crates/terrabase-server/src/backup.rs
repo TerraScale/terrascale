@@ -11,7 +11,8 @@ use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// The database file Litestream streams, inside one engine location.
@@ -233,6 +234,173 @@ impl std::fmt::Display for RestoreError {
             }
         }
     }
+}
+
+/// PITR retention per plan in days (D-25: Free 1 / Starter 7 / Pro 30 /
+/// Scale 35). Unknown plans fail closed to Free: a shorter window never
+/// over-promises durability.
+#[must_use]
+pub fn retention_days_for_plan(plan: &str) -> u64 {
+    match plan {
+        "starter" => 7,
+        "pro" => 30,
+        "scale" => 35,
+        _ => 1,
+    }
+}
+
+/// The Litestream `retention:` value matching [`retention_days_for_plan`].
+#[must_use]
+pub fn retention_for_plan(plan: &str) -> &'static str {
+    match plan {
+        "starter" => "168h",
+        "pro" => "720h",
+        "scale" => "840h",
+        _ => "24h",
+    }
+}
+
+/// How many throwaway point-in-time restores the time-travel cache keeps.
+/// Each entry is a whole database file, so the budget is entries, not
+/// bytes: eight restores bound the disk while covering distinct moments.
+const TIMETRAVEL_MAX_ENTRIES: usize = 8;
+
+/// One cached throwaway restore: the engine serving it and the location
+/// directory eviction removes.
+struct CachedAt {
+    engine: terrabase::Engine,
+    location: PathBuf,
+}
+
+/// What a time-travel read serves: the historical value and its revision.
+#[derive(Debug)]
+pub struct TimeTravelRead {
+    /// The document's value as of the requested moment.
+    pub value: terrabase::types::DocumentValue,
+    /// The revision the value carried then (the live read's ETag shape).
+    pub revision: String,
+}
+
+/// Time-travel reads (S-06 (d)): `GET /documents/{id}?at=<ts>` restores to
+/// a throwaway location once per (database, second) and serves later reads
+/// for the same moment from the cache. The budget is bounded
+/// ([`TIMETRAVEL_MAX_ENTRIES`]); eviction drops the engine and removes the
+/// directory. Restores are files under the backup root, never the live
+/// engine, never replication (D-29).
+pub struct TimeTravelCache {
+    streams: Arc<BackupStreams>,
+    root: PathBuf,
+    entries: Mutex<BTreeMap<(String, u64), CachedAt>>,
+}
+
+impl TimeTravelCache {
+    /// Opens a cache whose throwaway restores land under a fresh directory
+    /// inside `root` (one directory per cache instance, so dropping one
+    /// cache never sweeps another's restores).
+    pub fn new(streams: Arc<BackupStreams>, root: PathBuf) -> Self {
+        static NEXT_CACHE: AtomicU64 = AtomicU64::new(1);
+        let number = NEXT_CACHE.fetch_add(1, Ordering::Relaxed);
+        let process = std::process::id();
+        let root = root.join(format!("timetravel-{process}-{number}"));
+        Self { streams, root, entries: Mutex::new(BTreeMap::new()) }
+    }
+
+    /// Reads one document as of unix seconds: a cached restore serves,
+    /// else the stream restores once and the result caches. `None` means
+    /// the document did not exist then (the live 404's shape).
+    pub fn read_at(
+        &self,
+        database: &str,
+        tenant: &terrabase::types::TenantId,
+        at_seconds: u64,
+        collection: &terrabase::types::CollectionName,
+        id: &terrabase::types::DocumentId,
+    ) -> Result<Option<TimeTravelRead>, RestoreError> {
+        let mut entries = self.entries.lock().expect("the time-travel lock is not poisoned");
+        let key = (database.to_owned(), at_seconds);
+        if !entries.contains_key(&key) {
+            let location = self.location_for(database, at_seconds);
+            if let Err(error) =
+                self.streams.restore_to_location(database, Some(at_seconds), &location)
+            {
+                let _ = std::fs::remove_dir_all(&location);
+                return Err(error);
+            }
+            match open_restored(&location) {
+                Ok(engine) => {
+                    if entries.len() >= TIMETRAVEL_MAX_ENTRIES {
+                        if let Some((_, evicted)) = entries.pop_first() {
+                            let _ = std::fs::remove_dir_all(&evicted.location);
+                        }
+                    }
+                    entries.insert(key.clone(), CachedAt { engine, location });
+                }
+                Err(error) => {
+                    let _ = std::fs::remove_dir_all(&location);
+                    return Err(error);
+                }
+            }
+        }
+        let cached = entries.get(&key).expect("the restore just cached");
+        read_document(&cached.engine, tenant, collection, id)
+    }
+
+    /// The throwaway location for one (database, moment) restore. The name
+    /// sanitizes the database so the cache never escapes its root.
+    fn location_for(&self, database: &str, at_seconds: u64) -> PathBuf {
+        let safe: String = database
+            .chars()
+            .map(|cell| if cell.is_ascii_alphanumeric() || cell == '-' { cell } else { '_' })
+            .collect();
+        self.root.join(format!("{safe}-{at_seconds}"))
+    }
+}
+
+impl Drop for TimeTravelCache {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+/// Opens a serving engine over an already-restored location directory.
+fn open_restored(location: &Path) -> Result<terrabase::Engine, RestoreError> {
+    let config = terrabase::EngineConfig::durable(location)
+        .map_err(|_| io::Error::other("the restored location refused to initialize"))
+        .map_err(RestoreError::Spawn)?;
+    terrabase::Engine::open(config)
+        .map_err(|_| io::Error::other("the restored database refused to open"))
+        .map_err(RestoreError::Spawn)
+}
+
+/// Reads one document from a throwaway engine: the same snapshot +
+/// transaction shape the live read uses, minus sessions (a historical
+/// read has no read-your-writes to wait for).
+fn read_document(
+    engine: &terrabase::Engine,
+    tenant: &terrabase::types::TenantId,
+    collection: &terrabase::types::CollectionName,
+    id: &terrabase::types::DocumentId,
+) -> Result<Option<TimeTravelRead>, RestoreError> {
+    let stale = |what: &str| {
+        RestoreError::Spawn(io::Error::other(format!(
+            "the throwaway restore did not serve: {what}"
+        )))
+    };
+    let scope = engine.scope_for(tenant);
+    let snapshot = engine.read_snapshot(&scope).map_err(|_| stale("snapshot"))?;
+    let operation = terrabase::types::OperationId::try_new("timetravel-read")
+        .map_err(|_| stale("operation"))?;
+    let transaction = engine.begin(&scope, snapshot, operation).map_err(|_| stale("begin"))?;
+    let revision =
+        transaction.revision_in_collection(collection, id).map_err(|_| stale("revision"))?;
+    let Some(revision) = revision else {
+        return Ok(None);
+    };
+    let document = transaction.read_in_collection(collection, id).map_err(|_| stale("read"))?;
+    Ok(document.map(|document| TimeTravelRead {
+        value: document.value().clone(),
+        revision: revision.to_string(),
+    }))
 }
 
 /// Finds a non-empty snapshot artifact under one replica directory: the
@@ -548,6 +716,40 @@ mod tests {
 
     fn unix_now() -> u64 {
         SystemTime::now().duration_since(UNIX_EPOCH).map(|elapsed| elapsed.as_secs()).unwrap_or(0)
+    }
+
+    /// Retention honors the plan windows (D-25): Free 1 / Starter 7 /
+    /// Pro 30 / Scale 35 days, unknown plans fail closed to Free.
+    #[test]
+    fn retention_pins_plan_windows() {
+        assert_eq!(retention_days_for_plan("free"), 1);
+        assert_eq!(retention_days_for_plan("starter"), 7);
+        assert_eq!(retention_days_for_plan("pro"), 30);
+        assert_eq!(retention_days_for_plan("scale"), 35);
+        assert_eq!(retention_days_for_plan("team"), 1);
+        assert_eq!(retention_for_plan("free"), "24h");
+        assert_eq!(retention_for_plan("starter"), "168h");
+        assert_eq!(retention_for_plan("pro"), "720h");
+        assert_eq!(retention_for_plan("scale"), "840h");
+        assert_eq!(retention_for_plan("team"), "24h");
+    }
+
+    /// Without a stream there is no replica to time-travel into: the
+    /// cache refuses instead of restoring nothing.
+    #[test]
+    fn time_travel_without_a_stream_refuses() {
+        use terrabase::types::{CollectionName, DocumentId, TenantId};
+        let fleet = BackupStreams::new(PathBuf::from("/nonexistent-litestream"));
+        let root = TestLocation::new("timetravel-nostream");
+        let cache = TimeTravelCache::new(Arc::new(fleet), root.path().to_path_buf());
+        let tenant = TenantId::try_new("tenant-a").expect("the tenant parses");
+        let collection = CollectionName::try_new("orders").expect("the collection parses");
+        let id = DocumentId::try_new("orders/first").expect("the document id parses");
+        let refused = cache.read_at("database-a", &tenant, 1_700_000_000, &collection, &id);
+        assert!(
+            matches!(refused, Err(RestoreError::NotStreamed(_))),
+            "the cache refuses without a stream: {refused:?}"
+        );
     }
 
     /// The civil conversion is pinned: known instants must render exactly.

@@ -471,6 +471,10 @@ pub struct ApiState {
     /// Where the fleet writes replicas: `<data_root>/backup` on the local
     /// stack (`S-06`).
     pub backup_root: std::path::PathBuf,
+    /// Throwaway PITR restores backing `?at=` time-travel reads (`S-06`):
+    /// cached per (database, second) under the backup root with a bounded
+    /// budget.
+    pub timetravel: Arc<crate::backup::TimeTravelCache>,
     /// The regions this deployment believes active: `GlobalDurable`
     /// fails closed under two (D-37).
     pub active_regions: usize,
@@ -661,11 +665,18 @@ async fn create_database(State(state): State<Arc<ApiState>>, body: String) -> Re
         Ok(record) => {
             // The backup stream attaches at creation (S-06): open the
             // engine location so the database file exists, then start one
-            // stream child for it from its first moment.
+            // stream child for it from its first moment. Free is the
+            // default plan until the billing lane supplies the database's
+            // plan (D-25 retention).
             if let Some(catalog) = state.catalog.clone() {
                 let _ = catalog.host_for(&state.scope.0, &state.scope.1, name);
                 let location = catalog.location_for(&state.scope.0, &state.scope.1, name);
-                let _ = state.backups.attach(name, &location, &state.backup_root, "24h");
+                let _ = state.backups.attach(
+                    name,
+                    &location,
+                    &state.backup_root,
+                    crate::backup::retention_for_plan("free"),
+                );
             }
             record_response(StatusCode::CREATED, &record)
         }
@@ -1338,11 +1349,15 @@ fn document_not_found(collection: &str, id: &str) -> ApiError {
 
 /// Returns one document with its `ETag`; `If-None-Match` is answered from
 /// the revision column alone — the body blob is never decoded on a 304.
+/// `?at=<unix-millis>` reads the document as of that moment from a
+/// throwaway point-in-time restore (S-06 time-travel, cached per
+/// (database, second) with a bounded budget; TQL `AS OF` rides S-02).
 #[utoipa::path(get, path = "/api/v1/databases/{name}/collections/{collection}/documents/{id}", responses((status = 200, description = "Document")))]
 async fn get_document(
     State(state): State<Arc<ApiState>>,
     Path((name, collection, id)): Path<(String, String, String)>,
     headers: axum::http::HeaderMap,
+    extract::Query(at): extract::Query<AtQuery>,
 ) -> Response {
     let Ok(host) = document_host(&state, &name) else {
         return ApiError::database_not_found(&name).into_response();
@@ -1357,6 +1372,9 @@ async fn get_document(
     let Ok(id) = DocumentId::try_new(&id) else {
         return invalid_identifier("document identifier", &id).into_response();
     };
+    if let Some(at_millis) = at.at {
+        return time_travel_document(&state, &name, &collection, &id, at_millis, &headers);
+    }
     // Read-your-writes across regions (D-37): a session token names the
     // sequence the client has seen; the read waits a bounded window for
     // this member's journal to cover it (a replicated apply advances it)
@@ -1407,6 +1425,102 @@ async fn get_document(
         response.headers_mut().insert(axum::http::header::ETAG, etag);
     }
     response
+}
+
+/// The time-travel query parameter: `?at=<unix-millis>` names the moment
+/// the document is read as of. Absent means the live database.
+#[derive(serde::Deserialize)]
+struct AtQuery {
+    at: Option<i64>,
+}
+
+/// Serves `GET .../documents/{id}?at=<unix-millis>` from a throwaway
+/// point-in-time restore cached per (database, second) with a bounded
+/// budget (S-06 (d)). The moment must sit inside the plan's PITR retention
+/// (D-25); older moments name their typed remedy instead of restoring
+/// bytes Litestream no longer keeps.
+fn time_travel_document(
+    state: &ApiState,
+    name: &str,
+    collection: &CollectionName,
+    id: &DocumentId,
+    at_millis: i64,
+    headers: &axum::http::HeaderMap,
+) -> Response {
+    if at_millis < 0 {
+        return invalid_at("it is negative");
+    }
+    let at_seconds = u64::try_from(at_millis.div_euclid(1000)).unwrap_or(0);
+    let now_seconds = unix_now_seconds();
+    if at_seconds > now_seconds.saturating_add(60) {
+        return invalid_at("it is in the future");
+    }
+    // Free is the default plan until the billing lane supplies the
+    // database's plan (D-25 retention).
+    let retention_days = crate::backup::retention_days_for_plan("free");
+    if at_seconds.saturating_add(retention_days.saturating_mul(86_400)) < now_seconds {
+        return ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "pitr_outside_retention",
+            message: format!(
+                "?at= is older than the plan's PITR retention ({retention_days} days)"
+            ),
+            fix: "read a newer moment, or move to a plan with longer retention (Free 1 / \
+                  Starter 7 / Pro 30 / Scale 35 days)"
+                .into(),
+            placement: None,
+        }
+        .into_response();
+    }
+    let Ok(tenant) = local_tenant() else {
+        return ApiError::control_unavailable().into_response();
+    };
+    match state.timetravel.read_at(name, &tenant, at_seconds, collection, id) {
+        Err(error) => ApiError::backup(error).into_response(),
+        Ok(None) => document_not_found(collection.as_str(), id.as_str()).into_response(),
+        Ok(Some(read)) => {
+            let revision = &read.revision;
+            let etag = format!("\"{revision}\"");
+            if headers
+                .get(axum::http::header::IF_NONE_MATCH)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|present| present == etag)
+            {
+                let mut response = StatusCode::NOT_MODIFIED.into_response();
+                if let Ok(etag) = HeaderValue::from_str(&etag) {
+                    response.headers_mut().insert(axum::http::header::ETAG, etag);
+                }
+                return response;
+            }
+            let mut body = String::with_capacity(256);
+            push_value(&mut body, &read.value);
+            let mut response = json_response(StatusCode::OK, body);
+            if let Ok(etag) = HeaderValue::from_str(&etag) {
+                response.headers_mut().insert(axum::http::header::ETAG, etag);
+            }
+            response
+        }
+    }
+}
+
+/// The typed refusal for an unusable `?at=` timestamp.
+fn invalid_at(detail: &str) -> Response {
+    ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "invalid_at",
+        message: format!("the ?at= timestamp is unusable ({detail})"),
+        fix: "send ?at=<unix-millis> naming a moment inside the plan's PITR retention".into(),
+        placement: None,
+    }
+    .into_response()
+}
+
+/// Wall-clock unix seconds for the `?at=` retention window.
+fn unix_now_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0)
 }
 
 /// Creates or replaces one document; the `ETag` of the result names the new
@@ -2009,7 +2123,17 @@ async fn restore_or_branch(
     catalog.close_database(&state.scope.0, &state.scope.1, target);
     let at_seconds = at.map(|millis| u64::try_from(millis.div_euclid(1000)).unwrap_or(0));
     match state.backups.restore_to_location(&name, at_seconds, &location) {
-        Ok(()) => record_response(StatusCode::CREATED, &record),
+        Ok(()) => {
+            // The new database is a main.db from its first moment: it gets
+            // its own stream under the default plan (D-25 retention).
+            let _ = state.backups.attach(
+                target,
+                &location,
+                &state.backup_root,
+                crate::backup::retention_for_plan("free"),
+            );
+            record_response(StatusCode::CREATED, &record)
+        }
         Err(error) => {
             let _ = control.soft_delete(target);
             ApiError::backup(error).into_response()
@@ -2191,6 +2315,12 @@ mod tests {
     use tower::util::ServiceExt;
 
     fn state() -> Arc<ApiState> {
+        let backups = Arc::new(crate::backup::BackupStreams::open_member());
+        let backup_root = std::env::temp_dir().join("terrabase-api-test-backup-root");
+        let timetravel = Arc::new(crate::backup::TimeTravelCache::new(
+            Arc::clone(&backups),
+            backup_root.clone(),
+        ));
         Arc::new(ApiState {
             region: RegionCode::GRU,
             metrics: Arc::new(MetricsRegistry::new()),
@@ -2199,8 +2329,9 @@ mod tests {
             catalog: None,
             scope: ("terrabase-local".into(), "local".into()),
             reactive: Arc::new(crate::reactive_api::ReactiveSessions::default()),
-            backups: Arc::new(crate::backup::BackupStreams::open_member()),
-            backup_root: std::env::temp_dir().join("terrabase-api-test-backup-root"),
+            backups,
+            backup_root,
+            timetravel,
             active_regions: 1,
         })
     }
@@ -2225,6 +2356,11 @@ mod tests {
             std::time::Duration::from_secs(3_600),
         )
         .expect("catalog opens");
+        let backups = Arc::new(crate::backup::BackupStreams::open_member());
+        let timetravel = Arc::new(crate::backup::TimeTravelCache::new(
+            Arc::clone(&backups),
+            dir.join("backup-timetravel"),
+        ));
         Arc::new(ApiState {
             region: RegionCode::GRU,
             metrics: Arc::new(MetricsRegistry::new()),
@@ -2237,8 +2373,9 @@ mod tests {
             catalog: Some(Arc::new(catalog)),
             scope: ("terrabase-local".into(), "local".into()),
             reactive: Arc::new(crate::reactive_api::ReactiveSessions::default()),
-            backups: Arc::new(crate::backup::BackupStreams::open_member()),
+            backups,
             backup_root: dir.join("backup"),
+            timetravel,
             active_regions: 3,
         })
     }
@@ -2437,6 +2574,163 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
         let body = String::from_utf8(body.to_vec()).expect("utf-8");
         assert!(body.contains("live-branch"), "the branch lists under its parent: {body}");
+        fleet.detach_all();
+    }
+
+    /// The S-06 time-travel journey through the router: write, wait,
+    /// write, then `?at=` between the writes serves the old value while
+    /// the live read serves the new one. Skips when Litestream is not
+    /// packaged on this machine.
+    #[tokio::test]
+    async fn document_time_travel_at_returns_the_old_value() {
+        use crate::backup::BackupStreams;
+        if BackupStreams::discover().is_none() {
+            eprintln!("skipping: litestream is not on PATH");
+            return;
+        }
+        let state = state_with_keys_and_control();
+        let backup_root = state.backup_root.clone();
+        let fleet = Arc::clone(&state.backups);
+        let router = router(state);
+        let auth = "Bearer tskey_test_abcdefghijklmnop";
+        let unix_now = || {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_secs())
+                .unwrap_or(0)
+        };
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header("authorization", auth)
+                    .body(Body::from(r#"{"name":"tt","placement":["GRU"],"residency":null}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert!(fleet.wait_until_ready("tt", std::time::Duration::from_secs(30)), "ready");
+
+        // The write's WAL segment must ship before a restore can see it:
+        // the segment count must grow past the pre-write baseline.
+        let wal = backup_root.join("tt").join("ltx").join("0");
+        let shipped = |dir: &std::path::Path| {
+            std::fs::read_dir(dir).map(|entries| entries.flatten().count()).unwrap_or(0)
+        };
+        let wait_for_ship = |baseline: usize, what: &str| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while shipped(&wal) <= baseline {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the {what} write shipped to the replica"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        };
+        let baseline = shipped(&wal);
+        let response = router
+            .clone()
+            .oneshot(
+                Request::put("/api/v1/databases/tt/collections/orders/documents/item-1")
+                    .header("authorization", auth)
+                    .body(Body::from(r#"{"value":1}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert!(response.status().is_success(), "the first write lands: {}", response.status());
+        wait_for_ship(baseline, "first");
+
+        // The restore point sits strictly between the writes (a write is
+        // addressable a sync after it leaves the building).
+        std::thread::sleep(std::time::Duration::from_millis(2_500));
+        let at = unix_now() + 1;
+        while unix_now() <= at {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let between = shipped(&wal);
+        let response = router
+            .clone()
+            .oneshot(
+                Request::put("/api/v1/databases/tt/collections/orders/documents/item-1")
+                    .header("authorization", auth)
+                    .body(Body::from(r#"{"value":2}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert!(response.status().is_success(), "the second write lands: {}", response.status());
+        wait_for_ship(between, "second");
+
+        // Time-travel serves the old value; the repeat hits the cache.
+        let at_millis = at * 1000;
+        for _ in 0..2 {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::get(format!(
+                        "/api/v1/databases/tt/collections/orders/documents/item-1?at={at_millis}"
+                    ))
+                    .header("authorization", auth)
+                    .body(Body::empty())
+                    .expect("request"),
+                )
+                .await
+                .expect("answers");
+            assert_eq!(response.status(), StatusCode::OK, "the past serves");
+            let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
+            let body = String::from_utf8(body.to_vec()).expect("utf-8");
+            assert!(body.contains("\"value\":1"), "the old value serves: {body}");
+            assert!(!body.contains("\"value\":2"), "the new value stays out: {body}");
+        }
+
+        // The live read serves the new value.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/databases/tt/collections/orders/documents/item-1")
+                    .header("authorization", auth)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("\"value\":2"), "the live value serves: {body}");
+
+        // A moment older than the plan's retention names its remedy.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/databases/tt/collections/orders/documents/item-1?at=1000")
+                    .header("authorization", auth)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("pitr_outside_retention"), "the typed refusal: {body}");
+
+        // A future moment is unusable.
+        let future_millis = (unix_now() + 3_600) * 1000;
+        let response = router
+            .oneshot(
+                Request::get(format!(
+                    "/api/v1/databases/tt/collections/orders/documents/item-1?at={future_millis}"
+                ))
+                .header("authorization", auth)
+                .body(Body::empty())
+                .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         fleet.detach_all();
     }
 
