@@ -27,6 +27,7 @@ use axum::middleware::Next;
 use axum::middleware::from_fn_with_state;
 use axum::response::IntoResponse;
 use axum::response::Response;
+use axum::routing::delete;
 use axum::routing::get;
 use axum::routing::post;
 use terrabase::CommitOutcome;
@@ -350,6 +351,19 @@ impl ApiError {
         }
     }
 
+    /// A designed-but-not-yet-built surface fails closed with the issue that
+    /// replaces it, never with a half-built code path (GOAL's stub rule).
+    #[must_use]
+    pub fn pending_surface(surface: &str, issue: &str) -> Self {
+        Self {
+            status: StatusCode::NOT_IMPLEMENTED,
+            code: "surface_pending",
+            message: format!("{surface} is not implemented on this member yet"),
+            fix: format!("tracked by {issue}; nothing here silently degrades"),
+            placement: None,
+        }
+    }
+
     /// The response status this envelope answers with.
     #[must_use]
     pub fn status(&self) -> StatusCode {
@@ -448,6 +462,22 @@ pub fn router(state: Arc<ApiState>) -> Router {
         .route("/api/v1/databases/{name}", get(get_database).delete(delete_database))
         .route("/api/v1/databases/{name}/restore", post(restore_database))
         .route("/api/v1/databases/{name}/collections", get(list_collections))
+        .route(
+            "/api/v1/databases/{name}/collections/{collection}/indexes",
+            get(list_indexes).post(create_index),
+        )
+        .route(
+            "/api/v1/databases/{name}/collections/{collection}/indexes/recommendations",
+            get(index_recommendations),
+        )
+        .route(
+            "/api/v1/databases/{name}/collections/{collection}/indexes/{field}",
+            delete(delete_index),
+        )
+        .route(
+            "/api/v1/databases/{name}/collections/{collection}/schema",
+            get(get_schema).put(put_schema),
+        )
         .route("/api/v1/databases/{name}/collections/{collection}/documents", get(list_documents))
         .route(
             "/api/v1/databases/{name}/collections/{collection}/documents/batch",
@@ -686,6 +716,174 @@ async fn list_collections(
         }
         Err(_) => ApiError::control_unavailable().into_response(),
     }
+}
+
+/// Lists one collection's index descriptors: field, state, and the rows
+/// the governed backfill still owes (D-31/D-42).
+async fn list_indexes(
+    State(state): State<Arc<ApiState>>,
+    Path((name, collection)): Path<(String, String)>,
+) -> Response {
+    let Ok(host) = document_host(&state, &name) else {
+        return ApiError::database_not_found(&name).into_response();
+    };
+    let engine = host.engine();
+    let Ok(collection) = CollectionName::try_new(&collection) else {
+        return invalid_identifier("collection name", &collection).into_response();
+    };
+    match engine.index_descriptors() {
+        Ok(descriptors) => {
+            let mut body = String::from("{\"indexes\":[");
+            let mut first = true;
+            for descriptor in
+                descriptors.iter().filter(|descriptor| descriptor.collection == collection.as_str())
+            {
+                if !first {
+                    body.push(',');
+                }
+                first = false;
+                body.push_str("{\"field\":\"");
+                push_json_escaped(&mut body, &descriptor.field);
+                body.push_str("\",\"state\":\"");
+                body.push_str(if descriptor.active { "active" } else { "building" });
+                body.push_str("\",\"backfill_remaining\":");
+                body.push_str(&descriptor.backfill_remaining.to_string());
+                body.push('}');
+            }
+            body.push_str("]}");
+            json_response(StatusCode::OK, body)
+        }
+        Err(_) => ApiError::control_unavailable().into_response(),
+    }
+}
+
+/// Registers one extracted index column on a collection (D-31): the field
+/// gains stored columns written by the Rust write path, existing rows are
+/// backfilled inline inside the cost cap, and ordinary indexes cover the
+/// columns. Idempotent for an identical descriptor.
+async fn create_index(
+    State(state): State<Arc<ApiState>>,
+    Path((name, collection)): Path<(String, String)>,
+    body: String,
+) -> Response {
+    let Ok(host) = document_host(&state, &name) else {
+        return ApiError::database_not_found(&name).into_response();
+    };
+    let engine = host.engine();
+    let Ok(collection) = CollectionName::try_new(&collection) else {
+        return invalid_identifier("collection name", &collection).into_response();
+    };
+    let request: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            return ApiError {
+                status: StatusCode::BAD_REQUEST,
+                code: "invalid_json",
+                message: "the index body is not JSON".into(),
+                fix: "send {\"field\":\"<name>\"}".into(),
+                placement: None,
+            }
+            .into_response();
+        }
+    };
+    let Some(field) = request.get("field").and_then(serde_json::Value::as_str) else {
+        return ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "missing_field",
+            message: "the index request names no field".into(),
+            fix: "add \"field\": \"<name>\" to the request body".into(),
+            placement: None,
+        }
+        .into_response();
+    };
+    match engine.register_index_field(&collection, field) {
+        Ok(registration) => {
+            let body = format!(
+                "{{\"field\":\"{}\",\"state\":\"{}\"}}",
+                field,
+                match registration {
+                    terrabase::engine::DescriptorRegistration::Active
+                    | terrabase::engine::DescriptorRegistration::Unchanged => "active",
+                    terrabase::engine::DescriptorRegistration::Building => "building",
+                }
+            );
+            json_response(StatusCode::CREATED, body)
+        }
+        Err(terrabase::engine::IndexRegistrationError::BudgetExceeded) => ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "index_budget_exceeded",
+            message: "the database's extracted-column budget is full".into(),
+            fix:
+                "retire an unused index, or split the database (D-42 caps stored columns per file)"
+                    .into(),
+            placement: None,
+        }
+        .into_response(),
+        Err(_) => ApiError::control_unavailable().into_response(),
+    }
+}
+
+/// Index retirement (drop) fails closed until the D-31 lifecycle (usage
+/// tracking, merge, retire) lands with the auto-index audit.
+async fn delete_index(
+    State(state): State<Arc<ApiState>>,
+    Path((name, collection, field)): Path<(String, String, String)>,
+) -> Response {
+    let Ok(_host) = document_host(&state, &name) else {
+        return ApiError::database_not_found(&name).into_response();
+    };
+    ApiError::pending_surface(
+        &format!("dropping the index on {collection}.{field}"),
+        "the D-31 index lifecycle (#127 slice C)",
+    )
+    .into_response()
+}
+
+/// Index recommendations read the auto-index audit, which the S-02 lane
+/// has not landed; the route fails closed rather than inventing advice.
+async fn index_recommendations(
+    State(state): State<Arc<ApiState>>,
+    Path((name, collection)): Path<(String, String)>,
+) -> Response {
+    let Ok(_host) = document_host(&state, &name) else {
+        return ApiError::database_not_found(&name).into_response();
+    };
+    ApiError::pending_surface(
+        &format!("index recommendations for {collection}"),
+        "the auto-index audit (#127 slice C)",
+    )
+    .into_response()
+}
+
+/// Collection schemas are authored in TypeScript and applied by
+/// `terrascale push` (D-48); the route fails closed until that lane lands.
+async fn get_schema(
+    State(state): State<Arc<ApiState>>,
+    Path((name, collection)): Path<(String, String)>,
+) -> Response {
+    let Ok(_host) = document_host(&state, &name) else {
+        return ApiError::database_not_found(&name).into_response();
+    };
+    ApiError::pending_surface(
+        &format!("the {collection} collection schema"),
+        "terrascale push / schema-first SDK (S-09/S-10)",
+    )
+    .into_response()
+}
+
+/// See [`get_schema`]: schemas arrive with `terrascale push` (D-48).
+async fn put_schema(
+    State(state): State<Arc<ApiState>>,
+    Path((name, collection)): Path<(String, String)>,
+) -> Response {
+    let Ok(_host) = document_host(&state, &name) else {
+        return ApiError::database_not_found(&name).into_response();
+    };
+    ApiError::pending_surface(
+        &format!("the {collection} collection schema"),
+        "terrascale push / schema-first SDK (S-09/S-10)",
+    )
+    .into_response()
 }
 
 /// Lists one collection's documents in canonical key order, with bounded
@@ -2294,6 +2492,80 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
         let body = String::from_utf8(body.to_vec()).expect("utf-8");
         assert!(body.contains("capability_unavailable"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn indexes_register_list_and_pending_surfaces_fail_closed() {
+        use axum::body::Body;
+        use axum::http::Request;
+        let auth = "authorization";
+        let key = "Bearer tskey_test_abcdefghijklmnop";
+        let router = router(state_with_keys_and_control());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header(auth, key)
+                    .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        // Register an index on a field the documents use.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases/prod/collections/orders/indexes")
+                    .header(auth, key)
+                    .body(Body::from(r#"{"field":"status"}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(
+            body.contains("\"state\":\"active\""),
+            "an empty collection registers active: {body}"
+        );
+        // The list names it.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/databases/prod/collections/orders/indexes")
+                    .header(auth, key)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("\"field\":\"status\""), "{body}");
+        // The pending surfaces fail closed with the issue that replaces them.
+        for (method, path) in [
+            ("DELETE", "/api/v1/databases/prod/collections/orders/indexes/status"),
+            ("GET", "/api/v1/databases/prod/collections/orders/indexes/recommendations"),
+            ("GET", "/api/v1/databases/prod/collections/orders/schema"),
+        ] {
+            let request = match method {
+                "DELETE" => Request::delete(path),
+                _ => Request::get(path),
+            };
+            let response = router
+                .clone()
+                .oneshot(request.header(auth, key).body(Body::empty()).expect("request"))
+                .await
+                .expect("answers");
+            assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED, "{method} {path}");
+            let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+            let body = String::from_utf8(body.to_vec()).expect("utf-8");
+            assert!(body.contains("surface_pending"), "{method} {path}: {body}");
+            assert!(body.contains("\"fix\":"), "{method} {path}: {body}");
+        }
     }
 
     #[tokio::test]
