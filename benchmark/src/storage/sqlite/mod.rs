@@ -122,9 +122,9 @@ use crate::usage::{
 #[cfg(test)]
 use super::faults::FaultPlan;
 use super::{
-    BackfillProgress, DescriptorListing, DescriptorRegistration, IndexDescriptorError,
-    PublishedCommit, PublishedWrite, ScanFilter, ScanOp, SnapshotReadError, StorageOpenError,
-    StoragePort, StorageRootId, UsageFactPosition, UsageStorageError,
+    BackfillProgress, DescriptorListing, DescriptorRegistration, IndexDescriptorError, JournalKind,
+    JournalProvenance, PublishedCommit, PublishedWrite, ScanFilter, ScanOp, SnapshotReadError,
+    StorageOpenError, StoragePort, StorageRootId, UsageFactPosition, UsageStorageError,
 };
 use super::{
     codec,
@@ -189,6 +189,12 @@ const DESCRIPTOR_KIND_VALUE: i64 = 1;
 const DESCRIPTOR_STATE_BUILDING: i64 = 0;
 const DESCRIPTOR_STATE_ACTIVE: i64 = 1;
 
+/// The `documents.kind` value of a locally written row (D-35 provenance).
+const ROW_KIND_ORIGIN: &str = "origin";
+
+/// The `documents.kind` value of a row the cross-region tailer applied.
+const ROW_KIND_REPLICATED: &str = "replicated";
+
 /// The write path's view of the extracted-column descriptors (D-42): the
 /// per-collection fields whose values the document INSERT carries, the
 /// active descriptors whose conditions a scan may push, and the cached
@@ -208,6 +214,10 @@ struct ExtractedState {
 
 impl ExtractedState {
     /// Rebuilds the cached put INSERT for the current field set.
+    ///
+    /// The base row carries fifteen placeholders — twelve originals plus the
+    /// three provenance columns (D-35: `kind`, `origin`, `hlc`) — so the
+    /// extracted columns start at placeholder 16.
     fn refresh_put_sql(&mut self) {
         let mut columns = String::new();
         let mut placeholders = String::new();
@@ -217,15 +227,15 @@ impl ExtractedState {
             columns.push_str(", ");
             columns.push_str(&quote_identifier(&numeric_column(field)));
             placeholders.push_str(", ?");
-            placeholders.push_str(&(13 + 2 * position).to_string());
+            placeholders.push_str(&(16 + 2 * position).to_string());
             placeholders.push_str(", ?");
-            placeholders.push_str(&(14 + 2 * position).to_string());
+            placeholders.push_str(&(17 + 2 * position).to_string());
         }
         self.put_insert_sql = format!(
             "INSERT INTO documents
              (tenant, collection, id, commit_seq, commit_ulid, revision, requested,
-              digest, version, deleted, committed_at, body{columns})
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12{placeholders})"
+              digest, version, deleted, committed_at, body, kind, origin, hlc{columns})
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15{placeholders})"
         );
     }
 
@@ -245,6 +255,30 @@ fn text_column(field: &str) -> String {
 /// compares the two numerically, the `tql/1.0` number rule).
 fn numeric_column(field: &str) -> String {
     format!("f:{field}#n")
+}
+
+/// Adds the replication provenance columns (D-35: `kind`, `origin`, `hlc`)
+/// to a location created before they existed — the extracted-columns ALTER
+/// precedent, idempotent through the schema probe: a fresh location already
+/// carries the columns from `SCHEMA`, and the probe leaves it untouched.
+fn migrate_documents_provenance(connection: &Connection) -> Result<(), ()> {
+    let mut statement = connection.prepare("PRAGMA table_info(documents)").map_err(|_| ())?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|_| ())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| ())?;
+    drop(statement);
+    if columns.iter().any(|column| column == "hlc") {
+        return Ok(());
+    }
+    connection
+        .execute_batch(
+            "ALTER TABLE documents ADD COLUMN kind TEXT NOT NULL DEFAULT 'origin';
+             ALTER TABLE documents ADD COLUMN origin TEXT NOT NULL DEFAULT '';
+             ALTER TABLE documents ADD COLUMN hlc INTEGER NOT NULL DEFAULT 0;",
+        )
+        .map_err(|_| ())
 }
 
 /// Quotes one identifier for SQL, doubling embedded double quotes.
@@ -304,6 +338,9 @@ CREATE TABLE IF NOT EXISTS documents (
     deleted     INTEGER NOT NULL,
     committed_at INTEGER NOT NULL DEFAULT 0,
     body        BLOB    NOT NULL,
+    kind        TEXT    NOT NULL DEFAULT 'origin',
+    origin      TEXT    NOT NULL DEFAULT '',
+    hlc         INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (tenant, collection, id, commit_seq)
 ) WITHOUT ROWID;
 
@@ -427,6 +464,7 @@ impl SqliteStorage {
         }
         let writer = open_connection(&database_path)?;
         writer.execute_batch(SCHEMA).map_err(|_| StorageOpenError::Unavailable)?;
+        migrate_documents_provenance(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         // Seed the identity rows idempotently: `INSERT OR IGNORE` keeps an
         // existing location's root chain and format version untouched.
         let seed = format!(
@@ -722,9 +760,17 @@ fn stage_intent(
     if intent.usage_admission.is_some() {
         return Ok(CommitResult::Rejected(CommitRejection::Storage));
     }
+    // The row identity and provenance a replicated intent carries: the
+    // SOURCE region's commit identity rides the `commit_ulid` column — the
+    // operation-id-to-write-set binding resolves by it, so a re-applied
+    // record replays its receipt instead of double-writing — while origin
+    // rows bind this location's own operation identity.
+    let (row_identity, provenance) = commit_identity_of(intent)?;
     // Step 2: a retried identity resolves from its folded rows (or its
-    // rejection record).
-    if let Some(entry) = operation_view(transaction, &intent.tenant, &intent.operation)? {
+    // rejection record, which always binds the caller's own identity).
+    if let Some(entry) =
+        operation_view(transaction, &intent.tenant, &row_identity, &intent.operation)?
+    {
         if entry.digest != intent.digest {
             return Ok(CommitResult::Rejected(CommitRejection::OperationIdReuse));
         }
@@ -744,11 +790,14 @@ fn stage_intent(
     // earlier intent of this batch.
     let snapshot_sequence = intent.snapshot_sequence.get();
     for write in &intent.writes {
-        if let StagedWrite::Put { document, .. } = write
+        if let StagedWrite::Put { document, .. } | StagedWrite::ReplicatedPut { document, .. } =
+            write
             && !codec::document_within_limits(document)
         {
             return Ok(CommitResult::Rejected(CommitRejection::Validation));
         }
+        // A replicated write carries no expected-version clause: the apply
+        // is unconditional (`Any`), the tailer owns last-writer ordering.
         let mismatch = match write {
             StagedWrite::Put { document, expected } => conflict_between(
                 transaction,
@@ -756,6 +805,15 @@ fn stage_intent(
                 document.collection(),
                 document.id(),
                 *expected,
+                snapshot_sequence,
+                *watermark,
+            )?,
+            StagedWrite::ReplicatedPut { document, .. } => conflict_between(
+                transaction,
+                &intent.tenant,
+                document.collection(),
+                document.id(),
+                crate::types::ExpectedVersion::Any,
                 snapshot_sequence,
                 *watermark,
             )?,
@@ -773,6 +831,15 @@ fn stage_intent(
                 &intent.tenant,
                 id,
                 *expected,
+                snapshot_sequence,
+                *watermark,
+            )?,
+            StagedWrite::ReplicatedDelete { collection, id, .. } => conflict_between(
+                transaction,
+                &intent.tenant,
+                collection,
+                id,
+                crate::types::ExpectedVersion::Any,
                 snapshot_sequence,
                 *watermark,
             )?,
@@ -805,15 +872,20 @@ fn stage_intent(
     let root = chained_root(root_head, sequence, intent.digest);
     // Step 5: documents rows ride one transaction, and every row of the
     // commit carries the commit's own identity — the journal is the table.
+    // A replicated commit carries the source region's identity and its
+    // provenance stamp on every row.
     let commit = FoldedCommit {
-        operation: &intent.operation,
+        operation: &row_identity,
         requested: intent.durability,
         digest: intent.digest,
+        kind: provenance.kind(),
+        origin: provenance.origin(),
+        hlc: provenance.hlc(),
     };
     let mut published_writes: Vec<PublishedWrite> = Vec::with_capacity(intent.writes.len());
     for write in &intent.writes {
         match write {
-            StagedWrite::Put { document, .. } => {
+            StagedWrite::Put { document, .. } | StagedWrite::ReplicatedPut { document, .. } => {
                 let version = version_at(
                     transaction,
                     &intent.tenant,
@@ -882,6 +954,25 @@ fn stage_intent(
                     version_at_delete,
                 });
             }
+            StagedWrite::ReplicatedDelete { collection, id, .. } => {
+                let version_at_delete =
+                    version_at(transaction, &intent.tenant, collection, id, sequence - 1)?
+                        .unwrap_or(0);
+                insert_document_row(
+                    transaction,
+                    &intent.tenant,
+                    collection,
+                    id,
+                    sequence,
+                    version_at_delete,
+                    &commit,
+                )?;
+                published_writes.push(PublishedWrite::Delete {
+                    collection: Some(collection.clone()),
+                    id: id.clone(),
+                    version_at_delete,
+                });
+            }
         }
     }
     let published = PublishedCommit::new(
@@ -889,6 +980,7 @@ fn stage_intent(
         intent.operation.clone(),
         StorageSequence::new(sequence),
         intent.durability,
+        provenance,
         published_writes,
     );
     let _ = &published;
@@ -912,16 +1004,20 @@ struct OperationView {
 }
 
 /// Reads one operation's durable resolution from the folded rows and the
-/// rejections table.
+/// rejections table. The folded rows resolve by the identity the rows carry
+/// — this location's own operation for an origin commit, the source
+/// region's commit identity for a replicated one — while the rejection
+/// record always binds the caller's own operation identity.
 fn operation_view(
     transaction: &rusqlite::Transaction<'_>,
     tenant: &TenantId,
-    operation: &OperationId,
+    row_operation: &OperationId,
+    ledger_operation: &OperationId,
 ) -> Result<Option<OperationView>, ()> {
     if let Ok(row) = transaction.query_row(
         "SELECT digest, MIN(commit_seq), MIN(requested) FROM documents
          WHERE tenant = ?1 AND commit_ulid = ?2",
-        rusqlite::params![tenant.as_str(), operation.as_str()],
+        rusqlite::params![tenant.as_str(), row_operation.as_str()],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
     ) {
         let (digest, sequence, requested) = row;
@@ -935,7 +1031,7 @@ fn operation_view(
     }
     let rejection = match transaction.query_row(
         "SELECT digest, rejection FROM rejections WHERE tenant = ?1 AND operation = ?2",
-        rusqlite::params![tenant.as_str(), operation.as_str()],
+        rusqlite::params![tenant.as_str(), ledger_operation.as_str()],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
     ) {
         Ok(row) => row,
@@ -955,6 +1051,26 @@ fn operation_view(
         requested: LocalDurability::Written,
         rejection,
     }))
+}
+
+/// Derives the row identity and provenance one intent's rows carry: the
+/// first replicated write names the source region's commit identity, and
+/// an intent without replicated writes is an origin commit.
+fn commit_identity_of(intent: &CommitIntent) -> Result<(OperationId, JournalProvenance), ()> {
+    for write in &intent.writes {
+        match write {
+            StagedWrite::ReplicatedPut { commit_ulid, hlc, origin, .. }
+            | StagedWrite::ReplicatedDelete { commit_ulid, hlc, origin, .. } => {
+                let identity = OperationId::try_new(commit_ulid).map_err(|_| ())?;
+                return Ok((
+                    identity,
+                    JournalProvenance::new(JournalKind::Replicated, origin.clone(), *hlc),
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok((intent.operation.clone(), JournalProvenance::origin_commit()))
 }
 
 /// Writes one rejection record: the durable binding that makes a retried
@@ -1000,7 +1116,7 @@ fn insert_put_row(
     descriptors: &std::collections::BTreeMap<(String, String), bool>,
 ) -> Result<(), ()> {
     let committed_at = unix_millis();
-    let mut parameters: Vec<Value> = Vec::with_capacity(12 + 2 * extracted_fields.len());
+    let mut parameters: Vec<Value> = Vec::with_capacity(15 + 2 * extracted_fields.len());
     parameters.push(Value::Text(tenant.as_str().to_owned()));
     parameters.push(Value::Text(document.collection().as_str().to_owned()));
     parameters.push(Value::Text(document.id().as_str().to_owned()));
@@ -1013,6 +1129,9 @@ fn insert_put_row(
     parameters.push(Value::Integer(0));
     parameters.push(Value::Integer(committed_at));
     parameters.push(Value::Blob(body.to_vec()));
+    parameters.push(Value::Text(commit.kind_text().to_owned()));
+    parameters.push(Value::Text(commit.origin.to_owned()));
+    parameters.push(Value::Integer(commit.hlc as i64));
     // One extracted scalar per registered field of this row's collection;
     // every other column binds NULL — the same shape a backfilled row
     // carries. Building descriptors extract too: every row the write path
@@ -1038,7 +1157,8 @@ fn insert_put_row(
         .map_err(|_| ())
 }
 
-/// Writes one tombstone row (empty body, no extracted columns).
+/// Writes one tombstone row (empty body, no extracted columns), stamped
+/// with the commit's provenance the same way a put row is.
 #[allow(clippy::too_many_arguments, reason = "the folded row model's columns")]
 fn insert_document_row(
     transaction: &rusqlite::Transaction<'_>,
@@ -1054,8 +1174,8 @@ fn insert_document_row(
         .prepare_cached(
             "INSERT INTO documents
              (tenant, collection, id, commit_seq, commit_ulid, revision, requested,
-              digest, version, deleted, committed_at, body)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+              digest, version, deleted, committed_at, body, kind, origin, hlc)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         )
         .and_then(|mut statement| {
             statement.execute(rusqlite::params![
@@ -1071,17 +1191,34 @@ fn insert_document_row(
                 1,
                 committed_at,
                 Vec::<u8>::new(),
+                commit.kind_text(),
+                commit.origin,
+                commit.hlc as i64,
             ])
         })
         .map(|_| ())
         .map_err(|_| ())
 }
 
-/// The per-commit facts every row of one commit carries (the D-42 fold).
+/// The per-commit facts every row of one commit carries (the D-42 fold):
+/// its identity, durability, digest, and replication provenance (D-35).
 struct FoldedCommit<'a> {
     operation: &'a OperationId,
     requested: LocalDurability,
     digest: u64,
+    kind: JournalKind,
+    origin: &'a str,
+    hlc: u64,
+}
+
+impl FoldedCommit<'_> {
+    /// The stored `kind` text of this commit's rows.
+    fn kind_text(&self) -> &'static str {
+        match self.kind {
+            JournalKind::Origin => ROW_KIND_ORIGIN,
+            JournalKind::Replicated => ROW_KIND_REPLICATED,
+        }
+    }
 }
 
 /// The public revision string of one row: the sequence it committed at.
@@ -2005,7 +2142,7 @@ impl StoragePort for SqliteStorage {
         let connection = reader.connection();
         let Ok(mut statement) = connection.prepare_cached(
             "SELECT commit_seq, commit_ulid, collection, id, deleted, version,
-                    requested, body
+                    requested, body, kind, origin, hlc
              FROM documents WHERE tenant = ?1 AND commit_seq > ?2 AND commit_seq IN (
                  SELECT commit_seq FROM documents WHERE tenant = ?1 AND commit_seq > ?2
                  ORDER BY commit_seq LIMIT ?3
@@ -2026,6 +2163,9 @@ impl StoragePort for SqliteStorage {
                     row.get::<_, i64>(5)?,
                     row.get::<_, i64>(6)?,
                     row.get::<_, Vec<u8>>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, i64>(10)?,
                 ))
             },
         ) else {
@@ -2034,9 +2174,23 @@ impl StoragePort for SqliteStorage {
         // Group the rows of one commit_seq into one PublishedCommit — the
         // journal rebuilt from the folded rows. The inner LIMIT bounds
         // commits (not rows), so no publication is ever served partial.
+        // Every row of one commit carries the commit's provenance (D-35),
+        // so the first row of the group decides it.
         let mut commits: Vec<PublishedCommit> = Vec::new();
         for row in rows.flatten() {
-            let (sequence, operation, collection, id, deleted, version, requested, body) = row;
+            let (
+                sequence,
+                operation,
+                collection,
+                id,
+                deleted,
+                version,
+                requested,
+                body,
+                kind,
+                origin,
+                hlc,
+            ) = row;
             let write = if deleted == 0 {
                 let Some(document) = decode_document_body(&body) else { continue };
                 PublishedWrite::Put { document }
@@ -2062,11 +2216,20 @@ impl StoragePort for SqliteStorage {
                         continue;
                     };
                     let Some(operation) = OperationId::try_new(&operation).ok() else { continue };
+                    let kind = if kind == ROW_KIND_REPLICATED {
+                        JournalKind::Replicated
+                    } else {
+                        JournalKind::Origin
+                    };
+                    #[allow(clippy::cast_sign_loss)]
+                    let provenance =
+                        JournalProvenance::new(kind, origin, u64::try_from(hlc).unwrap_or(0));
                     commits.push(PublishedCommit::new(
                         tenant.clone(),
                         operation,
                         StorageSequence::new(sequence),
                         durability,
+                        provenance,
                         vec![write],
                     ));
                 }

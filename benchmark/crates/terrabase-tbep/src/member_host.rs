@@ -87,6 +87,13 @@ impl MemberHost {
         self.engine.engine()
     }
 
+    /// Returns the engine host this member composes: the plane the
+    /// cross-region replication tailer pulls and applies through.
+    #[must_use]
+    pub fn engine_host(&self) -> &EngineHost {
+        &self.engine
+    }
+
     /// Subscribes one reactive result view (`S-04`): brings the journal
     /// pump current, registers the subscription, then seeds it from a
     /// consistent scan of the collection so the Seed frame and every

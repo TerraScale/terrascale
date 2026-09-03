@@ -23,6 +23,9 @@
 //! - [`member_host`]: the explicitly enabled TB-1a composition over one
 //!   durable engine publication journal. The production harness continues to
 //!   construct `EngineHost` until the later host-cutover stage.
+//! - [`replication`]: the cross-region journal tailer's in-process form
+//!   (D-35/D-36) — pull origin rows, apply them on a peer, idempotently;
+//!   the QUIC lanes drive the same apply path.
 //! - [`grpc`]: the tonic serving layer — prost⇄domain conversion,
 //!   metadata discipline, streaming subscriptions, and the UDS and
 //!   TLS listeners.
@@ -56,6 +59,7 @@ pub mod host;
 pub mod member_host;
 pub mod reactive;
 pub mod registry;
+pub mod replication;
 pub mod value;
 
 /// The compiled protobuf contract (prost messages and tonic stubs).

@@ -28,14 +28,44 @@ pub(crate) enum StagedWrite {
         /// The version the transaction expects.
         expected: ExpectedVersion,
     },
+    /// Insert or replace one document replicated from a peer region
+    /// (D-35/D-36): an unconditional apply — the tailer owns the
+    /// last-writer ordering, so there is no optimistic conflict clause —
+    /// stamped `kind='replicated'` with its causal metadata, and bound to
+    /// the SOURCE region's commit identity for idempotent re-apply.
+    ReplicatedPut {
+        /// The replicated document to publish.
+        document: Document,
+        /// The source region's commit identity this row carries.
+        commit_ulid: String,
+        /// The source region's hybrid logical clock stamp.
+        hlc: u64,
+        /// The source region's identity.
+        origin: String,
+    },
+    /// Delete one document replicated from a peer region (D-35/D-36): the
+    /// tombstone form of [`StagedWrite::ReplicatedPut`], stamped the same
+    /// way so a replicated tombstone never re-ships as an origin write.
+    ReplicatedDelete {
+        /// The collection of the deleted key.
+        collection: CollectionName,
+        /// The deleted document's identifier.
+        id: DocumentId,
+        /// The source region's commit identity this row carries.
+        commit_ulid: String,
+        /// The source region's hybrid logical clock stamp.
+        hlc: u64,
+        /// The source region's identity.
+        origin: String,
+    },
 }
 
 impl StagedWrite {
     /// Returns the document identifier this write touches.
     pub(crate) fn document_id(&self) -> &DocumentId {
         match self {
-            Self::Put { document, .. } => document.id(),
-            Self::Delete { id, .. } => id,
+            Self::Put { document, .. } | Self::ReplicatedPut { document, .. } => document.id(),
+            Self::Delete { id, .. } | Self::ReplicatedDelete { id, .. } => id,
         }
     }
 }

@@ -546,6 +546,63 @@ pub(crate) trait StoragePort: Send {
     fn arm_test_fault(&mut self, point: FaultPoint);
 }
 
+/// Whether one journal row was written by this region or replicated in
+/// from a peer (D-35): the cross-region tailer ships `Origin` rows only,
+/// so replicated rows never re-ship and the tail cannot loop.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum JournalKind {
+    /// Written by this region's own writer.
+    Origin,
+    /// Applied from a peer region's journal by the replication tailer.
+    Replicated,
+}
+
+/// One journal row's replication provenance (D-35/D-36): where the write
+/// came from and the causal stamp it carries. An origin row reports
+/// `Origin`, an empty origin, and `hlc = 0` — this slice lands the
+/// cross-region apply path; the HLC clock itself is the QUIC lane's work.
+///
+/// The type is crate-public in spirit; it is `pub` only so
+/// [`SyncJournalRecord`](crate::streaming::SyncJournalRecord) can expose it
+/// to the in-process tailer seam beside the journal types.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JournalProvenance {
+    kind: JournalKind,
+    origin: String,
+    hlc: u64,
+}
+
+impl JournalProvenance {
+    /// Assembles one provenance from its facts. Crate-only: provenance is
+    /// recorded by the storage write path, never minted by a consumer.
+    pub(crate) fn new(kind: JournalKind, origin: String, hlc: u64) -> Self {
+        Self { kind, origin, hlc }
+    }
+
+    /// The provenance of a locally written row.
+    pub(crate) fn origin_commit() -> Self {
+        Self { kind: JournalKind::Origin, origin: String::new(), hlc: 0 }
+    }
+
+    /// Returns whether the row was written by this region.
+    #[must_use]
+    pub const fn kind(&self) -> JournalKind {
+        self.kind
+    }
+
+    /// Returns the writing region's identity (empty for a local row).
+    #[must_use]
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    /// Returns the writing region's hybrid logical clock stamp.
+    #[must_use]
+    pub const fn hlc(&self) -> u64 {
+        self.hlc
+    }
+}
+
 /// One published commit reconstructed from the durable publication history
 /// (W4-CA-4).
 ///
@@ -563,6 +620,7 @@ pub(crate) struct PublishedCommit {
     operation_id: OperationId,
     sequence: StorageSequence,
     durability: LocalDurability,
+    provenance: JournalProvenance,
     writes: Vec<PublishedWrite>,
 }
 
@@ -573,9 +631,10 @@ impl PublishedCommit {
         operation_id: OperationId,
         sequence: StorageSequence,
         durability: LocalDurability,
+        provenance: JournalProvenance,
         writes: Vec<PublishedWrite>,
     ) -> Self {
-        Self { tenant, operation_id, sequence, durability, writes }
+        Self { tenant, operation_id, sequence, durability, provenance, writes }
     }
 
     /// Returns the tenant that owns the commit.
@@ -597,6 +656,11 @@ impl PublishedCommit {
     /// was journaled (repair F4).
     pub(crate) fn durability(&self) -> LocalDurability {
         self.durability
+    }
+
+    /// Returns the commit's replication provenance (D-35).
+    pub(crate) fn provenance(&self) -> &JournalProvenance {
+        &self.provenance
     }
 
     /// Returns the reconstructable write set of the commit.

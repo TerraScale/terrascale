@@ -228,11 +228,14 @@ pub(crate) fn staged_writes_have_duplicate_targets(writes: &[StagedWrite]) -> bo
     let mut seen: Vec<(Option<&str>, &str)> = Vec::new();
     for write in writes {
         let target = match write {
-            StagedWrite::Put { document, .. } => {
+            StagedWrite::Put { document, .. } | StagedWrite::ReplicatedPut { document, .. } => {
                 (Some(document.collection().as_str()), document.id().as_str())
             }
             StagedWrite::Delete { collection, id, .. } => {
                 (collection.as_ref().map(CollectionName::as_str), id.as_str())
+            }
+            StagedWrite::ReplicatedDelete { collection, id, .. } => {
+                (Some(collection.as_str()), id.as_str())
             }
         };
         if seen.iter().any(|(collection, id)| {
@@ -260,6 +263,12 @@ fn sort_key(write: &StagedWrite) -> (u8, String, String) {
             (1, document.collection().as_str().to_owned(), document.id().as_str().to_owned())
         }
         StagedWrite::Delete { id, .. } => (2, String::new(), id.as_str().to_owned()),
+        StagedWrite::ReplicatedPut { document, .. } => {
+            (3, document.collection().as_str().to_owned(), document.id().as_str().to_owned())
+        }
+        StagedWrite::ReplicatedDelete { collection, id, .. } => {
+            (4, collection.as_str().to_owned(), id.as_str().to_owned())
+        }
     }
 }
 
@@ -284,6 +293,23 @@ fn encode_digest_write(out: &mut Vec<u8>, write: &StagedWrite) {
             push_u8(out, 2);
             push_str(out, id.as_str());
             encode_expected(out, *expected);
+        }
+        StagedWrite::ReplicatedPut { document, commit_ulid, hlc, origin } => {
+            push_u8(out, 3);
+            push_str(out, document.collection().as_str());
+            push_str(out, document.id().as_str());
+            push_str(out, commit_ulid);
+            push_u64(out, *hlc);
+            push_str(out, origin);
+            encode_document(out, document);
+        }
+        StagedWrite::ReplicatedDelete { collection, id, commit_ulid, hlc, origin } => {
+            push_u8(out, 4);
+            push_str(out, collection.as_str());
+            push_str(out, id.as_str());
+            push_str(out, commit_ulid);
+            push_u64(out, *hlc);
+            push_str(out, origin);
         }
     }
 }

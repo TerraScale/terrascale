@@ -61,8 +61,9 @@ use crate::{
     },
     streaming::StreamStore,
     types::{
-        CollectionName, Document, DocumentId, ExpectedVersion, IndexGenerationSet, LocalDurability,
-        OperationId, ReadSnapshot, RetryDisposition, StorageSequence, TenantId, TenantScope,
+        CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, IndexGenerationSet,
+        LocalDurability, OperationId, ReadSnapshot, RetryDisposition, StorageSequence, TenantId,
+        TenantScope,
     },
     usage::{
         MeasurementWindow, MintingRule, UsageAdmissionContext, UsageCommandError,
@@ -615,6 +616,62 @@ impl CommitReceipt {
     #[must_use]
     pub fn durability(&self) -> LocalDurability {
         self.durability
+    }
+}
+
+/// One journal row shipped for cross-region replication (D-35/D-36): the
+/// published mutation — canonical body bytes for a put, a tombstone for a
+/// delete — plus the causal metadata the receiving region applies it with.
+///
+/// The record is the in-process form of what the journal tailer puts on the
+/// wire (slice 2a); the QUIC lanes (slice 2b) carry the same fields.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReplicatedRecord {
+    /// The changed collection.
+    pub collection: CollectionName,
+    /// The changed document identity.
+    pub id: DocumentId,
+    /// The published document value (ignored for a tombstone).
+    pub body: DocumentValue,
+    /// Whether this record is a tombstone.
+    pub deleted: bool,
+    /// The source region's commit identity: the receiving row's
+    /// `commit_ulid` and the idempotency binding for re-apply.
+    pub commit_ulid: String,
+    /// The source region's hybrid logical clock stamp.
+    pub hlc: u64,
+    /// The source region's identity.
+    pub origin: String,
+}
+
+/// The outcome of applying one [`ReplicatedRecord`]:
+/// [`Engine::apply_replicated`]'s receipt plus whether this call published
+/// or replayed an already-applied record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppliedReplication {
+    receipt: CommitReceipt,
+    replayed: bool,
+}
+
+impl AppliedReplication {
+    /// Assembles one apply outcome. Crate-only.
+    pub(crate) fn new(receipt: CommitReceipt, replayed: bool) -> Self {
+        Self { receipt, replayed }
+    }
+
+    /// Returns the local receipt of the apply (or of the original apply a
+    /// replay resolved to).
+    #[must_use]
+    pub const fn receipt(&self) -> &CommitReceipt {
+        &self.receipt
+    }
+
+    /// Reports whether the record had already been applied: the
+    /// deterministic operation identity replayed the recorded publication
+    /// instead of double-writing.
+    #[must_use]
+    pub const fn replayed(&self) -> bool {
+        self.replayed
     }
 }
 
@@ -1464,6 +1521,57 @@ impl Engine {
         })
     }
 
+    /// Applies one replicated record from a peer region (D-35/D-36): an
+    /// unconditional put or tombstone stamped `kind='replicated'` with its
+    /// causal metadata, committed at [`LocalDurability::Written`] and bound
+    /// to the deterministic operation identity `repl-{commit_ulid}`.
+    ///
+    /// The identity binding is the idempotency: a re-applied record — a
+    /// re-pull after a crash, a duplicate delivery — replays the recorded
+    /// publication's receipt instead of double-writing, reported through
+    /// [`AppliedReplication::replayed`]. Replicated writes carry no
+    /// expected-version clause and no collection-schema enforcement: the
+    /// origin region validated the write, and the tailer owns
+    /// last-writer ordering.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::InvalidDocument`] when the record's body is
+    /// outside the structural limits, and the transaction path's typed
+    /// failures otherwise.
+    pub fn apply_replicated(
+        &self,
+        scope: &TenantScope,
+        record: &ReplicatedRecord,
+    ) -> Result<AppliedReplication, EngineError> {
+        let operation = OperationId::try_new(&format!("repl-{}", record.commit_ulid))
+            .map_err(|_| EngineError::InvalidDocument)?;
+        let snapshot = self.read_snapshot(scope)?;
+        let snapshot_sequence = snapshot.sequence();
+        let mut transaction = self.begin(scope, snapshot, operation.clone())?;
+        transaction.stage_replicated(record)?;
+        match transaction.commit(LocalDurability::Written) {
+            CommitOutcome::Committed(receipt) => {
+                // A replayed identity resolves to the original publication's
+                // sequence — at or below the snapshot taken this call —
+                // while a fresh apply allocates one past it.
+                let replayed = receipt.sequence() <= snapshot_sequence;
+                Ok(AppliedReplication::new(receipt, replayed))
+            }
+            CommitOutcome::Rejected(error) => Err(match error {
+                CommitError::Conflict => EngineError::Conflict,
+                CommitError::OperationIdReuse => {
+                    EngineError::OperationIdReuse { operation_id: operation }
+                }
+                _ => EngineError::StorageFailure,
+            }),
+            // `synchronous=NORMAL` under WAL cannot report an uncertain
+            // outcome on this path; treating one as a storage failure
+            // keeps the tailer retrying the same deterministic identity.
+            CommitOutcome::Unknown(_) => Err(EngineError::StorageFailure),
+        }
+    }
+
     /// Runs one storage retention sweep: prune publication history every
     /// consumer frontier has passed, then fold the WAL back into the
     /// database file. Crate-private: the maintenance loop owns the cadence.
@@ -2179,8 +2287,9 @@ impl Transaction<'_> {
         for write in self.writes.iter().rev() {
             if write.document_id() == id {
                 return Ok(match write {
-                    StagedWrite::Put { document, .. } => Some(document.clone()),
-                    StagedWrite::Delete { .. } => None,
+                    StagedWrite::Put { document, .. }
+                    | StagedWrite::ReplicatedPut { document, .. } => Some(document.clone()),
+                    StagedWrite::Delete { .. } | StagedWrite::ReplicatedDelete { .. } => None,
                 });
             }
         }
@@ -2216,14 +2325,18 @@ impl Transaction<'_> {
             // snapshot did not contain anywhere, so it matches every
             // collection and reads as absent from each of them.
             let touches_this_collection = match write {
-                StagedWrite::Put { document, .. } => document.collection() == collection,
+                StagedWrite::Put { document, .. } | StagedWrite::ReplicatedPut { document, .. } => {
+                    document.collection() == collection
+                }
                 StagedWrite::Delete { collection: None, .. } => true,
-                StagedWrite::Delete { collection: Some(staged), .. } => staged == collection,
+                StagedWrite::Delete { collection: Some(staged), .. }
+                | StagedWrite::ReplicatedDelete { collection: staged, .. } => staged == collection,
             };
             if touches_this_collection {
                 return Ok(match write {
-                    StagedWrite::Put { document, .. } => Some(document.clone()),
-                    StagedWrite::Delete { .. } => None,
+                    StagedWrite::Put { document, .. }
+                    | StagedWrite::ReplicatedPut { document, .. } => Some(document.clone()),
+                    StagedWrite::Delete { .. } | StagedWrite::ReplicatedDelete { .. } => None,
                 });
             }
         }
@@ -2256,12 +2369,17 @@ impl Transaction<'_> {
                 continue;
             }
             match write {
-                StagedWrite::Put { document, .. } if document.collection() == collection => {
+                StagedWrite::Put { document, .. } | StagedWrite::ReplicatedPut { document, .. }
+                    if document.collection() == collection =>
+                {
                     let version = document.metadata().version().max(1);
                     let sequence = self.snapshot_sequence.get().saturating_add(1);
                     return Ok(Some(format!("{sequence}-{version}")));
                 }
-                StagedWrite::Delete { collection: Some(staged), .. } if staged == collection => {
+                StagedWrite::Delete { collection: Some(staged), .. }
+                | StagedWrite::ReplicatedDelete { collection: staged, .. }
+                    if staged == collection =>
+                {
                     return Ok(None);
                 }
                 _ => {}
@@ -2335,6 +2453,46 @@ impl Transaction<'_> {
             id,
             expected,
         });
+    }
+
+    /// Stages one replicated record's mutation (D-35): the unconditional
+    /// put or tombstone the cross-region tailer applies. Unlike
+    /// [`Transaction::put`] this enforces no collection schema — the origin
+    /// region validated the write, and a divergent local schema must not
+    /// block convergence — but the structural limits still hold: a body
+    /// the codec cannot store is never staged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::InvalidDocument`] when a put's body is
+    /// outside the accepted structural limits.
+    pub(crate) fn stage_replicated(
+        &mut self,
+        record: &ReplicatedRecord,
+    ) -> Result<(), EngineError> {
+        let write = if record.deleted {
+            StagedWrite::ReplicatedDelete {
+                collection: record.collection.clone(),
+                id: record.id.clone(),
+                commit_ulid: record.commit_ulid.clone(),
+                hlc: record.hlc,
+                origin: record.origin.clone(),
+            }
+        } else {
+            let document =
+                Document::new(record.id.clone(), record.collection.clone(), record.body.clone());
+            if !storage::document_within_limits(&document) {
+                return Err(EngineError::InvalidDocument);
+            }
+            StagedWrite::ReplicatedPut {
+                document,
+                commit_ulid: record.commit_ulid.clone(),
+                hlc: record.hlc,
+                origin: record.origin.clone(),
+            }
+        };
+        self.writes.push(write);
+        Ok(())
     }
 
     /// Publishes this transaction at the requested local durability point.

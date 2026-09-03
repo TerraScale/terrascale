@@ -53,7 +53,7 @@ use std::{
 use super::conflict::ConflictRecord;
 use crate::{
     engine::{CommitPublicationSink, Engine, SubscriptionGuard},
-    storage::{CommitPublicationEvent, PublishedWrite},
+    storage::{CommitPublicationEvent, JournalProvenance, PublishedWrite},
     types::{
         Cancellation, CollectionName, DocumentId, DocumentValue, OperationId, StorageSequence,
         TenantScope,
@@ -197,8 +197,10 @@ pub enum SyncJournalMutation {
 /// One document record reconstructed from the durable publication journal.
 ///
 /// The record keeps both the storage sequence and the exact write position
-/// within that commit. Consumers advance only after applying this record, so
-/// an in-memory delivery cache can never create a revision on its own.
+/// within that commit, plus the commit's replication provenance (D-35): the
+/// cross-region tailer filters on it so replicated rows never re-ship.
+/// Consumers advance only after applying this record, so an in-memory
+/// delivery cache can never create a revision on its own.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SyncJournalRecord {
     position: ChangeCheckpoint,
@@ -206,6 +208,7 @@ pub struct SyncJournalRecord {
     collection: CollectionName,
     document: DocumentId,
     mutation: SyncJournalMutation,
+    provenance: JournalProvenance,
 }
 
 impl SyncJournalRecord {
@@ -243,6 +246,12 @@ impl SyncJournalRecord {
     #[must_use]
     pub const fn mutation(&self) -> &SyncJournalMutation {
         &self.mutation
+    }
+
+    /// Returns the commit's replication provenance (D-35).
+    #[must_use]
+    pub const fn provenance(&self) -> &JournalProvenance {
+        &self.provenance
     }
 }
 
@@ -501,6 +510,7 @@ pub(crate) fn replay_sync_journal(
                     collection,
                     document,
                     mutation,
+                    provenance: commit.provenance().clone(),
                 });
                 boundary = Some(position);
                 examined += 1;
