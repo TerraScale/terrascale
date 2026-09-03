@@ -492,6 +492,12 @@ pub fn router(state: Arc<ApiState>) -> Router {
             get(document_history),
         )
         .route("/api/v1/databases/{name}/tql", post(execute_tql))
+        .route("/api/v1/databases/{name}/usage", get(database_usage))
+        .route("/api/v1/databases/{name}/webhooks", get(list_webhooks).post(create_webhook))
+        .route("/api/v1/databases/{name}/webhooks/{id}", delete(delete_webhook))
+        .route("/api/v1/databases/{name}/backups", get(list_backups))
+        .route("/api/v1/databases/{name}/backups/restore", post(restore_backup))
+        .route("/api/v1/databases/{name}/branches", get(list_branches).post(create_branch))
         .fallback(not_routed)
         .layer(from_fn_with_state(Arc::clone(&state), authenticate))
         .with_state(state)
@@ -557,12 +563,11 @@ async fn regions(State(state): State<Arc<ApiState>>) -> Response {
     response
 }
 
-/// The served contract. Hand-assembled for now; `make contracts` (S-00)
-/// generates it from the route definitions with `utoipa` once the document
-/// routes exist.
-// ponytail: utoipa generation when the document/query routes land.
+/// The served contract. Hand-assembled from the route table; `make
+/// contracts` (S-00) generates it from the route definitions with `utoipa`
+/// once the monorepo's contract target exists.
 async fn openapi() -> Response {
-    let body = r#"{"openapi":"3.1.0","info":{"title":"TerraScale Public API","version":"v1"},"paths":{"/api/v1/health":{"get":{"responses":{"200":{"description":"the member's health"},"503":{"description":"the member is unhealthy"}}}},"/api/v1/regions":{"get":{"responses":{"200":{"description":"the member's own region and health"}}}},"/api/v1/openapi.json":{"get":{"responses":{"200":{"description":"this document"}}}}}}"#;
+    let body = r#"{"openapi":"3.1.0","info":{"title":"TerraScale Public API","version":"v1"},"paths":{"/api/v1/health":{"get":{"description":"the member's health"}},"/api/v1/regions":{"get":{"description":"the member's own region and health"}},"/api/v1/openapi.json":{"get":{"description":"this document"}},"/api/v1/databases":{"get":{"description":"list databases"},"post":{"description":"create a database (placement + residency, D-52)"}},"/api/v1/databases/{name}":{"get":{"description":"one database's record"},"delete":{"description":"soft-delete (7-day restore window)"}},"/api/v1/databases/{name}/restore":{"post":{"description":"restore a soft-deleted database"}},"/api/v1/databases/{name}/collections":{"get":{"description":"list collections"}},"/api/v1/databases/{name}/collections/{collection}/indexes":{"get":{"description":"list index descriptors"},"post":{"description":"register an extracted index field (D-31)"}},"/api/v1/databases/{name}/collections/{collection}/indexes/recommendations":{"get":{"description":"auto-index recommendations (pending, #127 slice C)"}},"/api/v1/databases/{name}/collections/{collection}/indexes/{field}":{"delete":{"description":"retire an index (pending, D-31 lifecycle)"}},"/api/v1/databases/{name}/collections/{collection}/schema":{"get":{"description":"collection schema (pending, S-09)"},"put":{"description":"apply a collection schema (pending, S-09)"}},"/api/v1/databases/{name}/collections/{collection}/documents":{"get":{"description":"list documents (bounded paging)"}},"/api/v1/databases/{name}/collections/{collection}/documents/batch":{"post":{"description":"atomic batch of put/patch/delete"}},"/api/v1/databases/{name}/collections/{collection}/documents/{id}":{"get":{"description":"one document (ETag/304)"},"put":{"description":"create or replace"},"patch":{"description":"RFC 7386 merge patch"},"delete":{"description":"tombstone"}},"/api/v1/databases/{name}/collections/{collection}/documents/{id}/history":{"get":{"description":"retained revision history (D-42)"}},"/api/v1/databases/{name}/tql":{"post":{"description":"execute TQL (parameters, explain)"}},"/api/v1/databases/{name}/usage":{"get":{"description":"per-database usage (pending, S-08)"}},"/api/v1/databases/{name}/webhooks":{"get":{"description":"list webhooks (pending, S-07)"},"post":{"description":"create a webhook (pending, S-07)"}},"/api/v1/databases/{name}/webhooks/{id}":{"delete":{"description":"delete a webhook (pending, S-07)"}},"/api/v1/databases/{name}/backups":{"get":{"description":"backup policy and restore points (pending, S-06)"}},"/api/v1/databases/{name}/backups/restore":{"post":{"description":"restore to a new database (pending, S-06)"}},"/api/v1/databases/{name}/branches":{"get":{"description":"list branches (pending, S-06)"},"post":{"description":"create a branch (pending, S-06)"}}}}"#;
     let mut response = body.into_response();
     response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     response
@@ -1742,6 +1747,62 @@ fn render_explained_plan(grammar: &str, plan: &terrabase::query::QueryPlan) -> S
     explained
 }
 
+/// Usage export fails closed until op metering lands (S-08).
+async fn database_usage(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
+    let Ok(_host) = document_host(&state, &name) else {
+        return ApiError::database_not_found(&name).into_response();
+    };
+    ApiError::pending_surface("the usage export", "op metering (S-08)").into_response()
+}
+
+/// Webhooks are a subscription whose consumer is an HTTP POST (S-07).
+async fn list_webhooks(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
+    let Ok(_host) = document_host(&state, &name) else {
+        return ApiError::database_not_found(&name).into_response();
+    };
+    ApiError::pending_surface("webhooks", "change streams → webhooks (S-07)").into_response()
+}
+
+/// See [`list_webhooks`].
+async fn create_webhook(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
+    list_webhooks(State(state), Path(name)).await
+}
+
+/// See [`list_webhooks`].
+async fn delete_webhook(
+    State(state): State<Arc<ApiState>>,
+    Path((name, _id)): Path<(String, String)>,
+) -> Response {
+    let Ok(_host) = document_host(&state, &name) else {
+        return ApiError::database_not_found(&name).into_response();
+    };
+    ApiError::pending_surface("webhooks", "change streams → webhooks (S-07)").into_response()
+}
+
+/// Backups ride Litestream per file (S-06).
+async fn list_backups(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
+    let Ok(_host) = document_host(&state, &name) else {
+        return ApiError::database_not_found(&name).into_response();
+    };
+    ApiError::pending_surface("backup policy and restore points", "Litestream backups (S-06)")
+        .into_response()
+}
+
+/// See [`list_backups`].
+async fn restore_backup(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
+    list_backups(State(state), Path(name)).await
+}
+
+/// See [`list_backups`]: branching is restore-plus-register (D-38/D-39).
+async fn list_branches(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
+    list_backups(State(state), Path(name)).await
+}
+
+/// See [`list_branches`].
+async fn create_branch(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
+    list_backups(State(state), Path(name)).await
+}
+
 /// The member's local tenant label: every hosted database serves under it
 /// on the single-tenant local stack.
 fn local_tenant() -> Result<terrabase::types::TenantId, ()> {
@@ -1947,6 +2008,21 @@ mod tests {
             .await
             .expect("answers");
         assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 65_536).await.expect("body");
+        let document: serde_json::Value = serde_json::from_slice(&body).expect("valid JSON");
+        let paths = document.get("paths").and_then(serde_json::Value::as_object).expect("paths");
+        for (path, route) in [
+            ("/api/v1/databases/{name}/tql", "post"),
+            ("/api/v1/databases/{name}/usage", "get"),
+            ("/api/v1/databases/{name}/webhooks", "get"),
+            ("/api/v1/databases/{name}/backups", "get"),
+            ("/api/v1/databases/{name}/branches", "get"),
+        ] {
+            assert!(
+                paths.get(path).is_some_and(|entry| entry.get(route).is_some()),
+                "the contract lists {route} {path}"
+            );
+        }
         let response = router(state())
             .oneshot(Request::get("/api/v1/health").body(Body::empty()).expect("request"))
             .await
