@@ -8,7 +8,6 @@ material choice and must not be treated as release authorization.
 ## Accepted decisions
 
 - [0001 — Independent Rust repository and storage format](0001-independent-rust-repository-and-storage-format.md)
-- [0006 — Private Operations Studio on Datastar](0006-operations-studio-on-datastar.md)
 - [0007 — NoSQL, optional schemas, and migrations](0007-nosql-optional-schemas-and-migrations.md)
 - [0009 — TQL query language](0009-tql-query-language.md)
 - [0010 — Automatic indexing and query optimizer](0010-auto-indexing-and-query-optimizer.md)

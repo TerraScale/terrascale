@@ -1,8 +1,9 @@
 # TerraBase
 
-TerraBase is TerraScale's private multi-Region database engine. The engine and
-repository-owned runtime services are written in Rust. The repository also
-contains `terrabase-go`, the only network client permitted to call TerraBase.
+TerraBase is TerraScale's multi-Region database engine and public API, written
+in Rust (D-34): one member process serves `/api/v1` over axum and hosts the
+engine; the private TBEP gRPC surface is control-only (placement, health,
+drain, faults).
 
 This checkout is pre-production. Local tests establish implementation facts,
 not OCI qualification. `ts-orchestrator` owns native x86_64 and ARM64 runs,
@@ -13,16 +14,15 @@ current blockers.
 ## Runtime boundary
 
 ```text
-public clients
-        -> TerraScale.Database gateway written in Go
-        -> terrabase-go
+customer SDK / dashboard
+        -> public REST + reactive API over HTTPS (axum, D-34/D-44)
+        -> TerraBase engine (one SQLite file per database, D-27)
+orchestrator / CLI (control only)
         -> private protobuf/gRPC TBEP over HTTP/2 and production mTLS
-        -> TerraBase engine and durable storage
 ```
 
-TerraBase has no public protocol, MessagePack endpoint, WebSocket endpoint, or
-supported client other than `terrabase-go`. Reactive result-view behavior is an
-engine contract exposed to the Go gateway through private TBEP gRPC.
+The public surface is the REST API (with the reactive WebSocket transport
+landing as S-04); TBEP carries no customer request path (D-02).
 
 The engine owns storage, WAL, compaction, indexing, TQL query execution,
 causality, CRDT merge, replication, repair, membership acceptance, backup,
@@ -58,13 +58,10 @@ participate.
   release deliverable and remains unready until every configured security and
   runtime bound is enforced and the complete clustered host replaces the
   standalone engine host.
-- `terrabase-go/` contains generated bindings and the sole network client.
 - `bench/` is the benchmark driver. Markdown history under
   `docs/evidence/benchmarks/` is the repository's comparison authority.
 - `deploy/observability/` contains the private Prometheus template, alert
   rules, and canonical Grafana dashboard.
-- `docs/operations/s3-backup-and-restore.md` is the S3 setup, verification,
-  lifecycle, and restore runbook.
 - `docs/adr/` contains accepted architecture decisions.
 - `docs/evidence/` separates local lane facts from production qualification.
 
@@ -85,7 +82,6 @@ Standalone deliverables:
 
 ```sh
 cargo test --manifest-path bench/Cargo.toml --locked
-cd terrabase-go && go vet -mod=readonly ./... && go test -mod=readonly ./...
 ```
 
 CI also checks protobuf generation drift, hostile input handling, architecture

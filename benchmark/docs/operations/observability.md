@@ -1,32 +1,15 @@
 # TerraBase observability
 
-TerraBase has two metrics paths with different purposes. The local Studio path
-is for one operator inspecting one engine location. The production path is the
-private Prometheus contract used by Grafana and alerts.
-
-## Local Studio metrics
-
-The Studio exposes Prometheus text at
-`http://127.0.0.1:8090/metrics/prometheus` by default. Its listener refuses
-non-loopback addresses because Studio has no authentication.
-
-```sh
-curl --fail --silent http://127.0.0.1:8090/metrics/prometheus
-```
-
-The Studio endpoint reports engine build information, published storage
-sequence, location bytes and files, aggregate document count, aggregate probe
-failures, index counts, tier-control flags, and S3 backup scheduler outcomes
-and freshness. It never emits tenant,
-collection, document, query, path, or error-text labels. It does not report
-production RPS, latency, topology, or capacity headroom.
+The metrics path is the private Prometheus contract used by Grafana and
+alerts (D-49: the dashboard plus Grafana are the operator surface; there
+is no Studio).
 
 ## Production metrics
 
 `ts-orchestrator` configures the private production listener, scrape target,
 and network policy. The listener uses plaintext HTTP without application
 authentication. Its path is `/internal/metrics` in the checked-in deployment
-template. Do not route it through the public Go gateway.
+template.
 
 The production registry reports request counters and latency histograms,
 in-flight work, admission refusals, queue saturation, WAL and commit outcomes,
@@ -59,6 +42,6 @@ usage-export thresholds against the admitted topology and ADR 0033 before
 production. A missing storage-capacity series is an instrumentation gap, not
 evidence of unlimited headroom.
 
-Studio metrics are not production evidence. Production promotion requires the
+Production promotion requires the
 private-network checks, populated collectors, dashboard queries, alert tests,
 and candidate-bound receipts in ADR 0036.

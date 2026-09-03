@@ -44,7 +44,7 @@ jobs:
           test -z "$(git status --porcelain)"
       - uses: https://data.forgejo.org/actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
-          go-version-file: terrabase-go/go.mod
+          go-version: stable
           cache: false
       - name: Install pinned Rust toolchain
         uses: https://github.com/dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
@@ -167,165 +167,20 @@ jobs:
           cargo deny --workspace --all-features --locked check
           cargo deny --manifest-path bench/Cargo.toml --config bench/deny.toml --locked check
 
-      # The protobuf is the TBEP contract of record. Regeneration must be
-      # clean, so a schema edit cannot silently ship stale Go bindings.
-      - name: Schema and generated-binding drift
+      # The protobuf is the TBEP contract of record: lint clean and no
+      # breaking change against the previous push. Generated Go bindings
+      # return with `make contracts` (S-00/S-12) once the reduced
+      # control-only proto lands.
+      - name: Schema lint and breaking
         env:
           GOBIN: ${{ runner.temp }}/terrabase-ci-bin
         run: |
           mkdir -p "$GOBIN"
           go install github.com/bufbuild/buf/cmd/buf@v1.50.0
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
-          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
-          protoc_version=34.1
-          protoc_sha256=af27ea66cd26938fe48587804ca7d4817457a08350021a1c6e23a27ccc8c6904
-          schema_temp_root="$(mktemp -d)"
-          cleanup_schema_temp() { rm -rf -- "$schema_temp_root"; }
-          trap cleanup_schema_temp EXIT
-          protoc_archive="$schema_temp_root/protoc.zip"
-          curl --fail --silent --show-error --location \
-            "https://github.com/protocolbuffers/protobuf/releases/download/v${protoc_version}/protoc-${protoc_version}-linux-x86_64.zip" \
-            --output "$protoc_archive"
-          printf '%s  %s\n' "$protoc_sha256" "$protoc_archive" | sha256sum --check --strict
-          protoc_root="$schema_temp_root/protoc"
-          mkdir -p "$protoc_root"
-          unzip -q "$protoc_archive" -d "$protoc_root"
-          export PATH="$protoc_root/bin:$GOBIN:$PATH"
-          protoc --version | grep -F 'libprotoc 34.1'
+          export PATH="$GOBIN:$PATH"
           buf lint
           against_commit='${{ forgejo.event.before }}'
           [[ "$against_commit" =~ ^[0-9a-f]{40}$ ]]
           [[ "$against_commit" != 0000000000000000000000000000000000000000 ]]
           git cat-file -e "$against_commit^{commit}"
           buf breaking --against ".git#ref=$against_commit"
-          # Direct protoc reports its compiler version while buf reports it as
-          # unknown. Generate into separate roots, canonicalize only that
-          # nonsemantic header line, then require complete inventories and
-          # every other byte to agree.
-          direct_dir="$schema_temp_root/direct"
-          buf_dir="$schema_temp_root/buf"
-          mkdir -p "$direct_dir" "$buf_dir"
-          protoc \
-            --proto_path=crates/terrabase-tbep/proto \
-            --go_out=paths=source_relative:"$direct_dir" \
-            --go-grpc_out=paths=source_relative:"$direct_dir" \
-            crates/terrabase-tbep/proto/terrabase/v1/engine.proto \
-            crates/terrabase-tbep/proto/terrabase/v1/family.proto
-          buf generate \
-            --template buf.gen.yaml \
-            --output "$buf_dir" \
-            --path crates/terrabase-tbep/proto/terrabase/v1/engine.proto \
-            --path crates/terrabase-tbep/proto/terrabase/v1/family.proto
-          scripts/normalize-generated-protoc-version.sh "$direct_dir"
-          scripts/normalize-generated-protoc-version.sh "$buf_dir/terrabase-go"
-          expected_generated_inventory="$(printf '%s\n' engine.pb.go engine_grpc.pb.go family.pb.go)"
-          for generated_root in \
-            "$direct_dir/terrabase/v1" \
-            "$buf_dir/terrabase-go/terrabase/v1" \
-            terrabase-go/terrabase/v1; do
-            [[ -d "$generated_root" && ! -L "$generated_root" ]]
-            generated_inventory="$(find "$generated_root" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)"
-            [[ "$generated_inventory" == "$expected_generated_inventory" ]]
-            while IFS= read -r generated_file; do
-              [[ -f "$generated_root/$generated_file" && ! -L "$generated_root/$generated_file" ]]
-            done <<<"$expected_generated_inventory"
-          done
-          for generated_file in engine.pb.go engine_grpc.pb.go family.pb.go; do
-            diff -u "$direct_dir/terrabase/v1/$generated_file" \
-              "$buf_dir/terrabase-go/terrabase/v1/$generated_file"
-            diff -u "$direct_dir/terrabase/v1/$generated_file" \
-              "terrabase-go/terrabase/v1/$generated_file"
-          done
-
-      # The checked-in Go client must interoperate with the real Rust server,
-      # not only with fake gRPC peers. The test owns its loopback PKI and
-      # storage directory and fails if the harness is absent or skips.
-      - name: Live Rust-Go integration
-        run: |
-          set -euo pipefail
-          readonly integration_target="$(mktemp -d "${RUNNER_TEMP:?}/terrabase-live.XXXXXX")"
-          trap 'rm -rf -- "$integration_target"' EXIT
-          readonly go_command="$(type -P go)"
-          [[ -x "$go_command" ]]
-          unset GOROOT GOENV GOTOOLCHAIN GOBIN GOPATH GOCACHE
-          export GOENV=off
-          export GOTOOLCHAIN=local
-          export GOROOT="$(env -u GOROOT GOENV=off GOTOOLCHAIN=local "$go_command" env GOROOT)"
-          export GO="$go_command"
-          export GOPATH="$integration_target/go-path"
-          export GOCACHE="$integration_target/go-cache"
-          export GOBIN="$integration_target/go-bin"
-          export PATH="$GOROOT/bin:$PATH"
-          export CARGO_TARGET_DIR="$integration_target"
-          cargo build -p terrabase-tbep --bin tbep-production-harness --release --locked
-          (
-            cd terrabase-go
-            TERRABASE_HARNESS="$integration_target/release/tbep-production-harness" \
-              ../scripts/run-checked-go-tests.sh go-live-integration . \
-                --tags integration \
-                --allow-no-tests terrascale.tech/terrabase-go/cmd/normalize-generated-protoc-version \
-                --allow-no-tests terrascale.tech/terrabase-go/terrabase/v1 \
-                -- ./...
-          )
-      - name: Verify checks source postflight
-        run: |
-          event_sha='${{ forgejo.sha }}'
-          [[ "$(git rev-parse --verify HEAD)" == "$event_sha" ]]
-          [[ "$(git rev-parse --verify HEAD^{tree})" == "$(git rev-parse --verify "$event_sha^{tree}")" ]]
-          git diff --exit-code
-          git diff --cached --exit-code
-          test -z "$(git status --porcelain)"
-
-  # The Go client (terrabase-go) is the only client allowed to communicate
-  # with the engine (AGENTS.md). Its build and tests gate with the engine.
-  go-client:
-    runs-on: terrascale-builder
-    timeout-minutes: 30
-    steps:
-      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: ${{ forgejo.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Verify Go client checkout revision
-        run: |
-          event_sha='${{ forgejo.sha }}'
-          checked_out_head="$(git rev-parse --verify HEAD)"
-          [[ "$event_sha" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$event_sha" == "$checked_out_head" ]]
-          [[ "$(git rev-parse --verify HEAD^{tree})" == "$(git rev-parse --verify "$event_sha^{tree}")" ]]
-          test -z "$(git status --porcelain)"
-      - uses: https://data.forgejo.org/actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
-        with:
-          go-version-file: terrabase-go/go.mod
-          cache: false
-      - name: Module integrity
-        run: go mod verify
-        working-directory: terrabase-go
-      - name: Build, vet, and test
-        run: |
-          go list -mod=readonly ./...
-          test -z "$(gofmt -d -e $(git ls-files '*.go'))"
-          go vet -mod=readonly ./...
-          ../scripts/run-checked-go-tests.sh go-normal . \
-            --allow-no-tests terrascale.tech/terrabase-go/cmd/normalize-generated-protoc-version \
-            --allow-no-tests terrascale.tech/terrabase-go/terrabase/v1 \
-            -- ./...
-          ../scripts/run-checked-go-tests.sh go-race . --race \
-            --allow-no-tests terrascale.tech/terrabase-go/cmd/normalize-generated-protoc-version \
-            --allow-no-tests terrascale.tech/terrabase-go/terrabase/v1 \
-            -- ./...
-          go -C bench/pgrest mod verify
-          go -C bench/pgrest list -mod=readonly ./...
-          go -C bench/pgrest vet -mod=readonly ./...
-          ../scripts/run-checked-go-tests.sh pgrest-normal bench/pgrest -- ./...
-          ../scripts/run-checked-go-tests.sh pgrest-race bench/pgrest --race -- ./...
-        working-directory: terrabase-go
-      - name: Verify Go client source postflight
-        run: |
-          event_sha='${{ forgejo.sha }}'
-          [[ "$(git rev-parse --verify HEAD)" == "$event_sha" ]]
-          [[ "$(git rev-parse --verify HEAD^{tree})" == "$(git rev-parse --verify "$event_sha^{tree}")" ]]
-          git diff --exit-code
-          git diff --cached --exit-code
-          test -z "$(git status --porcelain)"
