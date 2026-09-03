@@ -27,7 +27,6 @@ path.
 | --- | --- |
 | `@terrascale/sdk` | Ordinary typed customer operations |
 | `@terrascale/sdk/admin` | Role-protected public administration |
-| `@terrascale/sdk/local` | Explicit development-only local runtime |
 | `@terrascale/sdk/better-auth` | Public server-only Better Auth adapter |
 
 The Better Auth adapter accepts a typed Database API operation port and maps
@@ -128,33 +127,6 @@ rather than silently serving from another Region.
 Members. `GlobalDurable` pays WAN latency and requires every selected active
 Region. Backup is an independent opt-in.
 
-## Local development runtime
-
-The explicit SQLite local runtime supports bounded public-contract development:
-
-~~~ts
-import { createTerraScaleSqliteRuntime } from "@terrascale/sdk/local";
-
-const local = createTerraScaleSqliteRuntime({
-  sqlite: { enabled: true, databasePath: "/absolute/path/to/local.sqlite" },
-});
-
-const seed = await local.seed();
-const client = local.createClient({ projectId: seed.projectId });
-
-await local.start();
-await local.stop();
-await local.reset({ seed: true });
-await local.close();
-~~~
-
-Importing `local` is the opt-in. Root, `admin`, and `better-auth`
-entrypoints never enable SQLite automatically.
-
-The local runtime does not prove TerraBase replication, RF=2 durability,
-failover, reactive conformance, authorization, usage, billing, external
-providers, or performance. Unsupported operations fail explicitly.
-
 ## Public contract discipline
 
 The SDK implements only named operations published by the owning service.
@@ -215,7 +187,7 @@ absent; CI clones it before `npm test`.
 
 Integration tests target the fixed DevHost public routes. When the required
 base URLs or credentials are absent, they skip instead of using mocked HTTP.
-A local emulator cannot substitute for that evidence.
+Skipped gates are recorded as skipped, never as passing results.
 
 ## Releases
 

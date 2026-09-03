@@ -17,7 +17,7 @@ Promotion also depends on the workspace production evidence: public REST and
 reactive contract parity, Better Auth exact-version and license evidence,
 cross-language corpus conformance, authorization and recovery behavior,
 three-Region qualification, security, operational readiness, and the required
-production soak. The local SQLite runtime cannot satisfy any of those gates.
+production soak. Only live service evidence can satisfy those gates.
 
 The workflow publishes the verified npm tarball and does not create or repair a
 Forgejo Release. npm credentials and candidate-store access stay in protected

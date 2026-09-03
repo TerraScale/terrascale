@@ -7,9 +7,8 @@ The [workspace goal](../GOAL.md) is the sole authority for ts-typescript.
 ## Mission
 
 The public SDK `@terrascale/sdk` for browser and Node: named typed operations
-over the public API, the reactive MessagePack client, the server-only Better
-Auth adapter, and an explicitly dev-only local SQLite runtime. Never speaks
-TBEP.
+over the public API, the reactive MessagePack client, and the server-only
+Better Auth adapter. Never speaks TBEP.
 
 ## Verification
 

@@ -119,9 +119,7 @@ The current protected Deploy validator also rejects the SDK's source-command
 release profiles because it has no npm release-profile handoff. That failure is
 intentional; do not weaken it or model the SDK as a TUnit apphost.
 
-The local SQLite runtime and emulator tests are development evidence only. They
-cannot satisfy live API, authorization, multi-Region, recovery, or performance
-gates. Integration tests that lack their required environment skip and must be
+Integration tests that lack their required environment skip and must be
 recorded as skipped in the release receipt.
 
 ## Version classification
