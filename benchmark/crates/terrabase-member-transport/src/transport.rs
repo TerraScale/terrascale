@@ -30,7 +30,8 @@ pub enum FrameSelector {
     All,
     /// Drain catch-up requests, leaving deliveries and reports in place.
     Requests,
-    /// Drain catch-up batches and pushed commits, leaving requests in place.
+    /// Drain catch-up batches, pushed commits, and replicated-record
+    /// batches, leaving requests in place.
     Deliveries,
     /// Drain acknowledgement reports, leaving everything else in place.
     Reports,
@@ -46,7 +47,7 @@ impl FrameSelector {
                 | (Self::Requests, FrameKind::CatchUpRequest)
                 | (Self::Deliveries, FrameKind::CatchUpBatch | FrameKind::Push)
                 | (Self::Reports, FrameKind::AckReport | FrameKind::AckBatch)
-        )
+        ) || matches!((self, kind), (Self::Deliveries, FrameKind::ReplicationBatch))
     }
 }
 

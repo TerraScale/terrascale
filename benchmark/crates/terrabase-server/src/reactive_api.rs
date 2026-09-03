@@ -297,6 +297,7 @@ fn write_key(bytes: &mut Vec<u8>, key: &str) {
 /// subscribe, drain, or unsubscribe. The response body is one
 /// `MessagePack` array of frames.
 #[allow(clippy::too_many_lines, reason = "one transport contract, one function")]
+#[utoipa::path(post, path = "/api/v1/databases/{name}/reactive/poll", responses((status = 200, description = "Reactive query changes")))]
 pub async fn poll(
     State(state): State<Arc<ApiState>>,
     Path(name): Path<String>,
@@ -479,6 +480,7 @@ fn respond_frames(
 /// the client's first binary message is the `MessagePack` subscribe frame
 /// (the same map the poll body carries); every server message after is
 /// one `MessagePack` delivery frame.
+#[utoipa::path(get, path = "/api/v1/databases/{name}/reactive", responses((status = 101, description = "Reactive WebSocket connected")))]
 pub async fn websocket(
     State(state): State<Arc<ApiState>>,
     Path(name): Path<String>,

@@ -65,8 +65,8 @@ pub use clock::{ClockStamp, LaneInstant};
 pub use envelope::{
     BUDGET_BYTES_PER_DELIVERED_CHANGE, BUDGET_ENVELOPE_OVERHEAD_BYTES, ENVELOPE_SCHEMA,
     ENVELOPE_VERSION_MAJOR, ENVELOPE_VERSION_MINOR, EncodedFrame, Envelope, EnvelopeError,
-    FrameKind, LaneCommit, LaneDocument, LaneWrite, MAX_FIELD_BYTES, MAX_FRAME_BYTES,
-    MAX_PAYLOAD_BYTES, Payload, decode, encode, peek_kind, peek_payload_len,
+    FrameKind, LaneCommit, LaneDocument, LaneValue, LaneWrite, MAX_FIELD_BYTES, MAX_FRAME_BYTES,
+    MAX_PAYLOAD_BYTES, Payload, ReplicatedWrite, decode, encode, peek_kind, peek_payload_len,
 };
 pub use identity::{
     CollectionName, DocumentId, IdentityError, MemberId, OperationId, RegionId, TenantId,

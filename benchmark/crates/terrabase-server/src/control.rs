@@ -84,6 +84,9 @@ pub struct DatabaseRecord {
     pub created_at: i64,
     /// When the record was soft-deleted, unix milliseconds, if it was.
     pub deleted_at: Option<i64>,
+    /// The database this one was branched or restored from, if any
+    /// (D-38/D-39: a branch is restore-plus-register).
+    pub parent: Option<String>,
 }
 
 impl DatabaseRecord {
@@ -161,6 +164,51 @@ impl ControlPlane {
             deleted: false,
             created_at: unix_millis(),
             deleted_at: None,
+            parent: None,
+        };
+        self.commit_record(&record, name)?;
+        Ok(record)
+    }
+
+    /// Registers a branch: a new database record whose data is a restore
+    /// of `parent` (the restore itself is the caller's; D-29 keeps the
+    /// branch a registry fact plus a restored location).
+    ///
+    /// # Errors
+    ///
+    /// Returns the typed refusal for an invalid name, placement, or
+    /// residency, [`ControlError::NotFound`] for an unknown parent, and
+    /// the create-time refusals for the new name.
+    pub fn create_branch(
+        &self,
+        name: &str,
+        placement: &[RegionCode],
+        residency: Option<&str>,
+        parent: &str,
+    ) -> Result<DatabaseRecord, ControlError> {
+        match self.get(parent)? {
+            Some(record) if !record.deleted => {}
+            _ => return Err(ControlError::NotFound(parent.to_owned())),
+        }
+        validate_name(name)?;
+        validate_placement(placement)?;
+        if let Some(constraint) = residency {
+            validate_residency(constraint, placement)?;
+        }
+        if let Some(existing) = self.get(name)? {
+            if existing.deleted {
+                return Err(ControlError::SoftDeleted(name.to_owned()));
+            }
+            return Err(ControlError::AlreadyExists(name.to_owned()));
+        }
+        let record = DatabaseRecord {
+            name: name.to_owned(),
+            placement: placement.to_vec(),
+            residency: residency.map(str::to_owned),
+            deleted: false,
+            created_at: unix_millis(),
+            deleted_at: None,
+            parent: Some(parent.to_owned()),
         };
         self.commit_record(&record, name)?;
         Ok(record)
@@ -341,7 +389,13 @@ fn record_of(document: &Document) -> Option<DatabaseRecord> {
         DocumentValue::Null => None,
         _ => return None,
     };
-    Some(DatabaseRecord { name, placement, residency, deleted, created_at, deleted_at })
+    // Branches arrived with S-06; records stored before it have no field.
+    let parent = match fields.get("parent") {
+        Some(DocumentValue::String(text)) => Some(text.clone()),
+        Some(DocumentValue::Null) | None => None,
+        Some(_) => return None,
+    };
+    Some(DatabaseRecord { name, placement, residency, deleted, created_at, deleted_at, parent })
 }
 
 /// Builds one record's stored body.
@@ -370,6 +424,13 @@ fn record_body(record: &DatabaseRecord) -> DocumentValue {
         "deleted_at".to_owned(),
         match record.deleted_at {
             Some(millis) => DocumentValue::Integer(millis),
+            None => DocumentValue::Null,
+        },
+    );
+    fields.insert(
+        "parent".to_owned(),
+        match &record.parent {
+            Some(parent) => DocumentValue::String(parent.clone()),
             None => DocumentValue::Null,
         },
     );

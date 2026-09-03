@@ -207,6 +207,7 @@ impl MemberTransport for InProcessLane {
             FrameKind::Push,
             FrameKind::AckReport,
             FrameKind::AckBatch,
+            FrameKind::ReplicationBatch,
         ]
         .into_iter()
         .filter_map(|kind| self.class_bytes.get(&kind).map(|bytes| (kind, *bytes)))

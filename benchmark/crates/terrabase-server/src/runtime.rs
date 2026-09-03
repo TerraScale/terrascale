@@ -62,6 +62,16 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
     metrics.set_component_health(Component::Metrics, HealthStatus::Healthy);
     metrics.set_component_health(Component::Storage, HealthStatus::Healthy);
 
+    // The static peer list enumerates this member's cross-region lanes
+    // (SHORT_GOAL section 1): region code plus replication endpoint, fail
+    // closed when the configuration names none. The lanes are inert until
+    // the S-09 member composition spawns the transports this plan names;
+    // until then each configured peer's frontier reports Unknown — never
+    // Healthy — so readiness keeps telling the truth.
+    for lane in config.replication_lanes() {
+        metrics.set_replication_frontier_health(lane.region, HealthStatus::Unknown);
+    }
+
     let network = Arc::new(TbepGrpcServer::with_config_and_metrics(
         Arc::clone(&host) as Arc<dyn TbepHost>,
         pb::BindingKind::NetworkMtls,
@@ -234,6 +244,8 @@ async fn serve_public_api(
         catalog: Some(Arc::new(catalog)),
         scope: (tenant, project),
         reactive: Arc::new(crate::reactive_api::ReactiveSessions::default()),
+        backups: Arc::new(crate::backup::BackupStreams::open_member()),
+        backup_root: public.data_root.join("backup"),
         active_regions: public.active_regions,
     });
     let listener = tokio::net::TcpListener::bind(public.listen).await?;
@@ -506,6 +518,7 @@ mod tests {
             ]),
             uds: None,
             public_api: None,
+            replication_peers: Vec::new(),
             observability_listen: SocketAddr::from(([127, 0, 0, 1], 9464)),
             max_message_bytes: terrabase_tbep::registry::MAX_FRAME_BYTES,
             max_inflight: terrabase_tbep::grpc::MAX_INFLIGHT_OPERATIONS,
@@ -536,6 +549,7 @@ mod tests {
             gateway_principals: BTreeSet::new(),
             uds: None,
             public_api: None,
+            replication_peers: Vec::new(),
             observability_listen: SocketAddr::from(([127, 0, 0, 1], 0)),
             max_message_bytes: terrabase_tbep::registry::MAX_FRAME_BYTES,
             max_inflight: 1,

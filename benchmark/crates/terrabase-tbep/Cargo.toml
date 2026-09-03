@@ -22,11 +22,13 @@ publish = false
 default = ["local-crypto"]
 local-crypto = [
   "terrabase/local-crypto",
+  "terrabase-member-transport/local-crypto",
   "tonic/tls-ring",
   "tokio-rustls/ring",
 ]
 production-fips = [
   "terrabase/production-fips",
+  "terrabase-member-transport/production-fips",
   "tonic/tls-aws-lc",
   "tokio-rustls/fips",
 ]
@@ -72,6 +74,10 @@ terrabase-sync-core = { path = "../terrabase-sync-core" }
 # The engine this host serves (P4): the real durable engine behind the
 # document spine.
 terrabase = { path = "../..", default-features = false }
+# The member-transport seam (S-05, ADR 0041 D-35/D-45): the cross-region
+# lanes drive the journal tailer's pull/apply path over fault-injectable
+# MemberTransport lanes.
+terrabase-member-transport = { path = "../terrabase-member-transport", default-features = false }
 
 [build-dependencies]
 # The protobuf front end: pure-Rust schema compilation feeding

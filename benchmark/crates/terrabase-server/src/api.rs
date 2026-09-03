@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract;
+use axum::extract::Extension;
 use axum::extract::Path;
 use axum::extract::Request;
 use axum::extract::State;
@@ -27,9 +28,7 @@ use axum::middleware::Next;
 use axum::middleware::from_fn_with_state;
 use axum::response::IntoResponse;
 use axum::response::Response;
-use axum::routing::delete;
 use axum::routing::get;
-use axum::routing::post;
 use terrabase::CommitOutcome;
 use terrabase::observability::MetricsRegistry;
 use terrabase::observability::ServiceState;
@@ -41,6 +40,10 @@ use terrabase::types::DocumentValue;
 use terrabase::types::ExpectedVersion;
 use terrabase::types::LocalDurability;
 use terrabase::types::OperationId;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
+use utoipa_scalar::Scalar;
+use utoipa_scalar::Servable;
 
 /// The public API's path prefix.
 pub const API_PREFIX: &str = "/api/v1";
@@ -55,7 +58,7 @@ pub const REGION_HEADER: HeaderName = HeaderName::from_static("x-terrascale-regi
 
 /// The routes that never require a credential: the machine-readable
 /// contract itself and nothing else.
-const PUBLIC_PATHS: [&str; 1] = ["/api/v1/openapi.json"];
+const PUBLIC_PATHS: [&str; 2] = ["/api/v1/openapi.json", "/scalar"];
 
 /// The typed error envelope. Every variant spells its one-line remedy;
 /// where a CLI command applies, it names it (D-56).
@@ -364,6 +367,19 @@ impl ApiError {
         }
     }
 
+    /// A backup/restore refusal (S-06): the Litestream side failed or was
+    /// never attached; nothing is silently degraded (D-29).
+    #[must_use]
+    pub fn backup(reason: impl std::fmt::Display) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "backup_failure",
+            message: format!("the backup surface refused: {reason}"),
+            fix: "check the member's litestream.log under the database's replica directory".into(),
+            placement: None,
+        }
+    }
+
     /// The response status this envelope answers with.
     #[must_use]
     pub fn status(&self) -> StatusCode {
@@ -450,6 +466,11 @@ pub struct ApiState {
     pub scope: (String, String),
     /// The reactive transports' live subscriptions (`S-04`).
     pub reactive: Arc<crate::reactive_api::ReactiveSessions>,
+    /// The Litestream fleet (`S-06`): one stream per hosted database.
+    pub backups: Arc<crate::backup::BackupStreams>,
+    /// Where the fleet writes replicas: `<data_root>/backup` on the local
+    /// stack (`S-06`).
+    pub backup_root: std::path::PathBuf,
     /// The regions this deployment believes active: `GlobalDurable`
     /// fails closed under two (D-37).
     pub active_regions: usize,
@@ -459,53 +480,37 @@ pub struct ApiState {
 /// [`PUBLIC_PATHS`] requires an admitted credential.
 #[must_use = "the returned router must be installed on a server"]
 pub fn router(state: Arc<ApiState>) -> Router {
-    Router::new()
-        .route("/api/v1/health", get(health))
-        .route("/api/v1/regions", get(regions))
+    let (router, openapi_document) = OpenApiRouter::new()
+        .routes(routes!(health))
+        .routes(routes!(regions))
+        .routes(routes!(list_databases, create_database))
+        .routes(routes!(get_database, delete_database))
+        .routes(routes!(restore_database))
+        .routes(routes!(list_collections))
+        .routes(routes!(list_indexes, create_index))
+        .routes(routes!(index_recommendations))
+        .routes(routes!(delete_index))
+        .routes(routes!(get_schema, put_schema))
+        .routes(routes!(list_documents))
+        .routes(routes!(batch_documents))
+        .routes(routes!(get_document, put_document, patch_document, delete_document))
+        .routes(routes!(document_history))
+        .routes(routes!(execute_tql))
+        .routes(routes!(crate::reactive_api::poll))
+        .routes(routes!(crate::reactive_api::websocket))
+        .routes(routes!(database_usage))
+        .routes(routes!(list_webhooks, create_webhook))
+        .routes(routes!(delete_webhook))
+        .routes(routes!(list_backups))
+        .routes(routes!(restore_backup))
+        .routes(routes!(list_branches, create_branch))
+        .split_for_parts();
+    let openapi_json = Arc::new(openapi_document.to_json().expect("OpenAPI must serialize"));
+    router
         .route("/api/v1/openapi.json", get(openapi))
-        .route("/api/v1/databases", get(list_databases).post(create_database))
-        .route("/api/v1/databases/{name}", get(get_database).delete(delete_database))
-        .route("/api/v1/databases/{name}/restore", post(restore_database))
-        .route("/api/v1/databases/{name}/collections", get(list_collections))
-        .route(
-            "/api/v1/databases/{name}/collections/{collection}/indexes",
-            get(list_indexes).post(create_index),
-        )
-        .route(
-            "/api/v1/databases/{name}/collections/{collection}/indexes/recommendations",
-            get(index_recommendations),
-        )
-        .route(
-            "/api/v1/databases/{name}/collections/{collection}/indexes/{field}",
-            delete(delete_index),
-        )
-        .route(
-            "/api/v1/databases/{name}/collections/{collection}/schema",
-            get(get_schema).put(put_schema),
-        )
-        .route("/api/v1/databases/{name}/collections/{collection}/documents", get(list_documents))
-        .route(
-            "/api/v1/databases/{name}/collections/{collection}/documents/batch",
-            post(batch_documents),
-        )
-        .route(
-            "/api/v1/databases/{name}/collections/{collection}/documents/{id}",
-            get(get_document).put(put_document).patch(patch_document).delete(delete_document),
-        )
-        .route(
-            "/api/v1/databases/{name}/collections/{collection}/documents/{id}/history",
-            get(document_history),
-        )
-        .route("/api/v1/databases/{name}/tql", post(execute_tql))
-        .route("/api/v1/databases/{name}/reactive/poll", post(crate::reactive_api::poll))
-        .route("/api/v1/databases/{name}/reactive", get(crate::reactive_api::websocket))
-        .route("/api/v1/databases/{name}/usage", get(database_usage))
-        .route("/api/v1/databases/{name}/webhooks", get(list_webhooks).post(create_webhook))
-        .route("/api/v1/databases/{name}/webhooks/{id}", delete(delete_webhook))
-        .route("/api/v1/databases/{name}/backups", get(list_backups))
-        .route("/api/v1/databases/{name}/backups/restore", post(restore_backup))
-        .route("/api/v1/databases/{name}/branches", get(list_branches).post(create_branch))
+        .merge(Scalar::with_url("/scalar", openapi_document))
         .fallback(not_routed)
+        .layer(Extension(openapi_json))
         .layer(from_fn_with_state(Arc::clone(&state), authenticate))
         .with_state(state)
 }
@@ -546,6 +551,7 @@ async fn authenticate(
 
 /// Liveness of the public surface itself: the member answers, and its
 /// health registry's verdict rides the body.
+#[utoipa::path(get, path = "/api/v1/health", responses((status = 200, description = "Member health")))]
 async fn health(State(state): State<Arc<ApiState>>) -> Response {
     let healthy = state.metrics.snapshot().service_state() == ServiceState::Serving;
     let status = if healthy { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
@@ -560,6 +566,7 @@ async fn health(State(state): State<Arc<ApiState>>) -> Response {
 
 /// The member's own region and health (D-58): how a client discovers where
 /// its request landed.
+#[utoipa::path(get, path = "/api/v1/regions", responses((status = 200, description = "Serving region and health")))]
 async fn regions(State(state): State<Arc<ApiState>>) -> Response {
     let body = format!("{{\"region\":\"{}\",\"healthy\":true}}", state.region);
     let mut response = body.into_response();
@@ -570,12 +577,9 @@ async fn regions(State(state): State<Arc<ApiState>>) -> Response {
     response
 }
 
-/// The served contract. Hand-assembled from the route table; `make
-/// contracts` (S-00) generates it from the route definitions with `utoipa`
-/// once the monorepo's contract target exists.
-async fn openapi() -> Response {
-    let body = r#"{"openapi":"3.1.0","info":{"title":"TerraScale Public API","version":"v1"},"paths":{"/api/v1/health":{"get":{"description":"the member's health"}},"/api/v1/regions":{"get":{"description":"the member's own region and health"}},"/api/v1/openapi.json":{"get":{"description":"this document"}},"/api/v1/databases":{"get":{"description":"list databases"},"post":{"description":"create a database (placement + residency, D-52)"}},"/api/v1/databases/{name}":{"get":{"description":"one database's record"},"delete":{"description":"soft-delete (7-day restore window)"}},"/api/v1/databases/{name}/restore":{"post":{"description":"restore a soft-deleted database"}},"/api/v1/databases/{name}/collections":{"get":{"description":"list collections"}},"/api/v1/databases/{name}/collections/{collection}/indexes":{"get":{"description":"list index descriptors"},"post":{"description":"register an extracted index field (D-31)"}},"/api/v1/databases/{name}/collections/{collection}/indexes/recommendations":{"get":{"description":"auto-index recommendations (pending, #127 slice C)"}},"/api/v1/databases/{name}/collections/{collection}/indexes/{field}":{"delete":{"description":"retire an index (pending, D-31 lifecycle)"}},"/api/v1/databases/{name}/collections/{collection}/schema":{"get":{"description":"collection schema (pending, S-09)"},"put":{"description":"apply a collection schema (pending, S-09)"}},"/api/v1/databases/{name}/collections/{collection}/documents":{"get":{"description":"list documents (bounded paging)"}},"/api/v1/databases/{name}/collections/{collection}/documents/batch":{"post":{"description":"atomic batch of put/patch/delete"}},"/api/v1/databases/{name}/collections/{collection}/documents/{id}":{"get":{"description":"one document (ETag/304)"},"put":{"description":"create or replace"},"patch":{"description":"RFC 7386 merge patch"},"delete":{"description":"tombstone"}},"/api/v1/databases/{name}/collections/{collection}/documents/{id}/history":{"get":{"description":"retained revision history (D-42)"}},"/api/v1/databases/{name}/tql":{"post":{"description":"execute TQL (parameters, explain)"}},"/api/v1/databases/{name}/usage":{"get":{"description":"per-database usage (pending, S-08)"}},"/api/v1/databases/{name}/webhooks":{"get":{"description":"list webhooks (pending, S-07)"},"post":{"description":"create a webhook (pending, S-07)"}},"/api/v1/databases/{name}/webhooks/{id}":{"delete":{"description":"delete a webhook (pending, S-07)"}},"/api/v1/databases/{name}/backups":{"get":{"description":"backup policy and restore points (pending, S-06)"}},"/api/v1/databases/{name}/backups/restore":{"post":{"description":"restore to a new database (pending, S-06)"}},"/api/v1/databases/{name}/branches":{"get":{"description":"list branches (pending, S-06)"},"post":{"description":"create a branch (pending, S-06)"}}}}"#;
-    let mut response = body.into_response();
+/// Serves the OpenAPI contract generated while registering the routes.
+async fn openapi(Extension(body): Extension<Arc<String>>) -> Response {
+    let mut response = body.as_str().to_owned().into_response();
     response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     response
 }
@@ -587,6 +591,7 @@ async fn not_routed(request: Request) -> Response {
 
 /// Lists every database record, deleted records included (each record's
 /// body names its state).
+#[utoipa::path(get, path = "/api/v1/databases", responses((status = 200, description = "Database records")))]
 async fn list_databases(State(state): State<Arc<ApiState>>) -> Response {
     let Some(control) = state.control.clone() else {
         return ApiError::control_unavailable().into_response();
@@ -609,6 +614,7 @@ async fn list_databases(State(state): State<Arc<ApiState>>) -> Response {
 
 /// Creates one database from an explicit placement and optional residency
 /// constraint (D-52).
+#[utoipa::path(post, path = "/api/v1/databases", responses((status = 201, description = "Database created")))]
 async fn create_database(State(state): State<Arc<ApiState>>, body: String) -> Response {
     let Some(control) = state.control.clone() else {
         return ApiError::control_unavailable().into_response();
@@ -652,13 +658,24 @@ async fn create_database(State(state): State<Arc<ApiState>>, body: String) -> Re
     };
     let residency = request.get("residency").and_then(serde_json::Value::as_str);
     match control.create(name, &placement, residency) {
-        Ok(record) => record_response(StatusCode::CREATED, &record),
+        Ok(record) => {
+            // The backup stream attaches at creation (S-06): open the
+            // engine location so the database file exists, then start one
+            // stream child for it from its first moment.
+            if let Some(catalog) = state.catalog.clone() {
+                let _ = catalog.host_for(&state.scope.0, &state.scope.1, name);
+                let location = catalog.location_for(&state.scope.0, &state.scope.1, name);
+                let _ = state.backups.attach(name, &location, &state.backup_root, "24h");
+            }
+            record_response(StatusCode::CREATED, &record)
+        }
         Err(error) => ApiError::control(error).into_response(),
     }
 }
 
 /// Returns one database's record with the routing headers; a database this
 /// member's region does not host answers the 421 contract (D-58).
+#[utoipa::path(get, path = "/api/v1/databases/{name}", responses((status = 200, description = "Database record")))]
 async fn get_database(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
     let Some(control) = state.control.clone() else {
         return ApiError::control_unavailable().into_response();
@@ -676,18 +693,24 @@ async fn get_database(State(state): State<Arc<ApiState>>, Path(name): Path<Strin
     }
 }
 
-/// Soft-deletes one database: restorable for seven days.
+/// Soft-deletes one database: restorable for seven days. The backup
+/// stream stops with it; retention owns the artifacts (S-06).
+#[utoipa::path(delete, path = "/api/v1/databases/{name}", responses((status = 200, description = "Database soft-deleted")))]
 async fn delete_database(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
     let Some(control) = state.control.clone() else {
         return ApiError::control_unavailable().into_response();
     };
     match control.soft_delete(&name) {
-        Ok(record) => record_response(StatusCode::OK, &record),
+        Ok(record) => {
+            state.backups.detach(&name);
+            record_response(StatusCode::OK, &record)
+        }
         Err(error) => ApiError::control(error).into_response(),
     }
 }
 
 /// Restores one soft-deleted database inside its window.
+#[utoipa::path(post, path = "/api/v1/databases/{name}/restore", responses((status = 200, description = "Database restored")))]
 async fn restore_database(
     State(state): State<Arc<ApiState>>,
     Path(name): Path<String>,
@@ -702,6 +725,7 @@ async fn restore_database(
 }
 
 /// Lists the distinct collections a database's documents occupy.
+#[utoipa::path(get, path = "/api/v1/databases/{name}/collections", responses((status = 200, description = "Collections")))]
 async fn list_collections(
     State(state): State<Arc<ApiState>>,
     Path(name): Path<String>,
@@ -736,6 +760,7 @@ async fn list_collections(
 
 /// Lists one collection's index descriptors: field, state, and the rows
 /// the governed backfill still owes (D-31/D-42).
+#[utoipa::path(get, path = "/api/v1/databases/{name}/collections/{collection}/indexes", responses((status = 200, description = "Indexes")))]
 async fn list_indexes(
     State(state): State<Arc<ApiState>>,
     Path((name, collection)): Path<(String, String)>,
@@ -777,6 +802,7 @@ async fn list_indexes(
 /// gains stored columns written by the Rust write path, existing rows are
 /// backfilled inline inside the cost cap, and ordinary indexes cover the
 /// columns. Idempotent for an identical descriptor.
+#[utoipa::path(post, path = "/api/v1/databases/{name}/collections/{collection}/indexes", responses((status = 201, description = "Index created")))]
 async fn create_index(
     State(state): State<Arc<ApiState>>,
     Path((name, collection)): Path<(String, String)>,
@@ -841,6 +867,7 @@ async fn create_index(
 
 /// Index retirement (drop) fails closed until the D-31 lifecycle (usage
 /// tracking, merge, retire) lands with the auto-index audit.
+#[utoipa::path(delete, path = "/api/v1/databases/{name}/collections/{collection}/indexes/{field}", responses((status = 200, description = "Index retired")))]
 async fn delete_index(
     State(state): State<Arc<ApiState>>,
     Path((name, collection, field)): Path<(String, String, String)>,
@@ -857,6 +884,7 @@ async fn delete_index(
 
 /// Index recommendations read the auto-index audit, which the S-02 lane
 /// has not landed; the route fails closed rather than inventing advice.
+#[utoipa::path(get, path = "/api/v1/databases/{name}/collections/{collection}/indexes/recommendations", responses((status = 200, description = "Index recommendations")))]
 async fn index_recommendations(
     State(state): State<Arc<ApiState>>,
     Path((name, collection)): Path<(String, String)>,
@@ -873,6 +901,7 @@ async fn index_recommendations(
 
 /// Collection schemas are authored in TypeScript and applied by
 /// `terrascale push` (D-48); the route fails closed until that lane lands.
+#[utoipa::path(get, path = "/api/v1/databases/{name}/collections/{collection}/schema", responses((status = 200, description = "Collection schema")))]
 async fn get_schema(
     State(state): State<Arc<ApiState>>,
     Path((name, collection)): Path<(String, String)>,
@@ -888,6 +917,7 @@ async fn get_schema(
 }
 
 /// See [`get_schema`]: schemas arrive with `terrascale push` (D-48).
+#[utoipa::path(put, path = "/api/v1/databases/{name}/collections/{collection}/schema", responses((status = 200, description = "Collection schema updated")))]
 async fn put_schema(
     State(state): State<Arc<ApiState>>,
     Path((name, collection)): Path<(String, String)>,
@@ -904,6 +934,7 @@ async fn put_schema(
 
 /// Lists one collection's documents in canonical key order, with bounded
 /// paging (`?limit=`, `?after=` by identifier).
+#[utoipa::path(get, path = "/api/v1/databases/{name}/collections/{collection}/documents", responses((status = 200, description = "Documents")))]
 async fn list_documents(
     State(state): State<Arc<ApiState>>,
     Path((name, collection)): Path<(String, String)>,
@@ -1056,6 +1087,7 @@ fn merge_patch(base: &mut DocumentValue, patch: &DocumentValue) {
 /// One atomic batch of document mutations (create/replace, merge patch,
 /// delete) in a single engine transaction: every op commits together or
 /// the typed refusal names the offending op and nothing lands.
+#[utoipa::path(post, path = "/api/v1/databases/{name}/collections/{collection}/documents/batch", responses((status = 200, description = "Batch result")))]
 async fn batch_documents(
     State(state): State<Arc<ApiState>>,
     Path((name, collection)): Path<(String, String)>,
@@ -1276,9 +1308,10 @@ pub(crate) fn document_host(
     let Some(catalog) = state.catalog.clone() else {
         return Err(ApiError::control_unavailable());
     };
-    catalog
-        .host_for(&state.scope.0, &state.scope.1, name)
-        .map_err(|_| ApiError::database_not_found(name))
+    catalog.host_for(&state.scope.0, &state.scope.1, name).map_err(|error| {
+        eprintln!("document_host: host_for refused {name}: {:?}", error);
+        ApiError::database_not_found(name)
+    })
 }
 
 /// The typed refusal for a malformed collection or identifier path.
@@ -1305,6 +1338,7 @@ fn document_not_found(collection: &str, id: &str) -> ApiError {
 
 /// Returns one document with its `ETag`; `If-None-Match` is answered from
 /// the revision column alone — the body blob is never decoded on a 304.
+#[utoipa::path(get, path = "/api/v1/databases/{name}/collections/{collection}/documents/{id}", responses((status = 200, description = "Document")))]
 async fn get_document(
     State(state): State<Arc<ApiState>>,
     Path((name, collection, id)): Path<(String, String, String)>,
@@ -1377,6 +1411,7 @@ async fn get_document(
 
 /// Creates or replaces one document; the `ETag` of the result names the new
 /// revision.
+#[utoipa::path(put, path = "/api/v1/databases/{name}/collections/{collection}/documents/{id}", responses((status = 200, description = "Document stored")))]
 async fn put_document(
     State(state): State<Arc<ApiState>>,
     Path((name, collection, id)): Path<(String, String, String)>,
@@ -1485,6 +1520,7 @@ async fn put_document(
 /// RFC 7386 merge patch over one document: objects merge per field,
 /// `null` deletes a field, anything else replaces the whole value. The
 /// read-modify-write is one engine transaction against the snapshot.
+#[utoipa::path(patch, path = "/api/v1/databases/{name}/collections/{collection}/documents/{id}", responses((status = 200, description = "Document patched")))]
 async fn patch_document(
     State(state): State<Arc<ApiState>>,
     Path((name, collection, id)): Path<(String, String, String)>,
@@ -1590,6 +1626,7 @@ async fn patch_document(
 /// is journal retention). Conflict explanations — "why this version won" —
 /// ride the S-05 replication lane; a single-region document has no
 /// conflicts to explain yet.
+#[utoipa::path(get, path = "/api/v1/databases/{name}/collections/{collection}/documents/{id}/history", responses((status = 200, description = "Document history")))]
 async fn document_history(
     State(state): State<Arc<ApiState>>,
     Path((name, collection, id)): Path<(String, String, String)>,
@@ -1631,6 +1668,7 @@ async fn document_history(
 }
 
 /// Deletes one document (tombstone; the history route can explain it).
+#[utoipa::path(delete, path = "/api/v1/databases/{name}/collections/{collection}/documents/{id}", responses((status = 200, description = "Document deleted")))]
 async fn delete_document(
     State(state): State<Arc<ApiState>>,
     Path((name, collection, id)): Path<(String, String, String)>,
@@ -1700,6 +1738,7 @@ async fn delete_document(
 /// (S-03) over the S-02 parser and executor. The body carries the text,
 /// its declared grammar version (default `tql/1.0`), optional out-of-band
 /// parameters, and the `explain` request option (the plan, not the rows).
+#[utoipa::path(post, path = "/api/v1/databases/{name}/tql", responses((status = 200, description = "TQL result")))]
 async fn execute_tql(
     State(state): State<Arc<ApiState>>,
     Path(name): Path<String>,
@@ -1837,6 +1876,7 @@ fn render_explained_plan(grammar: &str, plan: &terrabase::query::QueryPlan) -> S
 }
 
 /// Usage export fails closed until op metering lands (S-08).
+#[utoipa::path(get, path = "/api/v1/databases/{name}/usage", responses((status = 200, description = "Database usage")))]
 async fn database_usage(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
     let Ok(_host) = document_host(&state, &name) else {
         return ApiError::database_not_found(&name).into_response();
@@ -1845,6 +1885,7 @@ async fn database_usage(State(state): State<Arc<ApiState>>, Path(name): Path<Str
 }
 
 /// Webhooks are a subscription whose consumer is an HTTP POST (S-07).
+#[utoipa::path(get, path = "/api/v1/databases/{name}/webhooks", responses((status = 200, description = "Webhooks")))]
 async fn list_webhooks(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
     let Ok(_host) = document_host(&state, &name) else {
         return ApiError::database_not_found(&name).into_response();
@@ -1853,11 +1894,13 @@ async fn list_webhooks(State(state): State<Arc<ApiState>>, Path(name): Path<Stri
 }
 
 /// See [`list_webhooks`].
+#[utoipa::path(post, path = "/api/v1/databases/{name}/webhooks", responses((status = 201, description = "Webhook created")))]
 async fn create_webhook(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
     list_webhooks(State(state), Path(name)).await
 }
 
 /// See [`list_webhooks`].
+#[utoipa::path(delete, path = "/api/v1/databases/{name}/webhooks/{id}", responses((status = 200, description = "Webhook deleted")))]
 async fn delete_webhook(
     State(state): State<Arc<ApiState>>,
     Path((name, _id)): Path<(String, String)>,
@@ -1868,28 +1911,137 @@ async fn delete_webhook(
     ApiError::pending_surface("webhooks", "change streams → webhooks (S-07)").into_response()
 }
 
-/// Backups ride Litestream per file (S-06).
+/// Backups ride Litestream per file (S-06): readiness is an artifact
+/// fact, never "the child process is alive".
+#[utoipa::path(get, path = "/api/v1/databases/{name}/backups", responses((status = 200, description = "Backup readiness")))]
 async fn list_backups(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
     let Ok(_host) = document_host(&state, &name) else {
         return ApiError::database_not_found(&name).into_response();
     };
-    ApiError::pending_surface("backup policy and restore points", "Litestream backups (S-06)")
-        .into_response()
+    let ready = state.backups.is_ready(&name);
+    json_response(
+        StatusCode::OK,
+        format!("{{\"ready\":{ready},\"streaming\":{}}}", state.backups.attached(&name)),
+    )
 }
 
-/// See [`list_backups`].
-async fn restore_backup(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
-    list_backups(State(state), Path(name)).await
+/// `POST /databases/{name}/backups/restore` — restores to a NEW database
+/// (D-29: a restore never lands on the live file), optionally at a point
+/// in time (`"at"`: unix milliseconds).
+#[utoipa::path(post, path = "/api/v1/databases/{name}/backups/restore", responses((status = 201, description = "Backup restored into a new database")))]
+async fn restore_backup(
+    State(state): State<Arc<ApiState>>,
+    Path(name): Path<String>,
+    body: String,
+) -> Response {
+    restore_or_branch(state, name, body, RestoreFlavor::Restore).await
 }
 
-/// See [`list_backups`]: branching is restore-plus-register (D-38/D-39).
+/// `POST /databases/{name}/branches` — restore plus register with parent
+/// metadata (D-38/D-39).
+#[utoipa::path(post, path = "/api/v1/databases/{name}/branches", responses((status = 201, description = "Branch created")))]
+async fn create_branch(
+    State(state): State<Arc<ApiState>>,
+    Path(name): Path<String>,
+    body: String,
+) -> Response {
+    restore_or_branch(state, name, body, RestoreFlavor::Branch).await
+}
+
+/// Whether the new database registers plain or as a branch.
+enum RestoreFlavor {
+    Restore,
+    Branch,
+}
+
+/// The shared restore-to-new-database path: register the target record,
+/// restore the file into the target's catalog location, and answer the
+/// record. A failed restore soft-deletes the record it just made so no
+/// half-born database lingers as live.
+async fn restore_or_branch(
+    state: Arc<ApiState>,
+    name: String,
+    body: String,
+    flavor: RestoreFlavor,
+) -> Response {
+    let Some(control) = state.control.clone() else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let Some(catalog) = state.catalog.clone() else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let request: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            return ApiError {
+                status: StatusCode::BAD_REQUEST,
+                code: "invalid_json",
+                message: "the request body is not the expected JSON object".into(),
+                fix: "send {\"name\":\"<new-database>\",\"at\":<unix-millis>?}".into(),
+                placement: None,
+            }
+            .into_response();
+        }
+    };
+    let Some(target) = request.get("name").and_then(serde_json::Value::as_str) else {
+        return ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "missing_name",
+            message: "the request names no target database".into(),
+            fix: "add \"name\": \"<new-database>\" to the request body".into(),
+            placement: None,
+        }
+        .into_response();
+    };
+    let at = request.get("at").and_then(serde_json::Value::as_i64);
+    let placement = [state.region];
+    let registered = match flavor {
+        RestoreFlavor::Restore => control.create(target, &placement, None),
+        RestoreFlavor::Branch => control.create_branch(target, &placement, None, &name),
+    };
+    let record = match registered {
+        Ok(record) => record,
+        Err(error) => return ApiError::control(error).into_response(),
+    };
+    let location = catalog.location_for(&state.scope.0, &state.scope.1, target);
+    // A resident host for the target must not hold the file the restore
+    // swaps (S-06: restore never writes under a live engine).
+    catalog.close_database(&state.scope.0, &state.scope.1, target);
+    let at_seconds = at.map(|millis| u64::try_from(millis.div_euclid(1000)).unwrap_or(0));
+    match state.backups.restore_to_location(&name, at_seconds, &location) {
+        Ok(()) => record_response(StatusCode::CREATED, &record),
+        Err(error) => {
+            let _ = control.soft_delete(target);
+            ApiError::backup(error).into_response()
+        }
+    }
+}
+
+/// Lists the database's branches: records whose parent names it.
+#[utoipa::path(get, path = "/api/v1/databases/{name}/branches", responses((status = 200, description = "Database branches")))]
 async fn list_branches(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
-    list_backups(State(state), Path(name)).await
-}
-
-/// See [`list_branches`].
-async fn create_branch(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
-    list_backups(State(state), Path(name)).await
+    let Some(control) = state.control.clone() else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let Ok(records) = control.list() else {
+        return ApiError::control(crate::control::ControlError::Registry(
+            "the registry did not answer".into(),
+        ))
+        .into_response();
+    };
+    let mut body = String::from("{\"branches\":[");
+    let branches: Vec<_> = records
+        .into_iter()
+        .filter(|record| record.parent.as_deref() == Some(name.as_str()))
+        .collect();
+    for (index, record) in branches.iter().enumerate() {
+        if index > 0 {
+            body.push(',');
+        }
+        push_record(&mut body, record);
+    }
+    body.push_str("]}");
+    json_response(StatusCode::OK, body)
 }
 
 /// The member's local tenant label: every hosted database serves under it
@@ -1986,6 +2138,15 @@ fn push_record(body: &mut String, record: &crate::control::DatabaseRecord) {
     body.push_str(if record.deleted { "true" } else { "false" });
     body.push_str(",\"created_at\":");
     body.push_str(&record.created_at.to_string());
+    body.push_str(",\"parent\":");
+    match &record.parent {
+        Some(parent) => {
+            body.push('"');
+            push_json_escaped(body, parent);
+            body.push('"');
+        }
+        None => body.push_str("null"),
+    }
     body.push('}');
 }
 
@@ -2038,6 +2199,8 @@ mod tests {
             catalog: None,
             scope: ("terrabase-local".into(), "local".into()),
             reactive: Arc::new(crate::reactive_api::ReactiveSessions::default()),
+            backups: Arc::new(crate::backup::BackupStreams::open_member()),
+            backup_root: std::env::temp_dir().join("terrabase-api-test-backup-root"),
             active_regions: 1,
         })
     }
@@ -2074,6 +2237,8 @@ mod tests {
             catalog: Some(Arc::new(catalog)),
             scope: ("terrabase-local".into(), "local".into()),
             reactive: Arc::new(crate::reactive_api::ReactiveSessions::default()),
+            backups: Arc::new(crate::backup::BackupStreams::open_member()),
+            backup_root: dir.join("backup"),
             active_regions: 3,
         })
     }
@@ -2110,12 +2275,24 @@ mod tests {
             ("/api/v1/databases/{name}/webhooks", "get"),
             ("/api/v1/databases/{name}/backups", "get"),
             ("/api/v1/databases/{name}/branches", "get"),
+            ("/api/v1/databases/{name}/reactive", "get"),
+            ("/api/v1/databases/{name}/reactive/poll", "post"),
         ] {
             assert!(
                 paths.get(path).is_some_and(|entry| entry.get(route).is_some()),
                 "the contract lists {route} {path}"
             );
         }
+        let response = router(state())
+            .oneshot(Request::get("/scalar").body(Body::empty()).expect("request"))
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 65_536).await.expect("body");
+        assert!(
+            body.windows(b"@scalar/api-reference".len())
+                .any(|part| { part == b"@scalar/api-reference" })
+        );
         let response = router(state())
             .oneshot(Request::get("/api/v1/health").body(Body::empty()).expect("request"))
             .await
@@ -2150,6 +2327,117 @@ mod tests {
             .await
             .expect("answers");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// The S-06 journey through the router: create (stream attaches),
+    /// write, restore to a new database, branch with parent metadata.
+    /// Skips when Litestream is not packaged on this machine.
+    #[tokio::test]
+    async fn backup_restore_and_branch_through_the_router() {
+        use crate::backup::BackupStreams;
+        if BackupStreams::discover().is_none() {
+            eprintln!("skipping: litestream is not on PATH");
+            return;
+        }
+        let state = state_with_keys_and_control();
+        let backup_root = state.backup_root.clone();
+        let fleet = Arc::clone(&state.backups);
+        let router = router(state);
+        let auth = "Bearer tskey_test_abcdefghijklmnop";
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header("authorization", auth)
+                    .body(Body::from(r#"{"name":"live","placement":["GRU"],"residency":null}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert!(fleet.attached("live"), "the stream attached at creation");
+        assert!(fleet.wait_until_ready("live", std::time::Duration::from_secs(30)), "ready");
+
+        // The write's WAL segment must ship before a restore can see it:
+        // the segment count must grow past the pre-write baseline
+        // (schema-init segments already in it don't count).
+        let wal = backup_root.join("live").join("ltx").join("0");
+        let shipped = |dir: &std::path::Path| {
+            std::fs::read_dir(dir).map(|entries| entries.flatten().count()).unwrap_or(0)
+        };
+        let baseline = shipped(&wal);
+        let response = router
+            .clone()
+            .oneshot(
+                Request::put("/api/v1/databases/live/collections/orders/documents/orders-1")
+                    .header("authorization", auth)
+                    .body(Body::from(r#"{"value":41}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert!(response.status().is_success(), "the document lands: {}", response.status());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while shipped(&wal) <= baseline {
+            assert!(std::time::Instant::now() < deadline, "the write shipped to the replica");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases/live/backups/restore")
+                    .header("authorization", auth)
+                    .body(Body::from(r#"{"name":"live-restored"}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED, "the restore registers");
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/databases/live-restored/collections/orders/documents")
+                    .header("authorization", auth)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("orders-1"), "the restored database serves the write: {body}");
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases/live/branches")
+                    .header("authorization", auth)
+                    .body(Body::from(r#"{"name":"live-branch"}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED, "the branch registers");
+        let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("\"parent\":\"live\""), "the branch carries parent metadata: {body}");
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/databases/live/branches")
+                    .header("authorization", auth)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("live-branch"), "the branch lists under its parent: {body}");
+        fleet.detach_all();
     }
 
     #[tokio::test]

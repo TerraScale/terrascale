@@ -33,8 +33,10 @@ pub const ENVELOPE_VERSION_MAJOR: u16 = 1;
 /// The supported envelope minor version. Additive changes bump it; a minor
 /// above the supported one fails closed rather than guessing. Minor 1
 /// (SE-07) adds the batched acknowledgement report
-/// ([`FrameKind::AckBatch`]); minor-0 frames decode unchanged.
-pub const ENVELOPE_VERSION_MINOR: u16 = 1;
+/// ([`FrameKind::AckBatch`]); minor 2 (S-05, ADR 0041 D-35/D-36) adds the
+/// journal tailer's replicated-record batch ([`FrameKind::ReplicationBatch`]);
+/// minor-0 and minor-1 frames decode unchanged.
+pub const ENVELOPE_VERSION_MINOR: u16 = 2;
 
 /// The digest length the codec writes and verifies.
 pub const DIGEST_BYTES: usize = 32;
@@ -82,6 +84,11 @@ pub enum FrameKind {
     /// acknowledgement of a K-operation push is one frame per peer, not K).
     /// Additive in envelope minor version 1.
     AckBatch,
+    /// One Member's journal tailer ships its committed journal rows as
+    /// replicated records to a peer region (ADR 0041 D-35/D-36: canonical
+    /// body bytes plus causal metadata, one frame per group-commit wave per
+    /// peer). Additive in envelope minor version 2.
+    ReplicationBatch,
 }
 
 impl FrameKind {
@@ -94,6 +101,7 @@ impl FrameKind {
             Self::Push => 3,
             Self::AckReport => 4,
             Self::AckBatch => 5,
+            Self::ReplicationBatch => 6,
         }
     }
 
@@ -109,6 +117,7 @@ impl FrameKind {
             3 => Ok(Self::Push),
             4 => Ok(Self::AckReport),
             5 => Ok(Self::AckBatch),
+            6 => Ok(Self::ReplicationBatch),
             _ => Err(EnvelopeError::UnsupportedKind),
         }
     }
@@ -122,6 +131,7 @@ impl FrameKind {
             Self::Push => "push",
             Self::AckReport => "ack-report",
             Self::AckBatch => "ack-batch",
+            Self::ReplicationBatch => "replication-batch",
         }
     }
 }
@@ -173,6 +183,157 @@ pub struct LaneCommit {
     pub sequence: u64,
     /// The reconstructed write set.
     pub writes: Vec<LaneWrite>,
+}
+
+/// The maximum nesting depth one [`LaneValue`] may carry: the wire form of
+/// the engine's document body, bounded so a hostile frame cannot demand
+/// unbounded recursion while decoding.
+pub const MAX_LANE_VALUE_DEPTH: u32 = 64;
+
+/// One structured document body as the lane carries it inside a replicated
+/// record: the engine's value model, typed on the wire field by field —
+/// never a free-form byte blob (the member-envelope discipline). Equality
+/// is bit equality (a float compares by its bit pattern), so the value
+/// remains a total order on the wire.
+#[derive(Clone, Debug)]
+pub enum LaneValue {
+    /// A null value.
+    Null,
+    /// A boolean value.
+    Boolean(bool),
+    /// A signed integer value.
+    Integer(i64),
+    /// A floating-point value.
+    Number(f64),
+    /// A text value.
+    String(String),
+    /// An ordered sequence of structured values.
+    Array(Vec<Self>),
+    /// A map of field names to structured values, in field-name order.
+    Object(Vec<(String, Self)>),
+}
+
+impl PartialEq for LaneValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Null, Self::Null) => true,
+            (Self::Boolean(left), Self::Boolean(right)) => left == right,
+            (Self::Integer(left), Self::Integer(right)) => left == right,
+            (Self::Number(left), Self::Number(right)) => left.to_bits() == right.to_bits(),
+            (Self::String(left), Self::String(right)) => left == right,
+            (Self::Array(left), Self::Array(right)) => left == right,
+            (Self::Object(left), Self::Object(right)) => left == right,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for LaneValue {}
+
+impl LaneValue {
+    /// Encodes the value at the given nesting depth.
+    fn encode(&self, out: &mut Vec<u8>, depth: u32) -> Result<(), EnvelopeError> {
+        if depth > MAX_LANE_VALUE_DEPTH {
+            return Err(EnvelopeError::FieldTooLarge);
+        }
+        match self {
+            Self::Null => put_u8(out, 0),
+            Self::Boolean(value) => {
+                put_u8(out, 1);
+                put_u8(out, u8::from(*value));
+            }
+            Self::Integer(value) => {
+                put_u8(out, 2);
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+            Self::Number(value) => {
+                put_u8(out, 3);
+                out.extend_from_slice(&value.to_bits().to_le_bytes());
+            }
+            Self::String(value) => {
+                put_u8(out, 4);
+                put_str(out, value)?;
+            }
+            Self::Array(items) => {
+                put_u8(out, 5);
+                put_u32(out, u32::try_from(items.len()).map_err(|_| EnvelopeError::Oversized)?);
+                for item in items {
+                    item.encode(out, depth + 1)?;
+                }
+            }
+            Self::Object(fields) => {
+                put_u8(out, 6);
+                put_u32(out, u32::try_from(fields.len()).map_err(|_| EnvelopeError::Oversized)?);
+                for (name, value) in fields {
+                    put_str(out, name)?;
+                    value.encode(out, depth + 1)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Decodes one value at the given nesting depth.
+    fn decode(cursor: &mut Cursor<'_>, depth: u32) -> Result<Self, EnvelopeError> {
+        if depth > MAX_LANE_VALUE_DEPTH {
+            return Err(EnvelopeError::MalformedLength);
+        }
+        let value = match cursor.take_u8()? {
+            0 => Self::Null,
+            1 => Self::Boolean(matches!(cursor.take_u8()?, 1)),
+            2 => Self::Integer(i64::from_le_bytes(wide_bytes(cursor)?)),
+            3 => Self::Number(f64::from_bits(u64::from_le_bytes(wide_bytes(cursor)?))),
+            4 => Self::String(take_str(cursor)?),
+            5 => {
+                let count = cursor.take_u32()? as usize;
+                if count > MAX_PAYLOAD_BYTES {
+                    return Err(EnvelopeError::MalformedLength);
+                }
+                let mut items = Vec::with_capacity(count.min(cursor.remaining()));
+                for _ in 0..count {
+                    items.push(Self::decode(cursor, depth + 1)?);
+                }
+                Self::Array(items)
+            }
+            6 => {
+                let count = cursor.take_u32()? as usize;
+                if count > MAX_PAYLOAD_BYTES {
+                    return Err(EnvelopeError::MalformedLength);
+                }
+                let mut fields =
+                    Vec::with_capacity(bounded_capacity(cursor, count, MIN_OBJECT_ENTRY_BYTES));
+                for _ in 0..count {
+                    let name = take_str(cursor)?;
+                    let value = Self::decode(cursor, depth + 1)?;
+                    fields.push((name, value));
+                }
+                Self::Object(fields)
+            }
+            _ => return Err(EnvelopeError::MalformedLength),
+        };
+        Ok(value)
+    }
+}
+
+/// One replicated record as the journal tailer ships it (ADR 0041 D-36):
+/// the canonical body plus the causal metadata — commit identity, source
+/// HLC stamp, source region — the receiving region's deterministic merge
+/// orders by. A tombstone carries `None` for the body.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReplicatedWrite {
+    /// The collection the document belongs to.
+    pub collection: CollectionName,
+    /// The document identity.
+    pub id: DocumentId,
+    /// The published body; `None` marks a tombstone.
+    pub body: Option<LaneValue>,
+    /// The source region's commit identity (the idempotency binding on the
+    /// receiver).
+    pub commit_ulid: String,
+    /// The source region's hybrid logical clock stamp.
+    pub hlc: u64,
+    /// The source region's identity.
+    pub origin: String,
 }
 
 /// The typed payload of one member envelope.
@@ -234,6 +395,16 @@ pub enum Payload {
         /// The observed operations with their durable holding, in the
         /// pushed batch's order.
         reports: Vec<(OperationId, bool)>,
+    },
+    /// Ships one journal tailer batch of replicated records to a peer
+    /// region (envelope minor 2, ADR 0041 D-35/D-36): one frame per
+    /// group-commit wave per peer, canonical body bytes plus causal
+    /// metadata.
+    ReplicationBatch {
+        /// The tenant the records belong to.
+        tenant: TenantId,
+        /// The shipped records in source journal order.
+        records: Vec<ReplicatedWrite>,
     },
 }
 
@@ -595,6 +766,14 @@ impl<'a> Cursor<'a> {
     }
 }
 
+/// Reads eight little-endian bytes as one wide word. Private to the value
+/// codec's integer and number arms.
+fn wide_bytes(cursor: &mut Cursor<'_>) -> Result<[u8; 8], EnvelopeError> {
+    let mut word = [0_u8; 8];
+    word.copy_from_slice(cursor.take_bytes(8)?);
+    Ok(word)
+}
+
 fn put_u8(out: &mut Vec<u8>, value: u8) {
     out.push(value);
 }
@@ -712,6 +891,21 @@ fn encode_payload(out: &mut Vec<u8>, payload: &Payload) -> Result<(), EnvelopeEr
                 put_u8(out, u8::from(*held_synced));
             }
         }
+        Payload::ReplicationBatch { tenant, records } => {
+            put_str(out, tenant.as_str())?;
+            put_u32(out, u32::try_from(records.len()).map_err(|_| EnvelopeError::Oversized)?);
+            for record in records {
+                put_str(out, record.collection.as_str())?;
+                put_str(out, record.id.as_str())?;
+                put_u8(out, u8::from(record.body.is_some()));
+                if let Some(body) = &record.body {
+                    body.encode(out, 0)?;
+                }
+                put_str(out, &record.commit_ulid)?;
+                put_u64(out, record.hlc);
+                put_str(out, &record.origin)?;
+            }
+        }
     }
     Ok(())
 }
@@ -757,6 +951,13 @@ fn encode_write(out: &mut Vec<u8>, write: &LaneWrite) -> Result<(), EnvelopeErro
 const MIN_ACK_REPORT_WIRE_BYTES: usize = 5;
 const MIN_COMMIT_WIRE_BYTES: usize = 32;
 const MIN_WRITE_WIRE_BYTES: usize = 13;
+/// The minimum wire bytes one decoded replicated record occupies (two empty
+/// identifier strings, the body tag, an empty commit identity, the HLC, and
+/// an empty origin — every counted field at its empty minimum).
+const MIN_REPLICATED_WIRE_BYTES: usize = 26;
+/// The minimum wire bytes one decoded object entry of a [`LaneValue`]
+/// occupies (a `u32` string length of zero plus one value tag byte).
+const MIN_OBJECT_ENTRY_BYTES: usize = 5;
 
 /// The decode capacity for a declared element count: the count, bounded by
 /// how many elements the cursor's remaining bytes could possibly hold.
@@ -830,6 +1031,32 @@ fn decode_payload(cursor: &mut Cursor<'_>, kind: FrameKind) -> Result<Payload, E
                 reports.push((operation, held_synced));
             }
             Ok(Payload::AckBatch { tenant, reports })
+        }
+        FrameKind::ReplicationBatch => {
+            let tenant =
+                TenantId::try_new(&take_str(cursor)?).map_err(|_| EnvelopeError::FieldTooLarge)?;
+            let count = cursor.take_u32()? as usize;
+            if count > MAX_PAYLOAD_BYTES {
+                return Err(EnvelopeError::MalformedLength);
+            }
+            let mut records =
+                Vec::with_capacity(bounded_capacity(cursor, count, MIN_REPLICATED_WIRE_BYTES));
+            for _ in 0..count {
+                let collection = CollectionName::try_new(&take_str(cursor)?)
+                    .map_err(|_| EnvelopeError::FieldTooLarge)?;
+                let id = DocumentId::try_new(&take_str(cursor)?)
+                    .map_err(|_| EnvelopeError::FieldTooLarge)?;
+                let body = match cursor.take_u8()? {
+                    0 => None,
+                    1 => Some(LaneValue::decode(cursor, 0)?),
+                    _ => return Err(EnvelopeError::MalformedLength),
+                };
+                let commit_ulid = take_str(cursor)?;
+                let hlc = cursor.take_u64()?;
+                let origin = take_str(cursor)?;
+                records.push(ReplicatedWrite { collection, id, body, commit_ulid, hlc, origin });
+            }
+            Ok(Payload::ReplicationBatch { tenant, records })
         }
     }
 }

@@ -26,6 +26,9 @@
 //! - [`replication`]: the cross-region journal tailer's in-process form
 //!   (D-35/D-36) — pull origin rows, apply them on a peer, idempotently;
 //!   the QUIC lanes drive the same apply path.
+//! - [`replication_lanes`]: the cross-region lanes (S-05, D-45) — the
+//!   tailer's pull/apply path driven over a fault-injectable
+//!   `MemberTransport`, one frame per pull with a credit window.
 //! - [`grpc`]: the tonic serving layer — prost⇄domain conversion,
 //!   metadata discipline, streaming subscriptions, and the UDS and
 //!   TLS listeners.
@@ -60,6 +63,7 @@ pub mod member_host;
 pub mod reactive;
 pub mod registry;
 pub mod replication;
+pub mod replication_lanes;
 pub mod value;
 
 /// The compiled protobuf contract (prost messages and tonic stubs).

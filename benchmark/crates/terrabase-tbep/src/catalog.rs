@@ -107,6 +107,14 @@ impl HostCatalog {
         })
     }
 
+    /// The location directory `host_for` opens for a database — without
+    /// opening it. Restore targets this path (S-06: the restored file
+    /// lands exactly where the catalog will find it).
+    #[must_use]
+    pub fn location_for(&self, tenant: &str, project: &str, database: &str) -> PathBuf {
+        self.root.join(tenant).join(project).join(database)
+    }
+
     /// Returns the resident member host for the database, lazily opening
     /// `root/tenant/project/database` on first use. The host is the TB-1a
     /// composition: one engine plus journal-derived delivery, so the
@@ -226,6 +234,26 @@ impl HostCatalog {
         // the catalog bounds its own resident set, not the references it
         // already handed out.
         drop(entry);
+    }
+
+    /// Closes one database's resident host by name (the LRU sweep's
+    /// eviction, on demand). Restore uses this to swap the database file
+    /// under a closed engine (S-06): the next `host_for` reopens the new
+    /// bytes. `None` when no host is resident.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the catalog lock is poisoned by a panicked open.
+    pub fn close_database(&self, tenant: &str, project: &str, database: &str) -> bool {
+        let key: ScopeKey = (tenant.to_owned(), project.to_owned(), database.to_owned());
+        let mut entries = self.entries.lock().expect("the catalog lock is not poisoned");
+        match entries.remove(&key) {
+            Some(entry) => {
+                Self::close(entry);
+                true
+            }
+            None => false,
+        }
     }
 }
 

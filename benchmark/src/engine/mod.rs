@@ -34,6 +34,7 @@ mod patch_tests;
 mod tests;
 
 pub use crate::storage::DatabaseOwner;
+pub use crate::storage::database_file;
 pub use authorized::{AuthorizedEngine, AuthorizedEngineError, AuthorizedSession};
 pub use ingest::{
     BulkIngestRequest, IngestBatchReceipt, IngestConflictMode, IngestReceipt, IngestRefusal,

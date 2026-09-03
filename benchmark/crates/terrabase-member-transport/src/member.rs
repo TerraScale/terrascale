@@ -927,6 +927,17 @@ impl LaneMember {
                         report.ack_reports += 1;
                     }
                 }
+                // The journal tailer's replicated-record batch (envelope
+                // minor 2) is the S-05 cross-region lane's frame, not this
+                // W4 protocol's: the driver records the rejection and never
+                // applies it — the RegionLink owns that apply path.
+                Payload::ReplicationBatch { .. } => {
+                    self.record_rejection(EnvelopeRejection {
+                        reason: EnvelopeError::UnsupportedKind,
+                        kind: Some(FrameKind::ReplicationBatch),
+                    });
+                    report.envelope_rejections += 1;
+                }
             }
         }
         // Serve the admitted catch-up requests. A peer whose bounded link

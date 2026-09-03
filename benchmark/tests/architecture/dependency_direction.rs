@@ -85,6 +85,13 @@ const LAYERS: &[(&str, u32)] = &[
 /// `DurableMember` adapter was the stand-in; the real WAL-frame follower
 /// and journal tailer attach through the `ProductionDataPlane` trait).
 /// ADR 0041 is the accepting record (GOAL D-35/D-36/D-45).
+///
+/// Review note (2026-09-03, issue #130 slice 2b): `terrabase-tbep` gained
+/// its edge onto `terrabase-member-transport` — the cross-region lanes
+/// (`replication_lanes`) drive the journal tailer's pull/apply path over
+/// the fault-injectable `MemberTransport` seam. The edge points strictly
+/// down the frozen layer order (6 -> 3), and ADR 0041 (GOAL D-45: pooled
+/// QUIC member lanes carry the journal tailer) is the accepting record.
 const ALLOWED_EDGES: &[(&str, &str)] = &[
     ("terrabase-crdt", "terrabase-causal"),
     ("terrabase-replication-core", "terrabase-causal"),
@@ -93,6 +100,7 @@ const ALLOWED_EDGES: &[(&str, &str)] = &[
     ("terrabase-tbep", "terrabase"),
     ("terrabase-tbep", "terrabase-sync-core"),
     ("terrabase-tbep", "terrabase-cluster"),
+    ("terrabase-tbep", "terrabase-member-transport"),
     ("terrabase-server", "terrabase"),
     ("terrabase-server", "terrabase-cluster"),
     ("terrabase-server", "terrabase-tbep"),

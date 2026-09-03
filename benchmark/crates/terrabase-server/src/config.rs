@@ -215,6 +215,10 @@ pub struct ServerConfig {
     /// Public `/api/v1` listener and its data root; `None` leaves the
     /// public surface unbound (the standalone TBEP-only shape).
     pub public_api: Option<PublicApiConfig>,
+    /// The static replication peers whose lanes this member enumerates;
+    /// empty when the configuration names none (fail closed: no lanes, no
+    /// replication).
+    pub replication_peers: Vec<ReplicationPeer>,
     /// Private Prometheus and probe listen address.
     pub observability_listen: SocketAddr,
     /// Maximum protobuf message size.
@@ -227,6 +231,19 @@ pub struct ServerConfig {
     pub tls_handshake_timeout: Duration,
     /// Graceful shutdown deadline.
     pub shutdown_grace: Duration,
+}
+
+/// One static replication peer the dev member composition dials
+/// (`SHORT_GOAL` section 1: "Members discover each other from a static peer
+/// list in the config"): a peer region's code and its replication
+/// endpoint. The runtime enumerates its cross-region lanes from this list;
+/// an absent list fails closed — no lanes, no replication.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReplicationPeer {
+    /// The peer's region.
+    pub region: Region,
+    /// The peer's replication (QUIC) endpoint.
+    pub address: SocketAddr,
 }
 
 /// Opt-in local Unix-domain socket configuration.
@@ -248,6 +265,21 @@ struct FileConfig {
     observability: FileObservability,
     #[serde(default)]
     public_api: Option<FilePublicApi>,
+    #[serde(default)]
+    replication: Option<FileReplication>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileReplication {
+    peers: Vec<FileReplicationPeer>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileReplicationPeer {
+    region: String,
+    address: String,
 }
 
 #[derive(Deserialize)]
@@ -484,6 +516,14 @@ impl ServerConfig {
         Self::parse_local(text)
     }
 
+    /// The static replication peers whose cross-region lanes this member
+    /// enumerates (`SHORT_GOAL` section 1). Empty means no lanes: the member
+    /// runs standalone and replicates nothing.
+    #[must_use]
+    pub fn replication_lanes(&self) -> &[ReplicationPeer] {
+        &self.replication_peers
+    }
+
     fn parse_local(text: &str) -> Result<Self, ConfigError> {
         let file: FileConfig = toml::from_str(text).map_err(ConfigError::ParseConfiguration)?;
         if file.mode.as_deref().is_some_and(|mode| mode != "local-development") {
@@ -561,6 +601,7 @@ impl ServerConfig {
                 Ok(UdsConfig { path: uds.path, mode: uds.mode })
             })
             .transpose()?;
+        let replication_peers = parse_replication_peers(file.replication.as_ref(), region)?;
         Ok(Self {
             mode: ServerMode::LocalDevelopment,
             production: None,
@@ -577,6 +618,7 @@ impl ServerConfig {
             gateway_principals,
             uds,
             public_api,
+            replication_peers,
             observability_listen,
             max_message_bytes: file.tbep.max_message_bytes,
             max_inflight: file.tbep.max_inflight,
@@ -718,6 +760,7 @@ impl ServerConfig {
             gateway_principals: production.transport.gateway_principals.clone(),
             uds,
             public_api: None,
+            replication_peers: Vec::new(),
             observability_listen: metrics_listen,
             max_message_bytes: file.transport.max_message_bytes,
             max_inflight: file.transport.max_inflight,
@@ -750,6 +793,43 @@ fn parse_region(value: &str) -> Result<RegionCode, ConfigError> {
     terrabase::regions::RegionCatalog::production()
         .parse(value)
         .map_err(|_| ConfigError::InvalidRegion)
+}
+
+/// Parses the static replication peer list (`SHORT_GOAL` section 1) against
+/// the member's own region: bounded, each peer a distinct known region
+/// with a dialable non-wildcard endpoint, never the member's own region.
+/// An absent section fails closed as an empty list — no lanes.
+fn parse_replication_peers(
+    file: Option<&FileReplication>,
+    own: Region,
+) -> Result<Vec<ReplicationPeer>, ConfigError> {
+    let Some(file) = file else { return Ok(Vec::new()) };
+    if file.peers.is_empty() || file.peers.len() > MAX_PEERS {
+        return Err(ConfigError::InvalidRegion);
+    }
+    let mut peers = Vec::with_capacity(file.peers.len());
+    let mut regions = BTreeSet::new();
+    let mut addresses = BTreeSet::new();
+    for peer in &file.peers {
+        let region = match peer.region.as_str() {
+            "GRU" => Region::Gru,
+            "SFO" => Region::Sfo,
+            "FRA" => Region::Fra,
+            _ => return Err(ConfigError::InvalidRegion),
+        };
+        let address =
+            peer.address.parse::<SocketAddr>().map_err(|_| ConfigError::InvalidListenAddress)?;
+        if region == own
+            || address.port() == 0
+            || address.ip().is_unspecified()
+            || !regions.insert(region)
+            || !addresses.insert(address)
+        {
+            return Err(ConfigError::InvalidListenAddress);
+        }
+        peers.push(ReplicationPeer { region, address });
+    }
+    Ok(peers)
 }
 
 fn region_label(region: RegionCode) -> Region {
@@ -1290,6 +1370,66 @@ capabilities = ["production", "tbep", "quic", "metrics", "oci-vault"]
         assert_eq!(production.transport.peers.len(), 3);
         assert_eq!(production.release.capabilities.len(), 5);
         assert_eq!(production.databases[0].encryption_provider, KeyProviderIdentity::OciVault);
+    }
+
+    #[test]
+    fn replication_peers_enumerate_as_lanes_and_fail_closed_when_absent() {
+        let base = valid();
+        let absent = ServerConfig::parse(&base).expect("the base configuration parses");
+        assert!(
+            absent.replication_lanes().is_empty(),
+            "an absent [replication] section fails closed: no lanes, no replication"
+        );
+
+        let configured = base
+            + r#"
+[[replication.peers]]
+region = "SFO"
+address = "127.0.0.1:7202"
+
+[[replication.peers]]
+region = "FRA"
+address = "127.0.0.1:7203"
+"#;
+        let config = ServerConfig::parse(&configured).expect("the peer list parses");
+        let lanes = config.replication_lanes();
+        assert_eq!(lanes.len(), 2);
+        assert_eq!(lanes[0].region, Region::Sfo);
+        assert_eq!(
+            lanes[0].address,
+            "127.0.0.1:7202".parse::<SocketAddr>().expect("the address parses")
+        );
+        assert_eq!(lanes[1].region, Region::Fra);
+    }
+
+    #[test]
+    fn replication_peers_reject_own_region_unknown_regions_and_undialable_addresses() {
+        let own = valid()
+            + r#"
+[[replication.peers]]
+region = "GRU"
+address = "127.0.0.1:7202"
+"#;
+        assert!(matches!(
+            ServerConfig::parse(&own).map(|config| config.replication_lanes().to_owned()),
+            Err(ConfigError::InvalidListenAddress)
+        ));
+
+        let unknown = valid()
+            + r#"
+[[replication.peers]]
+region = "SYD"
+address = "127.0.0.1:7202"
+"#;
+        assert!(matches!(ServerConfig::parse(&unknown), Err(ConfigError::InvalidRegion)));
+
+        let wildcard = valid()
+            + r#"
+[[replication.peers]]
+region = "SFO"
+address = "0.0.0.0:7202"
+"#;
+        assert!(matches!(ServerConfig::parse(&wildcard), Err(ConfigError::InvalidListenAddress)));
     }
 
     #[test]

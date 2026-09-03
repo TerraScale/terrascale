@@ -155,6 +155,12 @@ const SQLITE_FORMAT_VERSION: u64 = 2;
 /// The database file name inside one location directory.
 const DATABASE_FILE: &str = "terrabase.sqlite3";
 
+/// The database file's path inside one location directory — the file
+/// Litestream streams per database (D-29).
+pub fn database_file(location: &Path) -> PathBuf {
+    location.join(DATABASE_FILE)
+}
+
 /// The read-pool width. Reads take `&self`, so the pool is what lets a
 /// future engine-side read-concurrency split use this backend unchanged.
 const READ_POOL_WIDTH: usize = 4;
