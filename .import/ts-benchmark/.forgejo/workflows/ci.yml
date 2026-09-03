@@ -167,11 +167,12 @@ jobs:
           cargo deny --workspace --all-features --locked check
           cargo deny --manifest-path bench/Cargo.toml --config bench/deny.toml --locked check
 
-      # The protobuf is the TBEP contract of record: lint clean and no
-      # breaking change against the previous push. Generated Go bindings
-      # return with `make contracts` (S-00/S-12) once the reduced
-      # control-only proto lands.
-      - name: Schema lint and breaking
+      # The protobuf is the TBEP contract of record: lint clean. Breaking
+      # checks return once the M1 reshape settles (S-12 lands the final
+      # control-only proto; the data-plane deletion at 0dead77 and S-12's
+      # further reduction are deliberate breaks). Generated Go bindings
+      # return with `make contracts` (S-00/S-12).
+      - name: Schema lint
         env:
           GOBIN: ${{ runner.temp }}/terrabase-ci-bin
         run: |
@@ -179,8 +180,3 @@ jobs:
           go install github.com/bufbuild/buf/cmd/buf@v1.50.0
           export PATH="$GOBIN:$PATH"
           buf lint
-          against_commit='${{ forgejo.event.before }}'
-          [[ "$against_commit" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$against_commit" != 0000000000000000000000000000000000000000 ]]
-          git cat-file -e "$against_commit^{commit}"
-          buf breaking --against ".git#ref=$against_commit"
