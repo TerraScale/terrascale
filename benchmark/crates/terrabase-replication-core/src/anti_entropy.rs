@@ -12,7 +12,6 @@ use std::fmt;
 use terrabase_causal::{CanonicalEncode, CausalContext, DatabaseId, PartitionId, TenantId};
 
 use crate::{GapRange, ReplicationProgress};
-use crate::{ReplicaDoc, ReplicaValue};
 
 /// The native digest width.
 pub type Hash32 = [u8; 32];
@@ -448,34 +447,6 @@ impl fmt::Display for RepairError {
 
 impl std::error::Error for RepairError {}
 
-/// Builds an anti-entropy tree from a native replica. The causal frontier is
-/// included in every object entry, so equal visible state with different
-/// causal history still produces different causal roots.
-///
-/// # Errors
-///
-/// Returns an error when the supplied tree bounds cannot represent the replica.
-pub fn tree_for_replica(
-    replica: &ReplicaDoc,
-    leaf_entries: usize,
-    max_leaves: usize,
-) -> Result<MerkleTree, RepairError> {
-    let causal = replica.frontier().context().canonical_bytes();
-    let mut entries = replica
-        .materialized()
-        .into_iter()
-        .map(|(document, body)| {
-            MerkleEntry::new(document.into_bytes(), causal.clone(), canonical_scope_body(&body))
-        })
-        .collect::<Vec<_>>();
-    if entries.is_empty() {
-        // Keep a causal-only leaf even when the visible state is empty (for
-        // example, after a delete or when a replica has only retained dots).
-        entries.push(MerkleEntry::new(b"\0frontier", causal, Vec::new()));
-    }
-    MerkleTree::build_bounded(entries, leaf_entries, max_leaves)
-}
-
 /// A trigger that requests an anti-entropy exchange.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum AntiEntropyTrigger {
@@ -834,49 +805,6 @@ fn hash(domain: &'static str, bytes: &[u8]) -> Hash32 {
 fn put_bytes(output: &mut Vec<u8>, bytes: &[u8]) {
     output.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
     output.extend_from_slice(bytes);
-}
-
-fn canonical_scope_body(body: &BTreeMap<String, ReplicaValue>) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    for (key, value) in body {
-        put_bytes(&mut bytes, key.as_bytes());
-        canonical_value(value, &mut bytes);
-    }
-    bytes
-}
-
-fn canonical_value(value: &ReplicaValue, output: &mut Vec<u8>) {
-    match value {
-        ReplicaValue::Null => output.push(0),
-        ReplicaValue::Boolean(value) => output.extend_from_slice(&[1, u8::from(*value)]),
-        ReplicaValue::Integer(value) => {
-            output.push(2);
-            output.extend_from_slice(&value.to_be_bytes());
-        }
-        ReplicaValue::Number { bits } => {
-            output.push(3);
-            output.extend_from_slice(&bits.to_be_bytes());
-        }
-        ReplicaValue::Text(value) => {
-            output.push(4);
-            put_bytes(output, value.as_bytes());
-        }
-        ReplicaValue::Array(values) => {
-            output.push(5);
-            output.extend_from_slice(&(values.len() as u64).to_be_bytes());
-            for value in values {
-                canonical_value(value, output);
-            }
-        }
-        ReplicaValue::Object(values) => {
-            output.push(6);
-            output.extend_from_slice(&(values.len() as u64).to_be_bytes());
-            for (key, value) in values {
-                put_bytes(output, key.as_bytes());
-                canonical_value(value, output);
-            }
-        }
-    }
 }
 
 /// Hashes one causal context with the anti-entropy causal domain.

@@ -1,10 +1,18 @@
 ---
-status: accepted
+status: superseded
+superseded-by: 0041-replication-on-sqlite.md
 date: 2026-08-29
 authority: ../../../GOAL.md
 ---
 
 # Native replication, repair, and compaction
+
+Superseded by ADR 0041 (2026-09-03): the intra-region two-writer state
+machine and the per-field CRDT replay model below are deleted — intra-region
+replication is a physical WAL-frame follower and cross-region replication is
+a journal tailer over document-level causal metadata (GOAL D-35/D-36/D-45).
+Kept where the workspace goal still cites them: the progress-position
+vocabulary, anti-entropy triggers, and corruption quarantine posture.
 
 ## Context
 

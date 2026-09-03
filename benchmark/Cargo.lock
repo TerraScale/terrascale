@@ -1769,7 +1769,6 @@ dependencies = [
  "serde_json",
  "terrabase",
  "terrabase-member-transport",
- "terrabase-replication-core",
 ]
 
 [[package]]
@@ -1797,9 +1796,7 @@ dependencies = [
 name = "terrabase-replication-core"
 version = "0.1.0"
 dependencies = [
- "terrabase",
  "terrabase-causal",
- "terrabase-crdt",
 ]
 
 [[package]]

@@ -12,21 +12,20 @@ default = ["local-crypto"]
 local-crypto = [
   "terrabase/local-crypto",
   "terrabase-member-transport/local-crypto",
-  "terrabase-replication-core/local-crypto",
 ]
 production-fips = [
   "terrabase/production-fips",
   "terrabase-member-transport/production-fips",
-  "terrabase-replication-core/production-fips",
 ]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# The leaderless core P5 drives: ComposedMember, ReplicaSet, the
-# coordinators, and the engine beneath them.
-terrabase-replication-core = { path = "../terrabase-replication-core", default-features = false }
+# The engine core and the authenticated member transport. The
+# replication-core edge is gone with the per-field LWW stand-in
+# (issue #130, ADR 0041); the real data plane attaches through
+# `ProductionDataPlane`.
 terrabase-member-transport = { path = "../terrabase-member-transport", default-features = false }
 terrabase = { path = "../..", default-features = false }
 

@@ -75,14 +75,21 @@ const LAYERS: &[(&str, u32)] = &[
 /// (WebSocket + HTTP poll) serve the result-view subscription engine's
 /// frames (D-38/D-46). The edge points strictly down the frozen layer
 /// order (7 -> 3).
+///
+/// Review note (2026-09-03, issue #130): the S-05 opening deletion removed
+/// three edges. `terrabase-replication-core` lost `terrabase-crdt` and
+/// `terrabase` (the per-field LWW replica model and its in-process member
+/// stand-ins are deleted; the crate keeps the progress and Merkle
+/// anti-entropy kernels over `terrabase-causal` only), and
+/// `terrabase-cluster` lost `terrabase-replication-core` (its lease-backed
+/// `DurableMember` adapter was the stand-in; the real WAL-frame follower
+/// and journal tailer attach through the `ProductionDataPlane` trait).
+/// ADR 0041 is the accepting record (GOAL D-35/D-36/D-45).
 const ALLOWED_EDGES: &[(&str, &str)] = &[
     ("terrabase-crdt", "terrabase-causal"),
     ("terrabase-replication-core", "terrabase-causal"),
-    ("terrabase-replication-core", "terrabase-crdt"),
-    ("terrabase-replication-core", "terrabase"),
     ("terrabase-cluster", "terrabase"),
     ("terrabase-cluster", "terrabase-member-transport"),
-    ("terrabase-cluster", "terrabase-replication-core"),
     ("terrabase-tbep", "terrabase"),
     ("terrabase-tbep", "terrabase-sync-core"),
     ("terrabase-tbep", "terrabase-cluster"),

@@ -1,14 +1,13 @@
-# `terrabase-replication-core` — the P2 leaderless multi-writer CRDT
-# plane (ADR 0018). The opposite shape of the client sync seam: every
-# Member of a replica set is a distinct CRDT peer-writer, and the
-# exchange is member-to-member frontier summaries and delta batches per
-# the frozen leaderless contract §5 (anti-entropy) and §8 scenarios 6,
-# 11, and 13.
-#
-# The datatypes are TerraBase-native: LWW registers from
-# `terrabase-crdt` joined over the dotted version vectors and causal
-# contexts of `terrabase-causal`. No external CRDT engine is a
-# dependency of this crate.
+# `terrabase-replication-core` — replication support kernels for the
+# SQLite storage plane (ADR 0041; GOAL.md D-35/D-36/D-45). Intra-region
+# replication is a physical WAL-frame follower and cross-region is a
+# journal tailer over document-level causal metadata, so no per-field
+# CRDT model lives here (issue #130 deleted it). The crate owns the
+# transport- and storage-independent kernels both planes reuse:
+# durable counter-stream progress with retention guards, and the
+# dual-root Merkle anti-entropy, repair-planning, and scheduling
+# kernels. Hashes go through the native causal codec's
+# domain-separated BLAKE3 helper; no second crypto dependency.
 
 [package]
 name = "terrabase-replication-core"
@@ -16,13 +15,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
-description = "TerraBase leaderless multi-writer replication core: per-Member native CRDT replicas, frontier summaries, member-to-member delta exchange"
+description = "TerraBase replication support kernels: durable replication progress, retention guards, and deterministic Merkle anti-entropy"
 publish = false
-
-[features]
-default = ["local-crypto"]
-local-crypto = ["terrabase/local-crypto"]
-production-fips = ["terrabase/production-fips"]
 
 [lints.rust]
 unsafe_code = "deny"
@@ -33,5 +27,3 @@ pedantic = "warn"
 
 [dependencies]
 terrabase-causal = { path = "../terrabase-causal" }
-terrabase-crdt = { path = "../terrabase-crdt" }
-terrabase = { path = "../..", default-features = false }
