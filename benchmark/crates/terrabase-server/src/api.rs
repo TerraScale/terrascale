@@ -217,6 +217,127 @@ impl ApiError {
         }
     }
 
+    /// One typed TQL refusal: every parser class spells its remedy, and the
+    /// message carries the offending construct and source position when the
+    /// error has one (D-56).
+    #[must_use]
+    pub fn tql(error: &terrabase::query::tql::TqlError) -> Self {
+        use terrabase::query::tql::TqlErrorClass;
+        let (code, fix): (&'static str, &str) = match error.class() {
+            TqlErrorClass::MissingGrammarVersion => {
+                ("missing_grammar_version", "declare the version: add \"grammar\":\"tql/1.0\"")
+            }
+            TqlErrorClass::UnsupportedGrammarVersion => (
+                "unsupported_grammar_version",
+                "declare \"grammar\":\"tql/1.0\" — the only implemented version",
+            ),
+            TqlErrorClass::ParseError => {
+                ("tql_parse_error", "fix the text at the reported position (docs/tql/examples.md)")
+            }
+            TqlErrorClass::UnknownFunction => {
+                ("unknown_function", "call a tql/1.0 registry function (docs/tql/spec.md §7)")
+            }
+            TqlErrorClass::InvalidArgument => {
+                ("invalid_tql_argument", "match the registry function's arity and argument types")
+            }
+            TqlErrorClass::UnboundParameter => {
+                ("missing_parameter", "bind the $name in the request's parameters object")
+            }
+            TqlErrorClass::UnexpectedParameter => {
+                ("unexpected_parameter", "remove bindings the text does not reference")
+            }
+            TqlErrorClass::CapabilityUnavailable => (
+                "capability_unavailable",
+                "this engine does not ship the capability yet; drop the predicate",
+            ),
+            TqlErrorClass::InvalidBound => {
+                ("tql_bound_exceeded", "keep limit/offset within the documented bounds")
+            }
+            TqlErrorClass::InvalidIdentifier | TqlErrorClass::ReservedName => {
+                ("invalid_tql_identifier", "use a plain, unreserved identifier")
+            }
+            TqlErrorClass::UnsupportedForPlanning => (
+                "tql_not_plannable",
+                "the construct parses but has no exact plan yet; see docs/tql/examples.md",
+            ),
+            TqlErrorClass::InvalidRequest => {
+                ("invalid_tql_request", "the request context was refused; resend unchanged")
+            }
+        };
+        let mut message = format!("the TQL text was refused ({code})");
+        if let Some(construct) = error.construct() {
+            message.push_str(": ");
+            message.push_str(construct);
+        }
+        if let Some(position) = error.position() {
+            use std::fmt::Write;
+            let _ = write!(message, " at line {}, column {}", position.line(), position.column());
+        }
+        Self { status: StatusCode::BAD_REQUEST, code, message, fix: fix.into(), placement: None }
+    }
+
+    /// One typed compile/execution refusal off the query seam.
+    #[must_use]
+    pub fn query(error: terrabase::query::QueryError) -> Self {
+        use terrabase::query::QueryError;
+        match error {
+            QueryError::IndexNotReady => Self {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                code: "index_not_ready",
+                message: "a required index is still building".into(),
+                fix: "retry in 800 ms, or wait for the build (terrascale index wait <database>)"
+                    .into(),
+                placement: None,
+            },
+            QueryError::Deadline => Self {
+                status: StatusCode::GATEWAY_TIMEOUT,
+                code: "query_deadline",
+                message: "the query outlived its execution bound".into(),
+                fix: "narrow the filter or page the results; the server bound is 30 s".into(),
+                placement: None,
+            },
+            QueryError::CandidateBoundExceeded
+            | QueryError::IncludeBoundExceeded
+            | QueryError::IncludeCycle => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                code: "query_bound_exceeded",
+                message: "the query's candidate or include window exceeded its bound".into(),
+                fix: "narrow the filter, reduce the page, or bound the include depth".into(),
+                placement: None,
+            },
+            QueryError::InvalidSpec => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                code: "invalid_tql_spec",
+                message: "the compiled specification is not executable as written".into(),
+                fix: "rewrite the query within the surface docs/tql/examples.md documents".into(),
+                placement: None,
+            },
+            QueryError::EngineClosed | QueryError::StorageFailure => Self {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                code: "storage_failure",
+                message: "the engine could not serve the query".into(),
+                fix: "check the member's health, then retry once".into(),
+                placement: None,
+            },
+            QueryError::TenantMismatch
+            | QueryError::SnapshotEngineMismatch
+            | QueryError::SnapshotTenantMismatch => Self {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "query_binding_failure",
+                message: "the query's tenant or snapshot binding did not line up".into(),
+                fix: "this is a server-side wiring fault; retry once, then report it".into(),
+                placement: None,
+            },
+            QueryError::Cancelled => Self {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "query_cancelled",
+                message: "the query was cancelled before it finished".into(),
+                fix: "retry the query".into(),
+                placement: None,
+            },
+        }
+    }
+
     /// An unrouted path under the API prefix: the envelope names the fix.
     #[must_use]
     pub fn not_routed(path: &str) -> Self {
@@ -336,6 +457,7 @@ pub fn router(state: Arc<ApiState>) -> Router {
             "/api/v1/databases/{name}/collections/{collection}/documents/{id}",
             get(get_document).put(put_document).patch(patch_document).delete(delete_document),
         )
+        .route("/api/v1/databases/{name}/tql", post(execute_tql))
         .fallback(not_routed)
         .layer(from_fn_with_state(Arc::clone(&state), authenticate))
         .with_state(state)
@@ -706,7 +828,7 @@ fn merge_patch(base: &mut DocumentValue, patch: &DocumentValue) {
 /// the typed refusal names the offending op and nothing lands.
 async fn batch_documents(
     State(state): State<Arc<ApiState>>,
-    Path((name, collection)): Path<(String, String, String)>,
+    Path((name, collection)): Path<(String, String)>,
     headers: axum::http::HeaderMap,
     body: String,
 ) -> Response {
@@ -768,53 +890,8 @@ async fn batch_documents(
         return ApiError::control_unavailable().into_response();
     };
     for (index, item) in operations.iter().enumerate() {
-        let id = item.get("id").and_then(serde_json::Value::as_str);
-        let Some(id) = id else {
-            return batch_refusal(index, "missing_id", "the op names no document");
-        };
-        let Ok(id) = DocumentId::try_new(id) else {
-            return batch_refusal(index, "invalid_identifier", "the op's id is not valid");
-        };
-        match item.get("op").and_then(serde_json::Value::as_str) {
-            Some("put") => {
-                let Some(value) = item.get("value") else {
-                    return batch_refusal(index, "missing_value", "the put names no value");
-                };
-                let document = Document::new(id, collection.clone(), json_value(value));
-                if transaction.put(document, ExpectedVersion::Any).is_err() {
-                    return batch_refusal(index, "staging_refused", "the put could not stage");
-                }
-            }
-            Some("patch") => {
-                let existing = transaction.read_in_collection(&collection, &id);
-                let Ok(Some(existing)) = existing else {
-                    return batch_refusal(
-                        index,
-                        "document_not_found",
-                        "the patch target is absent",
-                    );
-                };
-                let mut merged = existing.value().clone();
-                merge_patch(
-                    &mut merged,
-                    &json_value(item.get("value").unwrap_or(&serde_json::Value::Null)),
-                );
-                let patched = Document::new(id, collection.clone(), merged);
-                if transaction.put(patched, ExpectedVersion::Any).is_err() {
-                    return batch_refusal(index, "staging_refused", "the patch could not stage");
-                }
-            }
-            Some("delete") => {
-                if transaction.read_in_collection(&collection, &id).ok().flatten().is_none() {
-                    return batch_refusal(
-                        index,
-                        "document_not_found",
-                        "the delete target is absent",
-                    );
-                }
-                transaction.delete_in_collection(&collection, id, ExpectedVersion::Any);
-            }
-            _ => return batch_refusal(index, "unknown_op", "op must be put, patch, or delete"),
+        if let Err((code, message)) = stage_batch_operation(&mut transaction, &collection, item) {
+            return batch_refusal(index, code, message);
         }
     }
     match transaction.commit(durability) {
@@ -847,6 +924,57 @@ async fn batch_documents(
         }
         .into_response(),
     }
+}
+
+/// Stages one batch operation onto the transaction. `Err` carries the
+/// refusal's code and message; the caller renders it against the op's
+/// index and nothing the batch staged lands.
+fn stage_batch_operation(
+    transaction: &mut terrabase::Transaction<'_>,
+    collection: &CollectionName,
+    item: &serde_json::Value,
+) -> Result<(), (&'static str, &'static str)> {
+    let id = item.get("id").and_then(serde_json::Value::as_str);
+    let Some(id) = id else {
+        return Err(("missing_id", "the op names no document"));
+    };
+    let Ok(id) = DocumentId::try_new(id) else {
+        return Err(("invalid_identifier", "the op's id is not valid"));
+    };
+    match item.get("op").and_then(serde_json::Value::as_str) {
+        Some("put") => {
+            let Some(value) = item.get("value") else {
+                return Err(("missing_value", "the put names no value"));
+            };
+            let document = Document::new(id, collection.clone(), json_value(value));
+            if transaction.put(document, ExpectedVersion::Any).is_err() {
+                return Err(("staging_refused", "the put could not stage"));
+            }
+        }
+        Some("patch") => {
+            let existing = transaction.read_in_collection(collection, &id);
+            let Ok(Some(existing)) = existing else {
+                return Err(("document_not_found", "the patch target is absent"));
+            };
+            let mut merged = existing.value().clone();
+            merge_patch(
+                &mut merged,
+                &json_value(item.get("value").unwrap_or(&serde_json::Value::Null)),
+            );
+            let patched = Document::new(id, collection.clone(), merged);
+            if transaction.put(patched, ExpectedVersion::Any).is_err() {
+                return Err(("staging_refused", "the patch could not stage"));
+            }
+        }
+        Some("delete") => {
+            if transaction.read_in_collection(collection, &id).ok().flatten().is_none() {
+                return Err(("document_not_found", "the delete target is absent"));
+            }
+            transaction.delete_in_collection(collection, id, ExpectedVersion::Any);
+        }
+        _ => return Err(("unknown_op", "op must be put, patch, or delete")),
+    }
+    Ok(())
 }
 
 /// One batch operation's typed refusal: the index names the offender.
@@ -1228,11 +1356,157 @@ async fn delete_document(
     }
 }
 
+/// Executes one TQL text against a database: the public query surface
+/// (S-03) over the S-02 parser and executor. The body carries the text,
+/// its declared grammar version (default `tql/1.0`), optional out-of-band
+/// parameters, and the `explain` request option (the plan, not the rows).
+async fn execute_tql(
+    State(state): State<Arc<ApiState>>,
+    Path(name): Path<String>,
+    body: String,
+) -> Response {
+    let Ok(host) = document_host(&state, &name) else {
+        return ApiError::database_not_found(&name).into_response();
+    };
+    let engine = host.engine();
+    let Ok(scope) = document_scope(engine) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let Ok(tenant) = local_tenant() else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let request: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            return ApiError {
+                status: StatusCode::BAD_REQUEST,
+                code: "invalid_json",
+                message: "the tql body is not JSON".into(),
+                fix: "send {\"tql\":\"from c where …\",\"parameters\":{…},\"explain\":false}"
+                    .into(),
+                placement: None,
+            }
+            .into_response();
+        }
+    };
+    let Some(text) = request.get("tql").and_then(serde_json::Value::as_str) else {
+        return ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "missing_tql",
+            message: "the request names no TQL text".into(),
+            fix: "add \"tql\": \"from <collection> where …\" to the request body".into(),
+            placement: None,
+        }
+        .into_response();
+    };
+    let grammar = request.get("grammar").and_then(serde_json::Value::as_str).unwrap_or("tql/1.0");
+    let mut parameters = terrabase::query::tql::TqlParameters::new();
+    if let Some(fields) = request.get("parameters").and_then(serde_json::Value::as_object) {
+        for (parameter, value) in fields {
+            if let Err(error) = parameters.insert(parameter, json_value(value)) {
+                return ApiError::tql(&error).into_response();
+            }
+        }
+    }
+    let query = match terrabase::query::tql::parse_artifact(
+        Some(grammar),
+        text,
+        &parameters,
+        &terrabase::query::tql::TqlCapabilities::none(),
+    ) {
+        Ok(query) => query,
+        Err(error) => return ApiError::tql(&error).into_response(),
+    };
+    let store = engine.queries();
+    // ponytail: a fixed 30 s bound; a per-request deadline option rides the
+    // reactive transport (S-04), which is the only long-running surface.
+    let Ok(deadline) = terrabase::Deadline::after(std::time::Duration::from_secs(30)) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    let plan = match terrabase::query::tql::compile(
+        &store,
+        &query,
+        &parameters,
+        tenant,
+        deadline,
+        terrabase::Cancellation::new(),
+    ) {
+        Ok(plan) => plan,
+        Err(error) => return ApiError::tql(&error).into_response(),
+    };
+    if request.get("explain").and_then(serde_json::Value::as_bool) == Some(true) {
+        return json_response(StatusCode::OK, render_explained_plan(grammar, &plan));
+    }
+    let Ok(snapshot) = engine.read_snapshot(&scope) else {
+        return ApiError::control_unavailable().into_response();
+    };
+    match store.execute(&plan, &snapshot) {
+        Ok(result) => {
+            let mut rendered = String::from("{\"matched\":");
+            rendered.push_str(&result.matched().to_string());
+            rendered.push_str(",\"rows\":[");
+            for (index, row) in result.rows().iter().enumerate() {
+                if index > 0 {
+                    rendered.push(',');
+                }
+                rendered.push_str("{\"id\":\"");
+                push_json_escaped(&mut rendered, row.document().id().as_str());
+                rendered.push_str("\",\"value\":");
+                push_value(&mut rendered, row.document().value());
+                rendered.push('}');
+            }
+            rendered.push_str("]}");
+            json_response(StatusCode::OK, rendered)
+        }
+        Err(error) => ApiError::query(error).into_response(),
+    }
+}
+
+/// Renders the explained plan of one compiled TQL query (the `explain`
+/// request option, docs/tql/examples.md §12).
+// ponytail: access/indexes/dependencies join when the S-02 auto-index audit
+// reports descriptor state (the documented shape in full).
+fn render_explained_plan(grammar: &str, plan: &terrabase::query::QueryPlan) -> String {
+    let mut explained = String::from("{\"grammar\":\"");
+    push_json_escaped(&mut explained, grammar);
+    explained.push_str("\",\"collection\":");
+    match plan.source().collection() {
+        Some(collection) => {
+            explained.push('"');
+            push_json_escaped(&mut explained, collection.as_str());
+            explained.push('"');
+        }
+        None => explained.push_str("null"),
+    }
+    explained.push_str(",\"order\":[");
+    for (index, key) in plan.ordering().keys().iter().enumerate() {
+        if index > 0 {
+            explained.push(',');
+        }
+        explained.push_str("{\"field\":\"");
+        push_json_escaped(&mut explained, key.field());
+        explained.push_str("\",\"direction\":\"");
+        explained.push_str(match key.direction() {
+            terrabase::query::OrderDirection::Ascending => "asc",
+            terrabase::query::OrderDirection::Descending => "desc",
+        });
+        explained.push_str("\"}");
+    }
+    explained.push_str("],\"access\":\"scan\"}");
+    explained
+}
+
+/// The member's local tenant label: every hosted database serves under it
+/// on the single-tenant local stack.
+fn local_tenant() -> Result<terrabase::types::TenantId, ()> {
+    terrabase::types::TenantId::try_new("terrabase-local").map_err(|_| ())
+}
+
 /// One engine's tenant scope for document operations: the member hosts
 /// each database under its stable tenant label, so one fixed label serves
 /// the local stack.
 fn document_scope(engine: &terrabase::Engine) -> Result<terrabase::types::TenantScope, ()> {
-    let tenant = terrabase::types::TenantId::try_new("terrabase-local").map_err(|_| ())?;
+    let tenant = local_tenant()?;
     Ok(engine.scope_for(&tenant))
 }
 
@@ -1894,6 +2168,132 @@ mod tests {
             StatusCode::NOT_FOUND,
             "the refused batch's other op landed nothing"
         );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines, reason = "one route contract, one test")]
+    async fn tql_executes_with_parameters_and_explains_the_plan() {
+        use axum::body::Body;
+        use axum::http::Request;
+        let auth = "authorization";
+        let key = "Bearer tskey_test_abcdefghijklmnop";
+        let router = router(state_with_keys_and_control());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header(auth, key)
+                    .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        for (id, body) in [
+            ("o-1", r#"{"status":"paid","total":120}"#),
+            ("o-2", r#"{"status":"open","total":80}"#),
+            ("o-3", r#"{"status":"paid","total":300}"#),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::put(format!(
+                        "/api/v1/databases/prod/collections/orders/documents/{id}"
+                    ))
+                    .header(auth, key)
+                    .body(Body::from(body))
+                    .expect("request"),
+                )
+                .await
+                .expect("answers");
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+        // Execute with an out-of-band parameter.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases/prod/tql")
+                    .header(auth, key)
+                    .body(Body::from(
+                        r#"{"tql":"from orders where status = $s order by total desc","parameters":{"s":"paid"}}"#,
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("\"matched\":2"), "the filter matched two rows: {body}");
+        assert!(body.contains("\"o-3\""), "the first row is the larger total: {body}");
+        assert!(!body.contains("\"o-2\""), "the open order is absent: {body}");
+        // Explain answers the plan, never the rows.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases/prod/tql")
+                    .header(auth, key)
+                    .body(Body::from(
+                        r#"{"tql":"from orders where status = $s order by total desc","parameters":{"s":"paid"},"explain":true}"#,
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("\"collection\":\"orders\""), "{body}");
+        assert!(body.contains("\"field\":\"total\""), "the plan names the ordering: {body}");
+        assert!(!body.contains("\"rows\":"), "explain never returns rows: {body}");
+        // Refusals are typed with a fix: an unbound parameter and a parse
+        // error both name their remedy (D-56).
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases/prod/tql")
+                    .header(auth, key)
+                    .body(Body::from(r#"{"tql":"from orders where status = $s"}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("missing_parameter"), "{body}");
+        assert!(body.contains("\"fix\":"), "{body}");
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases/prod/tql")
+                    .header(auth, key)
+                    .body(Body::from(r#"{"tql":"from orders where"}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("tql_parse_error"), "{body}");
+        // A gated capability fails closed with its own code.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases/prod/tql")
+                    .header(auth, key)
+                    .body(Body::from(
+                        r#"{"tql":"from orders where search(body, $q)","parameters":{"q":"x"}}"#,
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("capability_unavailable"), "{body}");
     }
 
     #[tokio::test]
