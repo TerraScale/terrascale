@@ -286,3 +286,43 @@ fn concurrent_writes_converge_deterministically() {
     drop(target);
     let _ = (source_location, target_location);
 }
+
+/// Catch-up after a partition (the journey's fault step, in-process):
+/// the link is simply absent while writes land; healing replays every
+/// missed record from the held-back cursor with zero acknowledged-write
+/// loss, and both members converge.
+#[test]
+fn a_partitioned_member_catches_up_from_its_cursor() {
+    let (source_location, source) = member("heal-a");
+    let (target_location, target) = member("heal-b");
+    let scope = scope();
+
+    // Before the partition: one replicated write establishes the cursor.
+    put(&source, "orders/pre", 1);
+    let mut cursor = None;
+    let shipped = replicate_once(source.engine_host(), target.engine_host(), &scope, &mut cursor)
+        .expect("the pre-partition replication runs");
+    assert_eq!(shipped, 1);
+    let settled = cursor;
+
+    // The partition: writes land with no link running.
+    for round in 0..25 {
+        put(&source, &format!("orders/down-{round}"), round);
+    }
+
+    // Healing: replication resumes from the held-back cursor and every
+    // missed record arrives exactly once.
+    let mut healed = settled;
+    let shipped = replicate_once(source.engine_host(), target.engine_host(), &scope, &mut healed)
+        .expect("the healed replication runs");
+    assert_eq!(shipped, 25, "every missed record ships, none lost");
+
+    let documents = orders(&target);
+    assert_eq!(documents.len(), 26, "the pre-partition write plus the missed twenty-five");
+    // And the source's own state matches — convergence with zero loss.
+    assert_eq!(orders(&source).len(), 26);
+
+    drop(source);
+    drop(target);
+    let _ = (source_location, target_location);
+}
