@@ -143,3 +143,45 @@ fn one_engine_journal_drives_backbone_revisions() {
     assert_eq!(batch.events[0].document, "orders/1");
     assert_eq!(batch.events[1].document, "orders/2");
 }
+
+/// One reactive subscription: the Seed frame carries the current state,
+/// and a later commit pumps through to a delta (`S-04`).
+#[test]
+fn reactive_subscriptions_seed_then_delta_on_commit() {
+    use terrabase_sync_core::server::{Comparison, Condition, FieldValue, SubscriptionSpec};
+    use terrabase_tbep::reactive::ReactiveFrame;
+
+    let location = TestLocation::new("reactive");
+    let host = open(location.path());
+    let scope = scope();
+    bind(&host, &scope);
+    put(&host, "orders/1", 1);
+
+    let spec = SubscriptionSpec {
+        collection: "orders".into(),
+        conditions: vec![Condition {
+            field: "value".into(),
+            op: Comparison::GreaterOrEqual,
+            value: FieldValue::Number(0.0),
+        }],
+        projection: vec!["value".into()],
+    };
+    let (_id, feed) = host.reactive_subscribe(&scope, &spec).expect("the subscription opens");
+    let ReactiveFrame::Seed { members, .. } = feed.recv().expect("the seed arrives") else {
+        panic!("the first frame is the seed");
+    };
+    assert_eq!(members.len(), 1, "the committed document is a member");
+    assert_eq!(members[0].0, "orders/1");
+
+    // A new commit pumps through to one Insert delta.
+    put(&host, "orders/2", 2);
+    host.reactive_pump(&scope).expect("the pump advances");
+    let ReactiveFrame::Delta { delta, .. } = feed.recv().expect("the delta arrives") else {
+        panic!("the second frame is a delta");
+    };
+    assert!(matches!(
+        delta.operation,
+        terrabase_sync_core::server::DeltaOp::Insert { ref document, .. } if document == "orders/2"
+    ));
+    assert_eq!(delta.revision, 1, "the subscription's first revision");
+}

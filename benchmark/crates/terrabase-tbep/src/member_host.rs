@@ -6,12 +6,14 @@
 //! the engine publication journal.
 
 use std::path::Path;
-use std::sync::{Mutex, mpsc::Receiver};
+use std::sync::Mutex;
+use std::sync::mpsc::Receiver;
 
 use terrabase::engine::Engine;
 
 use crate::engine_host::EngineHost;
 use crate::host::{HostingError, SyncDeliveryHost, TbepHost, TbepNotification};
+use crate::reactive::extract_path;
 use crate::registry;
 
 /// Explicit construction options for the staged `MemberHost`.
@@ -73,6 +75,102 @@ impl MemberHost {
     #[must_use]
     pub fn engine(&self) -> &Engine {
         self.engine.engine()
+    }
+
+    /// Subscribes one reactive result view (`S-04`): brings the journal
+    /// pump current, registers the subscription, then seeds it from a
+    /// consistent scan of the collection so the Seed frame and every
+    /// later delta describe one continuous revision history.
+    ///
+    /// # Errors
+    ///
+    /// Returns the pump's engine failure or the delivery host's typed
+    /// admission refusal.
+    pub fn reactive_subscribe(
+        &self,
+        scope: &registry::BoundScope,
+        spec: &terrabase_sync_core::server::SubscriptionSpec,
+    ) -> Result<(u64, Receiver<crate::reactive::ReactiveFrame>), HostingError> {
+        self.synchronize(scope)?;
+        let (id, receiver) = self.delivery.reactive_subscribe(scope, spec.clone())?;
+        let members = self.scan_members(scope, spec)?;
+        self.delivery.reactive_seed(id, members);
+        Ok((id, receiver))
+    }
+
+    /// Pumps the journal: new commits flow to every delivery plane,
+    /// reactive subscriptions included. The transport calls this per
+    /// poll/upgrade tick.
+    ///
+    /// # Errors
+    ///
+    /// Returns the pump's engine failure when the journal cannot be
+    /// replayed.
+    pub fn reactive_pump(&self, scope: &registry::BoundScope) -> Result<(), HostingError> {
+        self.synchronize(scope)
+    }
+
+    /// Retracts one reactive subscription.
+    pub fn reactive_unsubscribe(&self, id: u64) {
+        self.delivery.reactive_unsubscribe(id);
+    }
+
+    /// One subscription's seed members from a consistent engine scan:
+    /// the documents whose extracted values satisfy the spec's predicate,
+    /// projected per the spec, in document order.
+    fn scan_members(
+        &self,
+        scope: &registry::BoundScope,
+        spec: &terrabase_sync_core::server::SubscriptionSpec,
+    ) -> Result<crate::reactive::ProjectedMembers, HostingError> {
+        use terrabase_sync_core::server::Condition;
+
+        let engine = self.engine.engine();
+        let engine_scope = self.engine.engine_scope_of(scope)?;
+        let collection = terrabase::types::CollectionName::try_new(&spec.collection)
+            .map_err(|_| HostingError::Invalid("the collection name is not valid".into()))?;
+        let snapshot = engine.read_snapshot(&engine_scope).map_err(|error| {
+            HostingError::EngineFailure(format!("the scan snapshot failed: {error:?}"))
+        })?;
+        let documents = engine
+            .snapshot_documents_in_collection(&engine_scope, &snapshot, &collection)
+            .map_err(|error| {
+                HostingError::EngineFailure(format!("the collection scan failed: {error:?}"))
+            })?;
+        let mut fields: std::collections::BTreeSet<String> =
+            spec.conditions.iter().map(|condition| condition.field.clone()).collect();
+        for field in &spec.projection {
+            fields.insert(field.clone());
+        }
+        let mut members = Vec::new();
+        for document in documents {
+            let values: Vec<(String, Option<terrabase_sync_core::subscription::FieldValue>)> =
+                fields
+                    .iter()
+                    .map(|field| (field.clone(), extract_path(document.value(), field)))
+                    .collect();
+            let member = spec.conditions.iter().all(|condition: &Condition| {
+                values.iter().any(|(field, value)| {
+                    field == &condition.field
+                        && value.as_ref().is_some_and(|v| condition.matches(v))
+                })
+            });
+            if !member {
+                continue;
+            }
+            let projected = spec
+                .projection
+                .iter()
+                .filter_map(|field| {
+                    values
+                        .iter()
+                        .find(|(name, _)| name == field)
+                        .and_then(|(_, value)| value.clone().map(|v| (field.clone(), v)))
+                })
+                .collect();
+            members.push((document.id().as_str().to_owned(), projected));
+        }
+        Ok(members)
     }
 
     fn synchronize(&self, scope: &registry::BoundScope) -> Result<(), HostingError> {

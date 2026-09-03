@@ -255,6 +255,16 @@ impl EngineHost {
         Self::tenant_of(&scope.tenant)
     }
 
+    /// The engine-side scope of one bound scope: the engine's tenant
+    /// binding for the same tenant, project, and database.
+    pub(crate) fn engine_scope_of(
+        &self,
+        scope: &BoundScope,
+    ) -> Result<terrabase::types::TenantScope, HostingError> {
+        let tenant = self.tenant_of_scope(scope)?;
+        Ok(self.engine.scope_for(&tenant))
+    }
+
     fn count_frame(&self) {
         let mut frames = self.frames_served.lock().expect("the frame counter is not poisoned");
         *frames += 1;

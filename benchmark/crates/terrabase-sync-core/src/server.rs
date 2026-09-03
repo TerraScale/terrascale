@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 
 use crate::subscription::CommittedRow;
 use crate::subscription::DependencyIndex;
-use crate::subscription::FieldValue;
+pub use crate::subscription::FieldValue;
 
 /// One membership comparison over an extracted field.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -236,6 +236,22 @@ impl SubscriptionEngine {
         self.subscriptions.get(&id).map(|state| &state.members)
     }
 
+    /// Seeds one subscription's result from a consistent scan taken at
+    /// subscribe time: each member enters the result state (and the
+    /// holders map) directly. Records the tailer replays afterwards
+    /// re-derive against the seeded members as replacements, so a record
+    /// between the scan's sequence and the journal cursor is harmless.
+    pub fn seed(&mut self, id: u64, members: Vec<(String, Vec<(String, FieldValue)>)>) {
+        let Some(state) = self.subscriptions.get_mut(&id) else {
+            return;
+        };
+        let collection = state.spec.collection.clone();
+        for (document, fields) in members {
+            self.holders.entry((collection.clone(), document.clone())).or_default().insert(id);
+            state.members.insert(document, fields);
+        }
+    }
+
     /// Applies one committed row and returns the deltas it produced, in
     /// ascending subscription order. The row is converted once; each
     /// affected subscription gets exactly one delta.
@@ -356,14 +372,15 @@ mod tests {
         Condition { field: field.into(), op, value }
     }
 
+    #[allow(clippy::cast_precision_loss, reason = "test totals are small")]
     fn row(document: &str, status: &str, total: i64) -> RowEvent {
         RowEvent {
             collection: "orders".into(),
             document: document.into(),
-            put: Some(vec![("total".into(), FieldValue::Number(total))]),
+            put: Some(vec![("total".into(), FieldValue::Number(total as f64))]),
             extracted: vec![
                 ("status".into(), FieldValue::Text(status.into())),
-                ("total".into(), FieldValue::Number(total)),
+                ("total".into(), FieldValue::Number(total as f64)),
             ],
         }
     }
@@ -411,7 +428,7 @@ mod tests {
         engine.register(spec(vec![condition(
             "total",
             Comparison::Greater,
-            FieldValue::Number(100),
+            FieldValue::Number(100.0),
         )]));
         assert_eq!(engine.apply(&row("a", "paid", 150)).len(), 1);
         assert!(engine.apply(&row("b", "paid", 50)).is_empty());
@@ -423,7 +440,7 @@ mod tests {
         let mut engine = SubscriptionEngine::new();
         engine.register(spec(vec![
             condition("status", Comparison::Equals, FieldValue::Text("paid".into())),
-            condition("total", Comparison::LessOrEqual, FieldValue::Number(50)),
+            condition("total", Comparison::LessOrEqual, FieldValue::Number(50.0)),
         ]));
         assert_eq!(engine.apply(&row("x", "paid", 50)).len(), 1);
         assert!(engine.apply(&row("y", "paid", 51)).is_empty());

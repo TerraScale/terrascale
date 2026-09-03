@@ -12,12 +12,31 @@ use std::ops::Bound;
 
 /// One extracted index value: the two storage classes the D-42 stored
 /// columns carry (`f:<field>#t` TEXT, `f:<field>#n` NUMERIC).
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum FieldValue {
     /// The text-column value.
     Text(String),
-    /// The numeric-column value.
-    Number(i64),
+    /// The numeric-column value (the stored NUMERIC column class).
+    Number(f64),
+}
+
+// `f64` has no total `Ord`; the dependency order needs one, so the
+// numeric class orders through `total_cmp` (NaN sorts last, total).
+impl Eq for FieldValue {}
+impl PartialOrd for FieldValue {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for FieldValue {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (Self::Text(left), Self::Text(right)) => left.cmp(right),
+            (Self::Number(left), Self::Number(right)) => left.total_cmp(right),
+            (Self::Text(_), Self::Number(_)) => std::cmp::Ordering::Less,
+            (Self::Number(_), Self::Text(_)) => std::cmp::Ordering::Greater,
+        }
+    }
 }
 
 /// One end of a dependency range.
@@ -254,8 +273,8 @@ mod tests {
                 "orders",
                 "total",
                 ValueRange {
-                    start: super::RangeEnd::Included(FieldValue::Number(100)),
-                    end: super::RangeEnd::Excluded(FieldValue::Number(200)),
+                    start: super::RangeEnd::Included(FieldValue::Number(100.0)),
+                    end: super::RangeEnd::Excluded(FieldValue::Number(200.0)),
                 },
             ),
             false,
@@ -264,7 +283,7 @@ mod tests {
             let row = CommittedRow {
                 collection: "orders",
                 document: "x",
-                extracted: vec![("total", FieldValue::Number(total))],
+                extracted: vec![("total", FieldValue::Number(f64::from(total)))],
             };
             assert_eq!(
                 index.match_row(&row),
@@ -315,7 +334,7 @@ mod tests {
             document: "o-1",
             extracted: vec![
                 ("status", FieldValue::Text("paid".into())),
-                ("total", FieldValue::Number(42)),
+                ("total", FieldValue::Number(42.0)),
             ],
         };
         assert_eq!(index.match_row(&row), vec![2, 5, 9]);
@@ -325,7 +344,7 @@ mod tests {
     fn retract_removes_every_dependency_of_the_subscription() {
         let mut index = DependencyIndex::new();
         let status = key("orders", "status", ValueRange::all());
-        let total = key("orders", "total", ValueRange::equals(FieldValue::Number(1)));
+        let total = key("orders", "total", ValueRange::equals(FieldValue::Number(1.0)));
         index.register(4, status.clone(), false);
         index.register(4, total.clone(), false);
         assert!(index.is_registered(4, &status) && index.is_registered(4, &total));

@@ -1210,7 +1210,7 @@ fn with_session(response: &mut Response, sequence: u64) {
 fn document_host(
     state: &ApiState,
     name: &str,
-) -> Result<std::sync::Arc<terrabase_tbep::engine_host::EngineHost>, ApiError> {
+) -> Result<std::sync::Arc<terrabase_tbep::member_host::MemberHost>, ApiError> {
     let Some(catalog) = state.catalog.clone() else {
         return Err(ApiError::control_unavailable());
     };

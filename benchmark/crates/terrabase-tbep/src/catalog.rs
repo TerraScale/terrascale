@@ -2,7 +2,7 @@
 //! database, an RSS-sized LRU, and idle-close.
 //!
 //! [`HostCatalog`] maps a `tenant/project/database` scope to one durable
-//! [`EngineHost`] at `root/tenant/project/database`. Hosts open lazily on
+//! [`MemberHost`] at `root/tenant/project/database`. Hosts open lazily on
 //! first use, stay resident in a least-recently-used set bounded by the
 //! catalog capacity (the open-file bound that keeps RSS flat), and close
 //! when the catalog needs room or when they have gone unused past the
@@ -18,8 +18,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::engine_host::EngineHost;
 use crate::host::TbepHost;
+use crate::member_host::{MemberHost, MemberHostOptions};
 use crate::registry::{ShutdownReason, SupervisionShutdownRequest};
 
 /// The catalog key: one tenant, Project, and Database identity.
@@ -28,7 +28,7 @@ type ScopeKey = (String, String, String);
 /// One resident host with the stamp its LRU and idle-close decisions read.
 struct Entry {
     /// The lazily opened engine host.
-    host: Arc<EngineHost>,
+    host: Arc<MemberHost>,
     /// When the catalog last handed this host out (or opened it).
     last_used: Instant,
 }
@@ -107,8 +107,11 @@ impl HostCatalog {
         })
     }
 
-    /// Returns the resident engine host for the database, lazily opening
-    /// `root/tenant/project/database` on first use.
+    /// Returns the resident member host for the database, lazily opening
+    /// `root/tenant/project/database` on first use. The host is the TB-1a
+    /// composition: one engine plus journal-derived delivery, so the
+    /// public API's documents and the reactive plane share one storage
+    /// truth.
     ///
     /// A cache hit refreshes the entry's recency and returns the same
     /// host. A miss first closes hosts idle past the threshold, then —
@@ -130,7 +133,7 @@ impl HostCatalog {
         tenant: &str,
         project: &str,
         database: &str,
-    ) -> Result<Arc<EngineHost>, CatalogError> {
+    ) -> Result<Arc<MemberHost>, CatalogError> {
         safe_component(tenant, "tenant")?;
         safe_component(project, "project")?;
         safe_component(database, "database")?;
@@ -152,12 +155,13 @@ impl HostCatalog {
         }
         let instance = self.next_instance.fetch_add(1, Ordering::Relaxed);
         let host = Arc::new(
-            EngineHost::open(
+            MemberHost::open(
                 &self.root.join(tenant).join(project).join(database),
                 instance,
                 tenant,
                 project,
                 database,
+                MemberHostOptions::tb1a(),
             )
             .map_err(|error| CatalogError::OpenFailed(error.detail()))?,
         );
@@ -272,7 +276,7 @@ mod tests {
     use std::time::Duration;
 
     use super::{CatalogError, HostCatalog};
-    use crate::engine_host::EngineHost;
+    use crate::member_host::MemberHost;
     use terrabase::engine::CommitOutcome;
     use terrabase::types::{
         CollectionName, Document, DocumentId, DocumentValue, LocalDurability, OperationId, TenantId,
@@ -305,7 +309,7 @@ mod tests {
 
     /// Writes one small document through the host's engine transaction
     /// path and asserts the commit.
-    fn put(host: &EngineHost, database: &str, id: &str, value: i64) {
+    fn put(host: &MemberHost, database: &str, id: &str, value: i64) {
         let engine = host.engine();
         let tenant = TenantId::try_new("tenant-a").expect("the tenant parses");
         let engine_scope = engine.scope_for(&tenant);
@@ -335,7 +339,7 @@ mod tests {
 
     /// Reads one document back through the host's engine snapshot path,
     /// returning its `value` field when present.
-    fn get(host: &EngineHost, _database: &str, id: &str) -> Option<i64> {
+    fn get(host: &MemberHost, _database: &str, id: &str) -> Option<i64> {
         let engine = host.engine();
         let tenant = TenantId::try_new("tenant-a").expect("the tenant parses");
         let engine_scope = engine.scope_for(&tenant);

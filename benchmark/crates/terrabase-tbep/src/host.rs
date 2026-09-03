@@ -609,6 +609,7 @@ struct HostState {
     scopes: BTreeMap<(DeliveryScope, String), ScopeState>,
     durable_cursors: BTreeMap<DeliveryScope, ChangeCheckpoint>,
     subscriptions: BTreeMap<u64, SubscriptionState>,
+    reactive: crate::reactive::ReactiveState,
     frames_served: u64,
     health: HealthState,
 }
@@ -636,6 +637,7 @@ impl SyncDeliveryHost {
                 scopes: BTreeMap::new(),
                 durable_cursors: BTreeMap::new(),
                 subscriptions: BTreeMap::new(),
+                reactive: crate::reactive::ReactiveState::default(),
                 frames_served: 0,
                 health: HealthState::Starting,
             }),
@@ -769,6 +771,38 @@ impl SyncDeliveryHost {
         }
     }
 
+    /// Registers one reactive subscription and opens its bounded
+    /// delivery channel (`S-04`). The caller seeds it from a consistent
+    /// scan before the first pump.
+    pub(crate) fn reactive_subscribe(
+        &self,
+        scope: &BoundScope,
+        spec: terrabase_sync_core::server::SubscriptionSpec,
+    ) -> Result<(u64, Receiver<crate::reactive::ReactiveFrame>), HostingError> {
+        let mut state = self.lock();
+        Self::ensure_admission(&state)?;
+        if state.reactive.len() >= MAX_SUBSCRIPTIONS {
+            return Err(HostingError::SubscriptionRefused(
+                "the reactive subscription limit is exhausted".into(),
+            ));
+        }
+        // ponytail: a host-wide cap; per-tenant reactive bounds ride the
+        // transport's admission (connection limits are the abuse guard).
+        let _ = scope;
+        Ok(state.reactive.subscribe(spec))
+    }
+
+    /// Seeds one reactive subscription's result and delivers the Seed
+    /// frame (clears any reset-pending flag).
+    pub(crate) fn reactive_seed(&self, id: u64, members: crate::reactive::ProjectedMembers) {
+        self.lock().reactive.seed(id, members);
+    }
+
+    /// Retracts one reactive subscription.
+    pub(crate) fn reactive_unsubscribe(&self, id: u64) {
+        self.lock().reactive.unsubscribe(id);
+    }
+
     /// Applies records pulled from the engine's durable publication journal.
     ///
     /// This is the only composition path that advances a `MemberHost` sync
@@ -790,6 +824,7 @@ impl SyncDeliveryHost {
                 continue;
             }
             Self::can_add_scope(&state, bound_scope, record.collection().as_str())?;
+            state.reactive.apply_record(record);
             {
                 let scope =
                     Self::scope(&mut state.scopes, bound_scope, record.collection().as_str());
