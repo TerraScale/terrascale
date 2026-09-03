@@ -2,9 +2,11 @@
 //!
 //! TBEP is the Go↔Rust process-to-process wire protocol (ADR 0025):
 //! gRPC over the protobuf contract in `proto/terrabase/v1/engine.proto`,
-//! served by tonic. The closed typed operation set, backbone subscription
-//! streams, sync-delivery operations,
-//! topology/admin reads, and supervision operations all ride gRPC now.
+//! served by tonic. The document/query/sync-session data-plane RPCs were
+//! deleted with the S-03 TBEP reduction (the public API owns the data
+//! plane); the backbone subscription streams, schemas and migrations,
+//! replication observation, tier administration, usage, topology/admin
+//! reads, and supervision operations ride gRPC.
 //!
 //! Layout:
 //!
@@ -30,8 +32,8 @@
 //! - The engine crate (`terrabase`) stays synchronous and
 //!   zero-dependency; every async transport concern lives in this crate
 //!   only.
-//! - [`member_host::MemberHost`] combines the engine-backed operations with
-//!   sync and backbone delivery derived from that engine's durable publication
+//! - [`member_host::MemberHost`] combines the engine host with
+//!   backbone delivery derived from that engine's durable publication
 //!   journal. Construction requires the TB-1a option; the production harness
 //!   remains on `EngineHost` during this staged landing.
 //! - No performance claim is made anywhere in this crate
@@ -49,7 +51,6 @@ compile_error!("select one of `local-crypto` or `production-fips`");
 
 pub mod catalog;
 pub mod engine_host;
-pub mod family_codec;
 pub mod grpc;
 pub mod host;
 pub mod member_host;

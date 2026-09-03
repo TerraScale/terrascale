@@ -39,31 +39,6 @@ option go_package = "terrascale.tech/terrabase-go/terrabase/v1;v1";
 // Shared closed vocabularies
 // ---------------------------------------------------------------------------
 
-// The acknowledgement discipline of a committed mutation.
-enum Acknowledgement {
-  ACKNOWLEDGEMENT_UNSPECIFIED = 0;
-  ACKNOWLEDGEMENT_REGIONAL_QUORUM = 1;
-  ACKNOWLEDGEMENT_GLOBAL_QUORUM = 2;
-  ACKNOWLEDGEMENT_BACKUP = 3;
-  ACKNOWLEDGEMENT_LOCAL_SYNCED = 4;
-}
-
-// Whether a commit reached a backup tier.
-enum BackupOutcome {
-  BACKUP_OUTCOME_UNSPECIFIED = 0;
-  BACKUP_OUTCOME_NONE = 1;
-  BACKUP_OUTCOME_FULL = 2;
-  BACKUP_OUTCOME_PARTIAL = 3;
-}
-
-// The read consistency level.
-enum ReadLevel {
-  READ_LEVEL_UNSPECIFIED = 0;
-  READ_LEVEL_LOCAL = 1;
-  READ_LEVEL_REGIONAL_QUORUM = 2;
-  READ_LEVEL_GLOBAL_QUORUM = 3;
-}
-
 // The cluster mode of the serving topology.
 enum ClusterMode {
   CLUSTER_MODE_UNSPECIFIED = 0;
@@ -102,55 +77,6 @@ message TierMoveReceipt {
   bool manifest_accepted = 10;
 }
 
-// The commit receipt of an applied mutation.
-message CommitReceipt {
-  uint64 sequence = 1;
-  uint64 version = 2;
-  string operation_id = 3; // <= 128 bytes.
-  Acknowledgement acknowledgement = 4;
-  BackupOutcome backup = 5;
-}
-
-// Why a mutation was refused.
-enum WriteReason {
-  WRITE_REASON_UNSPECIFIED = 0;
-  WRITE_REASON_INVALID_DOCUMENT = 1;
-  WRITE_REASON_SCHEMA_REFUSED = 2;
-  WRITE_REASON_NOT_FOUND = 3;
-}
-
-// The outcome of a document write, delete, or batch.
-message WriteOutcome {
-  oneof outcome {
-    CommitReceipt committed = 1;
-    WriteConflict conflict = 2;
-    WriteRejected rejected = 3;
-  }
-}
-
-// The write lost the expected-version race.
-message WriteConflict {}
-
-// The write was refused before commit.
-message WriteRejected {
-  WriteReason reason = 1;
-}
-
-// Whether a query completed or was truncated by its item bound.
-enum QueryTerminal {
-  QUERY_TERMINAL_UNSPECIFIED = 0;
-  QUERY_TERMINAL_COMPLETE = 1;
-  QUERY_TERMINAL_TRUNCATED = 2;
-}
-
-// The outcome of a query cancellation.
-enum CancelOutcome {
-  CANCEL_OUTCOME_UNSPECIFIED = 0;
-  CANCEL_OUTCOME_CANCELLED = 1;
-  CANCEL_OUTCOME_ALREADY_COMPLETE = 2;
-  CANCEL_OUTCOME_UNKNOWN_QUERY = 3;
-}
-
 // The kind of one backbone change event.
 enum ChangeKind {
   CHANGE_KIND_UNSPECIFIED = 0;
@@ -177,49 +103,6 @@ message SubscriptionStart {
 
 // Start from the live edge.
 message SubscriptionLive {}
-
-// The outcome of a sync-session mutation.
-message MutationOutcome {
-  oneof outcome {
-    CommitReceipt applied = 1;
-    MutationRejected rejected = 2;
-  }
-}
-
-// The mutation was refused.
-message MutationRejected {
-  MutationReason reason = 1;
-}
-
-// Why a sync mutation was refused.
-enum MutationReason {
-  MUTATION_REASON_UNSPECIFIED = 0;
-  MUTATION_REASON_SCOPE_REFUSED = 1;
-  MUTATION_REASON_INVALID_BODY = 2;
-  MUTATION_REASON_SEQUENCE_OUT_OF_ORDER = 3;
-}
-
-// One field of a sync change payload.
-message SyncField {
-  string name = 1; // <= 64 bytes.
-  Value value = 2;
-}
-
-// One sync mutation: a put of named fields or a delete.
-message SyncChange {
-  oneof change {
-    SyncPut put = 1;
-    SyncDelete delete = 2;
-  }
-}
-
-// A put of named fields.
-message SyncPut {
-  repeated SyncField fields = 1; // <= 1024 items.
-}
-
-// A delete.
-message SyncDelete {}
 
 // The serving health of the engine.
 enum HealthState {
@@ -250,129 +133,6 @@ enum BindingKind {
   BINDING_KIND_UNSPECIFIED = 0;
   BINDING_KIND_LOCAL = 1;
   BINDING_KIND_NETWORK_MTLS = 2;
-}
-
-// ---------------------------------------------------------------------------
-// Documents, queries, and families
-// ---------------------------------------------------------------------------
-
-// A document as stored: identity, version, and body.
-message DocumentBody {
-  string id = 1;         // <= 64 bytes.
-  string collection = 2; // <= 64 bytes.
-  uint64 version = 3;
-  Value body = 4;
-}
-
-// A document to put (create or overwrite).
-message DocumentPut {
-  string id = 1;         // <= 64 bytes.
-  string collection = 2; // <= 64 bytes.
-  Value body = 3;
-}
-
-// One item of an atomic batch.
-message BatchWrite {
-  DocumentPut document = 1;
-  ExpectedVersion expected = 2;
-  string operation_id = 3; // <= 128 bytes.
-}
-
-message EngineServiceDocumentReadRequest {
-  string collection = 1; // <= 64 bytes.
-  string document = 2;   // <= 64 bytes.
-  ReadLevel level = 3;
-}
-
-message EngineServiceDocumentReadResponse {
-  bool found = 1;
-  DocumentBody document = 2;
-  uint64 position = 3;
-}
-
-message EngineServiceDocumentWriteRequest {
-  DocumentPut document = 1;
-  ExpectedVersion expected = 2;
-  string operation_id = 3; // <= 128 bytes.
-  Acknowledgement ack = 4;
-  UsageAdmissionContext usage = 5;
-}
-
-message EngineServiceDocumentWriteResponse {
-  WriteOutcome outcome = 1;
-}
-
-message EngineServiceDocumentDeleteRequest {
-  string collection = 1; // <= 64 bytes.
-  string document = 2;   // <= 64 bytes.
-  ExpectedVersion expected = 3;
-  string operation_id = 4; // <= 128 bytes.
-  Acknowledgement ack = 5;
-  UsageAdmissionContext usage = 6;
-}
-
-message EngineServiceDocumentDeleteResponse {
-  WriteOutcome outcome = 1;
-}
-
-message EngineServiceDocumentBatchRequest {
-  repeated BatchWrite items = 1; // 1..=256 items.
-  Acknowledgement ack = 2;
-  UsageAdmissionContext usage = 3;
-}
-
-message EngineServiceDocumentBatchResponse {
-  WriteOutcome outcome = 1;
-}
-
-message EngineServiceQueryExecuteRequest {
-  uint64 query_id = 1;
-  string text = 2; // 1..=4096 bytes.
-  uint32 max_items = 3;
-  ReadLevel level = 4;
-}
-
-message EngineServiceQueryExecuteResponse {
-  repeated DocumentBody documents = 1; // <= max_items.
-  uint32 count = 2;
-  QueryTerminal terminal = 3;
-  uint64 position = 4;
-}
-
-message EngineServiceQueryCancelRequest {
-  uint64 query_id = 1;
-}
-
-message EngineServiceQueryCancelResponse {
-  CancelOutcome outcome = 1;
-}
-
-message EngineServiceFamilyReadRequest {
-  string family = 1;         // closed vocabulary: attachment, counter,
-                             // time_series, revisions, compare_exchange,
-                             // identities, expiration_refresh, archival.
-  string name = 2;           // <= 64 bytes.
-  string request_codec = 3;  // e.g. terrabase.family-request/1.
-  bytes request = 4;         // <= 16 MiB.
-}
-
-message EngineServiceFamilyReadResponse {
-  string response_codec = 1;
-  bytes response = 2; // <= 16 MiB.
-}
-
-message EngineServiceFamilyWriteRequest {
-  string family = 1;
-  string name = 2;
-  string request_codec = 3;
-  bytes request = 4;
-  string operation_id = 5; // <= 128 bytes.
-  UsageAdmissionContext usage = 6;
-}
-
-message EngineServiceFamilyWriteResponse {
-  string response_codec = 1;
-  bytes response = 2;
 }
 
 // ---------------------------------------------------------------------------
@@ -439,75 +199,6 @@ message SubscribeResponse {
     TriggerNotification trigger = 3;
     SubscriptionClosed closed = 4;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Sync sessions
-// ---------------------------------------------------------------------------
-
-message SyncServiceSessionSetupRequest {
-  string collection = 1; // <= 64 bytes.
-  bytes resume = 2;       // <= 1057 bytes; empty starts fresh.
-}
-
-message SyncServiceSessionSetupResponse {
-  uint64 session_id = 1;
-  bytes checkpoint = 2;    // <= 1057 bytes.
-  bytes retained_floor = 3; // <= 1057 bytes.
-}
-
-message SyncServiceDeltaPullRequest {
-  uint64 session_id = 1;
-  bytes from = 2; // <= 1057 bytes.
-}
-
-message SyncServiceDeltaPullResponse {
-  uint64 session_id = 1;
-  string payload_codec = 2;
-  bytes payload = 3;  // <= 16 MiB.
-  bytes next = 4;     // <= 1057 bytes.
-  uint32 commits = 5;
-  bool single_commit_oversize = 6;
-}
-
-message SyncServiceSnapshotPullRequest {
-  uint64 session_id = 1;
-}
-
-message SyncServiceSnapshotPullResponse {
-  uint64 session_id = 1;
-  string payload_codec = 2;
-  bytes payload = 3;
-  bytes checkpoint = 4;
-}
-
-message SyncServiceCheckpointAckRequest {
-  uint64 session_id = 1;
-  bytes checkpoint = 2; // <= 1057 bytes.
-}
-
-message SyncServiceCheckpointAckResponse {
-  uint64 session_id = 1;
-}
-
-message SyncServiceMutationSubmitRequest {
-  uint64 session_id = 1;
-  string document = 2; // <= 64 bytes.
-  SyncChange change = 3;
-  UsageAdmissionContext usage = 4;
-}
-
-message SyncServiceMutationSubmitResponse {
-  uint64 session_id = 1;
-  MutationOutcome outcome = 2;
-}
-
-message SyncServiceSessionCloseRequest {
-  uint64 session_id = 1;
-}
-
-message SyncServiceSessionCloseResponse {
-  uint64 session_id = 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -955,21 +646,6 @@ enum UsageRegion {
   USAGE_REGION_FRA = 3;
 }
 
-// Trusted admission data attached atomically to one origin mutation. Tenant
-// scope comes only from the authenticated channel metadata. request_id must
-// equal x-tb-idempotency-key so commit replay and usage replay share one
-// identity. The admitted-request meter and unit are implied.
-message UsageAdmissionContext {
-  string project = 1;       // 1..=255 bytes.
-  string database = 2;      // 1..=255 bytes.
-  string partition = 3;     // 1..=255 bytes.
-  UsageRegion origin_region = 4;
-  string request_id = 5;    // 1..=128 bytes.
-  uint64 accepted_at_millis = 6;
-  uint32 meter_version = 7;
-  string integer_units = 8; // Canonical positive i128, <= 1,000,000.
-}
-
 // Record admits only facts whose public-boundary work cannot be attached to
 // an engine mutation. One call records one fact and is idempotent by the
 // (meter, fact_id) identity. x-tb-idempotency-key must equal fact_id.
@@ -1166,18 +842,6 @@ service ChannelService {
   rpc Bind(ChannelServiceBindRequest) returns (ChannelServiceBindResponse);
 }
 
-// Documents, queries, and families.
-service EngineService {
-  rpc DocumentRead(EngineServiceDocumentReadRequest) returns (EngineServiceDocumentReadResponse);
-  rpc DocumentWrite(EngineServiceDocumentWriteRequest) returns (EngineServiceDocumentWriteResponse);
-  rpc DocumentDelete(EngineServiceDocumentDeleteRequest) returns (EngineServiceDocumentDeleteResponse);
-  rpc DocumentBatch(EngineServiceDocumentBatchRequest) returns (EngineServiceDocumentBatchResponse);
-  rpc QueryExecute(EngineServiceQueryExecuteRequest) returns (EngineServiceQueryExecuteResponse);
-  rpc QueryCancel(EngineServiceQueryCancelRequest) returns (EngineServiceQueryCancelResponse);
-  rpc FamilyRead(EngineServiceFamilyReadRequest) returns (EngineServiceFamilyReadResponse);
-  rpc FamilyWrite(EngineServiceFamilyWriteRequest) returns (EngineServiceFamilyWriteResponse);
-}
-
 // The backbone change stream.
 service BackboneService {
   // Opens one subscription; the stream delivers the confirmation, then
@@ -1186,16 +850,6 @@ service BackboneService {
   rpc Subscribe(BackboneServiceSubscribeRequest) returns (stream SubscribeResponse);
   rpc Acknowledge(BackboneServiceAcknowledgeRequest) returns (BackboneServiceAcknowledgeResponse);
   rpc Unsubscribe(BackboneServiceUnsubscribeRequest) returns (BackboneServiceUnsubscribeResponse);
-}
-
-// Sync delivery sessions.
-service SyncService {
-  rpc SessionSetup(SyncServiceSessionSetupRequest) returns (SyncServiceSessionSetupResponse);
-  rpc DeltaPull(SyncServiceDeltaPullRequest) returns (SyncServiceDeltaPullResponse);
-  rpc SnapshotPull(SyncServiceSnapshotPullRequest) returns (SyncServiceSnapshotPullResponse);
-  rpc CheckpointAck(SyncServiceCheckpointAckRequest) returns (SyncServiceCheckpointAckResponse);
-  rpc MutationSubmit(SyncServiceMutationSubmitRequest) returns (SyncServiceMutationSubmitResponse);
-  rpc SessionClose(SyncServiceSessionCloseRequest) returns (SyncServiceSessionCloseResponse);
 }
 
 // Schema declaration and migrations.

@@ -34,7 +34,6 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -66,7 +65,6 @@ use terrabase::observability::{
     MetricsRegistry, Operation as MetricOperation, Outcome as MetricOutcome, Region as MetricRegion,
 };
 
-use crate::family_codec;
 use crate::host::HostingError;
 use crate::host::TbepHost;
 use crate::host::TbepNotification;
@@ -75,16 +73,12 @@ use crate::proto::terrabase::v1::backbone_service_server::BackboneService;
 use crate::proto::terrabase::v1::backbone_service_server::BackboneServiceServer;
 use crate::proto::terrabase::v1::channel_service_server::ChannelService;
 use crate::proto::terrabase::v1::channel_service_server::ChannelServiceServer;
-use crate::proto::terrabase::v1::engine_service_server::EngineService;
-use crate::proto::terrabase::v1::engine_service_server::EngineServiceServer;
 use crate::proto::terrabase::v1::maintenance_service_server::MaintenanceService;
 use crate::proto::terrabase::v1::maintenance_service_server::MaintenanceServiceServer;
 use crate::proto::terrabase::v1::replication_service_server::ReplicationService;
 use crate::proto::terrabase::v1::replication_service_server::ReplicationServiceServer;
 use crate::proto::terrabase::v1::schema_service_server::SchemaService;
 use crate::proto::terrabase::v1::schema_service_server::SchemaServiceServer;
-use crate::proto::terrabase::v1::sync_service_server::SyncService;
-use crate::proto::terrabase::v1::sync_service_server::SyncServiceServer;
 use crate::proto::terrabase::v1::tier_service_server::TierService;
 use crate::proto::terrabase::v1::tier_service_server::TierServiceServer;
 use crate::proto::terrabase::v1::usage_service_server::UsageService;
@@ -121,7 +115,6 @@ pub const MAX_INFLIGHT_OPERATIONS: usize = 128;
 /// that keeps a slow stream consumer from pinning engine memory.
 pub const OUTBOUND_DEPTH: usize = 64;
 
-const MAX_SYNC_TOKEN_BYTES: usize = 1057;
 const MAX_PEER_CERT_BYTES: usize = 1 << 20;
 
 /// Validated resource and authenticated-gateway policy for one serving
@@ -151,8 +144,9 @@ impl TbepGrpcConfig {
         shutdown_grace: Duration,
         gateway_principals: BTreeSet<String>,
     ) -> std::io::Result<Self> {
-        let valid_principals =
-            gateway_principals.iter().all(|principal| valid_gateway_spiffe_uri(principal));
+        let valid_principals = gateway_principals
+            .iter()
+            .all(|principal| !principal.is_empty() && principal.len() <= MAX_PRINCIPAL_BYTES);
         if !(1024..=registry::MAX_FRAME_BYTES).contains(&max_message_bytes)
             || !(1..=4096).contains(&max_inflight)
             || request_timeout.is_zero()
@@ -204,37 +198,6 @@ impl TbepGrpcConfig {
     pub const fn shutdown_grace(&self) -> Duration {
         self.shutdown_grace
     }
-}
-
-/// Returns whether `value` is one canonical Database-gateway workload
-/// identity admitted by ADR 0025.
-#[must_use]
-pub fn valid_gateway_spiffe_uri(value: &str) -> bool {
-    const PREFIX: &str = "spiffe://terrascale.tech/";
-    const GATEWAY_SEGMENT: &str = "/database-gateway/";
-
-    if value.len() > MAX_PRINCIPAL_BYTES || value != value.trim() {
-        return false;
-    }
-    let Some(remainder) = value.strip_prefix(PREFIX) else {
-        return false;
-    };
-    let Some((environment, instance)) = remainder.split_once(GATEWAY_SEGMENT) else {
-        return false;
-    };
-    valid_environment(environment)
-        && !instance.contains('/')
-        && terrabase::identity::Ulid::from_text(instance).is_ok()
-}
-
-fn valid_environment(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 32
-        && !value.starts_with('-')
-        && !value.ends_with('-')
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
 impl Default for TbepGrpcConfig {
@@ -426,7 +389,6 @@ pub struct TbepGrpcServer {
     inflight: Arc<AtomicUsize>,
     background: Arc<AtomicUsize>,
     draining: Arc<std::sync::atomic::AtomicBool>,
-    active_queries: Arc<Mutex<BTreeSet<(registry::BoundScope, u64)>>>,
 }
 
 fn authenticate_gateway_certificate(principal: &str, leaf: &[u8]) -> Result<(), Status> {
@@ -513,7 +475,6 @@ impl TbepGrpcServer {
             inflight: Arc::new(AtomicUsize::new(0)),
             background: Arc::new(AtomicUsize::new(0)),
             draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            active_queries: Arc::new(Mutex::new(BTreeSet::new())),
         }
     }
 
@@ -532,26 +493,6 @@ impl TbepGrpcServer {
 
     fn counted(&self) {
         self.frames_served.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn register_query(
-        &self,
-        scope: &registry::BoundScope,
-        query_id: u64,
-    ) -> Result<Arc<QueryLifecycle>, Status> {
-        let key = (scope.clone(), query_id);
-        let mut active = self.active_queries.lock().expect("the active query lock is not poisoned");
-        if !active.insert(key.clone()) {
-            return Err(conversion_error("the query id is already active for this bound scope"));
-        }
-        Ok(Arc::new(QueryLifecycle {
-            state: Mutex::new(QueryLifecycleState::default()),
-            active: Arc::clone(&self.active_queries),
-            key,
-            host: Arc::clone(&self.host),
-            scope: scope.clone(),
-            background: Arc::clone(&self.background),
-        }))
     }
 
     /// Stops new host work from being admitted while existing work drains.
@@ -590,27 +531,6 @@ impl TbepGrpcServer {
             )
         })?;
         authenticate_gateway_certificate(principal, leaf.as_ref())
-    }
-
-    fn require_mutation_usage(&self, present: bool) -> Result<(), Status> {
-        match (self.binding, present) {
-            (pb::BindingKind::NetworkMtls, true) | (pb::BindingKind::Local, false) => Ok(()),
-            (pb::BindingKind::NetworkMtls, false) => Err(tbep_status(
-                Code::FailedPrecondition,
-                pb::ErrorCode::UsageUnavailable,
-                "a production network mutation requires trusted usage admission",
-            )),
-            (pb::BindingKind::Local, true) => Err(tbep_status(
-                Code::FailedPrecondition,
-                pb::ErrorCode::OperationRefused,
-                "a local mutation cannot mint authoritative usage",
-            )),
-            _ => Err(tbep_status(
-                Code::FailedPrecondition,
-                pb::ErrorCode::OperationRefused,
-                "the serving binding is not configured",
-            )),
-        }
     }
 
     fn require_usage_rpc<T>(&self, request: &Request<T>) -> Result<Identity, Status> {
@@ -986,17 +906,7 @@ fn serve_routes(
                 .max_encoding_message_size(message_bytes),
         )
         .add_service(
-            EngineServiceServer::new(Arc::clone(&server))
-                .max_decoding_message_size(message_bytes)
-                .max_encoding_message_size(message_bytes),
-        )
-        .add_service(
             BackboneServiceServer::new(Arc::clone(&server))
-                .max_decoding_message_size(message_bytes)
-                .max_encoding_message_size(message_bytes),
-        )
-        .add_service(
-            SyncServiceServer::new(Arc::clone(&server))
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         )
@@ -1037,147 +947,6 @@ struct Permit(Arc<AtomicUsize>);
 impl Drop for Permit {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::AcqRel);
-    }
-}
-
-#[derive(Default)]
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "the four flags record independent query and cancellation milestones"
-)]
-struct QueryLifecycleState {
-    started: bool,
-    finished: bool,
-    cancel_requested: bool,
-    cancel_finished: bool,
-}
-
-/// Tracks one query across the asynchronous RPC and synchronous host task.
-///
-/// A query ID remains reserved until both the host execution and a requested
-/// cancellation have settled. This closes the race where a cancellation
-/// from a dropped RPC could arrive after the host retired an old query and
-/// accidentally target a new query reusing the same ID.
-struct QueryLifecycle {
-    state: Mutex<QueryLifecycleState>,
-    active: Arc<Mutex<BTreeSet<(registry::BoundScope, u64)>>>,
-    key: (registry::BoundScope, u64),
-    host: Arc<dyn TbepHost>,
-    scope: registry::BoundScope,
-    background: Arc<AtomicUsize>,
-}
-
-impl Drop for QueryLifecycle {
-    fn drop(&mut self) {
-        // This is the last-owner fallback for a task that was queued on the
-        // blocking pool and gets dropped before its execution guard runs.
-        self.remove_active();
-    }
-}
-
-impl QueryLifecycle {
-    fn started(&self) -> bool {
-        let mut state = self.state.lock().expect("the query lifecycle lock is not poisoned");
-        if state.cancel_requested {
-            return false;
-        }
-        state.started = true;
-        true
-    }
-
-    fn finished(&self) {
-        let remove = {
-            let mut state = self.state.lock().expect("the query lifecycle lock is not poisoned");
-            state.finished = true;
-            !state.cancel_requested || state.cancel_finished
-        };
-        if remove {
-            self.remove_active();
-        }
-    }
-
-    fn abandon(&self) {
-        {
-            let mut state = self.state.lock().expect("the query lifecycle lock is not poisoned");
-            state.finished = true;
-            state.cancel_finished = true;
-        }
-        self.remove_active();
-    }
-
-    fn request_cancel(self: &Arc<Self>) {
-        let spawn = {
-            let mut state = self.state.lock().expect("the query lifecycle lock is not poisoned");
-            if state.finished || state.cancel_requested {
-                false
-            } else {
-                state.cancel_requested = true;
-                if state.started {
-                    true
-                } else {
-                    // The execution task has not entered the host yet. Its
-                    // started check will return a cancellation error, so no
-                    // host cancellation call is safe or necessary.
-                    state.cancel_finished = true;
-                    false
-                }
-            }
-        };
-        if !spawn {
-            return;
-        }
-
-        self.background.fetch_add(1, Ordering::AcqRel);
-        let background_permit = Permit(Arc::clone(&self.background));
-        let lifecycle = Arc::clone(self);
-        if std::thread::Builder::new()
-            .name("tbep-query-cancel".into())
-            .spawn(move || {
-                let _background_permit = background_permit;
-                let request = registry::QueryCancelRequest { query_id: lifecycle.key.1 };
-                let _ = lifecycle.host.query_cancel(&lifecycle.scope, &request);
-                lifecycle.cancel_finished();
-            })
-            .is_err()
-        {
-            // Keep the reservation until the execution task exits even if
-            // the process cannot create the best-effort cancellation worker.
-            self.cancel_finished();
-        }
-    }
-
-    fn cancel_finished(&self) {
-        let remove = {
-            let mut state = self.state.lock().expect("the query lifecycle lock is not poisoned");
-            state.cancel_finished = true;
-            state.finished
-        };
-        if remove {
-            self.remove_active();
-        }
-    }
-
-    fn remove_active(&self) {
-        self.active.lock().expect("the active query lock is not poisoned").remove(&self.key);
-    }
-}
-
-/// Requests cancellation when a unary query future is dropped by tonic after
-/// a client disconnect or cancellation.
-struct QueryCancellationGuard(Arc<QueryLifecycle>);
-
-impl Drop for QueryCancellationGuard {
-    fn drop(&mut self) {
-        self.0.request_cancel();
-    }
-}
-
-/// Marks a blocking query task complete even if the host panics.
-struct QueryExecutionGuard(Arc<QueryLifecycle>);
-
-impl Drop for QueryExecutionGuard {
-    fn drop(&mut self) {
-        self.0.finished();
     }
 }
 
@@ -1344,16 +1113,12 @@ fn conversion_error(detail: &str) -> Status {
     tbep_status(Code::InvalidArgument, pb::ErrorCode::InvalidRequest, detail)
 }
 
-fn response_size_error(detail: &str) -> Status {
-    tbep_status(Code::ResourceExhausted, pb::ErrorCode::RequestTooLarge, detail)
-}
-
 #[cfg(test)]
 #[allow(
     clippy::items_after_test_module,
-    reason = "the focused lifecycle test stays next to the private lifecycle state machine"
+    reason = "the focused certificate-binding tests stay next to the private admission check"
 )]
-mod query_lifecycle_tests {
+mod gateway_certificate_tests {
     use super::*;
 
     fn certificate_with_uri_sans(uris: &[&str]) -> Vec<u8> {
@@ -1381,10 +1146,8 @@ mod query_lifecycle_tests {
 
     #[test]
     fn gateway_certificate_binding_requires_one_exact_bounded_uri_san() {
-        const PRINCIPAL: &str =
-            "spiffe://terrascale.tech/test/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV";
-        const OTHER: &str =
-            "spiffe://terrascale.tech/test/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAW";
+        const PRINCIPAL: &str = "spiffe://terrascale.tech/test/gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        const OTHER: &str = "spiffe://terrascale.tech/test/gateway/01ARZ3NDEKTSV4RRFFQ69G5FAW";
 
         let exact = certificate_with_uri_sans(&[PRINCIPAL]);
         authenticate_gateway_certificate(PRINCIPAL, &exact).expect("one exact URI SAN is accepted");
@@ -1404,31 +1167,6 @@ mod query_lifecycle_tests {
         let error = authenticate_gateway_certificate(&long_uri, &long_der)
             .expect_err("an over-bound URI SAN is refused");
         assert_eq!(error.code(), Code::PermissionDenied);
-    }
-
-    #[test]
-    fn query_reservations_use_the_full_scope_and_drop_cleanup() {
-        let server = TbepGrpcServer::new(
-            Arc::new(crate::host::SyncDeliveryHost::new(1)) as Arc<dyn TbepHost>,
-            pb::BindingKind::Local,
-        );
-        let scope = registry::BoundScope {
-            principal: "operator".into(),
-            tenant: "tenant-a".into(),
-            project: "project-a".into(),
-            database: "database-a".into(),
-        };
-        let lifecycle = server.register_query(&scope, 7).expect("the query reserves");
-        assert!(server.register_query(&scope, 7).is_err());
-
-        let other_database =
-            registry::BoundScope { database: "database-b".into(), ..scope.clone() };
-        let other = server
-            .register_query(&other_database, 7)
-            .expect("the same id is independent in another database");
-        drop(other);
-        drop(lifecycle);
-        assert!(server.register_query(&scope, 7).is_ok());
     }
 }
 
@@ -1531,160 +1269,12 @@ where
     }
 }
 
-/// Runs a query behind the overload gate and keeps its host cancellation
-/// lifecycle alive when the RPC future is cancelled or times out.
-#[allow(
-    clippy::too_many_lines,
-    reason = "the query lifecycle and overload permit must remain visible across every task outcome"
-)]
-async fn run_query_host<F>(
-    self_ref: &TbepGrpcServer,
-    lifecycle: Arc<QueryLifecycle>,
-    work: F,
-) -> Result<registry::QueryExecuteResponse, Status>
-where
-    F: FnOnce() -> Result<registry::QueryExecuteResponse, HostingError> + Send + 'static,
-{
-    let started = Instant::now();
-    if self_ref.draining.load(Ordering::Acquire) {
-        lifecycle.abandon();
-        self_ref.metrics.record_request(
-            self_ref.region,
-            MetricOperation::Query,
-            MetricOutcome::Rejected,
-            started.elapsed(),
-        );
-        return Err(tbep_status(
-            Code::FailedPrecondition,
-            pb::ErrorCode::ShuttingDown,
-            "the engine is draining and is not admitting new work",
-        ));
-    }
-    if self_ref.inflight.fetch_add(1, Ordering::AcqRel) >= self_ref.config.max_inflight() {
-        self_ref.inflight.fetch_sub(1, Ordering::AcqRel);
-        lifecycle.abandon();
-        self_ref.metrics.record_request(
-            self_ref.region,
-            MetricOperation::Query,
-            MetricOutcome::Rejected,
-            started.elapsed(),
-        );
-        return Err(tbep_status(
-            Code::ResourceExhausted,
-            pb::ErrorCode::Overloaded,
-            "the engine is serving its in-flight bound; retry",
-        ));
-    }
-    let permit = Permit(Arc::clone(&self_ref.inflight));
-    let task_lifecycle = Arc::clone(&lifecycle);
-    let task = tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        let _execution = QueryExecutionGuard(Arc::clone(&task_lifecycle));
-        if !task_lifecycle.started() {
-            return Err(HostingError::Refused("the query was cancelled".into()));
-        }
-        work()
-    });
-    match tokio::time::timeout(self_ref.config.request_timeout(), task).await {
-        Err(_) => {
-            // The execution task owns the permit and continues until the
-            // host reaches its cancellation checkpoint. The cancellation
-            // guard also covers a client disconnect that drops this future.
-            lifecycle.request_cancel();
-            self_ref.metrics.record_request(
-                self_ref.region,
-                MetricOperation::Query,
-                MetricOutcome::Error,
-                started.elapsed(),
-            );
-            Err(tbep_status(
-                Code::DeadlineExceeded,
-                pb::ErrorCode::EngineFailure,
-                "the engine request exceeded its configured deadline",
-            ))
-        }
-        Ok(Ok(Ok(value))) => {
-            self_ref.metrics.record_request(
-                self_ref.region,
-                MetricOperation::Query,
-                MetricOutcome::Success,
-                started.elapsed(),
-            );
-            Ok(value)
-        }
-        Ok(Ok(Err(error))) => {
-            let outcome = match &error {
-                HostingError::EngineFailure(_) | HostingError::UsageCorrupt(_) => {
-                    MetricOutcome::Error
-                }
-                HostingError::Invalid(_)
-                | HostingError::Refused(_)
-                | HostingError::SessionRefused(_)
-                | HostingError::SubscriptionRefused(_)
-                | HostingError::CheckpointRefused(_)
-                | HostingError::ClusterReadOnly(_)
-                | HostingError::ClusterImmutable(_)
-                | HostingError::UsageUnavailable(_) => MetricOutcome::Rejected,
-            };
-            self_ref.metrics.record_request(
-                self_ref.region,
-                MetricOperation::Query,
-                outcome,
-                started.elapsed(),
-            );
-            Err(host_error(error))
-        }
-        Ok(Err(_)) => {
-            self_ref.metrics.record_request(
-                self_ref.region,
-                MetricOperation::Query,
-                MetricOutcome::Error,
-                started.elapsed(),
-            );
-            Err(tbep_status(
-                Code::Internal,
-                pb::ErrorCode::EngineFailure,
-                "the serving task panicked",
-            ))
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Prost ⇄ domain conversion
 // ---------------------------------------------------------------------------
 
 fn invalid(detail: &str) -> HostingError {
     HostingError::Invalid(detail.to_string())
-}
-
-fn usage_admission(
-    value: Option<&pb::UsageAdmissionContext>,
-    idempotency_key: &str,
-    scope: &registry::BoundScope,
-) -> Result<Option<registry::UsageAdmissionContext>, Status> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let domain = registry::UsageAdmissionContext {
-        project: value.project.clone(),
-        database: value.database.clone(),
-        partition: value.partition.clone(),
-        origin_region: usage_region_from_pb(value.origin_region)?,
-        request_id: value.request_id.clone(),
-        accepted_at_millis: value.accepted_at_millis,
-        meter_version: value.meter_version,
-        integer_units: value.integer_units.clone(),
-    };
-    domain
-        .validate_for_key(idempotency_key)
-        .map_err(|error| conversion_error(&error.to_string()))?;
-    if domain.project != scope.project || domain.database != scope.database {
-        return Err(conversion_error(
-            "usage admission does not match the bound Project and Database",
-        ));
-    }
-    Ok(Some(domain))
 }
 
 fn usage_region_from_pb(value: i32) -> Result<registry::UsageRegion, Status> {
@@ -1794,144 +1384,13 @@ fn consume_value_budget(budget: &mut usize, amount: usize) -> Result<(), Hosting
     Ok(())
 }
 
-fn value_to_pb(value: &TbepValue) -> pb::Value {
-    pb::Value {
-        kind: Some(match value {
-            TbepValue::Null => pb::value::Kind::Null(pb::NullValue::Null as i32),
-            TbepValue::Boolean(flag) => pb::value::Kind::Boolean(*flag),
-            TbepValue::Integer(number) => pb::value::Kind::Integer(*number),
-            TbepValue::Number(number) => pb::value::Kind::Number(*number),
-            TbepValue::String(text) => pb::value::Kind::Text(text.clone()),
-            TbepValue::Array(items) => pb::value::Kind::List(pb::ValueList {
-                items: items.iter().map(value_to_pb).collect(),
-            }),
-            TbepValue::Object(fields) => pb::value::Kind::Map(pb::ValueMap {
-                entries: fields
-                    .iter()
-                    .map(|(name, item)| pb::ValueEntry {
-                        name: name.clone(),
-                        value: Some(value_to_pb(item)),
-                    })
-                    .collect(),
-            }),
-        }),
-    }
-}
-
 // --- shared closed vocabularies ---
-
-fn acknowledgement(v: i32) -> Option<registry::Acknowledgement> {
-    match pb::Acknowledgement::try_from(v).ok()? {
-        pb::Acknowledgement::Unspecified => None,
-        pb::Acknowledgement::LocalSynced => Some(registry::Acknowledgement::LocalSynced),
-        pb::Acknowledgement::RegionalQuorum => Some(registry::Acknowledgement::RegionalQuorum),
-        pb::Acknowledgement::GlobalQuorum => Some(registry::Acknowledgement::GlobalQuorum),
-        pb::Acknowledgement::Backup => Some(registry::Acknowledgement::BackupAck),
-    }
-}
-
-fn acknowledgement_pb(value: Option<registry::Acknowledgement>) -> i32 {
-    match value {
-        None | Some(registry::Acknowledgement::RegionalQuorum) => {
-            pb::Acknowledgement::RegionalQuorum as i32
-        }
-        Some(registry::Acknowledgement::GlobalQuorum) => pb::Acknowledgement::GlobalQuorum as i32,
-        Some(registry::Acknowledgement::BackupAck) => pb::Acknowledgement::Backup as i32,
-        Some(registry::Acknowledgement::LocalSynced) => pb::Acknowledgement::LocalSynced as i32,
-    }
-}
-
-fn backup_outcome_pb(value: Option<registry::BackupOutcome>) -> i32 {
-    match value {
-        None | Some(registry::BackupOutcome::None) => pb::BackupOutcome::None as i32,
-        Some(registry::BackupOutcome::Full) => pb::BackupOutcome::Full as i32,
-        Some(registry::BackupOutcome::Partial) => pb::BackupOutcome::Partial as i32,
-    }
-}
-
-fn read_level(v: i32) -> Option<registry::ReadLevel> {
-    match pb::ReadLevel::try_from(v).ok()? {
-        pb::ReadLevel::Unspecified => None,
-        pb::ReadLevel::Local => Some(registry::ReadLevel::Local),
-        pb::ReadLevel::RegionalQuorum => Some(registry::ReadLevel::RegionalQuorumRead),
-        pb::ReadLevel::GlobalQuorum => Some(registry::ReadLevel::GlobalQuorumRead),
-    }
-}
 
 fn cluster_mode_pb(value: Option<registry::ClusterMode>) -> i32 {
     match value {
         None | Some(registry::ClusterMode::Standalone) => pb::ClusterMode::Standalone as i32,
         Some(registry::ClusterMode::Active) => pb::ClusterMode::Active as i32,
         Some(registry::ClusterMode::Backup) => pb::ClusterMode::Backup as i32,
-    }
-}
-
-fn expected_version(
-    value: &pb::ExpectedVersion,
-) -> Result<registry::ExpectedVersion, HostingError> {
-    let discipline = value
-        .discipline
-        .as_ref()
-        .ok_or_else(|| invalid("an expected version carries no discipline"))?;
-    Ok(match discipline {
-        pb::expected_version::Discipline::Absent(_) => registry::ExpectedVersion::Absent,
-        pb::expected_version::Discipline::Any(_) => registry::ExpectedVersion::Any,
-        pb::expected_version::Discipline::Exact(version) => {
-            registry::ExpectedVersion::Exact(*version)
-        }
-    })
-}
-
-fn commit_receipt(value: &registry::CommitReceipt) -> pb::CommitReceipt {
-    pb::CommitReceipt {
-        sequence: value.sequence,
-        version: value.version,
-        operation_id: value.operation_id.clone(),
-        acknowledgement: acknowledgement_pb(value.acknowledgement),
-        backup: backup_outcome_pb(value.backup),
-    }
-}
-
-fn write_outcome_pb(value: &registry::WriteOutcome) -> pb::WriteOutcome {
-    pb::WriteOutcome {
-        outcome: Some(match value {
-            registry::WriteOutcome::Committed(receipt) => {
-                pb::write_outcome::Outcome::Committed(commit_receipt(receipt))
-            }
-            registry::WriteOutcome::Conflict => {
-                pb::write_outcome::Outcome::Conflict(pb::WriteConflict {})
-            }
-            registry::WriteOutcome::Rejected(reason) => {
-                let pb_reason = match reason {
-                    registry::WriteReason::InvalidDocument => pb::WriteReason::InvalidDocument,
-                    registry::WriteReason::SchemaRefused => pb::WriteReason::SchemaRefused,
-                    registry::WriteReason::NotFound => pb::WriteReason::NotFound,
-                };
-                pb::write_outcome::Outcome::Rejected(pb::WriteRejected { reason: pb_reason as i32 })
-            }
-        }),
-    }
-}
-
-fn document_put(value: &pb::DocumentPut) -> Result<registry::DocumentPut, HostingError> {
-    Ok(registry::DocumentPut {
-        id: value.id.clone(),
-        collection: value.collection.clone(),
-        body: value
-            .body
-            .as_ref()
-            .map(value_from_pb)
-            .transpose()?
-            .ok_or_else(|| invalid("a document put carries no body"))?,
-    })
-}
-
-fn document_body(value: &registry::DocumentBody) -> pb::DocumentBody {
-    pb::DocumentBody {
-        id: value.id.clone(),
-        collection: value.collection.clone(),
-        version: value.version,
-        body: Some(value_to_pb(&value.body)),
     }
 }
 
@@ -1947,51 +1406,6 @@ fn subscription_start(
         pb::subscription_start::Start::Sequence(sequence) => {
             registry::SubscriptionStart::Sequence(*sequence)
         }
-    })
-}
-
-fn mutation_outcome_pb(value: &registry::MutationOutcome) -> pb::MutationOutcome {
-    pb::MutationOutcome {
-        outcome: Some(match value {
-            registry::MutationOutcome::Applied(receipt) => {
-                pb::mutation_outcome::Outcome::Applied(commit_receipt(receipt))
-            }
-            registry::MutationOutcome::Rejected(reason) => {
-                let pb_reason = match reason {
-                    registry::MutationReason::ScopeRefused => pb::MutationReason::ScopeRefused,
-                    registry::MutationReason::InvalidBody => pb::MutationReason::InvalidBody,
-                    registry::MutationReason::SequenceOutOfOrder => {
-                        pb::MutationReason::SequenceOutOfOrder
-                    }
-                };
-                pb::mutation_outcome::Outcome::Rejected(pb::MutationRejected {
-                    reason: pb_reason as i32,
-                })
-            }
-        }),
-    }
-}
-
-fn sync_field(value: &pb::SyncField) -> Result<registry::SyncField, HostingError> {
-    Ok(registry::SyncField {
-        name: value.name.clone(),
-        value: value
-            .value
-            .as_ref()
-            .map(value_from_pb)
-            .transpose()?
-            .ok_or_else(|| invalid("a sync field carries no value"))?,
-    })
-}
-
-fn sync_change(value: &pb::SyncChange) -> Result<registry::SyncChange, HostingError> {
-    let change =
-        value.change.as_ref().ok_or_else(|| invalid("a sync mutation carries no change"))?;
-    Ok(match change {
-        pb::sync_change::Change::Put(put) => registry::SyncChange::Put(
-            put.fields.iter().map(sync_field).collect::<Result<Vec<_>, _>>()?,
-        ),
-        pb::sync_change::Change::Delete(_) => registry::SyncChange::Delete,
     })
 }
 
@@ -2455,324 +1869,6 @@ impl ChannelService for Arc<TbepGrpcServer> {
 }
 
 #[tonic::async_trait]
-impl EngineService for Arc<TbepGrpcServer> {
-    async fn document_read(
-        &self,
-        request: Request<pb::EngineServiceDocumentReadRequest>,
-    ) -> Result<Response<pb::EngineServiceDocumentReadResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let message = request.into_inner();
-        let domain = registry::DocumentReadRequest {
-            collection: message.collection,
-            document: message.document,
-            level: read_level(message.level),
-        };
-        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response = run_host(self.as_ref(), MetricOperation::Read, move || {
-            host.document_read(&tenant, &domain)
-        })
-        .await?;
-        Ok(Response::new(pb::EngineServiceDocumentReadResponse {
-            found: response.found,
-            document: response.document.as_ref().map(document_body),
-            position: response.position.unwrap_or_default(),
-        }))
-    }
-
-    async fn document_write(
-        &self,
-        request: Request<pb::EngineServiceDocumentWriteRequest>,
-    ) -> Result<Response<pb::EngineServiceDocumentWriteResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let key = idempotency_key(&request)?;
-        let message = request.into_inner();
-        let document =
-            message.document.as_ref().map(document_put).transpose().map_err(host_error)?;
-        let domain = registry::DocumentWriteRequest {
-            document: document.ok_or_else(|| conversion_error("a write carries no document"))?,
-            expected: message
-                .expected
-                .as_ref()
-                .map(expected_version)
-                .transpose()
-                .map_err(host_error)?
-                .ok_or_else(|| conversion_error("a write carries no expected version"))?,
-            operation_id: message.operation_id,
-            ack: acknowledgement(message.ack),
-            usage: usage_admission(message.usage.as_ref(), &key, &identity.tenant)?,
-        };
-        self.require_mutation_usage(domain.usage.is_some())?;
-        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response = run_host(self.as_ref(), MetricOperation::Write, move || {
-            host.document_write(&tenant, &domain, &key)
-        })
-        .await?;
-        Ok(Response::new(pb::EngineServiceDocumentWriteResponse {
-            outcome: Some(write_outcome_pb(&response.outcome)),
-        }))
-    }
-
-    async fn document_delete(
-        &self,
-        request: Request<pb::EngineServiceDocumentDeleteRequest>,
-    ) -> Result<Response<pb::EngineServiceDocumentDeleteResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let key = idempotency_key(&request)?;
-        let message = request.into_inner();
-        let domain = registry::DocumentDeleteRequest {
-            collection: message.collection,
-            document: message.document,
-            expected: message
-                .expected
-                .as_ref()
-                .map(expected_version)
-                .transpose()
-                .map_err(host_error)?
-                .ok_or_else(|| conversion_error("a delete carries no expected version"))?,
-            operation_id: message.operation_id,
-            ack: acknowledgement(message.ack),
-            usage: usage_admission(message.usage.as_ref(), &key, &identity.tenant)?,
-        };
-        self.require_mutation_usage(domain.usage.is_some())?;
-        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response = run_host(self.as_ref(), MetricOperation::Write, move || {
-            host.document_delete(&tenant, &domain, &key)
-        })
-        .await?;
-        Ok(Response::new(pb::EngineServiceDocumentDeleteResponse {
-            outcome: Some(write_outcome_pb(&response.outcome)),
-        }))
-    }
-
-    async fn document_batch(
-        &self,
-        request: Request<pb::EngineServiceDocumentBatchRequest>,
-    ) -> Result<Response<pb::EngineServiceDocumentBatchResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let key = idempotency_key(&request)?;
-        let message = request.into_inner();
-        let mut items = Vec::with_capacity(message.items.len());
-        for item in &message.items {
-            let document = item
-                .document
-                .as_ref()
-                .map(document_put)
-                .transpose()
-                .map_err(host_error)?
-                .ok_or_else(|| conversion_error("a batch item carries no document"))?;
-            items.push(registry::BatchWrite {
-                document,
-                expected: item
-                    .expected
-                    .as_ref()
-                    .map(expected_version)
-                    .transpose()
-                    .map_err(host_error)?
-                    .ok_or_else(|| conversion_error("a batch item carries no expected version"))?,
-                operation_id: item.operation_id.clone(),
-            });
-        }
-        let domain = registry::DocumentBatchRequest {
-            items,
-            ack: acknowledgement(message.ack),
-            usage: usage_admission(message.usage.as_ref(), &key, &identity.tenant)?,
-        };
-        self.require_mutation_usage(domain.usage.is_some())?;
-        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response = run_host(self.as_ref(), MetricOperation::Write, move || {
-            host.document_batch(&tenant, &domain, &key)
-        })
-        .await?;
-        Ok(Response::new(pb::EngineServiceDocumentBatchResponse {
-            outcome: Some(write_outcome_pb(&response.outcome)),
-        }))
-    }
-
-    async fn query_execute(
-        &self,
-        request: Request<pb::EngineServiceQueryExecuteRequest>,
-    ) -> Result<Response<pb::EngineServiceQueryExecuteResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let message = request.into_inner();
-        let max_items = message.max_items;
-        let domain = registry::QueryExecuteRequest {
-            query_id: message.query_id,
-            text: message.text,
-            max_items,
-            level: read_level(message.level),
-        };
-        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
-        let lifecycle = self.register_query(&identity.tenant, domain.query_id)?;
-        let _cancellation = QueryCancellationGuard(Arc::clone(&lifecycle));
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant.clone();
-        let response =
-            run_query_host(self.as_ref(), lifecycle, move || host.query_execute(&tenant, &domain))
-                .await?;
-        if response.documents.len() > usize::try_from(max_items).unwrap_or(usize::MAX) {
-            return Err(conversion_error(
-                "the host returned more query documents than max_items permits",
-            ));
-        }
-        if response.documents.len() > registry::MAX_LIST_ITEMS {
-            return Err(conversion_error("the host returned too many query documents"));
-        }
-        if usize::try_from(response.count).unwrap_or(usize::MAX) < response.documents.len() {
-            return Err(conversion_error(
-                "the host returned a query count smaller than its document page",
-            ));
-        }
-        let response = pb::EngineServiceQueryExecuteResponse {
-            documents: response.documents.iter().map(document_body).collect(),
-            count: response.count,
-            terminal: match response.terminal {
-                registry::QueryTerminal::Complete => pb::QueryTerminal::Complete as i32,
-                registry::QueryTerminal::Truncated => pb::QueryTerminal::Truncated as i32,
-            },
-            position: response.position.unwrap_or_default(),
-        };
-        if response.encoded_len() > self.config.max_message_bytes() {
-            return Err(response_size_error(
-                "the query response exceeds the configured message bound",
-            ));
-        }
-        Ok(Response::new(response))
-    }
-
-    async fn query_cancel(
-        &self,
-        request: Request<pb::EngineServiceQueryCancelRequest>,
-    ) -> Result<Response<pb::EngineServiceQueryCancelResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let message = request.into_inner();
-        let domain = registry::QueryCancelRequest { query_id: message.query_id };
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response = run_host(self.as_ref(), MetricOperation::Query, move || {
-            host.query_cancel(&tenant, &domain)
-        })
-        .await?;
-        Ok(Response::new(pb::EngineServiceQueryCancelResponse {
-            outcome: match response.outcome {
-                registry::CancelOutcome::Cancelled => pb::CancelOutcome::Cancelled as i32,
-                registry::CancelOutcome::AlreadyComplete => {
-                    pb::CancelOutcome::AlreadyComplete as i32
-                }
-                registry::CancelOutcome::UnknownQuery => pb::CancelOutcome::UnknownQuery as i32,
-            },
-        }))
-    }
-
-    async fn family_read(
-        &self,
-        request: Request<pb::EngineServiceFamilyReadRequest>,
-    ) -> Result<Response<pb::EngineServiceFamilyReadResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let message = request.into_inner();
-        if message.request.len() > self.config.max_message_bytes() {
-            return Err(conversion_error("a family request exceeds its byte bound"));
-        }
-        let domain = registry::FamilyReadRequest {
-            family: message.family,
-            name: message.name,
-            request_codec: message.request_codec,
-            request: message.request,
-        };
-        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
-        let _payload =
-            domain.decode_payload().map_err(|error| conversion_error(&error.to_string()))?;
-        let family = domain.family.clone();
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response = run_host(self.as_ref(), MetricOperation::Read, move || {
-            host.family_read(&tenant, &domain)
-        })
-        .await?;
-        if response.response.len() > self.config.max_message_bytes() {
-            return Err(response_size_error(
-                "the family response exceeds the configured message bound",
-            ));
-        }
-        let response_payload = family_codec::decode_response(&response.response)
-            .map_err(|error| conversion_error(&error.to_string()))?;
-        family_codec::validate_response_family(
-            &family,
-            &response.response_codec,
-            &response_payload,
-        )
-        .map_err(|error| conversion_error(&error.to_string()))?;
-        Ok(Response::new(pb::EngineServiceFamilyReadResponse {
-            response_codec: response.response_codec,
-            response: response.response,
-        }))
-    }
-
-    async fn family_write(
-        &self,
-        request: Request<pb::EngineServiceFamilyWriteRequest>,
-    ) -> Result<Response<pb::EngineServiceFamilyWriteResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let key = idempotency_key(&request)?;
-        let message = request.into_inner();
-        if message.request.len() > self.config.max_message_bytes() {
-            return Err(conversion_error("a family request exceeds its byte bound"));
-        }
-        let domain = registry::FamilyWriteRequest {
-            family: message.family,
-            name: message.name,
-            request_codec: message.request_codec,
-            request: message.request,
-            operation_id: message.operation_id,
-            usage: usage_admission(message.usage.as_ref(), &key, &identity.tenant)?,
-        };
-        self.require_mutation_usage(domain.usage.is_some())?;
-        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
-        let _payload =
-            domain.decode_payload().map_err(|error| conversion_error(&error.to_string()))?;
-        let family = domain.family.clone();
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response = run_host(self.as_ref(), MetricOperation::Write, move || {
-            host.family_write(&tenant, &domain, &key)
-        })
-        .await?;
-        if response.response.len() > self.config.max_message_bytes() {
-            return Err(response_size_error(
-                "the family response exceeds the configured message bound",
-            ));
-        }
-        let response_payload = family_codec::decode_response(&response.response)
-            .map_err(|error| conversion_error(&error.to_string()))?;
-        family_codec::validate_response_family(
-            &family,
-            &response.response_codec,
-            &response_payload,
-        )
-        .map_err(|error| conversion_error(&error.to_string()))?;
-        Ok(Response::new(pb::EngineServiceFamilyWriteResponse {
-            response_codec: response.response_codec,
-            response: response.response,
-        }))
-    }
-}
-
-#[tonic::async_trait]
 impl BackboneService for Arc<TbepGrpcServer> {
     type SubscribeStream = SubscriptionStream;
 
@@ -2917,163 +2013,6 @@ impl BackboneService for Arc<TbepGrpcServer> {
         Ok(Response::new(pb::BackboneServiceUnsubscribeResponse {
             subscription_id: response.subscription_id,
         }))
-    }
-}
-
-#[tonic::async_trait]
-impl SyncService for Arc<TbepGrpcServer> {
-    async fn session_setup(
-        &self,
-        request: Request<pb::SyncServiceSessionSetupRequest>,
-    ) -> Result<Response<pb::SyncServiceSessionSetupResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let message = request.into_inner();
-        if message.resume.len() > MAX_SYNC_TOKEN_BYTES {
-            return Err(conversion_error("a sync resume token exceeds its byte bound"));
-        }
-        let domain = registry::SyncSessionSetupRequest {
-            collection: message.collection,
-            resume: (!message.resume.is_empty()).then_some(message.resume),
-        };
-        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response = run_host(self.as_ref(), MetricOperation::Subscribe, move || {
-            host.sync_session_setup(&tenant, &domain)
-        })
-        .await?;
-        Ok(Response::new(pb::SyncServiceSessionSetupResponse {
-            session_id: response.session_id,
-            checkpoint: response.checkpoint,
-            retained_floor: response.retained_floor,
-        }))
-    }
-
-    async fn delta_pull(
-        &self,
-        request: Request<pb::SyncServiceDeltaPullRequest>,
-    ) -> Result<Response<pb::SyncServiceDeltaPullResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let message = request.into_inner();
-        if message.from.len() > MAX_SYNC_TOKEN_BYTES {
-            return Err(conversion_error("a sync cursor exceeds its byte bound"));
-        }
-        let domain =
-            registry::SyncDeltaPullRequest { session_id: message.session_id, from: message.from };
-        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response = run_host(self.as_ref(), MetricOperation::Subscribe, move || {
-            host.sync_delta_pull(&tenant, &domain)
-        })
-        .await?;
-        Ok(Response::new(pb::SyncServiceDeltaPullResponse {
-            session_id: response.session_id,
-            payload_codec: response.payload_codec,
-            payload: response.payload,
-            next: response.next,
-            commits: response.commits,
-            single_commit_oversize: response.single_commit_oversize,
-        }))
-    }
-
-    async fn snapshot_pull(
-        &self,
-        request: Request<pb::SyncServiceSnapshotPullRequest>,
-    ) -> Result<Response<pb::SyncServiceSnapshotPullResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let message = request.into_inner();
-        let domain = registry::SyncSnapshotPullRequest { session_id: message.session_id };
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response = run_host(self.as_ref(), MetricOperation::Subscribe, move || {
-            host.sync_snapshot_pull(&tenant, &domain)
-        })
-        .await?;
-        Ok(Response::new(pb::SyncServiceSnapshotPullResponse {
-            session_id: response.session_id,
-            payload_codec: response.payload_codec,
-            payload: response.payload,
-            checkpoint: response.checkpoint,
-        }))
-    }
-
-    async fn checkpoint_ack(
-        &self,
-        request: Request<pb::SyncServiceCheckpointAckRequest>,
-    ) -> Result<Response<pb::SyncServiceCheckpointAckResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let message = request.into_inner();
-        if message.checkpoint.len() > MAX_SYNC_TOKEN_BYTES {
-            return Err(conversion_error("a sync checkpoint exceeds its byte bound"));
-        }
-        let domain = registry::SyncCheckpointAckRequest {
-            session_id: message.session_id,
-            checkpoint: message.checkpoint,
-        };
-        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response = run_host(self.as_ref(), MetricOperation::Subscribe, move || {
-            host.sync_checkpoint_ack(&tenant, &domain)
-        })
-        .await?;
-        Ok(Response::new(pb::SyncServiceCheckpointAckResponse { session_id: response.session_id }))
-    }
-
-    async fn mutation_submit(
-        &self,
-        request: Request<pb::SyncServiceMutationSubmitRequest>,
-    ) -> Result<Response<pb::SyncServiceMutationSubmitResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let key = idempotency_key(&request)?;
-        let message = request.into_inner();
-        let domain = registry::SyncMutationSubmitRequest {
-            session_id: message.session_id,
-            document: message.document,
-            change: message
-                .change
-                .as_ref()
-                .map(sync_change)
-                .transpose()
-                .map_err(host_error)?
-                .ok_or_else(|| conversion_error("a sync mutation carries no change"))?,
-            usage: usage_admission(message.usage.as_ref(), &key, &identity.tenant)?,
-        };
-        self.require_mutation_usage(domain.usage.is_some())?;
-        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response = run_host(self.as_ref(), MetricOperation::Write, move || {
-            host.sync_mutation_submit(&tenant, &domain, &key)
-        })
-        .await?;
-        Ok(Response::new(pb::SyncServiceMutationSubmitResponse {
-            session_id: response.session_id,
-            outcome: Some(mutation_outcome_pb(&response.outcome)),
-        }))
-    }
-
-    async fn session_close(
-        &self,
-        request: Request<pb::SyncServiceSessionCloseRequest>,
-    ) -> Result<Response<pb::SyncServiceSessionCloseResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let message = request.into_inner();
-        let domain = registry::SyncSessionCloseRequest { session_id: message.session_id };
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response = run_host(self.as_ref(), MetricOperation::Subscribe, move || {
-            host.sync_session_close(&tenant, &domain)
-        })
-        .await?;
-        Ok(Response::new(pb::SyncServiceSessionCloseResponse { session_id: response.session_id }))
     }
 }
 

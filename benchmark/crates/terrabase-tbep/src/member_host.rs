@@ -1,17 +1,18 @@
 //! Opt-in composition of the durable engine and sync-delivery planes.
 //!
 //! `MemberHost` is the first staged host unification. It keeps
-//! [`EngineHost`] as the production harness,
-//! but lets focused callers construct one host whose document mutations and
-//! sync/backbone revisions share the engine publication journal.
+//! [`EngineHost`] as the production harness, but lets focused callers
+//! construct one host whose engine mutations and backbone revisions share
+//! the engine publication journal.
 
 use std::path::Path;
 use std::sync::{Mutex, mpsc::Receiver};
 
+use terrabase::engine::Engine;
+
 use crate::engine_host::EngineHost;
 use crate::host::{HostingError, SyncDeliveryHost, TbepHost, TbepNotification};
 use crate::registry;
-use crate::value::TbepValue;
 
 /// Explicit construction options for the staged `MemberHost`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -67,6 +68,13 @@ impl MemberHost {
         self.engine.location()
     }
 
+    /// Returns the underlying engine, so the public API can serve the same
+    /// durable storage this host's backbone delivery derives from.
+    #[must_use]
+    pub fn engine(&self) -> &Engine {
+        self.engine.engine()
+    }
+
     fn synchronize(&self, scope: &registry::BoundScope) -> Result<(), HostingError> {
         let _serial = self.journal_sync.lock().expect("the journal sync lock is not poisoned");
         loop {
@@ -88,23 +96,6 @@ impl MemberHost {
         }
     }
 
-    fn validate_sync_body(body: &TbepValue) -> Result<(), HostingError> {
-        let TbepValue::Object(fields) = body else {
-            return Err(HostingError::Invalid(
-                "MemberHost sync requires an object document body".into(),
-            ));
-        };
-        if fields
-            .iter()
-            .any(|(_, value)| matches!(value, TbepValue::Array(_) | TbepValue::Object(_)))
-        {
-            return Err(HostingError::Invalid(
-                "MemberHost sync does not accept composite document fields".into(),
-            ));
-        }
-        Ok(())
-    }
-
     fn combined_health(
         engine: registry::HealthState,
         delivery: registry::HealthState,
@@ -117,55 +108,6 @@ impl MemberHost {
             (Serving, Serving) => Serving,
         }
     }
-
-    fn sync_mutation_request(
-        &self,
-        scope: &registry::BoundScope,
-        request: &registry::SyncMutationSubmitRequest,
-        idempotency_key: &str,
-    ) -> Result<registry::WriteOutcome, HostingError> {
-        let collection = self.delivery.collection_for_session(scope, request.session_id)?;
-        match &request.change {
-            registry::SyncChange::Put(fields) => {
-                let body = TbepValue::Object(
-                    fields.iter().map(|field| (field.name.clone(), field.value.clone())).collect(),
-                );
-                Self::validate_sync_body(&body)?;
-                self.engine
-                    .document_write(
-                        scope,
-                        &registry::DocumentWriteRequest {
-                            document: registry::DocumentPut {
-                                id: request.document.clone(),
-                                collection,
-                                body,
-                            },
-                            expected: registry::ExpectedVersion::Any,
-                            operation_id: idempotency_key.to_owned(),
-                            ack: Some(registry::Acknowledgement::LocalSynced),
-                            usage: request.usage.clone(),
-                        },
-                        idempotency_key,
-                    )
-                    .map(|response| response.outcome)
-            }
-            registry::SyncChange::Delete => self
-                .engine
-                .document_delete(
-                    scope,
-                    &registry::DocumentDeleteRequest {
-                        collection,
-                        document: request.document.clone(),
-                        expected: registry::ExpectedVersion::Any,
-                        operation_id: idempotency_key.to_owned(),
-                        ack: Some(registry::Acknowledgement::LocalSynced),
-                        usage: request.usage.clone(),
-                    },
-                    idempotency_key,
-                )
-                .map(|response| response.outcome),
-        }
-    }
 }
 
 impl TbepHost for MemberHost {
@@ -175,90 +117,6 @@ impl TbepHost for MemberHost {
     ) -> Result<registry::ChannelBindResponse, HostingError> {
         let response = self.engine.bind_channel(request)?;
         self.delivery.bind_channel(request)?;
-        Ok(response)
-    }
-
-    fn document_read(
-        &self,
-        scope: &registry::BoundScope,
-        request: &registry::DocumentReadRequest,
-    ) -> Result<registry::DocumentReadResponse, HostingError> {
-        self.engine.document_read(scope, request)
-    }
-
-    fn document_write(
-        &self,
-        scope: &registry::BoundScope,
-        request: &registry::DocumentWriteRequest,
-        idempotency_key: &str,
-    ) -> Result<registry::DocumentWriteResponse, HostingError> {
-        Self::validate_sync_body(&request.document.body)?;
-        let response = self.engine.document_write(scope, request, idempotency_key)?;
-        if matches!(response.outcome, registry::WriteOutcome::Committed(_)) {
-            self.synchronize(scope)?;
-        }
-        Ok(response)
-    }
-
-    fn document_delete(
-        &self,
-        scope: &registry::BoundScope,
-        request: &registry::DocumentDeleteRequest,
-        idempotency_key: &str,
-    ) -> Result<registry::DocumentDeleteResponse, HostingError> {
-        let response = self.engine.document_delete(scope, request, idempotency_key)?;
-        if matches!(response.outcome, registry::WriteOutcome::Committed(_)) {
-            self.synchronize(scope)?;
-        }
-        Ok(response)
-    }
-
-    fn document_batch(
-        &self,
-        scope: &registry::BoundScope,
-        request: &registry::DocumentBatchRequest,
-        idempotency_key: &str,
-    ) -> Result<registry::DocumentBatchResponse, HostingError> {
-        for write in &request.items {
-            Self::validate_sync_body(&write.document.body)?;
-        }
-        let response = self.engine.document_batch(scope, request, idempotency_key)?;
-        self.synchronize(scope)?;
-        Ok(response)
-    }
-
-    fn query_execute(
-        &self,
-        scope: &registry::BoundScope,
-        request: &registry::QueryExecuteRequest,
-    ) -> Result<registry::QueryExecuteResponse, HostingError> {
-        self.engine.query_execute(scope, request)
-    }
-
-    fn query_cancel(
-        &self,
-        scope: &registry::BoundScope,
-        request: &registry::QueryCancelRequest,
-    ) -> Result<registry::QueryCancelResponse, HostingError> {
-        self.engine.query_cancel(scope, request)
-    }
-
-    fn family_read(
-        &self,
-        scope: &registry::BoundScope,
-        request: &registry::FamilyReadRequest,
-    ) -> Result<registry::FamilyReadResponse, HostingError> {
-        self.engine.family_read(scope, request)
-    }
-
-    fn family_write(
-        &self,
-        scope: &registry::BoundScope,
-        request: &registry::FamilyWriteRequest,
-        idempotency_key: &str,
-    ) -> Result<registry::FamilyWriteResponse, HostingError> {
-        let response = self.engine.family_write(scope, request, idempotency_key)?;
-        self.synchronize(scope)?;
         Ok(response)
     }
 
@@ -287,72 +145,6 @@ impl TbepHost for MemberHost {
         request: &registry::BackboneUnsubscribeRequest,
     ) -> Result<registry::BackboneUnsubscribeResponse, HostingError> {
         self.delivery.backbone_unsubscribe(scope, request)
-    }
-
-    fn sync_session_setup(
-        &self,
-        scope: &registry::BoundScope,
-        request: &registry::SyncSessionSetupRequest,
-    ) -> Result<registry::SyncSessionSetupResponse, HostingError> {
-        self.synchronize(scope)?;
-        self.delivery.sync_session_setup(scope, request)
-    }
-
-    fn sync_delta_pull(
-        &self,
-        scope: &registry::BoundScope,
-        request: &registry::SyncDeltaPullRequest,
-    ) -> Result<registry::SyncDeltaPullResponse, HostingError> {
-        self.synchronize(scope)?;
-        self.delivery.sync_delta_pull(scope, request)
-    }
-
-    fn sync_snapshot_pull(
-        &self,
-        scope: &registry::BoundScope,
-        request: &registry::SyncSnapshotPullRequest,
-    ) -> Result<registry::SyncSnapshotPullResponse, HostingError> {
-        self.synchronize(scope)?;
-        self.delivery.sync_snapshot_pull(scope, request)
-    }
-
-    fn sync_checkpoint_ack(
-        &self,
-        scope: &registry::BoundScope,
-        request: &registry::SyncCheckpointAckRequest,
-    ) -> Result<registry::SyncCheckpointAckResponse, HostingError> {
-        self.delivery.sync_checkpoint_ack(scope, request)
-    }
-
-    fn sync_mutation_submit(
-        &self,
-        scope: &registry::BoundScope,
-        request: &registry::SyncMutationSubmitRequest,
-        idempotency_key: &str,
-    ) -> Result<registry::SyncMutationSubmitResponse, HostingError> {
-        self.synchronize(scope)?;
-        let outcome = self.sync_mutation_request(scope, request, idempotency_key)?;
-        self.synchronize(scope)?;
-        let outcome = match outcome {
-            registry::WriteOutcome::Committed(receipt) => {
-                registry::MutationOutcome::Applied(receipt)
-            }
-            registry::WriteOutcome::Conflict => {
-                registry::MutationOutcome::Rejected(registry::MutationReason::SequenceOutOfOrder)
-            }
-            registry::WriteOutcome::Rejected(_) => {
-                registry::MutationOutcome::Rejected(registry::MutationReason::InvalidBody)
-            }
-        };
-        Ok(registry::SyncMutationSubmitResponse { session_id: request.session_id, outcome })
-    }
-
-    fn sync_session_close(
-        &self,
-        scope: &registry::BoundScope,
-        request: &registry::SyncSessionCloseRequest,
-    ) -> Result<registry::SyncSessionCloseResponse, HostingError> {
-        self.delivery.sync_session_close(scope, request)
     }
 
     fn schema_declare(
@@ -467,7 +259,7 @@ impl TbepHost for MemberHost {
         Ok(registry::AdminStatusResponse {
             registry_version: engine.registry_version,
             frames_served: engine.frames_served.saturating_add(delivery.frames_served),
-            sessions: delivery.sessions,
+            sessions: 0,
             subscriptions: delivery.subscriptions,
             scopes: delivery.scopes,
         })
@@ -478,7 +270,7 @@ impl TbepHost for MemberHost {
         let delivery = self.delivery.health()?;
         Ok(registry::SupervisionHealthResponse {
             state: Self::combined_health(engine.state, delivery.state),
-            sessions: engine.sessions.saturating_add(delivery.sessions),
+            sessions: 0,
             subscriptions: delivery.subscriptions,
             frames_served: engine.frames_served.saturating_add(delivery.frames_served),
         })

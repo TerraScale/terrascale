@@ -265,6 +265,7 @@ fn safe_component(name: &str, field: &'static str) -> Result<(), CatalogError> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -272,12 +273,10 @@ mod tests {
 
     use super::{CatalogError, HostCatalog};
     use crate::engine_host::EngineHost;
-    use crate::host::TbepHost;
-    use crate::registry::{
-        Acknowledgement, BoundScope, DocumentPut, DocumentReadRequest, DocumentWriteRequest,
-        ExpectedVersion, WriteOutcome,
+    use terrabase::engine::CommitOutcome;
+    use terrabase::types::{
+        CollectionName, Document, DocumentId, DocumentValue, LocalDurability, OperationId, TenantId,
     };
-    use crate::value::TbepValue;
 
     static NEXT_LOCATION: AtomicU64 = AtomicU64::new(1);
 
@@ -304,59 +303,52 @@ mod tests {
         }
     }
 
-    /// The bound scope one catalog host admits.
-    fn scope(database: &str) -> BoundScope {
-        BoundScope {
-            principal: "spiffe://local/catalog-test".into(),
-            tenant: "tenant-a".into(),
-            project: "project-a".into(),
-            database: database.into(),
-        }
-    }
-
     /// Writes one small document through the host's engine transaction
     /// path and asserts the commit.
     fn put(host: &EngineHost, database: &str, id: &str, value: i64) {
-        let response = host
-            .document_write(
-                &scope(database),
-                &DocumentWriteRequest {
-                    document: DocumentPut {
-                        id: id.into(),
-                        collection: "users".into(),
-                        body: TbepValue::Object(vec![("value".into(), TbepValue::Integer(value))]),
-                    },
-                    expected: ExpectedVersion::Any,
-                    operation_id: format!("put-{database}-{id}"),
-                    ack: Some(Acknowledgement::LocalSynced),
-                    usage: None,
-                },
-                &format!("idem-{database}-{id}"),
+        let engine = host.engine();
+        let tenant = TenantId::try_new("tenant-a").expect("the tenant parses");
+        let engine_scope = engine.scope_for(&tenant);
+        let snapshot = engine.read_snapshot(&engine_scope).expect("the engine serves a snapshot");
+        let operation =
+            OperationId::try_new(&format!("put-{database}-{id}")).expect("the identity parses");
+        let mut transaction =
+            engine.begin(&engine_scope, snapshot, operation).expect("the write begins");
+        transaction
+            .put(
+                Document::new(
+                    DocumentId::try_new(id).expect("the document id parses"),
+                    CollectionName::try_new("users").expect("the collection parses"),
+                    DocumentValue::Object(BTreeMap::from([(
+                        "value".to_owned(),
+                        DocumentValue::Integer(value),
+                    )])),
+                ),
+                terrabase::types::ExpectedVersion::Any,
             )
-            .expect("the engine commits the document");
-        assert!(
-            matches!(response.outcome, WriteOutcome::Committed(_)),
-            "the write committed: {:?}",
-            response.outcome
-        );
+            .expect("the put stages");
+        match transaction.commit(LocalDurability::Synced) {
+            CommitOutcome::Committed(_) => {}
+            outcome => panic!("the write committed: {outcome:?}"),
+        }
     }
 
     /// Reads one document back through the host's engine snapshot path,
     /// returning its `value` field when present.
-    fn get(host: &EngineHost, database: &str, id: &str) -> Option<i64> {
-        let read = host
-            .document_read(
-                &scope(database),
-                &DocumentReadRequest {
-                    collection: "users".into(),
-                    document: id.into(),
-                    level: None,
-                },
-            )
+    fn get(host: &EngineHost, _database: &str, id: &str) -> Option<i64> {
+        let engine = host.engine();
+        let tenant = TenantId::try_new("tenant-a").expect("the tenant parses");
+        let engine_scope = engine.scope_for(&tenant);
+        let snapshot = engine.read_snapshot(&engine_scope).expect("the engine serves a snapshot");
+        let operation = OperationId::try_new(&format!("get-{id}")).expect("the identity parses");
+        let transaction =
+            engine.begin(&engine_scope, snapshot, operation).expect("the read begins");
+        let found = transaction
+            .read(&DocumentId::try_new(id).expect("the document id parses"))
             .expect("the engine reads the document");
-        read.document.map(|document| match document.body {
-            TbepValue::Object(fields) => match fields.as_slice() {
-                [(name, TbepValue::Integer(value))] if name == "value" => *value,
+        found.map(|found| match found.value() {
+            DocumentValue::Object(fields) => match fields.get("value") {
+                Some(DocumentValue::Integer(value)) => *value,
                 other => panic!("the read body is not the written body: {other:?}"),
             },
             other => panic!("the read body is not the written body: {other:?}"),

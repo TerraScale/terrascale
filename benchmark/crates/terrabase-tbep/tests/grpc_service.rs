@@ -3,8 +3,7 @@
 //!
 //! Coverage follows the retired UDS conformance family's core rows:
 //! the identity discipline (unbound channels fail closed), the
-//! idempotency pairing of mutations, the document round-trip, the
-//! backbone stream lifecycle, the real sync-delivery session lifecycle,
+//! idempotency pairing of mutations, the backbone stream lifecycle,
 //! fail-closed bounds, and the supervision shutdown — plus the
 //! `TbepError` status-detail contract every client maps codes through.
 
@@ -16,20 +15,17 @@ use prost::Message as _;
 use terrabase_tbep::TbepHost;
 use terrabase_tbep::grpc::TbepGrpcServer;
 use terrabase_tbep::host::HostingError;
-use terrabase_tbep::host::SyncDeliveryHost;
 use terrabase_tbep::host::TbepNotification;
 use terrabase_tbep::proto::terrabase::v1 as pb;
 use terrabase_tbep::proto::terrabase::v1::backbone_service_client::BackboneServiceClient;
 use terrabase_tbep::proto::terrabase::v1::channel_service_client::ChannelServiceClient;
-use terrabase_tbep::proto::terrabase::v1::engine_service_client::EngineServiceClient;
 use terrabase_tbep::proto::terrabase::v1::maintenance_service_client::MaintenanceServiceClient;
-use terrabase_tbep::proto::terrabase::v1::sync_service_client::SyncServiceClient;
+use terrabase_tbep::proto::terrabase::v1::schema_service_client::SchemaServiceClient;
 use terrabase_tbep::registry;
-use terrabase_tbep::value::TbepValue;
 use tonic::Request;
 use tonic::transport::Endpoint;
 
-/// A minimal fixed-answer host: one document, one subscription feed.
+/// A minimal fixed-answer host: one subscription feed.
 struct FixedHost {
     feed: Mutex<Option<std::sync::mpsc::Sender<TbepNotification>>>,
 }
@@ -40,95 +36,6 @@ impl TbepHost for FixedHost {
         request: &registry::ChannelBindRequest,
     ) -> Result<registry::ChannelBindResponse, HostingError> {
         Ok(registry::ChannelBindResponse { scope: request.scope.clone(), serving_instance: 7 })
-    }
-
-    fn document_read(
-        &self,
-        _scope: &registry::BoundScope,
-        request: &registry::DocumentReadRequest,
-    ) -> Result<registry::DocumentReadResponse, HostingError> {
-        if request.collection != "orders" {
-            return Ok(registry::DocumentReadResponse {
-                found: false,
-                document: None,
-                position: None,
-            });
-        }
-        Ok(registry::DocumentReadResponse {
-            found: true,
-            document: Some(registry::DocumentBody {
-                id: request.document.clone(),
-                collection: request.collection.clone(),
-                version: 3,
-                body: TbepValue::Object(vec![("total".into(), TbepValue::Integer(21))]),
-            }),
-            position: Some(9),
-        })
-    }
-
-    fn document_write(
-        &self,
-        _scope: &registry::BoundScope,
-        request: &registry::DocumentWriteRequest,
-        idempotency_key: &str,
-    ) -> Result<registry::DocumentWriteResponse, HostingError> {
-        assert_eq!(idempotency_key, "op-1");
-        Ok(registry::DocumentWriteResponse {
-            outcome: registry::WriteOutcome::Committed(registry::CommitReceipt {
-                sequence: 4,
-                version: 1,
-                operation_id: request.operation_id.clone(),
-                acknowledgement: Some(registry::Acknowledgement::RegionalQuorum),
-                backup: Some(registry::BackupOutcome::Full),
-            }),
-        })
-    }
-
-    fn document_delete(
-        &self,
-        _scope: &registry::BoundScope,
-        _request: &registry::DocumentDeleteRequest,
-        _idempotency_key: &str,
-    ) -> Result<registry::DocumentDeleteResponse, HostingError> {
-        Ok(registry::DocumentDeleteResponse { outcome: registry::WriteOutcome::Conflict })
-    }
-
-    fn query_execute(
-        &self,
-        _scope: &registry::BoundScope,
-        _request: &registry::QueryExecuteRequest,
-    ) -> Result<registry::QueryExecuteResponse, HostingError> {
-        Ok(registry::QueryExecuteResponse {
-            documents: vec![],
-            count: 0,
-            terminal: registry::QueryTerminal::Complete,
-            position: Some(1),
-        })
-    }
-
-    fn query_cancel(
-        &self,
-        _scope: &registry::BoundScope,
-        _request: &registry::QueryCancelRequest,
-    ) -> Result<registry::QueryCancelResponse, HostingError> {
-        Ok(registry::QueryCancelResponse { outcome: registry::CancelOutcome::Cancelled })
-    }
-
-    fn family_read(
-        &self,
-        _scope: &registry::BoundScope,
-        _request: &registry::FamilyReadRequest,
-    ) -> Result<registry::FamilyReadResponse, HostingError> {
-        Err(HostingError::Refused("families are not served by the fixture".into()))
-    }
-
-    fn family_write(
-        &self,
-        _scope: &registry::BoundScope,
-        _request: &registry::FamilyWriteRequest,
-        _idempotency_key: &str,
-    ) -> Result<registry::FamilyWriteResponse, HostingError> {
-        Err(HostingError::Refused("families are not served by the fixture".into()))
     }
 
     fn backbone_subscribe(
@@ -167,55 +74,6 @@ impl TbepHost for FixedHost {
         request: &registry::BackboneUnsubscribeRequest,
     ) -> Result<registry::BackboneUnsubscribeResponse, HostingError> {
         Ok(registry::BackboneUnsubscribeResponse { subscription_id: request.subscription_id })
-    }
-
-    fn sync_session_setup(
-        &self,
-        _scope: &registry::BoundScope,
-        _request: &registry::SyncSessionSetupRequest,
-    ) -> Result<registry::SyncSessionSetupResponse, HostingError> {
-        Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
-    }
-
-    fn sync_delta_pull(
-        &self,
-        _scope: &registry::BoundScope,
-        _request: &registry::SyncDeltaPullRequest,
-    ) -> Result<registry::SyncDeltaPullResponse, HostingError> {
-        Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
-    }
-
-    fn sync_snapshot_pull(
-        &self,
-        _scope: &registry::BoundScope,
-        _request: &registry::SyncSnapshotPullRequest,
-    ) -> Result<registry::SyncSnapshotPullResponse, HostingError> {
-        Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
-    }
-
-    fn sync_checkpoint_ack(
-        &self,
-        _scope: &registry::BoundScope,
-        _request: &registry::SyncCheckpointAckRequest,
-    ) -> Result<registry::SyncCheckpointAckResponse, HostingError> {
-        Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
-    }
-
-    fn sync_mutation_submit(
-        &self,
-        _scope: &registry::BoundScope,
-        _request: &registry::SyncMutationSubmitRequest,
-        _idempotency_key: &str,
-    ) -> Result<registry::SyncMutationSubmitResponse, HostingError> {
-        Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
-    }
-
-    fn sync_session_close(
-        &self,
-        _scope: &registry::BoundScope,
-        _request: &registry::SyncSessionCloseRequest,
-    ) -> Result<registry::SyncSessionCloseResponse, HostingError> {
-        Err(HostingError::SessionRefused("the fixture serves no sync sessions".into()))
     }
 
     fn topology_read(
@@ -313,14 +171,10 @@ async fn unbound_calls_fail_closed_with_the_channel_code() {
     ));
     let mut listener = server.serve_uds(&socket).expect("the server binds");
     let channel = connect(socket.clone()).await;
-    let mut engine = EngineServiceClient::new(channel);
+    let mut maintenance = MaintenanceServiceClient::new(channel);
 
-    let status = engine
-        .document_read(Request::new(pb::EngineServiceDocumentReadRequest {
-            collection: "orders".into(),
-            document: "d-1".into(),
-            level: 0,
-        }))
+    let status = maintenance
+        .topology_read(Request::new(pb::MaintenanceServiceTopologyReadRequest {}))
         .await
         .expect_err("an unbound call fails");
     assert_eq!(status.code(), tonic::Code::Unauthenticated);
@@ -337,62 +191,35 @@ async fn mutations_require_their_idempotency_key() {
     ));
     let mut listener = server.serve_uds(&socket).expect("the server binds");
     let channel = connect(socket.clone()).await;
-    let mut engine = EngineServiceClient::new(channel);
+    let mut schema = SchemaServiceClient::new(channel);
 
-    let status = engine
-        .document_write(identified(pb::EngineServiceDocumentWriteRequest {
-            document: Some(pb::DocumentPut {
-                id: "d-1".into(),
-                collection: "orders".into(),
-                body: Some(value_pb()),
-            }),
-            expected: Some(pb::ExpectedVersion {
-                discipline: Some(pb::expected_version::Discipline::Any(pb::ExpectedAny {})),
-            }),
+    let status = schema
+        .declare(identified(pb::SchemaServiceDeclareRequest {
+            collection: "orders".into(),
+            schema: None,
             operation_id: "op-1".into(),
-            ack: 0,
-            usage: None,
         }))
         .await
         .expect_err("a keyless mutation fails");
     assert_eq!(status.code(), tonic::Code::InvalidArgument);
     assert_eq!(tbep_code(&status), Some(pb::ErrorCode::IdempotencyPairing));
 
-    let mut duplicate = identified(pb::EngineServiceDocumentWriteRequest {
-        document: Some(pb::DocumentPut {
-            id: "d-1".into(),
-            collection: "orders".into(),
-            body: Some(value_pb()),
-        }),
-        expected: Some(pb::ExpectedVersion {
-            discipline: Some(pb::expected_version::Discipline::Any(pb::ExpectedAny {})),
-        }),
+    let mut duplicate = identified(pb::SchemaServiceDeclareRequest {
+        collection: "orders".into(),
+        schema: None,
         operation_id: "op-1".into(),
-        ack: 0,
-        usage: None,
     });
     duplicate.metadata_mut().append("x-tb-idempotency-key", "op-1".parse().unwrap());
     duplicate.metadata_mut().append("x-tb-idempotency-key", "op-2".parse().unwrap());
-    let status = engine.document_write(duplicate).await.expect_err("duplicate keys fail closed");
+    let status = schema.declare(duplicate).await.expect_err("duplicate keys fail closed");
     assert_eq!(status.code(), tonic::Code::InvalidArgument);
     assert_eq!(tbep_code(&status), Some(pb::ErrorCode::IdempotencyPairing));
     listener.shutdown();
 }
 
-fn value_pb() -> pb::Value {
-    pb::Value {
-        kind: Some(pb::value::Kind::Map(pb::ValueMap {
-            entries: vec![pb::ValueEntry {
-                name: "total".into(),
-                value: Some(pb::Value { kind: Some(pb::value::Kind::Integer(21)) }),
-            }],
-        })),
-    }
-}
-
 #[tokio::test]
-async fn bind_write_read_and_delete_round_trip() {
-    let socket = socket_path("roundtrip");
+async fn bind_answers_the_serving_instance() {
+    let socket = socket_path("bind");
     let server = Arc::new(TbepGrpcServer::new(
         Arc::new(FixedHost { feed: Mutex::new(None) }) as Arc<dyn TbepHost>,
         pb::BindingKind::Local,
@@ -400,7 +227,7 @@ async fn bind_write_read_and_delete_round_trip() {
     let mut listener = server.serve_uds(&socket).expect("the server binds");
     let channel = connect(socket.clone()).await;
 
-    let mut channels = ChannelServiceClient::new(channel.clone());
+    let mut channels = ChannelServiceClient::new(channel);
     let bound = channels
         .bind(Request::new(pb::ChannelServiceBindRequest {
             principal: "operator".into(),
@@ -411,64 +238,6 @@ async fn bind_write_read_and_delete_round_trip() {
         .await
         .expect("the bind answers");
     assert_eq!(bound.into_inner().serving_instance, 7);
-
-    let mut engine = EngineServiceClient::new(channel.clone());
-    let written = engine
-        .document_write(mutation(pb::EngineServiceDocumentWriteRequest {
-            document: Some(pb::DocumentPut {
-                id: "d-1".into(),
-                collection: "orders".into(),
-                body: Some(value_pb()),
-            }),
-            expected: Some(pb::ExpectedVersion {
-                discipline: Some(pb::expected_version::Discipline::Any(pb::ExpectedAny {})),
-            }),
-            operation_id: "op-1".into(),
-            ack: 0,
-            usage: None,
-        }))
-        .await
-        .expect("the write commits");
-    match written.into_inner().outcome.expect("the outcome rides").outcome {
-        Some(pb::write_outcome::Outcome::Committed(receipt)) => {
-            assert_eq!(receipt.sequence, 4);
-            assert_eq!(receipt.acknowledgement, pb::Acknowledgement::RegionalQuorum as i32);
-            assert_eq!(receipt.backup, pb::BackupOutcome::Full as i32);
-        }
-        other => panic!("unexpected write outcome {other:?}"),
-    }
-
-    let read = engine
-        .document_read(identified(pb::EngineServiceDocumentReadRequest {
-            collection: "orders".into(),
-            document: "d-1".into(),
-            level: 0,
-        }))
-        .await
-        .expect("the read answers");
-    let read = read.into_inner();
-    assert!(read.found);
-    let document = read.document.expect("the document rides");
-    assert_eq!(document.version, 3);
-    assert_eq!(document.body.expect("the body rides").kind, value_pb().kind);
-
-    let deleted = engine
-        .document_delete(mutation(pb::EngineServiceDocumentDeleteRequest {
-            collection: "orders".into(),
-            document: "d-1".into(),
-            expected: Some(pb::ExpectedVersion {
-                discipline: Some(pb::expected_version::Discipline::Exact(3)),
-            }),
-            operation_id: "op-2".into(),
-            ack: 0,
-            usage: None,
-        }))
-        .await
-        .expect("the delete answers");
-    match deleted.into_inner().outcome.expect("the outcome rides").outcome {
-        Some(pb::write_outcome::Outcome::Conflict(_)) => {}
-        other => panic!("unexpected delete outcome {other:?}"),
-    }
     listener.shutdown();
 }
 
@@ -481,54 +250,16 @@ async fn bounds_fail_closed_before_the_host_runs() {
     ));
     let mut listener = server.serve_uds(&socket).expect("the server binds");
     let channel = connect(socket.clone()).await;
-    let mut engine = EngineServiceClient::new(channel);
+    let mut schema = SchemaServiceClient::new(channel);
 
-    let status = engine
-        .document_read(identified(pb::EngineServiceDocumentReadRequest {
+    let status = schema
+        .declare(mutation(pb::SchemaServiceDeclareRequest {
             collection: "c".repeat(65),
-            document: "d-1".into(),
-            level: 0,
+            schema: None,
+            operation_id: "op-1".into(),
         }))
         .await
         .expect_err("an over-bound collection fails");
-    assert_eq!(status.code(), tonic::Code::InvalidArgument);
-    assert_eq!(tbep_code(&status), Some(pb::ErrorCode::InvalidRequest));
-    listener.shutdown();
-}
-
-#[tokio::test]
-async fn query_max_items_rejects_zero_and_oversized_pages() {
-    let socket = socket_path("query-bounds");
-    let server = Arc::new(TbepGrpcServer::new(
-        Arc::new(FixedHost { feed: Mutex::new(None) }) as Arc<dyn TbepHost>,
-        pb::BindingKind::Local,
-    ));
-    let mut listener = server.serve_uds(&socket).expect("the server binds");
-    let channel = connect(socket.clone()).await;
-    let mut engine = EngineServiceClient::new(channel);
-
-    let status = engine
-        .query_execute(identified(pb::EngineServiceQueryExecuteRequest {
-            query_id: 1,
-            text: "from orders".into(),
-            max_items: 0,
-            level: 0,
-        }))
-        .await
-        .expect_err("zero max_items is outside the closed request bound");
-    assert_eq!(status.code(), tonic::Code::InvalidArgument);
-    assert_eq!(tbep_code(&status), Some(pb::ErrorCode::InvalidRequest));
-
-    let status = engine
-        .query_execute(identified(pb::EngineServiceQueryExecuteRequest {
-            query_id: 2,
-            text: "from orders".into(),
-            max_items: u32::try_from(registry::MAX_LIST_ITEMS).expect("the list bound fits u32")
-                + 1,
-            level: 0,
-        }))
-        .await
-        .expect_err("max_items above the list bound fails closed");
     assert_eq!(status.code(), tonic::Code::InvalidArgument);
     assert_eq!(tbep_code(&status), Some(pb::ErrorCode::InvalidRequest));
     listener.shutdown();
@@ -543,27 +274,20 @@ async fn identity_metadata_bounds_fail_closed() {
     ));
     let mut listener = server.serve_uds(&socket).expect("the server binds");
     let channel = connect(socket.clone()).await;
-    let mut engine = EngineServiceClient::new(channel);
-    let mut request = Request::new(pb::EngineServiceDocumentReadRequest {
-        collection: "orders".into(),
-        document: "d-1".into(),
-        level: 0,
-    });
+    let mut maintenance = MaintenanceServiceClient::new(channel);
+    let mut request = Request::new(pb::MaintenanceServiceTopologyReadRequest {});
     request.metadata_mut().insert("x-tb-principal", "p".repeat(129).parse().unwrap());
     request.metadata_mut().insert("x-tb-tenant", "tenant-a".parse().unwrap());
-    let status = engine.document_read(request).await.expect_err("an oversized principal fails");
+    let status =
+        maintenance.topology_read(request).await.expect_err("an oversized principal fails");
     assert_eq!(status.code(), tonic::Code::Unauthenticated);
     assert_eq!(tbep_code(&status), Some(pb::ErrorCode::UnboundChannel));
 
-    let mut duplicate = Request::new(pb::EngineServiceDocumentReadRequest {
-        collection: "orders".into(),
-        document: "d-1".into(),
-        level: 0,
-    });
+    let mut duplicate = Request::new(pb::MaintenanceServiceTopologyReadRequest {});
     duplicate.metadata_mut().insert("x-tb-principal", "operator".parse().unwrap());
     duplicate.metadata_mut().insert("x-tb-tenant", "tenant-a".parse().unwrap());
     duplicate.metadata_mut().append("x-tb-tenant", "tenant-b".parse().unwrap());
-    let status = engine.document_read(duplicate).await.expect_err("duplicate identity fails");
+    let status = maintenance.topology_read(duplicate).await.expect_err("duplicate identity fails");
     assert_eq!(status.code(), tonic::Code::Unauthenticated);
     assert_eq!(tbep_code(&status), Some(pb::ErrorCode::UnboundChannel));
     listener.shutdown();
@@ -578,70 +302,32 @@ async fn hostile_values_fail_closed_before_the_host_runs() {
     ));
     let mut listener = server.serve_uds(&socket).expect("the server binds");
     let channel = connect(socket.clone()).await;
-    let mut engine = EngineServiceClient::new(channel);
+    let mut schema = SchemaServiceClient::new(channel);
     let mut list = Vec::with_capacity(4097);
     for _ in 0..=4096 {
         list.push(pb::Value { kind: Some(pb::value::Kind::Null(pb::NullValue::Null as i32)) });
     }
-    let status = engine
-        .document_write(mutation(pb::EngineServiceDocumentWriteRequest {
-            document: Some(pb::DocumentPut {
-                id: "d-1".into(),
-                collection: "orders".into(),
-                body: Some(pb::Value {
-                    kind: Some(pb::value::Kind::List(pb::ValueList { items: list })),
-                }),
-            }),
-            expected: Some(pb::ExpectedVersion {
-                discipline: Some(pb::expected_version::Discipline::Any(pb::ExpectedAny {})),
+    let status = schema
+        .declare(mutation(pb::SchemaServiceDeclareRequest {
+            collection: "orders".into(),
+            schema: Some(pb::Value {
+                kind: Some(pb::value::Kind::List(pb::ValueList { items: list })),
             }),
             operation_id: "op-1".into(),
-            ack: 0,
-            usage: None,
         }))
         .await
         .expect_err("an oversized value list fails");
     assert_eq!(status.code(), tonic::Code::InvalidArgument);
     assert_eq!(tbep_code(&status), Some(pb::ErrorCode::InvalidRequest));
 
-    let status = engine
-        .document_write(mutation(pb::EngineServiceDocumentWriteRequest {
-            document: Some(pb::DocumentPut {
-                id: "d-1".into(),
-                collection: "orders".into(),
-                body: Some(pb::Value { kind: Some(pb::value::Kind::Number(f64::NAN)) }),
-            }),
-            expected: Some(pb::ExpectedVersion {
-                discipline: Some(pb::expected_version::Discipline::Any(pb::ExpectedAny {})),
-            }),
+    let status = schema
+        .declare(mutation(pb::SchemaServiceDeclareRequest {
+            collection: "orders".into(),
+            schema: Some(pb::Value { kind: Some(pb::value::Kind::Number(f64::NAN)) }),
             operation_id: "op-1".into(),
-            ack: 0,
-            usage: None,
         }))
         .await
         .expect_err("a non-finite value fails");
-    assert_eq!(status.code(), tonic::Code::InvalidArgument);
-    assert_eq!(tbep_code(&status), Some(pb::ErrorCode::InvalidRequest));
-    listener.shutdown();
-}
-
-#[tokio::test]
-async fn sync_tokens_are_bounded_before_the_host_runs() {
-    let socket = socket_path("sync-token-bounds");
-    let server = Arc::new(TbepGrpcServer::new(
-        Arc::new(FixedHost { feed: Mutex::new(None) }) as Arc<dyn TbepHost>,
-        pb::BindingKind::Local,
-    ));
-    let mut listener = server.serve_uds(&socket).expect("the server binds");
-    let channel = connect(socket.clone()).await;
-    let mut sync = SyncServiceClient::new(channel);
-    let status = sync
-        .session_setup(identified(pb::SyncServiceSessionSetupRequest {
-            collection: "orders".into(),
-            resume: vec![0; 1058],
-        }))
-        .await
-        .expect_err("an oversized resume token fails");
     assert_eq!(status.code(), tonic::Code::InvalidArgument);
     assert_eq!(tbep_code(&status), Some(pb::ErrorCode::InvalidRequest));
     listener.shutdown();
@@ -689,8 +375,7 @@ fn tls_requires_a_client_ca_for_production() {
         std::time::Duration::from_secs(30),
         std::time::Duration::from_secs(5),
         std::time::Duration::from_secs(5),
-        ["spiffe://terrascale.tech/test/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV".to_owned()]
-            .into(),
+        ["spiffe://terrascale.tech/test/gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV".to_owned()].into(),
     )
     .expect("the test gateway policy is valid");
     let server = Arc::new(TbepGrpcServer::with_config_and_metrics(
@@ -734,11 +419,11 @@ async fn tls_accepts_valid_mtls_material() {
     use tonic::transport::{Certificate, ClientTlsConfig, Identity};
 
     const GATEWAY_PRINCIPAL: &str =
-        "spiffe://terrascale.tech/test/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        "spiffe://terrascale.tech/test/gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV";
     const SECOND_ADMITTED_PRINCIPAL: &str =
-        "spiffe://terrascale.tech/test/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAW";
+        "spiffe://terrascale.tech/test/gateway/01ARZ3NDEKTSV4RRFFQ69G5FAW";
     const UNADMITTED_PRINCIPAL: &str =
-        "spiffe://terrascale.tech/test/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAX";
+        "spiffe://terrascale.tech/test/gateway/01ARZ3NDEKTSV4RRFFQ69G5FAX";
 
     let issuer_key = KeyPair::generate().expect("the test CA key generates");
     let mut issuer_params = CertificateParams::new(Vec::new()).expect("the CA parameters parse");
@@ -899,26 +584,23 @@ async fn tls_accepts_valid_mtls_material() {
     }
 
     let network_request = |principal: &'static str| {
-        let mut request = Request::new(pb::EngineServiceDocumentReadRequest {
-            collection: "orders".into(),
-            document: "d-1".into(),
-            level: 0,
-        });
+        let mut request = Request::new(pb::MaintenanceServiceTopologyReadRequest {});
         request.metadata_mut().insert("x-tb-principal", principal.parse().unwrap());
         request.metadata_mut().insert("x-tb-tenant", "tenant-a".parse().unwrap());
         request.metadata_mut().insert("x-tb-project", "project-a".parse().unwrap());
         request.metadata_mut().insert("x-tb-database", "database-a".parse().unwrap());
         request
     };
-    let mut engine = EngineServiceClient::new(channel);
-    let read = engine
-        .document_read(network_request(GATEWAY_PRINCIPAL))
+    let mut maintenance = MaintenanceServiceClient::new(channel);
+    let topology = maintenance
+        .topology_read(network_request(GATEWAY_PRINCIPAL))
         .await
         .expect("an ordinary RPC accepts the certificate-bound principal")
         .into_inner();
-    assert!(read.found);
-    let status = engine
-        .document_read(network_request(UNADMITTED_PRINCIPAL))
+    assert_eq!(topology.binding, pb::BindingKind::NetworkMtls as i32);
+    assert_eq!(topology.subsystems, vec!["engine".to_owned()]);
+    let status = maintenance
+        .topology_read(network_request(UNADMITTED_PRINCIPAL))
         .await
         .expect_err("ordinary RPC identity cannot escape the certificate binding");
     assert_eq!(status.code(), tonic::Code::PermissionDenied);
@@ -1037,82 +719,6 @@ async fn the_backbone_stream_delivers_confirmation_batches_and_close() {
         stream.message().await.expect("the stream ends cleanly").is_none(),
         "the close frame ends the stream"
     );
-    listener.shutdown();
-}
-
-#[tokio::test]
-async fn the_real_sync_delivery_core_serves_one_session_over_grpc() {
-    let socket = socket_path("sync");
-    let server = Arc::new(TbepGrpcServer::new(
-        Arc::new(SyncDeliveryHost::new(1)) as Arc<dyn TbepHost>,
-        pb::BindingKind::Local,
-    ));
-    let mut listener = server.serve_uds(&socket).expect("the server binds");
-    let channel = connect(socket.clone()).await;
-    let mut sync = SyncServiceClient::new(channel);
-
-    let setup = sync
-        .session_setup(identified(pb::SyncServiceSessionSetupRequest {
-            collection: "orders".into(),
-            resume: vec![],
-        }))
-        .await
-        .expect("the session opens")
-        .into_inner();
-    let session_id = setup.session_id;
-    assert!(!setup.checkpoint.is_empty());
-
-    let mutation = sync
-        .mutation_submit(mutation(pb::SyncServiceMutationSubmitRequest {
-            session_id,
-            document: "d-1".into(),
-            change: Some(pb::SyncChange {
-                change: Some(pb::sync_change::Change::Put(pb::SyncPut {
-                    fields: vec![pb::SyncField {
-                        name: "total".into(),
-                        value: Some(pb::Value { kind: Some(pb::value::Kind::Integer(21)) }),
-                    }],
-                })),
-            }),
-            usage: None,
-        }))
-        .await
-        .expect("the mutation applies")
-        .into_inner();
-    match mutation.outcome.expect("the outcome rides").outcome {
-        Some(pb::mutation_outcome::Outcome::Applied(receipt)) => {
-            assert_eq!(receipt.sequence, 1);
-        }
-        other => panic!("unexpected mutation outcome {other:?}"),
-    }
-
-    let delta = sync
-        .delta_pull(identified(pb::SyncServiceDeltaPullRequest {
-            session_id,
-            from: setup.checkpoint.clone(),
-        }))
-        .await
-        .expect("the delta answers")
-        .into_inner();
-    assert_eq!(delta.commits, 1);
-    assert!(!delta.next.is_empty());
-
-    sync.checkpoint_ack(identified(pb::SyncServiceCheckpointAckRequest {
-        session_id,
-        checkpoint: delta.next.clone(),
-    }))
-    .await
-    .expect("the checkpoint acknowledges");
-
-    sync.session_close(identified(pb::SyncServiceSessionCloseRequest { session_id }))
-        .await
-        .expect("the session closes");
-
-    let status = sync
-        .delta_pull(identified(pb::SyncServiceDeltaPullRequest { session_id, from: delta.next }))
-        .await
-        .expect_err("a closed session refuses");
-    assert_eq!(tbep_code(&status), Some(pb::ErrorCode::SessionRefused));
     listener.shutdown();
 }
 

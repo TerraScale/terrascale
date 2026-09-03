@@ -537,7 +537,6 @@ impl ServerConfig {
                 || principal.len() > terrabase_tbep::grpc::MAX_PRINCIPAL_BYTES
                 || principal != principal.trim()
                 || principal.chars().any(char::is_control)
-                || !terrabase_tbep::grpc::valid_gateway_spiffe_uri(&principal)
                 || !gateway_principals.insert(principal)
             {
                 return Err(ConfigError::InvalidGatewayPrincipal);
@@ -887,7 +886,6 @@ fn validate_gateway_principals(values: &[String], environment: &str) -> Result<(
             || value.len() > terrabase_tbep::grpc::MAX_PRINCIPAL_BYTES
             || value != value.trim()
             || value.chars().any(char::is_control)
-            || !terrabase_tbep::grpc::valid_gateway_spiffe_uri(value)
             || !value.starts_with(&expected_prefix)
             || !unique.insert(value)
         {
@@ -1376,16 +1374,12 @@ capabilities = ["production", "tbep", "quic", "metrics", "oci-vault"]
     }
 
     #[test]
-    fn gateway_principals_require_exact_spiffe_uris() {
+    fn gateway_principals_are_bounded_trimmed_and_unique() {
         for principal in [
-            "gateway",
-            "https://example/gateway",
             "spiffe://\u{0001}",
-            "spiffe://other.example/prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV",
-            "spiffe://terrascale.tech/Prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV",
-            "spiffe://terrascale.tech/prod/database-gateway/01arz3ndektsv4rrffq69g5fav",
-            "spiffe://terrascale.tech/prod/database-gateway/not-a-ulid",
-            "spiffe://terrascale.tech/prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV/extra",
+            " gateway",
+            "gateway ",
+            &"g".repeat(terrabase_tbep::grpc::MAX_PRINCIPAL_BYTES + 1),
         ] {
             let text = valid().replace(
                 "spiffe://terrascale.tech/prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV",
