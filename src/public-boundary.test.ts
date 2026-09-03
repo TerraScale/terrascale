@@ -63,28 +63,12 @@ test("built package keeps all public clients on typed operations without a runti
     await readFile(new URL("../package.json", import.meta.url), "utf8"),
   ) as { readonly exports: Record<string, unknown> };
   assert.equal("http" in packageManifest.exports, false);
-  assert.deepEqual(Object.keys(packageManifest.exports), [".", "./admin", "./better-auth", "./local"]);
+  assert.deepEqual(Object.keys(packageManifest.exports), [".", "./admin", "./better-auth"]);
 });
 
-test("root clients reject SQLite, private service origins, and arbitrary default headers", () => {
+test("root clients reject private service origins and arbitrary default headers", () => {
   const fetch = async (): Promise<Response> => Response.json({});
 
-  assert.throws(
-    () => sdk.createTerraScaleClient({
-      apiBaseUrl: "https://api.terrascale.test",
-      fetch,
-      sqlite: { enabled: true },
-    } as never),
-    /only available through the @terrascale\/sdk\/local entrypoint/u,
-  );
-  assert.throws(
-    () => sdk.createTerraScaleClient({
-      apiBaseUrl: "http://terrascale.local",
-      fetch,
-      sqlite: { enabled: true, databasePath: "/tmp/forged-local.sqlite" },
-    } as never),
-    /only available through the @terrascale\/sdk\/local entrypoint/u,
-  );
   assert.throws(
     () => sdk.createTerraScaleClient({ apiBaseUrl: "https://terrabase.internal", fetch }),
     /only the public API, not TBEP or TerraBase/u,

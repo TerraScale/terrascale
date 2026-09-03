@@ -358,7 +358,6 @@ async function createCandidateFixture(checkout: string, workspace: string): Prom
         root: ["dist/index.js"],
         admin: ["dist/admin.js"],
       },
-      localSqliteExport: "node-only",
       betterAuthExport: "node-only",
       packedSecretScan: "passed",
     },

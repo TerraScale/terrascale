@@ -36,10 +36,7 @@ test("package metadata declares the supported Node and browser matrix", async ()
     types: "./dist/better-auth.d.ts",
     node: "./dist/better-auth.js",
   });
-  assert.deepEqual(packageJson.exports?.["./local"], {
-    types: "./dist/local/index.d.ts",
-    node: "./dist/local/index.js",
-  });
+  assert.equal("./local" in (packageJson.exports ?? {}), false);
 });
 
 test("shipped browser paths do not import Node-only modules or the local emulator", async () => {
@@ -73,7 +70,7 @@ async function productionSources(directory: string): Promise<string[]> {
   const paths = await Promise.all(entries.map(async (entry) => {
     const entryPath = path.join(directory, entry.name);
     if (entry.isDirectory()) {
-      return entry.name === "integration" || entry.name === "local" || entry.name === "better-auth" ? [] : productionSources(entryPath);
+      return entry.name === "integration" || entry.name === "better-auth" ? [] : productionSources(entryPath);
     }
     if (
       !entry.name.endsWith(".ts") ||

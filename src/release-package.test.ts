@@ -7,8 +7,6 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { test } from "vitest";
 
-import { localSqliteTestChildEnvironment } from "./local/test-environment.js";
-
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const run = promisify(execFile);
 const forbiddenRoutePattern = /(?:\/api\/v\d+\/(?:auth|account|billing|pricing|onboarding\/payment)(?:[\/"'`: ]|$)|\/api\/v\d+\/projects\/\{[^}]+\}\/(?:auth|security)(?:[\/"'`: ]|$)|\b(?:auth|apiKeys|m2m|billing|pricing|payment|security)\.[a-z])/iu;
@@ -228,9 +226,6 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
 
     assert.match(listing.stdout, /^package\/dist\/index\.js$/mu);
     assert.match(listing.stdout, /^package\/dist\/index\.d\.ts$/mu);
-    assert.match(listing.stdout, /^package\/dist\/local\/index\.js$/mu);
-    assert.match(listing.stdout, /^package\/dist\/local\/index\.d\.ts$/mu);
-    assert.match(listing.stdout, /^package\/dist\/local\/cli\.js$/mu);
     assert.match(listing.stdout, /^package\/sdk-route-manifest\.json$/mu);
     assert.doesNotMatch(
       listing.stdout,
@@ -253,8 +248,6 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
       ["dist/index.js", "package/dist/index.js"] as const,
       ["dist/client.d.ts", "package/dist/client.d.ts"] as const,
       ["dist/client.js", "package/dist/client.js"] as const,
-      ["dist/local/index.d.ts", "package/dist/local/index.d.ts"] as const,
-      ["dist/local/index.js", "package/dist/local/index.js"] as const,
     ].map(async ([name, entry]) => [name, await readPackedEntry(tarball, entry)] as const));
     for (const [name, source] of packedSources) {
       assert.doesNotMatch(source, forbiddenSymbolPattern, `${name} contains a removed SDK symbol`);
@@ -291,21 +284,6 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
       ],
       { cwd: consumer },
     );
-    await run(
-      "node",
-      [
-        "--input-type=module",
-        "--eval",
-        "import path from 'node:path'; import { createTerraScaleSqliteRuntime } from '@terrascale/sdk/local'; const local = createTerraScaleSqliteRuntime({ sqlite: { enabled: true, databasePath: path.resolve('packed-local.sqlite') } }); await local.close();",
-      ],
-      { cwd: consumer, env: localSqliteTestChildEnvironment() },
-    );
-    const cli = await run(
-      path.join(consumer, "node_modules", ".bin", "terrascale-local"),
-      ["--help"],
-      { cwd: consumer },
-    );
-    assert.match(cli.stdout, /Usage: terrascale-local/u);
     for (const declaration of ["dist/index.d.ts", "dist/admin.d.ts"]) {
       const source = await readFile(path.join(checkout, declaration), "utf8");
       assert.doesNotMatch(source, /(?:node:sqlite|\.\/local\/)/u);
