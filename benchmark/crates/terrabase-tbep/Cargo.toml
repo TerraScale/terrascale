@@ -78,6 +78,11 @@ terrabase = { path = "../..", default-features = false }
 # lanes drive the journal tailer's pull/apply path over fault-injectable
 # MemberTransport lanes.
 terrabase-member-transport = { path = "../terrabase-member-transport", default-features = false }
+# The follower's generation fold (`wal_follower`): folding the follower's
+# WAL into its database file rides mainline SQLite, pinned exactly like the
+# engine's own substrate (D-27: the same bundled amalgamation and version,
+# so the fold can never disagree with the writer about the frame format).
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "cache"] }
 
 [build-dependencies]
 # The protobuf front end: pure-Rust schema compilation feeding

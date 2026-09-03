@@ -1841,6 +1841,7 @@ dependencies = [
  "prost",
  "protox",
  "rcgen",
+ "rusqlite",
  "rustls-pki-types",
  "terrabase",
  "terrabase-member-transport",

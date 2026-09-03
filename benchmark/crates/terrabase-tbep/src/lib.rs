@@ -29,6 +29,10 @@
 //! - [`replication_lanes`]: the cross-region lanes (S-05, D-45) — the
 //!   tailer's pull/apply path driven over a fault-injectable
 //!   `MemberTransport`, one frame per pull with a credit window.
+//! - [`wal_follower`]: the intra-region WAL-frame follower (S-05, D-35)
+//!   — the writer's WAL tail, the follower's validated append with an
+//!   `fdatasync` ack, fold-and-adopt across the per-wave generations,
+//!   and promotion by opening the follower's location.
 //! - [`grpc`]: the tonic serving layer — prost⇄domain conversion,
 //!   metadata discipline, streaming subscriptions, and the UDS and
 //!   TLS listeners.
@@ -65,6 +69,7 @@ pub mod registry;
 pub mod replication;
 pub mod replication_lanes;
 pub mod value;
+pub mod wal_follower;
 
 /// The compiled protobuf contract (prost messages and tonic stubs).
 pub mod proto {
