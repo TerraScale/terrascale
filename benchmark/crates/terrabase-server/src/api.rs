@@ -450,6 +450,9 @@ pub struct ApiState {
     pub scope: (String, String),
     /// The reactive transports' live subscriptions (`S-04`).
     pub reactive: Arc<crate::reactive_api::ReactiveSessions>,
+    /// The regions this deployment believes active: `GlobalDurable`
+    /// fails closed under two (D-37).
+    pub active_regions: usize,
 }
 
 /// Builds the public `/api/v1` router. Every route except
@@ -992,6 +995,22 @@ impl Durability {
             Self::Global => LocalDurability::Synced,
         }
     }
+
+    /// The typed refusal for a global write under two active regions
+    /// (D-37): the class fails closed, never degrades to regional.
+    fn requires_active_regions(self, active: usize) -> Result<(), ApiError> {
+        if matches!(self, Self::Global) && active < 2 {
+            return Err(ApiError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                code: "global_durability_unavailable",
+                message: "GlobalDurable needs at least two active regions".into(),
+                fix: "retry as regional, or add a region to the member's active set                       (public_api.regions in the member config)"
+                    .into(),
+                placement: None,
+            });
+        }
+        Ok(())
+    }
 }
 
 /// The write request's operation identity. An idempotency key names the
@@ -1087,7 +1106,12 @@ async fn batch_documents(
         .into_response();
     }
     let durability = match Durability::of_header(&headers) {
-        Ok(durability) => durability.level(),
+        Ok(durability) => {
+            if let Err(error) = durability.requires_active_regions(state.active_regions) {
+                return error.into_response();
+            }
+            durability.level()
+        }
         Err(error) => return error.into_response(),
     };
     let operation = match write_operation(&headers, "api-batch") {
@@ -1210,6 +1234,40 @@ fn with_session(response: &mut Response, sequence: u64) {
     }
 }
 
+/// Waits a bounded window for the engine's published sequence to cover
+/// the client's session sequence (D-37's read-your-writes across
+/// regions — the receiving region's replicated applies advance the
+/// journal). `Ok` serves; the typed timeout names its remedy.
+async fn await_session_sequence(
+    engine: &terrabase::Engine,
+    scope: &terrabase::types::TenantScope,
+    session: u64,
+) -> Result<(), ApiError> {
+    const WINDOW: std::time::Duration = std::time::Duration::from_secs(2);
+    const TICK: std::time::Duration = std::time::Duration::from_millis(5);
+    let started = std::time::Instant::now();
+    loop {
+        let covered =
+            engine.read_snapshot(scope).is_ok_and(|snapshot| snapshot.sequence().get() >= session);
+        if covered {
+            return Ok(());
+        }
+        if started.elapsed() >= WINDOW {
+            return Err(ApiError {
+                status: StatusCode::CONFLICT,
+                code: "session_not_covered",
+                message: format!(
+                    "the session's sequence ({session}) is not covered here yet"
+                ),
+                fix: "retry shortly (replication is catching up), or read without                       the session token for this-region state"
+                    .into(),
+                placement: None,
+            });
+        }
+        tokio::time::sleep(TICK).await;
+    }
+}
+
 /// One document's route context: the host engine for the named database.
 pub(crate) fn document_host(
     state: &ApiState,
@@ -1265,6 +1323,18 @@ async fn get_document(
     let Ok(id) = DocumentId::try_new(&id) else {
         return invalid_identifier("document identifier", &id).into_response();
     };
+    // Read-your-writes across regions (D-37): a session token names the
+    // sequence the client has seen; the read waits a bounded window for
+    // this member's journal to cover it (a replicated apply advances it)
+    // before serving.
+    if let Some(session) = headers
+        .get("x-terrascale-session")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        && let Err(error) = await_session_sequence(engine, &scope, session).await
+    {
+        return error.into_response();
+    }
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
         return ApiError::control_unavailable().into_response();
     };
@@ -1348,7 +1418,12 @@ async fn put_document(
         Err(error) => return error.into_response(),
     };
     let durability = match Durability::of_header(&headers) {
-        Ok(durability) => durability.level(),
+        Ok(durability) => {
+            if let Err(error) = durability.requires_active_regions(state.active_regions) {
+                return error.into_response();
+            }
+            durability.level()
+        }
         Err(error) => return error.into_response(),
     };
     let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
@@ -1447,7 +1522,12 @@ async fn patch_document(
         Err(error) => return error.into_response(),
     };
     let durability = match Durability::of_header(&headers) {
-        Ok(durability) => durability.level(),
+        Ok(durability) => {
+            if let Err(error) = durability.requires_active_regions(state.active_regions) {
+                return error.into_response();
+            }
+            durability.level()
+        }
         Err(error) => return error.into_response(),
     };
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
@@ -1577,7 +1657,12 @@ async fn delete_document(
         Err(error) => return error.into_response(),
     };
     let durability = match Durability::of_header(&headers) {
-        Ok(durability) => durability.level(),
+        Ok(durability) => {
+            if let Err(error) = durability.requires_active_regions(state.active_regions) {
+                return error.into_response();
+            }
+            durability.level()
+        }
         Err(error) => return error.into_response(),
     };
     let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
@@ -1953,6 +2038,7 @@ mod tests {
             catalog: None,
             scope: ("terrabase-local".into(), "local".into()),
             reactive: Arc::new(crate::reactive_api::ReactiveSessions::default()),
+            active_regions: 1,
         })
     }
 
@@ -1988,6 +2074,7 @@ mod tests {
             catalog: Some(Arc::new(catalog)),
             scope: ("terrabase-local".into(), "local".into()),
             reactive: Arc::new(crate::reactive_api::ReactiveSessions::default()),
+            active_regions: 3,
         })
     }
 
@@ -2853,6 +2940,125 @@ mod tests {
         // The newest entry is listed first.
         let tombstone = body.find("\"deleted\":true").expect("tombstone");
         assert!(body[..tombstone].matches("\"revision\"").count() == 1, "newest first: {body}");
+    }
+
+    #[tokio::test]
+    async fn global_durability_fails_closed_under_two_regions() {
+        use axum::body::Body;
+        use axum::http::Request;
+        let auth = "authorization";
+        let key = "Bearer tskey_test_abcdefghijklmnop";
+        let three_region = router(state_with_keys_and_control());
+        let response = three_region
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header(auth, key)
+                    .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        // Three active regions: a global write proceeds (regional semantics
+        // locally; the replicated ack tracking rides the QUIC slice).
+        let response = three_region
+            .clone()
+            .oneshot(
+                Request::put("/api/v1/databases/prod/collections/users/documents/g-1")
+                    .header(auth, key)
+                    .header("x-terrascale-durability", "global")
+                    .body(Body::from(r#"{"n":1}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        // One active region: the same write fails closed with its remedy.
+        let mut single = state_with_keys_and_control();
+        Arc::get_mut(&mut single).expect("sole handle").active_regions = 1;
+        let single_region = router(single);
+        let response = single_region
+            .oneshot(
+                Request::put("/api/v1/databases/prod/collections/users/documents/g-2")
+                    .header(auth, key)
+                    .header("x-terrascale-durability", "global")
+                    .body(Body::from(r#"{"n":1}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("global_durability_unavailable"), "{body}");
+        assert!(body.contains("\"fix\":"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_session_token_waits_for_coverage_then_serves() {
+        use axum::body::Body;
+        use axum::http::Request;
+        let auth = "authorization";
+        let key = "Bearer tskey_test_abcdefghijklmnop";
+        let router = router(state_with_keys_and_control());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header(auth, key)
+                    .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let response = router
+            .clone()
+            .oneshot(
+                Request::put("/api/v1/databases/prod/collections/users/documents/s-1")
+                    .header(auth, key)
+                    .body(Body::from(r#"{"n":1}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        // The write's session sequence is covered locally: the read serves
+        // immediately.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/databases/prod/collections/users/documents/s-1")
+                    .header(auth, key)
+                    .header("x-terrascale-session", "1")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        // A future sequence (replication that has not happened yet) times
+        // out with the typed remedy, never a stale read.
+        let started = std::time::Instant::now();
+        let response = router
+            .oneshot(
+                Request::get("/api/v1/databases/prod/collections/users/documents/s-1")
+                    .header(auth, key)
+                    .header("x-terrascale-session", "1000000")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("session_not_covered"), "{body}");
+        assert!(
+            started.elapsed() >= std::time::Duration::from_secs(2),
+            "the wait is bounded but real"
+        );
     }
 
     #[tokio::test]

@@ -174,6 +174,11 @@ pub struct PublicApiConfig {
     /// one. Absent means deny-all: the surface answers, nothing is
     /// admitted.
     pub bootstrap_key_file: Option<PathBuf>,
+    /// The regions this deployment believes active for `GlobalDurable`
+    /// (D-37: the class fails closed under two). Absent means a
+    /// single-region deployment and every global write is refused with
+    /// its typed remedy.
+    pub active_regions: usize,
 }
 
 /// Fully validated production server configuration.
@@ -300,6 +305,9 @@ struct FilePublicApi {
     /// wrote it).
     #[serde(default)]
     bootstrap_key_file: Option<PathBuf>,
+    /// The region codes this deployment considers active (D-37).
+    #[serde(default)]
+    regions: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -1045,10 +1053,18 @@ fn parse_public_api(
     if let Some(key_file) = &section.bootstrap_key_file {
         absolute(key_file)?;
     }
+    // Every named region must parse; duplicates collapse (the count is
+    // the durability class's input, not a placement).
+    let named: std::collections::BTreeSet<String> = section.regions.iter().cloned().collect();
+    for region in &named {
+        terrabase::regions::RegionCode::from_text(region)
+            .map_err(|_| ConfigError::InvalidRegion)?;
+    }
     Ok(Some(PublicApiConfig {
         listen,
         data_root: section.data_root.clone(),
         bootstrap_key_file: section.bootstrap_key_file.clone(),
+        active_regions: named.len(),
     }))
 }
 

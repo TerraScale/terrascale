@@ -234,6 +234,7 @@ async fn serve_public_api(
         catalog: Some(Arc::new(catalog)),
         scope: (tenant, project),
         reactive: Arc::new(crate::reactive_api::ReactiveSessions::default()),
+        active_regions: public.active_regions,
     });
     let listener = tokio::net::TcpListener::bind(public.listen).await?;
     let router = crate::api::router(state);
