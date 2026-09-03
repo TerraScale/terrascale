@@ -144,7 +144,6 @@ function isRoutingFailure(value: unknown): value is {
   }
   const error = value.error as { readonly code?: unknown; readonly kind?: unknown };
   return error.code === "route_not_found"
-    || error.code === "local_emulator_error"
     || error.kind === "invalid-response"
     || error.kind === "server"
     || error.kind === "transport";
