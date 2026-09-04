@@ -38,6 +38,8 @@ pub mod native;
 pub mod protocol;
 pub mod server;
 pub mod subscription;
+/// The bounded MessagePack codec for the public `terrascale.sync.v2` wire.
+pub mod wire;
 
 /// The correlation or causation identity of one protocol frame.
 /// Monotonic per sender; opaque here.

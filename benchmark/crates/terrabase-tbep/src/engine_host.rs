@@ -23,7 +23,11 @@ use terrabase::usage::{
     UsageContinuation, UsageFactId, UsagePageRequest, UsageRecordMeter as EngineUsageRecordMeter,
     UsageRecordRequest as EngineUsageRecordRequest,
 };
+use terrabase_replication_core::anti_entropy::{
+    JournalRowId, RangeSummaryTable, RowSummary, row_hash,
+};
 
+use crate::anti_entropy::{DurableJournalRow, JournalRowSource, JournalSummary};
 use crate::host::{HostingError, TbepHost};
 use crate::registry::{
     AdminStatusResponse, BoundScope, ChannelBindRequest, ChannelBindResponse, HealthState,
@@ -760,5 +764,145 @@ impl TbepHost for EngineHost {
             *state = HealthState::Draining;
         }
         Ok(SupervisionShutdownResponse { state: *state, in_flight: 0 })
+    }
+}
+
+impl JournalRowSource for EngineHost {
+    fn durable_journal_rows(
+        &self,
+        scope: &BoundScope,
+    ) -> Result<Vec<DurableJournalRow>, HostingError> {
+        const PAGE_SIZE: u32 = 256;
+        let tenant = self.tenant_of_scope(scope)?;
+        let engine_scope = self.engine.scope_for(&tenant);
+        let mut after = 0_u64;
+        let mut rows = Vec::new();
+        loop {
+            let page =
+                self.engine.journal_rows(&engine_scope, after, PAGE_SIZE).map_err(|error| {
+                    HostingError::EngineFailure(format!(
+                        "the durable anti-entropy journal could not be read: {error:?}"
+                    ))
+                })?;
+            let Some(last) = page.last() else {
+                let published = self.engine.published_sequence().map_err(|error| {
+                    HostingError::EngineFailure(format!(
+                        "the anti-entropy journal boundary could not be verified: {error:?}"
+                    ))
+                })?;
+                if published.get() > after {
+                    return Err(HostingError::EngineFailure(
+                        "the anti-entropy journal read ended before its durable boundary".into(),
+                    ));
+                }
+                break;
+            };
+            let last_sequence = last.commit_sequence;
+            for row in page {
+                if row.origin.is_empty() || row.origin_sequence == 0 {
+                    return Err(HostingError::EngineFailure(
+                        "the durable journal row has no stable source origin sequence".into(),
+                    ));
+                }
+                let id = JournalRowId::new(row.origin, row.origin_sequence).map_err(|error| {
+                    HostingError::EngineFailure(format!(
+                        "the durable journal row identity is invalid: {error}"
+                    ))
+                })?;
+                rows.push(DurableJournalRow::new(id, row_hash(&row.canonical)));
+            }
+            if last_sequence <= after {
+                return Err(HostingError::EngineFailure(
+                    "the durable anti-entropy journal cursor did not advance".into(),
+                ));
+            }
+            after = last_sequence;
+        }
+        Ok(rows)
+    }
+
+    fn durable_journal_summary(
+        &self,
+        scope: &BoundScope,
+        max_rows: usize,
+    ) -> Result<JournalSummary, HostingError> {
+        EngineHost::durable_journal_summary(self, scope, max_rows)
+    }
+}
+
+impl EngineHost {
+    /// Builds the range summaries directly from bounded journal pages.  The
+    /// repair path must not first materialize every retained row in a Vec:
+    /// only the current storage page and the capped summary table are live.
+    pub(crate) fn durable_journal_summary(
+        &self,
+        scope: &BoundScope,
+        max_rows: usize,
+    ) -> Result<JournalSummary, HostingError> {
+        const PAGE_SIZE: u32 = 256;
+        if max_rows == 0 {
+            return Err(HostingError::Invalid("the journal row budget must be nonzero".into()));
+        }
+        let tenant = self.tenant_of_scope(scope)?;
+        let engine_scope = self.engine.scope_for(&tenant);
+        let mut after = 0_u64;
+        let mut table = RangeSummaryTable::new();
+        let mut inspected = 0_usize;
+        loop {
+            let page =
+                self.engine.journal_rows(&engine_scope, after, PAGE_SIZE).map_err(|error| {
+                    HostingError::EngineFailure(format!(
+                        "the durable anti-entropy journal could not be read: {error:?}"
+                    ))
+                })?;
+            if page.is_empty() {
+                // An empty page is a valid end only when the storage cursor is
+                // also at the published boundary.  Treat a missing page in
+                // front of that boundary as an unavailable/partial read.
+                let published = self.engine.published_sequence().map_err(|error| {
+                    HostingError::EngineFailure(format!(
+                        "the anti-entropy journal boundary could not be verified: {error:?}"
+                    ))
+                })?;
+                if published.get() > after {
+                    return Err(HostingError::EngineFailure(
+                        "the anti-entropy journal read ended before its durable boundary".into(),
+                    ));
+                }
+                return Ok(JournalSummary { table, complete: true });
+            }
+            if inspected.saturating_add(page.len()) > max_rows {
+                return Ok(JournalSummary { table, complete: false });
+            }
+            let Some(last) = page.last() else {
+                unreachable!("the nonempty journal page has a last row");
+            };
+            let last_sequence = last.commit_sequence;
+            for row in page {
+                if row.origin.is_empty() || row.origin_sequence == 0 {
+                    return Err(HostingError::EngineFailure(
+                        "the durable journal row has no stable source origin sequence".into(),
+                    ));
+                }
+                let id = JournalRowId::new(row.origin, row.origin_sequence).map_err(|error| {
+                    HostingError::EngineFailure(format!(
+                        "the durable journal row identity is invalid: {error}"
+                    ))
+                })?;
+                let summary = RowSummary::new(id, row_hash(&row.canonical));
+                if table.insert(&summary).is_some() {
+                    return Err(HostingError::EngineFailure(
+                        "the durable anti-entropy journal contains a duplicate row identity".into(),
+                    ));
+                }
+                inspected = inspected.saturating_add(1);
+            }
+            if last_sequence <= after {
+                return Err(HostingError::EngineFailure(
+                    "the durable anti-entropy journal cursor did not advance".into(),
+                ));
+            }
+            after = last_sequence;
+        }
     }
 }

@@ -1,0 +1,33 @@
+# `terrabase-sim` — deterministic simulation harness skeleton (E-12, ADR 0044 §4).
+#
+# Scaffolding for the seeded-fault simulation harness that qualifies the
+# replication and sync engines against the eight invariants of ADR 0044 §4.
+# Starts on day one against trait interfaces; one subagent per invariant once
+# E-5/E-6 land; CI seed batch + nightly sweep.
+#
+# This crate is engine-independent on purpose: it defines the world vocabulary
+# (`model`), the engine seams (`traits`), the fault injectors (`faults`), the
+# seeded RNG (`rng`), the deterministic workload generator (`workload`), an
+# in-memory stub engine (`world`) that proves the harness mechanics, and the
+# invariant checklist (`check`). It never imports an engine crate, and no
+# engine crate imports it, so engine logic stays untouched.
+
+[package]
+name = "terrabase-sim"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "MIT"
+description = "TerraBase deterministic simulation harness skeleton: seeded faults and the eight ADR 0044 §4 invariants (E-12)"
+publish = false
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+
+[lints.clippy]
+pedantic = "warn"
+
+[dependencies]
+rand = "0.9"
+rand_chacha = "0.9"

@@ -19,7 +19,7 @@ use crate::{
     },
     operations::{
         DocumentReadRequest, DocumentWriteRequest, EngineRequest, EngineResponse, FamilyOperation,
-        QueryOperation,
+        QueryInput, QueryOperation, RequestValidationError,
     },
     query::QueryError,
     types::{Cancellation, Deadline, LocalDurability, OperationId, TenantScope},
@@ -273,11 +273,108 @@ fn execute_query(
     scope: &TenantScope,
     request: &QueryOperation,
 ) -> Result<EngineResponse, EngineError> {
+    // The Platform adapter performs this check too, but EnginePort is a
+    // trusted in-process seam and can be called directly. Refuse before
+    // opening a snapshot so an expired or cancelled operation does no query
+    // work at all.
+    check_query_bounds(request)?;
+    let input = query_input_with_operation_bounds(request)?;
     let snapshot = engine.read_snapshot(scope)?;
     let store = engine.queries();
-    let plan = store.compile(request.input().clone()).map_err(map_query_error)?;
+    let plan = store.compile(input).map_err(map_query_error)?;
+    // A bound may elapse while planning. Check again before execution so the
+    // operation controls cover both phases of the EnginePort query seam.
+    check_query_bounds(request)?;
     let result = store.execute(&plan, &snapshot).map_err(map_query_error)?;
     Ok(EngineResponse::Query(result))
+}
+
+/// Refuses an operation whose own controls have elapsed before query work.
+fn check_query_bounds(request: &QueryOperation) -> Result<(), EngineError> {
+    if request.deadline().is_expired() {
+        return Err(EngineError::Deadline);
+    }
+    if request.cancellation().is_cancelled() {
+        return Err(EngineError::Cancelled);
+    }
+    match request.input() {
+        QueryInput::Typed(spec) => {
+            if spec.deadline().is_expired() {
+                return Err(EngineError::Deadline);
+            }
+            if spec.cancellation().is_cancelled() {
+                return Err(EngineError::Cancelled);
+            }
+        }
+        QueryInput::SqlBounded { deadline, cancellation, .. } => {
+            if deadline.is_expired() {
+                return Err(EngineError::Deadline);
+            }
+            if cancellation.is_cancelled() {
+                return Err(EngineError::Cancelled);
+            }
+        }
+        QueryInput::Sql(_) => {}
+    }
+    Ok(())
+}
+
+/// Binds operation bounds to an input while retaining stricter input bounds.
+fn query_input_with_operation_bounds(request: &QueryOperation) -> Result<QueryInput, EngineError> {
+    let operation_deadline = request.deadline();
+    let operation_cancellation = request.cancellation();
+    match request.input() {
+        QueryInput::Sql(text) => {
+            Ok(QueryInput::sql_bounded(text.clone(), operation_deadline, operation_cancellation))
+        }
+        QueryInput::SqlBounded { text, deadline, cancellation, parameters } => {
+            Ok(QueryInput::sql_bounded_with_parameters(
+                text.clone(),
+                stricter_deadline(operation_deadline, *deadline),
+                cancellation.clone(),
+                parameters.clone(),
+            ))
+        }
+        QueryInput::Typed(spec) => {
+            let deadline = stricter_deadline(operation_deadline, spec.deadline());
+            let mut bounded = crate::query::QuerySpec::try_new(
+                spec.tenant_claim().clone(),
+                spec.source().clone(),
+                spec.predicate().clone(),
+                spec.ordering().clone(),
+                spec.projection().clone(),
+                spec.paging(),
+                spec.staleness().clone(),
+                deadline,
+                spec.cancellation(),
+            )
+            .map_err(map_query_input_validation_error)?;
+            bounded = bounded
+                .with_loads(spec.loads().to_vec())
+                .map_err(map_query_input_validation_error)?;
+            bounded = bounded
+                .with_includes(spec.includes().to_vec())
+                .map_err(map_query_input_validation_error)?;
+            if let Some((range, paging)) = spec.time_series_window() {
+                bounded = bounded
+                    .with_time_series_window(range, paging)
+                    .map_err(map_query_input_validation_error)?;
+            }
+            Ok(QueryInput::typed(bounded))
+        }
+    }
+}
+
+fn stricter_deadline(left: Deadline, right: Deadline) -> Deadline {
+    if left.instant() <= right.instant() { left } else { right }
+}
+
+fn map_query_input_validation_error(error: RequestValidationError) -> EngineError {
+    match error {
+        RequestValidationError::InvalidDeadline => EngineError::Deadline,
+        RequestValidationError::InvalidCancellation => EngineError::Cancelled,
+        _ => EngineError::InvalidDocument,
+    }
 }
 
 /// Reads one family capability through the family read seam.

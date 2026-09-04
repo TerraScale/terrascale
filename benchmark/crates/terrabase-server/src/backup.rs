@@ -6,6 +6,11 @@
 //! Readiness is judged from replica artifacts (the snapshot file inside a
 //! generation directory), never from the child process being alive — a
 //! stream that spawns happily and ships nothing is not ready.
+//!
+//! Object-storage lifecycle (segments older than 24 h to Infrequent
+//! Access, older than 7 days to Archive, same-region bucket) is
+//! orchestrator-owned bucket configuration per D-29; this fleet only
+//! writes the streams.
 
 use std::collections::BTreeMap;
 use std::io;
@@ -62,7 +67,7 @@ impl BackupStreams {
     /// fleet that refuses every operation (backups off, never degraded).
     #[must_use]
     pub fn open_member() -> Self {
-        Self::new(Self::discover().unwrap_or_else(PathBuf::new))
+        Self::new(Self::discover().unwrap_or_default())
     }
 
     /// Whether a stream child runs for the database.
@@ -791,7 +796,7 @@ mod tests {
         let request = BulkIngestRequest::try_new(
             IngestConflictMode::CreateOnly,
             LocalDurability::Synced,
-            Deadline::after(Duration::from_secs(120)).expect("the deadline is positive"),
+            Deadline::after(Duration::from_mins(2)).expect("the deadline is positive"),
         )
         .expect("the ingest request validates");
         let source = (0..100_000).map(|index| {
@@ -821,7 +826,7 @@ mod tests {
             .attach("database-a", location.path(), &replica_root, "24h")
             .expect("the stream attaches");
         assert!(
-            fleet.wait_until_ready("database-a", Duration::from_secs(60)),
+            fleet.wait_until_ready("database-a", Duration::from_mins(1)),
             "the snapshot artifact lands"
         );
 

@@ -10,7 +10,7 @@ use std::{path::PathBuf, time::Duration};
 
 use terrabase::{
     Cancellation, Deadline, Engine, EngineConfig, QueryInput, QueryInputError,
-    RequestValidationError, TenantId, TqlQueryText,
+    RequestValidationError, SqlQueryText, TenantId,
     query::{
         IndexNamespace, OrderDirection, OrderingKey, QueryCondition, QueryError, QueryOrdering,
         QueryPaging, QueryPredicate, QueryProjection, QuerySource, QuerySpec, QueryStore,
@@ -235,53 +235,50 @@ fn query_store_is_acquired_only_from_a_live_engine() {
 }
 
 #[test]
-fn v1_query_text_public_constructor_validates_and_rejects() {
-    let accepted =
-        TqlQueryText::try_new("from users where age > 21 order by age").expect("supported grammar");
-    assert_eq!(accepted.as_str(), "from users where age > 21 order by age");
+fn sql_query_text_public_constructor_validates_and_rejects() {
+    let accepted = SqlQueryText::try_new("SELECT * FROM users WHERE age > 21 ORDER BY age")
+        .expect("read-only SQL validates");
+    assert_eq!(accepted.as_str(), "SELECT * FROM users WHERE age > 21 ORDER BY age");
     assert_eq!(
-        TqlQueryText::try_new(""),
+        SqlQueryText::try_new(""),
         Err(QueryInputError::EmptyText),
         "empty text is rejected at construction"
     );
-    assert!(TqlQueryText::try_new("select * from users").is_ok());
+    assert!(SqlQueryText::try_new("SELECT * FROM users").is_ok());
+    assert!(
+        SqlQueryText::try_new("WITH recent AS (SELECT * FROM users) SELECT * FROM recent").is_ok()
+    );
     assert_eq!(
-        TqlQueryText::try_new("select name, age"),
+        SqlQueryText::try_new("DELETE FROM users"),
         Err(QueryInputError::UnsupportedGrammar),
-        "a projection without a source is rejected at construction"
+        "writes are rejected at construction"
     );
     assert_eq!(
-        TqlQueryText::try_new("from users where ag\u{7}e > 1"),
+        SqlQueryText::try_new("SELECT * FROM users WHERE ag\u{7}e > 1"),
         Err(QueryInputError::UnsupportedGrammar),
-        "control characters are not grammar tokens and are rejected at construction"
+        "control characters are not SQL tokens and are rejected at construction"
     );
-    assert_eq!(
-        TqlQueryText::try_new(&format!("from {} where a = 1", "x".repeat(300))),
-        Err(QueryInputError::InvalidIdentifier),
-        "oversized identifiers are rejected as invalid identifiers"
-    );
-    let oversized = format!("from users where {}", "a = 1 and ".repeat(4096));
+    let oversized = format!("SELECT * FROM users WHERE {}", "a = 1 AND ".repeat(4096));
     assert!(oversized.len() > terrabase::MAX_QUERY_TEXT_BYTES, "test text must exceed the bound");
     assert_eq!(
-        TqlQueryText::try_new(&oversized),
+        SqlQueryText::try_new(&oversized),
         Err(QueryInputError::UnsupportedGrammar),
         "text beyond the byte bound is rejected before parsing"
     );
 }
 
 #[test]
-fn public_v1_text_compiles_through_the_one_compile_seam() {
-    let (dir, engine) = open_engine("v1-public");
+fn public_sql_text_compiles_through_the_one_compile_seam() {
+    let (dir, engine) = open_engine("sql-public");
     let store = engine.queries();
-    let text =
-        TqlQueryText::try_new("from users where age > 21 order by age").expect("supported grammar");
-    let plan =
-        store.compile(QueryInput::tql(text)).expect("public V1 text compiles through the one seam");
-    let second =
-        TqlQueryText::try_new("from users where age > 21 order by age").expect("supported grammar");
+    let text = SqlQueryText::try_new("SELECT * FROM users WHERE age > 21 ORDER BY age")
+        .expect("read-only SQL validates");
+    let plan = store.compile(QueryInput::sql(text)).expect("SQL lowers through the one seam");
+    let second = SqlQueryText::try_new("SELECT * FROM users WHERE age > 21 ORDER BY age")
+        .expect("read-only SQL validates");
     let replay =
-        store.compile(QueryInput::tql(second)).expect("the same text recompiles deterministically");
-    assert_eq!(plan, replay, "one grammar, one compile seam, one plan");
+        store.compile(QueryInput::sql(second)).expect("the same text lowers deterministically");
+    assert_eq!(plan, replay, "one language, one compile seam, one plan");
     drop(store);
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();

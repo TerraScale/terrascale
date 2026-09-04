@@ -2,12 +2,10 @@
 //! pump-and-drain core behind two wire shapes — `POST /api/v1/reactive/poll`
 //! (HTTP fallback) and `GET /api/v1/databases/{name}/reactive` (WebSocket).
 //!
-//! The envelope is `MessagePack` (D-14); projected field values ride inside as
-//! canonical JSON strings — the same `MessagePack` envelope, JSON bodies
-//! split the architecture draws for the whole reactive surface. The frame
-//! manifest is hand-defined here for the local milestone; `make contracts`
-//! (S-00) generates the Rust and TS decoders from one manifest when the
-//! monorepo lands.
+//! Delivery bytes use the bounded `terrascale.sync.v2` indexed-array codec.
+//! The member host still exposes the older `ReactiveFrame` seam while the
+//! shared SQL-view attach lane is integrated. This module adapts that seam at
+//! the transport boundary and never emits the retired map format.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -15,7 +13,6 @@ use std::sync::Mutex;
 
 use crate::api::ApiError;
 use crate::api::ApiState;
-use crate::api::push_json_escaped;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::extract::WebSocketUpgrade;
@@ -32,6 +29,49 @@ use terrabase_sync_core::server::SubscriptionSpec;
 struct ReactiveSession {
     database: String,
     receiver: std::sync::mpsc::Receiver<terrabase_tbep::reactive::ReactiveFrame>,
+}
+
+/// Holds one admitted WebSocket slot (and, once subscribed, its
+/// distinct-view slot) for a socket task. Every exit path drops the lease,
+/// so a closed, failed, or refused socket always frees both D-64 budgets.
+struct WsLease {
+    guards: Arc<crate::guards::AbuseGuards>,
+    database: String,
+    view: Option<String>,
+}
+
+impl WsLease {
+    /// Attaches the socket's distinct-view slot. A refused attach leaves
+    /// any previous view untouched; dropping the lease still frees the
+    /// WebSocket slot.
+    #[allow(dead_code, reason = "the distinct-view attach is wired in the S-09 socket step")]
+    fn attach(&mut self, view: String) -> Result<(), crate::guards::GuardRejection> {
+        self.guards.attach_view(&self.database, &view)?;
+        self.view = Some(view);
+        Ok(())
+    }
+}
+
+impl Drop for WsLease {
+    fn drop(&mut self) {
+        if let Some(view) = self.view.take() {
+            self.guards.detach_view(&self.database, &view);
+        }
+        self.guards.release_ws(&self.database);
+    }
+}
+
+/// Sends one typed guard refusal down a socket that never got its
+/// subscription: the JSON error shape with the D-64 code and fix.
+async fn send_guard_refusal(socket: &mut WebSocket, rejection: &crate::guards::GuardRejection) {
+    let mut body = String::from("{\"error\":{\"code\":\"");
+    body.push_str(rejection.code());
+    body.push_str("\",\"message\":\"");
+    crate::api::push_json_escaped(&mut body, &rejection.message());
+    body.push_str("\",\"fix\":\"");
+    crate::api::push_json_escaped(&mut body, &rejection.fix());
+    body.push_str("\"}}");
+    socket.send(Message::Text(body.into())).await.ok();
 }
 
 /// The API's reactive sessions: subscription id → its database and feed.
@@ -181,104 +221,21 @@ fn spec_of(request: &serde_json::Value) -> Result<SubscriptionSpec, ApiError> {
     Ok(SubscriptionSpec { collection: collection.to_owned(), conditions, projection })
 }
 
-/// Renders one projected-field list as canonical JSON (the frame's body
-/// payload — `MessagePack` envelope, JSON bodies, D-14).
-fn fields_json(fields: &[(String, FieldValue)]) -> String {
-    let mut body = String::from("{");
-    for (index, (field, value)) in fields.iter().enumerate() {
-        if index > 0 {
-            body.push(',');
-        }
-        body.push('"');
-        push_json_escaped(&mut body, field);
-        body.push_str("\":");
-        match value {
-            FieldValue::Text(text) => {
-                body.push('"');
-                push_json_escaped(&mut body, text);
-                body.push('"');
-            }
-            FieldValue::Number(number) => body.push_str(&number.to_string()),
+/// Converts one extracted value into the canonical JSON bytes carried by the
+/// sync-v2 wire. The wire treats these bytes as opaque and never transcodes
+/// them into nested `MessagePack` values.
+fn canonical_value(value: &FieldValue) -> Result<Vec<u8>, ApiError> {
+    match value {
+        FieldValue::Text(text) => serde_json::to_vec(text),
+        FieldValue::Number(number) => {
+            let number = serde_json::Number::from_f64(*number).ok_or_else(frame_encode_failed)?;
+            serde_json::to_vec(&number)
         }
     }
-    body.push('}');
-    body
+    .map_err(|_| frame_encode_failed())
 }
 
-/// Encodes one delivery frame as a `MessagePack` map (D-14: the envelope;
-/// projected values ride as canonical JSON strings inside).
-fn encode_frame(frame: &terrabase_tbep::reactive::ReactiveFrame) -> Result<Vec<u8>, ApiError> {
-    use terrabase_sync_core::server::DeltaOp;
-    use terrabase_tbep::reactive::ReactiveFrame;
-    let refuse = |_| ApiError {
-        status: StatusCode::INTERNAL_SERVER_ERROR,
-        code: "frame_encode_failed",
-        message: "the delivery frame could not be encoded".into(),
-        fix: "retry the subscription; this is a server-side encoding fault".into(),
-        placement: None,
-    };
-    let mut bytes = Vec::with_capacity(256);
-    match frame {
-        ReactiveFrame::Seed { subscription, members } => {
-            rmp::encode::write_map_len(&mut bytes, 3).map_err(refuse)?;
-            write_key(&mut bytes, "t");
-            rmp::encode::write_str(&mut bytes, "seed").map_err(refuse)?;
-            write_key(&mut bytes, "sub");
-            rmp::encode::write_u64(&mut bytes, *subscription).map_err(refuse)?;
-            write_key(&mut bytes, "members");
-            rmp::encode::write_array_len(
-                &mut bytes,
-                u32::try_from(members.len()).map_err(|_| frame_bound_refused())?,
-            )
-            .map_err(refuse)?;
-            for (document, fields) in members {
-                rmp::encode::write_array_len(&mut bytes, 2).map_err(refuse)?;
-                rmp::encode::write_str(&mut bytes, document).map_err(refuse)?;
-                rmp::encode::write_str(&mut bytes, &fields_json(fields)).map_err(refuse)?;
-            }
-        }
-        ReactiveFrame::Delta { subscription, delta } => {
-            let (kind, document, fields) = match &delta.operation {
-                DeltaOp::Insert { document, fields } => ("insert", Some(document), Some(fields)),
-                DeltaOp::Update { document, fields } => ("update", Some(document), Some(fields)),
-                DeltaOp::Remove { document } => ("remove", Some(document), None),
-            };
-            let entries = 5 + usize::from(fields.is_some());
-            rmp::encode::write_map_len(
-                &mut bytes,
-                u32::try_from(entries).map_err(|_| frame_bound_refused())?,
-            )
-            .map_err(refuse)?;
-            write_key(&mut bytes, "t");
-            rmp::encode::write_str(&mut bytes, "delta").map_err(refuse)?;
-            write_key(&mut bytes, "sub");
-            rmp::encode::write_u64(&mut bytes, *subscription).map_err(refuse)?;
-            write_key(&mut bytes, "rev");
-            rmp::encode::write_u64(&mut bytes, delta.revision).map_err(refuse)?;
-            write_key(&mut bytes, "op");
-            rmp::encode::write_str(&mut bytes, kind).map_err(refuse)?;
-            write_key(&mut bytes, "id");
-            rmp::encode::write_str(&mut bytes, document.expect("every op names a document"))
-                .map_err(refuse)?;
-            if let Some(fields) = fields {
-                write_key(&mut bytes, "body");
-                rmp::encode::write_str(&mut bytes, &fields_json(fields)).map_err(refuse)?;
-            }
-        }
-        ReactiveFrame::Reset { subscription } => {
-            rmp::encode::write_map_len(&mut bytes, 2).map_err(refuse)?;
-            write_key(&mut bytes, "t");
-            rmp::encode::write_str(&mut bytes, "reset").map_err(refuse)?;
-            write_key(&mut bytes, "sub");
-            rmp::encode::write_u64(&mut bytes, *subscription).map_err(refuse)?;
-        }
-    }
-    Ok(bytes)
-}
-
-/// The typed refusal for a frame the wire cannot carry (a members list
-/// past the u32 array-length bound).
-fn frame_bound_refused() -> ApiError {
+fn frame_encode_failed() -> ApiError {
     ApiError {
         status: StatusCode::INTERNAL_SERVER_ERROR,
         code: "frame_encode_failed",
@@ -288,9 +245,154 @@ fn frame_bound_refused() -> ApiError {
     }
 }
 
-/// Writes one map key (every frame key is a short static string).
-fn write_key(bytes: &mut Vec<u8>, key: &str) {
-    rmp::encode::write_str(bytes, key).expect("a short static key always encodes");
+fn projected_fields(
+    fields: &[(String, FieldValue)],
+) -> Result<Vec<terrabase_sync_core::wire::ProjectedField>, ApiError> {
+    fields
+        .iter()
+        .map(|(path, value)| {
+            Ok(terrabase_sync_core::wire::ProjectedField {
+                path: path.clone(),
+                value: canonical_value(value)?,
+            })
+        })
+        .collect()
+}
+
+/// The old member seam gives this adapter a process-local numeric identity.
+/// Keep it opaque to the wire by carrying its textual form. The real view
+/// capability is issued by the shared attach endpoint once that host API is
+/// available.
+fn wire_subscription(subscription: u64) -> String {
+    subscription.to_string()
+}
+
+/// Produces a bounded opaque checkpoint for an adapted frame. A checkpoint is
+/// never a database cursor or a client-visible numeric session token.
+fn wire_checkpoint(subscription: u64, generation: u64, revision: u64) -> Vec<u8> {
+    let mut checkpoint = Vec::with_capacity(36);
+    checkpoint.extend_from_slice(b"reactive-v2\0");
+    checkpoint.extend_from_slice(&subscription.to_be_bytes());
+    checkpoint.extend_from_slice(&generation.to_be_bytes());
+    checkpoint.extend_from_slice(&revision.to_be_bytes());
+    checkpoint
+}
+
+fn digest_bytes(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex().to_string()
+}
+
+fn snapshot_digest(items: &[terrabase_sync_core::wire::ResultItem]) -> String {
+    let mut bytes = Vec::new();
+    for item in items {
+        bytes.extend_from_slice(&(item.identity.len() as u64).to_be_bytes());
+        bytes.extend_from_slice(item.identity.as_bytes());
+        for field in &item.fields {
+            bytes.extend_from_slice(&(field.path.len() as u64).to_be_bytes());
+            bytes.extend_from_slice(field.path.as_bytes());
+            bytes.extend_from_slice(&(field.value.len() as u64).to_be_bytes());
+            bytes.extend_from_slice(&field.value);
+        }
+    }
+    digest_bytes(&bytes)
+}
+
+fn snapshot(
+    subscription: u64,
+    members: &[(String, Vec<(String, FieldValue)>)],
+) -> Result<terrabase_sync_core::wire::Snapshot, ApiError> {
+    let items = members
+        .iter()
+        .map(|(identity, fields)| {
+            Ok(terrabase_sync_core::wire::ResultItem {
+                identity: identity.clone(),
+                fields: projected_fields(fields)?,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+    Ok(terrabase_sync_core::wire::Snapshot {
+        view_generation: 1,
+        authorization_generation: 1,
+        revision: 0,
+        digest: snapshot_digest(&items),
+        checkpoint: wire_checkpoint(subscription, 1, 0),
+        items,
+    })
+}
+
+fn operation(
+    operation: &terrabase_sync_core::server::DeltaOp,
+) -> Result<terrabase_sync_core::wire::ResultOperation, ApiError> {
+    use terrabase_sync_core::server::DeltaOp;
+    use terrabase_sync_core::wire::ResultOperation;
+    match operation {
+        DeltaOp::Insert { document, fields } => Ok(ResultOperation::Insert {
+            identity: document.clone(),
+            // The legacy matcher does not retain an order position. The SQL
+            // view host must supply it when the shared-view seam lands.
+            position: 0,
+            fields: projected_fields(fields)?,
+        }),
+        DeltaOp::Update { document, fields } => Ok(ResultOperation::Update {
+            identity: document.clone(),
+            fields: projected_fields(fields)?,
+        }),
+        DeltaOp::Remove { document } => Ok(ResultOperation::Remove { identity: document.clone() }),
+    }
+}
+
+/// Encodes one delivery frame as a complete canonical sync-v2 envelope.
+fn encode_frame(frame: &terrabase_tbep::reactive::ReactiveFrame) -> Result<Vec<u8>, ApiError> {
+    use terrabase_sync_core::wire::{Envelope, Message, ResetReason, encode_envelope};
+    use terrabase_tbep::reactive::ReactiveFrame;
+    let (subscription, message) = match frame {
+        ReactiveFrame::Seed { subscription, members } => {
+            let subscription_text = wire_subscription(*subscription);
+            let snapshot = snapshot(*subscription, members)?;
+            (*subscription, Message::Snapshot { subscription: subscription_text, snapshot })
+        }
+        ReactiveFrame::Delta { subscription, delta } => {
+            let subscription_text = wire_subscription(*subscription);
+            let operation = operation(&delta.operation)?;
+            let mut digest_input = Vec::new();
+            digest_input.extend_from_slice(&delta.revision.to_be_bytes());
+            digest_input.extend_from_slice(format!("{operation:?}").as_bytes());
+            (
+                *subscription,
+                Message::Delta {
+                    subscription: subscription_text,
+                    view_generation: 1,
+                    from_revision: delta.revision.saturating_sub(1),
+                    to_revision: delta.revision,
+                    operations: vec![operation],
+                    digest: digest_bytes(&digest_input),
+                    checkpoint: wire_checkpoint(*subscription, 1, delta.revision),
+                },
+            )
+        }
+        ReactiveFrame::Reset { subscription } => {
+            let subscription_text = wire_subscription(*subscription);
+            let snapshot = snapshot(*subscription, &[])?;
+            (
+                *subscription,
+                Message::Reset {
+                    subscription: subscription_text,
+                    reason: ResetReason::Backpressure,
+                    snapshot,
+                },
+            )
+        }
+    };
+    encode_envelope(&Envelope {
+        features: 0,
+        correlation: subscription,
+        causation: match frame {
+            ReactiveFrame::Delta { delta, .. } => delta.revision,
+            _ => 0,
+        },
+        message,
+    })
+    .map_err(|_| frame_encode_failed())
 }
 
 /// The poll transport (`POST /api/v1/databases/{name}/reactive/poll`):
@@ -319,6 +421,11 @@ pub async fn poll(
     let Ok(host) = crate::api::document_host(&state, &name) else {
         return ApiError::database_not_found(&name).into_response();
     };
+    if let Err(error) =
+        crate::api::check_read_guard(&state, &name, terrabase::observability::Operation::Subscribe)
+    {
+        return error.into_response();
+    }
     match request.get("op").and_then(serde_json::Value::as_str) {
         Some("subscribe") => {
             let spec = match spec_of(&request) {
@@ -347,6 +454,19 @@ pub async fn poll(
                 }
             };
             state.reactive.insert(subscription, name.clone(), receiver);
+            // Every live poll subscription holds one distinct-view slot
+            // (D-64): a database past its view budget refuses new
+            // subscribers with the typed 429 instead of silently shedding.
+            let view_key = format!("poll:{subscription}");
+            if let Err(rejection) = state.guards.attach_view(&name, &view_key) {
+                state.metrics.record_admission_rejection(
+                    terrabase::observability::Operation::Subscribe,
+                    terrabase::observability::AdmissionReason::Capacity,
+                );
+                host.reactive_unsubscribe(subscription);
+                state.reactive.remove(subscription);
+                return crate::api::ApiError::abuse_guard(&rejection).into_response();
+            }
             // A resume replays exactly the missed revisions as its first
             // frames (no Seed — the client kept its state); everything
             // else seeds.
@@ -420,6 +540,7 @@ pub async fn poll(
             }
             host.reactive_unsubscribe(subscription);
             state.reactive.remove(subscription);
+            state.guards.detach_view(&name, &format!("poll:{subscription}"));
             axum::http::StatusCode::NO_CONTENT.into_response()
         }
         _ => ApiError {
@@ -499,10 +620,27 @@ async fn serve_socket(
     state: &Arc<ApiState>,
     name: &str,
 ) -> Result<(), axum::Error> {
-    // ponytail: a 10 ms pump tick reaches the 50 ms p99 target; the
-    // commit-hook pump (publication sink) replaces the tick when the
-    // S-05 tailer wires the sink.
-    const PUMP_TICK: std::time::Duration = std::time::Duration::from_millis(10);
+    // The socket admits against the D-64 subscribe rate and connection
+    // budgets before reading its first frame; the lease frees both slots
+    // on every exit path below.
+    if let Err(rejection) = state.guards.check_read_query(name) {
+        state.metrics.record_admission_rejection(
+            terrabase::observability::Operation::Subscribe,
+            terrabase::observability::AdmissionReason::Capacity,
+        );
+        send_guard_refusal(&mut socket, &rejection).await;
+        return Ok(());
+    }
+    if let Err(rejection) = state.guards.acquire_ws(name) {
+        state.metrics.record_admission_rejection(
+            terrabase::observability::Operation::Subscribe,
+            terrabase::observability::AdmissionReason::Capacity,
+        );
+        send_guard_refusal(&mut socket, &rejection).await;
+        return Ok(());
+    }
+    let _lease =
+        WsLease { guards: Arc::clone(&state.guards), database: name.to_owned(), view: None };
     let Some(first) = socket.recv().await else {
         return Ok(());
     };
@@ -516,122 +654,72 @@ async fn serve_socket(
             .ok();
         return Ok(());
     };
-    // The subscribe frame reuses the poll body's JSON shape, carried as
-    // the MessagePack envelope's JSON body (D-14).
-    let decoded = decode_subscribe_frame(&request);
-    let spec = match decoded.and_then(|value| spec_of(&value)) {
-        Ok(spec) => spec,
+    // The first frame is one complete canonical sync-v2 Subscribe envelope.
+    // The current member host still accepts only its internal
+    // `SubscriptionSpec`, so SQL planning remains an explicit integration
+    // seam. Maps and the retired JSON-text frame are rejected here.
+    let subscribe = match decode_subscribe_frame(&request) {
+        Ok(subscribe) => subscribe,
         Err(error) => {
             let body = format!(
-                "{{\"error\":{{\"code\":\"{}\",\"fix\":\"{}\"}}}}",
+                "{{\"error\":{{\"code\":\"{}\",\"fix\":\"send one canonical sync-v2 Subscribe envelope\"}}}}",
                 error.code(),
-                "resend the subscribe frame with a collection"
             );
             socket.send(Message::Text(body.into())).await.ok();
             return Ok(());
         }
     };
-    let Ok(host) = crate::api::document_host(state, name) else {
-        socket
-            .send(Message::Text(
-                "{\"error\":{\"code\":\"database_not_found\",\"fix\":\"check the database name\"}}"
-                    .into(),
-            ))
-            .await
-            .ok();
-        return Ok(());
-    };
-    let scope = bound_scope(state, name);
-    // ponytail: the WS first-frame subscribe carries no resume; a
-    // reconnecting client resumes through the poll transport until the
-    // frame manifest grows a resume frame (S-10).
-    let Ok((subscription, receiver, _missed)) = host.reactive_subscribe(&scope, &spec, None) else {
-        socket
-            .send(Message::Text(
-                "{\"error\":{\"code\":\"reactive_refused\",\"fix\":\"retry the subscription\"}}"
-                    .into(),
-            ))
-            .await
-            .ok();
-        return Ok(());
-    };
-    state.reactive.insert(subscription, name.to_owned(), receiver);
-    loop {
-        if let Err(error) = host.reactive_pump(&scope) {
-            let _ = error;
-            break;
-        }
-        for frame in drain(subscription, state) {
-            match encode_frame(&frame) {
-                Ok(bytes) => {
-                    if socket.send(Message::Binary(bytes.into())).await.is_err() {
-                        host.reactive_detach(subscription);
-                        state.reactive.remove(subscription);
-                        return Ok(());
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-        // Wake on the tick or the client's close, whichever comes first.
-        tokio::select! {
-            () = tokio::time::sleep(PUMP_TICK) => {}
-            closed = socket.recv() => {
-                if closed.is_none() {
-                    host.reactive_detach(subscription);
-                    state.reactive.remove(subscription);
-                    return Ok(());
-                }
-            }
-        }
-    }
-    host.reactive_detach(subscription);
-    state.reactive.remove(subscription);
+    let error = ApiError::pending_surface(
+        "reactive SQL view attach",
+        "the member's shared SQL-view attach lane (E-5)",
+    );
+    let _ = subscribe;
+    socket
+        .send(Message::Text(
+            format!("{{\"error\":{{\"code\":\"{}\",\"fix\":\"{}\"}}}}", error.code(), error.fix)
+                .into(),
+        ))
+        .await
+        .ok();
     Ok(())
 }
 
-/// Decodes one subscribe frame: the `MessagePack` map the poll body
-/// describes, with its JSON body carried as a string. Only the closed
-/// subscribe shape decodes; anything else fails closed.
-fn decode_subscribe_frame(bytes: &[u8]) -> Result<serde_json::Value, ApiError> {
+/// Decodes one canonical sync-v2 Subscribe envelope. Only a client-to-server
+/// Subscribe message is accepted, and the bounded wire decoder rejects maps,
+/// extensions, unknown versions, and trailing bytes before allocation.
+fn decode_subscribe_frame(bytes: &[u8]) -> Result<terrabase_sync_core::wire::Message, ApiError> {
     let invalid = |message: &str| ApiError {
         status: StatusCode::BAD_REQUEST,
         code: "invalid_subscribe_frame",
         message: message.into(),
-        fix: "send the subscribe frame as a MessagePack map of JSON-text values".into(),
+        fix: "send one canonical terrascale.sync.v2 Subscribe envelope".into(),
         placement: None,
     };
-    let mut cursor = bytes;
-    let entries = rmp::decode::read_map_len(&mut cursor)
-        .map_err(|_| invalid("the subscribe frame is not a MessagePack map"))?;
-    let mut request = serde_json::Map::new();
-    for _ in 0..entries {
-        let mut key_buffer = [0_u8; 64];
-        let key = rmp::decode::read_str(&mut cursor, &mut key_buffer)
-            .map_err(|_| invalid("a subscribe frame key is not a short string"))?
-            .to_owned();
-        let mut value_buffer = [0_u8; 4096];
-        let value = rmp::decode::read_str(&mut cursor, &mut value_buffer)
-            .map_err(|_| invalid("a subscribe frame value is not the JSON body string"))?;
-        let parsed: serde_json::Value = serde_json::from_str(value)
-            .map_err(|_| invalid("a subscribe frame value is not JSON"))?;
-        request.insert(key, parsed);
+    let envelope = terrabase_sync_core::wire::decode_envelope(bytes)
+        .map_err(|error| invalid(&format!("the subscribe envelope is invalid: {error}")))?;
+    if !matches!(envelope.message, terrabase_sync_core::wire::Message::Subscribe { .. }) {
+        return Err(invalid("the first frame must be a sync-v2 Subscribe message"));
     }
-    Ok(serde_json::Value::Object(request))
+    Ok(envelope.message)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::decode_subscribe_frame;
     use super::encode_frame;
     use terrabase_sync_core::server::Delta;
     use terrabase_sync_core::server::DeltaOp;
     use terrabase_sync_core::server::FieldValue;
+    use terrabase_sync_core::wire::Envelope;
+    use terrabase_sync_core::wire::Message;
+    use terrabase_sync_core::wire::decode_envelope;
+    use terrabase_sync_core::wire::encode_envelope;
     use terrabase_tbep::reactive::ReactiveFrame;
 
-    /// A frame round-trips through `MessagePack` with its kind and payload
-    /// intact (rmp decodes what rmp wrote).
+    /// A member frame is emitted as one complete canonical sync-v2 envelope,
+    /// and projected values remain canonical JSON bytes inside that envelope.
     #[test]
-    fn frames_encode_as_messagepack() {
+    fn frames_encode_as_canonical_sync_v2() {
         let frame = ReactiveFrame::Delta {
             subscription: 3,
             delta: Delta {
@@ -643,14 +731,55 @@ mod tests {
             },
         };
         let bytes = encode_frame(&frame).expect("the frame encodes");
-        let mut cursor = bytes.as_slice();
-        let entries = rmp::decode::read_map_len(&mut cursor).expect("a map");
-        assert_eq!(entries, 6, "insert carries t/sub/rev/op/id/body");
-        let mut key_buffer = [0_u8; 8];
-        let first_key = rmp::decode::read_str(&mut cursor, &mut key_buffer).expect("a key");
-        assert_eq!(first_key, "t");
-        let mut kind_buffer = [0_u8; 8];
-        let kind = rmp::decode::read_str(&mut cursor, &mut kind_buffer).expect("a kind");
-        assert_eq!(kind, "delta");
+        let envelope = decode_envelope(&bytes).expect("the canonical envelope decodes");
+        let Message::Delta { subscription, operations, checkpoint, .. } = envelope.message else {
+            panic!("the member delta is not a canonical Delta message");
+        };
+        assert_eq!(subscription, "3");
+        assert_eq!(checkpoint.len(), 36);
+        assert_eq!(operations.len(), 1);
+        let terrabase_sync_core::wire::ResultOperation::Insert { fields, .. } = &operations[0]
+        else {
+            panic!("the member insert is not a canonical Insert operation");
+        };
+        assert_eq!(fields[0].path, "total");
+        assert_eq!(fields[0].value, b"4.0");
+    }
+
+    #[test]
+    fn canonical_snapshot_and_typed_reset_decode() {
+        let seed = ReactiveFrame::Seed {
+            subscription: 9,
+            members: vec![("o-1".into(), vec![("status".into(), FieldValue::Text("paid".into()))])],
+        };
+        let snapshot =
+            decode_envelope(&encode_frame(&seed).expect("seed encodes")).expect("seed decodes");
+        assert!(matches!(snapshot.message, Message::Snapshot { .. }));
+
+        let reset = ReactiveFrame::Reset { subscription: 9 };
+        let reset =
+            decode_envelope(&encode_frame(&reset).expect("reset encodes")).expect("reset decodes");
+        assert!(matches!(
+            reset.message,
+            Message::Reset { reason: terrabase_sync_core::wire::ResetReason::Backpressure, .. }
+        ));
+    }
+
+    #[test]
+    fn websocket_subscribe_decoder_rejects_legacy_maps() {
+        assert!(decode_subscribe_frame(&[0x81, 0xa1, b't', 0xa1, b'q']).is_err());
+        let bytes = encode_envelope(&Envelope {
+            features: 0,
+            correlation: 1,
+            causation: 0,
+            message: Message::Subscribe {
+                subscription: "view-capability".into(),
+                query: "SELECT * FROM orders".into(),
+                parameters: Vec::new(),
+                checkpoint: None,
+            },
+        })
+        .expect("subscribe encodes");
+        assert!(matches!(decode_subscribe_frame(&bytes), Ok(Message::Subscribe { .. })));
     }
 }

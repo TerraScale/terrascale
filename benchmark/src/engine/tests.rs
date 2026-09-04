@@ -123,6 +123,102 @@ fn rejected(outcome: CommitOutcome) -> CommitError {
 }
 
 #[test]
+fn host_clock_offset_bounds_origin_hlc_minting_and_recovers() {
+    let (dir, engine) = open_engine("clock-safety");
+
+    // The hard boundary is inclusive, and a negative offset is measured by
+    // magnitude rather than direction.
+    engine.set_clock_offset_seconds(0.5);
+    assert!(matches!(
+        commit_put(
+            &engine,
+            "tenant-a",
+            "clock-boundary",
+            "boundary",
+            "kept",
+            ExpectedVersion::New,
+            LocalDurability::Synced,
+        ),
+        CommitOutcome::Committed(_)
+    ));
+
+    engine.set_clock_offset_seconds(-0.500_001);
+    let before_clock = *engine.replication_clock.lock().expect("clock is not poisoned");
+    let before_sequence = engine
+        .read_snapshot(&tenant_scope(&engine, "tenant-a"))
+        .expect("snapshot remains readable")
+        .sequence();
+    assert_eq!(
+        rejected(commit_put(
+            &engine,
+            "tenant-a",
+            "clock-refused-negative",
+            "refused",
+            "not-written",
+            ExpectedVersion::New,
+            LocalDurability::Synced,
+        )),
+        CommitError::Validation,
+        "clock refusal preserves the frozen commit-error vocabulary"
+    );
+    assert_eq!(
+        *engine.replication_clock.lock().expect("clock is not poisoned"),
+        before_clock,
+        "a refused write does not mint or advance an HLC"
+    );
+    assert_eq!(
+        engine
+            .read_snapshot(&tenant_scope(&engine, "tenant-a"))
+            .expect("reads remain available")
+            .sequence(),
+        before_sequence,
+        "a refused write does not publish storage"
+    );
+    assert_eq!(
+        read_document(&engine, "tenant-a", "boundary").map(|doc| doc.value().clone()),
+        Some(DocumentValue::String("kept".into()))
+    );
+    assert_eq!(read_document(&engine, "tenant-a", "refused"), None);
+
+    // Unknown/stale input is explicit and fail-closed; a fresh safe sample
+    // reopens origin writes and records only the corresponding refusal.
+    engine.clear_clock_offset_seconds();
+    assert_eq!(engine.clock_offset_seconds(), None);
+    assert_eq!(engine.metrics().snapshot().clock_offset_seconds(), None);
+    assert!(matches!(
+        commit_put(
+            &engine,
+            "tenant-a",
+            "clock-refused-unknown",
+            "unknown",
+            "not-written",
+            ExpectedVersion::New,
+            LocalDurability::Synced,
+        ),
+        CommitOutcome::Rejected(CommitError::Validation)
+    ));
+    engine.set_clock_offset_seconds(-0.499_999);
+    assert!(matches!(
+        commit_put(
+            &engine,
+            "tenant-a",
+            "clock-recovered",
+            "recovered",
+            "written",
+            ExpectedVersion::New,
+            LocalDurability::Synced,
+        ),
+        CommitOutcome::Committed(_)
+    ));
+
+    let metrics = engine.metrics().snapshot();
+    assert_eq!(metrics.clock_offset_seconds(), Some(-0.499_999));
+    assert_eq!(metrics.clock_write_refusals(), 2);
+    drop(engine);
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
 fn engine_opens_only_configured_durable_storage() {
     assert_eq!(EngineConfig::durable("").err(), Some(EngineConfigError::EmptyLocation));
 
@@ -1366,7 +1462,7 @@ fn snapshot_documents_from_serves_bounded_windows_and_validates_the_view() {
 }
 
 #[test]
-fn snapshot_records_from_pages_full_keys_and_winning_durability_lsm() {
+fn snapshot_records_from_pages_full_keys_and_winning_durability_sqlite() {
     let (dir, engine) = open_engine("engine-record-pages");
     assert_snapshot_records_from_pages(&dir, engine);
 }

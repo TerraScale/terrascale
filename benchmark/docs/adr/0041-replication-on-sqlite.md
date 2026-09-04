@@ -5,13 +5,12 @@ Authority: the workspace goal (`../../../GOAL.md`) owns these decisions; this
 ADR records them in-repo for durable local context. If they diverge, the
 workspace goal wins.
 
-Supersedes ADR 0023's intra-region two-writer state machine and its
-per-field CRDT replay model. The per-field last-writer-wins replica
-model of `terrabase-replication-core` (`ReplicaDoc`, `ReplicaFrontier`,
-`ReplicaExchange`, the in-process `DurableMember`/`ComposedMember`
-stand-ins) is deleted with this record, not parked. ADR 0023 remains
-referenced for vocabulary that survives (progress positions,
-anti-entropy triggers, corruption quarantine).
+Supersedes the former intra-region two-writer state machine and per-field
+CRDT replay model. The per-field last-writer-wins replica model of
+`terrabase-replication-core` (`ReplicaDoc`, `ReplicaFrontier`,
+`ReplicaExchange`, the in-process `DurableMember`/`ComposedMember` stand-ins)
+is deleted with this record. Current replication and reconciliation mechanics
+are defined by ADR 0044.
 
 ## Decision
 
@@ -37,8 +36,8 @@ fields (PN-counter, add-wins/remove-wins set, MV register) from ADR
 dictionary trained on canonical JSON; credit-window pipelining (never
 wait for wave *k*'s ack before sending *k+1*); same-document writes
 coalesced within a wave (last bytes + merged causal context).
-Anti-entropy is a Merkle tree over `seq` ranges per database, descended
-only on mismatch. A joining region bootstraps from a peer's Litestream
+Range-based set reconciliation exchanges fingerprints over `seq` ranges and
+refines only mismatches. A joining region bootstraps from a peer's Litestream
 snapshot in its own region's object storage, then tails. Peer lists
 come from the orchestrator over control gRPC; NATS exists only inside
 the orchestrator.
@@ -52,7 +51,7 @@ the orchestrator.
 - `terrabase-replication-core` keeps only the transport- and
   storage-independent kernels the follower and tailer reuse: durable
   counter-stream progress with retention guards (`progress`), and the
-  dual-root Merkle comparison, repair planning, and scheduling kernels
+  range-summary comparison, repair planning, and scheduling kernels
   (`anti_entropy`).
 - The frame format stays shippable to a browser/mobile SQLite-WASM
   client later (D-57): no member-only assumptions in the frame.

@@ -275,7 +275,7 @@ entity_ulid!(
     "The identity of one automatic-index instance (ADR 0010). Its canonical definition carries a separate `AutoIndexDefinitionDigest`."
 );
 entity_ulid!(ViewPlanUlid, "The identity of one view plan.");
-entity_ulid!(SubscriptionUlid, "The identity of one reactive subscription (ADR 0024).");
+entity_ulid!(SubscriptionUlid, "The identity of one reactive subscription (ADR 0044).");
 entity_ulid!(
     CommitUlid,
     "The identity of one commit. A mutation tag remains `(CommitUlid, MutationOrdinal)` (ADR 0027)."

@@ -115,7 +115,7 @@ Native x86_64 and Ampere ARM64 runners build, lint, and test every release.
 Qualification creates storage, WAL, segment, snapshot, backup, CRDT, and
 protocol artifacts on each architecture and consumes them on the other. A
 mixed-architecture replica set must converge on the same canonical state,
-hashes, conflict winners, Merkle roots, and visible documents through normal
+hashes, conflict winners, range fingerprints, and visible documents through normal
 replication, repair, compaction, backup, restore, and an N/N-1 upgrade.
 
 Performance baselines are architecture and storage-profile specific. The
@@ -187,8 +187,8 @@ at least one independently verified recovery point every day. Ordinary backup
 retention cannot exceed ninety days unless a recorded legal hold or explicit
 compliant customer policy requires more. Restore always creates a new cluster,
 new active database-key version, and verified frontier before traffic moves.
-ADR 0037 stores these recovery points directly in an S3-compatible bucket. A
-persistent backup block volume is not part of the production design.
+ADR 0040 stores these recovery points through Litestream in OCI Object Storage.
+A persistent backup block volume is not part of the production design.
 
 For a healthy multi-Region database, public routing must recover from complete
 loss of one Region within five minutes. A one-Region database cannot claim that
@@ -265,5 +265,5 @@ optional-tier combination, and intentional Tier 1 and Tier 3 disablement.
 
 Every customer-visible receipt and support artifact uses airport `RegionCode`
 values. A CI boundary scan fails if an OCI Region identifier or `SJC` appears in
-OpenAPI, SDKs, TQL, checkpoints, placement contracts,
+OpenAPI, SDKs, SQL, checkpoints, placement contracts,
 customer fixtures, examples, customer-visible logs, or customer receipts.

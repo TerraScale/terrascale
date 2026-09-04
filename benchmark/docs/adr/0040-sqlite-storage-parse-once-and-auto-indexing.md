@@ -6,8 +6,8 @@ ADR records them in-repo for durable local context. If they diverge, the
 workspace goal wins.
 
 Supersedes the storage-engine portions of earlier ADRs and design docs that
-describe the custom LSM, RootFiles, custom WAL, compaction, and
-segment/manifest machinery. That code and those documents are deleted
+describe the retired segment/manifest storage machinery. That code and those
+documents are deleted
 **immediately** (workspace task TB-21, in lockstep with TB-20 — owner
 order of 2026-08-30: no transition period, SQLite only from now on). The
 CRDT/causality, sync, replication, TBEP, encryption-seam, and observability
@@ -15,7 +15,8 @@ decisions in earlier ADRs remain in force.
 
 ## Context
 
-The 2026-08-30 decision-grade benchmarks measured the custom LSM 20–70x
+The 2026-08-30 decision-grade benchmarks measured the prior storage
+implementation 20–70x
 behind PostgreSQL 18 on read workloads. Closing that gap was an open-ended
 engine-performance campaign with uncertain convergence, carried by a
 one-owner team, in the single subsystem where a latent bug loses customer
@@ -47,11 +48,15 @@ are journal-followers with promotion, not second writers.
 
 ### D-29 — Litestream backup
 
-One Litestream stream per database file to OCI Object Storage. Disaster
+One Litestream stream per database file to OCI Object Storage **in the
+same region** (free traffic), syncing every **10 s** (durability comes
+from the RF=2 follower; the backup tier's RPO is 10 s). Disaster
 recovery and PITR only — never a replication mechanism and never in the
 hot path. Restore always lands as a NEW database. Backup streams are
 encrypted under the same per-database keys, so crypto-shredding a database
-covers its backups.
+covers its backups. Bucket lifecycle is orchestrator-owned, per region:
+segments older than 24 h move to Infrequent Access, older than 7 days to
+Archive.
 
 ### D-30 — Parse once, bytes everywhere
 

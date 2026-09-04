@@ -28,8 +28,6 @@ pub use sqlite::database_file;
 /// Failures opening one durable location.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StorageOpenError {
-    /// The location is not an owned SQLite database directory.
-    FormatMismatch,
     /// The location cannot be opened or recovered.
     Unavailable,
 }
@@ -470,6 +468,8 @@ pub struct DocumentMergeState {
     pub hlc: u64,
     /// The current row's writing region.
     pub origin: String,
+    /// The current row's durable per-origin journal sequence.
+    pub origin_sequence: u64,
     /// The current row's writing dot.
     pub commit_ulid: String,
 }
@@ -517,6 +517,60 @@ impl UsageFactPosition {
             id: fact.fact().identity().id().clone(),
         }
     }
+}
+
+/// One per-database metering fact (E-9, D-16/D-42): the billable rollup of
+/// one database's folded journal rows. `db` is the tenant identity text
+/// (D-51: tenant = database); `seq_hi` is the highest journal sequence the
+/// rollup covers; `writes` counts billed write units under the D-16
+/// `ceil(bytes / 4 KiB)` rule; `bytes` sums the stored canonical body
+/// bytes (tombstones contribute zero).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DbUsageFact {
+    db: String,
+    seq_hi: u64,
+    writes: u64,
+    bytes: u64,
+}
+
+impl DbUsageFact {
+    /// Creates one per-database metering fact.
+    #[must_use]
+    pub fn new(db: String, seq_hi: u64, writes: u64, bytes: u64) -> Self {
+        Self { db, seq_hi, writes, bytes }
+    }
+
+    /// Returns the billed database identity.
+    #[must_use]
+    pub fn db(&self) -> &str {
+        &self.db
+    }
+
+    /// Returns the highest journal sequence the rollup covers.
+    #[must_use]
+    pub const fn seq_hi(&self) -> u64 {
+        self.seq_hi
+    }
+
+    /// Returns the billed write units.
+    #[must_use]
+    pub const fn writes(&self) -> u64 {
+        self.writes
+    }
+
+    /// Returns the stored canonical body bytes.
+    #[must_use]
+    pub const fn bytes(&self) -> u64 {
+        self.bytes
+    }
+}
+
+/// The D-16 write unit for one document operation over `body_len` stored
+/// canonical bytes: `ceil(body_len / 4 KiB)` with a one-unit floor, so a
+/// tombstone or empty body still bills the single delete it performed.
+#[must_use]
+pub fn billed_writes_for_bytes(body_len: u64) -> u64 {
+    body_len.div_ceil(4096).max(1)
 }
 
 /// The private storage adapter seam the Engine depends on.
@@ -570,6 +624,37 @@ pub(crate) trait StoragePort: Send {
         _limit: u32,
     ) -> Result<Vec<DurableUsageFact>, UsageStorageError> {
         Err(UsageStorageError::UnsupportedBackend)
+    }
+
+    /// Returns one database's metering fact, when it has billed rows.
+    fn metering_fact(&self, _db: &str) -> Option<DbUsageFact> {
+        None
+    }
+
+    /// Returns one page of per-database metering facts in `db` order with
+    /// an opaque cursor resuming strictly after `after`. The cursor is the
+    /// last fact's `db`; callers treat it as opaque bytes, never a key.
+    fn metering_facts_page(
+        &self,
+        _after: Option<&str>,
+        _limit: u32,
+    ) -> (Vec<DbUsageFact>, Option<String>) {
+        (Vec::new(), None)
+    }
+
+    /// Returns one database's live logical bytes: newest version per key,
+    /// tombstones excluded (the D-16 storage dimension's snapshot input).
+    fn metering_live_bytes(&self, _db: &str) -> u64 {
+        0
+    }
+
+    /// Records one served read for abuse-guard and attribution counters
+    /// (D-16/D-44: reads are metered, never billed).
+    fn record_read(&self, _db: &str) {}
+
+    /// Returns one database's served-read count.
+    fn read_count(&self, _db: &str) -> u64 {
+        0
     }
 
     /// Returns one document as the given read snapshot observed it.
@@ -875,6 +960,18 @@ pub(crate) trait StoragePort: Send {
         limit: u32,
     ) -> Vec<PublishedCommit>;
 
+    /// Returns one bounded page of retained journal rows. `after` is only a
+    /// paging cursor in global storage order; reconciliation identities are
+    /// always the row's persisted `(origin, origin_sequence)` pair.
+    fn journal_rows(
+        &self,
+        _tenant: &TenantId,
+        _after: StorageSequence,
+        _limit: u32,
+    ) -> Vec<JournalRow> {
+        Vec::new()
+    }
+
     /// Returns every tenant that has at least one recorded published commit,
     /// in canonical tenant order (W4-CA-4).
     fn committed_tenants(&self) -> Vec<TenantId>;
@@ -1008,8 +1105,8 @@ pub enum JournalKind {
 
 /// One journal row's replication provenance (D-35/D-36): where the write
 /// came from and the causal stamp it carries. An origin row reports
-/// `Origin`, an empty origin, and `hlc = 0` — this slice lands the
-/// cross-region apply path; the HLC clock itself is the QUIC lane's work.
+/// `Origin`, this location's stable origin identity, and its HLC stamp;
+/// replicated rows retain the source origin and stamp from the incoming dot.
 ///
 /// The type is crate-public in spirit; it is `pub` only so
 /// [`SyncJournalRecord`](crate::streaming::SyncJournalRecord) can expose it
@@ -1018,14 +1115,15 @@ pub enum JournalKind {
 pub struct JournalProvenance {
     kind: JournalKind,
     origin: String,
+    origin_sequence: u64,
     hlc: u64,
 }
 
 impl JournalProvenance {
     /// Assembles one provenance from its facts. Crate-only: provenance is
     /// recorded by the storage write path, never minted by a consumer.
-    pub(crate) fn new(kind: JournalKind, origin: String, hlc: u64) -> Self {
-        Self { kind, origin, hlc }
+    pub(crate) fn new(kind: JournalKind, origin: String, origin_sequence: u64, hlc: u64) -> Self {
+        Self { kind, origin, origin_sequence, hlc }
     }
 
     /// Returns whether the row was written by this region.
@@ -1040,11 +1138,32 @@ impl JournalProvenance {
         &self.origin
     }
 
+    /// Returns the writing region's durable per-origin journal sequence.
+    #[must_use]
+    pub const fn origin_sequence(&self) -> u64 {
+        self.origin_sequence
+    }
+
     /// Returns the writing region's hybrid logical clock stamp.
     #[must_use]
     pub const fn hlc(&self) -> u64 {
         self.hlc
     }
+}
+
+/// One retained publication-journal row exposed to the engine's
+/// anti-entropy adapter. Storage owns the durable field ordering and
+/// contents; the replication boundary hashes the canonical bytes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct JournalRow {
+    /// This location's global publication sequence, used only for paging.
+    pub(crate) commit_sequence: u64,
+    /// The persisted writing origin.
+    pub(crate) origin: String,
+    /// The persisted per-origin sequence.
+    pub(crate) origin_sequence: u64,
+    /// Canonical bytes covering the complete journal row.
+    pub(crate) canonical: Vec<u8>,
 }
 
 /// One published commit reconstructed from the durable publication history

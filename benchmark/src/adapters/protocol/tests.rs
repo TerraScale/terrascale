@@ -29,7 +29,7 @@ use crate::{
     operations::{
         DocumentReadRequest, DocumentWriteRequest, FamilyOperation, PublicOperation,
         PublicResponse, QueryInput, QueryInputError, QueryOperation, RequestValidationError,
-        TqlQueryText,
+        SqlQueryText,
     },
     query::QuerySpec,
     types::{
@@ -270,23 +270,34 @@ fn caller_context_try_new_structurally_validates_and_redacts_evidence() {
 
 #[test]
 fn public_operation_constructors_reject_generic_payloads_and_permissions() {
-    // TQL text is the only accepted text form, validated by the one full
-    // parser; generic SQL shapes and oversized raw payloads are typed
+    // SQL text is the only accepted text form, validated by the read-only
+    // front end; DDL/DML shapes and oversized raw payloads are typed
     // rejections, never forwarded strings.
-    assert_eq!(TqlQueryText::try_new(""), Err(QueryInputError::EmptyText));
-    assert_eq!(TqlQueryText::try_new("   "), Err(QueryInputError::EmptyText));
-    // `select *` IS the whole-document projection of the full grammar; the
-    // generic SQL shape that stays rejected is a bare table-less select.
-    assert!(TqlQueryText::try_new("SELECT * FROM users").is_ok());
-    assert_eq!(TqlQueryText::try_new("select name, age"), Err(QueryInputError::UnsupportedGrammar));
-    let oversized = format!("from {}", "x".repeat(17 * 1024));
-    assert_eq!(TqlQueryText::try_new(&oversized), Err(QueryInputError::UnsupportedGrammar));
-    assert!(TqlQueryText::try_new("from users where name = 'ada'").is_ok());
+    assert_eq!(SqlQueryText::try_new(""), Err(QueryInputError::EmptyText));
+    assert_eq!(SqlQueryText::try_new("   "), Err(QueryInputError::EmptyText));
+    // Read-only statements validate; writes, pragmas, and stacked
+    // statements stay rejected.
+    assert!(SqlQueryText::try_new("SELECT * FROM users").is_ok());
+    assert!(
+        SqlQueryText::try_new("WITH recent AS (SELECT * FROM users) SELECT * FROM recent").is_ok()
+    );
+    assert!(SqlQueryText::try_new("EXPLAIN SELECT * FROM users").is_ok());
+    assert_eq!(
+        SqlQueryText::try_new("DELETE FROM users"),
+        Err(QueryInputError::UnsupportedGrammar)
+    );
+    assert_eq!(
+        SqlQueryText::try_new("SELECT * FROM users; DROP TABLE users"),
+        Err(QueryInputError::UnsupportedGrammar)
+    );
+    let oversized = format!("SELECT * FROM {} ", "x".repeat(17 * 1024));
+    assert_eq!(SqlQueryText::try_new(&oversized), Err(QueryInputError::UnsupportedGrammar));
+    assert!(SqlQueryText::try_new("SELECT * FROM users WHERE name = 'ada'").is_ok());
 
     // The query input forms accept only the typed specification or the
     // validated text (compile-shape).
     let typed_shape: fn(QuerySpec) -> QueryInput = QueryInput::typed;
-    let compatible_shape: fn(TqlQueryText) -> QueryInput = QueryInput::tql;
+    let compatible_shape: fn(SqlQueryText) -> QueryInput = QueryInput::sql;
     let _ = (typed_shape, compatible_shape);
 
     // Family payloads reject structurally invalid fields and already-set

@@ -62,8 +62,8 @@ use crate::{
     operations::{EngineRequest, EngineResponse},
     query::QueryStore,
     storage::{
-        self, CommitIntent, CommitPublicationEvent, CommitResult, PublishedCommit, StagedWrite,
-        StoragePort, UsageFactPosition, UsageStorageError,
+        self, CommitIntent, CommitPublicationEvent, CommitResult, DbUsageFact, PublishedCommit,
+        StagedWrite, StoragePort, UsageFactPosition, UsageStorageError,
     },
     streaming::StreamStore,
     types::{
@@ -72,9 +72,9 @@ use crate::{
         StorageSequence, TenantId, TenantScope,
     },
     usage::{
-        MeasurementWindow, MintingRule, UsageAdmissionContext, UsageCommandError,
-        UsageContinuation, UsageFactId, UsagePage, UsagePageRequest, UsageRecordReceipt,
-        UsageRecordRequest,
+        MAX_USAGE_PAGE_SIZE, MeasurementWindow, MintingRule, UsageAdmissionContext,
+        UsageCommandError, UsageContinuation, UsageFactId, UsagePage, UsagePageRequest,
+        UsageRecordReceipt, UsageRecordRequest,
     },
 };
 
@@ -396,7 +396,7 @@ impl Drop for SubscriptionGuard {
     }
 }
 
-/// Describes one durable SQLite Engine location.
+/// Describes one durable `SQLite` Engine location.
 ///
 /// ```compile_fail
 /// // No ephemeral durable Engine constructor exists. This must not compile.
@@ -496,7 +496,7 @@ pub enum EngineConfigError {
 pub enum EngineOpenError {
     /// The configuration was invalid.
     InvalidConfig,
-    /// The location is not an owned SQLite database directory.
+    /// The location is not an owned `SQLite` database directory.
     FormatMismatch,
     /// Durable storage could not be opened.
     StorageUnavailable,
@@ -685,6 +685,24 @@ pub struct ReplicatedRecord {
     pub hlc: u64,
     /// The source region's identity.
     pub origin: String,
+    /// The source region's durable per-origin journal sequence.
+    pub origin_sequence: u64,
+}
+
+/// One retained publication-journal row for anti-entropy. The canonical
+/// bytes are storage-owned and include tombstones; callers derive the
+/// reconciliation hash without replacing the row identity with the global
+/// storage sequence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JournalRow {
+    /// Global publication sequence used only to page the journal.
+    pub commit_sequence: u64,
+    /// Persisted writing origin.
+    pub origin: String,
+    /// Persisted per-origin sequence.
+    pub origin_sequence: u64,
+    /// Canonical bytes covering the complete durable row.
+    pub canonical: Vec<u8>,
 }
 
 /// The outcome of applying one [`ReplicatedRecord`]:
@@ -849,7 +867,7 @@ pub enum DurableResolution {
 /// The identity is unique per open Engine and is never reused, so a snapshot,
 /// scope, or transaction cannot leak across Engine instances. It is separate
 /// from the durable owner identity recorded on disk, which detects a location
-/// mismatch before SQLite opens.
+/// mismatch before `SQLite` opens.
 pub(crate) struct EngineIdentity(u128);
 
 impl EngineIdentity {
@@ -895,6 +913,9 @@ pub struct Engine {
     /// database. Origin commits tick it; replicated applies witness it.
     /// The deterministic merge compares `(hlc, origin)` totals.
     replication_clock: Mutex<crate::types::ReplicationClockStamp>,
+    /// The host-fed clock safety input (D-69). The Engine cannot measure
+    /// chrony/NTP itself; `None` is the explicit unknown or stale state.
+    clock_offset_seconds: Mutex<Option<f64>>,
     pub(crate) storage: Arc<Mutex<StorageState>>,
     /// One bounded registry shared by the engine, storage, TBEP, probes, and
     /// Prometheus adapter for this process-local engine instance.
@@ -957,13 +978,13 @@ impl Drop for LeaderGuard {
 }
 
 impl Engine {
-    /// Opens a durable SQLite Engine.
+    /// Opens a durable `SQLite` Engine.
     ///
     /// # Errors
     ///
     /// Returns [`EngineOpenError::InvalidConfig`] for an unusable
     /// configuration, [`EngineOpenError::FormatMismatch`] when the location
-    /// is not an owned SQLite database directory, and
+    /// is not an owned `SQLite` database directory, and
     /// [`EngineOpenError::StorageUnavailable`] when the location cannot be
     /// opened.
     #[allow(clippy::needless_pass_by_value)]
@@ -998,10 +1019,7 @@ impl Engine {
         // substrate.
         let storage: Box<dyn storage::StoragePort> = storage::SqliteStorage::open(&location)
             .map(|engine| Box::new(engine) as Box<dyn storage::StoragePort>)
-            .map_err(|error| match error {
-                storage::StorageOpenError::FormatMismatch => EngineOpenError::FormatMismatch,
-                storage::StorageOpenError::Unavailable => EngineOpenError::StorageUnavailable,
-            })?;
+            .map_err(|_| EngineOpenError::StorageUnavailable)?;
         let subscriptions = Arc::new(PublicationRegistry::new());
         // W4-CA-3: register the Engine-owned index catalog's sink through the
         // production registry so index maintenance observes every publication.
@@ -1014,6 +1032,11 @@ impl Engine {
             identity: EngineIdentity::next().0,
             durable_owner: owner,
             replication_clock: Mutex::new(ReplicationClockStamp::new(Self::now_millis(), 0)),
+            // Keep existing local/development callers usable until the host
+            // starts feeding observations. Production wiring must publish a
+            // real sample promptly; an explicit unknown/stale sample is
+            // fail-closed through `clear_clock_offset_seconds()`.
+            clock_offset_seconds: Mutex::new(Some(0.0)),
             storage: Arc::new(Mutex::new(StorageState { port: storage })),
             metrics,
             in_flight: Mutex::new(BTreeSet::new()),
@@ -1042,6 +1065,65 @@ impl Engine {
     #[must_use]
     pub fn metrics(&self) -> Arc<MetricsRegistry> {
         Arc::clone(&self.metrics)
+    }
+
+    /// Supplies the host's latest measured offset from its chrony/NTP
+    /// reference, in seconds (D-69).
+    ///
+    /// The Engine deliberately does not inspect chrony or measure the host
+    /// clock. This records one finite signed observation. An invalid value is
+    /// treated as unknown, just like [`Engine::clear_clock_offset_seconds`],
+    /// and therefore refuses new origin writes until the host supplies
+    /// another sample. Replicated records already carrying a source HLC are
+    /// not blocked by this local admission gate.
+    pub fn set_clock_offset_seconds(&self, offset_seconds: f64) {
+        let offset_seconds = offset_seconds.is_finite().then_some(offset_seconds);
+        self.set_clock_offset_observation(offset_seconds);
+    }
+
+    /// Marks the host clock observation unknown or stale (D-69).
+    ///
+    /// The host owns freshness: when its chrony sample expires or cannot be
+    /// read, it must call this method. The Engine has no chrony access and
+    /// intentionally cannot infer freshness from its own wall clock.
+    pub fn clear_clock_offset_seconds(&self) {
+        self.set_clock_offset_observation(None);
+    }
+
+    fn set_clock_offset_observation(&self, offset_seconds: Option<f64>) {
+        if let Ok(mut observed) = self.clock_offset_seconds.lock() {
+            *observed = offset_seconds;
+        }
+        match offset_seconds {
+            Some(offset) => self.metrics.set_clock_offset_seconds(offset),
+            None => self.metrics.clear_clock_offset_seconds(),
+        }
+    }
+
+    /// Returns the last host-fed clock offset, or `None` when the host has
+    /// marked its observation unknown/stale.
+    #[must_use]
+    pub fn clock_offset_seconds(&self) -> Option<f64> {
+        self.clock_offset_seconds.lock().ok().and_then(|offset| *offset)
+    }
+
+    /// Admits an origin commit only while its host-fed clock observation is
+    /// finite and inside the hard D-69 threshold. Refusals increment the
+    /// existing counter exactly once at this single production call site.
+    fn admit_origin_clock(&self) -> Result<(), ()> {
+        let safe = self.clock_offset_seconds.lock().ok().and_then(|offset| *offset).is_some_and(
+            |offset| {
+                offset.abs() <= crate::observability::CLOCK_OFFSET_WRITE_REFUSAL_THRESHOLD_SECONDS
+            },
+        );
+        if safe {
+            Ok(())
+        } else {
+            self.metrics.record_clock_write_refusal();
+            // Keep the frozen CommitError vocabulary: clock admission is a
+            // pre-publication validation refusal, with no secret detail.
+            Err(())
+        }
     }
 
     /// Drains the group-commit mailbox until empty: one storage batch per
@@ -1456,6 +1538,85 @@ impl Engine {
         Ok(UsagePage::new(facts, snapshot, continuation))
     }
 
+    /// Returns one database's metering fact (E-9, D-16/D-42): `(db, seq_hi,
+    /// writes, bytes)` flushed once per group-commit wave and reconciled
+    /// from the journal on restart. Tenant-isolated: `db` must name the
+    /// caller's own tenant (D-51: tenant = database); anything else answers
+    /// `None`. This is the read seam the usage-export surface pages through.
+    #[must_use]
+    pub fn metering_fact(&self, scope: &TenantScope, db: &str) -> Option<DbUsageFact> {
+        if db != scope.tenant().as_str() {
+            return None;
+        }
+        self.validate_scope(scope).ok()?;
+        self.storage.lock().ok()?.port.metering_fact(db)
+    }
+
+    /// Returns one cursor page of the caller's metering facts in `db` order
+    /// (E-9): the tenant-isolated view of the shared storage cursor, so a
+    /// database exports exactly its own fact. The walk follows the storage
+    /// cursor until the caller's own database, which appears at most once;
+    /// everything after it belongs to other databases, so the page is
+    /// complete with no next cursor. The cursor itself stays opaque.
+    #[must_use]
+    pub fn metering_facts_page(
+        &self,
+        scope: &TenantScope,
+        after: Option<&str>,
+        limit: u32,
+    ) -> (Vec<DbUsageFact>, Option<String>) {
+        if limit == 0 {
+            return (Vec::new(), None);
+        }
+        if self.validate_scope(scope).is_err() {
+            return (Vec::new(), None);
+        }
+        let Ok(storage) = self.storage.lock() else {
+            return (Vec::new(), None);
+        };
+        let db = scope.tenant().as_str();
+        let mut cursor = after.map(str::to_owned);
+        loop {
+            let (facts, next) =
+                storage.port.metering_facts_page(cursor.as_deref(), MAX_USAGE_PAGE_SIZE);
+            for fact in facts {
+                if fact.db() == db {
+                    return (vec![fact], None);
+                }
+            }
+            let Some(next) = next else {
+                return (Vec::new(), None);
+            };
+            cursor = Some(next);
+        }
+    }
+
+    /// Returns the caller's live logical bytes for the D-16 storage
+    /// dimension: newest version per key, tombstones excluded.
+    #[must_use]
+    pub fn metering_live_bytes(&self, scope: &TenantScope) -> u64 {
+        if self.validate_scope(scope).is_err() {
+            return 0;
+        }
+        self.storage
+            .lock()
+            .ok()
+            .map_or(0, |storage| storage.port.metering_live_bytes(scope.tenant().as_str()))
+    }
+
+    /// Returns the caller's served-read count for abuse guards and cost
+    /// attribution (E-9, D-16/D-44: reads are metered, never billed).
+    #[must_use]
+    pub fn metering_read_count(&self, scope: &TenantScope) -> u64 {
+        if self.validate_scope(scope).is_err() {
+            return 0;
+        }
+        self.storage
+            .lock()
+            .ok()
+            .map_or(0, |storage| storage.port.read_count(scope.tenant().as_str()))
+    }
+
     /// Begins an Engine-borrowing transaction.
     ///
     /// The snapshot's Engine identity, the requested scope, the snapshot
@@ -1792,6 +1953,12 @@ impl Engine {
         scope: &TenantScope,
         record: &ReplicatedRecord,
     ) -> Result<AppliedReplication, EngineError> {
+        if record.origin.is_empty()
+            || record.origin_sequence == 0
+            || record.origin_sequence > i64::MAX as u64
+        {
+            return Err(EngineError::InvalidDocument);
+        }
         let operation = OperationId::try_new(&format!("repl-{}", record.commit_ulid))
             .map_err(|_| EngineError::InvalidDocument)?;
         // The clock always witnesses the remote stamp first.
@@ -1920,13 +2087,13 @@ impl Engine {
         // The merge produced new bytes: publish them under the incoming
         // identity at the covering stamp, so both regions compute the same
         // row without shipping merged bytes (replicated rows never re-ship).
-        let (cover_hlc, cover_origin) =
+        let (cover_hlc, cover_origin, cover_origin_sequence) =
             if merge::compare_stamps(current.hlc, &current.origin, record.hlc, &record.origin)
                 == std::cmp::Ordering::Greater
             {
-                (current.hlc, current.origin.clone())
+                (current.hlc, current.origin.clone(), current.origin_sequence)
             } else {
-                (record.hlc, record.origin.clone())
+                (record.hlc, record.origin.clone(), record.origin_sequence)
             };
         let merged_record = ReplicatedRecord {
             collection: record.collection.clone(),
@@ -1936,6 +2103,7 @@ impl Engine {
             commit_ulid: record.commit_ulid.clone(),
             hlc: cover_hlc,
             origin: cover_origin.clone(),
+            origin_sequence: cover_origin_sequence,
         };
         let kernel_fields: Vec<String> = merged.keys().cloned().collect();
         let outcome = self.apply_replicated_clean(scope, &merged_record, &operation)?;
@@ -2080,10 +2248,10 @@ impl Engine {
     /// `hlc`, `origin`, and tombstone flag — the deterministic merge's
     /// comparison input. `None` when the key has no row.
     ///
-    /// This is the flagged S-05 port the TBEP anti-entropy scan reads
-    /// (issue #130, slice 2e): the same seam
-    /// [`Engine::apply_replicated`]'s merge verdict compares against, so
-    /// the Merkle causal bytes and the merge order can never disagree.
+    /// This is the read-only stamp seam consumed by TBEP's ADR 0044
+    /// range-based reconciliation path. It exposes the same `(hlc, origin,
+    /// deleted)` inputs that [`Engine::apply_replicated`] compares, so the
+    /// row fingerprints and merge order cover the same causal state.
     /// Read-only; the S-02 query/storage lane is otherwise untouched.
     ///
     /// # Errors
@@ -2807,6 +2975,38 @@ impl Engine {
         Ok(storage.port.tenant_commits(tenant, after, limit))
     }
 
+    /// Returns one bounded page of retained publication-journal rows for
+    /// anti-entropy. The global sequence is only a paging cursor; each row's
+    /// reconciliation identity is its persisted origin and origin sequence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::ScopeMismatch`] for another engine's scope and
+    /// [`EngineError::StorageFailure`] when storage cannot be reached.
+    pub fn journal_rows(
+        &self,
+        scope: &TenantScope,
+        after: u64,
+        limit: u32,
+    ) -> Result<Vec<JournalRow>, EngineError> {
+        self.validate_scope(scope)?;
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let storage = self.lock_storage()?;
+        Ok(storage
+            .port
+            .journal_rows(scope.tenant(), StorageSequence::new(after), limit)
+            .into_iter()
+            .map(|row| JournalRow {
+                commit_sequence: row.commit_sequence,
+                origin: row.origin,
+                origin_sequence: row.origin_sequence,
+                canonical: row.canonical,
+            })
+            .collect())
+    }
+
     /// Returns every tenant that has at least one recorded published commit,
     /// in canonical tenant order (W4-CA-4).
     ///
@@ -3215,6 +3415,7 @@ impl Transaction<'_> {
                 commit_ulid: record.commit_ulid.clone(),
                 hlc: record.hlc,
                 origin: record.origin.clone(),
+                origin_sequence: record.origin_sequence,
             }
         } else {
             let document =
@@ -3227,6 +3428,7 @@ impl Transaction<'_> {
                 commit_ulid: record.commit_ulid.clone(),
                 hlc: record.hlc,
                 origin: record.origin.clone(),
+                origin_sequence: record.origin_sequence,
             }
         };
         self.writes.push(write);
@@ -3270,8 +3472,16 @@ impl Transaction<'_> {
         // An origin commit stamps the replication clock (the hybrid
         // logical clock the deterministic merge compares); a replicated
         // intent carries its source stamp on the staged variant.
-        let replicated =
-            writes.iter().any(|write| matches!(write, storage::StagedWrite::ReplicatedPut { .. }));
+        let replicated = writes.iter().any(|write| {
+            matches!(
+                write,
+                storage::StagedWrite::ReplicatedPut { .. }
+                    | storage::StagedWrite::ReplicatedDelete { .. }
+            )
+        });
+        if !replicated && !writes.is_empty() && self.engine.admit_origin_clock().is_err() {
+            return CommitOutcome::Rejected(CommitError::Validation);
+        }
         let hlc = if replicated { 0 } else { self.engine.tick_replication_clock() };
         let intent = CommitIntent {
             tenant: self.scope.tenant().clone(),

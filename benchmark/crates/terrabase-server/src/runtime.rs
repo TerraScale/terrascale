@@ -211,7 +211,7 @@ async fn serve_public_api(
     let catalog = terrabase_tbep::catalog::HostCatalog::open(
         &public.data_root,
         64,
-        std::time::Duration::from_secs(300),
+        std::time::Duration::from_mins(5),
     )
     .map_err(|error| DaemonError::Engine(error.to_string()))?;
     let keys = crate::api_keys::KeyStore::empty();
@@ -254,6 +254,7 @@ async fn serve_public_api(
         backup_root,
         timetravel,
         active_regions: public.active_regions,
+        guards: Arc::new(crate::guards::AbuseGuards::default()),
     });
     let listener = tokio::net::TcpListener::bind(public.listen).await?;
     let router = crate::api::router(state);

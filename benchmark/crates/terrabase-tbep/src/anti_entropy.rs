@@ -1,32 +1,24 @@
-//! Journal-independent catch-up over the Merkle kernels (S-05 slice 2e,
-//! D-45): state comparison, bounded repair, and snapshot bootstrap.
+//! Journal-independent catch-up over range-based set reconciliation (D-45):
+//! state comparison, bounded repair, and snapshot bootstrap.
 //!
 //! The journal tailer ([`crate::replication`], [`crate::replication_lanes`])
 //! converges members while the publication journal still holds the writes.
 //! This module owns what happens when it cannot: the cursor is past
 //! retention, the journal never saw the writes (a partition predates the
 //! tailer), or a member restarts so far behind that replaying is the wrong
-//! shape. The decision surfaces are the kept
-//! `terrabase-replication-core` kernels — [`MerkleTree`] build, roots, and
-//! mismatch planning over canonical entries — while the bytes compared and
-//! shipped come from the engines themselves:
+//! shape. The decision surface is the transport-free
+//! [`RangeSummaryTable`](terrabase_replication_core::anti_entropy::RangeSummaryTable):
+//! additive fingerprints descend through fixed-fanout sequence ranges and
+//! exact ids cross the boundary only for differing leaves.
 //!
-//! - **State scan**: every live document plus its replication stamp (the
-//!   flagged [`Engine::document_replication_stamp`](terrabase::engine::Engine::document_replication_stamp)
-//!   port — the same `(hlc, origin)` pair the deterministic merge compares,
-//!   so the Merkle causal bytes and the merge order can never disagree)
-//!   becomes one [`MerkleEntry`]: the key is `collection 0x00 id`, the
-//!   causal bytes fold `(hlc, origin, deleted)`, and the materialized bytes
-//!   are the deterministic value encoding below.
-//! - **Bounded repair**: [`repair_once`] plans with the kernels'
-//!   [`plan_repair`](terrabase_replication_core::anti_entropy::MerkleTree::plan_repair),
-//!   verifies the chunk transfer against the expected roots before
-//!   publishing anything, then ships each mismatched key's winning version
-//!   through [`Engine::apply_replicated`](terrabase::engine::Engine::apply_replicated)
-//!   — the `(hlc, origin)` order with remove-wins picks the same winner the
-//!   merge would, so every key publishes exactly once and both members
-//!   converge without coordination. Divergence past the range budget is not
-//!   repaired; the caller bootstraps instead ([`RepairDecision::NeedsSnapshot`]).
+//! - **Journal rows**: [`JournalRowSource`] supplies the persisted
+//!   `(origin, sequence) -> hash` set, including tombstones. No materialized
+//!   document scan can stand in for this set because it loses history and
+//!   cannot distinguish a tombstone from an absent key.
+//! - **Bounded repair**: [`reconcile_journal_rows`] follows the range plan
+//!   over those stable identities. `EngineHost` now supplies the persisted
+//!   rows; missing-row application remains snapshot-gated until the repair
+//!   transfer carries the source mutation and source dot.
 //! - **Snapshot bootstrap**: [`snapshot_bootstrap`] copies the peer's
 //!   quiesced durable file set into a fresh location — the in-process form
 //!   of installing the region-local Litestream snapshot (production reads
@@ -35,29 +27,21 @@
 //!   identical file set). The tailer's cursor resumes from
 //!   [`journal_end`] past the snapshot, so pre-snapshot rows never re-ship.
 //!
-//! Composition barriers, stated exactly:
+//! Composition barrier, stated exactly:
 //!
-//! - Repair and bootstrap assume quiescent members — no commit wave in
-//!   flight on either side — the same barrier the WAL fold and the
-//!   follower bootstrap already take. A write landing mid-repair fails the
-//!   closing roots check and the caller retries the pass.
-//! - Tombstone-tombstone stamp divergence is invisible and needs no
-//!   repair: both sides serve absence, and every future origin tick
-//!   dominates both stamps. Only tombstone-vs-live and live-vs-live
-//!   differences ship.
-//! - An exact `(hlc, origin)` tie with different bodies resolves
-//!   remove-wins per side, which is order-dependent when both sides are
-//!   live. Sequential and replicate-then-write patterns never tie; truly
-//!   concurrent same-stamp writes to one key need distinct origins to
-//!   converge deterministically.
+//! - Snapshot bootstrap assumes quiescent members — no commit wave in flight
+//!   on either side — the same barrier the WAL fold and follower bootstrap
+//!   already take.
+//! - A tombstone remains a durable row in the source set. Its identity and
+//!   hash differ from complete absence, so a missing tombstone is always a
+//!   repair difference rather than an accidental no-op.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
-use terrabase::engine::ReplicatedRecord;
 use terrabase::streaming::ChangeCheckpoint;
-use terrabase::types::{CollectionName, DocumentId, DocumentValue};
-use terrabase_replication_core::anti_entropy::{MerkleEntry, MerkleTree, RepairError};
+use terrabase_replication_core::anti_entropy::{
+    Hash32, JournalRowId, RangeSummaryTable, ReconciliationPlan, RepairError, RowSummary,
+};
 
 use crate::engine_host::EngineHost;
 use crate::host::HostingError;
@@ -67,6 +51,16 @@ use crate::registry::BoundScope;
 /// budget the members diverge by more than a catch-up pass should move and
 /// the caller bootstraps from a snapshot instead.
 pub const MAX_REPAIR_RANGES: usize = 64;
+
+/// One leaf's maximum row span.  A repair pass never needs to retain more
+/// than this many exact rows for a differing leaf; the journal scan uses the
+/// same span as its per-range memory/work bound.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "DEFAULT_LEAF_ROWS is 4096 and fits in usize on every supported target"
+)]
+pub const MAX_REPAIR_ROWS_PER_RANGE: usize =
+    terrabase_replication_core::anti_entropy::DEFAULT_LEAF_ROWS as usize;
 
 /// What one repair pass decided.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -87,16 +81,127 @@ pub enum RepairDecision {
     },
 }
 
-/// One repair pass between two members of the same database: compare the
-/// Merkle states, ship every mismatched key's winning version through the
-/// deterministic merge, and confirm both members serve the identical
-/// state afterwards.
+/// One durable publication-journal row supplied to anti-entropy.
+///
+/// The storage owner must provide the identity and hash that were persisted
+/// with the row. In particular, callers must not derive `sequence` from a
+/// live-document scan: one document may have many journal rows, and a
+/// tombstone is a row even when the materialized document is absent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DurableJournalRow {
+    /// Stable `(origin, per-origin sequence)` identity.
+    pub id: JournalRowId,
+    /// Hash of the canonical durable journal-row bytes.
+    pub row_hash: Hash32,
+}
+
+/// Result of a bounded journal summary scan. `complete` is false when the
+/// source has more retained rows than this pass is willing to inspect. That
+/// is a snapshot decision, never an empty or converged result.
+pub struct JournalSummary {
+    /// Range summaries inspected during this pass.
+    pub table: RangeSummaryTable,
+    /// Whether the source was fully inspected under the row bound.
+    pub complete: bool,
+}
+
+impl DurableJournalRow {
+    /// Constructs one durable row summary.
+    #[must_use]
+    pub const fn new(id: JournalRowId, row_hash: Hash32) -> Self {
+        Self { id, row_hash }
+    }
+}
+
+/// Narrow storage seam required by range anti-entropy.
+///
+/// Implementations must read the durable journal rows for one bound scope,
+/// including tombstones, and return their persisted `(origin, sequence)` and
+/// canonical row hash.
+pub trait JournalRowSource {
+    /// Reads all retained durable journal rows for a scope in any order.
+    ///
+    /// Implementations may return rows in any order; the summary table is
+    /// order-independent and keys every row by its supplied identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError`] when the durable journal cannot be read
+    /// under the bound scope.
+    fn durable_journal_rows(
+        &self,
+        scope: &BoundScope,
+    ) -> Result<Vec<DurableJournalRow>, HostingError>;
+
+    /// Builds a bounded summary for one repair pass. Implementations backed
+    /// by a pager should override this to avoid materializing all rows; the
+    /// fallback remains bounded at the summary boundary and propagates every
+    /// source error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HostingError::Invalid`] for a zero row budget and
+    /// [`HostingError`] when the durable journal cannot be read or holds a
+    /// duplicate row identity.
+    fn durable_journal_summary(
+        &self,
+        scope: &BoundScope,
+        max_rows: usize,
+    ) -> Result<JournalSummary, HostingError> {
+        if max_rows == 0 {
+            return Err(HostingError::Invalid("the journal row budget must be nonzero".into()));
+        }
+        let rows = self.durable_journal_rows(scope)?;
+        let complete = rows.len() <= max_rows;
+        let mut table = RangeSummaryTable::new();
+        for row in rows.into_iter().take(max_rows) {
+            let summary = RowSummary::new(row.id, row.row_hash);
+            if table.insert(&summary).is_some() {
+                return Err(HostingError::EngineFailure(
+                    "the durable anti-entropy journal contains a duplicate row identity".into(),
+                ));
+            }
+        }
+        Ok(JournalSummary { table, complete })
+    }
+}
+
+/// Builds a range reconciliation plan from two durable journal row sets.
+///
+/// Every row identity is taken verbatim from the source; no
+/// document key, scan index, or synthetic origin is introduced here.
 ///
 /// # Errors
 ///
-/// Returns [`HostingError`] when either state cannot be scanned, the chunk
-/// transfer fails verification, a record cannot be applied, or a write
-/// landed mid-repair (retry the pass).
+/// Returns [`RepairError::DuplicateRowIdentity`] when either set holds a
+/// duplicate row identity, [`RepairError::LayoutMismatch`] for mixed
+/// layouts, or [`RepairError::RepairBudgetExceeded`] when the differing
+/// rows exceed `max_differences`.
+pub fn reconcile_journal_rows(
+    local: &[DurableJournalRow],
+    peer: &[DurableJournalRow],
+    max_differences: usize,
+) -> Result<ReconciliationPlan, RepairError> {
+    fn table(rows: &[DurableJournalRow]) -> Result<RangeSummaryTable, RepairError> {
+        let mut table = RangeSummaryTable::new();
+        for row in rows {
+            if table.insert(&RowSummary::new(row.id.clone(), row.row_hash)).is_some() {
+                return Err(RepairError::DuplicateRowIdentity);
+            }
+        }
+        Ok(table)
+    }
+
+    table(local)?.reconcile(&table(peer)?, max_differences)
+}
+
+/// One repair pass between two members of the same database.
+///
+/// # Errors
+///
+/// The host compares its persisted journal rows. A divergent row set is
+/// reported as snapshot work until the transfer path carries reconstructable
+/// mutations and source dots.
 pub fn repair_once(
     local: &EngineHost,
     peer: &EngineHost,
@@ -109,26 +214,54 @@ pub fn repair_once(
 ///
 /// # Errors
 ///
-/// Returns [`HostingError::Invalid`] for a zero budget, and the failures
-/// of [`repair_once`] otherwise.
+/// Returns [`HostingError::Invalid`] for a zero budget, and an explicit
+/// unavailable-source error until the host is wired to a journal source.
 pub fn repair_once_bounded(
     local: &EngineHost,
     peer: &EngineHost,
     scope: &BoundScope,
     max_ranges: usize,
 ) -> Result<RepairDecision, HostingError> {
+    repair_once_sources_bounded(local, peer, scope, max_ranges)
+}
+
+/// Runs a bounded pass against two journal sources. This seam is useful for
+/// transports and for proving that a source read failure cannot be mistaken
+/// for an empty, converged journal.
+///
+/// # Errors
+///
+/// Returns [`HostingError::Invalid`] for a zero range budget and
+/// [`HostingError`] when either journal source cannot be read.
+pub fn repair_once_sources_bounded<L, R>(
+    local: &L,
+    peer: &R,
+    scope: &BoundScope,
+    max_ranges: usize,
+) -> Result<RepairDecision, HostingError>
+where
+    L: JournalRowSource,
+    R: JournalRowSource,
+{
     if max_ranges == 0 {
         return Err(HostingError::Invalid("the repair range budget must be nonzero".into()));
     }
-    let local_state = member_state(local, scope)?;
-    let peer_state = member_state(peer, scope)?;
-    if local_state.tree.roots() == peer_state.tree.roots() {
-        return Ok(RepairDecision::Converged { repaired: 0 });
+    let row_budget = max_ranges.saturating_mul(MAX_REPAIR_ROWS_PER_RANGE).max(1);
+    let local_summary = JournalRowSource::durable_journal_summary(local, scope, row_budget)?;
+    let peer_summary = JournalRowSource::durable_journal_summary(peer, scope, row_budget)?;
+    if !local_summary.complete || !peer_summary.complete {
+        return Ok(RepairDecision::NeedsSnapshot {
+            ranges: max_ranges.saturating_add(1),
+            max_ranges,
+        });
     }
-    let plan = match local_state.tree.plan_repair(&peer_state.tree, max_ranges) {
+    let plan = match local_summary.table.reconcile(&peer_summary.table, max_ranges) {
         Ok(plan) => plan,
-        Err(RepairError::RepairBudgetExceeded { ranges, max_ranges }) => {
-            return Ok(RepairDecision::NeedsSnapshot { ranges, max_ranges });
+        Err(RepairError::RepairBudgetExceeded { differences, max_differences }) => {
+            return Ok(RepairDecision::NeedsSnapshot {
+                ranges: differences,
+                max_ranges: max_differences,
+            });
         }
         Err(error) => {
             return Err(HostingError::EngineFailure(format!(
@@ -136,58 +269,14 @@ pub fn repair_once_bounded(
             )));
         }
     };
-    let chunks = plan.source_chunks(&peer_state.tree).map_err(|error| {
-        HostingError::EngineFailure(format!("the repair source changed under repair: {error:?}"))
-    })?;
-    // The transfer gate: the shipped bytes verify against the expected
-    // roots on a clone before any engine publishes them.
-    {
-        let mut verified = local_state.tree.clone();
-        verified.apply_verified_chunks(&plan, &chunks).map_err(|error| {
-            HostingError::EngineFailure(format!(
-                "the repair transfer failed verification: {error:?}"
-            ))
-        })?;
-    }
-    let mut repaired = 0;
-    for range in &plan.ranges {
-        let key = range_key(range)?;
-        // One ship per key, winner to loser: the `(hlc, origin)` order
-        // (remove-wins on ties) picks the same winner the merge would,
-        // so the merge publishes exactly once and the counts stay exact.
-        // Shipping both directions would re-ship a just-received version
-        // back into a tie and double-publish under the repair identity.
-        let local_side = key_state(local, scope, &local_state, &key)?;
-        let peer_side = key_state(peer, scope, &peer_state, &key)?;
-        match (&local_side, &peer_side) {
-            (KeySide::Absent, KeySide::Absent) => {
-                return Err(HostingError::EngineFailure(
-                    "a repair range names a key neither member holds".into(),
-                ));
-            }
-            (KeySide::Present(record), KeySide::Absent) => {
-                repaired += apply_one(peer, scope, record)?;
-            }
-            (KeySide::Absent, KeySide::Present(record)) => {
-                repaired += apply_one(local, scope, record)?;
-            }
-            (KeySide::Present(local_record), KeySide::Present(peer_record)) => {
-                if peer_wins(local_record, peer_record) {
-                    repaired += apply_one(local, scope, peer_record)?;
-                } else {
-                    repaired += apply_one(peer, scope, local_record)?;
-                }
-            }
-        }
-    }
-    let local_after = member_state(local, scope)?;
-    let peer_after = member_state(peer, scope)?;
-    if local_after.tree.roots() == peer_after.tree.roots() {
-        Ok(RepairDecision::Converged { repaired })
+    if plan.is_converged() {
+        Ok(RepairDecision::Converged { repaired: 0 })
     } else {
-        Err(HostingError::EngineFailure(
-            "the members still diverge after repair; retry the pass".into(),
-        ))
+        // Journal rows are now compared correctly, but applying a missing row
+        // still requires the source's reconstructable mutation payload and
+        // the source dot on the replication envelope. Keep the operation
+        // fail-closed until that transport carries both facts.
+        Ok(RepairDecision::NeedsSnapshot { ranges: plan.differences().len(), max_ranges })
     }
 }
 
@@ -225,8 +314,8 @@ pub struct SnapshotBootstrap {
 }
 
 /// Installs the peer's snapshot into a fresh location: copies the quiesced
-/// durable file set (`format`, the ownership record when present,
-/// `terrabase.sqlite3`, and its `-wal` when present) so opening the target
+/// durable file set (the ownership record when present, `terrabase.sqlite3`,
+/// and its `-wal` when present) so opening the target
 /// serves the peer's state byte-identically — the in-process form of
 /// installing the region-local Litestream snapshot. The caller owns the
 /// barrier: the peer must be quiescent (no commit wave or checkpoint in
@@ -253,8 +342,6 @@ pub fn snapshot_bootstrap(
         HostingError::EngineFailure("the snapshot target refused to initialize".into())
     })?;
     let mut files_copied = Vec::new();
-    copy_required(peer_location, target_location, "format")?;
-    files_copied.push("format".to_owned());
     if copy_optional(peer_location, target_location, "owner.tbv1")? {
         files_copied.push("owner.tbv1".to_owned());
     }
@@ -268,294 +355,6 @@ pub fn snapshot_bootstrap(
         |_| HostingError::EngineFailure("the snapshot target could not be made durable".into()),
     )?;
     Ok(SnapshotBootstrap { files_copied, had_wal })
-}
-
-/// One member's scanned state: its Merkle tree plus the full repair record
-/// behind every live entry key.
-struct MemberState {
-    tree: MerkleTree,
-    records: BTreeMap<Vec<u8>, ReplicatedRecord>,
-}
-
-/// Scans one member's live documents with their replication stamps into a
-/// [`MemberState`].
-fn member_state(host: &EngineHost, scope: &BoundScope) -> Result<MemberState, HostingError> {
-    fn engine_failure(error: impl std::fmt::Debug) -> HostingError {
-        HostingError::EngineFailure(format!("the anti-entropy scan failed: {error:?}"))
-    }
-
-    let engine_scope = host.engine_scope_of(scope)?;
-    let engine = host.engine();
-    let snapshot = engine.read_snapshot(&engine_scope).map_err(engine_failure)?;
-    let documents = engine.snapshot_documents(&engine_scope, &snapshot).map_err(engine_failure)?;
-    let mut entries = Vec::with_capacity(documents.len());
-    let mut records = BTreeMap::new();
-    for document in &documents {
-        let (hlc, origin, deleted) = engine
-            .document_replication_stamp(&engine_scope, document.collection(), document.id())
-            .map_err(engine_failure)?
-            .ok_or_else(|| {
-                HostingError::EngineFailure("a live document carries no replication stamp".into())
-            })?;
-        if deleted {
-            // The scan saw the document live but its stamp now reads
-            // tombstoned: a delete landed mid-scan. Fail closed; the caller
-            // retries the pass past it.
-            return Err(HostingError::EngineFailure(
-                "the member changed under the anti-entropy scan; retry the pass".into(),
-            ));
-        }
-        let key = entry_key(document.collection(), document.id());
-        let materialized = materialized_bytes(document.value());
-        entries.push(MerkleEntry::new(
-            key.clone(),
-            causal_bytes(hlc, &origin, false),
-            materialized.clone(),
-        ));
-        records.insert(
-            key,
-            ReplicatedRecord {
-                collection: document.collection().clone(),
-                id: document.id().clone(),
-                body: document.value().clone(),
-                deleted: false,
-                commit_ulid: repair_ulid(
-                    hlc,
-                    &origin,
-                    document.collection(),
-                    document.id(),
-                    false,
-                    &materialized,
-                ),
-                hlc,
-                origin,
-            },
-        );
-    }
-    let tree = MerkleTree::build(entries).map_err(engine_failure)?;
-    Ok(MemberState { tree, records })
-}
-
-/// One side of a mismatched key: what the member holds for it.
-#[derive(Clone, Debug)]
-enum KeySide {
-    /// The member never held the key.
-    Absent,
-    /// The member's live record or tombstone for the key.
-    Present(ReplicatedRecord),
-}
-
-/// One member's state for a mismatched key: its live repair record, its
-/// tombstone when provenance says deleted, or absence when the member never
-/// held the key. A live stamp for a key the scan did not see means a write
-/// landed between the scan and this lookup — fail closed so the caller
-/// retries past it.
-fn key_state(
-    host: &EngineHost,
-    scope: &BoundScope,
-    state: &MemberState,
-    key: &[u8],
-) -> Result<KeySide, HostingError> {
-    if let Some(record) = state.records.get(key) {
-        return Ok(KeySide::Present(record.clone()));
-    }
-    let (collection, id) = split_key(key)?;
-    let engine_scope = host.engine_scope_of(scope)?;
-    let stamp = host.engine().document_replication_stamp(&engine_scope, &collection, &id).map_err(
-        |error| {
-            HostingError::EngineFailure(format!(
-                "the anti-entropy tombstone read failed: {error:?}"
-            ))
-        },
-    )?;
-    match stamp {
-        None => Ok(KeySide::Absent),
-        Some((.., false)) => Err(HostingError::EngineFailure(
-            "a repair key turned live under repair; retry the pass".into(),
-        )),
-        Some((hlc, origin, true)) => {
-            let materialized = Vec::new();
-            Ok(KeySide::Present(ReplicatedRecord {
-                commit_ulid: repair_ulid(hlc, &origin, &collection, &id, true, &materialized),
-                hlc,
-                origin,
-                collection,
-                id,
-                body: DocumentValue::Null,
-                deleted: true,
-            }))
-        }
-    }
-}
-
-/// Whether the peer's version wins over the local one: the `(hlc, origin)`
-/// total order with remove-wins on exact ties — the same verdict
-/// `Engine::apply_replicated`'s deterministic merge reaches, mirrored here
-/// so the pass ships winner to loser exactly once. A both-live tie ships
-/// peer to local, which converges (the local adopts the peer's bytes at
-/// the shared stamp); any drift from the engine's verdict fails closed at
-/// the closing roots check instead of diverging silently.
-fn peer_wins(local: &ReplicatedRecord, peer: &ReplicatedRecord) -> bool {
-    match (peer.hlc, peer.origin.as_str()).cmp(&(local.hlc, local.origin.as_str())) {
-        std::cmp::Ordering::Greater => true,
-        std::cmp::Ordering::Less => false,
-        std::cmp::Ordering::Equal => peer.deleted || !local.deleted,
-    }
-}
-
-/// Applies one repair record through the deterministic merge, returning one
-/// when it published and zero when it replayed or was superseded.
-fn apply_one(
-    host: &EngineHost,
-    scope: &BoundScope,
-    record: &ReplicatedRecord,
-) -> Result<usize, HostingError> {
-    let engine_scope = host.engine_scope_of(scope)?;
-    let outcome = host.engine().apply_replicated(&engine_scope, record).map_err(|error| {
-        HostingError::EngineFailure(format!("the repair record could not be applied: {error:?}"))
-    })?;
-    Ok(usize::from(outcome.receipt().is_some() && !outcome.replayed()))
-}
-
-/// Decodes one planned range back to its entry key. The kernels name one
-/// logical key per mismatch range; anything else fails closed.
-fn range_key(
-    range: &terrabase_replication_core::anti_entropy::KeyRange,
-) -> Result<Vec<u8>, HostingError> {
-    match (&range.start, &range.end) {
-        (Some(start), Some(end)) if start == end => Ok(start.clone()),
-        _ => Err(HostingError::EngineFailure("a repair range names no single key".into())),
-    }
-}
-
-/// The entry key for one document: `collection 0x00 id`. Neither part can
-/// hold a zero byte (the identifier discipline rejects control characters),
-/// so the split is unambiguous.
-fn entry_key(collection: &CollectionName, id: &DocumentId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(collection.as_str().len() + id.as_str().len() + 1);
-    key.extend_from_slice(collection.as_str().as_bytes());
-    key.push(0);
-    key.extend_from_slice(id.as_str().as_bytes());
-    key
-}
-
-/// Splits one entry key back into its collection and document identities.
-fn split_key(key: &[u8]) -> Result<(CollectionName, DocumentId), HostingError> {
-    let separator = key.iter().position(|byte| *byte == 0).ok_or_else(|| {
-        HostingError::EngineFailure("a repair key breaks the key discipline".into())
-    })?;
-    let collection = std::str::from_utf8(&key[..separator])
-        .ok()
-        .and_then(|text| CollectionName::try_new(text).ok())
-        .ok_or_else(|| {
-            HostingError::EngineFailure("a repair key breaks the key discipline".into())
-        })?;
-    let id = std::str::from_utf8(&key[separator + 1..])
-        .ok()
-        .and_then(|text| DocumentId::try_new(text).ok())
-        .ok_or_else(|| {
-            HostingError::EngineFailure("a repair key breaks the key discipline".into())
-        })?;
-    Ok((collection, id))
-}
-
-/// The causal bytes for one version: the merge's comparison input —
-/// `hlc` big-endian, the origin length-prefixed, one tombstone byte — so
-/// the Merkle causal root and the merge verdict order the same values.
-fn causal_bytes(hlc: u64, origin: &str, deleted: bool) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(8 + 8 + origin.len() + 1);
-    bytes.extend_from_slice(&hlc.to_be_bytes());
-    bytes.extend_from_slice(&(origin.len() as u64).to_be_bytes());
-    bytes.extend_from_slice(origin.as_bytes());
-    bytes.push(u8::from(deleted));
-    bytes
-}
-
-/// The deterministic materialized encoding of one document value:
-/// domain-tagged, big-endian integers, length-prefixed strings, objects in
-/// key order (`BTreeMap` iteration). A tombstone encodes as the empty
-/// vector, which no live value (not even null) collides with.
-fn materialized_bytes(value: &DocumentValue) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    encode_value(&mut bytes, value);
-    bytes
-}
-
-/// Encodes one value into the materialized form.
-fn encode_value(output: &mut Vec<u8>, value: &DocumentValue) {
-    match value {
-        DocumentValue::Null => output.push(0x00),
-        DocumentValue::Boolean(flag) => {
-            output.push(0x01);
-            output.push(u8::from(*flag));
-        }
-        DocumentValue::Integer(number) => {
-            output.push(0x02);
-            output.extend_from_slice(&number.to_be_bytes());
-        }
-        DocumentValue::Number(number) => {
-            output.push(0x03);
-            output.extend_from_slice(&number.to_bits().to_be_bytes());
-        }
-        DocumentValue::String(text) => {
-            output.push(0x04);
-            push_bytes(output, text.as_bytes());
-        }
-        DocumentValue::Array(items) => {
-            output.push(0x05);
-            output.extend_from_slice(&(items.len() as u64).to_be_bytes());
-            for item in items {
-                encode_value(output, item);
-            }
-        }
-        DocumentValue::Object(fields) => {
-            output.push(0x06);
-            output.extend_from_slice(&(fields.len() as u64).to_be_bytes());
-            for (name, field) in fields {
-                push_bytes(output, name.as_bytes());
-                encode_value(output, field);
-            }
-        }
-    }
-}
-
-/// Pushes length-prefixed bytes.
-fn push_bytes(output: &mut Vec<u8>, bytes: &[u8]) {
-    output.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
-    output.extend_from_slice(bytes);
-}
-
-/// The deterministic repair identity for one version: `merkle-` plus the
-/// stamp and a content hash. Every member holding the same version mints
-/// the same identity, so a re-shipped repair replays instead of
-/// double-writing; distinct versions never share one.
-fn repair_ulid(
-    hlc: u64,
-    origin: &str,
-    collection: &CollectionName,
-    id: &DocumentId,
-    deleted: bool,
-    materialized: &[u8],
-) -> String {
-    let mut keyed = Vec::new();
-    keyed.extend_from_slice(&hlc.to_be_bytes());
-    push_bytes(&mut keyed, origin.as_bytes());
-    push_bytes(&mut keyed, collection.as_str().as_bytes());
-    push_bytes(&mut keyed, id.as_str().as_bytes());
-    keyed.push(u8::from(deleted));
-    keyed.extend_from_slice(materialized);
-    format!("merkle-{hlc:016x}-{:016x}", fnv1a(&keyed))
-}
-
-/// The 64-bit FNV-1a hash: the repair identity's content binding. Short,
-/// deterministic, dependency-free.
-fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0100_0000_01b3);
-    }
-    hash
 }
 
 /// Reports whether the path names an empty directory: the snapshot target

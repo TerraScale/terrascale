@@ -423,6 +423,9 @@ fn document_exists(
 
 /// Validates one query plan as a stream source.
 fn check_query_source(plan: &QueryPlan) -> Result<(), StreamError> {
+    if let Some(operator) = plan.sql_execute_only_operator() {
+        return Err(StreamError::NotSubscribable(crate::query::NotSubscribable::new(operator)));
+    }
     // A limit-free plan materializes every match per execution, which would
     // make a stream's memory unbounded; streaming requires a bounded page.
     if plan.model().paging().limit().is_none() {

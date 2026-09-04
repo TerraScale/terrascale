@@ -31,10 +31,27 @@ fn durable_config_creates_an_absent_directory_and_engine_reopens() {
     assert!(dir.is_dir());
     let engine = Engine::open(config).expect("opens");
     engine.shutdown().expect("shuts down");
+    assert!(!dir.join("format").exists(), "the retired selector is never created");
+    let bytes = std::fs::read(terrabase::engine::database_file(&dir)).expect("SQLite file exists");
+    assert_eq!(bytes.get(..16), Some(b"SQLite format 3\0".as_slice()));
     // The owned SQLite location opens again.
     let engine = Engine::open(EngineConfig::durable(&dir).expect("still durable"))
         .expect("reopens the same location");
     engine.shutdown().expect("shuts down");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn engine_never_adopts_an_orphaned_sqlite_file() {
+    let dir = location("orphan");
+    std::fs::remove_dir_all(&dir).ok();
+    EngineConfig::durable(&dir).expect("creates the directory");
+    std::fs::write(terrabase::engine::database_file(&dir), b"orphaned")
+        .expect("writes an orphaned database file");
+    assert_eq!(
+        Engine::open(EngineConfig::durable(&dir).expect("still durable")).err(),
+        Some(EngineOpenError::FormatMismatch)
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 

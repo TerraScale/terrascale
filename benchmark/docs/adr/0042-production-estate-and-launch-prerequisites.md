@@ -42,7 +42,7 @@ the member hosts carry nothing but terrabase.
 
 | Role | Count | Shape (start) | Storage | Notes |
 | --- | --- | --- | --- | --- |
-| Member host | 2 | A1 Flex, 4 OCPU / 24 GiB | 200–500 GiB block volume, Balanced or Higher Performance | Writer + follower for each database placed here; distinct fault domains; also the Postgres-wire listener. Nothing else (no dashboard, D-59) |
+| Member host | 2 | A1 Flex, 4 OCPU / 24 GiB | 200–500 GiB block volume, Balanced or Higher Performance | Writer + follower for each database placed here; distinct fault domains. Nothing else (no dashboard, D-59) |
 | Control host | 1 | A1 Flex, 1 OCPU / 6 GiB | 50 GiB boot | Third JetStream replica, regional control group; in GRU also the global authority, Prometheus, Grafana, Alertmanager |
 
 Total at launch: 6 member hosts + 3 control hosts = **9 instances**. Scaling
@@ -56,12 +56,12 @@ against OCI NTP (HLC skew guard), no password login, no public SSH.
 
 | Service | Purpose | Configuration |
 | --- | --- | --- |
-| Object Storage bucket | Litestream targets, analytics snapshots (D-53), Parquet export | One bucket per region, versioning on, retention rule on, **never replicated across regions** (residency, D-52) |
+| Object Storage bucket | Litestream targets, analytics snapshots (D-53), Parquet export | One bucket per region, versioning on, retention rule on, lifecycle per D-29 (segments older than 24 h to Infrequent Access, older than 7 days to Archive), **never replicated across regions** (residency, D-52) |
 | Block Volume backup policy | Second layer under Litestream | Daily, 7-day retention, per member host |
 | Vault + Key | Per-database encryption keys (M2-1, ADR 0030) | One master key per region; keys never leave their region |
 | OCIR (tenancy-wide) | Image registry | Immutable tags by digest; the orchestrator deploys digests only |
 | IAM (tenancy-wide) | Least privilege | One compartment per region; **instance principals** for members and control hosts; no API keys on disk; CI gets a scoped user per secret (GOAL O-3) |
-| VCN + NSG | Network | Public ingress only on 443 (API), the QUIC replication port (member ↔ member, source-restricted to the other regions' public IPs), and the Postgres-wire port; everything else via Tailscale |
+| VCN + NSG | Network | Public ingress only on 443 (API) and the QUIC replication port (member ↔ member, source-restricted to the other regions' public IPs); everything else via Tailscale |
 | Budgets | Cost cap | Monthly budget with alert at 80 % and 100 %, alert routed to paging |
 | Email Delivery (GRU) | Transactional email (D-26) | Approved sender domain, SPF/DKIM/DMARC records in Cloudflare. Submitted over the **HTTPS Email Submission API** (the dashboard Worker cannot open SMTP), authenticated with a dedicated IAM user whose key is a Worker secret |
 
@@ -73,7 +73,6 @@ São Paulo has a single availability domain: members there use distinct
 | Piece | Purpose | Notes |
 | --- | --- | --- |
 | Cloudflare zone `terrascale.tech` (Pro) + Workers Paid | DNS, TLS, WAF, rate rules; `ts-proxy` Worker + KV as the global load balancer (D-58); the **dashboard Worker** on `app.` (D-59); later the edge cache (D-55) | Origin certificates on members; `api.` → `ts-proxy` Worker; `gru|sfo|fra.api.` proxied A records straight to member hosts (pinned SDK traffic); `app.` → dashboard Worker (Workers Assets for static files, service binding to `ts-proxy`, secrets via `wrangler secret`); `*.preview.app.` → per-branch preview deployments; `docs.`, `status.` (D-24). No Cloudflare Load Balancing product. Turnstile on signup. |
-| Postgres-wire exposure (D-54) | BI tools over TCP | **Direct**: `pg.<region>.api.terrascale.tech` resolves to the member hosts' public IPs (DNS-only, grey-cloud); TLS terminated by the member with a Let's Encrypt certificate; NSG allows the port from anywhere; per-key connection limits apply. Cloudflare Spectrum is not used at launch. |
 | Forgejo Actions runner | Native ARM builds and `make check` in CI | One A1 Flex (2 OCPU / 12 GiB) in GRU outside the orchestrator's control, or the GRU control host if capacity allows |
 | Paging | Alerts to a phone | Grafana OnCall or PagerDuty free tier; primary + escalation contact; OCI budget alerts and external probe route here too |
 | External probe + status page | Independent view of availability (D-23) | A third-party uptime monitor probing all three regions' `/health` and the dashboard; its public page is `status.terrascale.tech` |

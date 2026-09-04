@@ -56,6 +56,7 @@ pub fn pull_origin_records(
             commit_ulid: record.operation_id().as_str().to_owned(),
             hlc: provenance.hlc(),
             origin: provenance.origin().to_owned(),
+            origin_sequence: provenance.origin_sequence(),
         });
     }
     Ok((records, batch.next_checkpoint()))

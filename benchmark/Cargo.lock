@@ -1913,6 +1913,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "terrabase-sim"
+version = "0.1.0"
+dependencies = [
+ "rand 0.9.5",
+ "rand_chacha",
+]
+
+[[package]]
 name = "terrabase-sync-core"
 version = "0.1.0"
 

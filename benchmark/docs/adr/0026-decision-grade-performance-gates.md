@@ -235,7 +235,7 @@ x86_64 and ARM64 run separately proves architecture-independent replication.
 Receipts separately measure:
 
 - local `RegionalDurable` acknowledgement;
-- origin-to-remote `stored`, `applied`, and Merkle-`verified` frontiers;
+- origin-to-remote `stored`, `applied`, and `reconciled` frontiers;
 - origin-to-authorized-client-visible latency;
 - `GlobalDurable` acknowledgement in every selected Region;
 - steady-state and backlog catch-up throughput;

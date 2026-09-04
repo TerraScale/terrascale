@@ -9,6 +9,16 @@
 //! tenant ID, document ID, request ID, provider OCID, or error text cannot
 //! accidentally become a Prometheus label.  `render_prometheus` emits the
 //! Prometheus 0.0.4 text format with deterministic ordering and no timestamps.
+//!
+//! E-14 start per D-72 ("metrics stay cheap"): no metric carries a
+//! per-database, per-tenant, or per-view label.  Cardinality is bounded by
+//! host (the Prometheus `instance` target) times closed Region and subsystem
+//! vocabularies, so the Grafana Cloud free tier holds.  Per-database and
+//! per-tenant numbers are engine usage facts (D-42), queried from the
+//! control-plane database rather than scraped.  Structured logs use the
+//! [`LogRecord`] schema, are sampled above [`LOG_SAMPLE_ABOVE_LINES_PER_SEC_PER_HOST`]
+//! lines/s per host, and are retained [`LOG_RETENTION_DAYS`] days; both bounds
+//! are enforced by the `ts-orchestrator` host agent, not in process.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -44,9 +54,6 @@ pub const MAX_OPERATION_LABEL_VALUES: usize = OPERATIONS.len();
 /// The fixed upper bound on outcome label values.
 pub const MAX_OUTCOME_LABEL_VALUES: usize = OUTCOMES.len();
 
-/// The fixed upper bound on storage-tier label values.
-pub const MAX_STORAGE_TIER_LABEL_VALUES: usize = STORAGE_TIERS.len();
-
 /// The fixed upper bound on component label values.
 pub const MAX_COMPONENT_LABEL_VALUES: usize = COMPONENTS.len();
 
@@ -76,6 +83,50 @@ pub const MAX_DIAGNOSTIC_BYTES: usize = 64 * 1024;
 pub const REQUEST_LATENCY_BUCKETS: [f64; 11] =
     [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0];
 
+/// The measured clock-offset magnitude, in seconds, above which a member
+/// refuses new writes (D-69).
+///
+/// Chrony disciplines the host clock against OCI NTP; the member exports its
+/// measured offset via `terrabase_clock_offset_seconds` and never mints an
+/// HLC from a suspect clock. The alert threshold in
+/// `deploy/observability/prometheus-rules.yml` sits below this refusal line
+/// so operators get headroom before writes stop.
+pub const CLOCK_OFFSET_WRITE_REFUSAL_THRESHOLD_SECONDS: f64 = 0.5;
+
+/// Monthly billable egress per Region, in bytes, that pages the operator
+/// view (D-66).
+///
+/// Replication journal frames, bootstrap snapshots, and direct member reads
+/// leave OCI as billable outbound; 8 decimal TB per Region per month is the
+/// Grafana alert line. The host `instance` target plus the closed Region and
+/// [`EgressKind`] vocabularies keep this family's cardinality bounded.
+pub const EGRESS_MONTHLY_ALERT_BYTES: u64 = 8_000_000_000_000;
+
+/// The per-host structured-log rate, in lines/s, above which the host agent
+/// samples before shipping (D-72).
+///
+/// Sampling is enforced by the `ts-orchestrator` Grafana-agent configuration,
+/// not in process: the engine always emits [`LogRecord`] lines and never
+/// drops a caller-visible error to meet this budget.
+pub const LOG_SAMPLE_ABOVE_LINES_PER_SEC_PER_HOST: u64 = 100;
+
+/// Structured-log retention, in days, enforced by the `ts-orchestrator`
+/// log-agent configuration (D-72).
+pub const LOG_RETENTION_DAYS: u32 = 14;
+
+/// The fixed upper bound on egress-kind label values.
+pub const MAX_EGRESS_KIND_LABEL_VALUES: usize = EGRESS_KINDS.len();
+
+/// The maximum number of egress counter series.
+///
+/// Each series is one member of the closed Region and egress-kind product,
+/// scraped per host `instance`. No runtime string can increase this value.
+pub const MAX_EGRESS_SERIES: usize = MAX_REGION_LABEL_VALUES * MAX_EGRESS_KIND_LABEL_VALUES;
+
+/// The maximum number of clock series: one offset gauge plus one write-refusal
+/// counter, both unlabeled because the host is the Prometheus `instance`.
+pub const MAX_CLOCK_SERIES: usize = 2;
+
 /// A bounded operation family used by request metrics.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Operation {
@@ -93,8 +144,6 @@ pub enum Operation {
     Restore,
     /// A repair operation.
     Repair,
-    /// A compaction operation.
-    Compaction,
     /// An operation not yet assigned a more specific family.
     Other,
 }
@@ -111,14 +160,13 @@ impl Operation {
             Self::Backup => "backup",
             Self::Restore => "restore",
             Self::Repair => "repair",
-            Self::Compaction => "compaction",
             Self::Other => "other",
         }
     }
 }
 
 /// Every admitted operation label in stable order.
-pub const OPERATIONS: [Operation; 9] = [
+pub const OPERATIONS: [Operation; 8] = [
     Operation::Read,
     Operation::Write,
     Operation::Query,
@@ -126,7 +174,6 @@ pub const OPERATIONS: [Operation; 9] = [
     Operation::Backup,
     Operation::Restore,
     Operation::Repair,
-    Operation::Compaction,
     Operation::Other,
 ];
 
@@ -207,32 +254,38 @@ impl Region {
 /// Every admitted Region label in stable order.
 pub const REGIONS: [Region; 4] = [Region::Gru, Region::Sfo, Region::Fra, Region::Unknown];
 
-/// The bounded storage tiers reported by the storage observer.
+/// A bounded billable-egress class (D-66).
+///
+/// Replication journal frames, bootstrap snapshots, and direct member reads
+/// each bill as OCI outbound at the source Region's rate; CDN fills and
+/// reader-side delivery are Cloudflare's and stay out of this family. The
+/// three classes keep per-Region spend attributable without a
+/// per-database, per-tenant, or per-view label (D-72).
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum StorageTier {
-    /// Fast local storage, when configured.
-    Tier1,
-    /// Required block-storage tier.
-    Tier2,
-    /// Optional object-storage tier.
-    Tier3,
+pub enum EgressKind {
+    /// Cross-Region journal frames over member-to-member QUIC.
+    Replication,
+    /// Bootstrap snapshots for a new follower or Region.
+    Snapshot,
+    /// Direct member reads served from OCI rather than the CDN.
+    Read,
 }
 
-impl StorageTier {
-    /// Returns the stable label value for this tier.
+impl EgressKind {
+    /// Returns the stable label value for this egress class.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Tier1 => "tier1",
-            Self::Tier2 => "tier2",
-            Self::Tier3 => "tier3",
+            Self::Replication => "replication",
+            Self::Snapshot => "snapshot",
+            Self::Read => "read",
         }
     }
 }
 
-/// Every admitted storage-tier label in stable order.
-pub const STORAGE_TIERS: [StorageTier; 3] =
-    [StorageTier::Tier1, StorageTier::Tier2, StorageTier::Tier3];
+/// Every admitted egress-kind label in stable order.
+pub const EGRESS_KINDS: [EgressKind; 3] =
+    [EgressKind::Replication, EgressKind::Snapshot, EgressKind::Read];
 
 /// A bounded admission refusal reason.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -285,8 +338,6 @@ pub enum Queue {
     Commit,
     /// Replication and repair delivery.
     Replication,
-    /// Background compaction.
-    Compaction,
     /// Backup production or verification.
     Backup,
     /// Authoritative usage-fact export.
@@ -301,7 +352,6 @@ impl Queue {
             Self::Foreground => "foreground",
             Self::Commit => "commit",
             Self::Replication => "replication",
-            Self::Compaction => "compaction",
             Self::Backup => "backup",
             Self::UsageExport => "usage_export",
         }
@@ -309,14 +359,8 @@ impl Queue {
 }
 
 /// Every admitted queue label in stable order.
-pub const QUEUES: [Queue; 6] = [
-    Queue::Foreground,
-    Queue::Commit,
-    Queue::Replication,
-    Queue::Compaction,
-    Queue::Backup,
-    Queue::UsageExport,
-];
+pub const QUEUES: [Queue; 5] =
+    [Queue::Foreground, Queue::Commit, Queue::Replication, Queue::Backup, Queue::UsageExport];
 
 /// The result of one bounded background or I/O task.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -397,44 +441,6 @@ impl BackupMode {
 /// Every admitted backup-mode label in stable order.
 pub const BACKUP_MODES: [BackupMode; 3] =
     [BackupMode::Full, BackupMode::Incremental, BackupMode::Continuous];
-
-/// A bounded storage operation used to classify storage errors.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum StorageOperation {
-    /// A storage read.
-    Read,
-    /// A storage write.
-    Write,
-    /// A WAL or segment flush.
-    Flush,
-    /// A compaction operation.
-    Compaction,
-    /// An operation that cannot be assigned to another bounded class.
-    Other,
-}
-
-impl StorageOperation {
-    /// Returns the stable label value.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Read => "read",
-            Self::Write => "write",
-            Self::Flush => "flush",
-            Self::Compaction => "compaction",
-            Self::Other => "other",
-        }
-    }
-}
-
-/// Every admitted storage-operation label in stable order.
-pub const STORAGE_OPERATIONS: [StorageOperation; 5] = [
-    StorageOperation::Read,
-    StorageOperation::Write,
-    StorageOperation::Flush,
-    StorageOperation::Compaction,
-    StorageOperation::Other,
-];
 
 /// A bounded engine component that can participate in health checks.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -931,48 +937,6 @@ impl ReplicationLag {
     }
 }
 
-/// One bounded storage tier's measured bytes.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct StorageUsage {
-    tier: StorageTier,
-    bytes: u64,
-}
-
-impl StorageUsage {
-    /// Returns the storage tier label.
-    #[must_use]
-    pub const fn tier(&self) -> StorageTier {
-        self.tier
-    }
-
-    /// Returns measured bytes.
-    #[must_use]
-    pub const fn bytes(&self) -> u64 {
-        self.bytes
-    }
-}
-
-/// One bounded storage tier's configured usable capacity.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct StorageCapacity {
-    tier: StorageTier,
-    bytes: u64,
-}
-
-impl StorageCapacity {
-    /// Returns the storage tier label.
-    #[must_use]
-    pub const fn tier(&self) -> StorageTier {
-        self.tier
-    }
-
-    /// Returns usable capacity in bytes.
-    #[must_use]
-    pub const fn bytes(&self) -> u64 {
-        self.bytes
-    }
-}
-
 /// One bounded Region's active member count.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ActiveMembers {
@@ -1018,8 +982,8 @@ impl ComponentHealth {
 /// An immutable, bounded snapshot shared by private adapters and Prometheus.
 ///
 /// The vectors can contain only closed enum values and each registry key occurs
-/// at most once. This type carries no tenant, document, query, path, credential,
-/// provider, or free-form diagnostic value.
+/// at most once. This type carries no database, tenant, view, collection,
+/// document, query, path, credential, provider, or free-form diagnostic value.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MetricsSnapshot {
     service_state: ServiceState,
@@ -1034,19 +998,15 @@ pub struct MetricsSnapshot {
     replication_lag: Vec<ReplicationLag>,
     replication_backlog: Vec<(Region, u64)>,
     replication_frontier_health: Vec<(Region, HealthStatus)>,
-    storage: Vec<StorageUsage>,
-    storage_capacity: Vec<StorageCapacity>,
-    storage_errors: Vec<(StorageTier, StorageOperation, u64)>,
     active_members: Vec<ActiveMembers>,
     component_health: Vec<ComponentHealth>,
-    compaction_backlog: Vec<StorageUsage>,
-    compaction_runs: Vec<(TaskOutcome, u64)>,
-    compaction_input_bytes: u64,
-    compaction_output_bytes: u64,
     backup_last_success_age: Vec<(BackupMode, f64)>,
     backup_runs: Vec<(BackupMode, TaskOutcome, u64)>,
     usage_export_frontier: Option<u64>,
     usage_export_failures: u64,
+    clock_offset_seconds: Option<f64>,
+    clock_write_refusals: u64,
+    egress_bytes: Vec<(Region, EgressKind, u64)>,
 }
 
 impl MetricsSnapshot {
@@ -1130,24 +1090,6 @@ impl MetricsSnapshot {
         &self.replication_frontier_health
     }
 
-    /// Returns storage usage in stable tier order.
-    #[must_use]
-    pub fn storage(&self) -> &[StorageUsage] {
-        &self.storage
-    }
-
-    /// Returns configured usable capacity in stable tier order.
-    #[must_use]
-    pub fn storage_capacity(&self) -> &[StorageCapacity] {
-        &self.storage_capacity
-    }
-
-    /// Returns `(tier, operation, total)` storage error counters.
-    #[must_use]
-    pub fn storage_errors(&self) -> &[(StorageTier, StorageOperation, u64)] {
-        &self.storage_errors
-    }
-
     /// Returns active members in stable Region order.
     #[must_use]
     pub fn active_members(&self) -> &[ActiveMembers] {
@@ -1159,30 +1101,6 @@ impl MetricsSnapshot {
     #[must_use]
     pub fn component_health(&self) -> &[ComponentHealth] {
         &self.component_health
-    }
-
-    /// Returns compaction backlog bytes in stable tier order.
-    #[must_use]
-    pub fn compaction_backlog(&self) -> &[StorageUsage] {
-        &self.compaction_backlog
-    }
-
-    /// Returns `(outcome, total)` compaction run counters.
-    #[must_use]
-    pub fn compaction_runs(&self) -> &[(TaskOutcome, u64)] {
-        &self.compaction_runs
-    }
-
-    /// Returns total compaction input bytes observed by this process.
-    #[must_use]
-    pub const fn compaction_input_bytes(&self) -> u64 {
-        self.compaction_input_bytes
-    }
-
-    /// Returns total compaction output bytes observed by this process.
-    #[must_use]
-    pub const fn compaction_output_bytes(&self) -> u64 {
-        self.compaction_output_bytes
     }
 
     /// Returns `(mode, age_seconds)` last-success backup observations.
@@ -1207,6 +1125,32 @@ impl MetricsSnapshot {
     #[must_use]
     pub const fn usage_export_failures(&self) -> u64 {
         self.usage_export_failures
+    }
+
+    /// Returns the measured host clock offset against OCI NTP in seconds,
+    /// when observed (D-69).
+    ///
+    /// The value is signed: a negative offset means the host clock trails.
+    /// The series is absent until the collector publishes its first
+    /// observation. Crossing [`CLOCK_OFFSET_WRITE_REFUSAL_THRESHOLD_SECONDS`]
+    /// in magnitude refuses new writes.
+    #[must_use]
+    pub const fn clock_offset_seconds(&self) -> Option<f64> {
+        self.clock_offset_seconds
+    }
+
+    /// Returns new writes refused because the measured clock offset exceeded
+    /// [`CLOCK_OFFSET_WRITE_REFUSAL_THRESHOLD_SECONDS`] (D-69).
+    #[must_use]
+    pub const fn clock_write_refusals(&self) -> u64 {
+        self.clock_write_refusals
+    }
+
+    /// Returns `(region, kind, bytes)` billable egress counters in stable
+    /// Region and egress-kind order (D-66).
+    #[must_use]
+    pub fn egress_bytes(&self) -> &[(Region, EgressKind, u64)] {
+        &self.egress_bytes
     }
 
     /// Renders this immutable snapshot as Prometheus 0.0.4 text.
@@ -1244,6 +1188,8 @@ impl MetricsSnapshot {
         write_durability_metrics(&mut output, self);
         write_resource_metrics(&mut output, self);
         write_background_metrics(&mut output, self);
+        write_clock_metrics(&mut output, self);
+        write_egress_metrics(&mut output, self);
         write_health_metrics(&mut output, self);
         output
     }
@@ -1261,19 +1207,15 @@ struct MetricsState {
     replication_lag_seconds: BTreeMap<Region, f64>,
     replication_backlog_bytes: BTreeMap<Region, u64>,
     replication_frontier_health: BTreeMap<Region, HealthStatus>,
-    storage_bytes: BTreeMap<StorageTier, u64>,
-    storage_capacity_bytes: BTreeMap<StorageTier, u64>,
-    storage_errors: BTreeMap<(StorageTier, StorageOperation), u64>,
     active_members: BTreeMap<Region, u64>,
     component_health: BTreeMap<Component, HealthStatus>,
-    compaction_backlog_bytes: BTreeMap<StorageTier, u64>,
-    compaction_runs: BTreeMap<TaskOutcome, u64>,
-    compaction_input_bytes: u64,
-    compaction_output_bytes: u64,
     backup_last_success_age_seconds: BTreeMap<BackupMode, f64>,
     backup_runs: BTreeMap<(BackupMode, TaskOutcome), u64>,
     usage_export_frontier: Option<u64>,
     usage_export_failures: u64,
+    clock_offset_seconds: Option<f64>,
+    clock_write_refusals: u64,
+    egress_bytes: BTreeMap<(Region, EgressKind), u64>,
     service_state: ServiceState,
     started: bool,
     health_ready: bool,
@@ -1370,39 +1312,6 @@ impl MetricsRegistry {
         lock(&self.state).replication_frontier_health.insert(region, status);
     }
 
-    /// Sets storage usage for a bounded storage tier.
-    pub fn set_storage_bytes(&self, tier: StorageTier, bytes: u64) {
-        lock(&self.state).storage_bytes.insert(tier, bytes);
-    }
-
-    /// Sets the configured usable capacity for a bounded storage tier.
-    ///
-    /// Callers omit this observation when a tier has no finite enforced
-    /// capacity. Reporting an invented maximum would make utilization and
-    /// headroom alerts unsafe.
-    pub fn set_storage_capacity_bytes(&self, tier: StorageTier, bytes: u64) {
-        lock(&self.state).storage_capacity_bytes.insert(tier, bytes);
-    }
-
-    /// Records one storage error in a bounded tier and operation class.
-    pub fn record_storage_error(&self, tier: StorageTier, operation: StorageOperation) {
-        let mut state = lock(&self.state);
-        saturating_increment(state.storage_errors.entry((tier, operation)).or_default());
-    }
-
-    /// Sets compaction backlog bytes for one bounded storage tier.
-    pub fn set_compaction_backlog_bytes(&self, tier: StorageTier, bytes: u64) {
-        lock(&self.state).compaction_backlog_bytes.insert(tier, bytes);
-    }
-
-    /// Records one compaction result and the bytes it processed.
-    pub fn record_compaction(&self, outcome: TaskOutcome, input_bytes: u64, output_bytes: u64) {
-        let mut state = lock(&self.state);
-        saturating_increment(state.compaction_runs.entry(outcome).or_default());
-        state.compaction_input_bytes = state.compaction_input_bytes.saturating_add(input_bytes);
-        state.compaction_output_bytes = state.compaction_output_bytes.saturating_add(output_bytes);
-    }
-
     /// Sets the current age of the last verified successful backup.
     pub fn set_backup_last_success_age(&self, mode: BackupMode, age: Duration) {
         lock(&self.state).backup_last_success_age_seconds.insert(mode, age.as_secs_f64());
@@ -1431,6 +1340,46 @@ impl MetricsRegistry {
     pub fn record_usage_export_failure(&self) {
         let mut state = lock(&self.state);
         state.usage_export_failures = state.usage_export_failures.saturating_add(1);
+    }
+
+    /// Sets the measured host clock offset against OCI NTP, in seconds
+    /// (D-69).
+    ///
+    /// The value is signed: negative means the host clock trails. Non-finite
+    /// observations are refused and leave the prior observation intact, so a
+    /// broken collector cannot poison the refusal comparison.
+    pub fn set_clock_offset_seconds(&self, offset_seconds: f64) {
+        if !offset_seconds.is_finite() {
+            return;
+        }
+        lock(&self.state).clock_offset_seconds = Some(offset_seconds);
+    }
+
+    /// Clears the measured host clock offset when its collector reports an
+    /// unknown or stale sample. The gauge is absent until the next finite
+    /// observation arrives.
+    pub fn clear_clock_offset_seconds(&self) {
+        lock(&self.state).clock_offset_seconds = None;
+    }
+
+    /// Records one new write refused because the measured clock offset
+    /// exceeded [`CLOCK_OFFSET_WRITE_REFUSAL_THRESHOLD_SECONDS`] in magnitude
+    /// (D-69).
+    pub fn record_clock_write_refusal(&self) {
+        let mut state = lock(&self.state);
+        state.clock_write_refusals = state.clock_write_refusals.saturating_add(1);
+    }
+
+    /// Adds billable egress bytes for one bounded Region and egress class
+    /// (D-66).
+    ///
+    /// Callers report OCI outbound only: replication journal frames, bootstrap
+    /// snapshots, and direct member reads. CDN fills and reader-side delivery
+    /// are Cloudflare's and must not enter this counter.
+    pub fn record_egress_bytes(&self, region: Region, kind: EgressKind, bytes: u64) {
+        let mut state = lock(&self.state);
+        let total = state.egress_bytes.entry((region, kind)).or_default();
+        *total = total.saturating_add(bytes);
     }
 
     /// Sets the active member count for a bounded Region.
@@ -1541,21 +1490,6 @@ impl MetricsRegistry {
             .iter()
             .map(|(region, status)| (*region, *status))
             .collect();
-        let storage = state
-            .storage_bytes
-            .iter()
-            .map(|(tier, bytes)| StorageUsage { tier: *tier, bytes: *bytes })
-            .collect();
-        let storage_capacity = state
-            .storage_capacity_bytes
-            .iter()
-            .map(|(tier, bytes)| StorageCapacity { tier: *tier, bytes: *bytes })
-            .collect();
-        let storage_errors = state
-            .storage_errors
-            .iter()
-            .map(|((tier, operation), total)| (*tier, *operation, *total))
-            .collect();
         let active_members = state
             .active_members
             .iter()
@@ -1572,13 +1506,6 @@ impl MetricsRegistry {
                     .unwrap_or(HealthStatus::Unknown),
             })
             .collect();
-        let compaction_backlog = state
-            .compaction_backlog_bytes
-            .iter()
-            .map(|(tier, bytes)| StorageUsage { tier: *tier, bytes: *bytes })
-            .collect();
-        let compaction_runs =
-            state.compaction_runs.iter().map(|(outcome, total)| (*outcome, *total)).collect();
         let backup_last_success_age = state
             .backup_last_success_age_seconds
             .iter()
@@ -1588,6 +1515,11 @@ impl MetricsRegistry {
             .backup_runs
             .iter()
             .map(|((mode, outcome), total)| (*mode, *outcome, *total))
+            .collect();
+        let egress_bytes = state
+            .egress_bytes
+            .iter()
+            .map(|((region, kind), bytes)| (*region, *kind, *bytes))
             .collect();
         MetricsSnapshot {
             service_state: state.service_state,
@@ -1602,19 +1534,15 @@ impl MetricsRegistry {
             replication_lag,
             replication_backlog,
             replication_frontier_health,
-            storage,
-            storage_capacity,
-            storage_errors,
             active_members,
             component_health,
-            compaction_backlog,
-            compaction_runs,
-            compaction_input_bytes: state.compaction_input_bytes,
-            compaction_output_bytes: state.compaction_output_bytes,
             backup_last_success_age,
             backup_runs,
             usage_export_frontier: state.usage_export_frontier,
             usage_export_failures: state.usage_export_failures,
+            clock_offset_seconds: state.clock_offset_seconds,
+            clock_write_refusals: state.clock_write_refusals,
+            egress_bytes,
         }
     }
 
@@ -1815,7 +1743,6 @@ fn write_durability_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
 
 fn write_resource_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
     write_replication_metrics(output, snapshot);
-    write_storage_metrics(output, snapshot);
     write_membership_metrics(output, snapshot);
 }
 
@@ -1866,54 +1793,6 @@ fn write_replication_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
     }
 }
 
-fn write_storage_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
-    write_help_type(
-        output,
-        "terrabase_storage_bytes",
-        "Observed storage bytes by bounded storage tier.",
-        "gauge",
-    );
-    for observation in &snapshot.storage {
-        writeln!(
-            output,
-            "terrabase_storage_bytes{{tier=\"{}\"}} {}",
-            observation.tier.as_str(),
-            observation.bytes
-        )
-        .expect("writing String cannot fail");
-    }
-    write_help_type(
-        output,
-        "terrabase_storage_capacity_bytes",
-        "Configured usable storage capacity in bytes by bounded storage tier.",
-        "gauge",
-    );
-    for observation in &snapshot.storage_capacity {
-        writeln!(
-            output,
-            "terrabase_storage_capacity_bytes{{tier=\"{}\"}} {}",
-            observation.tier.as_str(),
-            observation.bytes
-        )
-        .expect("writing String cannot fail");
-    }
-    write_help_type(
-        output,
-        "terrabase_storage_errors_total",
-        "Storage errors by bounded tier and operation.",
-        "counter",
-    );
-    for (tier, operation, total) in &snapshot.storage_errors {
-        writeln!(
-            output,
-            "terrabase_storage_errors_total{{tier=\"{}\",operation=\"{}\"}} {total}",
-            tier.as_str(),
-            operation.as_str()
-        )
-        .expect("writing String cannot fail");
-    }
-}
-
 fn write_membership_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
     write_help_type(
         output,
@@ -1933,55 +1812,6 @@ fn write_membership_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
 }
 
 fn write_background_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
-    write_help_type(
-        output,
-        "terrabase_compaction_backlog_bytes",
-        "Pending compaction bytes by bounded storage tier.",
-        "gauge",
-    );
-    for observation in &snapshot.compaction_backlog {
-        writeln!(
-            output,
-            "terrabase_compaction_backlog_bytes{{tier=\"{}\"}} {}",
-            observation.tier.as_str(),
-            observation.bytes
-        )
-        .expect("writing String cannot fail");
-    }
-    write_help_type(
-        output,
-        "terrabase_compaction_runs_total",
-        "Compaction runs by bounded outcome.",
-        "counter",
-    );
-    for (outcome, total) in &snapshot.compaction_runs {
-        writeln!(
-            output,
-            "terrabase_compaction_runs_total{{outcome=\"{}\"}} {total}",
-            outcome.as_str()
-        )
-        .expect("writing String cannot fail");
-    }
-    write_help_type(
-        output,
-        "terrabase_compaction_input_bytes_total",
-        "Bytes read by completed or failed compaction runs.",
-        "counter",
-    );
-    writeln!(output, "terrabase_compaction_input_bytes_total {}", snapshot.compaction_input_bytes)
-        .expect("writing String cannot fail");
-    write_help_type(
-        output,
-        "terrabase_compaction_output_bytes_total",
-        "Bytes written by completed or failed compaction runs.",
-        "counter",
-    );
-    writeln!(
-        output,
-        "terrabase_compaction_output_bytes_total {}",
-        snapshot.compaction_output_bytes
-    )
-    .expect("writing String cannot fail");
     write_help_type(
         output,
         "terrabase_backup_last_success_age_seconds",
@@ -2030,6 +1860,45 @@ fn write_background_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
     );
     writeln!(output, "terrabase_usage_export_failures_total {}", snapshot.usage_export_failures)
         .expect("writing String cannot fail");
+}
+
+fn write_clock_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
+    write_help_type(
+        output,
+        "terrabase_clock_offset_seconds",
+        "Measured host clock offset against OCI NTP in seconds; new writes are refused past 0.5 in magnitude.",
+        "gauge",
+    );
+    if let Some(offset) = snapshot.clock_offset_seconds {
+        writeln!(output, "terrabase_clock_offset_seconds {}", format_float(offset))
+            .expect("writing String cannot fail");
+    }
+    write_help_type(
+        output,
+        "terrabase_clock_write_refusals_total",
+        "New writes refused because the measured clock offset exceeded 0.5 seconds in magnitude.",
+        "counter",
+    );
+    writeln!(output, "terrabase_clock_write_refusals_total {}", snapshot.clock_write_refusals)
+        .expect("writing String cannot fail");
+}
+
+fn write_egress_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
+    write_help_type(
+        output,
+        "terrabase_egress_bytes_total",
+        "Billable OCI outbound bytes by bounded Region and egress class.",
+        "counter",
+    );
+    for (region, kind, bytes) in &snapshot.egress_bytes {
+        writeln!(
+            output,
+            "terrabase_egress_bytes_total{{region=\"{}\",kind=\"{}\"}} {bytes}",
+            region.as_str(),
+            kind.as_str()
+        )
+        .expect("writing String cannot fail");
+    }
 }
 
 fn write_health_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
@@ -2082,6 +1951,186 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 fn saturating_increment(value: &mut u64) {
     *value = value.saturating_add(1);
+}
+
+/// The structured-log field name for the millisecond Unix timestamp.
+pub const LOG_FIELD_TIMESTAMP: &str = "ts";
+/// The structured-log field name for the [`LogLevel`] value.
+pub const LOG_FIELD_LEVEL: &str = "level";
+/// The structured-log field name for the [`Component`] value.
+pub const LOG_FIELD_COMPONENT: &str = "component";
+/// The structured-log field name for the [`LogEvent`] value.
+pub const LOG_FIELD_EVENT: &str = "event";
+/// The structured-log field name for the redacted human message.
+pub const LOG_FIELD_MESSAGE: &str = "msg";
+
+/// The severity of one [`LogRecord`].
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum LogLevel {
+    /// Normal lifecycle and progress detail. Sampled first above
+    /// [`LOG_SAMPLE_ABOVE_LINES_PER_SEC_PER_HOST`].
+    Info,
+    /// Reduced health, saturation, or a refused operation. Never sampled
+    /// before `Info`.
+    Warn,
+    /// A failed durability, storage, or replication contract. Never sampled.
+    Error,
+}
+
+impl LogLevel {
+    /// Returns the stable log-field value for this severity.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Warn => "warn",
+            Self::Error => "error",
+        }
+    }
+}
+
+/// Every admitted log severity in stable order.
+pub const LOG_LEVELS: [LogLevel; 3] = [LogLevel::Info, LogLevel::Warn, LogLevel::Error];
+
+/// A bounded log event shared by every engine subsystem (D-72).
+///
+/// The vocabulary is deliberately lifecycle-shaped so storage, replication,
+/// backup, restore, and usage export all report the same eight events and
+/// no subsystem invents a per-database, per-tenant, or per-view event name.
+/// Anything finer-grained belongs in a metric label from the closed registry
+/// or in the redacted `msg` field, never in a new event.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum LogEvent {
+    /// The subsystem started serving.
+    Started,
+    /// The subsystem stopped serving.
+    Stopped,
+    /// The subsystem serves with reduced health or redundancy.
+    Degraded,
+    /// The subsystem returned to healthy from degraded or unhealthy.
+    Recovered,
+    /// A bounded queue or budget above its saturation threshold.
+    Saturated,
+    /// An operation refused before it began (admission, clock, validation).
+    Refused,
+    /// A begun operation failed against its contract.
+    Failed,
+    /// Long-running work (backup, restore, export) advanced.
+    Progress,
+}
+
+impl LogEvent {
+    /// Returns the stable log-field value for this event.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Started => "started",
+            Self::Stopped => "stopped",
+            Self::Degraded => "degraded",
+            Self::Recovered => "recovered",
+            Self::Saturated => "saturated",
+            Self::Refused => "refused",
+            Self::Failed => "failed",
+            Self::Progress => "progress",
+        }
+    }
+}
+
+/// Every admitted log event in stable order.
+pub const LOG_EVENTS: [LogEvent; 8] = [
+    LogEvent::Started,
+    LogEvent::Stopped,
+    LogEvent::Degraded,
+    LogEvent::Recovered,
+    LogEvent::Saturated,
+    LogEvent::Refused,
+    LogEvent::Failed,
+    LogEvent::Progress,
+];
+
+/// One structured log record (D-72).
+///
+/// Field names are the [`LOG_FIELD_*`] constants; level, component, and event
+/// come from closed enums, so a tenant ID, database ID, view ID, query text,
+/// path, or credential cannot become a field name. The message passes through
+/// [`redact_diagnostic`] at construction, so secrets cannot reach the host
+/// agent even when a dependency supplies them. Sampling above
+/// [`LOG_SAMPLE_ABOVE_LINES_PER_SEC_PER_HOST`] lines/s per host and
+/// [`LOG_RETENTION_DAYS`]-day retention are enforced by the
+/// `ts-orchestrator` agent configuration, not by this value type.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LogRecord {
+    timestamp_millis: u64,
+    level: LogLevel,
+    component: Component,
+    event: LogEvent,
+    message: String,
+}
+
+impl LogRecord {
+    /// Builds a record, redacting secrets from the message.
+    #[must_use]
+    pub fn new(
+        timestamp_millis: u64,
+        level: LogLevel,
+        component: Component,
+        event: LogEvent,
+        message: &str,
+    ) -> Self {
+        Self { timestamp_millis, level, component, event, message: redact_diagnostic(message) }
+    }
+
+    /// Returns the millisecond Unix timestamp.
+    #[must_use]
+    pub const fn timestamp_millis(&self) -> u64 {
+        self.timestamp_millis
+    }
+
+    /// Returns the record severity.
+    #[must_use]
+    pub const fn level(&self) -> LogLevel {
+        self.level
+    }
+
+    /// Returns the owning subsystem.
+    #[must_use]
+    pub const fn component(&self) -> Component {
+        self.component
+    }
+
+    /// Returns the bounded event.
+    #[must_use]
+    pub const fn event(&self) -> LogEvent {
+        self.event
+    }
+
+    /// Returns the redacted human message.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Renders one agent-shippable log line with the [`LOG_FIELD_*`] names.
+    #[must_use]
+    pub fn to_log_line(&self) -> String {
+        format!(
+            "{}={} {}={} {}={} {}={} {}=\"{}\"",
+            LOG_FIELD_TIMESTAMP,
+            self.timestamp_millis,
+            LOG_FIELD_LEVEL,
+            self.level.as_str(),
+            LOG_FIELD_COMPONENT,
+            self.component.as_str(),
+            LOG_FIELD_EVENT,
+            self.event.as_str(),
+            LOG_FIELD_MESSAGE,
+            self.message
+                .replace('\\', "\\\\")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r")
+                .replace('"', "\\\""),
+        )
+    }
 }
 
 /// Redacts secrets from diagnostic text before it is handed to logs or an
@@ -2461,12 +2510,15 @@ mod tests {
             Outcome::Rejected,
             Duration::ZERO,
         );
-        metrics.set_storage_bytes(StorageTier::Tier2, 42);
+        metrics.record_egress_bytes(Region::Unknown, EgressKind::Read, 1);
         let exposition = metrics.render_prometheus();
         assert!(exposition.contains("region=\"unknown\""));
         assert!(exposition.contains("operation=\"other\""));
         assert!(!exposition.contains("tenant"));
         assert!(!exposition.contains("document"));
+        assert!(!exposition.contains("database"));
+        assert!(!exposition.contains("collection"));
+        assert!(!exposition.contains("view="));
         assert!(!exposition.contains("authorization"));
     }
 
@@ -2592,23 +2644,21 @@ mod tests {
         }
         for outcome in TASK_OUTCOMES {
             metrics.record_wal_fsync(outcome, Duration::MAX);
-            metrics.record_compaction(outcome, u64::MAX, u64::MAX);
         }
         for result in COMMIT_RESULTS {
             metrics.record_commit(result, Duration::MAX);
-        }
-        for tier in STORAGE_TIERS {
-            metrics.set_storage_bytes(tier, u64::MAX);
-            metrics.set_storage_capacity_bytes(tier, u64::MAX);
-            metrics.set_compaction_backlog_bytes(tier, u64::MAX);
-            for operation in STORAGE_OPERATIONS {
-                metrics.record_storage_error(tier, operation);
-            }
         }
         for mode in BACKUP_MODES {
             metrics.set_backup_last_success_age(mode, Duration::MAX);
             for outcome in TASK_OUTCOMES {
                 metrics.record_backup(mode, outcome);
+            }
+        }
+        metrics.set_clock_offset_seconds(f64::MAX);
+        metrics.record_clock_write_refusal();
+        for region in REGIONS {
+            for kind in EGRESS_KINDS {
+                metrics.record_egress_bytes(region, kind, u64::MAX);
             }
         }
         for component in COMPONENTS {
@@ -2618,9 +2668,10 @@ mod tests {
         metrics.record_usage_export_failure();
         let snapshot = metrics.snapshot();
         assert_eq!(snapshot.requests().len(), MAX_REQUEST_SERIES);
+        assert_eq!(snapshot.egress_bytes().len(), MAX_EGRESS_SERIES);
+        assert_eq!(snapshot.clock_offset_seconds(), Some(f64::MAX));
+        assert_eq!(snapshot.clock_write_refusals(), 1);
         assert_eq!(snapshot.replication_lag().len(), MAX_REGION_LABEL_VALUES);
-        assert_eq!(snapshot.storage().len(), MAX_STORAGE_TIER_LABEL_VALUES);
-        assert_eq!(snapshot.storage_capacity().len(), MAX_STORAGE_TIER_LABEL_VALUES);
         assert_eq!(snapshot.active_members().len(), MAX_REGION_LABEL_VALUES);
         assert_eq!(snapshot.component_health().len(), MAX_COMPONENT_LABEL_VALUES);
         let exposition = snapshot.render_prometheus();
@@ -2630,6 +2681,84 @@ mod tests {
         );
         assert!(exposition.len() <= MAX_PROMETHEUS_BODY_BYTES);
         assert!(exposition.ends_with('\n'));
+    }
+
+    #[test]
+    fn clock_offset_and_egress_share_the_bounded_exposition() {
+        let bare = MetricsRegistry::new().render_prometheus();
+        assert!(
+            bare.lines()
+                .filter(|line| !line.starts_with('#'))
+                .all(|line| !line.starts_with("terrabase_clock_offset_seconds")),
+            "clock offset gauge must be absent until the collector publishes"
+        );
+
+        let metrics = MetricsRegistry::new();
+        metrics.set_clock_offset_seconds(-0.012);
+        metrics.set_clock_offset_seconds(f64::NAN);
+        metrics.set_clock_offset_seconds(f64::INFINITY);
+        metrics.record_clock_write_refusal();
+        metrics.record_egress_bytes(Region::Gru, EgressKind::Replication, 1_500);
+        metrics.record_egress_bytes(Region::Gru, EgressKind::Replication, 500);
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.clock_offset_seconds(), Some(-0.012));
+        assert_eq!(snapshot.clock_write_refusals(), 1);
+        assert_eq!(snapshot.egress_bytes(), &[(Region::Gru, EgressKind::Replication, 2_000)]);
+        assert!(
+            (CLOCK_OFFSET_WRITE_REFUSAL_THRESHOLD_SECONDS - 0.5).abs() < 1e-12,
+            "D-69 refusal line changed; update the alert rules and runbook with it"
+        );
+        assert_eq!(
+            EGRESS_MONTHLY_ALERT_BYTES, 8_000_000_000_000,
+            "D-66 alert line changed; update the alert rules and runbook with it"
+        );
+        let exposition = snapshot.render_prometheus();
+        assert!(exposition.contains("terrabase_clock_offset_seconds -0.012"));
+        assert!(exposition.contains("terrabase_clock_write_refusals_total 1"));
+        assert!(
+            exposition
+                .contains("terrabase_egress_bytes_total{region=\"GRU\",kind=\"replication\"} 2000")
+        );
+        metrics.clear_clock_offset_seconds();
+        assert_eq!(metrics.snapshot().clock_offset_seconds(), None);
+        assert!(!metrics.render_prometheus().contains("terrabase_clock_offset_seconds -0.012"));
+    }
+
+    #[test]
+    fn log_records_use_closed_fields_and_redact_secrets() {
+        let record = LogRecord::new(
+            1_757_000_000_000,
+            LogLevel::Error,
+            Component::Storage,
+            LogEvent::Failed,
+            "fsync failed token=secret-value tenant=public",
+        );
+        assert!(!record.message().contains("secret-value"));
+        assert!(record.message().contains("tenant=public"));
+        assert_eq!(
+            record.to_log_line(),
+            "ts=1757000000000 level=error component=storage event=failed msg=\"fsync failed token=[REDACTED] tenant=public\""
+        );
+        assert_eq!(LOG_SAMPLE_ABOVE_LINES_PER_SEC_PER_HOST, 100);
+        assert_eq!(LOG_RETENTION_DAYS, 14);
+        assert_eq!(LOG_EVENTS.len(), 8);
+        assert_eq!(MAX_EGRESS_SERIES, REGIONS.len() * EGRESS_KINDS.len());
+        assert_eq!(MAX_CLOCK_SERIES, 2);
+    }
+
+    #[test]
+    fn log_records_escape_line_breaks_without_splitting_records() {
+        let record = LogRecord::new(
+            1,
+            LogLevel::Info,
+            Component::Metrics,
+            LogEvent::Progress,
+            "first line\nsecond line\rfinal",
+        );
+        let line = record.to_log_line();
+        assert!(!line.contains('\n'));
+        assert!(!line.contains('\r'));
+        assert!(line.ends_with("msg=\"first line\\nsecond line\\rfinal\""));
     }
 
     #[test]

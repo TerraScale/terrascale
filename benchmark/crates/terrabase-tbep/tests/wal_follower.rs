@@ -4,7 +4,7 @@
 //! appends to its own `-wal`, `fdatasync`s, and acks; promotion opens the
 //! follower's location under a new replica epoch with byte-identical rows.
 //!
-//! Stock SQLite restarts the WAL in place after every fully-checkpointed
+//! Stock `SQLite` restarts the WAL in place after every fully-checkpointed
 //! wave (the leader's between-waves passive checkpoint, then the next
 //! wave's first write: salt-1 increments, frames overwrite from frame
 //! zero), so generations rotate per commit wave and the steady state is
@@ -361,6 +361,6 @@ fn seed_generation_bootstraps_and_promotes_empty() {
 /// The header parser rejects garbage before any file is touched.
 #[test]
 fn wal_header_rejects_garbage() {
-    assert!(matches!(WalHeader::parse(&[0u8; 10]), Err(_)), "a truncated header is refused");
-    assert!(matches!(WalHeader::parse(&[0x99u8; 32]), Err(_)), "a non-SQLite magic is refused");
+    assert!(WalHeader::parse(&[0u8; 10]).is_err(), "a truncated header is refused");
+    assert!(WalHeader::parse(&[0x99u8; 32]).is_err(), "a non-SQLite magic is refused");
 }

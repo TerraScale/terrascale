@@ -234,6 +234,30 @@ pub(crate) fn load_or_create(
     Ok(owner)
 }
 
+/// Returns the stable binding carried by the owner record, when one exists.
+///
+/// `SQLite` stores this value alongside its schema so replacing the database
+/// file cannot silently turn into a new database under the old owner. The
+/// canonical record bytes are hashed rather than exposing the owner tuple to
+/// the storage module.
+pub(crate) fn database_binding(location: &Path) -> Result<Option<String>, OwnershipError> {
+    let path = location.join(FILE_NAME);
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(OwnershipError::InvalidLocation);
+        }
+        Ok(metadata) if !metadata.is_file() => {
+            return Err(OwnershipError::ForeignLocation);
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(OwnershipError::Unavailable),
+    }
+    let (owner, mode) = read_record(&path)?;
+    let record = encode_record(&owner, mode);
+    Ok(Some(format!("owner-{:016x}", checksum(&record))))
+}
+
 fn validate_location(location: &Path) -> Result<(), OwnershipError> {
     let metadata = fs::symlink_metadata(location).map_err(|_| OwnershipError::InvalidLocation)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -503,8 +527,7 @@ mod tests {
     #[test]
     fn owner_symlink_is_rejected() {
         let path = location("symlink");
-        let target = path.join("target");
-        fs::write(&target, b"not-owner").expect("target");
+        let target = path.join("missing-target");
         std::os::unix::fs::symlink(&target, path.join(FILE_NAME)).expect("symlink");
         assert_eq!(
             load_or_create(&path, None, OwnershipMode::LocalDevelopment),

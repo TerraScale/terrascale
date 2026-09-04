@@ -13,8 +13,8 @@ as native edge records. Edges have stable ULIDs under ADR 0027, CRDT field
 semantics, and engine-owned forward and reverse Auto-Indexes.
 
 The first release supports named forward and reverse one-hop queries and
-bounded multi-hop TQL traversal. Every traversal has explicit depth, result,
-work, and deadline limits. Reactive views track edge, endpoint,
+bounded multi-hop relationship traversal. Every traversal has explicit depth,
+result, work, and deadline limits. Reactive views track edge, endpoint,
 authorization, and relationship-index dependencies.
 
 Soft referential integrity is the default because it remains available during

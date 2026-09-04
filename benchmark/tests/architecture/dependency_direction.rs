@@ -26,7 +26,7 @@
 //! boundary accepted by GOAL.md PRG-P0-02. It sits above TBEP, depends only on
 //! TBEP, cluster composition, and the engine, and is a workspace member so
 //! every release gate builds and tests the daemon. The cluster's dependency
-//! on `terrabase-member-transport` records ADR 0023's ownership of bounded
+//! on `terrabase-member-transport` records ADR 0041's ownership of bounded
 //! QUIC replication lanes; both edges point strictly down the frozen layers.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -79,8 +79,8 @@ const LAYERS: &[(&str, u32)] = &[
 /// Review note (2026-09-03, issue #130): the S-05 opening deletion removed
 /// three edges. `terrabase-replication-core` lost `terrabase-crdt` and
 /// `terrabase` (the per-field LWW replica model and its in-process member
-/// stand-ins are deleted; the crate keeps the progress and Merkle
-/// anti-entropy kernels over `terrabase-causal` only), and
+/// stand-ins are deleted; the crate keeps the progress and range-reconciliation
+/// kernels over `terrabase-causal` only), and
 /// `terrabase-cluster` lost `terrabase-replication-core` (its lease-backed
 /// `DurableMember` adapter was the stand-in; the real WAL-frame follower
 /// and journal tailer attach through the `ProductionDataPlane` trait).
@@ -92,6 +92,14 @@ const LAYERS: &[(&str, u32)] = &[
 /// the fault-injectable `MemberTransport` seam. The edge points strictly
 /// down the frozen layer order (6 -> 3), and ADR 0041 (GOAL D-45: pooled
 /// QUIC member lanes carry the journal tailer) is the accepting record.
+///
+/// Review note (2026-09-03, E-6 / ADR 0044): `terrabase-tbep` also depends on
+/// `terrabase-replication-core` for the transport-free range-based set
+/// reconciliation kernel used by its journal-independent repair path. TBEP
+/// owns the member-host and transport integration; the kernel remains below
+/// that boundary and contains no host or network code. The edge points
+/// strictly down the frozen layer order (6 -> 4), and ADR 0044's range-based
+/// anti-entropy decision is the accepting record.
 const ALLOWED_EDGES: &[(&str, &str)] = &[
     ("terrabase-crdt", "terrabase-causal"),
     ("terrabase-replication-core", "terrabase-causal"),
@@ -101,6 +109,7 @@ const ALLOWED_EDGES: &[(&str, &str)] = &[
     ("terrabase-tbep", "terrabase-sync-core"),
     ("terrabase-tbep", "terrabase-cluster"),
     ("terrabase-tbep", "terrabase-member-transport"),
+    ("terrabase-tbep", "terrabase-replication-core"),
     ("terrabase-server", "terrabase"),
     ("terrabase-server", "terrabase-cluster"),
     ("terrabase-server", "terrabase-tbep"),
@@ -224,6 +233,12 @@ fn workspace_crate_dag_matches_the_frozen_allow_list() {
         "internal dependency edges missing from the frozen allow-list (each addition \
          requires a review note citing the accepting record): {}",
         unregistered.join(", "),
+    );
+    assert!(
+        graph.internal.get("terrabase-tbep").is_some_and(|providers| providers
+            .iter()
+            .any(|provider| provider == "terrabase-replication-core")),
+        "TBEP must retain its ADR 0044 range-reconciliation kernel dependency",
     );
     assert!(
         unknown_layer.is_empty(),

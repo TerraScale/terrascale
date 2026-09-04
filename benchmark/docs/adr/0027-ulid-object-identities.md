@@ -29,7 +29,7 @@ The following are not entity IDs and retain their domain-appropriate type:
 - collection names, field paths, and public route names;
 - causal counters, mutation ordinals, message sequences, versions, epochs,
   bucket numbers, offsets, lengths, and quantities;
-- BLAKE3 content digests, Merkle roots, schema digests, and definition digests;
+- BLAKE3 content digests, range fingerprints, schema digests, and definition digests;
   and
 - external-provider references such as Stripe or identity-provider values,
   which remain typed boundary data and never become TerraBase storage keys.
@@ -48,7 +48,7 @@ The normative value is the 128-bit ULID defined by the ULID specification:
 - fixed 26-character uppercase Crockford Base32 text representation.
 
 Private TBEP protobuf fields carry ULIDs as exactly 16 binary bytes. Public
-REST, logs, operator displays, and TQL literals use the canonical
+REST, logs, operator displays, and SQL literals use the canonical
 26-character uppercase text. Decoders reject overflow, incorrect length,
 ambiguous characters, non-canonical text, and non-16-byte binary values. One
 semantic value therefore has one accepted binary form and one accepted text

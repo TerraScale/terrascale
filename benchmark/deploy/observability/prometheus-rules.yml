@@ -221,69 +221,9 @@ groups:
           summary: TerraBase has fewer than two active Members
           description: The collector emits this series only for selected Regions; Region {{ $labels.region }} is below RF=2.
 
-  - name: terrabase-storage-and-background-work
+  - name: terrabase-background-work
     interval: 30s
     rules:
-      - alert: TerraBaseStorageCapacityMissing
-        expr: up{job="terrabase"} == 1 unless on(job, instance) terrabase_storage_capacity_bytes{tier="tier2"}
-        for: 15m
-        labels:
-          service: terrabase
-          severity: warning
-        annotations:
-          summary: TerraBase finite storage capacity is not reported
-          description: Storage utilization and headroom alerts are unavailable; restore the capacity collector instead of publishing a guessed value.
-
-      - alert: TerraBaseStorageUtilizationHigh
-        expr: terrabase_storage_bytes / clamp_min(terrabase_storage_capacity_bytes, 1) > 0.80 and terrabase_storage_capacity_bytes > 0
-        for: 30m
-        labels:
-          service: terrabase
-          severity: warning
-        annotations:
-          summary: TerraBase storage utilization is above 80 percent
-          description: Storage {{ $labels.tier }} is above the warning threshold; verify growth and prepare qualified expansion or movement.
-
-      - alert: TerraBaseStorageUtilizationCritical
-        expr: terrabase_storage_bytes / clamp_min(terrabase_storage_capacity_bytes, 1) > 0.90 and terrabase_storage_capacity_bytes > 0
-        for: 15m
-        labels:
-          service: terrabase
-          severity: critical
-        annotations:
-          summary: TerraBase storage utilization is above 90 percent
-          description: Storage {{ $labels.tier }} is above the critical threshold; use the qualified expansion or movement runbook and preserve WAL and segment evidence.
-
-      - alert: TerraBaseStorageErrors
-        expr: sum by (job, instance, tier, operation) (increase(terrabase_storage_errors_total[5m])) > 0
-        for: 1m
-        labels:
-          service: terrabase
-          severity: critical
-        annotations:
-          summary: TerraBase storage operation failed
-          description: Storage {{ $labels.operation }} failed on {{ $labels.tier }} in the last five minutes.
-
-      - alert: TerraBaseCompactionBacklogHigh
-        expr: terrabase_compaction_backlog_bytes / clamp_min(terrabase_storage_bytes, 1) > 0.20
-        for: 30m
-        labels:
-          service: terrabase
-          severity: warning
-        annotations:
-          summary: TerraBase compaction backlog is high
-          description: Pending compaction bytes on {{ $labels.tier }} exceed twenty percent of observed storage.
-
-      - alert: TerraBaseCompactionErrors
-        expr: increase(terrabase_compaction_runs_total{outcome="error"}[15m]) > 0
-        for: 1m
-        labels:
-          service: terrabase
-          severity: warning
-        annotations:
-          summary: TerraBase compaction failed
-          description: At least one compaction run failed in the last fifteen minutes.
-
       - alert: TerraBaseContinuousBackupStale
         expr: terrabase_backup_last_success_age_seconds{mode="continuous"} > 93600
         for: 15m
@@ -323,3 +263,36 @@ groups:
         annotations:
           summary: TerraBase usage-export frontier telemetry is missing
           description: The exporter has not published its durable frontier; verify collector wiring.
+
+  - name: terrabase-clock-and-egress
+    interval: 30s
+    rules:
+      - alert: TerraBaseClockOffsetHigh
+        expr: abs(terrabase_clock_offset_seconds) > 0.4
+        for: 5m
+        labels:
+          service: terrabase
+          severity: warning
+        annotations:
+          summary: TerraBase host clock offset is approaching the refusal line
+          description: Measured offset against OCI NTP exceeds 0.4 seconds in magnitude; new writes stop at 0.5 seconds (D-69). Verify chrony before the member refuses writes.
+
+      - alert: TerraBaseClockWritesRefused
+        expr: increase(terrabase_clock_write_refusals_total[5m]) > 0
+        for: 1m
+        labels:
+          service: terrabase
+          severity: critical
+        annotations:
+          summary: TerraBase refused writes over clock offset
+          description: The member refused new writes because its clock offset exceeded 0.5 seconds; HLCs are never minted from a suspect clock (D-69).
+
+      - alert: TerraBaseEgressMonthlyHigh
+        expr: sum by (job, instance, region) (increase(terrabase_egress_bytes_total[1h])) * 730 > 8000000000000
+        for: 6h
+        labels:
+          service: terrabase
+          severity: warning
+        annotations:
+          summary: TerraBase egress is on pace past 8 TB/month
+          description: Region {{ $labels.region }} is emitting billable OCI outbound above the 8 TB/month pace for six hours (D-66). Inspect replication, snapshot, and direct-read classes before the buffer burns.

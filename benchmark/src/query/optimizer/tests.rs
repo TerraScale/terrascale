@@ -25,7 +25,7 @@ use crate::query::{
 use crate::{
     engine::{CommitOutcome, Engine, EngineConfig},
     index::{IndexBuilder, IndexError},
-    operations::{QueryInput, TqlQueryText},
+    operations::QueryInput,
     types::{
         Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue,
         ExpectedVersion, LocalDurability, OperationId, TenantId, TenantScope,
@@ -935,17 +935,18 @@ fn plan_cache_hits_are_recorded_and_invalidate_on_catalog_change() {
 }
 
 #[test]
-fn tql_text_lowers_through_the_optimizer_seam() {
-    let (dir, engine) = open_engine("v1-lowering");
+fn typed_equality_selects_through_the_optimizer_seam() {
+    let (dir, engine) = open_engine("typed-selection");
     commit_users(&engine, "tenant-a", "op-1", &[5]);
-    let store = engine.queries();
-    let text = TqlQueryText::try_new("from users where age = 5").expect("valid text");
-    let plan = store.compile(QueryInput::tql(text)).expect("compiles");
-    let snapshot = engine.read_snapshot(&scope(&engine, "tenant-a")).expect("snapshot");
-    let result = store.execute(&plan, &snapshot).expect("executes");
+    let result = execute_dynamic(
+        &engine,
+        dynamic_spec("tenant-a", predicate(vec![equals("age", 5)]), Vec::new()),
+        "tenant-a",
+    )
+    .expect("executes");
     assert_eq!(result.matched(), 1);
     let records = records(&engine, "tenant-a");
-    assert_eq!(records.len(), 1, "the lowered plan selects through the same seam");
+    assert_eq!(records.len(), 1, "the typed plan selects through the same seam");
     assert_eq!(chosen_name(&records[0]), "Auto/users/ByAge");
 
     // The typed form of the identical shape lands on the identical identity.

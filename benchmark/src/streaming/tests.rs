@@ -24,7 +24,7 @@ use crate::families::{
     SchemaVersion, TimeSeriesAppend, TimeSeriesBatchWrite, TimeSeriesDelete, TimeSeriesRange,
     TombstoneCommand, TombstoneWrite,
 };
-use crate::operations::QueryInput;
+use crate::operations::{QueryInput, SqlQueryText};
 use crate::query::{
     IndexNamespace, OrderDirection, OrderingKey, QueryCondition, QueryOrdering, QueryPaging,
     QueryPredicate, QueryProjection, QuerySource, QuerySpec, StalenessMode, StalenessPolicy,
@@ -536,45 +536,8 @@ fn exact_document_selector_reaches_targets_beyond_window_probe_bound() {
 fn query_stream_reports_the_index_generation_it_used() {
     let (dir, engine) = open_engine("query-generation");
     let tenant_scope = scope(&engine, "t1");
-    // Ranks are assigned so canonical insertion order and rank order
-    // differ: d-3 ranks 3, d-1 ranks 4, d-2 ranks 5.
-    let documents = [("d-3", 3_i64), ("d-1", 4), ("d-2", 5)]
-        .iter()
-        .map(|(id, rank)| {
-            Document::new(
-                document_id(id),
-                collection("users"),
-                DocumentValue::Object(
-                    [("rank".to_owned(), DocumentValue::Integer(*rank))].into_iter().collect(),
-                ),
-            )
-        })
-        .collect::<Vec<_>>();
-    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
-    let mut transaction =
-        engine.begin(&tenant_scope, snapshot, operation("q-seed")).expect("begins");
-    for document in documents {
-        transaction.put(document, ExpectedVersion::Any).expect("stages");
-    }
-    assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
-
-    let spec = QuerySpec::try_new(
-        tenant("t1"),
-        QuerySource::try_new(collection("users")).expect("source"),
-        QueryPredicate::all(vec![QueryCondition::Exists { field: "rank".to_owned() }])
-            .expect("predicate"),
-        QueryOrdering::try_new(vec![
-            OrderingKey::try_new("rank", OrderDirection::Ascending).expect("key"),
-        ])
-        .expect("ordering"),
-        QueryProjection::whole_document(),
-        QueryPaging::try_new(0, Some(4)).expect("paging"),
-        StalenessPolicy::try_new(StalenessMode::Strict, vec![]).expect("staleness"),
-        deadline(),
-        Cancellation::new(),
-    )
-    .expect("spec");
-    let plan = engine.queries().compile(QueryInput::Typed(spec)).expect("compiles");
+    seed_query_generation(&engine, &tenant_scope);
+    let plan = query_generation_plan(&engine);
 
     let store = engine.streams();
     let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
@@ -601,7 +564,75 @@ fn query_stream_reports_the_index_generation_it_used() {
     assert_eq!(second.completion(), Some(StreamCompletion::EndOfStream));
     assert_eq!(second.items().len(), 1);
 
-    // A strict-namespaced plan cannot be served index-less: typed refusal.
+    assert_strict_query_refusal(&engine, &store, &tenant_scope, &snapshot);
+    assert_unbounded_query_refusal(&engine, &store, &tenant_scope, &snapshot);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn sql_query_stream_classification_matches_live_attach_contract() {
+    let (dir, engine) = open_engine("sql-stream-classification");
+    let tenant_scope = scope(&engine, "t1");
+    seed_query_generation(&engine, &tenant_scope);
+
+    let store = engine.streams();
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    assert_execute_only_query_refusal(&engine, &store, &tenant_scope, &snapshot);
+    assert_live_sql_query_accepted(&engine, &store, &tenant_scope, &snapshot);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+fn seed_query_generation(engine: &Engine, tenant_scope: &TenantScope) {
+    // Ranks are assigned so canonical insertion order and rank order differ.
+    let documents = [("d-3", 3_i64), ("d-1", 4), ("d-2", 5)]
+        .iter()
+        .map(|(id, rank)| {
+            Document::new(
+                document_id(id),
+                collection("users"),
+                DocumentValue::Object(
+                    [("rank".to_owned(), DocumentValue::Integer(*rank))].into_iter().collect(),
+                ),
+            )
+        })
+        .collect::<Vec<_>>();
+    let snapshot = engine.read_snapshot(tenant_scope).expect("snapshot");
+    let mut transaction =
+        engine.begin(tenant_scope, snapshot, operation("q-seed")).expect("begins");
+    for document in documents {
+        transaction.put(document, ExpectedVersion::Any).expect("stages");
+    }
+    assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+}
+
+fn query_generation_plan(engine: &Engine) -> crate::query::QueryPlan {
+    let spec = QuerySpec::try_new(
+        tenant("t1"),
+        QuerySource::try_new(collection("users")).expect("source"),
+        QueryPredicate::all(vec![QueryCondition::Exists { field: "rank".to_owned() }])
+            .expect("predicate"),
+        QueryOrdering::try_new(vec![
+            OrderingKey::try_new("rank", OrderDirection::Ascending).expect("key"),
+        ])
+        .expect("ordering"),
+        QueryProjection::whole_document(),
+        QueryPaging::try_new(0, Some(4)).expect("paging"),
+        StalenessPolicy::try_new(StalenessMode::Strict, vec![]).expect("staleness"),
+        deadline(),
+        Cancellation::new(),
+    )
+    .expect("spec");
+    engine.queries().compile(QueryInput::Typed(spec)).expect("compiles")
+}
+
+fn assert_strict_query_refusal(
+    engine: &Engine,
+    store: &StreamStore<'_>,
+    tenant_scope: &TenantScope,
+    snapshot: &ReadSnapshot,
+) {
     let strict = QuerySpec::try_new(
         tenant("t1"),
         QuerySource::try_new(collection("users")).expect("source"),
@@ -618,16 +649,21 @@ fn query_stream_reports_the_index_generation_it_used() {
         Cancellation::new(),
     )
     .expect("spec");
-    let strict_plan = engine.queries().compile(QueryInput::Typed(strict)).expect("compiles");
-    let strict_source = StreamSource::Query(strict_plan);
-    let strict_cursor = store.open(&tenant_scope, &snapshot, strict_source.clone()).expect("opens");
+    let plan = engine.queries().compile(QueryInput::Typed(strict)).expect("compiles");
+    let source = StreamSource::Query(plan);
+    let cursor = store.open(tenant_scope, snapshot, source.clone()).expect("opens");
     assert_eq!(
-        pull(&store, &tenant_scope, &snapshot, &strict_source, strict_cursor, 2).unwrap_err(),
+        pull(store, tenant_scope, snapshot, &source, cursor, 2).unwrap_err(),
         StreamError::InvalidSource
     );
+}
 
-    // A limit-free plan would materialize every match per batch, so it is
-    // not a streamable source.
+fn assert_unbounded_query_refusal(
+    engine: &Engine,
+    store: &StreamStore<'_>,
+    tenant_scope: &TenantScope,
+    snapshot: &ReadSnapshot,
+) {
     let unbounded = QuerySpec::try_new(
         tenant("t1"),
         QuerySource::try_new(collection("users")).expect("source"),
@@ -640,13 +676,67 @@ fn query_stream_reports_the_index_generation_it_used() {
         Cancellation::new(),
     )
     .expect("spec");
-    let unbounded_plan = engine.queries().compile(QueryInput::Typed(unbounded)).expect("compiles");
+    let plan = engine.queries().compile(QueryInput::Typed(unbounded)).expect("compiles");
     assert_eq!(
-        store.open(&tenant_scope, &snapshot, StreamSource::Query(unbounded_plan)).unwrap_err(),
+        store.open(tenant_scope, snapshot, StreamSource::Query(plan)).unwrap_err(),
         StreamError::InvalidSource
     );
+}
 
-    std::fs::remove_dir_all(&dir).ok();
+fn assert_execute_only_query_refusal(
+    engine: &Engine,
+    store: &StreamStore<'_>,
+    tenant_scope: &TenantScope,
+    snapshot: &ReadSnapshot,
+) {
+    for (text, operator) in [
+        ("SELECT * FROM users JOIN orders ON users._id = orders._id", "join"),
+        ("SELECT count(*) FROM users", "aggregate"),
+        ("SELECT row_number() OVER (ORDER BY _id) FROM users", "window"),
+        ("SELECT * FROM users WHERE _id IN (SELECT _id FROM orders)", "subquery"),
+        ("WITH recent AS (SELECT * FROM users) SELECT * FROM recent", "subquery"),
+    ] {
+        let plan = engine
+            .queries()
+            .compile(QueryInput::sql(SqlQueryText::try_new(text).expect("valid execute-only SQL")))
+            .expect("execute-only SQL compiles");
+        match store.open(tenant_scope, snapshot, StreamSource::Query(plan)).unwrap_err() {
+            StreamError::NotSubscribable(refusal) => {
+                assert_eq!(refusal.operator(), operator, "{text}");
+                assert!(refusal.fix().contains("execute()"), "{text}");
+            }
+            other => panic!("execute-only SQL returned the wrong stream refusal: {other:?}"),
+        }
+    }
+}
+
+fn assert_live_sql_query_accepted(
+    engine: &Engine,
+    store: &StreamStore<'_>,
+    tenant_scope: &TenantScope,
+    snapshot: &ReadSnapshot,
+) {
+    let plan = engine
+        .queries()
+        .compile(QueryInput::sql(
+            SqlQueryText::try_new("SELECT * FROM users WHERE rank >= 3 ORDER BY rank DESC LIMIT 2")
+                .expect("valid live SQL"),
+        ))
+        .expect("live SQL compiles");
+    assert_eq!(plan.sql_execute_only_operator(), None);
+    let source = StreamSource::Query(plan);
+    let cursor = store.open(tenant_scope, snapshot, source.clone()).expect("live SQL opens");
+    let batch = pull(store, tenant_scope, snapshot, &source, cursor, 2).expect("live SQL serves");
+    let ids: Vec<&str> = batch
+        .items()
+        .iter()
+        .map(|item| match item {
+            StreamItem::QueryRow(row) => row.document().id().as_str(),
+            other => panic!("live SQL stream yielded a non-row item: {other:?}"),
+        })
+        .collect();
+    assert_eq!(ids, ["d-2", "d-1"]);
+    assert_eq!(batch.completion(), Some(StreamCompletion::EndOfStream));
 }
 
 #[test]

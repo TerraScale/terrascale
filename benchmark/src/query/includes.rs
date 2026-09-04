@@ -69,7 +69,7 @@ pub const MAX_INCLUDE_COUNTER_NAMES: usize = 32;
 /// The execution window a family read gets when the plan itself carries no
 /// deadline.
 ///
-/// The V1-compatible form normalizes without a deadline or a cancellation,
+/// The SQL text form normalizes without a deadline or a cancellation,
 /// but the family seam requires both for every read. This window is the
 /// include's own bound in that case, not a claim about how long a read
 /// takes.

@@ -17,7 +17,7 @@ use rusqlite::Connection;
 
 use crate::engine::{CommitError, CommitOutcome, DurableResolution, Engine, EngineConfig};
 use crate::storage::intent::{CommitIntent, CommitResult, StagedWrite};
-use crate::storage::{FaultPoint, StorageOpenError, StoragePort, write_set_digest};
+use crate::storage::{DbUsageFact, FaultPoint, StorageOpenError, StoragePort, write_set_digest};
 use crate::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
     OperationId, StorageSequence, TenantId, TenantScope,
@@ -222,6 +222,78 @@ fn engine_round_trips_and_persists_across_reopen() {
 }
 
 #[test]
+fn journal_rows_keep_origin_counters_and_tombstones_across_reopen() {
+    let (dir, engine) = open_sqlite_engine("anti-entropy-origin");
+    assert!(matches!(
+        commit_put(
+            &engine,
+            "tenant-a",
+            "origin-put",
+            "doc-1",
+            "orders",
+            "one",
+            ExpectedVersion::Any,
+            LocalDurability::Synced,
+        ),
+        CommitOutcome::Committed(_)
+    ));
+    assert!(matches!(
+        commit_delete(
+            &engine,
+            "tenant-a",
+            "origin-delete",
+            "doc-1",
+            ExpectedVersion::Any,
+            LocalDurability::Synced,
+        ),
+        CommitOutcome::Committed(_)
+    ));
+    drop(engine);
+
+    let tenant = TenantId::try_new("tenant-a").expect("valid tenant");
+    let reopened = SqliteStorage::open(&dir).expect("storage reopens");
+    let first = reopened.journal_rows(&tenant, StorageSequence::new(0), 16);
+    assert_eq!(first.len(), 2);
+    assert!(first.iter().all(|row| !row.origin.is_empty() && row.origin_sequence > 0));
+    assert!(first.iter().all(|row| !row.canonical.is_empty()));
+    assert_ne!(first[0].origin_sequence, first[1].origin_sequence);
+    let second = reopened.journal_rows(&tenant, StorageSequence::new(0), 16);
+    assert_eq!(first, second, "reopen preserves journal identities and bytes");
+}
+
+#[test]
+fn migration_backfills_local_origin_counter_without_global_identity() {
+    let (dir, engine) = open_sqlite_engine("anti-entropy-migration");
+    assert!(matches!(
+        commit_put(
+            &engine,
+            "tenant-a",
+            "migration-put",
+            "doc-1",
+            "orders",
+            "one",
+            ExpectedVersion::Any,
+            LocalDurability::Synced,
+        ),
+        CommitOutcome::Committed(_)
+    ));
+    drop(engine);
+    let storage = SqliteStorage::open(&dir).expect("storage opens");
+    storage
+        .raw_writer_connection()
+        .execute("UPDATE documents SET origin = '', origin_seq = 0", [])
+        .expect("legacy row shape is writable");
+    drop(storage);
+
+    let reopened = SqliteStorage::open(&dir).expect("migration reopens");
+    let tenant = TenantId::try_new("tenant-a").expect("valid tenant");
+    let rows = reopened.journal_rows(&tenant, StorageSequence::new(0), 16);
+    assert_eq!(rows.len(), 1);
+    assert!(!rows[0].origin.is_empty());
+    assert_eq!(rows[0].origin_sequence, 1);
+}
+
+#[test]
 fn faulted_batch_leaves_zero_divergence() {
     let (dir, engine) = open_sqlite_engine("crash-atomicity");
     committed_sequence(commit_put(
@@ -331,6 +403,46 @@ fn idempotent_replay_and_digest_conflict() {
         "the conflicting write never landed"
     );
     drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn sequence_only_delete_is_durable_across_reopen() {
+    let (dir, engine) = open_sqlite_engine("sequence-only-delete");
+    let first = committed_sequence(commit_delete(
+        &engine,
+        "tenant-a",
+        "op-missing-delete",
+        "missing",
+        ExpectedVersion::Any,
+        LocalDurability::Synced,
+    ));
+    assert_eq!(first, 1, "the acknowledged no-row delete publishes sequence one");
+    {
+        let storage = engine.storage.lock().expect("storage lock");
+        assert_eq!(storage.port.published_state().0.get(), first);
+        assert_eq!(storage.port.metering_fact("tenant-a").expect("metering fact").seq_hi(), first);
+        assert_eq!(storage.port.journaled_high_water(), None, "no document row was written");
+    }
+    drop(engine);
+
+    let reopened = reopen_sqlite_engine(&dir);
+    let second = committed_sequence(commit_put(
+        &reopened,
+        "tenant-a",
+        "op-after-missing-delete",
+        "present",
+        "users",
+        "value",
+        ExpectedVersion::New,
+        LocalDurability::Synced,
+    ));
+    assert_eq!(second, 2, "the next commit cannot reuse the sequence-only publication");
+    let storage = reopened.storage.lock().expect("storage lock");
+    assert_eq!(storage.port.published_state().0.get(), second);
+    assert_eq!(storage.port.journaled_high_water(), Some(StorageSequence::new(second)));
+    drop(storage);
+    drop(reopened);
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -880,6 +992,46 @@ fn a_non_sqlite_database_file_fails_closed() {
     std::fs::remove_dir_all(&foreign).ok();
 }
 
+#[test]
+fn replacing_an_owned_sqlite_file_is_rejected_without_mutation() {
+    let (dir, engine) = open_sqlite_engine("replacement-binding");
+    drop(engine);
+    let database = super::database_file(&dir);
+    std::fs::remove_file(&database).expect("replace the database file");
+    let foreign = Connection::open(&database).expect("foreign sqlite file");
+    foreign.execute("CREATE TABLE foreign_data (value TEXT)", []).expect("foreign schema");
+    drop(foreign);
+    let before = std::fs::read(&database).expect("foreign bytes");
+
+    assert_eq!(SqliteStorage::open(&dir).err(), Some(StorageOpenError::Unavailable));
+    assert_eq!(std::fs::read(&database).expect("foreign bytes remain"), before);
+    assert!(!database.with_extension("sqlite3-wal").exists(), "rejection did not create a WAL");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn authentic_legacy_sqlite_core_schema_is_bound_during_upgrade() {
+    let (dir, engine) = open_sqlite_engine("legacy-binding");
+    drop(engine);
+    let database = super::database_file(&dir);
+    let connection = Connection::open(&database).expect("legacy sqlite file");
+    connection
+        .execute("DELETE FROM meta WHERE key = ?1", [super::SCHEMA_BINDING_KEY])
+        .expect("remove the pre-binding marker");
+    drop(connection);
+
+    let storage = SqliteStorage::open(&dir).expect("legacy schema migrates");
+    let bound: String = storage
+        .raw_writer_connection()
+        .query_row("SELECT value FROM meta WHERE key = ?1", [super::SCHEMA_BINDING_KEY], |row| {
+            row.get(0)
+        })
+        .expect("migration writes the binding");
+    assert!(bound.starts_with("owner-"), "the upgraded file is owner-bound");
+    drop(storage);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 // ---- S-01 gates: one row, the counter cache -------------------------------
 
 #[test]
@@ -955,6 +1107,226 @@ fn usage_counters_flush_per_wave_and_reconcile_from_the_journal() {
         assert_eq!(reconciled, (3, 3), "open reconciles the counter from the journal");
     }
     drop(reopened);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// ---- E-9: metering facts, cursor export, chaos reconcile (D-16/D-42) -----
+
+use crate::storage::billed_writes_for_bytes;
+
+/// Commits one write set as the named tenant through the storage port.
+fn commit_as(
+    storage: &mut dyn StoragePort,
+    tenant_name: &str,
+    operation: &str,
+    writes: Vec<StagedWrite>,
+) -> CommitResult {
+    let tenant = TenantId::try_new(tenant_name).expect("valid tenant");
+    let intent = CommitIntent {
+        digest: write_set_digest(&tenant, &writes),
+        tenant,
+        operation: OperationId::try_new(operation).expect("valid identifier"),
+        snapshot_sequence: storage.published_state().0,
+        durability: LocalDurability::Written,
+        usage_admission: None,
+        hlc: 0,
+        writes,
+    };
+    storage.commit(intent)
+}
+
+fn assert_metering_unit_rule() {
+    // The D-16 unit rule first, as a pure function with no storage.
+    assert_eq!(billed_writes_for_bytes(0), 1, "a tombstone bills its one delete");
+    assert_eq!(billed_writes_for_bytes(1), 1, "a small body bills one write");
+    assert_eq!(billed_writes_for_bytes(4096), 1, "exactly 4 KiB bills one write");
+    assert_eq!(billed_writes_for_bytes(4097), 2, "one byte over bills two writes");
+}
+
+fn assert_metering_retries_and_large_write(
+    storage: &mut dyn StoragePort,
+) -> (DbUsageFact, DbUsageFact) {
+    // One small put flushes one (db, seq_hi, writes, bytes) fact per wave.
+    let first = stored_sequence(&commit(
+        storage,
+        "op-meter-1",
+        vec![put(document("doc", "users", "value"), ExpectedVersion::New)],
+    ));
+    let fact = storage.metering_fact("tenant-a").expect("the wave flushed the fact");
+    assert_eq!(fact.db(), "tenant-a", "the fact names its database");
+    assert_eq!(fact.seq_hi(), first, "the fact covers the wave's sequence");
+    assert_eq!(fact.writes(), 1, "one small put bills one write");
+    assert!(fact.bytes() > 0, "bytes carry the stored body");
+
+    // RETRIES: the same operation identity replays its receipt and bills
+    // nothing twice — exactly-once billing under client retries.
+    let retry = commit(
+        storage,
+        "op-meter-1",
+        vec![put(document("doc", "users", "value"), ExpectedVersion::New)],
+    );
+    assert_eq!(stored_sequence(&retry), first, "the retry replays the original receipt");
+    assert_eq!(
+        storage.metering_fact("tenant-a").expect("fact"),
+        fact,
+        "the retry bills nothing twice"
+    );
+
+    // A body over 4 KiB bills two write units through the same wave flush.
+    let big = "x".repeat(5000);
+    commit(
+        storage,
+        "op-meter-big",
+        vec![put(document("big", "users", &big), ExpectedVersion::New)],
+    );
+    let grown = storage.metering_fact("tenant-a").expect("fact");
+    assert_eq!(grown.writes(), fact.writes() + 2, "5 KiB bills two write units");
+    (fact, grown)
+}
+
+fn assert_metering_split_and_cursor(storage: &mut dyn StoragePort, grown: &DbUsageFact) {
+    // SPLITS: a second database's rows bill their own fact (E-11 moves key
+    // ranges with their rows; per-database facts stay isolated either way).
+    commit_as(
+        storage,
+        "tenant-b",
+        "op-b-1",
+        vec![put(document("doc", "users", "other"), ExpectedVersion::New)],
+    );
+    commit_as(
+        storage,
+        "tenant-b",
+        "op-b-2",
+        vec![delete(Some("users"), "doc", ExpectedVersion::Exact(1))],
+    );
+    let fact_b = storage.metering_fact("tenant-b").expect("tenant-b bills its own fact");
+    assert_eq!(fact_b.writes(), 2, "put plus tombstone bill two writes");
+    assert!(fact_b.bytes() > 0, "the tombstone adds no bytes to the put's");
+    assert_eq!(
+        storage.metering_fact("tenant-a").expect("fact").writes(),
+        grown.writes(),
+        "tenant-b rows never move tenant-a"
+    );
+
+    // CURSOR: the export walks per-database facts in db order.
+    let (first_page, cursor) = storage.metering_facts_page(None, 1);
+    assert_eq!(first_page.len(), 1, "the page honors its limit");
+    assert_eq!(first_page[0].db(), "tenant-a", "pages run in db order");
+    let cursor = cursor.expect("one more database follows");
+    let (second_page, end) = storage.metering_facts_page(Some(&cursor), 1);
+    assert_eq!(second_page.len(), 1, "the cursor resumes after tenant-a");
+    assert_eq!(second_page[0].db(), "tenant-b", "the second page carries tenant-b");
+    assert_eq!(end, None, "the cursor ends after the last database");
+}
+
+fn assert_metering_reads_and_live_bytes(storage: &mut dyn StoragePort, grown: &DbUsageFact) {
+    // READ COUNTERS: served reads meter for guards and attribution only.
+    let reads_before = storage.read_count("tenant-a");
+    let snapshot = storage.published_state().0;
+    let _ = storage.read_document_at(
+        snapshot,
+        &tenant(),
+        &DocumentId::try_new("doc").expect("identifier"),
+    );
+    let _ = storage.documents_at(snapshot, &tenant());
+    assert_eq!(
+        storage.read_count("tenant-a"),
+        reads_before + 2,
+        "two served reads counted for guards"
+    );
+    assert_eq!(
+        storage.metering_fact("tenant-a").expect("fact").writes(),
+        grown.writes(),
+        "reads never bill"
+    );
+
+    // LIVE BYTES: the D-16 storage snapshot counts live documents only —
+    // retained history bills through the fact's bytes, never here.
+    let live_a = storage.metering_live_bytes("tenant-a");
+    assert!(live_a > 0, "live documents carry storage bytes");
+    assert!(
+        live_a <= storage.metering_fact("tenant-a").expect("fact").bytes(),
+        "live bytes never exceed retained bytes"
+    );
+    assert_eq!(
+        storage.metering_live_bytes("tenant-b"),
+        0,
+        "the tombstoned key carries no live bytes"
+    );
+}
+
+fn assert_metering_restart_reconciles(dir: &Path, storage: SqliteStorage) {
+    // RESTARTS: a torn counter reconciles from the journal on open.
+    let expected_a = storage.metering_fact("tenant-a").expect("fact");
+    let expected_b = storage.metering_fact("tenant-b").expect("fact");
+    {
+        let connection = storage.raw_writer_connection();
+        connection
+            .execute("UPDATE metering_db_facts SET seq_hi = 0, writes = 0, bytes = 0", [])
+            .expect("tamper lands");
+    }
+    drop(storage);
+    let reopened = SqliteStorage::open(dir).expect("reopens");
+    assert_eq!(
+        reopened.metering_fact("tenant-a").expect("reconciled"),
+        expected_a,
+        "open reconciles tenant-a from the journal"
+    );
+    assert_eq!(
+        reopened.metering_fact("tenant-b").expect("reconciled"),
+        expected_b,
+        "open reconciles tenant-b from the journal"
+    );
+    drop(reopened);
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn metering_chaos_retries_splits_restarts_reconcile() {
+    assert_metering_unit_rule();
+    let (dir, mut storage) = sqlite_store("metering-chaos");
+    let (_, grown) = assert_metering_retries_and_large_write(&mut storage);
+    assert_metering_split_and_cursor(&mut storage, &grown);
+    assert_metering_reads_and_live_bytes(&mut storage, &grown);
+    assert_metering_restart_reconciles(&dir, storage);
+}
+
+#[test]
+fn metering_engine_export_seam_is_tenant_isolated() {
+    let (dir, engine) = open_sqlite_engine("metering-engine");
+    commit_put(
+        &engine,
+        "tenant-a",
+        "op-eng-1",
+        "doc-1",
+        "users",
+        "value",
+        ExpectedVersion::New,
+        LocalDurability::Written,
+    );
+    let scope_a = tenant_scope(&engine, "tenant-a");
+    let scope_b = tenant_scope(&engine, "tenant-b");
+    let fact = engine.metering_fact(&scope_a, "tenant-a").expect("the caller reads its own fact");
+    assert_eq!(fact.writes(), 1, "one small put bills one write");
+    assert_eq!(engine.metering_fact(&scope_a, "tenant-b"), None, "cross-tenant fact reads refuse");
+    assert_eq!(
+        engine.metering_fact(&scope_b, "tenant-b"),
+        None,
+        "a database with no rows has no fact"
+    );
+    let (page, next) = engine.metering_facts_page(&scope_a, None, 10);
+    assert_eq!(page.len(), 1, "the isolated page carries the own fact");
+    assert_eq!(page[0].db(), "tenant-a", "isolation holds through the cursor");
+    assert_eq!(next, None, "nothing follows the single isolated fact");
+    let (empty, _) = engine.metering_facts_page(&scope_b, None, 10);
+    assert!(empty.is_empty(), "the empty database pages empty");
+    assert!(engine.metering_live_bytes(&scope_a) > 0, "live bytes serve through the seam");
+    let _ = read_document(&engine, "tenant-a", "doc-1");
+    assert!(
+        engine.metering_read_count(&scope_a) >= 1,
+        "engine reads count through the storage seam"
+    );
+    drop(engine);
     std::fs::remove_dir_all(&dir).ok();
 }
 

@@ -795,7 +795,7 @@ struct QueryClauses {
 
 /// A validated typed query specification.
 ///
-/// This is the typed input form of the one compile seam; the V1-compatible
+/// This is the typed input form of the one compile seam; the SQL
 /// text form normalizes to the same internal model.
 #[derive(Clone, Debug, PartialEq)]
 pub struct QuerySpec {

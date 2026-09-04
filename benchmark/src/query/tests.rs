@@ -2,11 +2,10 @@
 //!
 //! These tests use `TenantScope::from_parts`, which mirrors Platform's
 //! production role of creating a validated scope, because `TenantScope` has
-//! no public constructor by design. The V1-compatible text is exercised
-//! through the crate-private raw-text compile entry, because the public
-//! `TqlQueryText::try_new` constructor is still the declaration-only W3-0
-//! placeholder; that wiring is the integrator action recorded in the design
-//! record. No test inspects raw pages, WAL bytes, or private lock state.
+//! no public constructor by design. SQL is the only query language (D-78):
+//! text is exercised through the validated [`SqlQueryText`] front end and
+//! the typed specification surface; supported SQL lowers through the same
+//! planner. No test inspects raw pages, WAL bytes, or private lock state.
 
 use std::{
     collections::BTreeMap,
@@ -16,17 +15,15 @@ use std::{
 };
 
 use super::{
-    GenerationView, GrammarVersion, IndexNamespace, ObservedGeneration, OrderDirection,
-    OrderingKey, QueryCondition, QueryError, QueryOrdering, QueryPaging, QueryPredicate,
-    QueryProjection, QuerySource, QuerySpec, QueryStore, StalenessMode, StalenessPolicy,
-    TqlParameters, VectorSearchRequest,
+    GenerationView, IndexNamespace, ObservedGeneration, OrderDirection, OrderingKey,
+    QueryCondition, QueryError, QueryOrdering, QueryPaging, QueryPredicate, QueryProjection,
+    QuerySource, QuerySpec, QueryStore, StalenessMode, StalenessPolicy, VectorSearchRequest,
     execute::execute_with_view,
     spec::{MAX_PAGE_LIMIT, validate_field_name},
-    tql,
 };
 use crate::{
     engine::{AutoIndexRecommendation, CommitOutcome, DescriptorCoverage, Engine, EngineConfig},
-    operations::{QueryInput, QueryInputError, RequestValidationError, TqlQueryText},
+    operations::{QueryInput, QueryInputError, RequestValidationError, SqlQueryText},
     types::{
         Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue,
         ExpectedVersion, IndexGenerationSet, LocalDurability, OperationId, ReadSnapshot,
@@ -692,7 +689,7 @@ fn automatic_index_reads_are_collection_scoped_and_fall_back_for_an_uncovered_sn
 }
 
 #[test]
-fn query_input_normalizes_typed_and_v1_text_through_one_compile_seam() {
+fn query_input_normalizes_typed_and_sql_text_through_one_compile_seam() {
     let (dir, engine) = open_engine("one-seam");
     let tenant_scope = scope(&engine, "tenant-a");
     commit_documents(
@@ -735,27 +732,16 @@ fn query_input_normalizes_typed_and_v1_text_through_one_compile_seam() {
         staleness(StalenessMode::Strict, Vec::new()),
     );
     let typed_plan = store.compile(QueryInput::typed(typed)).expect("compiles");
-    // The same query as TQL text, through the same seam. The public
-    // constructor validates the text before it reaches the seam.
-    let text_plan = store
-        .compile(QueryInput::tql(
-            TqlQueryText::try_new(
-                "select name, age from users where age >= 30 order by age desc limit 2 offset 0",
-            )
-            .expect("public constructor accepts the grammar"),
-        ))
-        .expect("parses and lowers through the one full parser");
-    assert_eq!(text_plan.tenant_claim(), None, "the grammar carries no tenant claim");
+    // The same query as SQL text lowers into the same immutable plan.
+    let text = SqlQueryText::try_new(
+        "SELECT name, age FROM users WHERE age >= 30 ORDER BY age DESC LIMIT 2 OFFSET 0",
+    )
+    .expect("the front end accepts read-only SQL");
+    let sql_plan = store.compile(QueryInput::sql(text)).expect("SQL lowers");
+    let sql_result = store.execute(&sql_plan, &snapshot).expect("SQL executes");
+    assert_eq!(row_ids(&sql_result), ["doc-2", "doc-1"]);
 
     let typed_result = store.execute(&typed_plan, &snapshot).expect("executes");
-    let text_result = store.execute(&text_plan, &snapshot).expect("executes");
-    assert_eq!(row_ids(&typed_result), row_ids(&text_result));
-    assert_eq!(typed_result.matched(), text_result.matched());
-    assert_eq!(
-        typed_result.rows()[0].projected(),
-        text_result.rows()[0].projected(),
-        "both forms must project identically"
-    );
     assert_eq!(row_ids(&typed_result), ["doc-2", "doc-1"]);
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();
@@ -765,72 +751,47 @@ fn query_input_normalizes_typed_and_v1_text_through_one_compile_seam() {
 fn query_input_rejects_unsupported_or_generic_query_text() {
     let (dir, engine) = open_engine("reject-text");
     let store = engine.queries();
-    // Grammar-level rejections: the text does not parse under `tql/1.0`,
-    // so both the public constructor and the compile seam refuse it.
+    // Front-end rejections: the text is not read-only SQL, so both the
+    // public constructor and the compile seam refuse it.
     let unparsable = [
-        "from users sort by age",
-        "from users order by age select name limit 2",
-        "from users limit 0",
-        "from users offset -1",
-        "from users where name = 'ada' extra",
-        "from",
-        "where name = 'ada'",
+        "FROM users SORT BY age",
+        "SELECT * FROM users; DROP TABLE users",
+        "DROP TABLE users",
+        "INSERT INTO users VALUES (1)",
+        "UPDATE users SET age = 2",
+        "DELETE FROM users",
+        "PRAGMA journal_mode=WAL",
+        "ATTACH DATABASE 'x' AS y",
+        "SELECT",
+        "WITH",
     ];
     for text in unparsable {
         assert_eq!(
-            super::validate_tql_text(text).unwrap_err(),
+            super::validate_sql_text(text).unwrap_err(),
             QueryInputError::UnsupportedGrammar,
             "{text}"
         );
         assert_eq!(
-            TqlQueryText::try_new(text).unwrap_err(),
+            SqlQueryText::try_new(text).unwrap_err(),
             QueryInputError::UnsupportedGrammar,
             "the public constructor rejects the same text before the seam: {text}"
         );
-        assert_eq!(
-            store.compile_tql_text(text).unwrap_err(),
-            QueryError::InvalidSpec,
-            "unsupported grammar must be rejected: {text}"
-        );
+        // Unvalidatable text never reaches the planner.
     }
-    // Grammar-valid but seam-unlowerable: the constructor accepts the text
-    // (the grammar defines it) and the compile seam fails closed instead of
-    // degrading the plan.
-    let unlodable = [
-        "from users where name = 'ada' or age = 2",
-        "from users where name = \"ada\"",
-        "from orders include customer",
-        "select distinct status from orders",
-    ];
-    for text in unlodable {
-        assert!(super::validate_tql_text(text).is_ok(), "the full grammar defines: {text}");
-        assert_eq!(
-            store.compile_tql_text(text).unwrap_err(),
-            QueryError::InvalidSpec,
-            "the seam fails closed on: {text}"
-        );
-    }
-    assert_eq!(super::validate_tql_text("   ").unwrap_err(), QueryInputError::EmptyText);
-    // The full parser enforces the shared identifier discipline itself: an
-    // over-long collection name is a typed invalid identifier at validation
-    // and an invalid specification at compile.
-    let long_collection = format!("from {} where a = 1", "x".repeat(300));
-    assert_eq!(
-        super::validate_tql_text(&long_collection).unwrap_err(),
-        QueryInputError::InvalidIdentifier
-    );
-    assert_eq!(store.compile_tql_text(&long_collection).unwrap_err(), QueryError::InvalidSpec);
-    // The full grammar accepts strictly more than the deleted subset did:
-    // case-insensitive keywords, `select *` as the whole-document
-    // projection, and parenthesized single comparisons all compile.
+    // Read-only SQL the front end accepts compiles into an executable plan.
     for text in [
         "SELECT * FROM users",
         "select * from users",
-        "from users where (name = 'ada')",
-        "from users where name = 'o''brien'",
+        "SELECT name FROM users WHERE name = 'ada'",
+        "WITH recent AS (SELECT * FROM users) SELECT * FROM recent",
+        "EXPLAIN SELECT * FROM users",
     ] {
-        assert!(store.compile_tql_text(text).is_ok(), "the full grammar accepts: {text}");
+        assert!(super::validate_sql_text(text).is_ok(), "the front end accepts: {text}");
+        let result =
+            store.compile(QueryInput::sql(SqlQueryText::try_new(text).expect("valid text")));
+        assert!(result.is_ok(), "the planner accepts execute-only read shapes: {text}");
     }
+    assert_eq!(super::validate_sql_text("   ").unwrap_err(), QueryInputError::EmptyText);
     // Generic query text cannot enter through the typed form: it has no
     // free-text channel at all. Identifiers still reject control characters,
     // and the reserved family collection is not a query source.
@@ -1259,34 +1220,25 @@ fn query_rejects_a_wrong_tenant_scope() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn tql_text_lowers_into_typed_clauses_through_the_one_parser() {
-    let query = tql::parse(
-        GrammarVersion::CURRENT,
-        "select name, age from users where exists(flag) and age >= 30 and missing(note) order by age desc, name limit 10 offset 5",
-        &TqlParameters::new(),
+fn sql_text_validates_through_the_read_only_front_end() {
+    use super::sql;
+    // The front end admits one read-only statement and classifies its shape;
+    // planning that tree is E-4.
+    let parsed = sql::parse(
+        "SELECT name, age FROM users WHERE age >= 30 ORDER BY age DESC LIMIT 10",
+        16 * 1024,
     )
-    .expect("parses the grammar");
-    let clauses = tql::lower_clauses(&query, &TqlParameters::new()).expect("lowers");
-    assert_eq!(clauses.source.collection().map(CollectionName::as_str), Some("users"));
-    assert_eq!(clauses.predicate.conditions().len(), 3);
-    assert_eq!(clauses.ordering.keys().len(), 2);
-    assert_eq!(clauses.ordering.keys()[0].field(), "age");
-    assert_eq!(clauses.ordering.keys()[0].direction(), OrderDirection::Descending);
-    assert_eq!(clauses.ordering.keys()[1].direction(), OrderDirection::Ascending);
-    assert_eq!(clauses.paging.offset(), 5);
-    assert_eq!(clauses.paging.limit(), Some(10));
-    assert_eq!(clauses.projection.selected(), Some(&["name".to_owned(), "age".to_owned()][..]));
-    // A `from`-only query is the minimal valid form, and the doubled-quote
-    // escape is a literal quote inside the string.
-    assert!(tql::parse(GrammarVersion::CURRENT, "from users", &TqlParameters::new()).is_ok());
-    assert!(
-        tql::parse(
-            GrammarVersion::CURRENT,
-            "from users where name = 'o''brien'",
-            &TqlParameters::new()
-        )
-        .is_ok()
-    );
+    .expect("parses read-only SQL");
+    assert_eq!(parsed.kind(), sql::SqlStatementKind::Select);
+    let with = sql::parse("WITH recent AS (SELECT * FROM users) SELECT * FROM recent", 16 * 1024)
+        .expect("parses WITH");
+    assert_eq!(with.kind(), sql::SqlStatementKind::With);
+    let explain = sql::parse("EXPLAIN SELECT * FROM users", 16 * 1024).expect("parses EXPLAIN");
+    assert_eq!(explain.kind(), sql::SqlStatementKind::Explain);
+    // Parameters stay out of band: the tree carries no values.
+    let parameters =
+        sql::SqlParameters::try_new(&[("min_age", DocumentValue::Integer(30))]).expect("binds");
+    assert!(parameters.contains("min_age"));
 }
 
 #[test]
@@ -2432,8 +2384,8 @@ fn random_with_seed_orders_deterministically_per_seed() {
 /// document whose identity the path reads, and the projected value comes
 /// from that source document. Serving a projection from stored index fields is the
 /// GAP-Q6-gated half and does not exist here. A reference that resolves to
-/// no document binds null (docs/tql/spec.md Section 4.2), and an absent
-/// field of a resolved reference is omitted, staying distinct from a
+/// no document binds null (the reference contract V1's id-lookup `LOAD`
+/// defines), and an absent field of a resolved reference is omitted, staying distinct from a
 /// present null.
 #[test]
 fn loads_resolve_referenced_source_documents_into_projection() {
@@ -3122,9 +3074,18 @@ fn extracted_columns_push_the_predicate_into_the_sql_scan() {
     let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
     let store = engine.queries();
     let plan = store
-        .compile(QueryInput::tql(
-            TqlQueryText::try_new("from users where status = 'paid'").expect("valid text"),
-        ))
+        .compile(QueryInput::typed(spec(
+            "tenant-a",
+            "users",
+            predicate(vec![QueryCondition::Equals {
+                field: "status".to_owned(),
+                value: DocumentValue::String("paid".into()),
+            }]),
+            QueryOrdering::default(),
+            QueryProjection::whole_document(),
+            paging(0, None),
+            staleness(StalenessMode::Strict, Vec::new()),
+        )))
         .expect("compiles");
     let result = store.execute(&plan, &snapshot).expect("executes");
     assert_eq!(row_ids(&result), ["doc-1", "doc-2"]);
@@ -3136,9 +3097,18 @@ fn extracted_columns_push_the_predicate_into_the_sql_scan() {
     // An order over the extracted column rides the same scan: the
     // candidate set is already exact, the ordering applies in the executor.
     let ordered = store
-        .compile(QueryInput::tql(
-            TqlQueryText::try_new("from users where status >= 'paid' limit 2").expect("valid text"),
-        ))
+        .compile(QueryInput::typed(spec(
+            "tenant-a",
+            "users",
+            predicate(vec![QueryCondition::GreaterOrEqual {
+                field: "status".to_owned(),
+                value: DocumentValue::String("paid".into()),
+            }]),
+            QueryOrdering::default(),
+            QueryProjection::whole_document(),
+            paging(0, Some(2)),
+            staleness(StalenessMode::Strict, Vec::new()),
+        )))
         .expect("compiles");
     let result = store.execute(&ordered, &snapshot).expect("executes");
     assert_eq!(row_ids(&result), ["doc-1", "doc-2"]);
@@ -3169,9 +3139,18 @@ fn first_query_registers_pushdown_fields_inline() {
     let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
     let store = engine.queries();
     let plan = store
-        .compile(QueryInput::tql(
-            TqlQueryText::try_new("from orders where total > 20").expect("valid text"),
-        ))
+        .compile(QueryInput::typed(spec(
+            "tenant-a",
+            "orders",
+            predicate(vec![QueryCondition::GreaterThan {
+                field: "total".to_owned(),
+                value: DocumentValue::Integer(20),
+            }]),
+            QueryOrdering::default(),
+            QueryProjection::whole_document(),
+            paging(0, None),
+            staleness(StalenessMode::Strict, Vec::new()),
+        )))
         .expect("compiles");
     let result = store.execute(&plan, &snapshot).expect("executes");
     assert_eq!(row_ids(&result), ["doc-2"]);
@@ -3223,9 +3202,18 @@ fn auto_index_audit_joins_observed_shapes_with_descriptor_coverage() {
     let store = engine.queries();
     // A scalar predicate auto-registers its field inline.
     let plan = store
-        .compile(QueryInput::tql(
-            TqlQueryText::try_new("from users where status = 'paid'").expect("valid text"),
-        ))
+        .compile(QueryInput::typed(spec(
+            "tenant-a",
+            "users",
+            predicate(vec![QueryCondition::Equals {
+                field: "status".to_owned(),
+                value: DocumentValue::String("paid".into()),
+            }]),
+            QueryOrdering::default(),
+            QueryProjection::whole_document(),
+            paging(0, None),
+            staleness(StalenessMode::Strict, Vec::new()),
+        )))
         .expect("compiles");
     assert_eq!(row_ids(&store.execute(&plan, &snapshot).expect("executes")), ["doc-1"]);
     // A boolean equality is observed but never pushable: the columns do not
@@ -3273,24 +3261,17 @@ fn large_collection_first_query_is_not_ready_until_the_governed_backfill_complet
     // One wave past the inline cost cap: every row shares the wave's single
     // commit sequence, which is exactly the shape that must never strand.
     // Eleven evenly spaced needles plus one the next commit retracts.
-    let bulk = (0..10_001u32)
-        .map(|index| {
-            let tag = if index.is_multiple_of(1000) || index == 500 { "needle" } else { "bulk" };
-            object_document(
-                &format!("bulk-{index:05}"),
-                "events",
-                &[("tag", DocumentValue::String(tag.into()))],
-            )
-        })
-        .collect::<Vec<_>>();
+    let bulk = governed_backfill_documents();
     commit_documents(&engine, &tenant_scope, "op-bulk", bulk);
     let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
     let store = engine.queries();
-    let plan = store
-        .compile(QueryInput::tql(
-            TqlQueryText::try_new("from events where tag = 'needle' limit 20").expect("valid text"),
-        ))
-        .expect("compiles");
+    let plan = governed_backfill_plan(
+        &store,
+        QueryCondition::Equals {
+            field: "tag".to_owned(),
+            value: DocumentValue::String("needle".into()),
+        },
+    );
     assert_eq!(
         store.execute(&plan, &snapshot).expect("the segment serves").matched(),
         12,
@@ -3299,11 +3280,13 @@ fn large_collection_first_query_is_not_ready_until_the_governed_backfill_complet
     // A range shape no segment covers exactly takes the scan path, and the
     // scan fails closed while the descriptor builds: a scan over
     // half-extracted columns would silently miss rows.
-    let range = store
-        .compile(QueryInput::tql(
-            TqlQueryText::try_new("from events where tag >= 'n' limit 20").expect("valid text"),
-        ))
-        .expect("compiles");
+    let range = governed_backfill_plan(
+        &store,
+        QueryCondition::GreaterOrEqual {
+            field: "tag".to_owned(),
+            value: DocumentValue::String("n".into()),
+        },
+    );
     assert_eq!(
         store.execute(&range, &snapshot),
         Err(QueryError::IndexNotReady),
@@ -3349,8 +3332,22 @@ fn large_collection_first_query_is_not_ready_until_the_governed_backfill_complet
     assert!(active, "the bounded pass completes the descriptor");
     let fresh = engine.read_snapshot(&tenant_scope).expect("fresh snapshot");
     let result = store.execute(&plan, &fresh).expect("the query serves once active");
+    assert_governed_backfill_rows(&row_ids(&result));
+    let ranged = store.execute(&range, &fresh).expect("the range serves once active");
+    assert_eq!(row_ids(&ranged), row_ids(&result));
     assert_eq!(
-        row_ids(&result),
+        ranged.statistics().scanned(),
+        12,
+        "the pushed scan reads exactly the live matches: backfilled rows, \
+         write-path rows, and the retraction all resolve — zero stale reads"
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+fn assert_governed_backfill_rows(ids: &[String]) {
+    assert_eq!(
+        ids,
         [
             "bulk-00000",
             "bulk-01000",
@@ -3366,16 +3363,33 @@ fn large_collection_first_query_is_not_ready_until_the_governed_backfill_complet
             "late-needle",
         ]
     );
-    let ranged = store.execute(&range, &fresh).expect("the range serves once active");
-    assert_eq!(row_ids(&ranged), row_ids(&result));
-    assert_eq!(
-        ranged.statistics().scanned(),
-        12,
-        "the pushed scan reads exactly the live matches: backfilled rows, \
-         write-path rows, and the retraction all resolve — zero stale reads"
-    );
-    drop(engine);
-    std::fs::remove_dir_all(&dir).ok();
+}
+
+fn governed_backfill_documents() -> Vec<Document> {
+    (0..10_001u32)
+        .map(|index| {
+            let tag = if index.is_multiple_of(1000) || index == 500 { "needle" } else { "bulk" };
+            object_document(
+                &format!("bulk-{index:05}"),
+                "events",
+                &[("tag", DocumentValue::String(tag.into()))],
+            )
+        })
+        .collect()
+}
+
+fn governed_backfill_plan(store: &QueryStore<'_>, condition: QueryCondition) -> super::QueryPlan {
+    store
+        .compile(QueryInput::typed(spec(
+            "tenant-a",
+            "events",
+            predicate(vec![condition]),
+            QueryOrdering::default(),
+            QueryProjection::whole_document(),
+            paging(0, Some(20)),
+            staleness(StalenessMode::Strict, Vec::new()),
+        )))
+        .expect("compiles")
 }
 
 // ---------------------------------------------------------------------------
@@ -3394,22 +3408,32 @@ fn text_document(id: &str, collection: &str, field: &str, text: &str) -> Documen
     object_document(id, collection, &[(field, DocumentValue::String(text.to_owned()))])
 }
 
-fn search_parameters(query: &str) -> TqlParameters {
-    TqlParameters::try_new(&[("q", DocumentValue::String(query.to_owned()))])
-        .expect("valid parameters")
-}
-
-fn compile_tql(
-    engine: &Engine,
-    text: &str,
-    parameters: &TqlParameters,
+/// Compiles one full-text search through the typed seam, with an optional
+/// relevance rank travelling beside the plan (the shape the SQL planner
+/// lowers `ORDER BY` relevance onto in E-4).
+fn compile_search(
+    store: &QueryStore,
+    collection: &str,
+    field: &str,
+    query: &str,
     tenant_name: &str,
+    rank: Option<OrderDirection>,
+    limit: Option<u32>,
 ) -> super::QueryPlan {
-    let store = engine.queries();
-    let parsed = tql::parse_artifact(Some("tql/1.0"), text, parameters, &engine.tql_capabilities())
-        .expect("the examples text parses");
-    tql::compile(&store, &parsed, parameters, tenant(tenant_name), deadline(), Cancellation::new())
-        .expect("the search text compiles")
+    let planned = spec(
+        tenant_name,
+        collection,
+        predicate(vec![search(field, query)]),
+        QueryOrdering::default(),
+        QueryProjection::whole_document(),
+        paging(0, limit),
+        staleness(StalenessMode::Strict, Vec::new()),
+    );
+    let plan = store.compile(QueryInput::typed(planned)).expect("the search compiles");
+    match rank {
+        Some(direction) => plan.with_search_rank(direction),
+        None => plan,
+    }
 }
 
 #[test]
@@ -3557,7 +3581,7 @@ fn first_search_registers_a_text_descriptor_and_reads_its_own_writes() {
 }
 
 #[test]
-fn search_with_score_orders_by_relevance_through_tql() {
+fn search_with_score_orders_by_relevance() {
     let (dir, engine) = open_engine("search-ranked");
     let tenant_scope = scope(&engine, "tenant-a");
     commit_documents(
@@ -3577,34 +3601,35 @@ fn search_with_score_orders_by_relevance_through_tql() {
     );
     let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
     let store = engine.queries();
-    let parameters = search_parameters("apple");
-    let descending = compile_tql(
-        &engine,
-        "from products where search(description, $q) order by score() desc limit 10",
-        &parameters,
+    let descending = compile_search(
+        &store,
+        "products",
+        "description",
+        "apple",
         "tenant-a",
+        Some(OrderDirection::Descending),
+        Some(10),
     );
     assert_eq!(
         row_ids(&store.execute(&descending, &snapshot).expect("executes")),
         ["doc-often", "doc-once"]
     );
-    let ascending = compile_tql(
-        &engine,
-        "from products where search(description, $q) order by score() limit 10",
-        &parameters,
+    let ascending = compile_search(
+        &store,
+        "products",
+        "description",
+        "apple",
         "tenant-a",
+        Some(OrderDirection::Ascending),
+        Some(10),
     );
     assert_eq!(
         row_ids(&store.execute(&ascending, &snapshot).expect("executes")),
         ["doc-once", "doc-often"]
     );
     // The unranked form serves the same match set in source order.
-    let unranked = compile_tql(
-        &engine,
-        "from products where search(description, $q)",
-        &parameters,
-        "tenant-a",
-    );
+    let unranked =
+        compile_search(&store, "products", "description", "apple", "tenant-a", None, None);
     assert_eq!(
         row_ids(&store.execute(&unranked, &snapshot).expect("executes")),
         ["doc-often", "doc-once"]
@@ -3759,12 +3784,14 @@ fn scale_100k_fts_and_vector_top_k_are_exact() {
         commit_documents(&engine, &tenant_scope, &format!("op-scale-{wave:02}"), documents);
     }
     let store = engine.queries();
-    let parameters = search_parameters("zephyrneedle");
-    let first = compile_tql(
-        &engine,
-        "from corpus where search(body, $q) order by score() desc limit 10",
-        &parameters,
+    let first = compile_search(
+        &store,
+        "corpus",
+        "body",
+        "zephyrneedle",
         "tenant-a",
+        Some(OrderDirection::Descending),
+        Some(10),
     );
     let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
     assert_eq!(
@@ -3784,11 +3811,14 @@ fn scale_100k_fts_and_vector_top_k_are_exact() {
     // A client retries with a fresh query after `IndexBuilding`: recompile
     // so the plan carries a live deadline past the backfill window.
     let fresh = engine.read_snapshot(&tenant_scope).expect("fresh snapshot");
-    let ranked = compile_tql(
-        &engine,
-        "from corpus where search(body, $q) order by score() desc limit 10",
-        &parameters,
+    let ranked = compile_search(
+        &store,
+        "corpus",
+        "body",
+        "zephyrneedle",
         "tenant-a",
+        Some(OrderDirection::Descending),
+        Some(10),
     );
     let started = std::time::Instant::now();
     let result = store.execute(&ranked, &fresh).expect("the FTS top-10 serves once active");
@@ -4026,10 +4056,18 @@ fn explain_reports_access_indexes_order_and_building() {
     // Running the value query first activates its descriptor, so the same
     // query explains as a filtered, sorted scan over one active index.
     let filtered = store
-        .compile(QueryInput::tql(
-            TqlQueryText::try_new("from orders where status = 'paid' order by status limit 5")
-                .expect("valid text"),
-        ))
+        .compile(QueryInput::typed(spec(
+            "tenant-a",
+            "orders",
+            predicate(vec![QueryCondition::Equals {
+                field: "status".to_owned(),
+                value: DocumentValue::String("paid".into()),
+            }]),
+            ordering(vec![("status", OrderDirection::Ascending)]),
+            QueryProjection::whole_document(),
+            paging(0, Some(5)),
+            staleness(StalenessMode::Strict, Vec::new()),
+        )))
         .expect("compiles");
     store.execute(&filtered, &snapshot).expect("the first query registers inline");
     let explained = store.explain(&filtered, &snapshot).expect("explains");
@@ -4046,12 +4084,14 @@ fn explain_reports_access_indexes_order_and_building() {
     // first execution registers the text descriptor inline, so explaining
     // afterwards reports the active index the query already narrowed
     // through.
-    let parameters = search_parameters("quick");
-    let ranked = compile_tql(
-        &engine,
-        "from orders where search(note, $q) order by score() desc limit 5",
-        &parameters,
+    let ranked = compile_search(
+        &store,
+        "orders",
+        "note",
+        "quick",
         "tenant-a",
+        Some(OrderDirection::Descending),
+        Some(5),
     );
     assert_eq!(
         row_ids(&store.execute(&ranked, &snapshot).expect("the first search registers")),
@@ -4072,134 +4112,125 @@ fn explain_reports_access_indexes_order_and_building() {
 }
 
 #[test]
-fn search_ships_while_the_vector_operator_stays_gated() {
-    let (dir, engine) = open_engine("capabilities");
-    let capabilities = engine.tql_capabilities();
-    assert!(capabilities.is_available(tql::Capability::Search));
-    assert!(!capabilities.is_available(tql::Capability::Vector));
-    let terms = TqlParameters::try_new(&[("q", DocumentValue::String("x".to_owned()))])
-        .expect("valid parameters");
-    assert!(
-        tql::parse_artifact(
-            Some("tql/1.0"),
-            "from p where search(body, $q)",
-            &terms,
-            &capabilities
-        )
-        .is_ok(),
-        "the engine reports search"
+fn sql_front_end_gates_statements_relations_and_functions() {
+    // The read-only boundary fails closed: statements outside
+    // SELECT/WITH/EXPLAIN, SQLite-internal relations, and volatile or
+    // host-sensitive functions never reach authorization or planning.
+    // Full-text search rides the typed seam through the SQL `MATCH`
+    // lowering (`Search` conditions); vector search rides exact k-NN
+    // requests, not SQL operators.
+    for text in [
+        "SELECT * FROM orders",
+        "SELECT _id, body ->> '$.customer' AS customer FROM orders WHERE total >= ?1",
+        "WITH recent AS (SELECT * FROM orders) SELECT * FROM recent",
+        "EXPLAIN SELECT * FROM orders",
+    ] {
+        assert!(super::validate_sql_text(text).is_ok(), "the front end accepts: {text}");
+    }
+    for text in [
+        "DELETE FROM orders",
+        "PRAGMA table_info(orders)",
+        "SELECT * FROM sqlite_master",
+        "SELECT random() FROM orders",
+        "SELECT load_extension('x')",
+    ] {
+        assert_eq!(
+            super::validate_sql_text(text).unwrap_err(),
+            QueryInputError::UnsupportedGrammar,
+            "the front end refuses: {text}"
+        );
+    }
+}
+
+#[test]
+fn sql_live_subset_admits_the_launch_operators() {
+    use super::sql::{LiveSubset, classify_sql_text};
+    const MAX: usize = 16 * 1024;
+    // The D-78 live subset: one collection, scalar predicates over columns
+    // or JSON paths, projection, FTS5 `MATCH`, `ORDER BY`, `LIMIT`.
+    // `EXPLAIN` classifies through its inner query.
+    for text in [
+        "SELECT * FROM orders",
+        "SELECT _id, total FROM orders WHERE status = 'paid' ORDER BY total DESC LIMIT 25",
+        "SELECT body ->> '$.customer' FROM orders WHERE body ->> '$.status' = :status",
+        "SELECT * FROM articles WHERE body MATCH :query",
+        "SELECT * FROM articles WHERE body MATCH 'quick'",
+        "EXPLAIN SELECT * FROM orders WHERE total > 10",
+    ] {
+        assert_eq!(classify_sql_text(text, MAX), Ok(LiveSubset::Live), "{text}");
+    }
+}
+
+#[test]
+fn sql_live_subset_names_the_first_non_live_operator() {
+    use super::sql::{LiveSubset, check_subscribable, classify_sql_text, parse};
+    const MAX: usize = 16 * 1024;
+    // ADR 0044 §3.2 operator table, in priority order: a statement carrying
+    // several non-live operators names the first.
+    for (text, operator) in [
+        ("SELECT * FROM orders JOIN archive ON orders._id = archive._id", "join"),
+        ("SELECT status, count(*) FROM orders GROUP BY status HAVING count(*) > 1", "aggregate"),
+        ("SELECT count(*) FROM orders", "aggregate"),
+        ("SELECT row_number() OVER (ORDER BY _id) FROM orders", "window"),
+        ("SELECT * FROM orders WHERE _id IN (SELECT _id FROM archive)", "subquery"),
+        ("SELECT * FROM orders WHERE EXISTS (SELECT 1 FROM archive)", "subquery"),
+        ("SELECT * FROM (SELECT * FROM orders) AS recent", "subquery"),
+        ("WITH recent AS (SELECT * FROM orders) SELECT * FROM recent", "subquery"),
+        ("SELECT * FROM orders UNION ALL SELECT * FROM archive", "subquery"),
+        ("SELECT count(*) FROM orders JOIN archive ON orders._id = archive._id", "join"),
+    ] {
+        assert_eq!(
+            classify_sql_text(text, MAX),
+            Ok(LiveSubset::ExecuteOnly { operator }),
+            "{text}"
+        );
+        let parsed = parse(text, MAX).expect("the front end parses execute-only shapes");
+        assert_eq!(check_subscribable(&parsed).unwrap_err().operator(), operator, "{text}");
+    }
+    // The refusal carries the fix, and a live statement subscribes cleanly.
+    let parsed = parse("SELECT count(*) FROM orders", MAX).expect("parses");
+    let refusal = check_subscribable(&parsed).expect_err("aggregates do not subscribe");
+    assert!(refusal.fix().contains("execute()"), "the fix names execute()");
+    let live = parse("SELECT * FROM orders WHERE total > 10", MAX).expect("parses");
+    assert!(check_subscribable(&live).is_ok());
+}
+
+#[test]
+fn sql_match_predicate_lowers_to_search_and_executes() {
+    use super::sql::SqlParameters;
+    let (dir, engine) = open_engine("sql-match-lowers");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            text_document("doc-1", "articles", "body", "the quick brown fox"),
+            text_document("doc-2", "articles", "body", "a slow green turtle"),
+        ],
     );
-    let vectors = TqlParameters::try_new(&[(
-        "v",
-        DocumentValue::Array(vec![DocumentValue::Number(0.5), DocumentValue::Number(0.25)]),
-    )])
-    .expect("valid parameters");
-    assert_eq!(
-        tql::parse_artifact(
-            Some("tql/1.0"),
-            "from p where vector.search(embedding, $v)",
-            &vectors,
-            &capabilities
-        )
-        .map(|_| ())
-        .map_err(|error| error.class()),
-        Err(tql::TqlErrorClass::CapabilityUnavailable),
-        "vector search through TQL stays fail-closed: the exact k-NN seam serves \
-         typed requests, and no TQL operator reports it until the sqlite-vec \
-         follow-up lands (workspace goal D-40: vector is post-launch)"
-    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    // Bound-parameter form: the query string travels as data, never as FTS syntax.
+    let text = SqlQueryText::try_new("SELECT * FROM articles WHERE body MATCH :query")
+        .expect("valid text");
+    let parameters =
+        SqlParameters::try_new(&[("query", DocumentValue::String("quick".to_owned()))])
+            .expect("binds");
+    let plan = store
+        .compile(QueryInput::sql_bounded_with_parameters(
+            text,
+            deadline(),
+            Cancellation::new(),
+            parameters,
+        ))
+        .expect("MATCH lowers to the typed search condition");
+    assert_eq!(row_ids(&store.execute(&plan, &snapshot).expect("MATCH executes")), ["doc-1"]);
+    // Literal form serves the same match set.
+    let literal = SqlQueryText::try_new("SELECT * FROM articles WHERE body MATCH 'turtle'")
+        .expect("valid text");
+    let plan = store.compile(QueryInput::sql(literal)).expect("literal MATCH lowers");
+    assert_eq!(row_ids(&store.execute(&plan, &snapshot).expect("executes")), ["doc-2"]);
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();
-}
-
-#[test]
-fn score_ranking_fails_closed_outside_the_plan_compile() {
-    let parameters = search_parameters("quick");
-    let parsed = tql::parse_artifact(
-        Some("tql/1.0"),
-        "from orders where search(note, $q) order by score() desc",
-        &parameters,
-        &tql::engine_capabilities(),
-    )
-    .expect("parses");
-    // The specification cannot carry the rank, so the specification entry
-    // fails closed and only the plan compile serves ranked queries.
-    assert_eq!(
-        tql::lower_to_spec(
-            &parsed,
-            &parameters,
-            tenant("tenant-a"),
-            deadline(),
-            Cancellation::new()
-        )
-        .map(|_| ())
-        .map_err(|error| (error.class(), error.construct().map(str::to_owned))),
-        Err((tql::TqlErrorClass::UnsupportedForPlanning, Some("score".to_owned())))
-    );
-}
-
-#[test]
-fn search_lowering_rejects_bad_queries_fail_closed() {
-    let case = |text: &str, parameters: &TqlParameters| {
-        tql::parse_artifact(Some("tql/1.0"), text, parameters, &tql::engine_capabilities())
-            .map_err(|error| (error.class(), error.construct().map(str::to_owned)))
-            .and_then(|parsed| {
-                tql::lower_to_spec(
-                    &parsed,
-                    parameters,
-                    tenant("tenant-a"),
-                    deadline(),
-                    Cancellation::new(),
-                )
-                .map(|_| ())
-                .map_err(|error| (error.class(), error.construct().map(str::to_owned)))
-            })
-    };
-    // A non-string query is an invalid search argument.
-    assert_eq!(
-        case(
-            "from p where search(body, 42)",
-            &TqlParameters::try_new(&[]).expect("valid parameters")
-        ),
-        Err((tql::TqlErrorClass::InvalidArgument, Some("search".to_owned())))
-    );
-    // A combiner outside and/or is an invalid search argument.
-    assert_eq!(
-        case("from p where search(body, $q, 'xor')", &search_parameters("quick")),
-        Err((tql::TqlErrorClass::InvalidArgument, Some("search".to_owned())))
-    );
-    // A nested field has no seam spelling and fails closed, like every
-    // other nested path.
-    assert_eq!(
-        case("from p where search(customer.note, $q)", &search_parameters("quick")),
-        Err((tql::TqlErrorClass::UnsupportedForPlanning, Some("search".to_owned())))
-    );
-    // Weighting has no slice-D spelling and fails closed.
-    assert_eq!(
-        case("from p where boost(search(body, $q), 3)", &search_parameters("quick")),
-        Err((tql::TqlErrorClass::UnsupportedForPlanning, Some("call".to_owned())))
-    );
-    // Several searched fields leave the rank ambiguous and fail closed.
-    let both = TqlParameters::try_new(&[
-        ("a", DocumentValue::String("quick".to_owned())),
-        ("b", DocumentValue::String("brown".to_owned())),
-    ])
-    .expect("valid parameters");
-    assert_eq!(
-        case("from p where search(title, $a) and search(body, $b) order by score() desc", &both),
-        Err((tql::TqlErrorClass::UnsupportedForPlanning, Some("score".to_owned())))
-    );
-    // A ranking without a search has nothing to rank by.
-    assert_eq!(
-        case(
-            "from p order by score() desc",
-            &TqlParameters::try_new(&[]).expect("valid parameters")
-        ),
-        Err((tql::TqlErrorClass::UnsupportedForPlanning, Some("score".to_owned())))
-    );
-    // An empty query string is an invalid search argument.
-    assert_eq!(
-        case("from p where search(body, $q)", &search_parameters("")),
-        Err((tql::TqlErrorClass::InvalidArgument, Some("search".to_owned())))
-    );
 }

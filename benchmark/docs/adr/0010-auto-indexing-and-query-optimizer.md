@@ -17,7 +17,7 @@ paths. Auto-Indexes follow admitted query shapes and measured reuse.
 
 ## Canonical index definitions
 
-The optimizer lowers an authorized canonical TQL plan to required index
+The optimizer lowers an authorized canonical SQL plan to required index
 capabilities:
 
 ```text

@@ -107,17 +107,19 @@ use crate::types::{
 };
 use crate::usage::{
     DurableUsageFact, MAX_ADMITTED_REQUEST_UNITS_PER_FACT, MAX_PUBLIC_EGRESS_BYTES_PER_FACT,
-    MeasurementWindow, MeterCatalog, MeterKind, MintingIdentity, MintingRule, UsageFact,
+    MAX_USAGE_PAGE_SIZE, MeasurementWindow, MeterCatalog, MeterKind, MintingIdentity, MintingRule,
+    UsageFact,
 };
 
 #[cfg(test)]
 use super::faults::FaultPlan;
+use super::ownership::database_binding;
 use super::{
-    BackfillProgress, DescriptorListing, DescriptorRegistration, DocumentMergeState,
+    BackfillProgress, DbUsageFact, DescriptorListing, DescriptorRegistration, DocumentMergeState,
     DocumentRevisionEntry, ExpiredTtlKey, IndexDescriptorError, JournalKind, JournalProvenance,
-    MergeConflictEntry, MergeKernelEntry, MergePolicy, MergeSchema, MergeSchemaError,
+    JournalRow, MergeConflictEntry, MergeKernelEntry, MergePolicy, MergeSchema, MergeSchemaError,
     PublishedCommit, PublishedWrite, ScanFilter, ScanOp, SnapshotReadError, StorageOpenError,
-    StoragePort, StorageRootId, UsageFactPosition, UsageStorageError,
+    StoragePort, StorageRootId, UsageFactPosition, UsageStorageError, billed_writes_for_bytes,
 };
 use super::{
     codec,
@@ -189,6 +191,22 @@ const ROW_KIND_ORIGIN: &str = "origin";
 /// The `documents.kind` value of a row the cross-region tailer applied.
 const ROW_KIND_REPLICATED: &str = "replicated";
 
+/// Derives a stable local origin for a database location. The identity is
+/// persisted in `meta`; the path-derived value is only the first-open seed.
+fn local_origin_for(path: &Path) -> String {
+    let digest = blake3::hash(path.to_string_lossy().as_bytes());
+    format!("local-{}", hex_digest(digest.as_bytes()))
+}
+
+fn hex_digest(bytes: &[u8; 32]) -> String {
+    use std::fmt::Write as _;
+    let mut output = String::with_capacity(64);
+    for byte in bytes {
+        let _ = write!(output, "{byte:02x}");
+    }
+    output
+}
+
 /// The write path's view of the extracted-column descriptors (D-42): the
 /// per-collection fields whose values the document INSERT carries, the
 /// active descriptors whose conditions a scan may push, and the cached
@@ -210,9 +228,9 @@ impl ExtractedState {
     /// Rebuilds the cached put INSERT for the current field set.
     ///
     /// The base row carries sixteen placeholders — twelve originals, the
-    /// three provenance columns (D-35: `kind`, `origin`, `hlc`), and the
-    /// TTL expiry column (S-02 slice D: `expires_at`) — so the extracted
-    /// columns start at placeholder 17.
+    /// four provenance columns (D-35: `kind`, `origin`, `origin_seq`, `hlc`),
+    /// and the TTL expiry column (S-02 slice D: `expires_at`) — so the
+    /// extracted columns start at placeholder 18.
     fn refresh_put_sql(&mut self) {
         let mut columns = String::new();
         let mut placeholders = String::new();
@@ -222,15 +240,15 @@ impl ExtractedState {
             columns.push_str(", ");
             columns.push_str(&quote_identifier(&numeric_column(field)));
             placeholders.push_str(", ?");
-            placeholders.push_str(&(17 + 2 * position).to_string());
-            placeholders.push_str(", ?");
             placeholders.push_str(&(18 + 2 * position).to_string());
+            placeholders.push_str(", ?");
+            placeholders.push_str(&(19 + 2 * position).to_string());
         }
         self.put_insert_sql = format!(
             "INSERT INTO documents
              (tenant, collection, id, commit_seq, commit_ulid, revision, requested,
-              digest, version, deleted, committed_at, body, kind, origin, hlc, expires_at{columns})
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16{placeholders})"
+              digest, version, deleted, committed_at, body, kind, origin, origin_seq, hlc, expires_at{columns})
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17{placeholders})"
         );
     }
 
@@ -338,6 +356,81 @@ fn migrate_documents_provenance(connection: &Connection) -> Result<(), ()> {
         .map_err(|_| ())
 }
 
+/// Adds and backfills the durable per-origin sequence. Existing rows are
+/// ordered by their retained publication facts only; future writes allocate
+/// the counter inside the commit transaction. A zero counter is reserved for
+/// replicated rows whose source dot was not carried by the old protocol.
+fn migrate_documents_origin_sequence(
+    connection: &mut Connection,
+    local_origin: &str,
+) -> Result<(), ()> {
+    let mut statement = connection.prepare("PRAGMA table_info(documents)").map_err(|_| ())?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|_| ())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| ())?;
+    drop(statement);
+    if !columns.iter().any(|column| column == "origin_seq") {
+        connection
+            .execute("ALTER TABLE documents ADD COLUMN origin_seq INTEGER NOT NULL DEFAULT 0", [])
+            .map_err(|_| ())?;
+    }
+    let transaction = connection.transaction().map_err(|_| ())?;
+    let mut rows = transaction
+        .prepare(
+            "SELECT tenant, collection, id, commit_seq, kind, origin
+             FROM documents WHERE origin_seq = 0
+             ORDER BY origin, commit_seq, collection, id",
+        )
+        .map_err(|_| ())?;
+    let pending = rows
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        })
+        .map_err(|_| ())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| ())?;
+    drop(rows);
+    let mut counters = std::collections::BTreeMap::<String, u64>::new();
+    for (tenant, collection, id, commit_seq, kind, origin) in pending {
+        // Old replicated rows have no source counter in this protocol
+        // version. Leave them at zero so anti-entropy refuses rather than
+        // inventing a receiver-local identity during migration.
+        if kind != ROW_KIND_ORIGIN {
+            continue;
+        }
+        let origin = if origin.is_empty() { local_origin.to_owned() } else { origin };
+        let next = counters.entry(origin.clone()).or_insert_with(|| {
+            transaction
+                .query_row(
+                    "SELECT COALESCE(MAX(origin_seq), 0) FROM documents WHERE origin = ?1",
+                    [&origin],
+                    |row| row.get::<_, i64>(0),
+                )
+                .ok()
+                .and_then(|value| u64::try_from(value).ok())
+                .unwrap_or(0)
+        });
+        *next = next.saturating_add(1);
+        transaction
+            .execute(
+                "UPDATE documents SET origin = ?1, origin_seq = ?2
+                 WHERE tenant = ?3 AND collection = ?4 AND id = ?5 AND commit_seq = ?6",
+                rusqlite::params![origin, *next as i64, tenant, collection, id, commit_seq],
+            )
+            .map_err(|_| ())?;
+    }
+    transaction.commit().map_err(|_| ())
+}
+
 /// Adds the TTL expiry column (S-02 slice D) to a location created before
 /// it existed — the extracted-columns ALTER precedent, idempotent through
 /// the schema probe.
@@ -414,6 +507,7 @@ CREATE TABLE IF NOT EXISTS documents (
     body        BLOB    NOT NULL,
     kind        TEXT    NOT NULL DEFAULT 'origin',
     origin      TEXT    NOT NULL DEFAULT '',
+    origin_seq  INTEGER NOT NULL DEFAULT 0,
     hlc         INTEGER NOT NULL DEFAULT 0,
     expires_at  INTEGER,
     PRIMARY KEY (tenant, collection, id, commit_seq)
@@ -503,6 +597,20 @@ CREATE TABLE IF NOT EXISTS usage_counters (
     ops    INTEGER NOT NULL
 ) WITHOUT ROWID;
 
+-- Per-database metering facts (E-9, D-16/D-42): the billable rollup of one
+-- database's folded journal rows, flushed once per group-commit wave in the
+-- wave's own transaction and reconciled from the journal on open. `db` is
+-- the tenant identity text (D-51: tenant = database). `writes` counts
+-- billed write units under the D-16 ceil(bytes / 4 KiB) rule; `bytes` sums
+-- stored canonical body bytes. The journal stays the truth; this table is
+-- its cache, like `usage_counters`.
+CREATE TABLE IF NOT EXISTS metering_db_facts (
+    db     TEXT    PRIMARY KEY,
+    seq_hi INTEGER NOT NULL,
+    writes INTEGER NOT NULL,
+    bytes  INTEGER NOT NULL
+) WITHOUT ROWID;
+
 -- Declared merge schemas (S-05 D-36): one row per collection naming the
 -- typed CRDT fields. Schema-free collections have no row and merge with
 -- the remove-wins map default, storing no per-field kernels.
@@ -551,10 +659,110 @@ CREATE INDEX IF NOT EXISTS merge_conflicts_key
 /// The zero root head a fresh location records, before any commit chains it.
 const INITIAL_ROOT_HEAD: &str = "sqlite3-00000000000000000000000000000000";
 
+/// Metadata key binding the `SQLite` schema to the location's owner record.
+const SCHEMA_BINDING_KEY: &str = "sqlite_schema_binding";
+
+/// A pre-binding database is accepted only when it has the old core shape.
+/// This is the deliberate upgrade rule for prelaunch fixtures: after the
+/// read-only shape check, the normal schema migration writes the binding.
+const LEGACY_CORE_TABLES: &[&str] = &["meta", "documents"];
+
+fn has_legacy_core_schema(connection: &Connection) -> Result<bool, ()> {
+    let count = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name IN ('meta', 'documents')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| ())?;
+    if usize::try_from(count).map_err(|_| ())? != LEGACY_CORE_TABLES.len() {
+        return Ok(false);
+    }
+    let required_meta = ["key", "value"];
+    let required_documents = [
+        "tenant",
+        "collection",
+        "id",
+        "commit_seq",
+        "commit_ulid",
+        "revision",
+        "requested",
+        "digest",
+        "version",
+        "deleted",
+        "committed_at",
+        "body",
+    ];
+    for (table, columns) in [("meta", &required_meta[..]), ("documents", &required_documents[..])] {
+        for column in columns {
+            let present = connection
+                .query_row(
+                    "SELECT EXISTS(
+                         SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2
+                     )",
+                    rusqlite::params![table, column],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(|_| ())?;
+            if !present {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
+}
+
+/// Validates an existing file without running WAL or schema pragmas. Those
+/// pragmas can create or alter `SQLite` sidecar state, so identity rejection
+/// must happen first.
+fn validate_database_binding(
+    connection: &Connection,
+    expected: &str,
+) -> Result<bool, StorageOpenError> {
+    let has_meta = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|_| StorageOpenError::Unavailable)?;
+    let binding = if has_meta {
+        connection
+            .query_row("SELECT value FROM meta WHERE key = ?1", [SCHEMA_BINDING_KEY], |row| {
+                row.get::<_, String>(0)
+            })
+            .optional()
+            .map_err(|_| StorageOpenError::Unavailable)?
+    } else {
+        None
+    };
+    if let Some(actual) = binding {
+        if actual != expected {
+            return Err(StorageOpenError::Unavailable);
+        }
+        // The owner marker is necessary but not sufficient: a foreign file
+        // must not be able to pass by copying one metadata row alone.
+        return if has_legacy_core_schema(connection).map_err(|()| StorageOpenError::Unavailable)? {
+            Ok(false)
+        } else {
+            Err(StorageOpenError::Unavailable)
+        };
+    }
+    if has_legacy_core_schema(connection).map_err(|()| StorageOpenError::Unavailable)? {
+        return Ok(true);
+    }
+    // A valid SQLite header is not enough to identify a TerraBase file. In
+    // particular, do not let CREATE TABLE IF NOT EXISTS adopt it.
+    Err(StorageOpenError::Unavailable)
+}
+
 /// The `SQLite` storage engine behind [`StoragePort`].
 pub(crate) struct SqliteStorage {
     /// The location's database path, kept for pool overflow opens.
     database_path: PathBuf,
+    /// Stable origin identity for local origin commits.
+    local_origin: String,
     /// The single writer connection. One writer at a time is `SQLite`'s own
     /// WAL contract; the mutex is interior so a later engine read split can
     /// keep using this backend without restructuring.
@@ -568,6 +776,10 @@ pub(crate) struct SqliteStorage {
     /// The full-text descriptor view (S-02 slice D), refreshed on text
     /// registration and consulted by the write and search paths.
     fts: Mutex<FtsState>,
+    /// Served-read counters per database for abuse guards and cost
+    /// attribution (E-9, D-16/D-44: reads are metered, never billed).
+    /// In-memory only — guards need no durability — keyed by tenant text.
+    reads: Mutex<std::collections::BTreeMap<String, u64>>,
     /// The test-only fault plan (see [`StoragePort::arm_test_fault`]).
     #[cfg(test)]
     faults: Mutex<FaultPlan>,
@@ -608,9 +820,41 @@ impl SqliteStorage {
         // behavior) working on a named-but-absent directory.
         std::fs::create_dir_all(dir).map_err(|_| StorageOpenError::Unavailable)?;
         let database_path = dir.join(DATABASE_FILE);
-        let writer = open_connection(&database_path)?;
+        let database_exists = database_path.exists();
+        let expected_binding = database_binding(dir)
+            .map_err(|_| StorageOpenError::Unavailable)?
+            .unwrap_or_else(|| format!("path-{}", local_origin_for(&database_path)));
+        // Open the handle without WAL/schema pragmas first. An existing file
+        // must prove its identity before any SQLite sidecar or schema state is
+        // changed; otherwise a replacement valid SQLite file could be adopted.
+        let mut writer =
+            Connection::open(&database_path).map_err(|_| StorageOpenError::Unavailable)?;
+        if database_exists {
+            let _legacy = validate_database_binding(&writer, &expected_binding)?;
+        }
+        configure_connection(&writer)?;
         writer.execute_batch(SCHEMA).map_err(|_| StorageOpenError::Unavailable)?;
+        writer
+            .execute(
+                "INSERT OR IGNORE INTO meta (key, value) VALUES (?1, ?2)",
+                rusqlite::params![SCHEMA_BINDING_KEY, expected_binding],
+            )
+            .map_err(|_| StorageOpenError::Unavailable)?;
         migrate_documents_provenance(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+        let local_origin = local_origin_for(&database_path);
+        writer
+            .execute(
+                "INSERT OR IGNORE INTO meta (key, value) VALUES ('local_origin', ?1)",
+                [&local_origin],
+            )
+            .map_err(|_| StorageOpenError::Unavailable)?;
+        let local_origin = writer
+            .query_row("SELECT value FROM meta WHERE key = 'local_origin'", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|_| StorageOpenError::Unavailable)?;
+        migrate_documents_origin_sequence(&mut writer, &local_origin)
+            .map_err(|()| StorageOpenError::Unavailable)?;
         migrate_documents_ttl(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         // The SQLite schema is authoritative; the metadata table carries only
         // runtime state, never a backend selector.
@@ -626,6 +870,10 @@ impl SqliteStorage {
         // at all — is recomputed from the journal itself, so a torn WAL
         // tail or a lost wave leaves the counter honest.
         reconcile_usage_counters(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+        // E-9 per-database metering facts reconcile the same way: the table
+        // is a cache of the folded rows, so a torn wave or a lost counter
+        // row is rebuilt from the journal on open.
+        reconcile_metering_db_facts(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         let mut readers = Vec::with_capacity(READ_POOL_WIDTH);
         for _ in 0..READ_POOL_WIDTH {
             readers.push(open_connection(&database_path)?);
@@ -637,10 +885,12 @@ impl SqliteStorage {
         load_fts_state(&writer, &mut fts).map_err(|()| StorageOpenError::Unavailable)?;
         Ok(Self {
             database_path,
+            local_origin,
             writer: Mutex::new(writer),
             readers: Mutex::new(readers),
             extracted: Mutex::new(extracted),
             fts: Mutex::new(fts),
+            reads: Mutex::new(std::collections::BTreeMap::new()),
             #[cfg(test)]
             faults: Mutex::new(FaultPlan::empty()),
         })
@@ -823,6 +1073,10 @@ impl SqliteStorage {
             writer.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| ())?;
         let mut results: Vec<Option<CommitResult>> = intents.iter().map(|_| None).collect();
         let mut watermark = durable_watermark(&transaction)?;
+        // The wave's journal floor: every sequence above it was allocated by
+        // this wave, so the per-database metering flush below scans exactly
+        // this wave's rows.
+        let wave_base = watermark;
         let mut root_head: String = transaction
             .query_row("SELECT value FROM meta WHERE key = 'root_head'", [], |row| {
                 row.get::<_, String>(0)
@@ -848,6 +1102,7 @@ impl SqliteStorage {
                 &mut watermark,
                 &mut root_head,
                 intent,
+                &self.local_origin,
                 &fields,
                 &put_sql,
                 &descriptors,
@@ -875,6 +1130,11 @@ impl SqliteStorage {
                 })
                 .map_err(|_| ())?;
         }
+        // The wave's per-database metering flush (E-9, D-42): one rollup per
+        // billed database riding the wave's own transaction, so a rolled-back
+        // wave bills nothing and a retried operation identity — which replays
+        // its receipt without writing a row — bills nothing twice.
+        flush_metering_db_facts(&transaction, wave_base, intents, &results)?;
         // The test fault aborts between the staged rows and the commit: the
         // guard's drop rolls the transaction back, which is exactly the
         // in-process stand-in for a crash between two durable steps.
@@ -903,6 +1163,7 @@ fn stage_intent(
     watermark: &mut u64,
     root_head: &mut String,
     intent: &CommitIntent,
+    local_origin: &str,
     extracted_fields: &[String],
     put_insert_sql: &str,
     descriptors: &std::collections::BTreeMap<(String, String), bool>,
@@ -923,7 +1184,31 @@ fn stage_intent(
     // operation-id-to-write-set binding resolves by it, so a re-applied
     // record replays its receipt instead of double-writing — while origin
     // rows bind this location's own operation identity.
-    let (row_identity, provenance) = commit_identity_of(intent)?;
+    let (row_identity, mut provenance) = commit_identity_of(intent, local_origin)?;
+    let origin_sequence = if provenance.kind() == JournalKind::Origin {
+        let next = transaction
+            .query_row(
+                "SELECT COALESCE(MAX(origin_seq), 0) + 1 FROM documents WHERE origin = ?1",
+                [provenance.origin()],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|_| ())?;
+        u64::try_from(next).map_err(|_| ())?
+    } else {
+        let sequence = provenance.origin_sequence();
+        if sequence == 0 || sequence > i64::MAX as u64 {
+            return Ok(CommitResult::Rejected(CommitRejection::Validation));
+        }
+        sequence
+    };
+    if provenance.kind() == JournalKind::Origin {
+        provenance = JournalProvenance::new(
+            provenance.kind(),
+            provenance.origin().to_owned(),
+            origin_sequence,
+            provenance.hlc(),
+        );
+    }
     // Step 2: a retried identity resolves from its folded rows (or its
     // rejection record, which always binds the caller's own identity).
     if let Some(entry) =
@@ -1038,6 +1323,7 @@ fn stage_intent(
         digest: intent.digest,
         kind: provenance.kind(),
         origin: provenance.origin(),
+        origin_sequence,
         hlc: provenance.hlc(),
     };
     let mut published_writes: Vec<PublishedWrite> = Vec::with_capacity(intent.writes.len());
@@ -1218,15 +1504,23 @@ fn operation_view(
 /// Derives the row identity and provenance one intent's rows carry: the
 /// first replicated write names the source region's commit identity, and
 /// an intent without replicated writes is an origin commit.
-fn commit_identity_of(intent: &CommitIntent) -> Result<(OperationId, JournalProvenance), ()> {
+fn commit_identity_of(
+    intent: &CommitIntent,
+    local_origin: &str,
+) -> Result<(OperationId, JournalProvenance), ()> {
     for write in &intent.writes {
         match write {
-            StagedWrite::ReplicatedPut { commit_ulid, hlc, origin, .. }
-            | StagedWrite::ReplicatedDelete { commit_ulid, hlc, origin, .. } => {
+            StagedWrite::ReplicatedPut { commit_ulid, hlc, origin, origin_sequence, .. }
+            | StagedWrite::ReplicatedDelete { commit_ulid, hlc, origin, origin_sequence, .. } => {
                 let identity = OperationId::try_new(commit_ulid).map_err(|_| ())?;
                 return Ok((
                     identity,
-                    JournalProvenance::new(JournalKind::Replicated, origin.clone(), *hlc),
+                    JournalProvenance::new(
+                        JournalKind::Replicated,
+                        origin.clone(),
+                        *origin_sequence,
+                        *hlc,
+                    ),
                 ));
             }
             _ => {}
@@ -1234,7 +1528,7 @@ fn commit_identity_of(intent: &CommitIntent) -> Result<(OperationId, JournalProv
     }
     Ok((
         intent.operation.clone(),
-        JournalProvenance::new(JournalKind::Origin, String::new(), intent.hlc),
+        JournalProvenance::new(JournalKind::Origin, local_origin.to_owned(), 0, intent.hlc),
     ))
 }
 
@@ -1284,7 +1578,7 @@ fn insert_put_row(
     fts_descriptors: &std::collections::BTreeMap<(String, String), bool>,
 ) -> Result<(), ()> {
     let committed_at = unix_millis();
-    let mut parameters: Vec<Value> = Vec::with_capacity(16 + 2 * extracted_fields.len());
+    let mut parameters: Vec<Value> = Vec::with_capacity(17 + 2 * extracted_fields.len());
     parameters.push(Value::Text(tenant.as_str().to_owned()));
     parameters.push(Value::Text(document.collection().as_str().to_owned()));
     parameters.push(Value::Text(document.id().as_str().to_owned()));
@@ -1299,6 +1593,7 @@ fn insert_put_row(
     parameters.push(Value::Blob(body.to_vec()));
     parameters.push(Value::Text(commit.kind_text().to_owned()));
     parameters.push(Value::Text(commit.origin.to_owned()));
+    parameters.push(Value::Integer(commit.origin_sequence as i64));
     parameters.push(Value::Integer(commit.hlc as i64));
     parameters.push(match extract_expires_at(document) {
         Some(millis) => Value::Integer(millis),
@@ -1349,8 +1644,8 @@ fn insert_document_row(
         .prepare_cached(
             "INSERT INTO documents
              (tenant, collection, id, commit_seq, commit_ulid, revision, requested,
-              digest, version, deleted, committed_at, body, kind, origin, hlc)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+              digest, version, deleted, committed_at, body, kind, origin, origin_seq, hlc)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         )
         .and_then(|mut statement| {
             statement.execute(rusqlite::params![
@@ -1368,6 +1663,7 @@ fn insert_document_row(
                 Vec::<u8>::new(),
                 commit.kind_text(),
                 commit.origin,
+                commit.origin_sequence as i64,
                 commit.hlc as i64,
             ])
         })
@@ -1464,6 +1760,7 @@ struct FoldedCommit<'a> {
     digest: u64,
     kind: JournalKind,
     origin: &'a str,
+    origin_sequence: u64,
     hlc: u64,
 }
 
@@ -1482,6 +1779,33 @@ fn revision_string(sequence: u64, version: u64) -> String {
     format!("{sequence}-{version}")
 }
 
+/// Encodes the stable logical fields of one journal row deterministically.
+/// Local storage sequence, revision, durability, and wall-clock time are
+/// deliberately excluded because they differ when a source row is applied in
+/// another region. The replication boundary hashes these bytes.
+#[allow(clippy::too_many_arguments, reason = "canonical row fields are explicit by contract")]
+fn canonical_journal_row(
+    collection: &str,
+    id: &str,
+    commit_ulid: &str,
+    deleted: i64,
+    body: &[u8],
+    origin: &str,
+    origin_sequence: i64,
+    hlc: i64,
+) -> Vec<u8> {
+    let mut output = Vec::new();
+    for value in [collection, id, commit_ulid, origin] {
+        codec::push_str(&mut output, value);
+    }
+    for value in [deleted, origin_sequence, hlc] {
+        output.extend_from_slice(&value.to_le_bytes());
+    }
+    codec::push_u32(&mut output, body.len() as u32);
+    output.extend_from_slice(body);
+    output
+}
+
 /// Advances the recorded root chain head.
 fn update_root_head(transaction: &rusqlite::Transaction<'_>, root: &str) -> Result<(), ()> {
     transaction
@@ -1489,6 +1813,86 @@ fn update_root_head(transaction: &rusqlite::Transaction<'_>, root: &str) -> Resu
         .and_then(|mut statement| statement.execute(rusqlite::params![root]))
         .map(|_| ())
         .map_err(|_| ())
+}
+
+/// Flushes one wave's per-database metering facts (E-9, D-16/D-42).
+///
+/// Every sequence above `wave_base` was allocated by this wave, so one scan
+/// of the wave's own rows yields each billed database's exact wave bytes;
+/// each row bills `ceil(bytes / 4 KiB)` write units. A committed intent that
+/// wrote no row — a collection-less delete matching nothing — still bills
+/// its single delete, with `seq_hi` floored at its receipt sequence. A
+/// retried identity replays its receipt without writing a row and without a
+/// new sequence, so it bills nothing twice. Riding the wave's transaction
+/// means a rolled-back wave bills nothing.
+fn flush_metering_db_facts(
+    transaction: &rusqlite::Transaction<'_>,
+    wave_base: u64,
+    intents: &[CommitIntent],
+    results: &[Option<CommitResult>],
+) -> Result<(), ()> {
+    use std::collections::{BTreeMap, HashSet};
+    let mut billed: BTreeMap<String, (u64, u64, u64)> = BTreeMap::new();
+    let mut row_seqs: HashSet<u64> = HashSet::new();
+    {
+        let mut statement = transaction
+            .prepare_cached(
+                "SELECT tenant, commit_seq, LENGTH(body) FROM documents WHERE commit_seq > ?1",
+            )
+            .map_err(|_| ())?;
+        let rows = statement
+            .query_map([wave_base as i64], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+            })
+            .map_err(|_| ())?;
+        for row in rows {
+            let (tenant, seq, len) = row.map_err(|_| ())?;
+            let Ok(seq) = u64::try_from(seq) else { continue };
+            let bytes = u64::try_from(len).map_err(|_| ())?;
+            row_seqs.insert(seq);
+            let entry = billed.entry(tenant).or_insert((0, 0, 0));
+            entry.0 = entry.0.max(seq);
+            entry.1 = entry.1.saturating_add(billed_writes_for_bytes(bytes));
+            entry.2 = entry.2.saturating_add(bytes);
+        }
+    }
+    for (intent, result) in intents.iter().zip(results.iter()) {
+        let Some(CommitResult::Committed(receipt)) = result else { continue };
+        let sequence = receipt.sequence.get();
+        let entry = billed.entry(intent.tenant.as_str().to_owned()).or_insert((0, 0, 0));
+        entry.0 = entry.0.max(sequence);
+        // A sequence-only publication of THIS wave wrote no row but still
+        // bills its single delete. A retried identity replays an old
+        // sequence at or below the wave floor, so the floor check keeps
+        // retries billing nothing twice.
+        if sequence > wave_base && !row_seqs.contains(&sequence) {
+            entry.1 = entry.1.saturating_add(1);
+        }
+    }
+    for (db, (seq_hi, writes, bytes)) in &billed {
+        // A wave with only rejections bills nothing and writes no row.
+        if *seq_hi == 0 && *writes == 0 {
+            continue;
+        }
+        transaction
+            .prepare_cached(
+                "INSERT INTO metering_db_facts (db, seq_hi, writes, bytes) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(db) DO UPDATE SET
+                    seq_hi = MAX(metering_db_facts.seq_hi, excluded.seq_hi),
+                    writes = metering_db_facts.writes + excluded.writes,
+                    bytes = metering_db_facts.bytes + excluded.bytes",
+            )
+            .and_then(|mut statement| {
+                statement.execute(rusqlite::params![
+                    db,
+                    *seq_hi as i64,
+                    *writes as i64,
+                    *bytes as i64
+                ])
+            })
+            .map_err(|_| ())?;
+    }
+    Ok(())
 }
 
 /// Rebuilds the usage counter from the folded journal when it trails the
@@ -1527,9 +1931,59 @@ fn reconcile_usage_counters(connection: &Connection) -> Result<(), ()> {
     Ok(())
 }
 
-/// The highest sequence any durable row names. Commits' folded document
-/// rows and usage facts share one sequence space, exactly the reference
-/// engines' watermark rule.
+/// Rebuilds the per-database metering facts from the folded journal when any
+/// recorded high-water trails the journal — the facts are a cache, the
+/// journal is the truth (E-9, D-42).
+///
+/// The rebuild recomputes every database from its stored rows with the same
+/// `ceil(bytes / 4 KiB)` rule the wave flush applies, so retries (which
+/// wrote one row once) and splits (whose rows moved with their key range)
+/// reconcile to the same facts a clean run would hold. One disclosed
+/// corner: a sequence-only publication (a matched-no-row delete) bills its
+/// single unit in the live wave but leaves no row, so after a restart it
+/// contributes `seq_hi` only — a bounded undercount of one unit per such
+/// op, never an overcount.
+fn reconcile_metering_db_facts(connection: &Connection) -> Result<(), ()> {
+    let high_water = connection
+        .query_row("SELECT COALESCE(MAX(commit_seq), 0) FROM documents", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map_err(|_| ())?;
+    if high_water == 0 {
+        return Ok(());
+    }
+    let (recorded_hi, recorded_dbs, journal_dbs): (i64, i64, i64) = connection
+        .query_row(
+            "SELECT COALESCE(MAX(seq_hi), 0), COUNT(*),
+                    (SELECT COUNT(DISTINCT tenant) FROM documents)
+             FROM metering_db_facts",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|_| ())?;
+    if recorded_hi >= high_water && recorded_dbs >= journal_dbs {
+        return Ok(());
+    }
+    connection
+        .execute_batch(
+            "INSERT INTO metering_db_facts (db, seq_hi, writes, bytes)
+             SELECT tenant, MAX(commit_seq),
+                    SUM(CASE WHEN LENGTH(body) = 0 THEN 1
+                             ELSE (LENGTH(body) + 4095) / 4096 END),
+                    SUM(LENGTH(body))
+             FROM documents GROUP BY tenant
+             ON CONFLICT(db) DO UPDATE SET
+                seq_hi = excluded.seq_hi,
+                writes = excluded.writes,
+                bytes = excluded.bytes",
+        )
+        .map_err(|_| ())?;
+    Ok(())
+}
+
+/// The highest sequence any durable row names. Commits' folded document rows,
+/// usage facts, and metering rollups share one sequence space, exactly the
+/// reference engines' watermark rule.
 fn durable_watermark(connection: &Connection) -> Result<u64, ()> {
     let watermark = connection
         .query_row(
@@ -1537,6 +1991,8 @@ fn durable_watermark(connection: &Connection) -> Result<u64, ()> {
                  SELECT MAX(commit_seq) AS sequence FROM documents
                  UNION ALL
                  SELECT MAX(seq) AS sequence FROM usage_facts
+                 UNION ALL
+                 SELECT MAX(seq_hi) AS sequence FROM metering_db_facts
              )",
             [],
             |row| row.get::<_, i64>(0),
@@ -1741,9 +2197,8 @@ fn decode_document_body(bytes: &[u8]) -> Option<Document> {
 
 /// Derives the next root-chain identity from the current head.
 ///
-/// The identity keeps the LSM chain's shape — sequence and a chained
-/// checksum — behind a `SQLite`-namespace prefix, so a root string from this
-/// backend is self-describing and never collides with an LSM root.
+/// The identity binds the sequence to the preceding publication and the
+/// committed write-set digest.
 fn chained_root(head: &str, sequence: u64, digest: u64) -> String {
     let mut chained = Vec::new();
     codec::push_str(&mut chained, head);
@@ -2029,12 +2484,122 @@ impl StoragePort for SqliteStorage {
         Ok(facts)
     }
 
+    fn metering_fact(&self, db: &str) -> Option<DbUsageFact> {
+        let reader = self.reader();
+        let connection = reader.connection();
+        connection
+            .query_row(
+                "SELECT db, seq_hi, writes, bytes FROM metering_db_facts WHERE db = ?1",
+                [db],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .ok()
+            .and_then(|(db, seq_hi, writes, bytes)| {
+                Some(DbUsageFact::new(
+                    db,
+                    u64::try_from(seq_hi).ok()?,
+                    u64::try_from(writes).ok()?,
+                    u64::try_from(bytes).ok()?,
+                ))
+            })
+    }
+
+    fn metering_facts_page(
+        &self,
+        after: Option<&str>,
+        limit: u32,
+    ) -> (Vec<DbUsageFact>, Option<String>) {
+        let limit = limit.clamp(1, MAX_USAGE_PAGE_SIZE);
+        let reader = self.reader();
+        let connection = reader.connection();
+        let fetch = i64::from(limit).saturating_add(1);
+        let sql = "SELECT db, seq_hi, writes, bytes FROM metering_db_facts
+                   WHERE (?1 IS NULL OR db > ?1) ORDER BY db LIMIT ?2";
+        let Ok(mut statement) = connection.prepare(sql) else {
+            return (Vec::new(), None);
+        };
+        let Ok(rows) = statement.query_map(rusqlite::params![after, fetch], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        }) else {
+            return (Vec::new(), None);
+        };
+        let mut facts = Vec::new();
+        for row in rows {
+            let Ok((db, seq_hi, writes, bytes)) = row else { continue };
+            let (Ok(seq_hi), Ok(writes), Ok(bytes)) =
+                (u64::try_from(seq_hi), u64::try_from(writes), u64::try_from(bytes))
+            else {
+                continue;
+            };
+            facts.push(DbUsageFact::new(db, seq_hi, writes, bytes));
+        }
+        if facts.len() > limit as usize {
+            let next = facts.pop().and_then(|_| facts.last().map(|last| last.db().to_owned()));
+            (facts, next)
+        } else {
+            (facts, None)
+        }
+    }
+
+    fn metering_live_bytes(&self, db: &str) -> u64 {
+        let reader = self.reader();
+        let connection = reader.connection();
+        // Newest version per key, tombstones excluded. TTL-expired rows the
+        // sweep has not tombstoned yet still count; the sweep converges the
+        // snapshot the same way reads do.
+        connection
+            .query_row(
+                "SELECT COALESCE(SUM(LENGTH(body)), 0) FROM documents AS live
+                 WHERE tenant = ?1 AND deleted = 0 AND commit_seq = (
+                    SELECT MAX(commit_seq) FROM documents
+                    WHERE tenant = live.tenant
+                      AND collection = live.collection
+                      AND id = live.id)",
+                [db],
+                |row| row.get::<_, i64>(0),
+            )
+            .ok()
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .unwrap_or(0)
+    }
+
+    fn record_read(&self, db: &str) {
+        self.reads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(db.to_owned())
+            .and_modify(|count| *count = count.saturating_add(1))
+            .or_insert(1);
+    }
+
+    fn read_count(&self, db: &str) -> u64 {
+        self.reads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(db)
+            .copied()
+            .unwrap_or(0)
+    }
+
     fn read_document_at(
         &self,
         sequence: StorageSequence,
         tenant: &TenantId,
         id: &DocumentId,
     ) -> Option<Document> {
+        self.record_read(tenant.as_str());
         let reader = self.reader();
         let connection = reader.connection();
         let now = unix_millis();
@@ -2067,6 +2632,7 @@ impl StoragePort for SqliteStorage {
         collection: &CollectionName,
         id: &DocumentId,
     ) -> Option<Document> {
+        self.record_read(tenant.as_str());
         let reader = self.reader();
         let connection = reader.connection();
         let now = unix_millis();
@@ -2161,9 +2727,9 @@ impl StoragePort for SqliteStorage {
     ) -> Option<DocumentMergeState> {
         let reader = self.reader();
         let connection = reader.connection();
-        let (body, deleted, hlc, origin, commit_ulid) = connection
+        let (body, deleted, hlc, origin, origin_sequence, commit_ulid) = connection
             .query_row(
-                "SELECT body, deleted, hlc, origin, commit_ulid FROM documents
+                "SELECT body, deleted, hlc, origin, origin_seq, commit_ulid FROM documents
                  WHERE tenant = ?1 AND collection = ?2 AND id = ?3
                  ORDER BY commit_seq DESC LIMIT 1",
                 rusqlite::params![tenant.as_str(), collection.as_str(), id.as_str()],
@@ -2173,7 +2739,8 @@ impl StoragePort for SqliteStorage {
                         row.get::<_, i64>(1)?,
                         row.get::<_, i64>(2)?,
                         row.get::<_, String>(3)?,
-                        row.get::<_, String>(4)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, String>(5)?,
                     ))
                 },
             )
@@ -2182,7 +2749,14 @@ impl StoragePort for SqliteStorage {
         let hlc = u64::try_from(hlc).unwrap_or(0);
         let body =
             if deleted { None } else { decode_document_body(&body).map(|doc| doc.value().clone()) };
-        Some(DocumentMergeState { body, deleted, hlc, origin, commit_ulid })
+        Some(DocumentMergeState {
+            body,
+            deleted,
+            hlc,
+            origin,
+            origin_sequence: u64::try_from(origin_sequence).unwrap_or(0),
+            commit_ulid,
+        })
     }
 
     fn record_merge_conflict(
@@ -2337,6 +2911,7 @@ impl StoragePort for SqliteStorage {
         if limit == 0 {
             return Vec::new();
         }
+        self.record_read(tenant.as_str());
         let reader = self.reader();
         let connection = reader.connection();
         // Live journal rows, newest first, with the conflict-viewer facts
@@ -2484,6 +3059,7 @@ impl StoragePort for SqliteStorage {
         collection: &CollectionName,
         id: &DocumentId,
     ) -> Option<String> {
+        self.record_read(tenant.as_str());
         let reader = self.reader();
         let connection = reader.connection();
         let now = unix_millis();
@@ -2514,6 +3090,7 @@ impl StoragePort for SqliteStorage {
     }
 
     fn documents_at(&self, sequence: StorageSequence, tenant: &TenantId) -> Vec<Document> {
+        self.record_read(tenant.as_str());
         let reader = self.reader();
         let Ok(mut statement) = connection_statement(
             reader.connection(),
@@ -2651,6 +3228,7 @@ impl StoragePort for SqliteStorage {
         let connection = reader.connection();
         // One deferred transaction pins every point lookup in this batch to
         // one read snapshot.
+        self.record_read(tenant.as_str());
         let Ok(transaction) = connection.unchecked_transaction() else {
             return Vec::new();
         };
@@ -2700,6 +3278,8 @@ impl StoragePort for SqliteStorage {
         let Some(after) = after else {
             return self.documents_at(sequence, tenant).into_iter().take(limit as usize).collect();
         };
+        // The cursor-less page above already counted through `documents_at`.
+        self.record_read(tenant.as_str());
         let reader = self.reader();
         let connection = reader.connection();
         // Resolve the cursor to a canonical position: the first collection
@@ -2751,6 +3331,7 @@ impl StoragePort for SqliteStorage {
         after: Option<(&CollectionName, &DocumentId)>,
         limit: u32,
     ) -> Result<Vec<Document>, SnapshotReadError> {
+        self.record_read(tenant.as_str());
         let reader = self.reader();
         let connection = reader.connection();
         let (after_collection, after_id) =
@@ -2808,9 +3389,8 @@ impl StoragePort for SqliteStorage {
                     row.get::<_, i64>(3)?,
                 ))
             });
-        // ponytail: O(retained history) per call, matching the LSM's
-        // history_index walk; index the rows by key when bulk export on
-        // this backend gets hot.
+        // ponytail: O(retained history) per call; index the rows by key when
+        // bulk export on this backend gets hot.
         for row in rows.ok()?.flatten() {
             let (collection, identifier, deleted, requested) = row;
             let durability = codec::durability_of(u8::try_from(requested).ok()?)?;
@@ -2833,7 +3413,7 @@ impl StoragePort for SqliteStorage {
         let connection = reader.connection();
         let Ok(mut statement) = connection.prepare_cached(
             "SELECT commit_seq, commit_ulid, collection, id, deleted, version,
-                    requested, body, kind, origin, hlc
+                    requested, body, kind, origin, origin_seq, hlc
              FROM documents WHERE tenant = ?1 AND commit_seq > ?2 AND commit_seq IN (
                  SELECT commit_seq FROM documents WHERE tenant = ?1 AND commit_seq > ?2
                  ORDER BY commit_seq LIMIT ?3
@@ -2857,6 +3437,7 @@ impl StoragePort for SqliteStorage {
                     row.get::<_, String>(8)?,
                     row.get::<_, String>(9)?,
                     row.get::<_, i64>(10)?,
+                    row.get::<_, i64>(11)?,
                 ))
             },
         ) else {
@@ -2880,6 +3461,7 @@ impl StoragePort for SqliteStorage {
                 body,
                 kind,
                 origin,
+                origin_sequence,
                 hlc,
             ) = row;
             let write = if deleted == 0 {
@@ -2913,8 +3495,12 @@ impl StoragePort for SqliteStorage {
                         JournalKind::Origin
                     };
                     #[allow(clippy::cast_sign_loss)]
-                    let provenance =
-                        JournalProvenance::new(kind, origin, u64::try_from(hlc).unwrap_or(0));
+                    let provenance = JournalProvenance::new(
+                        kind,
+                        origin,
+                        u64::try_from(origin_sequence).unwrap_or(0),
+                        u64::try_from(hlc).unwrap_or(0),
+                    );
                     commits.push(PublishedCommit::new(
                         tenant.clone(),
                         operation,
@@ -2927,6 +3513,63 @@ impl StoragePort for SqliteStorage {
             }
         }
         commits
+    }
+
+    fn journal_rows(
+        &self,
+        tenant: &TenantId,
+        after: StorageSequence,
+        limit: u32,
+    ) -> Vec<JournalRow> {
+        if limit == 0 {
+            return Vec::new();
+        }
+        let reader = self.reader();
+        let connection = reader.connection();
+        let Ok(mut statement) = connection.prepare(
+            "SELECT commit_seq, collection, id, commit_ulid, revision, requested,
+                    digest, version, deleted, committed_at, body, kind, origin,
+                    origin_seq, hlc
+             FROM documents WHERE tenant = ?1 AND commit_seq > ?2 AND commit_seq IN (
+                 SELECT commit_seq FROM documents WHERE tenant = ?1 AND commit_seq > ?2
+                 ORDER BY commit_seq LIMIT ?3
+             )
+             ORDER BY commit_seq, collection, id",
+        ) else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map(
+            rusqlite::params![tenant.as_str(), after.get() as i64, i64::from(limit)],
+            |row| {
+                let commit_sequence = row.get::<_, i64>(0)?;
+                let collection = row.get::<_, String>(1)?;
+                let id = row.get::<_, String>(2)?;
+                let commit_ulid = row.get::<_, String>(3)?;
+                let deleted = row.get::<_, i64>(8)?;
+                let body = row.get::<_, Vec<u8>>(10)?;
+                let origin = row.get::<_, String>(12)?;
+                let origin_sequence = row.get::<_, i64>(13)?;
+                let hlc = row.get::<_, i64>(14)?;
+                Ok(JournalRow {
+                    commit_sequence: u64::try_from(commit_sequence).unwrap_or(0),
+                    origin: origin.clone(),
+                    origin_sequence: u64::try_from(origin_sequence).unwrap_or(0),
+                    canonical: canonical_journal_row(
+                        &collection,
+                        &id,
+                        &commit_ulid,
+                        deleted,
+                        &body,
+                        &origin,
+                        origin_sequence,
+                        hlc,
+                    ),
+                })
+            },
+        ) else {
+            return Vec::new();
+        };
+        rows.flatten().collect()
     }
 
     fn committed_tenants(&self) -> Vec<TenantId> {
@@ -2997,15 +3640,17 @@ impl StoragePort for SqliteStorage {
         let connection = reader.connection();
         // One statement keeps the sequence and the root head on one read
         // snapshot. The watermark is the shared sequence space's maximum —
-        // commits' folded rows and usage facts — matching the reference
-        // engines (with rejections consuming no sequence, an empty
-        // usage table leaves it exactly the last commit's sequence).
+        // commits' folded rows, usage facts, and metering rollups — matching
+        // the reference engines (with rejections consuming no sequence, an
+        // empty metering table leaves it exactly the last commit's sequence).
         connection
             .query_row(
                 "SELECT (SELECT COALESCE(MAX(sequence), 0) FROM (
                             SELECT MAX(commit_seq) AS sequence FROM documents
                             UNION ALL
-                            SELECT MAX(seq) AS sequence FROM usage_facts)),
+                            SELECT MAX(seq) AS sequence FROM usage_facts
+                            UNION ALL
+                            SELECT MAX(seq_hi) AS sequence FROM metering_db_facts)),
                         (SELECT value FROM meta WHERE key = 'root_head')",
                 [],
                 |row| {
@@ -3063,6 +3708,7 @@ impl SqliteStorage {
         after: Option<&str>,
         limit: i64,
     ) -> Result<Vec<Document>, SnapshotReadError> {
+        self.record_read(tenant.as_str());
         let reader = self.reader();
         let connection = reader.connection();
         let mut statement = connection
@@ -3291,6 +3937,7 @@ impl SqliteStorage {
         limit: i64,
         filter: &ScanFilter,
     ) -> Option<Result<Vec<Document>, SnapshotReadError>> {
+        self.record_read(tenant.as_str());
         let extracted = self.extracted.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut conditions: Vec<String> = Vec::new();
         let mut values: Vec<rusqlite::types::Value> = Vec::new();
@@ -3842,6 +4489,7 @@ impl SqliteStorage {
         query: &str,
         match_any: bool,
     ) -> Option<Result<Vec<(String, f64)>, SnapshotReadError>> {
+        self.record_read(tenant.as_str());
         if self.fts_descriptor_state(collection.as_str(), field) != Some(true) {
             return None;
         }

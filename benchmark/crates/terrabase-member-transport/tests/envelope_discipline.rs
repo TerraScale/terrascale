@@ -12,8 +12,9 @@ mod support;
 use support::{bare_commit, frame_of, hostile_envelope, open_member};
 
 use terrabase_member_transport::{
-    BUDGET_ENVELOPE_OVERHEAD_BYTES, ENVELOPE_SCHEMA, EnvelopeError, FrameKind, FrameSelector,
-    LaneInstant, MemberTransport, Payload, decode, encode, peek_kind, peek_payload_len,
+    BUDGET_ENVELOPE_OVERHEAD_BYTES, CollectionName, DocumentId, ENVELOPE_SCHEMA,
+    ENVELOPE_VERSION_MINOR, EnvelopeError, FrameKind, FrameSelector, LaneInstant, MemberTransport,
+    Payload, ReplicatedWrite, decode, encode, peek_kind, peek_payload_len,
 };
 
 fn base_envelope() -> terrabase_member_transport::Envelope {
@@ -30,6 +31,28 @@ fn base_envelope() -> terrabase_member_transport::Envelope {
             tenant_high_water: Some(1),
             servable_from: Some(1),
             gap_below: None,
+        },
+    )
+}
+
+fn replication_envelope() -> terrabase_member_transport::Envelope {
+    hostile_envelope(
+        FrameKind::ReplicationBatch,
+        "m-src",
+        "m-dst",
+        Some("main".to_owned()),
+        Some(1),
+        Payload::ReplicationBatch {
+            tenant: support::tenant("tenant-a"),
+            records: vec![ReplicatedWrite {
+                collection: CollectionName::try_new("users").expect("valid collection"),
+                id: DocumentId::try_new("doc-1").expect("valid document"),
+                body: None,
+                commit_ulid: "commit-1".to_owned(),
+                hlc: 1,
+                origin: "r-alpha".to_owned(),
+                origin_sequence: 1,
+            }],
         },
     )
 }
@@ -104,8 +127,101 @@ fn an_unsupported_version_fails_closed() {
     assert_eq!(decode(&major), Err(EnvelopeError::UnsupportedMajorVersion));
 
     let mut minor = frame_of(&base_envelope()).bytes;
-    minor[major_at + 2] = minor[major_at + 2].wrapping_add(1);
+    minor[major_at + 2..major_at + 4].copy_from_slice(&(ENVELOPE_VERSION_MINOR + 1).to_le_bytes());
     assert_eq!(decode(&minor), Err(EnvelopeError::UnsupportedMinorVersion));
+}
+
+#[test]
+fn encoded_frames_use_the_minimum_minor_for_their_kind() {
+    let payloads = [
+        (
+            FrameKind::CatchUpRequest,
+            Payload::CatchUpRequest {
+                tenant: support::tenant("tenant-a"),
+                after: Some(3),
+                limit: 8,
+            },
+            0,
+        ),
+        (FrameKind::CatchUpBatch, base_envelope().payload, 0),
+        (
+            FrameKind::Push,
+            Payload::Push {
+                tenant: support::tenant("tenant-a"),
+                range: "main".to_owned(),
+                epoch: 2,
+                commits: vec![bare_commit("op-9", 4, "doc-9", "v9")],
+            },
+            0,
+        ),
+        (
+            FrameKind::AckReport,
+            Payload::AckReport {
+                tenant: support::tenant("tenant-a"),
+                operation: support::operation("op-1"),
+                held_synced: true,
+            },
+            0,
+        ),
+        (
+            FrameKind::AckBatch,
+            Payload::AckBatch {
+                tenant: support::tenant("tenant-a"),
+                reports: vec![(support::operation("op-1"), true)],
+            },
+            1,
+        ),
+        (FrameKind::ReplicationBatch, replication_envelope().payload, 3),
+    ];
+    let minor_at = 1 + ENVELOPE_SCHEMA.len() + 2;
+    for (kind, payload, expected_minor) in payloads {
+        let envelope =
+            hostile_envelope(kind, "m-src", "m-dst", Some("main".to_owned()), Some(1), payload);
+        let frame = frame_of(&envelope);
+        let minor = u16::from_le_bytes([frame.bytes[minor_at], frame.bytes[minor_at + 1]]);
+        assert_eq!(minor, expected_minor, "{kind:?} uses its minimum minor");
+        assert_eq!(decode(&frame.bytes).expect("the frame decodes").0, envelope);
+    }
+    assert_eq!(ENVELOPE_VERSION_MINOR, 3);
+}
+
+#[test]
+fn a_legacy_non_replication_frame_at_minor_two_still_decodes() {
+    use terrabase_member_transport::envelope::DIGEST_BYTES;
+
+    let expected = base_envelope();
+    let frame = frame_of(&expected);
+    let minor_at = 1 + ENVELOPE_SCHEMA.len() + 2;
+    let mut legacy = frame.bytes;
+    legacy[minor_at..minor_at + 2].copy_from_slice(&2u16.to_le_bytes());
+    let signed_len = legacy.len() - DIGEST_BYTES;
+    let digest = ring::digest::digest(&ring::digest::SHA256, &legacy[..signed_len]);
+    legacy[signed_len..].copy_from_slice(digest.as_ref());
+
+    assert_eq!(decode(&legacy).expect("the legacy frame decodes").0, expected);
+}
+
+#[test]
+fn an_old_replication_batch_fails_with_an_explicit_version_error() {
+    use terrabase_member_transport::envelope::DIGEST_BYTES;
+
+    let frame = frame_of(&replication_envelope());
+    let version_at = 1 + ENVELOPE_SCHEMA.len();
+    let payload_start = frame.bytes.len() - DIGEST_BYTES - frame.payload_len;
+    let payload_len_at = payload_start - 4;
+    let old_payload_len = frame.payload_len - std::mem::size_of::<u64>();
+    let mut legacy = frame.bytes;
+    legacy.drain(payload_start + old_payload_len..payload_start + frame.payload_len);
+    legacy[version_at + 2..version_at + 4].copy_from_slice(&2u16.to_le_bytes());
+    legacy[payload_len_at..payload_len_at + 4].copy_from_slice(
+        &u32::try_from(old_payload_len).expect("payload length fits").to_le_bytes(),
+    );
+    let signed_len = legacy.len() - DIGEST_BYTES;
+    let digest = ring::digest::digest(&ring::digest::SHA256, &legacy[..signed_len]);
+    legacy[signed_len..].copy_from_slice(digest.as_ref());
+
+    assert_eq!(decode(&legacy), Err(EnvelopeError::UnsupportedMinorVersion));
+    assert_eq!(peek_kind(&legacy), Err(EnvelopeError::UnsupportedMinorVersion));
 }
 
 #[test]

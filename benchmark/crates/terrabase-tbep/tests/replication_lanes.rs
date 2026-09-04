@@ -23,7 +23,11 @@ use terrabase::types::{
 };
 use terrabase_member_transport::in_process::InProcessLane;
 use terrabase_member_transport::transport::MemberTransport;
+use terrabase_member_transport::{
+    Envelope, FrameKind, LaneInstant, MemberId, Payload, TenantId as LaneTenantId, encode,
+};
 use terrabase_tbep::registry::{BoundScope, ChannelBindRequest};
+use terrabase_tbep::replication::replicate_once;
 use terrabase_tbep::replication_lanes::{MAX_INFLIGHT_FRAMES, RegionLink, ShipStep};
 use terrabase_tbep::{MemberHost, MemberHostOptions, TbepHost};
 
@@ -105,6 +109,52 @@ fn put(host: &MemberHost, id: &str, value: i64) {
     }
 }
 
+/// Writes one row per commit so each replicated fixture row keeps its own
+/// operation identity while the journal page fills to its bound.
+fn put_many(host: &MemberHost, count: usize) {
+    for index in 0..count {
+        put(host, &format!("orders/seed-{index}"), i64::try_from(index).expect("the index fits"));
+    }
+}
+
+fn replication_frame(
+    source: &str,
+    target: &str,
+    tenant: &str,
+    message_id: u64,
+    correlation_id: Option<u64>,
+) -> terrabase_member_transport::EncodedFrame {
+    encode(&Envelope {
+        kind: if correlation_id.is_some() {
+            FrameKind::AckBatch
+        } else {
+            FrameKind::ReplicationBatch
+        },
+        message_id,
+        correlation_id,
+        causation_id: None,
+        idempotency_key: None,
+        source: MemberId::try_new(source).expect("the source identity parses"),
+        target: MemberId::try_new(target).expect("the target identity parses"),
+        issued_at: LaneInstant::at_ticks(0),
+        expires_at: None,
+        range: None,
+        epoch: None,
+        payload: if correlation_id.is_some() {
+            Payload::AckBatch {
+                tenant: LaneTenantId::try_new(tenant).expect("the tenant identity parses"),
+                reports: Vec::new(),
+            }
+        } else {
+            Payload::ReplicationBatch {
+                tenant: LaneTenantId::try_new(tenant).expect("the tenant identity parses"),
+                records: Vec::new(),
+            }
+        },
+    })
+    .expect("the adversarial frame encodes")
+}
+
 /// The member's live documents of the collection, at a fresh snapshot.
 fn orders(host: &MemberHost) -> Vec<Document> {
     let engine = host.engine();
@@ -161,7 +211,7 @@ impl Mesh<'_> {
 
 /// The visibility target, in-process: write in region A, pump the lanes,
 /// and a reactive subscriber in region B receives the delta — measured
-/// `p50` under 250 ms per round (the localhost form of the SHORT_GOAL S-05
+/// `p50` under 250 ms per round (the localhost form of the `SHORT_GOAL` S-05
 /// target).
 #[test]
 fn cross_region_visibility_p50_under_250_milliseconds() {
@@ -302,7 +352,7 @@ fn a_killed_member_restarts_and_catches_up() {
     // frames sit undelivered (its window and expiry churn against the
     // absent receiver).
     let killed = mesh.b;
-    drop(killed);
+    let _ = killed;
     for round in 0..10 {
         put(mesh.a, &format!("orders/down-{round}"), round + 10);
     }
@@ -428,4 +478,128 @@ fn both_directions_converge_over_the_lanes() {
         ids
     };
     assert_eq!(ids(mesh.a), ids(mesh.b), "both members converge to the identical document set");
+}
+
+/// A page full of replicated rows must not hide a later origin row. The
+/// filtered page advances the link's cursor, and the following page ships
+/// the local origin write.
+#[test]
+fn replicated_only_page_advances_to_a_later_origin() {
+    let (_source_location, source) = member("filtered-page-source");
+    let (_target_location, target) = member("filtered-page-target");
+    let scope = scope();
+
+    put_many(&source, 1024);
+    let mut source_cursor = None;
+    assert_eq!(
+        replicate_once(source.engine_host(), target.engine_host(), &scope, &mut source_cursor)
+            .expect("the seed rows replicate"),
+        1024
+    );
+    put(&target, "orders/after-filtered-page", 7);
+
+    let mut lane = InProcessLane::new();
+    let mut target_link = RegionLink::new("member-sfo", "member-gru").expect("the link opens");
+    assert_eq!(
+        target_link
+            .ship(target.engine_host(), &scope, &mut lane)
+            .expect("the link ships past replicated rows"),
+        ShipStep::Shipped(1)
+    );
+    assert!(target_link.cursor().is_some(), "the filtered page checkpoint was retained");
+
+    let mut source_link = RegionLink::new("member-gru", "member-sfo").expect("the link opens");
+    source_link
+        .receive(source.engine_host(), &scope, &mut lane)
+        .expect("the later origin reaches its peer");
+    target_link.drain_acks(&mut lane).expect("the later origin is acknowledged");
+    assert!(
+        orders(&source)
+            .iter()
+            .any(|document| document.id().as_str() == "orders/after-filtered-page"),
+        "the origin after the filtered page is not lost"
+    );
+}
+
+/// A replication delivery from a member other than the configured peer is
+/// refused before the payload can reach the apply path.
+#[test]
+fn receive_refuses_a_forged_source() {
+    let (_location, target) = member("forged-source-target");
+    let scope = scope();
+    let mut lane = InProcessLane::new();
+    let target_id = MemberId::try_new("member-sfo").expect("the target identity parses");
+    lane.send(
+        &MemberId::try_new("member-attacker").expect("the forged identity parses"),
+        &target_id,
+        replication_frame("member-attacker", "member-sfo", &scope.tenant, 1, None),
+    )
+    .expect("the forged frame enters the lane");
+    let mut link = RegionLink::new("member-sfo", "member-gru").expect("the link opens");
+    assert!(
+        matches!(
+            link.receive(target.engine_host(), &scope, &mut lane),
+            Err(terrabase_tbep::HostingError::Refused(_))
+        ),
+        "a forged source is refused"
+    );
+}
+
+/// An acknowledgement for an in-flight frame must carry the frame's tenant;
+/// a forged tenant cannot move the sender's durable cursor.
+#[test]
+fn drain_acks_refuses_a_wrong_tenant() {
+    let (_source_location, source) = member("wrong-ack-source");
+    let scope = scope();
+    put(&source, "orders/ack-target", 1);
+    let mut lane = InProcessLane::new();
+    let mut link = RegionLink::new("member-gru", "member-sfo").expect("the link opens");
+    assert!(matches!(
+        link.ship(source.engine_host(), &scope, &mut lane).expect("the frame ships"),
+        ShipStep::Shipped(1)
+    ));
+    let source_id = MemberId::try_new("member-gru").expect("the source identity parses");
+    let peer_id = MemberId::try_new("member-sfo").expect("the peer identity parses");
+    lane.send(
+        &peer_id,
+        &source_id,
+        replication_frame("member-sfo", "member-gru", "tenant-forged", 9, Some(1)),
+    )
+    .expect("the forged acknowledgement enters the lane");
+    assert!(
+        matches!(link.drain_acks(&mut lane), Err(terrabase_tbep::HostingError::Refused(_))),
+        "the wrong tenant acknowledgement is refused"
+    );
+    assert_eq!(link.cursor(), None, "the forged acknowledgement cannot advance the cursor");
+    assert_eq!(link.in_flight(), 1, "the forged acknowledgement leaves the frame pending");
+}
+
+/// Duplicate delivery is an idempotent replay: the target publishes one
+/// document, while duplicate acknowledgements settle one in-flight frame.
+#[test]
+fn duplicate_delivery_replays_idempotently() {
+    let (_source_location, source) = member("replay-source");
+    let (_target_location, target) = member("replay-target");
+    let scope = scope();
+    put(&source, "orders/replay", 3);
+    let mut lane = InProcessLane::new();
+    let source_id = MemberId::try_new("member-gru").expect("the source identity parses");
+    let target_id = MemberId::try_new("member-sfo").expect("the target identity parses");
+    lane.link(&source_id, &target_id).duplicate();
+    let mut source_link = RegionLink::new("member-gru", "member-sfo").expect("the link opens");
+    let mut target_link = RegionLink::new("member-sfo", "member-gru").expect("the link opens");
+    assert!(matches!(
+        source_link.ship(source.engine_host(), &scope, &mut lane).expect("the frame ships"),
+        ShipStep::Shipped(1)
+    ));
+    assert_eq!(
+        target_link
+            .receive(target.engine_host(), &scope, &mut lane)
+            .expect("the duplicate deliveries apply"),
+        1,
+        "the duplicate is a replay"
+    );
+    source_link.drain_acks(&mut lane).expect("the duplicate acknowledgements settle");
+    assert_eq!(orders(&target).len(), 1, "replay does not duplicate the document");
+    assert_eq!(source_link.in_flight(), 0, "the replay acknowledgements settle the frame");
 }

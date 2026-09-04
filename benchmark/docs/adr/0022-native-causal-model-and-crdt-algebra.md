@@ -31,7 +31,7 @@ This record governs:
 - the required replacement of every Loro-owned product format.
 
 It does not define Region transport, snapshot transfer, or public query-view
-delivery. ADRs 0023 and 0024 own those state machines.
+delivery. ADR 0044 owns those state machines.
 
 ## Identity model
 
@@ -361,8 +361,8 @@ narrower range. Overflow rejects the local mutation and quarantines malformed
 remote state. It never wraps or saturates.
 
 Counter components are per object field and actor. Stable actor summarization
-may fold retired components into a versioned base only when ADR 0023's stable
-frontier proves no retired-actor delta can return.
+may fold retired components into a versioned base only when the stable frontier
+proves no retired-actor delta can return.
 
 ### Add-wins observed-remove set
 
@@ -478,7 +478,7 @@ Canonical encoding follows these rules:
   it must normalize before persistence, comparison, or hashing.
 
 BLAKE3-256 over domain-separated canonical bytes is the initial content hash
-for commits, request digests, causal summaries, Merkle nodes, snapshot chunks,
+for commits, request digests, causal summaries, range fingerprints, snapshot chunks,
 and manifests. Each domain has a fixed ASCII prefix and codec major version.
 A checksum proves identity and corruption detection, not authorization.
 

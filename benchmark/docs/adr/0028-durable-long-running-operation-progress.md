@@ -143,7 +143,7 @@ database and Partition. Its stable stages are:
 3. select and pin verified source snapshots;
 4. transfer, authenticate, and verify snapshot chunks;
 5. stream and apply retained causal deltas;
-6. reach the required stored, applied, and Merkle-verified frontiers;
+6. reach the required stored, applied, and reconciled frontiers;
 7. enter and complete the joint membership generation;
 8. prove reads, writes, repair, recovery, and resource isolation; and
 9. publish the Region as selectable and release temporary pins.

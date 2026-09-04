@@ -8,8 +8,8 @@
 //! declaration and its validation, the filtered k-NN request and its typed
 //! error taxonomy (empty query vector, dimension bounds, invalid limit,
 //! invalid threshold, non-finite components), the deterministic identity and
-//! drift model of a declaration, and the versioned TQL predicate handoff
-//! shape whose grammar integration rides TQL-03 (#34).
+//! drift model of a declaration, and the typed vector predicate lowered
+//! directly into engine requests.
 
 use std::time::Duration;
 
@@ -17,8 +17,8 @@ use terrabase::{
     Cancellation, Deadline, QueryPredicate, QuerySource,
     query::{
         MAX_VECTOR_DIMENSIONS, MAX_VECTOR_SEARCH_LIMIT, MIN_VECTOR_DIMENSIONS, QueryCondition,
-        TqlVectorPredicate, VECTOR_PREDICATE_VERSION, VectorEmbeddingType, VectorIndexDeclaration,
-        VectorIndexDrift, VectorIndexError, VectorOptions, VectorOptionsError, VectorSearchError,
+        VECTOR_PREDICATE_VERSION, VectorEmbeddingType, VectorIndexDeclaration, VectorIndexDrift,
+        VectorIndexError, VectorOptions, VectorOptionsError, VectorPredicate, VectorSearchError,
         VectorSearchMode, VectorSearchRequest, VectorSimilarity,
     },
     types::{CollectionName, DocumentValue},
@@ -409,34 +409,22 @@ fn request_bound_against_a_declaration_enforces_the_declared_dimensions() {
 }
 
 // ---------------------------------------------------------------------------
-// TQL predicate handoff (TQL-03 seam)
+// Typed vector predicate (lowered directly into typed requests)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn tql_predicate_renders_the_specified_grammar_text() {
-    // The tql/1.0 grammar fixes the predicate text (docs/tql/spec.md 8.2);
-    // this render is what TQL-03's lowering must produce and consume.
-    let predicate = TqlVectorPredicate::try_new("embedding", "queryVector", Some(0.62), Some(25))
-        .expect("valid predicate");
-    assert_eq!(predicate.render(), "where vector.search(embedding, $queryVector, 0.62)\nlimit 25");
-    let bare = TqlVectorPredicate::try_new("embedding", "queryVector", None, None)
-        .expect("valid predicate");
-    assert_eq!(bare.render(), "where vector.search(embedding, $queryVector)");
-}
-
-#[test]
-fn tql_predicate_is_versioned_with_the_vector_vocabulary() {
+fn vector_predicate_is_versioned_with_the_vector_vocabulary() {
     assert_eq!(VECTOR_PREDICATE_VERSION, "vec/1.0");
-    let predicate = TqlVectorPredicate::try_new("embedding", "queryVector", None, None)
-        .expect("valid predicate");
+    let predicate =
+        VectorPredicate::try_new("embedding", "queryVector", None, None).expect("valid predicate");
     assert_eq!(predicate.version(), VECTOR_PREDICATE_VERSION);
 }
 
 #[test]
-fn tql_predicate_lowering_binds_the_parameter_value() {
-    // The lowering path TQL-03 wires: the predicate plus the bound parameter
-    // value produce the engine's typed request.
-    let predicate = TqlVectorPredicate::try_new("embedding", "queryVector", Some(0.62), Some(25))
+fn vector_predicate_lowering_binds_the_parameter_value() {
+    // The predicate plus the bound parameter value produce the engine's
+    // typed request.
+    let predicate = VectorPredicate::try_new("embedding", "queryVector", Some(0.62), Some(25))
         .expect("valid predicate");
     let bound = DocumentValue::Array(vec![
         DocumentValue::Number(1.0),
@@ -473,47 +461,45 @@ fn tql_predicate_lowering_binds_the_parameter_value() {
 }
 
 #[test]
-fn tql_predicate_validates_limit_and_threshold_like_the_request() {
+fn vector_predicate_validates_limit_and_threshold_like_the_request() {
     assert_eq!(
-        TqlVectorPredicate::try_new("embedding", "queryVector", None, Some(0)).unwrap_err(),
+        VectorPredicate::try_new("embedding", "queryVector", None, Some(0)).unwrap_err(),
         VectorSearchError::InvalidLimit { requested: 0 }
     );
     assert_eq!(
-        TqlVectorPredicate::try_new("embedding", "queryVector", Some(2.5), None).unwrap_err(),
+        VectorPredicate::try_new("embedding", "queryVector", Some(2.5), None).unwrap_err(),
         VectorSearchError::InvalidSimilarityThreshold { requested: 2.5 }
     );
     assert_eq!(
-        TqlVectorPredicate::try_new("", "queryVector", None, None).unwrap_err(),
+        VectorPredicate::try_new("", "queryVector", None, None).unwrap_err(),
         VectorSearchError::InvalidField
     );
 }
 
 #[test]
-fn tql_predicate_names_are_bare_identifiers_refusing_grammar_metacharacters() {
-    // The field and parameter names land verbatim in grammar text. The
-    // field-name rule admits commas, parentheses, and spaces, so a name
-    // outside the grammar's bare-identifier alphabet could inject grammar
-    // through the render — "a, 0.9) or true(" would render a second
-    // predicate, "p, 0.5) limit 999" a threshold and a limit line. Both
-    // operands refuse typed instead.
+fn vector_predicate_names_are_bare_identifiers_refusing_sql_metacharacters() {
+    // The field and parameter names bind into SQL text. The field-name rule
+    // admits commas, parentheses, and spaces, so a name outside the
+    // bare-identifier alphabet could inject SQL — both operands refuse
+    // typed instead.
     assert_eq!(
-        TqlVectorPredicate::try_new("a, 0.9) or true(", "p", None, None).unwrap_err(),
+        VectorPredicate::try_new("a, 0.9) or true(", "p", None, None).unwrap_err(),
         VectorSearchError::InvalidField
     );
     assert_eq!(
-        TqlVectorPredicate::try_new("embedding", "p, 0.5) limit 999", None, None).unwrap_err(),
+        VectorPredicate::try_new("embedding", "p, 0.5) limit 999", None, None).unwrap_err(),
         VectorSearchError::InvalidField
     );
     assert_eq!(
-        TqlVectorPredicate::try_new("embed ding", "p", None, None).unwrap_err(),
+        VectorPredicate::try_new("embed ding", "p", None, None).unwrap_err(),
         VectorSearchError::InvalidField
     );
     assert_eq!(
-        TqlVectorPredicate::try_new("embedding", "0query", None, None).unwrap_err(),
+        VectorPredicate::try_new("embedding", "0query", None, None).unwrap_err(),
         VectorSearchError::InvalidField
     );
-    // The identifier shapes the grammar's own examples use still bind.
-    assert!(TqlVectorPredicate::try_new("_embedding", "query_vector_2", None, None).is_ok());
+    // The identifier shapes the SQL examples use still bind.
+    assert!(VectorPredicate::try_new("_embedding", "query_vector_2", None, None).is_ok());
 }
 
 #[test]

@@ -123,6 +123,7 @@ use crate::{
     types::{ReadSnapshot, TenantId},
 };
 
+pub mod auto_index;
 pub(crate) mod lifecycle;
 
 #[cfg(test)]

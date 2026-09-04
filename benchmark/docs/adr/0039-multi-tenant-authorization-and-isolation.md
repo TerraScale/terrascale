@@ -70,7 +70,7 @@ handle, or production bypass token.
 Policy, membership, role, session, and relationship changes advance the
 authorization generation in the durable publication journal. Ordinary calls
 with an old generation fail closed and rebind. Reactive sessions apply the
-transition rules in ADR 0024, including removal of data that the principal can
+transition rules in ADR 0044, including removal of data that the principal can
 no longer see before a new checkpoint generation advances.
 
 ## Isolation and accounting

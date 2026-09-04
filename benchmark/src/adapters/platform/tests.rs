@@ -26,14 +26,14 @@ use crate::{
         CallerContext, CallerEvidence, CredentialInput, CredentialKind, PrincipalId,
         ProtocolAdapter, ProtocolError,
     },
-    engine::{CommitOutcome, Engine, EngineConfig},
+    engine::{CommitOutcome, Engine, EngineConfig, EngineError, EnginePort},
     families::{
         AttachmentMutation, AttachmentRead, AttachmentWrite, FamilyReadRequest, FamilyReadResult,
         FamilyWriteRequest,
     },
     operations::{
-        DocumentReadRequest, DocumentWriteRequest, FamilyOperation, PublicOperation,
-        PublicResponse, QueryInput, QueryOperation, RequestValidationError, TqlQueryText,
+        DocumentReadRequest, DocumentWriteRequest, EngineRequest, FamilyOperation, PublicOperation,
+        PublicResponse, QueryInput, QueryOperation, RequestValidationError, SqlQueryText,
     },
     query::{
         OrderDirection, OrderingKey, QueryCondition, QueryOrdering, QueryPaging, QueryPredicate,
@@ -225,10 +225,10 @@ fn typed_query_operation(tenant_name: &str) -> PublicOperation {
     )
 }
 
-fn v1_query_operation() -> PublicOperation {
-    let text = TqlQueryText::try_new("from users").expect("valid query text");
+fn sql_text_query_operation() -> PublicOperation {
+    let text = SqlQueryText::try_new("SELECT * FROM users").expect("valid query text");
     PublicOperation::query(
-        QueryOperation::try_new(QueryInput::tql(text), None, deadline(), Cancellation::new())
+        QueryOperation::try_new(QueryInput::sql(text), None, deadline(), Cancellation::new())
             .expect("valid query"),
     )
 }
@@ -405,19 +405,20 @@ fn query_operation_try_new_validates_and_reports_parts() {
     assert!(!typed.deadline().is_expired());
     assert!(!typed.cancellation().is_cancelled());
 
-    let text = TqlQueryText::try_new("from users where name = 'ada'").expect("valid query text");
+    let text =
+        SqlQueryText::try_new("SELECT * FROM users WHERE name = 'ada'").expect("valid query text");
     let compatible =
-        QueryOperation::try_new(QueryInput::tql(text), None, deadline(), Cancellation::new())
-            .expect("a live V1-compatible query constructs");
-    assert!(matches!(compatible.input(), QueryInput::Tql(_)));
+        QueryOperation::try_new(QueryInput::sql(text), None, deadline(), Cancellation::new())
+            .expect("a live SQL-text query constructs");
+    assert!(matches!(compatible.input(), QueryInput::Sql(_)));
     assert!(compatible.operation_id().is_none());
 
     // The bounds are checked for both input forms.
     let expired = Deadline::after(Duration::from_millis(1)).expect("valid deadline");
     std::thread::sleep(Duration::from_millis(10));
-    let text = TqlQueryText::try_new("from users").expect("valid query text");
+    let text = SqlQueryText::try_new("SELECT * FROM users").expect("valid query text");
     assert_eq!(
-        QueryOperation::try_new(QueryInput::tql(text), None, expired, Cancellation::new()),
+        QueryOperation::try_new(QueryInput::sql(text), None, expired, Cancellation::new()),
         Err(RequestValidationError::InvalidDeadline)
     );
 
@@ -425,7 +426,7 @@ fn query_operation_try_new_validates_and_reports_parts() {
     cancelled.cancel();
     assert_eq!(
         QueryOperation::try_new(
-            QueryInput::tql(TqlQueryText::try_new("from users").expect("valid text")),
+            QueryInput::sql(SqlQueryText::try_new("SELECT * FROM users").expect("valid text")),
             None,
             deadline(),
             cancelled
@@ -566,15 +567,59 @@ fn query_dispatches_end_to_end() {
     };
     assert_eq!(result.rows().len(), 1);
 
-    // The V1-compatible form has no claim: the backend scope's snapshot
+    // The SQL text form has no claim: the backend scope's snapshot
     // tenant is its binding.
     let response = adapter
-        .dispatch(&caller_for("tenant-a"), v1_query_operation())
-        .expect("the V1-compatible query dispatches");
+        .dispatch(&caller_for("tenant-a"), sql_text_query_operation())
+        .expect("the SQL-text query dispatches");
     let PublicResponse::Query(result) = response else {
         panic!("expected a query result");
     };
     assert_eq!(result.rows().len(), 2);
+}
+
+#[test]
+fn engine_port_rejects_cancelled_query_before_snapshot_work() {
+    let engine = open_engine("query-cancelled-before-snapshot");
+    let cancellation = Cancellation::new();
+    let request = QueryOperation::try_new(
+        QueryInput::sql(SqlQueryText::try_new("SELECT * FROM users").expect("valid text")),
+        None,
+        deadline(),
+        cancellation.clone(),
+    )
+    .expect("query constructs while live");
+    cancellation.cancel();
+
+    // A mismatched Engine identity would fail as soon as a snapshot is read.
+    // Cancellation winning proves the port checks the operation before that
+    // work begins.
+    let scope = TenantScope::from_parts(tenant("tenant-a"), engine.identity() ^ 1);
+    assert!(matches!(
+        EnginePort::execute(&engine, EngineRequest::Query { scope, request }),
+        Err(EngineError::Cancelled)
+    ));
+}
+
+#[test]
+fn engine_port_rejects_expired_query_before_snapshot_work() {
+    let engine = open_engine("query-expired-before-snapshot");
+    let request = QueryOperation::try_new(
+        QueryInput::sql(SqlQueryText::try_new("SELECT * FROM users").expect("valid text")),
+        None,
+        Deadline::after(Duration::from_millis(1)).expect("valid deadline"),
+        Cancellation::new(),
+    )
+    .expect("query constructs while live");
+    std::thread::sleep(Duration::from_millis(10));
+
+    // As above, a snapshot read would reject this scope first. The deadline
+    // result proves the query control gate runs before any Engine work.
+    let scope = TenantScope::from_parts(tenant("tenant-a"), engine.identity() ^ 1);
+    assert!(matches!(
+        EnginePort::execute(&engine, EngineRequest::Query { scope, request }),
+        Err(EngineError::Deadline)
+    ));
 }
 
 #[test]

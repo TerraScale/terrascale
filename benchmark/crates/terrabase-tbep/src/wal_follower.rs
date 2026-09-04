@@ -54,18 +54,16 @@
 //!
 //! ## The bootstrap contract
 //!
-//! [`WalFollower::bootstrap`] copies the writer's location marker
-//! (`format`), ownership record (`owner.tbv1`, when present),
-//! `terrabase.sqlite3`, and the valid prefix of its `-wal` — an at-rest
-//! set is consistent (main at or past the last generation boundary, WAL
-//! holding the current generation from frame zero). It returns the
-//! follower alongside the [`WalCheckpoint`] the tailer passes to
-//! [`WalTail::resume`], so the tail continues past the snapshot instead
-//! of re-shipping it. The caller must invoke it with the writer quiescent
-//! (no commit wave or checkpoint in flight): the S-09 member composition
-//! takes that barrier at the member-composition boundary, and the
-//! orchestration that promotes or re-syncs a follower owns it in
-//! production.
+//! [`WalFollower::bootstrap`] copies the writer's ownership record
+//! (`owner.tbv1`, when present), `terrabase.sqlite3`, and the valid prefix of
+//! its `-wal` — an at-rest set is consistent (main at or past the last
+//! generation boundary, WAL holding the current generation from frame zero).
+//! It returns the follower alongside the [`WalCheckpoint`] the tailer passes
+//! to [`WalTail::resume`], so the tail continues past the snapshot instead of
+//! re-shipping it. The caller must invoke it with the writer quiescent (no
+//! commit wave or checkpoint in flight): the S-09 member composition takes
+//! that barrier at the member-composition boundary, and the orchestration
+//! that promotes or re-syncs a follower owns it in production.
 //!
 //! ## What is deliberately M1
 //!
@@ -92,11 +90,6 @@ use std::path::{Path, PathBuf};
 
 /// The engine's `SQLite` database file name inside a durable location.
 const DATABASE_FILE: &str = "terrabase.sqlite3";
-
-/// The location's format marker: [`bootstrap`](WalFollower::bootstrap) copies
-/// it so the follower's directory opens as the same database instead of
-/// failing the marker check as a loss.
-const FORMAT_FILE: &str = "format";
 
 /// The location's ownership record: copied when present for the same reason.
 const OWNER_FILE: &str = "owner.tbv1";
@@ -493,11 +486,8 @@ pub struct FollowerAck {
 impl WalFollower {
     /// Bootstraps a follower from the writer's at-rest file pair (the
     /// writer quiescent — see the module's bootstrap contract): copies the
-    /// location marker (`format`), the ownership record (`owner.tbv1`,
-    /// when present), `terrabase.sqlite3`, and the valid WAL prefix through
-    /// the last commit frame. Without the marker the follower's directory
-    /// would fail the open as a loss instead of promoting as the same
-    /// database.
+    /// ownership record (`owner.tbv1`, when present), `terrabase.sqlite3`,
+    /// and the valid WAL prefix through the last commit frame.
     ///
     /// Returns the follower alongside the [`WalCheckpoint`] the tailer
     /// passes to [`WalTail::resume`]: the snapshot's committed prefix is
@@ -559,7 +549,6 @@ impl WalFollower {
             wal_prefix = wal[..header.frame_range(0, committed).end].to_vec();
         }
         copy_location_file(writer, follower, DATABASE_FILE)?;
-        copy_location_file(writer, follower, FORMAT_FILE)?;
         copy_location_file_optional(writer, follower, OWNER_FILE)?;
         if state.header.is_some() {
             let mut wal_file = File::create(follower.join(wal_file_name()))?;

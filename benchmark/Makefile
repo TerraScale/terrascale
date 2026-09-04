@@ -1,11 +1,24 @@
-.PHONY: check contracts stack
+.PHONY: check contracts stack stack-check stack-down
+
+stack:
+	./scripts/stack.sh up
+
+stack-check:
+	./scripts/stack.sh check
+
+stack-down:
+	./scripts/stack.sh down
 
 check:
 	cargo fmt --all --check
 	cargo clippy --workspace --all-targets --locked -- -D warnings
 	cargo test --workspace --locked
 	buf lint
-	./scripts/validate-release-contracts.sh
+	@if [ -n "$(CONTRACT_PREVIOUS)" ]; then \
+		./scripts/validate-release-contracts.sh --version "$(CONTRACT_VERSION)" --previous "$(CONTRACT_PREVIOUS)"; \
+	else \
+		./scripts/validate-release-contracts.sh --version "$(CONTRACT_VERSION)"; \
+	fi
 	@if [ -f terrabase-go/go.mod ]; then \
 		echo "--- terrabase-go"; \
 		test -z "$$(cd terrabase-go && gofmt -l .)"; \
@@ -13,13 +26,15 @@ check:
 	fi
 
 CONTRACT_VERSION ?= v1
+CONTRACT_PREVIOUS ?=
 
 contracts:
 	cargo run --quiet --locked -p terrabase-server --bin terrabase-contracts -- \
 		--repository-root . \
 		--output contracts \
 		--version "$(CONTRACT_VERSION)"
-
-stack:
-	@echo "NOT-IMPLEMENTED: the local three-member harness is track item E-15 (after E-3, E-5, E-6); this target fails closed until it lands." >&2
-	@exit 1
+	@if [ -n "$(CONTRACT_PREVIOUS)" ]; then \
+		./scripts/validate-release-contracts.sh --version "$(CONTRACT_VERSION)" --previous "$(CONTRACT_PREVIOUS)"; \
+	else \
+		./scripts/validate-release-contracts.sh --version "$(CONTRACT_VERSION)"; \
+	fi

@@ -69,6 +69,11 @@ pub const MAX_RECORDS_PER_FRAME: usize = 1024;
 /// wave *k*'s ack before sending *k+1* — holds up to this bound.
 pub const MAX_INFLIGHT_FRAMES: usize = 8;
 
+/// The maximum number of journal pages one ship tick may scan when every
+/// page contains only replicated rows. The cursor advances after each such
+/// page, so a larger replicated prefix is handled by later bounded ticks.
+pub const MAX_FILTERED_PAGE_SCANS: usize = 8;
+
 /// The lane-tick expiry one shipped frame carries. An unacknowledged frame
 /// past its expiry is treated as lost: it releases its window credit, the
 /// outbound state rolls back to it, and the next pull re-ships its records
@@ -84,6 +89,8 @@ struct InFlightFrame {
     expiry: u64,
     /// Whether the peer's batched report confirmed the frame.
     acknowledged: bool,
+    /// The tenant bound to the frame, used to authenticate its report.
+    tenant: LaneTenantId,
 }
 
 /// The outcome of one outbound shipping tick.
@@ -176,9 +183,10 @@ impl RegionLink {
 
     /// One outbound tick (M1: one frame per pump tick): pull one bounded
     /// page of this member's origin journal rows and ship the first frame
-    /// of it toward the peer. The cursor advances only through
-    /// acknowledged frames, so a skipped, dropped, or expired frame leaves
-    /// its records to be pulled again.
+    /// of it toward the peer. The cursor advances only through acknowledged
+    /// origin frames. Filtered-only pages may advance it because they hold no
+    /// records that could need re-shipping. A skipped, dropped, or expired
+    /// frame leaves its origin records to be pulled again.
     ///
     /// # Errors
     ///
@@ -194,7 +202,25 @@ impl RegionLink {
         if self.in_flight.len() >= MAX_INFLIGHT_FRAMES {
             return Ok(ShipStep::WindowFull);
         }
-        let page = pull_origin_page(host, scope, self.cursor)?;
+        let mut page = Vec::new();
+        let mut after = self.cursor;
+        for _ in 0..MAX_FILTERED_PAGE_SCANS {
+            let (candidate, next) = pull_origin_page(host, scope, after)?;
+            if !candidate.is_empty() {
+                page = candidate;
+                break;
+            }
+            let Some(next) = next else {
+                return Ok(ShipStep::Idle);
+            };
+            if after.is_some_and(|previous| !checkpoint_after(next, previous)) {
+                return Err(HostingError::EngineFailure(
+                    "the durable journal pull did not advance its checkpoint".into(),
+                ));
+            }
+            self.cursor = Some(next);
+            after = self.cursor;
+        }
         if page.is_empty() {
             return Ok(ShipStep::Idle);
         }
@@ -203,12 +229,14 @@ impl RegionLink {
             .map(|(position, record)| Ok((Some(*position), replicated_write(record)?)))
             .collect::<Result<Vec<_>, HostingError>>()?;
         let now = lane.now().ticks();
+        let tenant = LaneTenantId::try_new(&scope.tenant)
+            .map_err(|_| HostingError::Invalid("the tenant breaks the lane rules".into()))?;
         let (frame, checkpoint, shipped) = encode_first_frame(
             &self.local,
             &self.peer,
             now,
             self.next_message_id,
-            &scope.tenant,
+            tenant.as_str(),
             &records,
         )?;
         match lane.send(&self.local, &self.peer, frame) {
@@ -221,7 +249,12 @@ impl RegionLink {
         self.next_message_id += 1;
         self.in_flight.insert(
             message_id,
-            InFlightFrame { checkpoint, expiry: now + FRAME_EXPIRY_TICKS, acknowledged: false },
+            InFlightFrame {
+                checkpoint,
+                expiry: now + FRAME_EXPIRY_TICKS,
+                acknowledged: false,
+                tenant,
+            },
         );
         Ok(ShipStep::Shipped(shipped))
     }
@@ -250,6 +283,9 @@ impl RegionLink {
                 return Err(HostingError::Refused(
                     "the frame is addressed to another member".into(),
                 ));
+            }
+            if envelope.source != self.peer {
+                return Err(HostingError::Refused("the frame is sourced by another member".into()));
             }
             if envelope.expires_at.is_some_and(|at| at <= lane.now()) {
                 // Lost in transit by the lane's own clock: never applied,
@@ -324,16 +360,24 @@ impl RegionLink {
                     "the frame is addressed to another member".into(),
                 ));
             }
-            let Payload::AckBatch { reports: batch, .. } = envelope.payload else {
+            if envelope.source != self.peer {
+                return Err(HostingError::Refused(
+                    "the report is sourced by another member".into(),
+                ));
+            }
+            let Payload::AckBatch { tenant, reports: batch } = envelope.payload else {
                 return Err(HostingError::Refused(
                     "the reports selector drained a non-report frame".into(),
                 ));
             };
-            reports.push((envelope.correlation_id, batch));
+            reports.push((envelope.correlation_id, tenant, batch));
         }
-        for (correlation, batch) in reports {
+        for (correlation, tenant, batch) in reports {
             let Some(message_id) = correlation else { continue };
             let Some(frame_state) = self.in_flight.get_mut(&message_id) else { continue };
+            if tenant != frame_state.tenant {
+                return Err(HostingError::Refused("the report names another tenant".into()));
+            }
             // Any non-durable holding voids the frame's advance: the
             // sender treats the frame as lost and re-pulls its records.
             if batch.iter().all(|(_, held)| *held) {
@@ -373,15 +417,21 @@ impl RegionLink {
     }
 }
 
+/// One bounded origin page: positioned records plus the cursor past them.
+type OriginPage = (Vec<(ChangeCheckpoint, ReplicatedRecord)>, Option<ChangeCheckpoint>);
+
 /// Pulls one bounded page of origin journal rows with the durable cursor
-/// after each record — [`crate::replication::pull_origin_records`]'s
-/// semantics (the `kind='origin'` filter that prevents shipping loops)
-/// extended with the per-record positions the frame checkpoints need.
+/// after each record. The returned checkpoint is after every row examined,
+/// including filtered replicated rows, while each returned record retains its
+/// own position for the frame checkpoint. This is
+/// [`crate::replication::pull_origin_records`]'s `kind='origin'` filter that
+/// prevents shipping loops, extended with the per-record positions the frame
+/// checkpoints need.
 fn pull_origin_page(
     host: &EngineHost,
     scope: &BoundScope,
     after: Option<ChangeCheckpoint>,
-) -> Result<Vec<(ChangeCheckpoint, ReplicatedRecord)>, HostingError> {
+) -> Result<OriginPage, HostingError> {
     let batch = host.replay_sync_journal(scope, after)?;
     let mut page = Vec::new();
     for record in batch.records() {
@@ -403,10 +453,15 @@ fn pull_origin_page(
                 commit_ulid: record.operation_id().as_str().to_owned(),
                 hlc: provenance.hlc(),
                 origin: provenance.origin().to_owned(),
+                origin_sequence: provenance.origin_sequence(),
             },
         ));
     }
-    Ok(page)
+    Ok((page, batch.next_checkpoint()))
+}
+
+fn checkpoint_after(next: ChangeCheckpoint, previous: ChangeCheckpoint) -> bool {
+    (next.sequence(), next.write_index()) > (previous.sequence(), previous.write_index())
 }
 
 /// Encodes the first frame of a pulled page: the longest prefix of
@@ -482,6 +537,7 @@ fn replicated_write(record: &ReplicatedRecord) -> Result<ReplicatedWrite, Hostin
         commit_ulid: record.commit_ulid.clone(),
         hlc: record.hlc,
         origin: record.origin.clone(),
+        origin_sequence: record.origin_sequence,
     })
 }
 
@@ -500,6 +556,7 @@ fn replicated_record(write: &ReplicatedWrite) -> Result<ReplicatedRecord, Hostin
         commit_ulid: write.commit_ulid.clone(),
         hlc: write.hlc,
         origin: write.origin.clone(),
+        origin_sequence: write.origin_sequence,
     })
 }
 

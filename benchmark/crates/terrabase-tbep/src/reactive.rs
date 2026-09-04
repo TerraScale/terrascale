@@ -10,7 +10,7 @@
 //! delta goes to its channel. A full channel is the backpressure
 //! ladder: the backlog is dropped and replaced with [`ReactiveFrame::Reset`]
 //! — a slow consumer re-bootstraps, it never queues without bound
-//! (docs/sync/terrascale-sync-v2.md §Backpressure).
+//! (D-38 backpressure contract).
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;

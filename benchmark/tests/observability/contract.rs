@@ -10,9 +10,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use terrabase::observability::{
-    AdmissionReason, BackupMode, CommitResult, Component, HealthStatus, MetricsRegistry, Operation,
-    Outcome, PROMETHEUS_PATH, Queue, Region, ServiceState, StorageOperation, StorageTier,
-    TaskOutcome, redact_diagnostic,
+    AdmissionReason, BackupMode, CLOCK_OFFSET_WRITE_REFUSAL_THRESHOLD_SECONDS, CommitResult,
+    Component, EGRESS_KINDS, EGRESS_MONTHLY_ALERT_BYTES, EgressKind, HealthStatus,
+    LOG_RETENTION_DAYS, LOG_SAMPLE_ABOVE_LINES_PER_SEC_PER_HOST, LogEvent, LogLevel, LogRecord,
+    MAX_CLOCK_SERIES, MAX_EGRESS_SERIES, MetricsRegistry, Operation, Outcome, PROMETHEUS_PATH,
+    Queue, Region, ServiceState, TaskOutcome, redact_diagnostic,
 };
 use terrabase::types::CollectionName;
 use terrabase::usage::UsagePageRequest;
@@ -49,19 +51,15 @@ fn exposition_has_one_type_declaration_per_family() {
         "terrabase_replication_lag_seconds",
         "terrabase_replication_backlog_bytes",
         "terrabase_replication_frontier_health",
-        "terrabase_storage_bytes",
-        "terrabase_storage_capacity_bytes",
-        "terrabase_storage_errors_total",
         "terrabase_active_members",
         "terrabase_component_health",
-        "terrabase_compaction_backlog_bytes",
-        "terrabase_compaction_runs_total",
-        "terrabase_compaction_input_bytes_total",
-        "terrabase_compaction_output_bytes_total",
         "terrabase_backup_last_success_age_seconds",
         "terrabase_backup_runs_total",
         "terrabase_usage_export_frontier",
         "terrabase_usage_export_failures_total",
+        "terrabase_clock_offset_seconds",
+        "terrabase_clock_write_refusals_total",
+        "terrabase_egress_bytes_total",
     ] {
         assert_eq!(
             text.matches(&format!("# TYPE {family} ")).count(),
@@ -131,8 +129,6 @@ fn immutable_snapshot_is_the_prometheus_source_of_truth() {
         Duration::from_millis(12),
     );
     metrics.set_replication_lag(Region::Fra, Duration::from_millis(250));
-    metrics.set_storage_bytes(StorageTier::Tier2, 4_096);
-    metrics.set_storage_capacity_bytes(StorageTier::Tier2, 16_384);
     metrics.set_active_members(Region::Gru, 2);
 
     let snapshot = metrics.snapshot();
@@ -140,8 +136,6 @@ fn immutable_snapshot_is_the_prometheus_source_of_truth() {
     assert_eq!(snapshot.requests()[0].total(), 1);
     assert_eq!(snapshot.requests()[0].duration().count(), 1);
     assert_eq!(snapshot.replication_lag()[0].seconds(), 0.25);
-    assert_eq!(snapshot.storage()[0].bytes(), 4_096);
-    assert_eq!(snapshot.storage_capacity()[0].bytes(), 16_384);
     assert_eq!(snapshot.active_members()[0].members(), 2);
     assert_eq!(snapshot.component_health().len(), 6);
     assert_eq!(snapshot.render_prometheus(), metrics.render_prometheus());
@@ -157,9 +151,6 @@ fn production_diagnostic_signals_are_typed_and_share_the_snapshot() {
     metrics.record_commit(CommitResult::Unknown, Duration::from_millis(30));
     metrics.set_replication_backlog_bytes(Region::Fra, 1_024);
     metrics.set_replication_frontier_health(Region::Fra, HealthStatus::Degraded);
-    metrics.record_storage_error(StorageTier::Tier2, StorageOperation::Flush);
-    metrics.set_compaction_backlog_bytes(StorageTier::Tier2, 2_048);
-    metrics.record_compaction(TaskOutcome::Success, 4_096, 3_072);
     metrics.set_backup_last_success_age(BackupMode::Continuous, Duration::from_secs(3_600));
     metrics.record_backup(BackupMode::Continuous, TaskOutcome::Error);
     assert!(metrics.advance_usage_export_frontier(42));
@@ -178,11 +169,6 @@ fn production_diagnostic_signals_are_typed_and_share_the_snapshot() {
     assert_eq!(snapshot.commits()[0].0, CommitResult::Unknown);
     assert_eq!(snapshot.replication_backlog(), &[(Region::Fra, 1_024)]);
     assert_eq!(snapshot.replication_frontier_health(), &[(Region::Fra, HealthStatus::Degraded)]);
-    assert_eq!(snapshot.storage_errors(), &[(StorageTier::Tier2, StorageOperation::Flush, 1)]);
-    assert_eq!(snapshot.compaction_backlog()[0].bytes(), 2_048);
-    assert_eq!(snapshot.compaction_runs(), &[(TaskOutcome::Success, 1)]);
-    assert_eq!(snapshot.compaction_input_bytes(), 4_096);
-    assert_eq!(snapshot.compaction_output_bytes(), 3_072);
     assert_eq!(snapshot.backup_last_success_age(), &[(BackupMode::Continuous, 3_600.0)]);
     assert_eq!(snapshot.backup_runs(), &[(BackupMode::Continuous, TaskOutcome::Error, 1)]);
     assert_eq!(snapshot.usage_export_frontier(), Some(42));
@@ -268,19 +254,17 @@ fn every_exposed_label_name_belongs_to_its_closed_family() {
     metrics.set_replication_lag(Region::Gru, Duration::ZERO);
     metrics.set_replication_backlog_bytes(Region::Gru, 0);
     metrics.set_replication_frontier_health(Region::Gru, HealthStatus::Healthy);
-    metrics.set_storage_bytes(StorageTier::Tier1, 0);
-    metrics.set_storage_capacity_bytes(StorageTier::Tier1, 1);
-    metrics.record_storage_error(StorageTier::Tier1, StorageOperation::Read);
     metrics.set_active_members(Region::Gru, 2);
     metrics.set_in_flight(Operation::Read, 1);
     metrics.record_admission_rejection(Operation::Read, AdmissionReason::Capacity);
     metrics.set_queue(Queue::Foreground, 0, NonZeroU64::new(1).expect("test capacity is non-zero"));
     metrics.record_wal_fsync(TaskOutcome::Success, Duration::ZERO);
     metrics.record_commit(CommitResult::Committed, Duration::ZERO);
-    metrics.set_compaction_backlog_bytes(StorageTier::Tier1, 0);
-    metrics.record_compaction(TaskOutcome::Success, 0, 0);
     metrics.set_backup_last_success_age(BackupMode::Full, Duration::ZERO);
     metrics.record_backup(BackupMode::Full, TaskOutcome::Success);
+    metrics.set_clock_offset_seconds(0.001);
+    metrics.record_clock_write_refusal();
+    metrics.record_egress_bytes(Region::Gru, EgressKind::Replication, 0);
 
     for line in metrics.render_prometheus().lines().filter(|line| !line.starts_with('#')) {
         let Some((name, rest)) = line.split_once('{') else { continue };
@@ -326,23 +310,14 @@ fn every_exposed_label_name_belongs_to_its_closed_family() {
                 | "terrabase_replication_frontier_health"
         ) {
             &["region"]
-        } else if matches!(
-            name,
-            "terrabase_storage_bytes"
-                | "terrabase_storage_capacity_bytes"
-                | "terrabase_compaction_backlog_bytes"
-        ) {
-            &["tier"]
-        } else if name == "terrabase_storage_errors_total" {
-            &["tier", "operation"]
         } else if name == "terrabase_component_health" {
             &["component"]
-        } else if name == "terrabase_compaction_runs_total" {
-            &["outcome"]
         } else if name == "terrabase_backup_last_success_age_seconds" {
             &["mode"]
         } else if name == "terrabase_backup_runs_total" {
             &["mode", "outcome"]
+        } else if name == "terrabase_egress_bytes_total" {
+            &["region", "kind"]
         } else {
             panic!("unexpected labeled family {name}");
         };
@@ -426,7 +401,6 @@ fn alert_rules_preserve_required_optional_and_selected_region_semantics() {
     for target_grouping in [
         "sum by (job, instance, le, region, operation)",
         "sum by (job, instance, operation, reason)",
-        "sum by (job, instance, tier, operation)",
         "sum by (job, instance, mode)",
     ] {
         assert!(rules.contains(target_grouping), "alert dropped target labels: {target_grouping}");
@@ -436,7 +410,6 @@ fn alert_rules_preserve_required_optional_and_selected_region_semantics() {
         "TerraBaseQueueSaturationHigh",
         "TerraBaseWalFsyncErrors",
         "TerraBaseCommitOutcomeUnknown",
-        "TerraBaseStorageErrors",
         "TerraBaseReplicationFrontierUnhealthy",
         "TerraBaseContinuousBackupStale",
         "TerraBaseUsageExportErrors",
@@ -447,6 +420,10 @@ fn alert_rules_preserve_required_optional_and_selected_region_semantics() {
             "alert {alert} must appear once"
         );
     }
+    assert!(rules.contains(
+        "sum by (job, instance, region) (increase(terrabase_egress_bytes_total[1h])) * 730 > 8000000000000"
+    ));
+    assert!(!rules.contains("> 11111111111"));
 }
 
 #[test]
@@ -467,13 +444,67 @@ fn prometheus_scrape_config_matches_rust_server_and_plaintext_boundary() {
 }
 
 #[test]
-fn storage_tier_metric_has_no_region_or_customer_labels() {
+fn cardinality_stays_bounded_by_host_region_and_subsystem() {
+    // D-72: no per-database, per-tenant, or per-view label on any metric.
+    // The host is the Prometheus `instance` target, so every other label
+    // must come from a closed Region or subsystem vocabulary.
     let metrics = MetricsRegistry::new();
-    metrics.set_storage_bytes(StorageTier::Tier2, 128);
-    metrics.set_storage_capacity_bytes(StorageTier::Tier2, 512);
+    metrics.record_request(Region::Gru, Operation::Query, Outcome::Success, Duration::ZERO);
+    metrics.set_clock_offset_seconds(0.001);
+    for kind in EGRESS_KINDS {
+        metrics.record_egress_bytes(Region::Sfo, kind, 1);
+    }
     let text = metrics.render_prometheus();
-    assert!(text.contains("terrabase_storage_bytes{tier=\"tier2\"} 128"));
-    assert!(text.contains("terrabase_storage_capacity_bytes{tier=\"tier2\"} 512"));
-    assert!(!text.contains("region=\""));
-    assert!(!text.contains("tenant=\""));
+    for forbidden in [
+        "tenant=\"",
+        "tenant_id",
+        "database=\"",
+        "database_id",
+        "view=\"",
+        "view_id",
+        "collection=\"",
+        "document=\"",
+        "request_id",
+        "ocid",
+    ] {
+        assert!(!text.contains(forbidden), "forbidden D-72 label {forbidden}");
+    }
+    assert_eq!(metrics.snapshot().egress_bytes().len(), EGRESS_KINDS.len());
+    assert_eq!(MAX_EGRESS_SERIES, 12);
+    assert_eq!(MAX_CLOCK_SERIES, 2);
+    assert_eq!(CLOCK_OFFSET_WRITE_REFUSAL_THRESHOLD_SECONDS, 0.5);
+    assert_eq!(EGRESS_MONTHLY_ALERT_BYTES, 8_000_000_000_000);
+}
+
+#[test]
+fn structured_log_schema_is_closed_and_redacted() {
+    // D-72: structured logs with agent-side sampling above 100 lines/s per
+    // host and 14-day retention.
+    assert_eq!(LOG_SAMPLE_ABOVE_LINES_PER_SEC_PER_HOST, 100);
+    assert_eq!(LOG_RETENTION_DAYS, 14);
+    let record = LogRecord::new(
+        1_757_000_000_000,
+        LogLevel::Warn,
+        Component::Replication,
+        LogEvent::Saturated,
+        "replication queue depth high password=hunter2",
+    );
+    let line = record.to_log_line();
+    assert!(line.starts_with("ts=1757000000000 level=warn component=replication event=saturated "));
+    assert!(!line.contains("hunter2"));
+}
+
+#[test]
+fn structured_log_line_escapes_line_breaks() {
+    let record = LogRecord::new(
+        1,
+        LogLevel::Info,
+        Component::Metrics,
+        LogEvent::Progress,
+        "first\nsecond\rthird",
+    );
+    let line = record.to_log_line();
+    assert!(!line.contains('\n'));
+    assert!(!line.contains('\r'));
+    assert!(line.ends_with("msg=\"first\\nsecond\\rthird\""));
 }

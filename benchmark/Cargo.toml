@@ -20,6 +20,7 @@ members = [
   "crates/terrabase-replication-core",
   "crates/terrabase-tbep",
   "crates/terrabase-server",
+  "crates/terrabase-sim",
 ]
 
 [lib]
@@ -69,7 +70,7 @@ ulid = { version = "1", default-features = false }
 # format never silently moves with a new SQLite build. TerraBase selects the
 # native bundled engine and prepared-statement cache explicitly; rusqlite's
 # default wasm VFS is not part of this native server product.
-rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "cache"] }
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "cache", "hooks"] }
 # D-54/E-4: validate the public SQL AST before authorization or planning.
 sqlparser = { version = "0.62.0", features = ["visitor"] }
 

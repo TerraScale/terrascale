@@ -1,7 +1,7 @@
 //! The vector conformance vector corpus (GAP-C4, TerraBaseV2#86).
 //!
 //! Following the query golden-vector pattern of
-//! `tests/query/tql_golden_vectors.rs`: every accept and refusal class of
+//! `tests/query/sql conformance (E-4)`: every accept and refusal class of
 //! the vector vocabulary's construction surface has at least one named
 //! vector, pinned by the exact-count assertions below, and the
 //! coverage-completeness checks at the end of this file fail when a
@@ -9,8 +9,8 @@
 //! so a coverage gap of that class cannot recur silently.
 //!
 //! The corpus runs in CI with the rest of the integration tests. It pins
-//! the CONSTRUCTION surface (declaration options, k-NN requests, TQL
-//! predicate forms); the execution semantics — cosine scoring, filtered
+//! the CONSTRUCTION surface (declaration options, k-NN requests,
+//! typed predicate forms); the execution semantics — cosine scoring, filtered
 //! k-NN, deterministic tie ordering — are pinned by the in-crate corpus of
 //! `src/query/vector_tests.rs`, because execution requires a `TenantScope`
 //! and the public surface has no scope constructor by design.
@@ -18,9 +18,9 @@
 use terrabase::{
     QuerySource,
     query::{
-        MAX_VECTOR_DIMENSIONS, MIN_VECTOR_DIMENSIONS, TqlVectorPredicate, VectorEmbeddingType,
-        VectorIndexDeclaration, VectorIndexError, VectorOptions, VectorOptionsError,
-        VectorSearchError, VectorSearchRequest,
+        MAX_VECTOR_DIMENSIONS, MIN_VECTOR_DIMENSIONS, VectorEmbeddingType, VectorIndexDeclaration,
+        VectorIndexError, VectorOptions, VectorOptionsError, VectorPredicate, VectorSearchError,
+        VectorSearchRequest,
     },
     types::{CollectionName, DocumentValue},
 };
@@ -51,16 +51,9 @@ enum Scenario {
     RequestField { field: &'static str },
     /// `with_minimum_similarity` over one threshold.
     Threshold { value: f64 },
-    /// `TqlVectorPredicate::try_new` over one name pair (the identifier rule).
+    /// `VectorPredicate::try_new` over one name pair (the identifier rule).
     PredicateName { field: &'static str, parameter: &'static str },
-    /// `TqlVectorPredicate` rendering over one predicate shape.
-    Render {
-        field: &'static str,
-        parameter: &'static str,
-        threshold: Option<f64>,
-        limit: Option<u32>,
-    },
-    /// `TqlVectorPredicate::lower` over one bound parameter value.
+    /// `VectorPredicate::lower` over one bound parameter value.
     Lower { parameter: DocumentValue },
 }
 
@@ -71,8 +64,6 @@ enum Expected {
     RefusedOptions(VectorOptionsError),
     RefusedDeclaration(VectorIndexError),
     RefusedRequest(VectorSearchError),
-    /// The rendered TQL predicate text, pinned to the grammar's shape.
-    Rendered(&'static str),
 }
 
 fn collection(name: &str) -> CollectionName {
@@ -309,47 +300,15 @@ fn vectors() -> Vec<Vector> {
             }),
         },
         // ---------------------------------------------------------------
-        // TQL predicate: render and lower (the TQL-03 seam handoff)
+        // Typed predicate: identifier rule and lowering
         // ---------------------------------------------------------------
         Vector {
-            name: "tql/render-full-form",
-            scenario: Scenario::Render {
-                field: "embedding",
-                parameter: "queryVector",
-                threshold: Some(0.62),
-                limit: Some(25),
-            },
-            expected: Expected::Rendered(
-                "where vector.search(embedding, $queryVector, 0.62)\nlimit 25",
-            ),
-        },
-        Vector {
-            name: "tql/render-bare-form",
-            scenario: Scenario::Render {
-                field: "embedding",
-                parameter: "queryVector",
-                threshold: None,
-                limit: None,
-            },
-            expected: Expected::Rendered("where vector.search(embedding, $queryVector)"),
-        },
-        Vector {
-            name: "tql/render-threshold-only",
-            scenario: Scenario::Render {
-                field: "embedding",
-                parameter: "queryVector",
-                threshold: Some(-0.5),
-                limit: None,
-            },
-            expected: Expected::Rendered("where vector.search(embedding, $queryVector, -0.5)"),
-        },
-        Vector {
-            name: "tql/name-field-metacharacters",
+            name: "predicate/name-field-metacharacters",
             scenario: Scenario::PredicateName { field: "a, 0.9) or true(", parameter: "p" },
             expected: Expected::RefusedRequest(VectorSearchError::InvalidField),
         },
         Vector {
-            name: "tql/name-parameter-metacharacters",
+            name: "predicate/name-parameter-metacharacters",
             scenario: Scenario::PredicateName {
                 field: "embedding",
                 parameter: "p, 0.5) limit 999",
@@ -357,7 +316,7 @@ fn vectors() -> Vec<Vector> {
             expected: Expected::RefusedRequest(VectorSearchError::InvalidField),
         },
         Vector {
-            name: "tql/lower-bound-array",
+            name: "predicate/lower-bound-array",
             scenario: Scenario::Lower {
                 parameter: DocumentValue::Array(vec![
                     DocumentValue::Integer(1),
@@ -367,12 +326,12 @@ fn vectors() -> Vec<Vector> {
             expected: Expected::Accepted,
         },
         Vector {
-            name: "tql/lower-non-vector-parameter",
+            name: "predicate/lower-non-vector-parameter",
             scenario: Scenario::Lower { parameter: DocumentValue::String("0.1,0.2".to_owned()) },
             expected: Expected::RefusedRequest(VectorSearchError::InvalidQueryVector),
         },
         Vector {
-            name: "tql/lower-below-minimum",
+            name: "predicate/lower-below-minimum",
             scenario: Scenario::Lower {
                 parameter: DocumentValue::Array(vec![DocumentValue::Number(0.5)]),
             },
@@ -427,23 +386,12 @@ fn run(vector: &Vector) {
                 .map_err(Outcomes::Request)
         }
         Scenario::PredicateName { field, parameter } => {
-            TqlVectorPredicate::try_new(field, parameter, None, None)
+            VectorPredicate::try_new(field, parameter, None, None)
                 .map(|_| ())
                 .map_err(Outcomes::Request)
         }
-        Scenario::Render { field, parameter, threshold, limit } => {
-            let predicate = TqlVectorPredicate::try_new(field, parameter, *threshold, *limit)
-                .expect("the render vectors are well-formed predicates");
-            assert_eq!(
-                predicate.render(),
-                vector.expected.expected_text(),
-                "vector {}",
-                vector.name
-            );
-            return;
-        }
         Scenario::Lower { parameter } => {
-            TqlVectorPredicate::try_new("embedding", "queryVector", None, Some(4))
+            VectorPredicate::try_new("embedding", "queryVector", None, Some(4))
                 .expect("the lower vectors are well-formed predicates")
                 .lower(source(), parameter)
                 .map(|_| ())
@@ -475,17 +423,6 @@ enum Outcomes {
     Request(VectorSearchError),
 }
 
-impl Expected {
-    /// Returns the rendered text this vector expects, or panics for
-    /// non-render vectors.
-    fn expected_text(&self) -> &str {
-        match self {
-            Self::Rendered(text) => text,
-            _ => panic!("not a render vector"),
-        }
-    }
-}
-
 #[test]
 fn vector_conformance_corpus_is_complete_and_exact() {
     let corpus = vectors();
@@ -510,9 +447,8 @@ fn vector_conformance_corpus_is_complete_and_exact() {
         corpus.iter().filter(|v| matches!(v.scenario, Scenario::PredicateName { .. })).count(),
         2
     );
-    assert_eq!(corpus.iter().filter(|v| matches!(v.scenario, Scenario::Render { .. })).count(), 3);
     assert_eq!(corpus.iter().filter(|v| matches!(v.scenario, Scenario::Lower { .. })).count(), 3);
-    assert_eq!(corpus.len(), 36, "the corpus carries exactly thirty-six named vectors");
+    assert_eq!(corpus.len(), 33, "the corpus carries exactly thirty-three named vectors");
     for vector in &corpus {
         run(vector);
     }

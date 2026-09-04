@@ -294,22 +294,31 @@ fn encode_digest_write(out: &mut Vec<u8>, write: &StagedWrite) {
             push_str(out, id.as_str());
             encode_expected(out, *expected);
         }
-        StagedWrite::ReplicatedPut { document, commit_ulid, hlc, origin } => {
+        StagedWrite::ReplicatedPut { document, commit_ulid, hlc, origin, origin_sequence } => {
             push_u8(out, 3);
             push_str(out, document.collection().as_str());
             push_str(out, document.id().as_str());
             push_str(out, commit_ulid);
             push_u64(out, *hlc);
             push_str(out, origin);
+            push_u64(out, *origin_sequence);
             encode_document(out, document);
         }
-        StagedWrite::ReplicatedDelete { collection, id, commit_ulid, hlc, origin } => {
+        StagedWrite::ReplicatedDelete {
+            collection,
+            id,
+            commit_ulid,
+            hlc,
+            origin,
+            origin_sequence,
+        } => {
             push_u8(out, 4);
             push_str(out, collection.as_str());
             push_str(out, id.as_str());
             push_str(out, commit_ulid);
             push_u64(out, *hlc);
             push_str(out, origin);
+            push_u64(out, *origin_sequence);
         }
     }
 }

@@ -524,6 +524,10 @@ impl ServerConfig {
         &self.replication_peers
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "local configuration is validated as one fail-closed boundary"
+    )]
     fn parse_local(text: &str) -> Result<Self, ConfigError> {
         let file: FileConfig = toml::from_str(text).map_err(ConfigError::ParseConfiguration)?;
         if file.mode.as_deref().is_some_and(|mode| mode != "local-development") {

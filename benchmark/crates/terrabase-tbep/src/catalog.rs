@@ -7,7 +7,7 @@
 //! catalog capacity (the open-file bound that keeps RSS flat), and close
 //! when the catalog needs room or when they have gone unused past the
 //! idle threshold. Create, open, and close are crash-safe by delegation:
-//! the engine creates its own directory, SQLite WAL recovery runs on
+//! the engine creates its own directory, `SQLite` WAL recovery runs on
 //! every reopen, and closing drains through the supervision shutdown
 //! path before the catalog's last reference drops the engine.
 
@@ -390,7 +390,7 @@ mod tests {
     #[test]
     fn lazy_open_reuses_one_host_per_scope() {
         let location = TestLocation::new("lazy");
-        let catalog = HostCatalog::open(location.path(), 4, Duration::from_secs(600))
+        let catalog = HostCatalog::open(location.path(), 4, Duration::from_mins(10))
             .expect("the catalog opens");
         let first =
             catalog.host_for("tenant-a", "project-a", "database-a").expect("the first host opens");
@@ -407,7 +407,7 @@ mod tests {
     #[test]
     fn the_lru_bound_evicts_the_oldest_and_data_survives_reopen() {
         let location = TestLocation::new("lru");
-        let catalog = HostCatalog::open(location.path(), 2, Duration::from_secs(600))
+        let catalog = HostCatalog::open(location.path(), 2, Duration::from_mins(10))
             .expect("the catalog opens");
         let first =
             catalog.host_for("tenant-a", "project-a", "database-a").expect("the first host opens");
@@ -429,7 +429,7 @@ mod tests {
     #[test]
     fn unsafe_names_are_rejected_before_any_host_opens() {
         let location = TestLocation::new("names");
-        let catalog = HostCatalog::open(location.path(), 4, Duration::from_secs(600))
+        let catalog = HostCatalog::open(location.path(), 4, Duration::from_mins(10))
             .expect("the catalog opens");
         for name in ["", "..", ".", "a/b", "a\\b"] {
             for (tenant, project, database) in
@@ -475,7 +475,7 @@ mod tests {
     /// RSS flatness is asserted indirectly: the resident-set bound is the
     /// open-file bound, so `open_len() <= capacity` throughout is the
     /// measurable stand-in for a flat memory profile — every closed host
-    /// drops its SQLite pool with it.
+    /// drops its `SQLite` pool with it.
     ///
     /// Runtime: one engine open dominates each database (~64 ms measured
     /// in the debug profile; the committed put adds only a few
@@ -510,7 +510,7 @@ mod tests {
         // Restart: a fresh catalog over the same root reopens spot-checked
         // databases across the whole range and reads committed data back —
         // SQLite WAL recovery runs inside each reopen.
-        let catalog = HostCatalog::open(&root, 32, Duration::from_secs(600))
+        let catalog = HostCatalog::open(&root, 32, Duration::from_mins(10))
             .expect("the restarted catalog opens");
         for index in (0..1000_u32).step_by(50) {
             let database = format!("db-{index:04}");

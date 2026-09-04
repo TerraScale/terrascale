@@ -354,7 +354,7 @@ pub struct ProductionDataPlaneFacts {
     pub local_rf2_reconciled: bool,
     /// Current and catch-up replication use the durable engine state machine.
     pub replication_serving: bool,
-    /// Anti-entropy, Merkle repair, and snapshot fallback are serving.
+    /// Range reconciliation repair and snapshot fallback are serving.
     pub repair_serving: bool,
     /// Stored, applied, and verified progress comes from durable facts.
     pub durable_progress_available: bool,

@@ -1017,8 +1017,8 @@ fn encode_u64(mut value: u64, output: &mut Vec<u8>) {
     }
 }
 
-// Actor keys are compared as encoded bytes in maps and Merkle keys. A fixed
-// big-endian epoch preserves the numeric order (notably 255 before 256),
+// Actor keys are compared as encoded bytes in maps and range-fingerprint keys.
+// A fixed big-endian epoch preserves the numeric order (notably 255 before 256),
 // while ordinary protocol integers retain minimal LEB128 below.
 fn encode_actor_epoch(value: u64, output: &mut Vec<u8>) {
     output.extend_from_slice(&value.to_be_bytes());

@@ -34,9 +34,9 @@
 //!   `fdatasync` ack, fold-and-adopt across the per-wave generations,
 //!   and promotion by opening the follower's location.
 //! - [`anti_entropy`]: the journal-independent catch-up (S-05, D-45) —
-//!   Merkle state comparison over the kept replication-core kernels,
-//!   bounded repair through the deterministic merge, and snapshot
-//!   bootstrap from the region-local snapshot file set.
+//!   range-based set reconciliation over the kept replication-core kernels,
+//!   bounded repair through the deterministic merge, and snapshot bootstrap
+//!   from the region-local snapshot file set.
 //! - [`grpc`]: the tonic serving layer — prost⇄domain conversion,
 //!   metadata discipline, streaming subscriptions, and the UDS and
 //!   TLS listeners.
@@ -92,6 +92,10 @@ pub mod proto {
     }
 }
 
+pub use anti_entropy::{
+    DurableJournalRow, JournalRowSource, RepairDecision, SnapshotBootstrap, journal_end,
+    reconcile_journal_rows, repair_once, repair_once_bounded, snapshot_bootstrap,
+};
 pub use grpc::TbepGrpcServer;
 pub use host::HostingError;
 pub use host::SyncDeliveryHost;

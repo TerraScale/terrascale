@@ -21,6 +21,7 @@ use axum::extract::Path;
 use axum::extract::Request;
 use axum::extract::State;
 use axum::http::HeaderValue;
+use axum::http::Method;
 use axum::http::StatusCode;
 use axum::http::header::CONTENT_TYPE;
 use axum::http::header::HeaderName;
@@ -44,6 +45,8 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use utoipa_scalar::Scalar;
 use utoipa_scalar::Servable;
+
+use crate::api_keys::Verbs;
 
 /// The public API's path prefix.
 pub const API_PREFIX: &str = "/api/v1";
@@ -111,6 +114,28 @@ impl ApiError {
             fix: "send Authorization: Bearer <api key> (terrabase api-keys create prints the \
                   key exactly once)"
                 .into(),
+            placement: None,
+        }
+    }
+
+    /// A JWT-shaped bearer with no verifier lane yet (E-3 BYO-JWT): fails
+    /// closed with the tracking lane instead of the generic denial, so SDK
+    /// authors can tell "not built yet" from "wrong key". Never parsed —
+    /// only its three-part shape is observed, never its claims.
+    #[must_use]
+    pub fn byo_jwt_pending() -> Self {
+        Self::pending_surface("BYO-JWT verification", "E-3 (BYO-JWT over JWKS)")
+    }
+
+    /// An `If-Match` precondition that no longer holds (D-20 optimistic
+    /// concurrency): the client wrote against a stale revision.
+    #[must_use]
+    pub fn precondition_failed(detail: &str) -> Self {
+        Self {
+            status: StatusCode::PRECONDITION_FAILED,
+            code: "precondition_failed",
+            message: format!("the write's precondition failed ({detail})"),
+            fix: "re-read the document and retry with the ETag from its latest GET".into(),
             placement: None,
         }
     }
@@ -194,6 +219,13 @@ impl ApiError {
                 fix: "place the database only in regions the constraint admits (D-52)".into(),
                 placement: None,
             },
+            ControlError::PlacementLockWidened { source, detail } => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                code: "placement_lock_widened",
+                message: format!("'{source}' keeps its placement lock: {detail}"),
+                fix: "keep the derived database inside its source's placement and residency (D-52)".into(),
+                placement: None,
+            },
             ControlError::AlreadyExists(name) => Self {
                 status: StatusCode::CONFLICT,
                 code: "database_exists",
@@ -221,61 +253,72 @@ impl ApiError {
         }
     }
 
-    /// One typed TQL refusal: every parser class spells its remedy, and the
-    /// message carries the offending construct and source position when the
+    /// Durable storage could not answer the request. This is deliberately
+    /// distinct from a missing document or database: a failed read must not
+    /// be presented as an empty result or a not-found response.
+    #[must_use]
+    pub fn storage_failure() -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: "storage_failure",
+            message: "durable storage could not serve the request".into(),
+            fix: "check the member's storage health, then retry once".into(),
+            placement: None,
+        }
+    }
+
+    /// One typed SQL refusal: every front-end class spells its remedy, and
+    /// the message carries the offending construct and byte offset when the
     /// error has one (D-56).
     #[must_use]
-    pub fn tql(error: &terrabase::query::tql::TqlError) -> Self {
-        use terrabase::query::tql::TqlErrorClass;
+    pub fn sql(error: &terrabase::query::sql::SqlError) -> Self {
+        use terrabase::query::sql::SqlErrorClass;
         let (code, fix): (&'static str, &str) = match error.class() {
-            TqlErrorClass::MissingGrammarVersion => {
-                ("missing_grammar_version", "declare the version: add \"grammar\":\"tql/1.0\"")
-            }
-            TqlErrorClass::UnsupportedGrammarVersion => (
-                "unsupported_grammar_version",
-                "declare \"grammar\":\"tql/1.0\" — the only implemented version",
+            SqlErrorClass::ParseError => (
+                "sql_parse_error",
+                "fix the text at the reported offset: one SELECT, WITH ... SELECT, or EXPLAIN statement",
             ),
-            TqlErrorClass::ParseError => {
-                ("tql_parse_error", "fix the text at the reported position (docs/tql/examples.md)")
+            SqlErrorClass::UnsupportedStatement => (
+                "unsupported_sql_statement",
+                "send one SELECT, WITH ... SELECT, or EXPLAIN SELECT statement",
+            ),
+            SqlErrorClass::ForbiddenKeyword => (
+                "forbidden_sql_keyword",
+                "the read-only endpoint refuses DDL, DML, pragmas, and attachments",
+            ),
+            SqlErrorClass::ForbiddenFunction => (
+                "forbidden_sql_function",
+                "the function is volatile or host-sensitive; drop it from the statement",
+            ),
+            SqlErrorClass::ForbiddenRelation => (
+                "forbidden_sql_relation",
+                "the relation is qualified or SQLite-internal; read a collection instead",
+            ),
+            SqlErrorClass::ForbiddenTableFunction => (
+                "forbidden_sql_table_function",
+                "table-valued functions cannot appear in the statement",
+            ),
+            SqlErrorClass::UnboundParameter => {
+                ("missing_parameter", "bind the parameter in the request's parameters object")
             }
-            TqlErrorClass::UnknownFunction => {
-                ("unknown_function", "call a tql/1.0 registry function (docs/tql/spec.md §7)")
-            }
-            TqlErrorClass::InvalidArgument => {
-                ("invalid_tql_argument", "match the registry function's arity and argument types")
-            }
-            TqlErrorClass::UnboundParameter => {
-                ("missing_parameter", "bind the $name in the request's parameters object")
-            }
-            TqlErrorClass::UnexpectedParameter => {
+            SqlErrorClass::UnexpectedParameter => {
                 ("unexpected_parameter", "remove bindings the text does not reference")
             }
-            TqlErrorClass::CapabilityUnavailable => (
-                "capability_unavailable",
-                "this engine does not ship the capability yet; drop the predicate",
-            ),
-            TqlErrorClass::InvalidBound => {
-                ("tql_bound_exceeded", "keep limit/offset within the documented bounds")
+            SqlErrorClass::InvalidBound => {
+                ("sql_bound_exceeded", "keep limit/offset within the documented bounds")
             }
-            TqlErrorClass::InvalidIdentifier | TqlErrorClass::ReservedName => {
-                ("invalid_tql_identifier", "use a plain, unreserved identifier")
-            }
-            TqlErrorClass::UnsupportedForPlanning => (
-                "tql_not_plannable",
-                "the construct parses but has no exact plan yet; see docs/tql/examples.md",
-            ),
-            TqlErrorClass::InvalidRequest => {
-                ("invalid_tql_request", "the request context was refused; resend unchanged")
+            SqlErrorClass::InvalidIdentifier => {
+                ("invalid_sql_identifier", "use a plain identifier for the binding name")
             }
         };
-        let mut message = format!("the TQL text was refused ({code})");
+        let mut message = format!("the SQL text was refused ({code})");
         if let Some(construct) = error.construct() {
             message.push_str(": ");
             message.push_str(construct);
         }
         if let Some(position) = error.position() {
             use std::fmt::Write;
-            let _ = write!(message, " at line {}, column {}", position.line(), position.column());
+            let _ = write!(message, " at byte offset {position}");
         }
         Self { status: StatusCode::BAD_REQUEST, code, message, fix: fix.into(), placement: None }
     }
@@ -311,9 +354,9 @@ impl ApiError {
             },
             QueryError::InvalidSpec => Self {
                 status: StatusCode::UNPROCESSABLE_ENTITY,
-                code: "invalid_tql_spec",
-                message: "the compiled specification is not executable as written".into(),
-                fix: "rewrite the query within the surface docs/tql/examples.md documents".into(),
+                code: "invalid_sql_spec",
+                message: "the SQL text could not be lowered into a query plan".into(),
+                fix: "use one collection, supported predicates, and bounded paging".into(),
                 placement: None,
             },
             QueryError::EngineClosed | QueryError::StorageFailure => Self {
@@ -376,6 +419,20 @@ impl ApiError {
             code: "backup_failure",
             message: format!("the backup surface refused: {reason}"),
             fix: "check the member's litestream.log under the database's replica directory".into(),
+            placement: None,
+        }
+    }
+
+    /// One D-64 abuse-guard refusal (E-10): the request is well-formed but
+    /// the database's plan budget is spent. Nothing is billed; the fix
+    /// names the remedy (slow down, serve from the CDN, or raise the guard).
+    #[must_use]
+    pub fn abuse_guard(rejection: &crate::guards::GuardRejection) -> Self {
+        Self {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            code: "abuse_guard_exceeded",
+            message: rejection.message(),
+            fix: rejection.fix(),
             placement: None,
         }
     }
@@ -478,12 +535,17 @@ pub struct ApiState {
     /// The regions this deployment believes active: `GlobalDurable`
     /// fails closed under two (D-37).
     pub active_regions: usize,
+    /// The D-64 abuse guards and per-tenant governance budgets (E-10):
+    /// every read/query/transport admission on this surface checks them
+    /// first, and every served direct-read byte accounts against them.
+    /// Unknown databases run the Free row (fail-closed).
+    pub guards: Arc<crate::guards::AbuseGuards>,
 }
 
-/// The served route table as an OpenAPI router: the single source of both
+/// The served route table as an `OpenAPI` router: the single source of both
 /// the running axum router and the published contract document, so the two
 /// can never drift apart.
-fn openapi_router() -> OpenApiRouter {
+fn openapi_router() -> OpenApiRouter<Arc<ApiState>> {
     OpenApiRouter::new()
         .routes(routes!(health))
         .routes(routes!(regions))
@@ -499,7 +561,7 @@ fn openapi_router() -> OpenApiRouter {
         .routes(routes!(batch_documents))
         .routes(routes!(get_document, put_document, patch_document, delete_document))
         .routes(routes!(document_history))
-        .routes(routes!(execute_tql))
+        .routes(routes!(execute_sql))
         .routes(routes!(crate::reactive_api::poll))
         .routes(routes!(crate::reactive_api::websocket))
         .routes(routes!(database_usage))
@@ -507,16 +569,409 @@ fn openapi_router() -> OpenApiRouter {
         .routes(routes!(delete_webhook))
         .routes(routes!(list_backups))
         .routes(routes!(restore_backup))
+        .routes(routes!(create_export))
         .routes(routes!(list_branches, create_branch))
+        .routes(routes!(attach_view))
+        .routes(routes!(view_log))
 }
 
-/// Renders the served OpenAPI document: exactly the bytes
+/// Adds the parts of the contract that cannot be inferred from axum extractors.
+/// The handlers deliberately keep hand-rendering JSON on the data path, so the
+/// public document describes those wire shapes here in one bounded table.
+#[allow(clippy::too_many_lines, reason = "one contract table covers every route in one pass")]
+fn enrich_openapi(raw: String) -> String {
+    let Ok(mut document) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return raw;
+    };
+    document["security"] = serde_json::json!([{ "bearerAuth": [] }]);
+    document["components"] = serde_json::json!({
+        "securitySchemes": {
+            "bearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "TerraScale API key"
+            }
+        },
+        "schemas": openapi_schemas()
+    });
+
+    let Some(paths) = document.get_mut("paths").and_then(serde_json::Value::as_object_mut) else {
+        return serde_json::to_string(&document).expect("OpenAPI enrichment must serialize");
+    };
+    for (path, item) in paths {
+        let Some(item) = item.as_object_mut() else { continue };
+        for method in ["get", "post", "put", "patch", "delete"] {
+            let Some(operation) = item.get_mut(method).and_then(serde_json::Value::as_object_mut)
+            else {
+                continue;
+            };
+            let operation_id = operation
+                .get("operationId")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            operation["security"] = serde_json::json!([{ "bearerAuth": [] }]);
+            for variable in path_variables(path) {
+                add_parameter(operation, &variable, "path", true, "string");
+            }
+            add_route_parameters(operation, &operation_id);
+            if let Some((schema, required)) = request_schema(&operation_id) {
+                set_request_body(operation, schema, required);
+            }
+
+            if pending_operation(&operation_id) {
+                operation["responses"] = serde_json::json!({});
+                set_json_response(
+                    operation,
+                    "501",
+                    "This route is not implemented",
+                    "ErrorResponse",
+                );
+                for status in
+                    ["400", "401", "403", "404", "409", "421", "422", "429", "500", "503", "504"]
+                {
+                    set_json_response(operation, status, "Typed API error", "ErrorResponse");
+                }
+            } else {
+                if operation_id == "delete_document"
+                    && let Some(responses) =
+                        operation.get_mut("responses").and_then(serde_json::Value::as_object_mut)
+                {
+                    responses.remove("200");
+                    responses.insert(
+                        "204".into(),
+                        serde_json::json!({"description": "Document deleted"}),
+                    );
+                }
+                let success_schema = success_schema(&operation_id);
+                if let Some(responses) =
+                    operation.get_mut("responses").and_then(serde_json::Value::as_object_mut)
+                {
+                    for (status, response) in responses {
+                        let Some(response) = response.as_object_mut() else { continue };
+                        if status == "204" || status == "101" {
+                            response.remove("content");
+                        } else if status.starts_with('2') {
+                            if let Some(schema) = success_schema {
+                                response["content"] = json_content(schema);
+                            }
+                        } else if status.parse::<u16>().is_ok_and(|code| code >= 400) {
+                            response["content"] = json_content("ErrorResponse");
+                        }
+                    }
+                }
+                for status in
+                    ["400", "401", "403", "404", "409", "421", "422", "429", "500", "503", "504"]
+                {
+                    set_json_response(operation, status, "Typed API error", "ErrorResponse");
+                }
+                if operation_id == "health" {
+                    set_json_response(operation, "503", "Member is unhealthy", "HealthResponse");
+                }
+                if matches!(operation_id.as_str(), "health" | "regions") {
+                    set_response_header(operation, "200", "X-TerraScale-Region", "string");
+                    if operation_id == "health" {
+                        set_response_header(operation, "503", "X-TerraScale-Region", "string");
+                    }
+                }
+                if matches!(
+                    operation_id.as_str(),
+                    "create_database"
+                        | "get_database"
+                        | "delete_database"
+                        | "restore_database"
+                        | "restore_backup"
+                        | "create_branch"
+                ) {
+                    for status in ["200", "201"] {
+                        set_response_header(operation, status, "X-TerraScale-Placement", "string");
+                        set_response_header(operation, status, "X-TerraScale-Residency", "string");
+                    }
+                }
+                if operation_id == "get_document" {
+                    set_response_header(operation, "200", "ETag", "string");
+                    set_response_header(operation, "304", "ETag", "string");
+                }
+                if matches!(operation_id.as_str(), "put_document" | "patch_document") {
+                    set_response_header(operation, "200", "ETag", "string");
+                    set_response_header(operation, "200", "X-TerraScale-Session", "integer");
+                }
+                if operation_id == "poll" {
+                    set_response_header(operation, "200", "X-TerraScale-Subscription", "integer");
+                    if let Some(response) = operation
+                        .get_mut("responses")
+                        .and_then(serde_json::Value::as_object_mut)
+                        .and_then(|responses| responses.get_mut("200"))
+                        .and_then(serde_json::Value::as_object_mut)
+                    {
+                        response["content"] = serde_json::json!({
+                            "application/msgpack": {
+                                "schema": { "$ref": "#/components/schemas/ReactiveFramesResponse" }
+                            }
+                        });
+                    }
+                }
+            }
+        }
+    }
+    serde_json::to_string(&document).expect("OpenAPI enrichment must serialize")
+}
+
+fn path_variables(path: &str) -> Vec<String> {
+    path.split('{').skip(1).filter_map(|part| part.split('}').next()).map(str::to_owned).collect()
+}
+
+fn add_parameter(
+    operation: &mut serde_json::Map<String, serde_json::Value>,
+    name: &str,
+    location: &str,
+    required: bool,
+    schema_type: &str,
+) {
+    let parameters = operation
+        .entry("parameters")
+        .or_insert_with(|| serde_json::json!([]))
+        .as_array_mut()
+        .expect("OpenAPI parameters are an array");
+    if parameters.iter().any(|parameter| {
+        parameter.get("name").and_then(serde_json::Value::as_str) == Some(name)
+            && parameter.get("in").and_then(serde_json::Value::as_str) == Some(location)
+    }) {
+        return;
+    }
+    parameters.push(serde_json::json!({
+        "name": name,
+        "in": location,
+        "required": required,
+        "schema": { "type": schema_type }
+    }));
+}
+
+fn add_route_parameters(operation: &mut serde_json::Map<String, serde_json::Value>, id: &str) {
+    match id {
+        "list_documents" | "document_history" => {
+            add_parameter(operation, "limit", "query", false, "integer");
+            add_parameter(operation, "after", "query", false, "string");
+        }
+        "get_document" => {
+            add_parameter(operation, "at", "query", false, "integer");
+            add_parameter(operation, "if-none-match", "header", false, "string");
+            add_parameter(operation, "x-terrascale-session", "header", false, "integer");
+        }
+        "put_document" | "patch_document" | "delete_document" => {
+            add_parameter(operation, "if-match", "header", false, "string");
+            add_parameter(operation, "idempotency-key", "header", false, "string");
+            add_parameter(operation, "x-terrascale-durability", "header", false, "string");
+            set_parameter_enum(
+                operation,
+                "x-terrascale-durability",
+                "header",
+                &["regional", "global"],
+            );
+        }
+        "batch_documents" => {
+            add_parameter(operation, "idempotency-key", "header", false, "string");
+            add_parameter(operation, "x-terrascale-durability", "header", false, "string");
+            set_parameter_enum(
+                operation,
+                "x-terrascale-durability",
+                "header",
+                &["regional", "global"],
+            );
+        }
+        _ => {}
+    }
+}
+
+fn set_parameter_enum(
+    operation: &mut serde_json::Map<String, serde_json::Value>,
+    name: &str,
+    location: &str,
+    values: &[&str],
+) {
+    let Some(parameters) =
+        operation.get_mut("parameters").and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    let Some(parameter) = parameters.iter_mut().find(|parameter| {
+        parameter.get("name").and_then(serde_json::Value::as_str) == Some(name)
+            && parameter.get("in").and_then(serde_json::Value::as_str) == Some(location)
+    }) else {
+        return;
+    };
+    parameter["schema"]["enum"] = serde_json::json!(values);
+}
+
+fn set_request_body(
+    operation: &mut serde_json::Map<String, serde_json::Value>,
+    schema: &str,
+    required: bool,
+) {
+    operation["requestBody"] = serde_json::json!({
+        "required": required,
+        "content": { "application/json": { "schema": { "$ref": format!("#/components/schemas/{schema}") } } }
+    });
+}
+
+fn json_content(schema: &str) -> serde_json::Value {
+    serde_json::json!({ "application/json": { "schema": { "$ref": format!("#/components/schemas/{schema}") } } })
+}
+
+fn set_json_response(
+    operation: &mut serde_json::Map<String, serde_json::Value>,
+    status: &str,
+    description: &str,
+    schema: &str,
+) {
+    let responses = operation
+        .entry("responses")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .expect("OpenAPI responses are an object");
+    let response = responses
+        .entry(status.to_owned())
+        .or_insert_with(|| serde_json::json!({"description": description}));
+    if let Some(response) = response.as_object_mut() {
+        response.entry("description").or_insert_with(|| serde_json::json!(description));
+        response["content"] = json_content(schema);
+    }
+}
+
+fn set_response_header(
+    operation: &mut serde_json::Map<String, serde_json::Value>,
+    status: &str,
+    name: &str,
+    schema_type: &str,
+) {
+    let Some(response) = operation
+        .get_mut("responses")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|responses| responses.get_mut(status))
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    response.entry("headers").or_insert_with(|| serde_json::json!({}));
+    response["headers"][name] = serde_json::json!({ "schema": { "type": schema_type } });
+}
+
+fn request_schema(operation_id: &str) -> Option<(&'static str, bool)> {
+    Some(match operation_id {
+        "create_database" => ("CreateDatabaseRequest", true),
+        "create_index" => ("CreateIndexRequest", true),
+        "batch_documents" => ("BatchRequest", true),
+        "put_document" | "patch_document" => ("JsonValue", true),
+        "execute_sql" => ("SqlRequest", true),
+        "create_webhook" => ("WebhookRequest", true),
+        "attach_view" => ("AttachViewRequest", true),
+        "restore_backup" | "create_branch" => ("RestoreRequest", true),
+        "poll" => ("ReactivePollRequest", true),
+        _ => return None,
+    })
+}
+
+fn success_schema(operation_id: &str) -> Option<&'static str> {
+    match operation_id {
+        "health" | "regions" => Some("HealthResponse"),
+        "list_databases" => Some("DatabaseListResponse"),
+        "list_branches" => Some("BranchListResponse"),
+        "create_database" | "get_database" | "delete_database" | "restore_database"
+        | "restore_backup" | "create_branch" => Some("DatabaseRecord"),
+        "list_collections" => Some("CollectionsResponse"),
+        "list_indexes" => Some("IndexListResponse"),
+        "create_index" => Some("IndexCreatedResponse"),
+        "list_documents" => Some("DocumentsResponse"),
+        "batch_documents" => Some("BatchResponse"),
+        "get_document" => Some("JsonValue"),
+        "put_document" | "patch_document" => Some("DocumentWriteResponse"),
+        "document_history" => Some("HistoryResponse"),
+        "execute_sql" => Some("SqlResponse"),
+        "list_backups" => Some("BackupStatusResponse"),
+        "poll" => Some("ReactiveFramesResponse"),
+        _ => None,
+    }
+}
+
+fn pending_operation(operation_id: &str) -> bool {
+    matches!(
+        operation_id,
+        "delete_index"
+            | "index_recommendations"
+            | "get_schema"
+            | "put_schema"
+            | "database_usage"
+            | "list_webhooks"
+            | "create_webhook"
+            | "delete_webhook"
+            | "attach_view"
+            | "view_log"
+            | "create_export"
+    )
+}
+
+fn openapi_schemas() -> serde_json::Value {
+    let json_value = serde_json::json!({
+        "oneOf": [
+            { "type": "null" }, { "type": "boolean" }, { "type": "integer" },
+            { "type": "number" }, { "type": "string" },
+            { "type": "array", "items": { "$ref": "#/components/schemas/JsonValue" } },
+            { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/JsonValue" } }
+        ]
+    });
+    serde_json::json!({
+        "JsonValue": json_value,
+        "ErrorResponse": {
+            "type": "object", "required": ["error"],
+            "properties": { "error": { "type": "object", "required": ["code", "message", "fix"], "properties": {
+                "code": { "type": "string" }, "message": { "type": "string" }, "fix": { "type": "string" }
+            } } }
+        },
+        "HealthResponse": { "type": "object", "required": ["region", "healthy"], "properties": { "region": { "type": "string" }, "healthy": { "type": "boolean" } } },
+        "DatabaseRecord": { "type": "object", "required": ["name", "placement", "residency", "deleted", "created_at", "parent"], "properties": {
+            "name": { "type": "string" }, "placement": { "type": "string" }, "residency": { "type": "string" }, "deleted": { "type": "boolean" }, "created_at": { "type": "integer", "format": "int64" }, "parent": { "type": ["string", "null"] }
+        } },
+        "DatabaseListResponse": { "type": "object", "required": ["databases"], "properties": { "databases": { "type": "array", "items": { "$ref": "#/components/schemas/DatabaseRecord" } } } },
+        "BranchListResponse": { "type": "object", "required": ["branches"], "properties": { "branches": { "type": "array", "items": { "$ref": "#/components/schemas/DatabaseRecord" } } } },
+        "CollectionsResponse": { "type": "object", "required": ["collections"], "properties": { "collections": { "type": "array", "items": { "type": "string" } } } },
+        "IndexDescriptor": { "type": "object", "required": ["field", "state", "backfill_remaining"], "properties": { "field": { "type": "string" }, "state": { "type": "string", "enum": ["active", "building"] }, "backfill_remaining": { "type": "integer", "format": "int64" } } },
+        "IndexListResponse": { "type": "object", "required": ["indexes"], "properties": { "indexes": { "type": "array", "items": { "$ref": "#/components/schemas/IndexDescriptor" } } } },
+        "IndexCreatedResponse": { "type": "object", "required": ["field", "state"], "properties": { "field": { "type": "string" }, "state": { "type": "string", "enum": ["active", "building"] } } },
+        "DocumentsResponse": { "type": "object", "required": ["documents"], "properties": { "documents": { "type": "array", "items": { "type": "object", "required": ["id", "version", "value"], "properties": { "id": { "type": "string" }, "version": { "type": "integer", "format": "int64" }, "value": { "$ref": "#/components/schemas/JsonValue" } } } } } },
+        "DocumentWriteResponse": { "type": "object", "required": ["revision"], "properties": { "revision": { "type": "string" } } },
+        "HistoryResponse": { "type": "object", "required": ["history"], "properties": { "history": { "type": "array", "items": { "type": "object", "required": ["revision", "deleted"], "properties": { "revision": { "type": "string" }, "deleted": { "type": "boolean" } } } } } },
+        "BatchResponse": { "type": "object", "required": ["committed", "count"], "properties": { "committed": { "type": "integer", "format": "int64" }, "count": { "type": "integer" } } },
+        "SqlRequest": { "type": "object", "required": ["sql"], "properties": { "sql": { "type": "string" }, "parameters": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/JsonValue" } }, "explain": { "type": "boolean" }, "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 30000 }, "cancelled": { "type": "boolean" } } },
+        "SqlResponse": { "type": "object", "required": ["matched", "rows"], "properties": { "matched": { "type": "integer", "format": "int64" }, "rows": { "type": "array", "items": { "type": "object", "required": ["id", "value"], "properties": { "id": { "type": "string" }, "value": { "$ref": "#/components/schemas/JsonValue" } } } } } },
+        "BackupStatusResponse": { "type": "object", "required": ["ready", "streaming"], "properties": { "ready": { "type": "boolean" }, "streaming": { "type": "boolean" } } },
+        "CreateDatabaseRequest": { "type": "object", "required": ["name", "placement"], "properties": { "name": { "type": "string" }, "placement": { "type": "array", "minItems": 1, "items": { "type": "string" } }, "residency": { "type": ["string", "null"] } } },
+        "CreateIndexRequest": { "type": "object", "required": ["field"], "properties": { "field": { "type": "string" } } },
+        "BatchRequest": { "type": "object", "required": ["operations"], "properties": { "operations": { "type": "array", "minItems": 1, "maxItems": 1000, "items": { "type": "object", "required": ["op", "id"], "properties": { "op": { "type": "string", "enum": ["put", "patch", "delete"] }, "id": { "type": "string" }, "value": { "$ref": "#/components/schemas/JsonValue" } } } } } },
+        "RestoreRequest": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "at": { "type": "integer", "format": "int64" } } },
+        "WebhookRequest": { "oneOf": [
+            { "type": "object", "required": ["endpoint"], "properties": { "endpoint": { "type": "string", "format": "uri" } } },
+            { "type": "object", "required": ["url"], "properties": { "url": { "type": "string", "format": "uri" } } },
+            { "type": "object", "required": ["id"], "properties": { "id": { "type": "string" } } }
+        ] },
+        "AttachViewRequest": { "type": "object", "properties": { "view": { "type": "string" }, "name": { "type": "string" }, "id": { "type": "string" } } },
+        "ReactivePollRequest": { "type": "object", "required": ["op"], "properties": { "op": { "type": "string", "enum": ["subscribe", "poll", "unsubscribe"] }, "collection": { "type": "string" }, "conditions": { "type": "array", "items": { "type": "object" } }, "projection": { "type": "array", "items": { "type": "string" } }, "subscription": { "type": "integer", "format": "int64" }, "resume": { "type": "object" } } },
+        "ReactiveFramesResponse": { "type": "array", "description": "MessagePack frames; projected bodies are canonical JSON strings.", "items": { "type": "object", "additionalProperties": true } }
+    })
+}
+
+/// Renders the served `OpenAPI` document: exactly the bytes
 /// `GET /api/v1/openapi.json` serves. `make contracts` (E-1) writes this to
-/// `contracts/openapi.json`; consumers pin it via `CONTRACT_VERSION`.
+/// `contracts/openapi.json`; consumers pin it via the bundle manifest's
+/// contract version.
+///
+/// # Panics
+///
+/// Panics if the generated `OpenAPI` document fails to serialize (a static
+/// schema — a build regression, never a runtime input).
 #[must_use = "the contract document is only useful when written out"]
 pub fn openapi_json() -> String {
     let (_router, openapi_document) = openapi_router().split_for_parts();
-    openapi_document.to_json().expect("OpenAPI must serialize")
+    enrich_openapi(openapi_document.to_json().expect("OpenAPI must serialize"))
 }
 
 /// Builds the public `/api/v1` router. Every route except
@@ -524,12 +979,13 @@ pub fn openapi_json() -> String {
 ///
 /// # Panics
 ///
-/// Panics if the generated OpenAPI document fails to serialize (a static
+/// Panics if the generated `OpenAPI` document fails to serialize (a static
 /// schema — a build regression, never a runtime input).
 #[must_use = "the returned router must be installed on a server"]
 pub fn router(state: Arc<ApiState>) -> Router {
     let (router, openapi_document) = openapi_router().split_for_parts();
-    let openapi_json = Arc::new(openapi_document.to_json().expect("OpenAPI must serialize"));
+    let openapi_json =
+        Arc::new(enrich_openapi(openapi_document.to_json().expect("OpenAPI must serialize")));
     router
         .route("/api/v1/openapi.json", get(openapi))
         .merge(Scalar::with_url("/scalar", openapi_document))
@@ -544,6 +1000,11 @@ pub fn router(state: Arc<ApiState>) -> Router {
 /// The gate never logs the credential's bytes and never compares against
 /// material it does not hold; a present-but-malformed header is its own
 /// typed error so clients can tell "forgot the header" from "sent garbage".
+/// Past admission, the principal's scope is enforced per request (D-44):
+/// routes naming a database need the matching verb on that database, and
+/// deployment-level mutations need an every-database admin scope. A
+/// JWT-shaped bearer names the pending BYO-JWT lane instead of the generic
+/// denial.
 async fn authenticate(
     State(state): State<Arc<ApiState>>,
     request: Request,
@@ -555,14 +1016,32 @@ async fn authenticate(
     let Some(keys) = state.keys.clone() else {
         return ApiError::unauthorized().into_response();
     };
-    let admitted = request
+    let token = request
         .headers()
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .map_or_else(|| Err(ApiError::malformed_credential()), |key| keys.admit(key));
+        .and_then(|value| value.strip_prefix("Bearer "));
+    let Some(token) = token else {
+        return ApiError::malformed_credential().into_response();
+    };
+    if is_jwt_shaped(token) {
+        return ApiError::byo_jwt_pending().into_response();
+    }
+    let admitted = keys.admit(token);
     match admitted {
         Ok(principal) => {
+            let verb = required_verb(request.method(), request.uri().path());
+            if let Some(database) = database_of(request.uri().path()) {
+                if !principal.scope().admits(verb, database) {
+                    return ApiError::forbidden(&format!(
+                        "{} on database '{database}'",
+                        verb_name(verb)
+                    ))
+                    .into_response();
+                }
+            } else if verb == Verbs::ADMIN && !principal.scope().admits_global(verb) {
+                return ApiError::forbidden("deployment administration").into_response();
+            }
             let mut response = next.run(request).await;
             if let Ok(label) = HeaderValue::from_str(principal.label()) {
                 response.headers_mut().insert("x-terrascale-principal", label);
@@ -570,6 +1049,65 @@ async fn authenticate(
             response
         }
         Err(error) => error.into_response(),
+    }
+}
+
+/// Whether a bearer token is shaped like a JWT (three non-empty base64url
+/// parts, `eyJ` header): API keys never contain `.`, so this distinguishes
+/// a customer's own JWT from key material without parsing any claims.
+fn is_jwt_shaped(token: &str) -> bool {
+    if !token
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b'='))
+    {
+        return false;
+    }
+    let mut parts = token.split('.');
+    matches!((parts.next(), parts.next(), parts.next(), parts.next()), (Some(header), Some(body), Some(signature), None)
+        if !header.is_empty() && !body.is_empty() && !signature.is_empty() && header.starts_with("eyJ"))
+}
+
+/// The verb one request needs: reads ride `READ`, document writes ride
+/// `WRITE`, and database lifecycle, indexes, schema, webhooks, and exports
+/// ride `ADMIN` (the [`crate::api_keys::Verbs`] contract). Unknown mutating
+/// paths fail closed toward `ADMIN`.
+fn required_verb(method: &Method, path: &str) -> Verbs {
+    if *method == Method::GET || *method == Method::HEAD {
+        return Verbs::READ;
+    }
+    // The shared view attach is every authorized client's read path (D-14).
+    if path == "/api/v1/reactive/views" {
+        return Verbs::READ;
+    }
+    if let Some(rest) = path.strip_prefix("/api/v1/databases/") {
+        if rest.ends_with("/sql") || rest.ends_with("/reactive/poll") {
+            return Verbs::READ;
+        }
+        if rest.contains("/documents") {
+            return Verbs::WRITE;
+        }
+        return Verbs::ADMIN;
+    }
+    Verbs::ADMIN
+}
+
+/// The database one request names, if its path carries one
+/// (`/api/v1/databases/{name}[/...]`). Global routes (list, create,
+/// health, regions) name none.
+fn database_of(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("/api/v1/databases/")?;
+    let name = rest.split('/').next()?;
+    if name.is_empty() { None } else { Some(name) }
+}
+
+/// The verb name the `forbidden` envelope carries.
+fn verb_name(verb: Verbs) -> &'static str {
+    if verb == Verbs::READ {
+        "read"
+    } else if verb == Verbs::WRITE {
+        "write"
+    } else {
+        "administer"
     }
 }
 
@@ -758,15 +1296,19 @@ async fn list_collections(
     State(state): State<Arc<ApiState>>,
     Path(name): Path<String>,
 ) -> Response {
-    let Ok(host) = document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
+    let host = match document_host(&state, &name) {
+        Ok(host) => host,
+        Err(error) => return error.into_response(),
     };
+    if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
+        return error.into_response();
+    }
     let engine = host.engine();
     let Ok(scope) = document_scope(engine) else {
         return ApiError::control_unavailable().into_response();
     };
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
-        return ApiError::control_unavailable().into_response();
+        return ApiError::storage_failure().into_response();
     };
     match engine.collections_at(&scope, &snapshot) {
         Ok(collections) => {
@@ -780,9 +1322,12 @@ async fn list_collections(
                 body.push('"');
             }
             body.push_str("]}");
+            if let Err(error) = account_direct_read(&state, &name, response_bytes(body.len())) {
+                return error.into_response();
+            }
             json_response(StatusCode::OK, body)
         }
-        Err(_) => ApiError::control_unavailable().into_response(),
+        Err(_) => ApiError::storage_failure().into_response(),
     }
 }
 
@@ -793,9 +1338,13 @@ async fn list_indexes(
     State(state): State<Arc<ApiState>>,
     Path((name, collection)): Path<(String, String)>,
 ) -> Response {
-    let Ok(host) = document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
+    let host = match document_host(&state, &name) {
+        Ok(host) => host,
+        Err(error) => return error.into_response(),
     };
+    if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
+        return error.into_response();
+    }
     let engine = host.engine();
     let Ok(collection) = CollectionName::try_new(&collection) else {
         return invalid_identifier("collection name", &collection).into_response();
@@ -820,9 +1369,12 @@ async fn list_indexes(
                 body.push('}');
             }
             body.push_str("]}");
+            if let Err(error) = account_direct_read(&state, &name, response_bytes(body.len())) {
+                return error.into_response();
+            }
             json_response(StatusCode::OK, body)
         }
-        Err(_) => ApiError::control_unavailable().into_response(),
+        Err(_) => ApiError::storage_failure().into_response(),
     }
 }
 
@@ -836,8 +1388,9 @@ async fn create_index(
     Path((name, collection)): Path<(String, String)>,
     body: String,
 ) -> Response {
-    let Ok(host) = document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
+    let host = match document_host(&state, &name) {
+        Ok(host) => host,
+        Err(error) => return error.into_response(),
     };
     let engine = host.engine();
     let Ok(collection) = CollectionName::try_new(&collection) else {
@@ -889,7 +1442,7 @@ async fn create_index(
             placement: None,
         }
         .into_response(),
-        Err(_) => ApiError::control_unavailable().into_response(),
+        Err(_) => ApiError::storage_failure().into_response(),
     }
 }
 
@@ -900,9 +1453,9 @@ async fn delete_index(
     State(state): State<Arc<ApiState>>,
     Path((name, collection, field)): Path<(String, String, String)>,
 ) -> Response {
-    let Ok(_host) = document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
-    };
+    if let Err(error) = document_host(&state, &name) {
+        return error.into_response();
+    }
     ApiError::pending_surface(
         &format!("dropping the index on {collection}.{field}"),
         "the D-31 index lifecycle (#127 slice C)",
@@ -917,9 +1470,12 @@ async fn index_recommendations(
     State(state): State<Arc<ApiState>>,
     Path((name, collection)): Path<(String, String)>,
 ) -> Response {
-    let Ok(_host) = document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
-    };
+    if let Err(error) = document_host(&state, &name) {
+        return error.into_response();
+    }
+    if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
+        return error.into_response();
+    }
     ApiError::pending_surface(
         &format!("index recommendations for {collection}"),
         "the auto-index audit (#127 slice C)",
@@ -934,9 +1490,9 @@ async fn get_schema(
     State(state): State<Arc<ApiState>>,
     Path((name, collection)): Path<(String, String)>,
 ) -> Response {
-    let Ok(_host) = document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
-    };
+    if let Err(error) = document_host(&state, &name) {
+        return error.into_response();
+    }
     ApiError::pending_surface(
         &format!("the {collection} collection schema"),
         "terrascale push / schema-first SDK (S-09/S-10)",
@@ -950,9 +1506,9 @@ async fn put_schema(
     State(state): State<Arc<ApiState>>,
     Path((name, collection)): Path<(String, String)>,
 ) -> Response {
-    let Ok(_host) = document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
-    };
+    if let Err(error) = document_host(&state, &name) {
+        return error.into_response();
+    }
     ApiError::pending_surface(
         &format!("the {collection} collection schema"),
         "terrascale push / schema-first SDK (S-09/S-10)",
@@ -968,9 +1524,13 @@ async fn list_documents(
     Path((name, collection)): Path<(String, String)>,
     extract::Query(paging): extract::Query<DocumentPaging>,
 ) -> Response {
-    let Ok(host) = document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
+    let host = match document_host(&state, &name) {
+        Ok(host) => host,
+        Err(error) => return error.into_response(),
     };
+    if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
+        return error.into_response();
+    }
     let engine = host.engine();
     let Ok(scope) = document_scope(engine) else {
         return ApiError::control_unavailable().into_response();
@@ -979,11 +1539,13 @@ async fn list_documents(
         return invalid_identifier("collection name", &collection).into_response();
     };
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
-        return ApiError::control_unavailable().into_response();
+        return ApiError::storage_failure().into_response();
     };
     let limit = paging.limit.unwrap_or(100).clamp(1, 1000);
-    let documents =
-        engine.snapshot_documents_in_collection(&scope, &snapshot, &collection).unwrap_or_default();
+    let Ok(documents) = engine.snapshot_documents_in_collection(&scope, &snapshot, &collection)
+    else {
+        return ApiError::storage_failure().into_response();
+    };
     let mut body = String::from("{\"documents\":[");
     let paged: Vec<_> = documents
         .iter()
@@ -1007,6 +1569,9 @@ async fn list_documents(
         body.push('}');
     }
     body.push_str("]}");
+    if let Err(error) = account_direct_read(&state, &name, response_bytes(body.len())) {
+        return error.into_response();
+    }
     json_response(StatusCode::OK, body)
 }
 
@@ -1122,8 +1687,9 @@ async fn batch_documents(
     headers: axum::http::HeaderMap,
     body: String,
 ) -> Response {
-    let Ok(host) = document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
+    let host = match document_host(&state, &name) {
+        Ok(host) => host,
+        Err(error) => return error.into_response(),
     };
     let engine = host.engine();
     let Ok(scope) = document_scope(engine) else {
@@ -1179,10 +1745,10 @@ async fn batch_documents(
         Err(error) => return error.into_response(),
     };
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
-        return ApiError::control_unavailable().into_response();
+        return ApiError::storage_failure().into_response();
     };
     let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
-        return ApiError::control_unavailable().into_response();
+        return ApiError::storage_failure().into_response();
     };
     for (index, item) in operations.iter().enumerate() {
         if let Err((code, message)) = stage_batch_operation(&mut transaction, &collection, item) {
@@ -1333,13 +1899,71 @@ pub(crate) fn document_host(
     state: &ApiState,
     name: &str,
 ) -> Result<std::sync::Arc<terrabase_tbep::member_host::MemberHost>, ApiError> {
+    // The catalog is an open-file cache, not the source of database
+    // existence or placement. Resolve the durable registry first so an
+    // unknown/deleted name can never cause `host_for` to create a local file.
+    let Some(control) = state.control.clone() else {
+        return Err(ApiError::control_unavailable());
+    };
+    let record = match control.get(name) {
+        Ok(Some(record)) if record.deleted => return Err(ApiError::database_not_found(name)),
+        Ok(Some(record)) => record,
+        Ok(None) => return Err(ApiError::database_not_found(name)),
+        Err(error) => return Err(ApiError::control(error)),
+    };
+    if !record.placement.contains(&state.region) {
+        return Err(ApiError::misdirected(&record.placement, record.residency_header()));
+    }
     let Some(catalog) = state.catalog.clone() else {
         return Err(ApiError::control_unavailable());
     };
-    catalog.host_for(&state.scope.0, &state.scope.1, name).map_err(|error| {
-        eprintln!("document_host: host_for refused {name}: {error:?}");
-        ApiError::database_not_found(name)
+    catalog.host_for(&state.scope.0, &state.scope.1, name).map_err(|_| ApiError::storage_failure())
+}
+
+/// Admits one read or query against the database's D-64 rate guard (E-10).
+/// A spent budget answers the typed 429 with its fix and records the
+/// bounded admission rejection (no per-database label, D-72).
+pub(crate) fn check_read_guard(
+    state: &ApiState,
+    database: &str,
+    operation: terrabase::observability::Operation,
+) -> Result<(), ApiError> {
+    state.guards.check_read_query(database).map_err(|rejection| {
+        state.metrics.record_admission_rejection(
+            operation,
+            terrabase::observability::AdmissionReason::Capacity,
+        );
+        ApiError::abuse_guard(&rejection)
     })
+}
+
+/// Accounts served direct-read bytes against the D-64 monthly bandwidth
+/// guard and the billable egress counter (D-66). The byte that would cross
+/// the ceiling answers the typed 429 instead of the body; nothing over the
+/// guard is billed.
+pub(crate) fn account_direct_read(
+    state: &ApiState,
+    database: &str,
+    bytes: u64,
+) -> Result<(), ApiError> {
+    if let Err(rejection) = state.guards.record_direct_read_bytes(database, bytes) {
+        state.metrics.record_admission_rejection(
+            terrabase::observability::Operation::Read,
+            terrabase::observability::AdmissionReason::Capacity,
+        );
+        return Err(ApiError::abuse_guard(&rejection));
+    }
+    state.metrics.record_egress_bytes(
+        terrabase::observability::Region::from_code(state.region.as_str()),
+        terrabase::observability::EgressKind::Read,
+        bytes,
+    );
+    Ok(())
+}
+
+/// Converts a response byte length without a truncating cast.
+pub(crate) fn response_bytes(len: usize) -> u64 {
+    u64::try_from(len).unwrap_or(u64::MAX)
 }
 
 /// The typed refusal for a malformed collection or identifier path.
@@ -1364,11 +1988,59 @@ fn document_not_found(collection: &str, id: &str) -> ApiError {
     }
 }
 
+/// Enforces `If-Match` on a single-document write against the live revision
+/// (D-20 optimistic concurrency): absent means go ahead, `*` means the
+/// document must exist, and a quoted revision must equal the live one. The
+/// revision probe never touches the body blob.
+fn check_if_match(
+    headers: &axum::http::HeaderMap,
+    transaction: &terrabase::Transaction<'_>,
+    collection: &CollectionName,
+    id: &DocumentId,
+) -> Result<(), ApiError> {
+    let Some(expected) =
+        headers.get(axum::http::header::IF_MATCH).and_then(|value| value.to_str().ok())
+    else {
+        return Ok(());
+    };
+    let live = transaction
+        .revision_in_collection(collection, id)
+        .map_err(|_| ApiError::storage_failure())?;
+    if expected == "*" {
+        return live.is_some().then_some(()).ok_or_else(|| {
+            ApiError::precondition_failed("If-Match: * needs the document to exist")
+        });
+    }
+    match live {
+        Some(revision) if format!("\"{revision}\"") == expected => Ok(()),
+        _ => Err(ApiError::precondition_failed("the ETag no longer matches the live revision")),
+    }
+}
+
+/// One document's live revision for a response `ETag`: the same probe the
+/// GET path answers `If-None-Match` from, so a write's `ETag` always names
+/// what the next `GET` serves.
+fn live_revision(
+    engine: &terrabase::Engine,
+    scope: &terrabase::types::TenantScope,
+    collection: &CollectionName,
+    id: &DocumentId,
+) -> Result<String, ApiError> {
+    let snapshot = engine.read_snapshot(scope).map_err(|_| ApiError::storage_failure())?;
+    let operation = OperationId::try_new("api-read").map_err(|_| ApiError::storage_failure())?;
+    let transaction =
+        engine.begin(scope, snapshot, operation).map_err(|_| ApiError::storage_failure())?;
+    transaction
+        .revision_in_collection(collection, id)
+        .map_err(|_| ApiError::storage_failure())?
+        .ok_or_else(ApiError::storage_failure)
+}
+
 /// Returns one document with its `ETag`; `If-None-Match` is answered from
 /// the revision column alone — the body blob is never decoded on a 304.
 /// `?at=<unix-millis>` reads the document as of that moment from a
 /// throwaway point-in-time restore (S-06 time-travel, cached per
-/// (database, second) with a bounded budget; TQL `AS OF` rides S-02).
+/// (database, second) with a bounded budget).
 #[utoipa::path(get, path = "/api/v1/databases/{name}/collections/{collection}/documents/{id}", responses((status = 200, description = "Document")))]
 async fn get_document(
     State(state): State<Arc<ApiState>>,
@@ -1376,8 +2048,9 @@ async fn get_document(
     headers: axum::http::HeaderMap,
     extract::Query(at): extract::Query<AtQuery>,
 ) -> Response {
-    let Ok(host) = document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
+    let host = match document_host(&state, &name) {
+        Ok(host) => host,
+        Err(error) => return error.into_response(),
     };
     let engine = host.engine();
     let Ok(scope) = document_scope(engine) else {
@@ -1389,6 +2062,9 @@ async fn get_document(
     let Ok(id) = DocumentId::try_new(&id) else {
         return invalid_identifier("document identifier", &id).into_response();
     };
+    if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
+        return error.into_response();
+    }
     if let Some(at_millis) = at.at {
         return time_travel_document(&state, &name, &collection, &id, at_millis, &headers);
     }
@@ -1405,15 +2081,17 @@ async fn get_document(
         return error.into_response();
     }
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
-        return ApiError::control_unavailable().into_response();
+        return ApiError::storage_failure().into_response();
     };
     let Ok(operation) = OperationId::try_new("api-read") else {
-        return ApiError::control_unavailable().into_response();
+        return ApiError::storage_failure().into_response();
     };
     let Ok(transaction) = engine.begin(&scope, snapshot, operation) else {
-        return ApiError::control_unavailable().into_response();
+        return ApiError::storage_failure().into_response();
     };
-    let revision = transaction.revision_in_collection(&collection, &id).unwrap_or(None);
+    let Ok(revision) = transaction.revision_in_collection(&collection, &id) else {
+        return ApiError::storage_failure().into_response();
+    };
     let Some(revision) = revision else {
         return document_not_found(collection.as_str(), id.as_str()).into_response();
     };
@@ -1424,19 +2102,25 @@ async fn get_document(
         .is_some_and(|present| present == etag)
     {
         // The 304 path read the revision column only — the body blob was
-        // never touched (S-03's gate).
+        // never touched (S-03's gate). No body bytes leave, so only the
+        // rate guard (checked above) applies here.
         let mut response = StatusCode::NOT_MODIFIED.into_response();
         if let Ok(etag) = HeaderValue::from_str(&etag) {
             response.headers_mut().insert(axum::http::header::ETAG, etag);
         }
         return response;
     }
-    let Ok(Some(document)) = transaction.read_in_collection(&collection, &id) else {
-        return document_not_found(collection.as_str(), id.as_str()).into_response();
+    let document = match transaction.read_in_collection(&collection, &id) {
+        Ok(Some(document)) => document,
+        Ok(None) => return document_not_found(collection.as_str(), id.as_str()).into_response(),
+        Err(_) => return ApiError::storage_failure().into_response(),
     };
     drop(transaction);
     let mut body = String::with_capacity(256);
     push_value(&mut body, document.value());
+    if let Err(error) = account_direct_read(&state, &name, response_bytes(body.len())) {
+        return error.into_response();
+    }
     let mut response = json_response(StatusCode::OK, body);
     if let Ok(etag) = HeaderValue::from_str(&etag) {
         response.headers_mut().insert(axum::http::header::ETAG, etag);
@@ -1513,6 +2197,9 @@ fn time_travel_document(
             }
             let mut body = String::with_capacity(256);
             push_value(&mut body, &read.value);
+            if let Err(error) = account_direct_read(state, name, response_bytes(body.len())) {
+                return error.into_response();
+            }
             let mut response = json_response(StatusCode::OK, body);
             if let Ok(etag) = HeaderValue::from_str(&etag) {
                 response.headers_mut().insert(axum::http::header::ETAG, etag);
@@ -1543,6 +2230,7 @@ fn unix_now_seconds() -> u64 {
 
 /// Creates or replaces one document; the `ETag` of the result names the new
 /// revision.
+#[allow(clippy::too_many_lines, reason = "one document write path validates, writes, and answers")]
 #[utoipa::path(put, path = "/api/v1/databases/{name}/collections/{collection}/documents/{id}", responses((status = 200, description = "Document stored")))]
 async fn put_document(
     State(state): State<Arc<ApiState>>,
@@ -1550,8 +2238,9 @@ async fn put_document(
     headers: axum::http::HeaderMap,
     body: String,
 ) -> Response {
-    let Ok(host) = document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
+    let host = match document_host(&state, &name) {
+        Ok(host) => host,
+        Err(error) => return error.into_response(),
     };
     let engine = host.engine();
     let Ok(scope) = document_scope(engine) else {
@@ -1578,7 +2267,7 @@ async fn put_document(
     };
     let document = Document::new(id, collection, json_value(&value));
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
-        return ApiError::control_unavailable().into_response();
+        return ApiError::storage_failure().into_response();
     };
     let operation = match write_operation(&headers, "api-put") {
         Ok(operation) => operation,
@@ -1594,8 +2283,12 @@ async fn put_document(
         Err(error) => return error.into_response(),
     };
     let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
-        return ApiError::control_unavailable().into_response();
+        return ApiError::storage_failure().into_response();
     };
+    if let Err(error) = check_if_match(&headers, &transaction, document.collection(), document.id())
+    {
+        return error.into_response();
+    }
     // With an idempotency key the logical request is the body: the expected
     // clause is Any so a retry replays the original receipt (the engine's
     // digest binds the op id to the write set). Without a key, optimistic
@@ -1606,9 +2299,10 @@ async fn put_document(
         match transaction.read_in_collection(document.collection(), document.id()) {
             Ok(Some(existing)) => ExpectedVersion::Exact(existing.metadata().version()),
             Ok(None) => ExpectedVersion::New,
-            Err(_) => return ApiError::control_unavailable().into_response(),
+            Err(_) => return ApiError::storage_failure().into_response(),
         }
     };
+    let probe = (document.collection().clone(), document.id().clone());
     if let Err(reason) = transaction.put(document, expected) {
         return ApiError {
             status: StatusCode::CONFLICT,
@@ -1621,7 +2315,10 @@ async fn put_document(
     }
     match transaction.commit(durability) {
         CommitOutcome::Committed(receipt) => {
-            let revision = format!("{}-1", receipt.sequence().get());
+            let revision = match live_revision(engine, &scope, &probe.0, &probe.1) {
+                Ok(revision) => revision,
+                Err(error) => return error.into_response(),
+            };
             let mut response =
                 json_response(StatusCode::OK, format!("{{\"revision\":\"{revision}\"}}"));
             if let Ok(etag) = HeaderValue::from_str(&format!("\"{revision}\"")) {
@@ -1659,8 +2356,9 @@ async fn patch_document(
     headers: axum::http::HeaderMap,
     body: String,
 ) -> Response {
-    let Ok(host) = document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
+    let host = match document_host(&state, &name) {
+        Ok(host) => host,
+        Err(error) => return error.into_response(),
     };
     let engine = host.engine();
     let Ok(scope) = document_scope(engine) else {
@@ -1699,20 +2397,24 @@ async fn patch_document(
         Err(error) => return error.into_response(),
     };
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
-        return ApiError::control_unavailable().into_response();
+        return ApiError::storage_failure().into_response();
     };
     let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
-        return ApiError::control_unavailable().into_response();
+        return ApiError::storage_failure().into_response();
     };
+    if let Err(error) = check_if_match(&headers, &transaction, &collection, &id) {
+        return error.into_response();
+    }
     let existing = match transaction.read_in_collection(&collection, &id) {
         Ok(Some(existing)) => existing,
         Ok(None) => {
             return document_not_found(collection.as_str(), id.as_str()).into_response();
         }
-        Err(_) => return ApiError::control_unavailable().into_response(),
+        Err(_) => return ApiError::storage_failure().into_response(),
     };
     let mut merged = existing.value().clone();
     merge_patch(&mut merged, &json_value(&value));
+    let probe = (collection.clone(), id.clone());
     let patched = Document::new(id, collection, merged);
     // The merge base is snapshot state, not the logical request: with an
     // idempotency key the expected clause is Any so an unchanged-state
@@ -1734,7 +2436,10 @@ async fn patch_document(
     }
     match transaction.commit(durability) {
         CommitOutcome::Committed(receipt) => {
-            let revision = format!("{}-1", receipt.sequence().get());
+            let revision = match live_revision(engine, &scope, &probe.0, &probe.1) {
+                Ok(revision) => revision,
+                Err(error) => return error.into_response(),
+            };
             let mut response =
                 json_response(StatusCode::OK, format!("{{\"revision\":\"{revision}\"}}"));
             if let Ok(etag) = HeaderValue::from_str(&format!("\"{revision}\"")) {
@@ -1764,8 +2469,9 @@ async fn document_history(
     Path((name, collection, id)): Path<(String, String, String)>,
     extract::Query(paging): extract::Query<DocumentPaging>,
 ) -> Response {
-    let Ok(host) = document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
+    let host = match document_host(&state, &name) {
+        Ok(host) => host,
+        Err(error) => return error.into_response(),
     };
     let engine = host.engine();
     let Ok(scope) = document_scope(engine) else {
@@ -1777,6 +2483,9 @@ async fn document_history(
     let Ok(id) = DocumentId::try_new(&id) else {
         return invalid_identifier("document identifier", &id).into_response();
     };
+    if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
+        return error.into_response();
+    }
     let limit = paging.limit.unwrap_or(100).clamp(1, 1000);
     let limit = u32::try_from(limit).unwrap_or(100);
     match engine.document_history_in_collection(&scope, &collection, &id, limit) {
@@ -1793,9 +2502,12 @@ async fn document_history(
                 body.push('}');
             }
             body.push_str("]}");
+            if let Err(error) = account_direct_read(&state, &name, response_bytes(body.len())) {
+                return error.into_response();
+            }
             json_response(StatusCode::OK, body)
         }
-        Err(_) => ApiError::control_unavailable().into_response(),
+        Err(_) => ApiError::storage_failure().into_response(),
     }
 }
 
@@ -1806,8 +2518,9 @@ async fn delete_document(
     Path((name, collection, id)): Path<(String, String, String)>,
     headers: axum::http::HeaderMap,
 ) -> Response {
-    let Ok(host) = document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
+    let host = match document_host(&state, &name) {
+        Ok(host) => host,
+        Err(error) => return error.into_response(),
     };
     let engine = host.engine();
     let Ok(scope) = document_scope(engine) else {
@@ -1820,7 +2533,7 @@ async fn delete_document(
         return invalid_identifier("document identifier", &id).into_response();
     };
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
-        return ApiError::control_unavailable().into_response();
+        return ApiError::storage_failure().into_response();
     };
     let operation = match write_operation(&headers, "api-delete") {
         Ok(operation) => operation,
@@ -1836,8 +2549,11 @@ async fn delete_document(
         Err(error) => return error.into_response(),
     };
     let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
-        return ApiError::control_unavailable().into_response();
+        return ApiError::storage_failure().into_response();
     };
+    if let Err(error) = check_if_match(&headers, &transaction, &collection, &id) {
+        return error.into_response();
+    }
     let expected = if has_idempotency_key(&headers) {
         ExpectedVersion::Any
     } else {
@@ -1846,7 +2562,7 @@ async fn delete_document(
             Ok(None) => {
                 return document_not_found(collection.as_str(), id.as_str()).into_response();
             }
-            Err(_) => return ApiError::control_unavailable().into_response(),
+            Err(_) => return ApiError::storage_failure().into_response(),
         }
     };
     // delete_in_collection stages without a pre-read (the caller owns
@@ -1866,90 +2582,185 @@ async fn delete_document(
     }
 }
 
-/// Executes one TQL text against a database: the public query surface
-/// (S-03) over the S-02 parser and executor. The body carries the text,
-/// its declared grammar version (default `tql/1.0`), optional out-of-band
-/// parameters, and the `explain` request option (the plan, not the rows).
-#[utoipa::path(post, path = "/api/v1/databases/{name}/tql", responses((status = 200, description = "TQL result")))]
-async fn execute_tql(
+/// Executes one read-only SQL text against a database: the public query
+/// surface (D-54/D-78) over the SQL front end and executor. The body carries
+/// the text, optional out-of-band parameters, and the `explain` request
+/// option (the plan, not the rows).
+fn sql_controls(
+    request: &serde_json::Value,
+    headers: &axum::http::HeaderMap,
+) -> Result<(terrabase::Deadline, terrabase::Cancellation), ApiError> {
+    const DEFAULT_TIMEOUT_MS: u64 = 30_000;
+    const MAX_TIMEOUT_MS: u64 = 30_000;
+    let body_timeout = match request.get("timeout_ms") {
+        Some(value) => Some(
+            value.as_u64().ok_or_else(|| invalid_query_control("timeout_ms must be an integer"))?,
+        ),
+        None => None,
+    };
+    let timeout = headers
+        .get("x-terrascale-timeout-ms")
+        .and_then(|value| value.to_str().ok())
+        .map(str::parse::<u64>)
+        .transpose()
+        .map_err(|_| invalid_query_control("X-TerraScale-Timeout-Ms must be an integer"))?
+        .or(body_timeout)
+        .unwrap_or(DEFAULT_TIMEOUT_MS);
+    if timeout == 0 || timeout > MAX_TIMEOUT_MS {
+        return Err(invalid_query_control("timeout_ms must be between 1 and 30000"));
+    }
+    let deadline = terrabase::Deadline::after(std::time::Duration::from_millis(timeout))
+        .map_err(|_| invalid_query_control("timeout_ms is not representable"))?;
+    let cancelled = headers
+        .get("x-terrascale-cancelled")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+        || request.get("cancelled").and_then(serde_json::Value::as_bool).unwrap_or(false);
+    let cancellation = terrabase::Cancellation::new();
+    if cancelled {
+        cancellation.cancel();
+    }
+    Ok((deadline, cancellation))
+}
+
+fn invalid_query_control(detail: &str) -> ApiError {
+    ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "invalid_query_control",
+        message: format!("the SQL operation control is invalid ({detail})"),
+        fix: "use timeout_ms from 1 through 30000 and a boolean cancelled flag".into(),
+        placement: None,
+    }
+}
+
+#[utoipa::path(post, path = "/api/v1/databases/{name}/sql", responses((status = 200, description = "SQL result")))]
+#[allow(
+    clippy::too_many_lines,
+    reason = "SQL request validation and result rendering stay together"
+)]
+async fn execute_sql(
     State(state): State<Arc<ApiState>>,
     Path(name): Path<String>,
+    headers: axum::http::HeaderMap,
     body: String,
 ) -> Response {
-    let Ok(host) = document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
+    let host = match document_host(&state, &name) {
+        Ok(host) => host,
+        Err(error) => return error.into_response(),
     };
     let engine = host.engine();
     let Ok(scope) = document_scope(engine) else {
         return ApiError::control_unavailable().into_response();
     };
-    let Ok(tenant) = local_tenant() else {
-        return ApiError::control_unavailable().into_response();
-    };
+    if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Query)
+    {
+        return error.into_response();
+    }
     let request: serde_json::Value = match serde_json::from_str(&body) {
         Ok(value) => value,
         Err(_) => {
             return ApiError {
                 status: StatusCode::BAD_REQUEST,
                 code: "invalid_json",
-                message: "the tql body is not JSON".into(),
-                fix: "send {\"tql\":\"from c where …\",\"parameters\":{…},\"explain\":false}"
-                    .into(),
+                message: "the sql body is not JSON".into(),
+                fix: "send {\"sql\":\"SELECT ...\",\"parameters\":{…},\"explain\":false}".into(),
                 placement: None,
             }
             .into_response();
         }
     };
-    let Some(text) = request.get("tql").and_then(serde_json::Value::as_str) else {
+    let (deadline, cancellation) = match sql_controls(&request, &headers) {
+        Ok(controls) => controls,
+        Err(error) => return error.into_response(),
+    };
+    let Some(text) =
+        request.get("sql").or_else(|| request.get("statement")).and_then(serde_json::Value::as_str)
+    else {
         return ApiError {
             status: StatusCode::BAD_REQUEST,
-            code: "missing_tql",
-            message: "the request names no TQL text".into(),
-            fix: "add \"tql\": \"from <collection> where …\" to the request body".into(),
+            code: "missing_sql",
+            message: "the request names no SQL text".into(),
+            fix: "add \"sql\": \"SELECT ... FROM <collection> ...\" to the request body".into(),
             placement: None,
         }
         .into_response();
     };
-    let grammar = request.get("grammar").and_then(serde_json::Value::as_str).unwrap_or("tql/1.0");
-    let mut parameters = terrabase::query::tql::TqlParameters::new();
-    if let Some(fields) = request.get("parameters").and_then(serde_json::Value::as_object) {
+    let validated = match terrabase::SqlQueryText::try_new(text) {
+        Ok(validated) => validated,
+        Err(terrabase::QueryInputError::EmptyText) => {
+            return ApiError {
+                status: StatusCode::BAD_REQUEST,
+                code: "missing_sql",
+                message: "the request names no SQL text".into(),
+                fix: "add \"sql\": \"SELECT ... FROM <collection> ...\" to the request body".into(),
+                placement: None,
+            }
+            .into_response();
+        }
+        Err(terrabase::QueryInputError::InvalidIdentifier) => {
+            return ApiError {
+                status: StatusCode::BAD_REQUEST,
+                code: "invalid_sql_identifier",
+                message: "a binding name is not a plain identifier".into(),
+                fix: "use a plain identifier for the binding name".into(),
+                placement: None,
+            }
+            .into_response();
+        }
+        Err(terrabase::QueryInputError::UnsupportedGrammar) => {
+            return ApiError {
+                status: StatusCode::BAD_REQUEST,
+                code: "invalid_sql",
+                message: "the text is not read-only SQL".into(),
+                fix: "send one SELECT, WITH ... SELECT, or EXPLAIN SELECT statement".into(),
+                placement: None,
+            }
+            .into_response();
+        }
+    };
+    let mut parameters = terrabase::query::sql::SqlParameters::new();
+    if let Some(fields) = request
+        .get("parameters")
+        .or_else(|| request.get("params"))
+        .and_then(serde_json::Value::as_object)
+    {
         for (parameter, value) in fields {
             if let Err(error) = parameters.insert(parameter, json_value(value)) {
-                return ApiError::tql(&error).into_response();
+                return ApiError::sql(&error).into_response();
             }
         }
     }
-    let query = match terrabase::query::tql::parse_artifact(
-        Some(grammar),
-        text,
-        &parameters,
-        &terrabase::query::tql::TqlCapabilities::none(),
-    ) {
-        Ok(query) => query,
-        Err(error) => return ApiError::tql(&error).into_response(),
-    };
+    if let Err(error) = terrabase::query::sql::validate_parameters(text, &parameters) {
+        return ApiError::sql(&error).into_response();
+    }
     let store = engine.queries();
-    // ponytail: a fixed 30 s bound; a per-request deadline option rides the
-    // reactive transport (S-04), which is the only long-running surface.
-    let Ok(deadline) = terrabase::Deadline::after(std::time::Duration::from_secs(30)) else {
-        return ApiError::control_unavailable().into_response();
-    };
-    let plan = match terrabase::query::tql::compile(
-        &store,
-        &query,
-        &parameters,
-        tenant,
+    // The public SQL route carries the same bounded deadline and cancellation
+    // controls as the typed query seam; the plan retains them through
+    // execution, including execute-only SQL operators.
+    let plan = match store.compile(terrabase::QueryInput::sql_bounded_with_parameters(
+        validated,
         deadline,
-        terrabase::Cancellation::new(),
-    ) {
+        cancellation.clone(),
+        parameters,
+    )) {
         Ok(plan) => plan,
-        Err(error) => return ApiError::tql(&error).into_response(),
+        Err(error) => return ApiError::query(error).into_response(),
     };
+    if deadline.is_expired() {
+        return ApiError::query(terrabase::query::QueryError::Deadline).into_response();
+    }
+    if cancellation.is_cancelled() {
+        return ApiError::query(terrabase::query::QueryError::Cancelled).into_response();
+    }
     if request.get("explain").and_then(serde_json::Value::as_bool) == Some(true) {
-        return json_response(StatusCode::OK, render_explained_plan(grammar, &plan));
+        let explained = render_explained_plan(&plan);
+        if let Err(error) = account_direct_read(&state, &name, response_bytes(explained.len())) {
+            return error.into_response();
+        }
+        return json_response(StatusCode::OK, explained);
     }
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
-        return ApiError::control_unavailable().into_response();
+        return ApiError::storage_failure().into_response();
     };
     match store.execute(&plan, &snapshot) {
         Ok(result) => {
@@ -1963,24 +2774,39 @@ async fn execute_tql(
                 rendered.push_str("{\"id\":\"");
                 push_json_escaped(&mut rendered, row.document().id().as_str());
                 rendered.push_str("\",\"value\":");
-                push_value(&mut rendered, row.document().value());
+                if plan.projection().selected().is_some() {
+                    rendered.push('{');
+                    for (field_index, (field, value)) in row.projected().iter().enumerate() {
+                        if field_index > 0 {
+                            rendered.push(',');
+                        }
+                        rendered.push('"');
+                        push_json_escaped(&mut rendered, field);
+                        rendered.push_str("\":");
+                        push_value(&mut rendered, value);
+                    }
+                    rendered.push('}');
+                } else {
+                    push_value(&mut rendered, row.document().value());
+                }
                 rendered.push('}');
             }
             rendered.push_str("]}");
+            if let Err(error) = account_direct_read(&state, &name, response_bytes(rendered.len())) {
+                return error.into_response();
+            }
             json_response(StatusCode::OK, rendered)
         }
         Err(error) => ApiError::query(error).into_response(),
     }
 }
 
-/// Renders the explained plan of one compiled TQL query (the `explain`
-/// request option, docs/tql/examples.md §12).
+/// Renders the explained plan of one compiled SQL query (the `explain`
+/// request option).
 // ponytail: access/indexes/dependencies join when the S-02 auto-index audit
 // reports descriptor state (the documented shape in full).
-fn render_explained_plan(grammar: &str, plan: &terrabase::query::QueryPlan) -> String {
-    let mut explained = String::from("{\"grammar\":\"");
-    push_json_escaped(&mut explained, grammar);
-    explained.push_str("\",\"collection\":");
+fn render_explained_plan(plan: &terrabase::query::QueryPlan) -> String {
+    let mut explained = String::from("{\"dialect\":\"sql/sqlite-readonly\",\"collection\":");
     match plan.source().collection() {
         Some(collection) => {
             explained.push('"');
@@ -2010,51 +2836,188 @@ fn render_explained_plan(grammar: &str, plan: &terrabase::query::QueryPlan) -> S
 /// Usage export fails closed until op metering lands (S-08).
 #[utoipa::path(get, path = "/api/v1/databases/{name}/usage", responses((status = 200, description = "Database usage")))]
 async fn database_usage(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
-    let Ok(_host) = document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
-    };
+    if let Err(error) = document_host(&state, &name) {
+        return error.into_response();
+    }
+    if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
+        return error.into_response();
+    }
     ApiError::pending_surface("the usage export", "op metering (S-08)").into_response()
 }
 
 /// Webhooks are a subscription whose consumer is an HTTP POST (S-07).
 #[utoipa::path(get, path = "/api/v1/databases/{name}/webhooks", responses((status = 200, description = "Webhooks")))]
 async fn list_webhooks(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
-    let Ok(_host) = document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
-    };
+    if let Err(error) = document_host(&state, &name) {
+        return error.into_response();
+    }
+    if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
+        return error.into_response();
+    }
     ApiError::pending_surface("webhooks", "change streams → webhooks (S-07)").into_response()
 }
 
 /// See [`list_webhooks`].
 #[utoipa::path(post, path = "/api/v1/databases/{name}/webhooks", responses((status = 201, description = "Webhook created")))]
-async fn create_webhook(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
-    list_webhooks(State(state), Path(name)).await
+async fn create_webhook(
+    State(state): State<Arc<ApiState>>,
+    Path(name): Path<String>,
+    body: String,
+) -> Response {
+    if let Err(error) = document_host(&state, &name) {
+        return error.into_response();
+    }
+    let endpoint = webhook_endpoint_of(&body).unwrap_or_default();
+    if endpoint.is_empty() {
+        return ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "missing_endpoint",
+            message: "the webhook request names no endpoint".into(),
+            fix: "add \"endpoint\": \"<https url>\" to the request body".into(),
+            placement: None,
+        }
+        .into_response();
+    }
+    if let Err(rejection) = state.guards.register_webhook(&name, &endpoint) {
+        state.metrics.record_admission_rejection(
+            terrabase::observability::Operation::Other,
+            terrabase::observability::AdmissionReason::Capacity,
+        );
+        return ApiError::abuse_guard(&rejection).into_response();
+    }
+    ApiError::pending_surface("webhooks", "change streams → webhooks (S-07)").into_response()
+}
+
+/// Parses one webhook endpoint identity out of a create body: the
+/// `endpoint` (or legacy `url`/`id`) string, trimmed. `None` when the body
+/// names none.
+fn webhook_endpoint_of(body: &str) -> Option<String> {
+    let request: serde_json::Value = serde_json::from_str(body).ok()?;
+    let endpoint = request
+        .get("endpoint")
+        .or_else(|| request.get("url"))
+        .or_else(|| request.get("id"))
+        .and_then(serde_json::Value::as_str)?;
+    let endpoint = endpoint.trim();
+    if endpoint.is_empty() { None } else { Some(endpoint.to_owned()) }
 }
 
 /// See [`list_webhooks`].
 #[utoipa::path(delete, path = "/api/v1/databases/{name}/webhooks/{id}", responses((status = 200, description = "Webhook deleted")))]
 async fn delete_webhook(
     State(state): State<Arc<ApiState>>,
-    Path((name, _id)): Path<(String, String)>,
+    Path((name, id)): Path<(String, String)>,
 ) -> Response {
-    let Ok(_host) = document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
-    };
+    if let Err(error) = document_host(&state, &name) {
+        return error.into_response();
+    }
+    // Unregistering frees the endpoint's D-64 slot.
+    state.guards.unregister_webhook(&name, id.trim());
     ApiError::pending_surface("webhooks", "change streams → webhooks (S-07)").into_response()
+}
+
+/// Attaches to (or creates) a shared reactive view and issues its view
+/// capability (D-14): pending until the sync engine's view-attach lane
+/// (E-5) lands. Fails closed — no ad-hoc view key is minted here.
+#[utoipa::path(post, path = "/api/v1/reactive/views", responses((status = 201, description = "View attached")))]
+async fn attach_view(State(state): State<Arc<ApiState>>, body: String) -> Response {
+    let view = attach_view_name_of(&body);
+    // The distinct-view count is enforced here (D-64, E-10) so the budget
+    // is real before the E-5 lane lands.
+    if let Err(rejection) = state.guards.attach_view("reactive-views", &view) {
+        state.metrics.record_admission_rejection(
+            terrabase::observability::Operation::Subscribe,
+            terrabase::observability::AdmissionReason::Capacity,
+        );
+        return ApiError::abuse_guard(&rejection).into_response();
+    }
+    // The attach lane is still pending, so no shared-view resource owns this
+    // slot. Release it on every failed attach; otherwise retries eventually
+    // exhaust the quota even though no view was created.
+    state.guards.detach_view("reactive-views", &view);
+    ApiError::pending_surface(
+        "shared reactive view attach",
+        "the sync engine view-attach lane (E-5)",
+    )
+    .into_response()
+}
+
+/// Parses one shared view name out of an attach body (`view`, `name`, or
+/// `id`), defaulting to the single unnamed view.
+fn attach_view_name_of(body: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|request| {
+            request
+                .get("view")
+                .or_else(|| request.get("name"))
+                .or_else(|| request.get("id"))
+                .and_then(serde_json::Value::as_str)
+                .map(|name| name.trim().to_owned())
+        })
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "default".to_owned())
+}
+
+/// Serves one shared view generation's immutable delta log at an offset
+/// (D-14/D-55): pending with the attach lane (E-5).
+#[utoipa::path(get, path = "/api/v1/reactive/views/{view}/{generation}/log", responses((status = 200, description = "View log")))]
+async fn view_log(
+    State(state): State<Arc<ApiState>>,
+    Path((_view, _generation)): Path<(String, String)>,
+) -> Response {
+    // Reads of the log ride the read/query rate guard like every other read.
+    if let Err(error) =
+        check_read_guard(&state, "reactive-views", terrabase::observability::Operation::Read)
+    {
+        return error.into_response();
+    }
+    ApiError::pending_surface("the shared view log", "the sync engine view-attach lane (E-5)")
+        .into_response()
+}
+
+/// Exports one database's logical contents as a versioned bundle (D-60):
+/// schemas, index definitions, current documents, retained history, branch
+/// metadata, a manifest, and checksums, plus the current-data JSONL form.
+/// Fail-closed stub: E-8 replaces it with the real bundle writer. Exports
+/// are bytes at rest, so the writer must refuse any destination outside the
+/// record's placement lock (D-52); until it exists nothing here invents
+/// bytes.
+#[utoipa::path(post, path = "/api/v1/databases/{name}/exports", responses((status = 202, description = "Export accepted")))]
+async fn create_export(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
+    // The bundle writer will need the registry record for the placement
+    // lock (D-52), so the stub already resolves it: unknown or
+    // soft-deleted databases 404 here, never inside the writer.
+    if let Some(control) = state.control.clone() {
+        match control.get(&name) {
+            Ok(Some(record)) if !record.deleted => {}
+            Ok(_) => return ApiError::database_not_found(&name).into_response(),
+            Err(error) => return ApiError::control(error).into_response(),
+        }
+    }
+    if let Err(error) = document_host(&state, &name) {
+        return error.into_response();
+    }
+    ApiError::pending_surface("logical database exports (lossless bundle and JSONL)", "E-8")
+        .into_response()
 }
 
 /// Backups ride Litestream per file (S-06): readiness is an artifact
 /// fact, never "the child process is alive".
 #[utoipa::path(get, path = "/api/v1/databases/{name}/backups", responses((status = 200, description = "Backup readiness")))]
 async fn list_backups(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
-    let Ok(_host) = document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
-    };
+    if let Err(error) = document_host(&state, &name) {
+        return error.into_response();
+    }
+    if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
+        return error.into_response();
+    }
     let ready = state.backups.is_ready(&name);
-    json_response(
-        StatusCode::OK,
-        format!("{{\"ready\":{ready},\"streaming\":{}}}", state.backups.attached(&name)),
-    )
+    let body = format!("{{\"ready\":{ready},\"streaming\":{}}}", state.backups.attached(&name));
+    if let Err(error) = account_direct_read(&state, &name, response_bytes(body.len())) {
+        return error.into_response();
+    }
+    json_response(StatusCode::OK, body)
 }
 
 /// `POST /databases/{name}/backups/restore` — restores to a NEW database
@@ -2090,6 +3053,10 @@ enum RestoreFlavor {
 /// restore the file into the target's catalog location, and answer the
 /// record. A failed restore soft-deletes the record it just made so no
 /// half-born database lingers as live.
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the axum handlers move owned state, name, body, and flavor into this shared path"
+)]
 fn restore_or_branch(
     state: Arc<ApiState>,
     name: String,
@@ -2128,7 +3095,17 @@ fn restore_or_branch(
     let at = request.get("at").and_then(serde_json::Value::as_i64);
     let placement = [state.region];
     let registered = match flavor {
-        RestoreFlavor::Restore => control.create(target, &placement, None),
+        // D-52: a restore is bytes at rest in a new place — the target
+        // inherits the source's placement lock and cannot widen it. An
+        // unknown source fails closed before any record is made.
+        RestoreFlavor::Restore => {
+            let inherited = match control.lock_for_derived(&name, &placement) {
+                Ok(inherited) => inherited,
+                Err(error) => return ApiError::control(error).into_response(),
+            };
+            control.create(target, &placement, inherited.as_deref())
+        }
+        // The branch lock check lives in `create_branch` itself (D-52).
         RestoreFlavor::Branch => control.create_branch(target, &placement, None, &name),
     };
     let record = match registered {
@@ -2159,6 +3136,12 @@ fn restore_or_branch(
 /// Lists the database's branches: records whose parent names it.
 #[utoipa::path(get, path = "/api/v1/databases/{name}/branches", responses((status = 200, description = "Database branches")))]
 async fn list_branches(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
+    if let Err(error) = document_host(&state, &name) {
+        return error.into_response();
+    }
+    if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
+        return error.into_response();
+    }
     let Some(control) = state.control.clone() else {
         return ApiError::control_unavailable().into_response();
     };
@@ -2180,6 +3163,9 @@ async fn list_branches(State(state): State<Arc<ApiState>>, Path(name): Path<Stri
         push_record(&mut body, record);
     }
     body.push_str("]}");
+    if let Err(error) = account_direct_read(&state, &name, response_bytes(body.len())) {
+        return error.into_response();
+    }
     json_response(StatusCode::OK, body)
 }
 
@@ -2318,6 +3304,7 @@ mod tests {
     use super::API_PREFIX;
     use super::ApiError;
     use super::ApiState;
+    use super::openapi_json;
     use super::router;
     use axum::body::Body;
     use axum::http::Request;
@@ -2332,10 +3319,8 @@ mod tests {
     fn state() -> Arc<ApiState> {
         let backups = Arc::new(crate::backup::BackupStreams::open_member());
         let backup_root = std::env::temp_dir().join("terrabase-api-test-backup-root");
-        let timetravel = Arc::new(crate::backup::TimeTravelCache::new(
-            Arc::clone(&backups),
-            &backup_root,
-        ));
+        let timetravel =
+            Arc::new(crate::backup::TimeTravelCache::new(Arc::clone(&backups), &backup_root));
         Arc::new(ApiState {
             region: RegionCode::GRU,
             metrics: Arc::new(MetricsRegistry::new()),
@@ -2348,6 +3333,7 @@ mod tests {
             backup_root,
             timetravel,
             active_regions: 1,
+            guards: Arc::new(crate::guards::AbuseGuards::default()),
         })
     }
 
@@ -2368,7 +3354,7 @@ mod tests {
         let catalog = terrabase_tbep::catalog::HostCatalog::open(
             &dir.join("data"),
             8,
-            std::time::Duration::from_secs(3_600),
+            std::time::Duration::from_hours(1),
         )
         .expect("catalog opens");
         let backups = Arc::new(crate::backup::BackupStreams::open_member());
@@ -2392,6 +3378,7 @@ mod tests {
             backup_root: dir.join("backup"),
             timetravel,
             active_regions: 3,
+            guards: Arc::new(crate::guards::AbuseGuards::default()),
         })
     }
 
@@ -2422,13 +3409,16 @@ mod tests {
         let document: serde_json::Value = serde_json::from_slice(&body).expect("valid JSON");
         let paths = document.get("paths").and_then(serde_json::Value::as_object).expect("paths");
         for (path, route) in [
-            ("/api/v1/databases/{name}/tql", "post"),
+            ("/api/v1/databases/{name}/sql", "post"),
             ("/api/v1/databases/{name}/usage", "get"),
             ("/api/v1/databases/{name}/webhooks", "get"),
             ("/api/v1/databases/{name}/backups", "get"),
             ("/api/v1/databases/{name}/branches", "get"),
+            ("/api/v1/databases/{name}/exports", "post"),
             ("/api/v1/databases/{name}/reactive", "get"),
             ("/api/v1/databases/{name}/reactive/poll", "post"),
+            ("/api/v1/reactive/views", "post"),
+            ("/api/v1/reactive/views/{view}/{generation}/log", "get"),
         ] {
             assert!(
                 paths.get(path).is_some_and(|entry| entry.get(route).is_some()),
@@ -2450,6 +3440,129 @@ mod tests {
             .await
             .expect("answers");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines, reason = "one route contract, one test")]
+    fn openapi_describes_runtime_bodies_errors_security_and_pending_routes() {
+        let document: serde_json::Value =
+            serde_json::from_str(&openapi_json()).expect("valid JSON");
+        let components =
+            document.get("components").and_then(serde_json::Value::as_object).expect("components");
+        assert!(
+            components
+                .get("schemas")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|schemas| !schemas.is_empty())
+        );
+        assert_eq!(
+            components
+                .get("securitySchemes")
+                .and_then(serde_json::Value::as_object)
+                .and_then(|schemes| schemes.get("bearerAuth"))
+                .and_then(|scheme| scheme.get("scheme"))
+                .and_then(serde_json::Value::as_str),
+            Some("bearer")
+        );
+        let paths = document.get("paths").and_then(serde_json::Value::as_object).expect("paths");
+        let body_operations = [
+            "create_database",
+            "create_index",
+            "batch_documents",
+            "put_document",
+            "patch_document",
+            "execute_sql",
+            "create_webhook",
+            "attach_view",
+            "restore_backup",
+            "create_branch",
+            "poll",
+        ];
+        let pending_operations = [
+            "delete_index",
+            "index_recommendations",
+            "get_schema",
+            "put_schema",
+            "database_usage",
+            "list_webhooks",
+            "create_webhook",
+            "delete_webhook",
+            "attach_view",
+            "view_log",
+            "create_export",
+        ];
+        let mut operation_count = 0;
+        for item in paths.values() {
+            let item = item.as_object().expect("path item");
+            for (method, operation) in item {
+                if !matches!(method.as_str(), "get" | "post" | "put" | "patch" | "delete") {
+                    continue;
+                }
+                operation_count += 1;
+                let operation = operation.as_object().expect("operation");
+                let id = operation
+                    .get("operationId")
+                    .and_then(serde_json::Value::as_str)
+                    .expect("operation id");
+                assert_eq!(
+                    operation.get("security"),
+                    Some(&serde_json::json!([{ "bearerAuth": [] }])),
+                    "security for {id}"
+                );
+                if body_operations.contains(&id) {
+                    let body = operation
+                        .get("requestBody")
+                        .and_then(serde_json::Value::as_object)
+                        .expect("request body");
+                    assert_eq!(
+                        body.get("required").and_then(serde_json::Value::as_bool),
+                        Some(true),
+                        "body required for {id}"
+                    );
+                    assert!(
+                        body.get("content")
+                            .and_then(serde_json::Value::as_object)
+                            .is_some_and(|content| !content.is_empty()),
+                        "body media for {id}"
+                    );
+                }
+                let responses = operation
+                    .get("responses")
+                    .and_then(serde_json::Value::as_object)
+                    .expect("responses");
+                for (status, response) in responses {
+                    let response = response.as_object().expect("response");
+                    let code = status.parse::<u16>().expect("numeric response");
+                    if code >= 400 {
+                        assert!(
+                            response
+                                .get("content")
+                                .and_then(serde_json::Value::as_object)
+                                .is_some_and(|content| content.contains_key("application/json")),
+                            "typed error body for {id} {status}"
+                        );
+                    } else if code != 101 && code != 204 {
+                        assert!(
+                            response
+                                .get("content")
+                                .and_then(serde_json::Value::as_object)
+                                .is_some_and(|content| !content.is_empty()),
+                            "success body for {id} {status}"
+                        );
+                    }
+                }
+                if pending_operations.contains(&id) {
+                    assert!(responses.contains_key("501"), "pending route {id} advertises 501");
+                    assert!(
+                        responses
+                            .keys()
+                            .all(|status| status.parse::<u16>().is_ok_and(|code| code >= 400)),
+                        "pending route {id} advertises success"
+                    );
+                }
+            }
+        }
+        assert_eq!(operation_count, 35, "registered route count changed");
     }
 
     #[tokio::test]
@@ -2479,6 +3592,34 @@ mod tests {
             .await
             .expect("answers");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// The E-10 envelope: a spent D-64 budget answers 429 with the stable
+    /// code and a fix, never a bare status.
+    #[tokio::test]
+    async fn abuse_guard_refusals_answer_429_with_code_and_fix() {
+        let guards = crate::guards::AbuseGuards::new();
+        guards.set_plan(
+            "guarded",
+            crate::guards::Plan::Custom(crate::guards::AbuseLimits {
+                read_query_rps: 1,
+                direct_read_bandwidth_bytes_per_month: 1,
+                distinct_views: 1,
+                ws_connections: 1,
+                webhook_endpoints: 1,
+            }),
+        );
+        assert!(guards.check_read_query("guarded").is_ok());
+        let rejection = guards.check_read_query("guarded").expect_err("the second request refuses");
+        let response = ApiError::abuse_guard(&rejection).into_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(
+            body.contains("\"code\":\"abuse_guard_exceeded\""),
+            "the envelope codes the refusal: {body}"
+        );
+        assert!(body.contains("\"fix\":"), "every error carries a fix (D-56): {body}");
     }
 
     /// The S-06 journey through the router: create (stream attaches),
@@ -2647,6 +3788,47 @@ mod tests {
         assert_eq!(closed, StatusCode::UNPROCESSABLE_ENTITY, "unknown plans fail closed");
     }
 
+    /// The journey's write step: PUT one document, answer the status.
+    async fn write_document(
+        router: &axum::Router,
+        auth: &str,
+        uri: &str,
+        body: &'static str,
+    ) -> StatusCode {
+        router
+            .clone()
+            .oneshot(
+                Request::put(uri)
+                    .header("authorization", auth)
+                    .body(Body::from(body))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers")
+            .status()
+    }
+
+    /// The journey's read step: GET one URI, answer the status and body.
+    async fn read_document_body(
+        router: &axum::Router,
+        auth: &str,
+        uri: String,
+    ) -> (StatusCode, String) {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get(uri)
+                    .header("authorization", auth)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
+        (status, String::from_utf8(bytes.to_vec()).expect("utf-8"))
+    }
+
     /// The S-06 time-travel journey through the router: write, wait,
     /// write, then `?at=` between the writes serves the old value while
     /// the live read serves the new one. Skips when Litestream is not
@@ -2663,12 +3845,7 @@ mod tests {
         let fleet = Arc::clone(&state.backups);
         let router = router(state);
         let auth = "Bearer tskey_test_abcdefghijklmnop";
-        let unix_now = || {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|elapsed| elapsed.as_secs())
-                .unwrap_or(0)
-        };
+        let unix_now = super::unix_now_seconds;
 
         let response = router
             .clone()
@@ -2700,17 +3877,14 @@ mod tests {
             }
         };
         let baseline = shipped(&wal);
-        let response = router
-            .clone()
-            .oneshot(
-                Request::put("/api/v1/databases/tt/collections/orders/documents/item-1")
-                    .header("authorization", auth)
-                    .body(Body::from(r#"{"value":1}"#))
-                    .expect("request"),
-            )
-            .await
-            .expect("answers");
-        assert!(response.status().is_success(), "the first write lands: {}", response.status());
+        let first = write_document(
+            &router,
+            auth,
+            "/api/v1/databases/tt/collections/orders/documents/item-1",
+            r#"{"value":1}"#,
+        )
+        .await;
+        assert!(first.is_success(), "the first write lands: {first}");
         wait_for_ship(baseline, "first");
 
         // The restore point sits strictly between the writes (a write is
@@ -2721,86 +3895,59 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
         let between = shipped(&wal);
-        let response = router
-            .clone()
-            .oneshot(
-                Request::put("/api/v1/databases/tt/collections/orders/documents/item-1")
-                    .header("authorization", auth)
-                    .body(Body::from(r#"{"value":2}"#))
-                    .expect("request"),
-            )
-            .await
-            .expect("answers");
-        assert!(response.status().is_success(), "the second write lands: {}", response.status());
+        let second = write_document(
+            &router,
+            auth,
+            "/api/v1/databases/tt/collections/orders/documents/item-1",
+            r#"{"value":2}"#,
+        )
+        .await;
+        assert!(second.is_success(), "the second write lands: {second}");
         wait_for_ship(between, "second");
 
         // Time-travel serves the old value; the repeat hits the cache.
         let at_millis = at * 1000;
         for _ in 0..2 {
-            let response = router
-                .clone()
-                .oneshot(
-                    Request::get(format!(
-                        "/api/v1/databases/tt/collections/orders/documents/item-1?at={at_millis}"
-                    ))
-                    .header("authorization", auth)
-                    .body(Body::empty())
-                    .expect("request"),
-                )
-                .await
-                .expect("answers");
-            assert_eq!(response.status(), StatusCode::OK, "the past serves");
-            let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
-            let body = String::from_utf8(body.to_vec()).expect("utf-8");
+            let (status, body) = read_document_body(
+                &router,
+                auth,
+                format!("/api/v1/databases/tt/collections/orders/documents/item-1?at={at_millis}"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "the past serves");
             assert!(body.contains("\"value\":1"), "the old value serves: {body}");
             assert!(!body.contains("\"value\":2"), "the new value stays out: {body}");
         }
 
         // The live read serves the new value.
-        let response = router
-            .clone()
-            .oneshot(
-                Request::get("/api/v1/databases/tt/collections/orders/documents/item-1")
-                    .header("authorization", auth)
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("answers");
-        let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
-        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        let (status, body) = read_document_body(
+            &router,
+            auth,
+            "/api/v1/databases/tt/collections/orders/documents/item-1".to_owned(),
+        )
+        .await;
+        assert!(status.is_success());
         assert!(body.contains("\"value\":2"), "the live value serves: {body}");
 
         // A moment older than the plan's retention names its remedy.
-        let response = router
-            .clone()
-            .oneshot(
-                Request::get("/api/v1/databases/tt/collections/orders/documents/item-1?at=1000")
-                    .header("authorization", auth)
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("answers");
-        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
-        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        let (status, body) = read_document_body(
+            &router,
+            auth,
+            "/api/v1/databases/tt/collections/orders/documents/item-1?at=1000".to_owned(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert!(body.contains("pitr_outside_retention"), "the typed refusal: {body}");
 
         // A future moment is unusable.
         let future_millis = (unix_now() + 3_600) * 1000;
-        let response = router
-            .oneshot(
-                Request::get(format!(
-                    "/api/v1/databases/tt/collections/orders/documents/item-1?at={future_millis}"
-                ))
-                .header("authorization", auth)
-                .body(Body::empty())
-                .expect("request"),
-            )
-            .await
-            .expect("answers");
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let (status, _) = read_document_body(
+            &router,
+            auth,
+            format!("/api/v1/databases/tt/collections/orders/documents/item-1?at={future_millis}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
         fleet.detach_all();
     }
 
@@ -2970,6 +4117,250 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
         let body = String::from_utf8(body.to_vec()).expect("utf-8");
         assert!(body.contains("\"fix\":\""), "{body}");
+    }
+
+    #[tokio::test]
+    async fn scopes_bind_verb_and_database_in_the_gate() {
+        use crate::api_keys::Scope;
+        use crate::api_keys::Verbs;
+        use axum::body::Body;
+        use axum::http::Request;
+        let auth = "authorization";
+        let bootstrap = "Bearer tskey_test_abcdefghijklmnop";
+        let state = state_with_keys_and_control();
+        let keys = state.keys.clone().expect("key material");
+        keys.register(
+            "tskey_test_readonly_abcdefghij",
+            "readonly",
+            Scope::every_database(Verbs::READ),
+        );
+        keys.register(
+            "tskey_test_prodonly_abcdefghij",
+            "prod-only",
+            Scope::database("prod", Verbs::ALL),
+        );
+        let router = router(state);
+        let readonly = "Bearer tskey_test_readonly_abcdefghij";
+        let prod_only = "Bearer tskey_test_prodonly_abcdefghij";
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header(auth, bootstrap)
+                    .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let document = "/api/v1/databases/prod/collections/users/documents/scoped-1";
+        let response = router
+            .clone()
+            .oneshot(
+                Request::put(document)
+                    .header(auth, bootstrap)
+                    .body(Body::from(r#"{"n":1}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        // A read-only key reads but cannot write: the gate answers the
+        // typed forbidden envelope with its remedy.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get(document).header(auth, readonly).body(Body::empty()).expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = router
+            .clone()
+            .oneshot(
+                Request::put(document)
+                    .header(auth, readonly)
+                    .body(Body::from(r#"{"n":2}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("\"code\":\"forbidden\""), "{body}");
+        assert!(body.contains("\"fix\":"), "{body}");
+        // A prod-scoped key cannot touch another database's route — the
+        // gate refuses before the handler can oracle its existence.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/databases/other/collections")
+                    .header(auth, prod_only)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        // ... but serves its own database.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/databases/prod/collections")
+                    .header(auth, prod_only)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        // Database creation needs an every-database admin scope: a
+        // database-scoped admin key cannot mint databases.
+        let response = router
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header(auth, prod_only)
+                    .body(Body::from(r#"{"name":"sneaky","placement":["GRU"],"residency":null}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn jwt_shaped_bearers_name_the_pending_lane() {
+        use axum::body::Body;
+        use axum::http::Request;
+        let router = router(state_with_keys_and_control());
+        let response = router
+            .oneshot(
+                Request::get("/api/v1/databases/prod")
+                    .header("authorization", "Bearer eyJhbGciOiJub25lIn0.e30.c2ln")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("\"code\":\"surface_pending\""), "{body}");
+        assert!(body.contains("BYO-JWT"), "{body}");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines, reason = "one route contract, one test")]
+    async fn if_match_guards_single_document_writes() {
+        use axum::body::Body;
+        use axum::http::Request;
+        let auth = "authorization";
+        let key = "Bearer tskey_test_abcdefghijklmnop";
+        let path = "/api/v1/databases/prod/collections/users/documents/m-1";
+        let router = router(state_with_keys_and_control());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header(auth, key)
+                    .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let response = router
+            .clone()
+            .oneshot(
+                Request::put(path)
+                    .header(auth, key)
+                    .body(Body::from(r#"{"n":1}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let put_etag = response
+            .headers()
+            .get("etag")
+            .and_then(|value| value.to_str().ok())
+            .expect("the put names the revision")
+            .to_owned();
+        // The write's ETag is what the next GET serves (no stale `-1`).
+        let response = router
+            .clone()
+            .oneshot(Request::get(path).header(auth, key).body(Body::empty()).expect("request"))
+            .await
+            .expect("answers");
+        let get_etag = response
+            .headers()
+            .get("etag")
+            .and_then(|value| value.to_str().ok())
+            .expect("the get names the revision")
+            .to_owned();
+        assert_eq!(put_etag, get_etag, "the write ETag names the live revision");
+        // A stale precondition fails closed with its remedy.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::put(path)
+                    .header(auth, key)
+                    .header("if-match", "\"0-0\"")
+                    .body(Body::from(r#"{"n":2}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("\"code\":\"precondition_failed\""), "{body}");
+        // The matching precondition commits and re-names the live revision.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::patch(path)
+                    .header(auth, key)
+                    .header("if-match", get_etag.as_str())
+                    .body(Body::from(r#"{"n":2}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let patched_etag = response
+            .headers()
+            .get("etag")
+            .and_then(|value| value.to_str().ok())
+            .expect("the patch names the revision")
+            .to_owned();
+        assert_ne!(patched_etag, get_etag, "the patch advanced the revision");
+        // `If-Match: *` guards existence on delete: present deletes, absent
+        // refuses instead of inventing a 404-or-success ambiguity.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::delete("/api/v1/databases/prod/collections/users/documents/missing")
+                    .header(auth, key)
+                    .header("if-match", "*")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+        let response = router
+            .oneshot(
+                Request::delete(path)
+                    .header(auth, key)
+                    .header("if-match", patched_etag.as_str())
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
     }
 
     #[tokio::test]
@@ -3338,7 +4729,7 @@ mod tests {
 
     #[tokio::test]
     #[allow(clippy::too_many_lines, reason = "one route contract, one test")]
-    async fn tql_executes_with_parameters_and_explains_the_plan() {
+    async fn sql_executes_with_parameters_and_explains_the_plan() {
         use axum::body::Body;
         use axum::http::Request;
         let auth = "authorization";
@@ -3374,14 +4765,15 @@ mod tests {
                 .expect("answers");
             assert_eq!(response.status(), StatusCode::OK);
         }
-        // Execute with an out-of-band parameter.
+        // Validated SQL with an out-of-band parameter lowers and executes
+        // against the database snapshot.
         let response = router
             .clone()
             .oneshot(
-                Request::post("/api/v1/databases/prod/tql")
+                Request::post("/api/v1/databases/prod/sql")
                     .header(auth, key)
                     .body(Body::from(
-                        r#"{"tql":"from orders where status = $s order by total desc","parameters":{"s":"paid"}}"#,
+                        r#"{"sql":"SELECT * FROM orders WHERE status = :s ORDER BY total DESC","parameters":{"s":"paid"}}"#,
                     ))
                     .expect("request"),
             )
@@ -3390,17 +4782,29 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
         let body = String::from_utf8(body.to_vec()).expect("utf-8");
-        assert!(body.contains("\"matched\":2"), "the filter matched two rows: {body}");
-        assert!(body.contains("\"o-3\""), "the first row is the larger total: {body}");
-        assert!(!body.contains("\"o-2\""), "the open order is absent: {body}");
-        // Explain answers the plan, never the rows.
+        assert!(body.contains("\"matched\":2"), "SQL result: {body}");
+        assert!(body.contains("o-3"), "SQL ordering: {body}");
+        // Explain of validated text returns the lowered plan.
         let response = router
             .clone()
             .oneshot(
-                Request::post("/api/v1/databases/prod/tql")
+                Request::post("/api/v1/databases/prod/sql")
                     .header(auth, key)
                     .body(Body::from(
-                        r#"{"tql":"from orders where status = $s order by total desc","parameters":{"s":"paid"},"explain":true}"#,
+                        r#"{"sql":"SELECT * FROM orders WHERE status = :s ORDER BY total DESC","parameters":{"s":"paid"},"explain":true}"#,
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases/prod/sql")
+                    .header(auth, key)
+                    .body(Body::from(
+                        r#"{"sql":"SELECT status, COUNT(*) AS count FROM orders GROUP BY status ORDER BY status"}"#,
                     ))
                     .expect("request"),
             )
@@ -3409,17 +4813,15 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
         let body = String::from_utf8(body.to_vec()).expect("utf-8");
-        assert!(body.contains("\"collection\":\"orders\""), "{body}");
-        assert!(body.contains("\"field\":\"total\""), "the plan names the ordering: {body}");
-        assert!(!body.contains("\"rows\":"), "explain never returns rows: {body}");
-        // Refusals are typed with a fix: an unbound parameter and a parse
+        assert!(body.contains("\"count\":2"), "aggregate SQL result: {body}");
+        // Refusals are typed with a fix: a missing body field and a parse
         // error both name their remedy (D-56).
         let response = router
             .clone()
             .oneshot(
-                Request::post("/api/v1/databases/prod/tql")
+                Request::post("/api/v1/databases/prod/sql")
                     .header(auth, key)
-                    .body(Body::from(r#"{"tql":"from orders where status = $s"}"#))
+                    .body(Body::from(r#"{"parameters":{"s":"paid"}}"#))
                     .expect("request"),
             )
             .await
@@ -3427,14 +4829,14 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
         let body = String::from_utf8(body.to_vec()).expect("utf-8");
-        assert!(body.contains("missing_parameter"), "{body}");
+        assert!(body.contains("missing_sql"), "{body}");
         assert!(body.contains("\"fix\":"), "{body}");
         let response = router
             .clone()
             .oneshot(
-                Request::post("/api/v1/databases/prod/tql")
+                Request::post("/api/v1/databases/prod/sql")
                     .header(auth, key)
-                    .body(Body::from(r#"{"tql":"from orders where"}"#))
+                    .body(Body::from(r#"{"sql":"SELECT * FROM"}"#))
                     .expect("request"),
             )
             .await
@@ -3442,16 +4844,14 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
         let body = String::from_utf8(body.to_vec()).expect("utf-8");
-        assert!(body.contains("tql_parse_error"), "{body}");
-        // A gated capability fails closed with its own code.
+        assert!(body.contains("invalid_sql"), "{body}");
+        // A write through the read-only endpoint fails closed.
         let response = router
             .clone()
             .oneshot(
-                Request::post("/api/v1/databases/prod/tql")
+                Request::post("/api/v1/databases/prod/sql")
                     .header(auth, key)
-                    .body(Body::from(
-                        r#"{"tql":"from orders where search(body, $q)","parameters":{"q":"x"}}"#,
-                    ))
+                    .body(Body::from(r#"{"sql":"DELETE FROM orders"}"#))
                     .expect("request"),
             )
             .await
@@ -3459,7 +4859,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
         let body = String::from_utf8(body.to_vec()).expect("utf-8");
-        assert!(body.contains("capability_unavailable"), "{body}");
+        assert!(body.contains("invalid_sql"), "{body}");
     }
 
     #[tokio::test]
@@ -3534,6 +4934,98 @@ mod tests {
             assert!(body.contains("surface_pending"), "{method} {path}: {body}");
             assert!(body.contains("\"fix\":"), "{method} {path}: {body}");
         }
+    }
+
+    #[tokio::test]
+    async fn exports_fail_closed_naming_e8_and_locked_sources_refuse_derived_databases() {
+        use axum::body::Body;
+        use axum::http::Request;
+        let auth = "authorization";
+        let key = "Bearer tskey_test_abcdefghijklmnop";
+        let router = router(state_with_keys_and_control());
+        // An unlocked source for the export stub's 501 path.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header(auth, key)
+                    .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        // The E-8 export stub fails closed and names its replacing item.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases/prod/exports")
+                    .header(auth, key)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+        let body = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(body.contains("surface_pending"), "the stub fails closed: {body}");
+        assert!(body.contains("E-8"), "the stub names its replacing item: {body}");
+        // Unknown databases 404 before the stub answers.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases/unknown/exports")
+                    .header(auth, key)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        // A locked source (eu-only in FRA) refuses derived databases on
+        // this GRU member: restore and branch cannot widen the lock.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header(auth, key)
+                    .body(Body::from(r#"{"name":"eu","placement":["FRA"],"residency":"eu-only"}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        for (path, target) in [
+            ("/api/v1/databases/eu/backups/restore", "eu-restored"),
+            ("/api/v1/databases/eu/branches", "eu-branch"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::post(path)
+                        .header(auth, key)
+                        .body(Body::from(format!(r#"{{"name":"{target}"}}"#)))
+                        .expect("request"),
+                )
+                .await
+                .expect("answers");
+            assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY, "{path}");
+            let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+            let body = String::from_utf8(body.to_vec()).expect("utf-8");
+            assert!(body.contains("placement_lock_widened"), "{path}: {body}");
+        }
+        // An unknown restore source fails closed before any record is made.
+        let response = router
+            .oneshot(
+                Request::post("/api/v1/databases/unknown/backups/restore")
+                    .header(auth, key)
+                    .body(Body::from(r#"{"name":"unknown-restored"}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

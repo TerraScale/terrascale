@@ -351,7 +351,12 @@ pub struct MemberStatus {
 struct DatabaseEntry {
     id: DatabaseId,
     location: PathBuf,
+    scope: Option<DatabaseScope>,
     engine: Mutex<Option<Arc<Engine>>>,
+    /// The last time an acquire handed out this database's engine. The
+    /// idle-close clock (D-44): a database with no request for the
+    /// configured window is evicted, and the next acquire reopens it.
+    last_used: Mutex<Instant>,
     admissions: Arc<AdmissionCounter>,
 }
 
@@ -425,16 +430,18 @@ impl Member {
                     return Err(MemberOpenError::EngineOpen { database: id, error });
                 }
             };
-            opened.push((id, location, engine));
+            opened.push((id, location, scope, engine));
         }
 
         let databases = opened
             .into_iter()
-            .map(|(id, location, engine)| {
+            .map(|(id, location, scope, engine)| {
                 let entry = Arc::new(DatabaseEntry {
                     id: id.clone(),
                     location,
+                    scope,
                     engine: Mutex::new(Some(engine)),
+                    last_used: Mutex::new(Instant::now()),
                     admissions: Arc::new(AdmissionCounter::new(limits.per_database)),
                 });
                 (id, entry)
@@ -527,14 +534,63 @@ impl Member {
                 return Err(error);
             }
         };
-        let engine = lock_unpoisoned(&entry.engine).clone();
-        if let Some(engine) = engine {
-            Ok(DatabaseLease { entry, engine, _global: global, _local: local })
-        } else {
-            drop(local);
-            drop(global);
-            Err(MemberError::StorageUnavailable(database.clone()))
+        let engine = {
+            let mut guard = lock_unpoisoned(&entry.engine);
+            if guard.is_none() {
+                // Idle-close evicted this database; reopen it from its
+                // validated location and scope (D-44 lazy reopen) while
+                // holding the entry lock, so a concurrent eviction sweep
+                // cannot take the engine mid-open.
+                *guard = Some(reopen_database_engine(&entry)?);
+            }
+            let Some(engine) = guard.clone() else {
+                return Err(MemberError::StorageUnavailable(database.clone()));
+            };
+            *lock_unpoisoned(&entry.last_used) = Instant::now();
+            engine
+        };
+        Ok(DatabaseLease { entry, engine, _global: global, _local: local })
+    }
+
+    /// Closes every open database engine with no admitted request for at
+    /// least `idle` (D-44 idle close), returning how many were evicted.
+    ///
+    /// Eviction flushes through [`Engine::shutdown`] (retention sweep plus
+    /// WAL fold-back), never touches a database with an outstanding lease,
+    /// and is transparent: the next [`Member::acquire`] reopens the
+    /// database from its validated location and scope. A closed (already
+    /// evicted) database is not reported again. While the Member is not
+    /// serving, nothing is evicted.
+    #[must_use]
+    pub fn close_idle(&self, idle: Duration) -> usize {
+        if *lock_unpoisoned(&self.inner.lifecycle) != LifecycleState::Serving {
+            return 0;
         }
+        let mut evicted = 0;
+        for entry in self.inner.databases.values() {
+            if lock_unpoisoned(&entry.last_used).elapsed() < idle {
+                continue;
+            }
+            let mut guard = lock_unpoisoned(&entry.engine);
+            let Some(engine) = guard.take() else { continue };
+            // Re-check under the entry lock: an acquire may have reopened
+            // and used the database after the first check.
+            if lock_unpoisoned(&entry.last_used).elapsed() < idle {
+                *guard = Some(engine);
+                continue;
+            }
+            match Arc::try_unwrap(engine) {
+                Ok(engine) => {
+                    let _ = engine.shutdown();
+                    evicted += 1;
+                }
+                Err(shared) => {
+                    // A lease is outstanding; keep serving it.
+                    *guard = Some(shared);
+                }
+            }
+        }
+        evicted
     }
 
     /// Changes the Member to draining and waits for admitted work to finish.
@@ -771,8 +827,28 @@ fn reject_symlink_components(path: &Path) -> Result<(), CatalogValidationError> 
     Ok(())
 }
 
-fn close_opened(opened: Vec<(DatabaseId, PathBuf, Arc<Engine>)>) {
-    for (_, _, engine) in opened {
+/// Reopens one database engine from its validated location and scope.
+///
+/// The idle-close path funnels through here so an evicted database returns
+/// with the identical ownership binding [`Member::open`] established. Any
+/// failure to rebuild the configuration or reopen the engine surfaces as
+/// the same typed unavailability an evicted database reports.
+fn reopen_database_engine(entry: &DatabaseEntry) -> Result<Arc<Engine>, MemberError> {
+    let config = EngineConfig::durable(&entry.location)
+        .map(|config| {
+            entry
+                .scope
+                .as_ref()
+                .map_or(config.clone(), |scope| config.with_owner(scope.owner().clone()))
+        })
+        .map_err(|_| MemberError::StorageUnavailable(entry.id.clone()))?;
+    Engine::open(config)
+        .map(Arc::new)
+        .map_err(|_| MemberError::StorageUnavailable(entry.id.clone()))
+}
+
+fn close_opened(opened: Vec<(DatabaseId, PathBuf, Option<DatabaseScope>, Arc<Engine>)>) {
+    for (_, _, _, engine) in opened {
         if let Ok(engine) = Arc::try_unwrap(engine) {
             let _ = engine.shutdown();
         }
@@ -887,6 +963,62 @@ mod tests {
         assert_eq!(lease.database_owner(), scope.owner());
         drop(lease);
         reopened.close(Duration::from_secs(1)).expect("close");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn idle_close_evicts_and_next_acquire_reopens() {
+        let root = root("idle");
+        let scope = DatabaseScope::new(
+            "production",
+            TenantUlid::generate(),
+            ProjectUlid::generate(),
+            DatabaseUlid::generate(),
+            RegionCode::GRU,
+        )
+        .expect("scope");
+        let spec = DatabaseSpec::scoped(scope.clone(), "db");
+        let id = DatabaseId::from(scope.database());
+        let member = Member::open_production(&root, [spec], AdmissionLimits::new(4, 2))
+            .expect("production member");
+        // A just-used database is never idle.
+        assert_eq!(member.close_idle(Duration::from_mins(1)), 0);
+        // Past the window with no requests, the engine closes flush...
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(member.close_idle(Duration::from_millis(1)), 1);
+        // ...an already-closed database is not reported again...
+        assert_eq!(member.close_idle(Duration::from_millis(1)), 0);
+        // ...and the next request transparently reopens the same database.
+        let lease = member.acquire(&id).expect("reopen");
+        assert_eq!(lease.database_owner().database(), scope.database());
+        drop(lease);
+        member.close(Duration::from_secs(5)).expect("close");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn idle_close_keeps_databases_with_outstanding_leases() {
+        let root = root("idle-lease");
+        let scope = DatabaseScope::new(
+            "production",
+            TenantUlid::generate(),
+            ProjectUlid::generate(),
+            DatabaseUlid::generate(),
+            RegionCode::GRU,
+        )
+        .expect("scope");
+        let spec = DatabaseSpec::scoped(scope.clone(), "db");
+        let id = DatabaseId::from(scope.database());
+        let member = Member::open_production(&root, [spec], AdmissionLimits::new(4, 2))
+            .expect("production member");
+        let lease = member.acquire(&id).expect("lease");
+        std::thread::sleep(Duration::from_millis(5));
+        // The outstanding lease pins the engine: nothing is evicted and the
+        // lease keeps serving.
+        assert_eq!(member.close_idle(Duration::from_millis(1)), 0);
+        assert_eq!(lease.database_owner().database(), scope.database());
+        drop(lease);
+        member.close(Duration::from_secs(5)).expect("close");
         let _ = fs::remove_dir_all(root);
     }
 

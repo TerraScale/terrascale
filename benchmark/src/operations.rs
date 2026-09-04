@@ -41,7 +41,7 @@ pub enum RequestValidationError {
     InvalidPatch,
 }
 
-/// Validation failures for V1-compatible query input.
+/// Validation failures for SQL query input.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum QueryInputError {
     /// The query text was empty.
@@ -211,7 +211,7 @@ impl SqlQueryText {
     /// and shaped as read-only SQL (`SELECT`, `WITH`, or `EXPLAIN` first
     /// keyword; no DDL, DML, pragma, attachment, or multi-statement text).
     /// Anything else is a typed [`QueryInputError`] and never reaches the
-    /// compile seam. Full planning belongs to track item E-4.
+    /// compile seam.
     ///
     /// # Errors
     ///
@@ -241,7 +241,7 @@ impl SqlQueryText {
 pub enum QueryInput {
     /// A typed query specification (the SQL AST surface).
     Typed(QuerySpec),
-    /// Read-only SQL text (planned by E-4).
+    /// Read-only SQL text lowered by the query planner.
     Sql(SqlQueryText),
     /// Read-only SQL text with a caller-supplied deadline and
     /// cancellation signal: the serving seam binds control to the
@@ -253,6 +253,8 @@ pub enum QueryInput {
         deadline: Deadline,
         /// The cancellation signal.
         cancellation: Cancellation,
+        /// Named, typed values bound to placeholders in the statement.
+        parameters: crate::query::sql::SqlParameters,
     },
 }
 
@@ -270,7 +272,23 @@ impl QueryInput {
     /// Wraps validated SQL text with execution control.
     #[must_use]
     pub fn sql_bounded(text: SqlQueryText, deadline: Deadline, cancellation: Cancellation) -> Self {
-        Self::SqlBounded { text, deadline, cancellation }
+        Self::SqlBounded {
+            text,
+            deadline,
+            cancellation,
+            parameters: crate::query::sql::SqlParameters::new(),
+        }
+    }
+
+    /// Wraps SQL text with execution controls and named parameter bindings.
+    #[must_use]
+    pub fn sql_bounded_with_parameters(
+        text: SqlQueryText,
+        deadline: Deadline,
+        cancellation: Cancellation,
+        parameters: crate::query::sql::SqlParameters,
+    ) -> Self {
+        Self::SqlBounded { text, deadline, cancellation, parameters }
     }
 }
 

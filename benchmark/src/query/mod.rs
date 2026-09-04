@@ -2,11 +2,10 @@
 //!
 //! This module implements the W3-2 query contract: one compile/execute path
 //! over [`QueryInput`], execution against an immutable [`ReadSnapshot`], and
-//! generation-aware index selection. Typed clauses (the SQL AST surface)
-//! normalize into one private model, the plan is
-//! immutable after compilation, and execution consumes only the caller's
-//! snapshot. SQL is the only query language (D-78); the read-only SQL text
-//! front end is [`sql`], and the full SQL planner is track item E-4.
+//! generation-aware index selection. Typed clauses normalize into one private
+//! model, the plan is immutable after compilation, and execution consumes
+//! only the caller's snapshot. SQL is the only query language (D-78); its
+//! supported read-only subset lowers through the same model and executor.
 //!
 //! GAP-Q19 adds the family query sources: counters and time-series are
 //! typed sources beside user collections, answering through typed family
@@ -31,6 +30,7 @@ mod model;
 pub mod optimizer;
 mod result;
 mod spec;
+mod sql_execute;
 mod statistics;
 mod vector;
 
@@ -98,7 +98,10 @@ pub use crate::families::{TimeSeriesPaging, TimeSeriesRange};
 pub use statistics::{DiagnosticDuration, QueryStatistics, ResultEtag};
 // The public SqlQueryText constructor validates through the read-only SQL
 // front end (`sql`); the full SQL planner is track item E-4.
-pub(crate) use sql::{SqlError, SqlErrorClass, SqlParameters};
+pub(crate) use sql::SqlErrorClass;
+/// The launch live-subset tag and the typed subscribe refusal (E-4, D-78):
+/// the whole `NotSubscribable` decision, pinned for SDK conformance.
+pub use sql::{LiveSubset, NotSubscribable};
 pub use vector::{
     DEFAULT_VECTOR_SEARCH_LIMIT, MAX_VECTOR_DIMENSIONS, MAX_VECTOR_SEARCH_LIMIT,
     MIN_VECTOR_DIMENSIONS, VECTOR_PREDICATE_VERSION, VECTOR_SEARCH_WINDOW, VectorEmbeddingType,
@@ -172,19 +175,26 @@ pub enum QueryError {
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryPlan {
     query: NormalizedQuery,
+    sql_runtime: Option<Box<sql::SqlRuntime>>,
 }
 
 impl QueryPlan {
     /// Creates a plan from one normalized model. Crate-only: compile is the
     /// only plan constructor.
     pub(crate) fn new(query: NormalizedQuery) -> Self {
-        Self { query }
+        Self { query, sql_runtime: None }
     }
 
-    /// Binds the score-rank request of a lowered `search(...)` query.
-    /// Crate-only: the SQL planner (E-4) is the only producer.
-    pub(crate) fn with_search_rank(self, rank: model::SearchRank) -> Self {
-        Self { query: self.query.with_search_rank(rank) }
+    pub(crate) fn new_sql(query: NormalizedQuery, runtime: sql::SqlRuntime) -> Self {
+        Self { query, sql_runtime: Some(Box::new(runtime)) }
+    }
+
+    /// Binds the score-rank request of a relevance-ordered search.
+    /// Test-only: in-crate search tests bind the rank the SQL planner
+    /// lowers from relevance ordering.
+    #[cfg(test)]
+    pub(crate) fn with_search_rank(self, direction: OrderDirection) -> Self {
+        Self { query: self.query.with_search_rank(direction), ..self }
     }
 
     /// Returns the plan's model. Crate-only planner surface.
@@ -193,7 +203,7 @@ impl QueryPlan {
     }
 
     /// Returns the tenant claim the plan carries, or `None` for the
-    /// V1-compatible form, whose tenant binding is the snapshot's tenant.
+    /// SQL text form, whose tenant binding is the snapshot's tenant.
     #[must_use]
     pub fn tenant_claim(&self) -> Option<&TenantId> {
         self.query.tenant_claim()
@@ -209,6 +219,26 @@ impl QueryPlan {
     #[must_use]
     pub fn ordering(&self) -> &QueryOrdering {
         self.query.ordering()
+    }
+
+    /// Returns the projected field selection, or `None` for whole documents.
+    #[must_use]
+    pub fn projection(&self) -> &QueryProjection {
+        self.query.projection()
+    }
+
+    /// Returns the execute-only SQL operator, when this plan is not safe for
+    /// incremental subscription. `None` identifies the live single-
+    /// collection subset.
+    #[must_use]
+    pub fn sql_execute_only_operator(&self) -> Option<&'static str> {
+        self.sql_runtime.as_ref().and_then(|runtime| runtime.operator)
+    }
+
+    /// Returns the typed subscription refusal for an execute-only SQL plan.
+    #[must_use]
+    pub fn sql_execute_only_refusal(&self) -> Option<NotSubscribable> {
+        self.sql_execute_only_operator().map(NotSubscribable::new)
     }
 
     /// Returns the include clauses the plan will materialize, in
@@ -306,12 +336,12 @@ impl<'engine> QueryStore<'engine> {
     /// Compiles typed or SQL text input into an immutable plan.
     ///
     /// The typed form (the SQL AST surface) is re-validated as it is
-    /// normalized. SQL text is validated by the read-only front end and its
-    /// full planning belongs to track item E-4: until that planner lands,
-    /// SQL text fails closed with [`QueryError::InvalidSpec`], never a
-    /// degraded plan. Authorization compiles into the plan and index
-    /// derivation reads the plan's predicates and order keys — both move
-    /// onto the SQL AST (D-78), with the typed form as the working surface.
+    /// normalized. SQL text is parsed by the read-only front end and lowered
+    /// onto the same typed clauses, so both forms share one plan shape.
+    /// Anything the front end accepts but the seam cannot express exactly
+    /// fails closed with [`QueryError::InvalidSpec`], never a degraded plan.
+    /// Authorization compiles into the plan and index derivation reads the
+    /// plan's predicates and order keys — both on the SQL AST (D-78).
     ///
     /// # Errors
     ///
@@ -336,10 +366,104 @@ impl<'engine> QueryStore<'engine> {
                 spec.includes().to_vec(),
                 spec.time_series_window(),
             )),
-            // E-4 owns SQL text planning: validated text arrives here and
-            // fails closed until the planner lands.
-            QueryInput::Sql(_) | QueryInput::SqlBounded { .. } => Err(QueryError::InvalidSpec),
+            QueryInput::Sql(text) => self.compile_sql(text, None, None, sql::SqlParameters::new()),
+            QueryInput::SqlBounded { text, deadline, cancellation, parameters } => {
+                self.compile_sql(text, Some(deadline), Some(cancellation), parameters)
+            }
         }
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    #[allow(clippy::unused_self, reason = "compile is one store-bound seam")]
+    fn compile_sql(
+        &self,
+        text: crate::operations::SqlQueryText,
+        deadline: Option<crate::types::Deadline>,
+        cancellation: Option<crate::types::Cancellation>,
+        parameters: sql::SqlParameters,
+    ) -> Result<QueryPlan, QueryError> {
+        let parsed = sql::parse(text.as_str(), crate::operations::MAX_SQL_TEXT_BYTES)
+            .map_err(|_| QueryError::InvalidSpec)?;
+        sql::validate_parameters(text.as_str(), &parameters)
+            .map_err(|_| QueryError::InvalidSpec)?;
+        let lowered = match sql::lower(&parsed, &parameters) {
+            Ok(lowered) => lowered,
+            Err(error) if error.class() == sql::SqlErrorClass::UnsupportedStatement => {
+                let operator = match sql::classify_live_subset(&parsed) {
+                    sql::LiveSubset::ExecuteOnly { operator } => Some(operator),
+                    sql::LiveSubset::Live => None,
+                };
+                let source = QuerySource::try_new(
+                    crate::types::CollectionName::try_new("__sql_execute__")
+                        .map_err(|_| QueryError::InvalidSpec)?,
+                )
+                .map_err(|_| QueryError::InvalidSpec)?;
+                let query = NormalizedQuery::from_sql(
+                    source,
+                    QueryPredicate::all(Vec::new()).map_err(|_| QueryError::InvalidSpec)?,
+                    QueryOrdering::default(),
+                    QueryProjection::whole_document(),
+                    // The SQL text owns paging. This model copy is only for
+                    // live dependency planning and must not invent a limit
+                    // for joins, CTEs, EXPLAIN, or other execute-only forms.
+                    QueryPaging::try_new(0, None).map_err(|_| QueryError::InvalidSpec)?,
+                    deadline,
+                    cancellation.clone(),
+                );
+                return Ok(QueryPlan::new_sql(
+                    query,
+                    sql::SqlRuntime {
+                        text: text.as_str().to_owned(),
+                        parameters,
+                        tables: sql::table_names(&parsed),
+                        deadline,
+                        cancellation,
+                        operator,
+                    },
+                ));
+            }
+            Err(_) => return Err(QueryError::InvalidSpec),
+        };
+        let collection = crate::types::CollectionName::try_new(&lowered.collection)
+            .map_err(|_| QueryError::InvalidSpec)?;
+        let source = QuerySource::try_new(collection).map_err(|_| QueryError::InvalidSpec)?;
+        let predicate =
+            QueryPredicate::all(lowered.conditions).map_err(|_| QueryError::InvalidSpec)?;
+        let ordering =
+            QueryOrdering::try_new(lowered.ordering).map_err(|_| QueryError::InvalidSpec)?;
+        let projection = match lowered.projection {
+            Some(fields) => {
+                let refs: Vec<&str> = fields.iter().map(String::as_str).collect();
+                QueryProjection::fields(&refs).map_err(|_| QueryError::InvalidSpec)?
+            }
+            None => QueryProjection::whole_document(),
+        };
+        let paging = QueryPaging::try_new(lowered.offset, lowered.limit)
+            .map_err(|_| QueryError::InvalidSpec)?;
+        let query = NormalizedQuery::from_sql(
+            source,
+            predicate,
+            ordering,
+            projection,
+            paging,
+            deadline,
+            cancellation.clone(),
+        );
+        let operator = match parsed.kind() {
+            sql::SqlStatementKind::Explain => Some("explain"),
+            _ => None,
+        };
+        Ok(QueryPlan::new_sql(
+            query,
+            sql::SqlRuntime {
+                text: text.as_str().to_owned(),
+                parameters,
+                tables: sql::table_names(&parsed),
+                deadline,
+                cancellation,
+                operator,
+            },
+        ))
     }
 
     /// Validates one normalized model and freezes it into a plan.
@@ -396,6 +520,9 @@ impl<'engine> QueryStore<'engine> {
         plan: &QueryPlan,
         snapshot: &ReadSnapshot,
     ) -> Result<QueryResult, QueryError> {
+        if let Some(runtime) = &plan.sql_runtime {
+            return sql_execute::execute(self.engine, plan, runtime, snapshot);
+        }
         execute::execute(self.engine, &self.indexes, plan, snapshot)
     }
 

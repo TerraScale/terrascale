@@ -32,3 +32,7 @@ __pycache__/
 deploy/release/sbom/target/
 .claude/
 .codex-worktrees/
+
+# E-15 local stack state: dev certs, bootstrap key, member data, logs.
+# Never commit; the binary never leaves our infrastructure (D-50).
+/.terrascale/stack/

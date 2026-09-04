@@ -29,7 +29,7 @@ Therefore every production Member upgrade uses temporary surge capacity:
    protocol compatibility;
 2. allocate a temporary Member in a different OCI fault domain or availability
    domain from the seat it protects;
-3. bootstrap and Merkle-verify the surge Member at the required frontier;
+3. bootstrap and reconcile the surge Member at the required frontier;
 4. admit it through joint consensus without weakening current acknowledgements;
 5. upgrade or replace one old Member, catch it up, and requalify reads, writes,
    repair, and resource isolation;

@@ -8,7 +8,7 @@ use terrabase::{
     QueryError, QueryInput, QueryInputError, QueryOperation, QueryOrdering, QueryPaging, QueryPlan,
     QueryPredicate, QueryProjection, QueryResult, QuerySource, QuerySpec,
     QueryStore as RootQueryStore, ReadSnapshot, RequestValidationError, RetryDisposition,
-    StalenessPolicy, StorageSequence, TenantId, TenantScope, TqlQueryText, Transaction,
+    SqlQueryText, StalenessPolicy, StorageSequence, TenantId, TenantScope, Transaction,
     UnknownCommit, UnknownReason,
     adapters::{platform, protocol},
     engine::{self, Engine},
@@ -116,7 +116,7 @@ fn public_exports_compile_with_declaration_only_tree() {
         std::any::type_name::<Transaction<'static>>(),
         std::any::type_name::<UnknownCommit>(),
         std::any::type_name::<UnknownReason>(),
-        std::any::type_name::<TqlQueryText>(),
+        std::any::type_name::<SqlQueryText>(),
     );
 }
 

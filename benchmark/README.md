@@ -24,7 +24,7 @@ orchestrator / CLI (control only)
 The public surface is the REST API (with the reactive WebSocket transport
 landing as S-04); TBEP carries no customer request path (D-02).
 
-The engine owns storage, WAL, compaction, indexing, TQL query execution,
+The engine owns SQLite storage and WAL, indexing, SQL query execution,
 causality, CRDT merge, replication, repair, membership acceptance, backup,
 restore, deletion, reactive state, and authoritative usage facts. A durable
 engine opens one filesystem location through `Engine::open` and
@@ -33,7 +33,7 @@ engine opens one filesystem location through `Engine::open` and
 The production engine must run asynchronously across multiple threads and use
 all CPUs admitted to the Member. Independent storage, network, replication,
 and maintenance I/O must not block executor threads. Query execution,
-indexing, compaction, repair, encoding, and other CPU-heavy work must use
+indexing, repair, encoding, and other CPU-heavy work must use
 bounded parallelism instead of serial hot paths or unbounded task spawning.
 Runtime limits must account for available CPUs, memory, storage, and network
 capacity while preserving deterministic results, durability, tenant

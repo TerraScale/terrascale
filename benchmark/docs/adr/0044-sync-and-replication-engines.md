@@ -4,8 +4,7 @@ Status: accepted (owner decisions D-35..D-38, D-45, D-46, D-78, 2026-09-03).
 Authority: the workspace `GOAL.md` owns these decisions; this ADR is the
 detailed design and names the papers each mechanism is built on. If they
 diverge, the workspace goal wins. Supersedes the anti-entropy and
-session-token portions of ADR 0041 and the TQL portions of ADR 0022 and
-`docs/sync/terrascale-sync-v2.md`.
+session-token portions of ADR 0041 and the legacy query portions of ADR 0022.
 
 ## 0. Why these two engines are the product
 
@@ -27,12 +26,12 @@ canonical body bytes.
 | Mixing durable classes | UNISTORE, Bravo et al., ATC 2021 | A "strong" write must only depend on *uniform* (durably replicated) causal dependencies, or a Region loss can make it unreachable. Shapes `GlobalDurable`. |
 | Document CRDT | Delta-state CRDTs, Almeida/Shoker/Baquero 2018; Melda, Brocco 2022/2025/2026 (delta-state JSON CRDT with deterministic reconstruction) | Ship deltas, not state; merge is a deterministic function of the set of observed updates, so replay order never matters. |
 | Text fields (post-launch) | Eg-walker, Gentle & Kleppmann, EuroSys 2025 | Event-graph replay gives CRDT convergence with OT-sized steady state; the right shape for a `text` merge-schema field. |
-| Anti-entropy | Range-Based Set Reconciliation, Meyer 2023; RBSR via range-summarizable order-statistics stores, 2026; Negentropy wire protocol | Fingerprint ranges, refine only mismatches: O(log n) rounds worst case, no per-connection state, no rigid tree. Replaces the Merkle tree of ADR 0041. |
+| Anti-entropy | Range-Based Set Reconciliation, Meyer 2023; RBSR via range-summarizable order-statistics stores, 2026; Negentropy wire protocol | Fingerprint ranges, refine only mismatches: O(log n) rounds worst case, no per-connection state, no rigid tree. |
 | Incremental view maintenance | DBSP, Budiu et al., VLDB 2023 / VLDB Journal 2025 | Views as streams of Z-sets; any query plan incrementalizes operator by operator; linear operators need no state, bilinear ones (joins) and aggregates need integrated state. Decides the launch live subset. |
 | Ordered windows | Efficient maintenance of materialized top-k views, Yi et al., ICDE 2003 | Keep a k' > k buffer with a boundary so `ORDER BY … LIMIT` rarely requires a requery. |
 | Partial replication guarantees | IntersectionAtomicity / IntersectionCC, 2026 | A subscriber that sees a subset of the data gets causal and atomic guarantees only on the intersection of interest sets; our views promise consistent cuts per view, not across views. |
 
-Not adopted, and why: Merkle search / prolly trees (worst case degrades to
+Not adopted, and why: tree-based search / prolly trees (worst case degrades to
 full transfer under adversarial keys; rigid shape); operation-based CRDT
 replay for whole documents (state and load cost, the exact problem Eg-walker
 documents); OT (server-serialized, wrong for leaderless); per-field causal
@@ -120,7 +119,7 @@ worst case, a round trip carries O(k log n) bytes for k differences, the
 protocol needs no per-connection state and cannot be forced into full
 transfer by pathological data. It runs after every tailer reconnect, after
 region bootstrap, on the dependency-queue overflow above, and on a slow
-periodic sweep; the Merkle tree of ADR 0041 is deleted.
+periodic sweep; the former tree-based reconciler is deleted.
 
 ### 2.6 Region bootstrap and repair
 
@@ -240,7 +239,7 @@ webhooks consume the same revisions.
 ## 5. Consequences
 
 - `terrabase-replication-core` keeps progress kernels and gains the
-  range-summary aggregate and reconciliation state machine; the Merkle
+  range-summary aggregate and reconciliation state machine; the former tree
   comparison and repair planner are deleted.
 - The SQL planner tags each plan `live` or `execute-only` from the operator
   table in 3.2; that tag is the whole `NotSubscribable` decision.

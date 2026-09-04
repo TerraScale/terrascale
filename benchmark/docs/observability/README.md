@@ -26,37 +26,45 @@ private-network policy, retention, and alert delivery.
 | `terrabase_replication_lag_seconds` | gauge | `region` | Current observed replication lag. |
 | `terrabase_replication_backlog_bytes` | gauge | `region` | Bytes queued for delivery to a selected Region. |
 | `terrabase_replication_frontier_health` | gauge | `region` | Verified frontier health using the component health numeric values. |
-| `terrabase_storage_bytes` | gauge | `tier` | Measured bytes in `tier1`, `tier2`, or `tier3`. |
-| `terrabase_storage_capacity_bytes` | gauge | `tier` | Finite usable capacity by tier. The series is absent when capacity is unknown or unbounded. |
-| `terrabase_storage_errors_total` | counter | `tier`, `operation` | Storage errors classified without paths or error text. |
 | `terrabase_active_members` | gauge | `region` | Active admitted Members by Region. |
 | `terrabase_component_health` | gauge | `component` | `1` healthy, `0.5` degraded, `0` unhealthy, `-1` unknown or unconfigured. |
 | `terrabase_backup_last_success_age_seconds` | gauge | `mode` | Age of the last verified successful backup. |
 | `terrabase_backup_runs_total` | counter | `mode`, `outcome` | Successful and failed backup runs. |
 | `terrabase_usage_export_frontier` | gauge | none | Last exported authoritative usage sequence frontier. |
 | `terrabase_usage_export_failures_total` | counter | none | Failed authoritative usage export attempts. |
+| `terrabase_clock_offset_seconds` | gauge | none | Measured host clock offset against OCI NTP in seconds. Absent until the collector publishes. New writes are refused past 0.5 in magnitude (D-69). |
+| `terrabase_clock_write_refusals_total` | counter | none | New writes refused because the measured clock offset exceeded 0.5 seconds in magnitude. |
+| `terrabase_egress_bytes_total` | counter | `region`, `kind` | Billable OCI outbound bytes: replication journal frames, bootstrap snapshots, and direct member reads (D-66). |
 
 The only named Region label values are `GRU`, `SFO`, and `FRA`; `unknown` is an
 aggregate for incomplete or invalid topology observations. Input is not
 normalized, so lowercase values, provider names, aliases, and malformed codes
-cannot become labels. Operations, outcomes, tiers, and components are closed
+cannot become labels. Operations, outcomes, and components are closed
 enums in the Rust API. The values are `read`, `write`, `query`, `subscribe`,
 `backup`, `restore`, `repair`, `other` for operations;
-`success`, `error`, `rejected`, `timeout` for outcomes; `tier1`, `tier2`,
-`tier3` for storage; and `storage`, `replication`, `membership`,
+`success`, `error`, `rejected`, `timeout` for outcomes; and `storage`, `replication`, `membership`,
 `control_plane`, `backup`, `metrics` for components. Admission reasons are
 `capacity`, `concurrency`, `queue_full`, `deadline`, `not_serving`, and `other`.
 Queues are `foreground`, `commit`, `replication`, `backup`, and
 `usage_export`. Background outcomes are `success` and `error`. Commit outcomes
 are `committed`, `refused`, `failed`, and `unknown`. Backup modes are `full`,
-`incremental`, and `continuous`. Storage operations are `read`, `write`,
-`flush`, and `other`.
+`incremental`, and `continuous`.
 
 `storage`, `replication`, and `membership` are the post-admission readiness
 requirements. Control-plane loss remains visible but does not evacuate an
 admitted data-plane Member: reads, convergence, and replication continue while
 new control mutations fail closed. Optional `backup` and `metrics` slots stay at
 `-1` when unconfigured or unobserved, so they do not look like failures.
+
+No metric carries a per-database, per-tenant, or per-view label (D-72).
+Cardinality is bounded by host (the Prometheus `instance` target) times the
+closed Region and subsystem vocabularies above, so the Grafana Cloud free tier
+holds: at most 144 request series plus 12 egress series plus the unlabeled
+clock and usage families per host. Per-database and
+per-tenant numbers are engine usage facts (D-42), queried from the
+control-plane database and shown in the dashboard, never scraped. Egress kinds
+are `replication`, `snapshot`, and `read`; CDN fills and reader-side delivery
+are Cloudflare's and stay out of `terrabase_egress_bytes_total`.
 
 The renderer emits `# HELP` and `# TYPE` once per family, sorts map-backed
 series deterministically, emits no scrape timestamp, and uses cumulative
@@ -77,17 +85,16 @@ Prometheus calculates operator views from raw cumulative facts. A sampled
 | Admission rejections per second | `sum by (operation, reason) (rate(terrabase_admission_rejections_total[5m]))` |
 | Queue utilization | `100 * terrabase_queue_depth / clamp_min(terrabase_queue_capacity, 1)` |
 | Committed durability p99 | `histogram_quantile(0.99, sum by (le) (rate(terrabase_commit_duration_seconds_bucket{outcome="committed"}[5m])))` |
-| Total storage usage | `sum(terrabase_storage_bytes)` |
-| Storage utilization by tier | `100 * terrabase_storage_bytes / clamp_min(terrabase_storage_capacity_bytes, 1)` |
-| Storage change over 24 hours | `sum(terrabase_storage_bytes) - sum(terrabase_storage_bytes offset 24h)` |
 | Worst replication lag by Region | `max by (region) (terrabase_replication_lag_seconds)` |
-| Storage errors per second | `sum by (tier, operation) (rate(terrabase_storage_errors_total[5m]))` |
 | Backup failures per second | `sum by (mode) (rate(terrabase_backup_runs_total{outcome="error"}[5m]))` |
+| Clock offset magnitude | `abs(terrabase_clock_offset_seconds)` — writes stop past 0.5 s (D-69) |
+| Clock write refusals per second | `sum(rate(terrabase_clock_write_refusals_total[5m]))` |
+| Egress bytes per second by Region and class | `sum by (region, kind) (rate(terrabase_egress_bytes_total[5m]))` |
+| Monthly egress pace by Region | `sum by (region) (increase(terrabase_egress_bytes_total[1h])) * 730` — compare against the 8 TB/month alert line (D-66) |
 
 The checked-in Grafana dashboard uses `$__rate_interval` instead of a fixed
 five-minute rate window and provides `region` and `operation` filters. Scope its
-Prometheus job to one TerraBase deployment. Summing storage across unrelated
-deployments produces a valid number with the wrong meaning.
+Prometheus job to one TerraBase deployment.
 
 ## Boundary requirements
 
@@ -107,6 +114,19 @@ liveness. Probe bodies contain only bounded lifecycle, component, and status
 values. Free-form diagnostics must pass through `redact_diagnostic` before an
 operator sink receives them.
 
+## Structured logs
+
+Every engine subsystem emits [`LogRecord`](../../../src/observability/mod.rs)
+lines: `ts=<millis> level=<info|warn|error> component=<component>
+event=<started|stopped|degraded|recovered|saturated|refused|failed|progress>
+msg="<redacted>"`. Level, component, and event come from closed enums, so no
+subsystem can invent a per-database, per-tenant, or per-view field name; the
+message passes through `redact_diagnostic` at construction. Sampling above 100
+lines/s per host and 14-day retention are enforced by the `ts-orchestrator`
+Grafana-agent configuration, not in process: the engine always emits and never
+drops a caller-visible error to meet the sampling budget. `Error` records are
+never sampled; `Warn` is sampled only after `Info`.
+
 ## Redaction
 
 Metrics never carry free-form details. The redaction helper is for an
@@ -120,8 +140,8 @@ defense, not permission to collect sensitive values.
 ## Qualification status
 
 Source unit tests and `tests/observability/contract.rs` cover deterministic
-exposition, histogram accounting, label and response-size bounds, storage
-capacity semantics, lifecycle and readiness separation, control-plane loss,
+exposition, histogram accounting, label and response-size bounds, lifecycle and
+readiness separation, control-plane loss,
 optional unconfigured components, monotonic usage frontiers, alert structure,
 path agreement, and secret redaction. These tests are implementation evidence.
 The exact candidate still needs a private-network scrape and probe receipt

@@ -1,7 +1,7 @@
 //! The private normalized query model shared by both input forms.
 //!
-//! [`QuerySpec::try_new`](super::QuerySpec::try_new) and the V1-compatible
-//! grammar both normalize into [`NormalizedQuery`], and
+//! [`QuerySpec::try_new`](super::QuerySpec::try_new) and the SQL text
+//! front end both normalize into [`NormalizedQuery`], and
 //! [`QueryStore::compile`](super::QueryStore::compile) is the only producer of
 //! plans from it. The model is crate-private: planner shapes, reducer state,
 //! and evaluation helpers are never exposed.
@@ -32,11 +32,6 @@ pub(crate) struct SearchRank {
 }
 
 impl SearchRank {
-    /// Creates one rank request.
-    pub(crate) const fn new(direction: OrderDirection) -> Self {
-        Self { direction }
-    }
-
     /// Returns the ranking direction.
     #[allow(
         clippy::trivially_copy_pass_by_ref,
@@ -66,6 +61,35 @@ pub(crate) struct NormalizedQuery {
 }
 
 impl NormalizedQuery {
+    /// Builds an untenant-bound model lowered from SQL text. The serving
+    /// tenant is supplied by the immutable snapshot at execution time.
+    pub(crate) fn from_sql(
+        source: QuerySource,
+        predicate: QueryPredicate,
+        ordering: QueryOrdering,
+        projection: QueryProjection,
+        paging: QueryPaging,
+        deadline: Option<Deadline>,
+        cancellation: Option<Cancellation>,
+    ) -> Self {
+        Self {
+            source,
+            predicate,
+            ordering,
+            projection,
+            paging,
+            staleness: super::StalenessPolicy::try_new(super::StalenessMode::Strict, Vec::new())
+                .expect("empty strict policy is valid"),
+            loads: Vec::new(),
+            includes: Vec::new(),
+            time_series_window: None,
+            tenant_claim: None,
+            deadline,
+            cancellation,
+            search_rank: None,
+        }
+    }
+
     /// Builds a model from already validated typed clauses.
     #[allow(clippy::too_many_arguments)] // the typed form carries every frozen clause
     pub(crate) fn from_spec(
@@ -97,53 +121,6 @@ impl NormalizedQuery {
             cancellation: Some(cancellation),
             search_rank: None,
         }
-    }
-
-    /// Builds an unbound model, the shape the grammar-only compile seam
-    /// produces: the grammar has no tenant, deadline, or cancellation clause,
-    /// so those stay unbound and the snapshot supplies the tenant binding at
-    /// execution. The grammar has no include clause either, so an unbound
-    /// model materializes nothing.
-    pub(crate) fn unbound(
-        source: QuerySource,
-        predicate: QueryPredicate,
-        ordering: QueryOrdering,
-        projection: QueryProjection,
-        paging: QueryPaging,
-        staleness: StalenessPolicy,
-    ) -> Self {
-        Self {
-            source,
-            predicate,
-            ordering,
-            projection,
-            paging,
-            staleness,
-            loads: Vec::new(),
-            includes: Vec::new(),
-            time_series_window: None,
-            tenant_claim: None,
-            deadline: None,
-            cancellation: None,
-            search_rank: None,
-        }
-    }
-
-    /// Binds reference-resolution loads onto an unbound model — the `load`
-    /// clause the grammar carries and the serving seam's request-bound form
-    /// would otherwise supply through the typed constructor.
-    pub(crate) fn with_loads(mut self, loads: Vec<QueryLoad>) -> Self {
-        self.loads = loads;
-        self
-    }
-
-    /// Binds execution control to an unbound model — the deadline and
-    /// cancellation the serving seam supplies for a V1-compatible
-    /// query whose grammar has no control clauses.
-    pub(crate) fn with_control(mut self, deadline: Deadline, cancellation: Cancellation) -> Self {
-        self.deadline = Some(deadline);
-        self.cancellation = Some(cancellation);
-        self
     }
 
     /// Returns the typed source.
@@ -224,32 +201,42 @@ impl NormalizedQuery {
         self.cancellation.clone()
     }
 
-    /// Binds the score-rank request of a `search(...)` query with a
-    /// `score()` ordering key. Crate-only: the SQL planner (E-4) is the
-    /// only producer; the typed specification path never ranks.
-    pub(crate) fn with_search_rank(mut self, rank: SearchRank) -> Self {
-        self.search_rank = Some(rank);
-        self
-    }
-
     /// Returns the score-rank request, when the query was lowered from a
-    /// `search(...)` filter ordered by `score()`.
+    /// `search(...)` filter ordered by relevance.
     pub(crate) const fn search_rank(&self) -> Option<&SearchRank> {
         self.search_rank.as_ref()
     }
+
+    /// Binds the score-rank request of a relevance-ordered search.
+    ///
+    /// Test-only: in-crate search tests bind the rank the SQL planner will
+    /// lower from relevance ordering, so execution's ranked path stays
+    /// covered without a text front end in the loop.
+    #[cfg(test)]
+    pub(crate) fn with_search_rank(mut self, direction: OrderDirection) -> Self {
+        self.search_rank = Some(SearchRank { direction });
+        self
+    }
 }
 
-/// Returns one top-level field of a document, or `None` when the document is
-/// not an object or does not carry the field. W3-2 addresses top-level fields
-/// only; nested paths are a documented limit.
+/// Returns one field (including a dotted nested JSON path) of a document, or
+/// `None` when the document is not an object or does not carry the field.
 pub(crate) fn field_of<'document>(
     document: &'document Document,
     field: &str,
 ) -> Option<&'document DocumentValue> {
-    match document.value() {
-        DocumentValue::Object(fields) => fields.get(field),
-        _ => None,
+    let DocumentValue::Object(fields) = document.value() else { return None };
+    if let Some(value) = fields.get(field) {
+        return Some(value);
     }
+    let mut parts = field.split('.');
+    let first = parts.next()?;
+    let mut value = fields.get(first)?;
+    for part in parts {
+        let DocumentValue::Object(fields) = value else { return None };
+        value = fields.get(part)?;
+    }
+    Some(value)
 }
 
 /// Reports whether one field map satisfies the predicate conjunction.

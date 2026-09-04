@@ -949,6 +949,11 @@ pub enum ApplyOutcome {
 }
 
 /// Why a stream requires a fresh authorized snapshot.
+///
+/// The wire values are the stable `reset_reason` enum values of the
+/// `terrascale.sync.v2.msgpack` manifest (1–9); unknown values fail
+/// closed on decode. The [`ResetReason::name`] strings are the
+/// manifest's snake-case names, shared with `ts-typescript`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResetReason {
     /// Checkpoint lifetime elapsed.
@@ -969,6 +974,57 @@ pub enum ResetReason {
     InvalidCheckpoint,
     /// Backlog was coalesced into a reset.
     Backpressure,
+}
+
+impl ResetReason {
+    /// The stable wire value from the `MessagePack` manifest.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::CheckpointExpired => 1,
+            Self::RetentionAdvanced => 2,
+            Self::GenerationChanged => 3,
+            Self::CheckpointNotCurrent => 4,
+            Self::ViewDiverged => 5,
+            Self::Oversized => 6,
+            Self::InvalidOperations => 7,
+            Self::InvalidCheckpoint => 8,
+            Self::Backpressure => 9,
+        }
+    }
+
+    /// The reason for a wire value, or `None` for unknown values.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        Some(match code {
+            1 => Self::CheckpointExpired,
+            2 => Self::RetentionAdvanced,
+            3 => Self::GenerationChanged,
+            4 => Self::CheckpointNotCurrent,
+            5 => Self::ViewDiverged,
+            6 => Self::Oversized,
+            7 => Self::InvalidOperations,
+            8 => Self::InvalidCheckpoint,
+            9 => Self::Backpressure,
+            _ => return None,
+        })
+    }
+
+    /// The stable manifest name shared with `ts-typescript`.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::CheckpointExpired => "checkpoint_expired",
+            Self::RetentionAdvanced => "retention_advanced",
+            Self::GenerationChanged => "generation_changed",
+            Self::CheckpointNotCurrent => "checkpoint_not_current",
+            Self::ViewDiverged => "view_diverged",
+            Self::Oversized => "oversized",
+            Self::InvalidOperations => "invalid_operations",
+            Self::InvalidCheckpoint => "invalid_checkpoint",
+            Self::Backpressure => "backpressure",
+        }
+    }
 }
 
 /// Resume decision after validating an opaque checkpoint.
@@ -1600,5 +1656,31 @@ mod tests {
         // generation and revision.
         assert_eq!(state.view_generation(), 1);
         assert_eq!(state.revision(), 0);
+    }
+
+    #[test]
+    fn reset_reasons_match_the_msgpack_manifest() {
+        // The stable `reset_reason` enum of
+        // `contracts/msgpack/terrascale.sync.v2.msgpack.json` (protocol
+        // 2.1) and the generated `ts-typescript` module: values 1–9
+        // with the manifest's snake-case names.
+        let expected: &[(ResetReason, u8, &str)] = &[
+            (ResetReason::CheckpointExpired, 1, "checkpoint_expired"),
+            (ResetReason::RetentionAdvanced, 2, "retention_advanced"),
+            (ResetReason::GenerationChanged, 3, "generation_changed"),
+            (ResetReason::CheckpointNotCurrent, 4, "checkpoint_not_current"),
+            (ResetReason::ViewDiverged, 5, "view_diverged"),
+            (ResetReason::Oversized, 6, "oversized"),
+            (ResetReason::InvalidOperations, 7, "invalid_operations"),
+            (ResetReason::InvalidCheckpoint, 8, "invalid_checkpoint"),
+            (ResetReason::Backpressure, 9, "backpressure"),
+        ];
+        for (reason, code, name) in expected {
+            assert_eq!(reason.code(), *code, "{reason:?} code");
+            assert_eq!(reason.name(), *name, "{reason:?} name");
+            assert_eq!(ResetReason::from_code(*code), Some(*reason), "code {code}");
+        }
+        assert_eq!(ResetReason::from_code(0), None, "0 is not a reason");
+        assert_eq!(ResetReason::from_code(10), None, "10 is not a reason");
     }
 }

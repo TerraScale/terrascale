@@ -35,8 +35,13 @@ pub const ENVELOPE_VERSION_MAJOR: u16 = 1;
 /// (SE-07) adds the batched acknowledgement report
 /// ([`FrameKind::AckBatch`]); minor 2 (S-05, ADR 0041 D-35/D-36) adds the
 /// journal tailer's replicated-record batch ([`FrameKind::ReplicationBatch`]);
-/// minor-0 and minor-1 frames decode unchanged.
-pub const ENVELOPE_VERSION_MINOR: u16 = 2;
+/// minor 3 adds the durable source sequence to replicated records. Encoders
+/// use the minimum minor for each frame kind so older peers can continue to
+/// decode unchanged frame classes.
+pub const ENVELOPE_VERSION_MINOR: u16 = 3;
+
+const ACK_BATCH_VERSION_MINOR: u16 = 1;
+const REPLICATION_BATCH_VERSION_MINOR: u16 = 3;
 
 /// The digest length the codec writes and verifies.
 pub const DIGEST_BYTES: usize = 32;
@@ -87,7 +92,7 @@ pub enum FrameKind {
     /// One Member's journal tailer ships its committed journal rows as
     /// replicated records to a peer region (ADR 0041 D-35/D-36: canonical
     /// body bytes plus causal metadata, one frame per group-commit wave per
-    /// peer). Additive in envelope minor version 2.
+    /// peer). Its current wire shape requires envelope minor version 3.
     ReplicationBatch,
 }
 
@@ -132,6 +137,15 @@ impl FrameKind {
             Self::AckReport => "ack-report",
             Self::AckBatch => "ack-batch",
             Self::ReplicationBatch => "replication-batch",
+        }
+    }
+
+    /// Returns the oldest envelope minor that can represent this kind.
+    const fn minimum_minor(self) -> u16 {
+        match self {
+            Self::CatchUpRequest | Self::CatchUpBatch | Self::Push | Self::AckReport => 0,
+            Self::AckBatch => ACK_BATCH_VERSION_MINOR,
+            Self::ReplicationBatch => REPLICATION_BATCH_VERSION_MINOR,
         }
     }
 }
@@ -317,8 +331,9 @@ impl LaneValue {
 
 /// One replicated record as the journal tailer ships it (ADR 0041 D-36):
 /// the canonical body plus the causal metadata — commit identity, source
-/// HLC stamp, source region — the receiving region's deterministic merge
-/// orders by. A tombstone carries `None` for the body.
+/// HLC stamp, source region, and source journal sequence — the receiving
+/// region's deterministic merge orders by. A tombstone carries `None` for
+/// the body.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReplicatedWrite {
     /// The collection the document belongs to.
@@ -334,6 +349,8 @@ pub struct ReplicatedWrite {
     pub hlc: u64,
     /// The source region's identity.
     pub origin: String,
+    /// The source region's durable per-origin journal sequence.
+    pub origin_sequence: u64,
 }
 
 /// The typed payload of one member envelope.
@@ -397,9 +414,9 @@ pub enum Payload {
         reports: Vec<(OperationId, bool)>,
     },
     /// Ships one journal tailer batch of replicated records to a peer
-    /// region (envelope minor 2, ADR 0041 D-35/D-36): one frame per
+    /// region (envelope minor 3, ADR 0041 D-35/D-36): one frame per
     /// group-commit wave per peer, canonical body bytes plus causal
-    /// metadata.
+    /// metadata and the source journal sequence.
     ReplicationBatch {
         /// The tenant the records belong to.
         tenant: TenantId,
@@ -447,7 +464,7 @@ pub enum EnvelopeError {
     UnknownSchema,
     /// The frame's major version is not the supported one.
     UnsupportedMajorVersion,
-    /// The frame's minor version is above the supported one.
+    /// The frame's minor version is unsupported for its kind.
     UnsupportedMinorVersion,
     /// The frame's kind byte is not a known kind.
     UnsupportedKind,
@@ -522,7 +539,7 @@ pub fn encode(envelope: &Envelope) -> Result<EncodedFrame, EnvelopeError> {
     );
     frame.extend_from_slice(ENVELOPE_SCHEMA.as_bytes());
     put_u16(&mut frame, ENVELOPE_VERSION_MAJOR);
-    put_u16(&mut frame, ENVELOPE_VERSION_MINOR);
+    put_u16(&mut frame, envelope.kind.minimum_minor());
     put_u8(&mut frame, envelope.kind.wire());
     put_u64(&mut frame, envelope.message_id);
     put_option_u64(&mut frame, envelope.correlation_id);
@@ -571,6 +588,9 @@ pub fn decode(frame: &[u8]) -> Result<(Envelope, EncodedFrame), EnvelopeError> {
         return Err(EnvelopeError::UnsupportedMinorVersion);
     }
     let kind = FrameKind::from_wire(cursor.take_u8()?)?;
+    if minor < kind.minimum_minor() {
+        return Err(EnvelopeError::UnsupportedMinorVersion);
+    }
     let message_id = cursor.take_u64()?;
     let correlation_id = take_option_u64(&mut cursor)?;
     let causation_id = take_option_u64(&mut cursor)?;
@@ -646,7 +666,11 @@ pub fn peek_kind(frame: &[u8]) -> Result<FrameKind, EnvelopeError> {
     if minor > ENVELOPE_VERSION_MINOR {
         return Err(EnvelopeError::UnsupportedMinorVersion);
     }
-    FrameKind::from_wire(cursor.take_u8()?)
+    let kind = FrameKind::from_wire(cursor.take_u8()?)?;
+    if minor < kind.minimum_minor() {
+        return Err(EnvelopeError::UnsupportedMinorVersion);
+    }
+    Ok(kind)
 }
 
 /// Returns the digest of `bytes`.
@@ -904,6 +928,10 @@ fn encode_payload(out: &mut Vec<u8>, payload: &Payload) -> Result<(), EnvelopeEr
                 put_str(out, &record.commit_ulid)?;
                 put_u64(out, record.hlc);
                 put_str(out, &record.origin)?;
+                if record.origin_sequence == 0 || record.origin_sequence > i64::MAX as u64 {
+                    return Err(EnvelopeError::MalformedLength);
+                }
+                put_u64(out, record.origin_sequence);
             }
         }
     }
@@ -952,9 +980,10 @@ const MIN_ACK_REPORT_WIRE_BYTES: usize = 5;
 const MIN_COMMIT_WIRE_BYTES: usize = 32;
 const MIN_WRITE_WIRE_BYTES: usize = 13;
 /// The minimum wire bytes one decoded replicated record occupies (two empty
-/// identifier strings, the body tag, an empty commit identity, the HLC, and
-/// an empty origin — every counted field at its empty minimum).
-const MIN_REPLICATED_WIRE_BYTES: usize = 26;
+/// identifier strings, the body tag, an empty commit identity, the HLC, an
+/// empty origin, and the source sequence — every counted field at its empty
+/// minimum).
+const MIN_REPLICATED_WIRE_BYTES: usize = 33;
 /// The minimum wire bytes one decoded object entry of a [`LaneValue`]
 /// occupies (a `u32` string length of zero plus one value tag byte).
 const MIN_OBJECT_ENTRY_BYTES: usize = 5;
@@ -967,98 +996,113 @@ fn bounded_capacity(cursor: &Cursor<'_>, declared: usize, min_wire_bytes: usize)
 
 fn decode_payload(cursor: &mut Cursor<'_>, kind: FrameKind) -> Result<Payload, EnvelopeError> {
     match kind {
-        FrameKind::CatchUpRequest => {
-            let tenant =
-                TenantId::try_new(&take_str(cursor)?).map_err(|_| EnvelopeError::FieldTooLarge)?;
-            let after = take_option_u64(cursor)?;
-            let limit = cursor.take_u32()?;
-            Ok(Payload::CatchUpRequest { tenant, after, limit })
-        }
-        FrameKind::CatchUpBatch => {
-            let tenant =
-                TenantId::try_new(&take_str(cursor)?).map_err(|_| EnvelopeError::FieldTooLarge)?;
-            let commits = decode_commits(cursor)?;
-            let through = take_option_u64(cursor)?;
-            let tenant_high_water = take_option_u64(cursor)?;
-            let servable_from = take_option_u64(cursor)?;
-            let gap_below = take_option_u64(cursor)?;
-            Ok(Payload::CatchUpBatch {
-                tenant,
-                commits,
-                through,
-                tenant_high_water,
-                servable_from,
-                gap_below,
-            })
-        }
-        FrameKind::Push => {
-            let tenant =
-                TenantId::try_new(&take_str(cursor)?).map_err(|_| EnvelopeError::FieldTooLarge)?;
-            let range = take_str(cursor)?;
-            let epoch = cursor.take_u64()?;
-            let commits = decode_commits(cursor)?;
-            Ok(Payload::Push { tenant, range, epoch, commits })
-        }
-        FrameKind::AckReport => {
-            let tenant =
-                TenantId::try_new(&take_str(cursor)?).map_err(|_| EnvelopeError::FieldTooLarge)?;
-            let operation = OperationId::try_new(&take_str(cursor)?)
-                .map_err(|_| EnvelopeError::FieldTooLarge)?;
-            let held_synced = match cursor.take_u8()? {
-                0 => false,
-                1 => true,
-                _ => return Err(EnvelopeError::MalformedLength),
-            };
-            Ok(Payload::AckReport { tenant, operation, held_synced })
-        }
-        FrameKind::AckBatch => {
-            let tenant =
-                TenantId::try_new(&take_str(cursor)?).map_err(|_| EnvelopeError::FieldTooLarge)?;
-            let count = cursor.take_u32()? as usize;
-            if count > MAX_PAYLOAD_BYTES {
-                return Err(EnvelopeError::MalformedLength);
-            }
-            let mut reports =
-                Vec::with_capacity(bounded_capacity(cursor, count, MIN_ACK_REPORT_WIRE_BYTES));
-            for _ in 0..count {
-                let operation = OperationId::try_new(&take_str(cursor)?)
-                    .map_err(|_| EnvelopeError::FieldTooLarge)?;
-                let held_synced = match cursor.take_u8()? {
-                    0 => false,
-                    1 => true,
-                    _ => return Err(EnvelopeError::MalformedLength),
-                };
-                reports.push((operation, held_synced));
-            }
-            Ok(Payload::AckBatch { tenant, reports })
-        }
-        FrameKind::ReplicationBatch => {
-            let tenant =
-                TenantId::try_new(&take_str(cursor)?).map_err(|_| EnvelopeError::FieldTooLarge)?;
-            let count = cursor.take_u32()? as usize;
-            if count > MAX_PAYLOAD_BYTES {
-                return Err(EnvelopeError::MalformedLength);
-            }
-            let mut records =
-                Vec::with_capacity(bounded_capacity(cursor, count, MIN_REPLICATED_WIRE_BYTES));
-            for _ in 0..count {
-                let collection = CollectionName::try_new(&take_str(cursor)?)
-                    .map_err(|_| EnvelopeError::FieldTooLarge)?;
-                let id = DocumentId::try_new(&take_str(cursor)?)
-                    .map_err(|_| EnvelopeError::FieldTooLarge)?;
-                let body = match cursor.take_u8()? {
-                    0 => None,
-                    1 => Some(LaneValue::decode(cursor, 0)?),
-                    _ => return Err(EnvelopeError::MalformedLength),
-                };
-                let commit_ulid = take_str(cursor)?;
-                let hlc = cursor.take_u64()?;
-                let origin = take_str(cursor)?;
-                records.push(ReplicatedWrite { collection, id, body, commit_ulid, hlc, origin });
-            }
-            Ok(Payload::ReplicationBatch { tenant, records })
-        }
+        FrameKind::CatchUpRequest => decode_catch_up_request(cursor),
+        FrameKind::CatchUpBatch => decode_catch_up_batch(cursor),
+        FrameKind::Push => decode_push(cursor),
+        FrameKind::AckReport => decode_ack_report(cursor),
+        FrameKind::AckBatch => decode_ack_batch(cursor),
+        FrameKind::ReplicationBatch => decode_replication_batch(cursor),
     }
+}
+
+fn decode_tenant(cursor: &mut Cursor<'_>) -> Result<TenantId, EnvelopeError> {
+    TenantId::try_new(&take_str(cursor)?).map_err(|_| EnvelopeError::FieldTooLarge)
+}
+
+fn decode_catch_up_request(cursor: &mut Cursor<'_>) -> Result<Payload, EnvelopeError> {
+    let tenant = decode_tenant(cursor)?;
+    let after = take_option_u64(cursor)?;
+    let limit = cursor.take_u32()?;
+    Ok(Payload::CatchUpRequest { tenant, after, limit })
+}
+
+fn decode_catch_up_batch(cursor: &mut Cursor<'_>) -> Result<Payload, EnvelopeError> {
+    let tenant = decode_tenant(cursor)?;
+    let commits = decode_commits(cursor)?;
+    let through = take_option_u64(cursor)?;
+    let tenant_high_water = take_option_u64(cursor)?;
+    let servable_from = take_option_u64(cursor)?;
+    let gap_below = take_option_u64(cursor)?;
+    Ok(Payload::CatchUpBatch {
+        tenant,
+        commits,
+        through,
+        tenant_high_water,
+        servable_from,
+        gap_below,
+    })
+}
+
+fn decode_push(cursor: &mut Cursor<'_>) -> Result<Payload, EnvelopeError> {
+    let tenant = decode_tenant(cursor)?;
+    let range = take_str(cursor)?;
+    let epoch = cursor.take_u64()?;
+    let commits = decode_commits(cursor)?;
+    Ok(Payload::Push { tenant, range, epoch, commits })
+}
+
+fn decode_ack_report(cursor: &mut Cursor<'_>) -> Result<Payload, EnvelopeError> {
+    let tenant = decode_tenant(cursor)?;
+    let operation = decode_operation(cursor)?;
+    let held_synced = decode_bool(cursor)?;
+    Ok(Payload::AckReport { tenant, operation, held_synced })
+}
+
+fn decode_ack_batch(cursor: &mut Cursor<'_>) -> Result<Payload, EnvelopeError> {
+    let tenant = decode_tenant(cursor)?;
+    let count = bounded_count(cursor.take_u32()? as usize)?;
+    let mut reports =
+        Vec::with_capacity(bounded_capacity(cursor, count, MIN_ACK_REPORT_WIRE_BYTES));
+    for _ in 0..count {
+        reports.push((decode_operation(cursor)?, decode_bool(cursor)?));
+    }
+    Ok(Payload::AckBatch { tenant, reports })
+}
+
+fn decode_replication_batch(cursor: &mut Cursor<'_>) -> Result<Payload, EnvelopeError> {
+    let tenant = decode_tenant(cursor)?;
+    let count = bounded_count(cursor.take_u32()? as usize)?;
+    let mut records =
+        Vec::with_capacity(bounded_capacity(cursor, count, MIN_REPLICATED_WIRE_BYTES));
+    for _ in 0..count {
+        records.push(decode_replicated_write(cursor)?);
+    }
+    Ok(Payload::ReplicationBatch { tenant, records })
+}
+
+fn bounded_count(count: usize) -> Result<usize, EnvelopeError> {
+    if count > MAX_PAYLOAD_BYTES { Err(EnvelopeError::MalformedLength) } else { Ok(count) }
+}
+
+fn decode_operation(cursor: &mut Cursor<'_>) -> Result<OperationId, EnvelopeError> {
+    OperationId::try_new(&take_str(cursor)?).map_err(|_| EnvelopeError::FieldTooLarge)
+}
+
+fn decode_bool(cursor: &mut Cursor<'_>) -> Result<bool, EnvelopeError> {
+    match cursor.take_u8()? {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(EnvelopeError::MalformedLength),
+    }
+}
+
+fn decode_replicated_write(cursor: &mut Cursor<'_>) -> Result<ReplicatedWrite, EnvelopeError> {
+    let collection =
+        CollectionName::try_new(&take_str(cursor)?).map_err(|_| EnvelopeError::FieldTooLarge)?;
+    let id = DocumentId::try_new(&take_str(cursor)?).map_err(|_| EnvelopeError::FieldTooLarge)?;
+    let body = match cursor.take_u8()? {
+        0 => None,
+        1 => Some(LaneValue::decode(cursor, 0)?),
+        _ => return Err(EnvelopeError::MalformedLength),
+    };
+    let commit_ulid = take_str(cursor)?;
+    let hlc = cursor.take_u64()?;
+    let origin = take_str(cursor)?;
+    let origin_sequence = cursor.take_u64()?;
+    if origin_sequence == 0 || origin_sequence > i64::MAX as u64 {
+        return Err(EnvelopeError::MalformedLength);
+    }
+    Ok(ReplicatedWrite { collection, id, body, commit_ulid, hlc, origin, origin_sequence })
 }
 
 fn decode_commits(cursor: &mut Cursor<'_>) -> Result<Vec<LaneCommit>, EnvelopeError> {

@@ -40,6 +40,7 @@ pub mod query;
 pub mod regions;
 pub mod relationships;
 pub mod session;
+pub mod shard_split;
 pub mod storage;
 pub mod streaming;
 pub mod types;

@@ -805,9 +805,7 @@ pub enum StreamCompletion {
 ///
 /// The frozen variant set has no storage-failure case: an unreachable or
 /// poisoned Engine storage lock is reported as [`StreamError::EngineClosed`],
-/// and a family or query rejection is reported as
-/// [`StreamError::InvalidSource`]. Both mappings are recorded as limits in
-/// the design record.
+/// and a family or query rejection is reported as a typed stream error.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StreamError {
     /// The `Engine` has closed.
@@ -818,6 +816,9 @@ pub enum StreamError {
     TenantMismatch,
     /// The stream source or its selectors are invalid.
     InvalidSource,
+    /// SQL compiled successfully for execution but uses an operator that the
+    /// incremental subscription engine cannot maintain.
+    NotSubscribable(crate::query::NotSubscribable),
     /// The continuation cursor does not bind to this source and `Engine`.
     InvalidCursor,
     /// A blocking call could not proceed within its buffer bound because the

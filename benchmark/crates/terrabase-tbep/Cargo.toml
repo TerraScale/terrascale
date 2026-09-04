@@ -74,13 +74,13 @@ terrabase-sync-core = { path = "../terrabase-sync-core" }
 # The engine this host serves (P4): the real durable engine behind the
 # document spine.
 terrabase = { path = "../..", default-features = false }
-# The member-transport seam (S-05, ADR 0041 D-35/D-45): the cross-region
+# The member-transport seam (E-6, ADR 0044 D-35/D-45): the cross-region
 # lanes drive the journal tailer's pull/apply path over fault-injectable
 # MemberTransport lanes.
 terrabase-member-transport = { path = "../terrabase-member-transport", default-features = false }
-# The Merkle anti-entropy kernels (S-05, ADR 0041 D-45): the
-# journal-independent catch-up (`anti_entropy`) compares member states
-# through these transport-free decision surfaces.
+# The range-based set reconciliation kernels (E-6, ADR 0044 D-45): the
+# journal-independent catch-up compares member state through transport-free
+# additive range summaries.
 terrabase-replication-core = { path = "../terrabase-replication-core" }
 # The follower's generation fold (`wal_follower`): folding the follower's
 # WAL into its database file rides mainline SQLite, pinned exactly like the

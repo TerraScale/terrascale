@@ -2570,10 +2570,9 @@ impl TierService for Arc<TbepGrpcServer> {
         let key = idempotency_key(&request)?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
-        let response = run_host(self.as_ref(), MetricOperation::Compaction, move || {
-            host.tier_run(&tenant, &key)
-        })
-        .await?;
+        let response =
+            run_host(self.as_ref(), MetricOperation::Write, move || host.tier_run(&tenant, &key))
+                .await?;
         Ok(Response::new(pb::TierServiceRunResponse {
             receipt: Some(tier_move_receipt(&response.receipt)),
         }))

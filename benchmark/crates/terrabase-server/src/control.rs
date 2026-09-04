@@ -58,6 +58,17 @@ pub enum ControlError {
         /// The constraint as given.
         constraint: String,
     },
+    /// A derived database (branch or restore target) would widen its
+    /// source's placement lock (D-52): a placement region outside the
+    /// source placement, or a residency constraint other than the
+    /// source's. E-8 owns constraint narrowing and the remaining
+    /// lock points (replication, backup, export, add-region).
+    PlacementLockWidened {
+        /// The source database whose lock would widen.
+        source: String,
+        /// What the derived database requested that the lock forbids.
+        detail: String,
+    },
     /// A live database with this name already exists.
     AlreadyExists(String),
     /// The name exists but is soft-deleted inside the restore window.
@@ -174,11 +185,18 @@ impl ControlPlane {
     /// of `parent` (the restore itself is the caller's; D-29 keeps the
     /// branch a registry fact plus a restored location).
     ///
+    /// The branch inherits its parent's placement lock (D-52): its
+    /// placement must stay inside the parent's, and its residency is the
+    /// parent's unless the caller repeats it exactly — any widening is a
+    /// typed refusal, never a silent copy outside the lock.
+    ///
     /// # Errors
     ///
     /// Returns the typed refusal for an invalid name, placement, or
-    /// residency, [`ControlError::NotFound`] for an unknown parent, and
-    /// the create-time refusals for the new name.
+    /// residency, [`ControlError::NotFound`] for an unknown parent,
+    /// [`ControlError::PlacementLockWidened`] for a placement or
+    /// residency outside the parent's lock, and the create-time refusals
+    /// for the new name.
     pub fn create_branch(
         &self,
         name: &str,
@@ -186,15 +204,13 @@ impl ControlPlane {
         residency: Option<&str>,
         parent: &str,
     ) -> Result<DatabaseRecord, ControlError> {
-        match self.get(parent)? {
-            Some(record) if !record.deleted => {}
+        let parent_record = match self.get(parent)? {
+            Some(record) if !record.deleted => record,
             _ => return Err(ControlError::NotFound(parent.to_owned())),
-        }
+        };
         validate_name(name)?;
         validate_placement(placement)?;
-        if let Some(constraint) = residency {
-            validate_residency(constraint, placement)?;
-        }
+        let inherited = lock_allows_derived(&parent_record, placement, residency)?;
         if let Some(existing) = self.get(name)? {
             if existing.deleted {
                 return Err(ControlError::SoftDeleted(name.to_owned()));
@@ -204,7 +220,7 @@ impl ControlPlane {
         let record = DatabaseRecord {
             name: name.to_owned(),
             placement: placement.to_vec(),
-            residency: residency.map(str::to_owned),
+            residency: inherited,
             deleted: false,
             created_at: unix_millis(),
             deleted_at: None,
@@ -212,6 +228,31 @@ impl ControlPlane {
         };
         self.commit_record(&record, name)?;
         Ok(record)
+    }
+
+    /// Checks a restore target's placement against its source's placement
+    /// lock (D-52) and returns the residency the target must store: the
+    /// source's own constraint, inherited, never widened. A restore is
+    /// bytes at rest in a new place, so the same narrowing rule as
+    /// [`Self::create_branch`] applies even though the target is not a
+    /// branch (it carries no parent link).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ControlError::NotFound`] for an unknown or soft-deleted
+    /// source and [`ControlError::PlacementLockWidened`] for a placement
+    /// outside the source's lock.
+    pub fn lock_for_derived(
+        &self,
+        source: &str,
+        placement: &[RegionCode],
+    ) -> Result<Option<String>, ControlError> {
+        let source_record = match self.get(source)? {
+            Some(record) if !record.deleted => record,
+            _ => return Err(ControlError::NotFound(source.to_owned())),
+        };
+        validate_placement(placement)?;
+        lock_allows_derived(&source_record, placement, None)
     }
 
     /// Lists every record, deleted records included (the dashboard's
@@ -437,6 +478,47 @@ fn record_body(record: &DatabaseRecord) -> DocumentValue {
     DocumentValue::Object(fields)
 }
 
+/// Checks one derived database's placement and residency against its
+/// source's placement lock (D-52): every target region must already host
+/// the source (the lock cannot be widened), and the residency is the
+/// source's own constraint — inherited when the caller passes none, and
+/// refused when the caller passes anything else. Constraint narrowing is
+/// an E-8 decision, so until it lands even a narrowing is refused
+/// fail-closed rather than guessed. Returns the residency the derived
+/// record must store.
+fn lock_allows_derived(
+    source: &DatabaseRecord,
+    placement: &[RegionCode],
+    residency: Option<&str>,
+) -> Result<Option<String>, ControlError> {
+    for region in placement {
+        if !source.placement.contains(region) {
+            return Err(ControlError::PlacementLockWidened {
+                source: source.name.clone(),
+                detail: format!(
+                    "region {region} is outside the source placement {}",
+                    source.placement_header()
+                ),
+            });
+        }
+    }
+    let inherited = match (&source.residency, residency) {
+        (Some(locked), None) => Some(locked.clone()),
+        (Some(locked), Some(requested)) if requested == locked => Some(locked.clone()),
+        (Some(locked), Some(requested)) => {
+            return Err(ControlError::PlacementLockWidened {
+                source: source.name.clone(),
+                detail: format!("residency '{requested}' differs from the source lock '{locked}'"),
+            });
+        }
+        (None, requested) => requested.map(str::to_owned),
+    };
+    if let Some(constraint) = inherited.as_deref() {
+        validate_residency(constraint, placement)?;
+    }
+    Ok(inherited)
+}
+
 /// Validates a database name: 1–63 characters, lowercase letters, digits,
 /// and dashes, starting and ending with a letter or digit — the same class
 /// the catalog's path components allow.
@@ -599,6 +681,87 @@ mod tests {
         drop(plane);
         let reopened = ControlPlane::open(dir.path()).expect("reopens");
         assert!(reopened.get("durable").expect("gets").is_some());
+    }
+
+    #[test]
+    fn branch_inherits_the_parent_lock_when_no_residency_is_given() {
+        let (_dir, plane) = plane();
+        plane
+            .create("locked", &[RegionCode::FRA], Some("eu-only"))
+            .expect("creates the locked source");
+        let branch = plane
+            .create_branch("locked-branch", &[RegionCode::FRA], None, "locked")
+            .expect("branches inside the lock");
+        assert_eq!(branch.residency.as_deref(), Some("eu-only"));
+        assert_eq!(branch.parent.as_deref(), Some("locked"));
+        // Repeating the parent's own constraint is the same lock, not a widening.
+        assert!(
+            plane
+                .create_branch("locked-branch-2", &[RegionCode::FRA], Some("eu-only"), "locked")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn branch_outside_the_parent_placement_is_refused_fail_closed() {
+        let (_dir, plane) = plane();
+        plane
+            .create("home", &[RegionCode::GRU, RegionCode::FRA], None)
+            .expect("creates the source");
+        // A branch that adds no new region is allowed and stays unlocked.
+        let narrow = plane
+            .create_branch("home-narrow", &[RegionCode::GRU], None, "home")
+            .expect("narrowing is not widening");
+        assert_eq!(narrow.residency, None);
+        // SFO was never in the source placement: widening refuses, and no
+        // half-born record lingers.
+        let refused = plane
+            .create_branch("home-wide", &[RegionCode::GRU, RegionCode::SFO], None, "home")
+            .expect_err("SFO widens the source placement");
+        assert!(
+            matches!(refused, ControlError::PlacementLockWidened { ref source, .. } if source == "home"),
+            "{refused:?}"
+        );
+        assert!(plane.get("home-wide").expect("gets").is_none());
+    }
+
+    #[test]
+    fn branch_with_a_different_residency_is_refused_fail_closed() {
+        let (_dir, plane) = plane();
+        plane
+            .create("locked", &[RegionCode::FRA], Some("eu-only"))
+            .expect("creates the locked source");
+        let refused = plane
+            .create_branch("locked-other", &[RegionCode::FRA], Some("br-only"), "locked")
+            .expect_err("swapping the constraint widens the lock until E-8 defines narrowing");
+        assert!(matches!(refused, ControlError::PlacementLockWidened { .. }), "{refused:?}");
+        assert!(plane.get("locked-other").expect("gets").is_none());
+    }
+
+    #[test]
+    fn lock_for_derived_inherits_the_source_lock_for_restore_targets() {
+        let (_dir, plane) = plane();
+        plane
+            .create("locked", &[RegionCode::FRA], Some("eu-only"))
+            .expect("creates the locked source");
+        assert_eq!(
+            plane.lock_for_derived("locked", &[RegionCode::FRA]).expect("inside the lock"),
+            Some("eu-only".to_owned())
+        );
+        assert!(
+            matches!(
+                plane.lock_for_derived("locked", &[RegionCode::GRU]),
+                Err(ControlError::PlacementLockWidened { .. })
+            ),
+            "a restore outside the source placement refuses"
+        );
+        assert!(
+            matches!(
+                plane.lock_for_derived("unknown", &[RegionCode::GRU]),
+                Err(ControlError::NotFound(_))
+            ),
+            "an unknown source fails closed before any record is made"
+        );
     }
 
     // A tiny tempdir: the crate keeps dev-dependencies minimal and the
