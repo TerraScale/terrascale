@@ -78,6 +78,11 @@ type FieldDef struct {
 	MergePolicy FieldType `json:"mergePolicy,omitempty"`
 }
 
+// Field is the concise descriptor used by typed schema callers.
+// It is an alias so generated field values and builder fields remain
+// interchangeable without conversion.
+type Field = FieldDef
+
 // FieldOption customizes a FieldDef.
 type FieldOption func(*FieldDef)
 
@@ -127,6 +132,9 @@ type TTLDef struct {
 
 // NewTTL creates a TTL declaration for a root timestamp field.
 func NewTTL(field string) TTLDef { return TTLDef{Field: strings.TrimSpace(field)} }
+
+// TTL is the descriptive constructor spelling used by the other SDKs.
+func TTL(field string) TTLDef { return NewTTL(field) }
 
 // IndexDef is one explicit transactional index. A full-text index must have
 // exactly one string or text field and uses kind "fts" in schema JSON.

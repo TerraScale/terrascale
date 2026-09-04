@@ -42,6 +42,13 @@ type Region struct {
 	Healthy     bool       `json:"healthy,omitempty"`
 }
 
+// HealthResponse is the generated response model for GET /api/v1/regions
+// and GET /api/v1/health. It identifies the member that served the request.
+type HealthResponse struct {
+	Region  RegionCode `json:"region"`
+	Healthy bool       `json:"healthy"`
+}
+
 // SavedQuery is a named saved query.
 type SavedQuery struct {
 	ID       string `json:"id"`
@@ -198,6 +205,9 @@ type DatabasePage struct {
 	NextCursor string           `json:"nextCursor,omitempty"`
 }
 
+// DatabaseListResponse is the generated contract name for DatabasePage.
+type DatabaseListResponse = DatabasePage
+
 // CreateDatabaseRequest is the direct TerraBase create contract. Placement
 // is required; Residency is the optional immutable placement lock.
 type CreateDatabaseRequest struct {
@@ -223,11 +233,17 @@ type BranchPage struct {
 	NextCursor string         `json:"nextCursor,omitempty"`
 }
 
+// BranchListResponse is the generated contract name for BranchPage.
+type BranchListResponse = BranchPage
+
 // CollectionPage is the direct collection-list response.
 type CollectionPage struct {
 	Collections []string `json:"collections"`
 	NextCursor  string   `json:"nextCursor,omitempty"`
 }
+
+// CollectionsResponse is the generated contract name for CollectionPage.
+type CollectionsResponse = CollectionPage
 
 // IndexDescriptor is one extracted-column index and its backfill state.
 type IndexDescriptor struct {
@@ -242,9 +258,20 @@ type IndexPage struct {
 	NextCursor string            `json:"nextCursor,omitempty"`
 }
 
+// IndexListResponse is the generated contract name for IndexPage.
+type IndexListResponse = IndexPage
+
 // CreateIndexRequest registers one extracted field.
 type CreateIndexRequest struct {
 	Field string `json:"field"`
+}
+
+// IndexCreatedResponse is the response returned by create_index. Creation
+// reports only the field and lifecycle state; backfill_remaining belongs to
+// the list/recommendation descriptor.
+type IndexCreatedResponse struct {
+	Field string `json:"field"`
+	State string `json:"state"`
 }
 
 // BackupReadiness is the direct TerraBase backup status response.
@@ -252,6 +279,9 @@ type BackupReadiness struct {
 	Ready     bool `json:"ready"`
 	Streaming bool `json:"streaming"`
 }
+
+// BackupStatusResponse is the generated contract name for BackupReadiness.
+type BackupStatusResponse = BackupReadiness
 
 // RestoreBackupRequest restores a backup into a new database. At is Unix
 // milliseconds, matching the TerraBase PITR contract.
@@ -404,7 +434,10 @@ func managementMutation(opts []RequestOption) error {
 	rc := resolveRequestOptions(opts)
 	key := strings.TrimSpace(rc.idempotencyKey)
 	if rc.noIdempotency || key == "" {
-		return &IdempotencyError{Reason: "must be nonblank"}
+		// The generated contract marks idempotency-key optional. A caller that
+		// supplies no key still gets one request; Client.do retries only when a
+		// usable key is present.
+		return nil
 	}
 	if len([]byte(key)) > 128 {
 		return &IdempotencyError{Reason: "must be at most 128 characters"}
@@ -415,6 +448,14 @@ func managementMutation(opts []RequestOption) error {
 		}
 	}
 	return nil
+}
+
+func requiredManagementMutation(opts []RequestOption) error {
+	rc := resolveRequestOptions(opts)
+	if rc.noIdempotency || strings.TrimSpace(rc.idempotencyKey) == "" {
+		return &IdempotencyError{Reason: "must be nonblank"}
+	}
+	return managementMutation(opts)
 }
 
 func deleteConfirmation(opts []RequestOption, resource string) error {
@@ -608,30 +649,38 @@ func (o *OrganizationsClient) ListProjects(ctx context.Context, organizationID s
 // RegionsClient mirrors regions.* routes.
 type RegionsClient struct{ c *Client }
 
-// List returns serving regions.
-func (r *RegionsClient) List(ctx context.Context, opts ...RequestOption) ([]Region, error) {
-	var out struct {
-		Regions []Region   `json:"regions"`
-		Region  RegionCode `json:"region"`
-		Healthy bool       `json:"healthy"`
-	}
-	if err := r.c.do(ctx, "GET", "/api/v1/regions", nil, nil, &out, "regions.list", opts...); err != nil {
+// Status returns the generated HealthResponse without adapting it to the
+// legacy []Region shape returned by List.
+func (r *RegionsClient) Status(ctx context.Context, opts ...RequestOption) (*HealthResponse, error) {
+	var out HealthResponse
+	if err := r.c.do(ctx, "GET", "/api/v1/regions", nil, nil, &out, "regions", opts...); err != nil {
 		return nil, err
 	}
-	// TerraBase publishes member status, not a region collection. Accept the
-	// old fixture envelope only as a compatibility decode; the contract shape
-	// is the single region/healthy object.
-	if len(out.Regions) == 0 && out.Region != "" {
-		code, err := ParseRegionCode(string(out.Region))
-		if err != nil {
-			return nil, err
-		}
-		return []Region{{Code: code, Available: out.Healthy, Healthy: out.Healthy}}, nil
+	if _, err := ParseRegionCode(string(out.Region)); err != nil {
+		return nil, err
 	}
-	if len(out.Regions) == 0 {
-		return nil, &ValidationError{Field: "region response", Message: "missing required region status"}
+	return &out, nil
+}
+
+// Health performs the generated health operation.
+func (r *RegionsClient) Health(ctx context.Context, opts ...RequestOption) (*HealthResponse, error) {
+	var out HealthResponse
+	if err := r.c.do(ctx, "GET", "/api/v1/health", nil, nil, &out, "health", opts...); err != nil {
+		return nil, err
 	}
-	return out.Regions, nil
+	if _, err := ParseRegionCode(string(out.Region)); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// List returns serving regions.
+func (r *RegionsClient) List(ctx context.Context, opts ...RequestOption) ([]Region, error) {
+	out, err := r.Status(ctx, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return []Region{{Code: out.Region, Available: out.Healthy, Healthy: out.Healthy}}, nil
 }
 
 // Get returns one region.
@@ -805,7 +854,7 @@ func (d *DatabasesClient) DeleteDatabase(ctx context.Context, name string, opts 
 	if err != nil {
 		return nil, err
 	}
-	if err := managementMutation(opts); err != nil {
+	if err := requiredManagementMutation(opts); err != nil {
 		return nil, err
 	}
 	if err := deleteConfirmation(opts, name); err != nil {
@@ -878,7 +927,7 @@ func (d *DatabasesClient) ListIndexes(ctx context.Context, database, collection 
 
 // CreateIndex registers one extracted field. Registering an identical field
 // is idempotent server-side, while the request itself remains replay-safe.
-func (d *DatabasesClient) CreateIndex(ctx context.Context, database, collection string, request CreateIndexRequest, opts ...RequestOption) (*IndexDescriptor, error) {
+func (d *DatabasesClient) CreateIndex(ctx context.Context, database, collection string, request CreateIndexRequest, opts ...RequestOption) (*IndexCreatedResponse, error) {
 	if err := managementContext(ctx); err != nil {
 		return nil, err
 	}
@@ -892,7 +941,7 @@ func (d *DatabasesClient) CreateIndex(ctx context.Context, database, collection 
 	if err := managementMutation(opts); err != nil {
 		return nil, err
 	}
-	var out IndexDescriptor
+	var out IndexCreatedResponse
 	if err := d.c.do(ctx, "POST", path+"/indexes", nil, request, &out, "create_index", opts...); err != nil {
 		return nil, err
 	}
@@ -919,8 +968,27 @@ func (d *DatabasesClient) DeleteIndex(ctx context.Context, database, collection,
 	}
 	_ = path
 	return contractGap(ctx, "delete_index", "DELETE", "/api/v1/databases/{name}/collections/{collection}/indexes/{field}",
-		"the TerraBase route is published but the index lifecycle is pending",
-		"wait for the D-31 index lifecycle implementation")
+		"the pinned contract publishes no successful response for index deletion",
+		"wait for the producer to publish the index lifecycle operation")
+}
+
+// IndexRecommendations reports the contract gap because the pinned producer
+// publishes no successful response for this operation.
+func (d *DatabasesClient) IndexRecommendations(ctx context.Context, database, collection string, page PageRequest, opts ...RequestOption) (*IndexPage, error) {
+	if err := managementContext(ctx); err != nil {
+		return nil, err
+	}
+	if err := validatePage(page); err != nil {
+		return nil, err
+	}
+	path, err := collectionPath(database, collection)
+	if err != nil {
+		return nil, err
+	}
+	_ = path
+	return nil, contractGap(ctx, "index_recommendations", "GET", "/api/v1/databases/{name}/collections/{collection}/indexes/recommendations",
+		"the pinned contract publishes no successful response for index recommendations",
+		"wait for the producer to publish recommendation results")
 }
 
 // GetCollectionSchema fetches the declared schema for one collection.
@@ -934,8 +1002,8 @@ func (d *DatabasesClient) GetCollectionSchema(ctx context.Context, database, col
 	}
 	_ = path
 	return nil, contractGap(ctx, "get_schema", "GET", "/api/v1/databases/{name}/collections/{collection}/schema",
-		"the TerraBase route is published but schema application is pending",
-		"apply schema through the published schema contract when S-09/S-10 lands")
+		"the pinned contract publishes no successful schema response",
+		"wait for the producer to publish collection schema reads")
 }
 
 // PutCollectionSchema replaces a collection schema.
@@ -958,8 +1026,8 @@ func (d *DatabasesClient) PutCollectionSchema(ctx context.Context, database, col
 	}
 	_ = path
 	return nil, contractGap(ctx, "put_schema", "PUT", "/api/v1/databases/{name}/collections/{collection}/schema",
-		"the TerraBase route is published but schema application is pending",
-		"apply schema through the published schema contract when S-09/S-10 lands")
+		"the pinned contract publishes no successful schema response",
+		"wait for the producer to publish collection schema writes")
 }
 
 // DatabaseBranchesClient mirrors databaseBranches.* routes.
@@ -1007,6 +1075,9 @@ func (b *DatabaseBranchesClient) CreateBranch(ctx context.Context, database stri
 	}
 	if err := validateDatabaseName(request.Name); err != nil {
 		return nil, err
+	}
+	if request.At != nil && *request.At < 0 {
+		return nil, &ValidationError{Field: "at", Message: "must be a non-negative Unix-millisecond timestamp"}
 	}
 	path, err := databasePath(database)
 	if err != nil {
@@ -1088,6 +1159,9 @@ func (b *BackupsClient) RestoreBackup(ctx context.Context, database string, requ
 	}
 	if err := validateDatabaseName(request.Name); err != nil {
 		return nil, err
+	}
+	if request.At != nil && *request.At < 0 {
+		return nil, &ValidationError{Field: "at", Message: "must be a non-negative Unix-millisecond timestamp"}
 	}
 	path, err := databasePath(database)
 	if err != nil {
@@ -1200,8 +1274,8 @@ func (u *UsageClient) GetDatabaseUsage(ctx context.Context, database string, opt
 	}
 	_ = path
 	return nil, contractGap(ctx, "database_usage", "GET", "/api/v1/databases/{name}/usage",
-		"the TerraBase route is published but op metering is pending",
-		"retry after the usage export contract lands")
+		"the pinned contract publishes no successful usage response",
+		"wait for the producer to publish usage facts")
 }
 
 // AuditClient mirrors audit.* routes.

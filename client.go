@@ -653,8 +653,10 @@ func (c *Client) roundTrip(ctx context.Context, method, base, path string, query
 		h.Set("X-TerraScale-Project-ID", c.cfg.ProjectID)
 	}
 	hint := rc.regionHint
-	if hint == "" && c.cfg.Affinity == AffinityFailover {
-		// A learned 421 pin wins over the configured preferred region.
+	if hint == "" && (c.cfg.Affinity == AffinityFailover || c.cfg.Affinity == AffinityStrict) {
+		// A learned 421 pin wins over the configured preferred region. Strict
+		// affinity also needs this header when APIBaseURL is a custom proxy,
+		// because regionalizeHost cannot rewrite a non-canonical hostname.
 		if p := c.PinnedRegion(); p != "" {
 			hint = p
 		} else if c.cfg.PreferredRegion != "" {

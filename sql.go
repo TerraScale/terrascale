@@ -9,6 +9,7 @@ package sdk
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -19,6 +20,53 @@ import (
 type SQLResult struct {
 	Matched int64    `json:"matched"`
 	Rows    []SQLRow `json:"rows"`
+	// Explain is set when the server returns the SqlExplainResponse variant
+	// of the generated SqlResultResponse oneOf model.
+	Explain *SQLExplainResponse `json:"-"`
+}
+
+// SQLExplainResponse is the generated read-only query-plan response.
+type SQLExplainResponse struct {
+	Dialect    string     `json:"dialect"`
+	Collection *string    `json:"collection"`
+	Order      []SQLOrder `json:"order"`
+	Access     string     `json:"access"`
+}
+
+// SQLOrder is one generated explain ORDER BY descriptor.
+type SQLOrder struct {
+	Field     string `json:"field"`
+	Direction string `json:"direction"`
+}
+
+// SQLResultResponse is the generated oneOf response model. SQLResult keeps
+// the original row-result API while exposing Explain for the second variant.
+type SQLResultResponse = SQLResult
+
+// UnmarshalJSON decodes both branches of SqlResultResponse without silently
+// turning an explain response into an empty row result.
+func (r *SQLResult) UnmarshalJSON(data []byte) error {
+	var marker struct {
+		Dialect *string `json:"dialect"`
+	}
+	if err := json.Unmarshal(data, &marker); err != nil {
+		return err
+	}
+	if marker.Dialect != nil {
+		var explain SQLExplainResponse
+		if err := json.Unmarshal(data, &explain); err != nil {
+			return err
+		}
+		r.Matched, r.Rows, r.Explain = 0, nil, &explain
+		return nil
+	}
+	type rowsResult SQLResult
+	var rows rowsResult
+	if err := json.Unmarshal(data, &rows); err != nil {
+		return err
+	}
+	*r = SQLResult(rows)
+	return nil
 }
 
 // SQLRow is one SQL result row. Value is the projected JSON object returned
@@ -33,6 +81,41 @@ type SQLRow struct {
 // are plain SQL identifiers.
 type SQLParameters = map[string]any
 
+// MetadataFields are immutable columns exposed on every collection table.
+var metadataFieldNames = [...]string{"_id", "_rev", "_hlc", "_created", "_updated"}
+
+// MetadataField returns a schema descriptor for one immutable metadata
+// column. Metadata columns are available to typed projections and ordering,
+// but cannot be declared as user fields.
+func MetadataField(name string) (*FieldDef, error) {
+	typ := FieldString
+	switch name {
+	case "_id", "_rev", "_hlc":
+	case "_created", "_updated":
+		typ = FieldTimestamp
+	default:
+		return nil, fmt.Errorf("sdk: unknown metadata field %q", name)
+	}
+	return &FieldDef{Name: name, Type: typ, Required: true, Indexed: true}, nil
+}
+
+// MetadataFieldsForQuery returns descriptors for all immutable metadata
+// columns in their canonical contract order.
+func MetadataFieldsForQuery() ([]FieldDef, error) {
+	fields := make([]FieldDef, 0, len(metadataFieldNames))
+	for _, name := range metadataFieldNames {
+		field, err := MetadataField(name)
+		if err != nil {
+			return nil, err
+		}
+		fields = append(fields, *field)
+	}
+	return fields, nil
+}
+
+// MetadataFields returns descriptors for all immutable metadata columns.
+func MetadataFields() ([]FieldDef, error) { return MetadataFieldsForQuery() }
+
 // Len returns the number of result rows.
 func (r *SQLResult) Len() int {
 	if r == nil {
@@ -44,9 +127,10 @@ func (r *SQLResult) Len() int {
 // SQLExecuteOptions controls optional SQL request fields. Zero values omit
 // the corresponding optional wire member.
 type SQLExecuteOptions struct {
-	Explain   bool
-	TimeoutMs int
-	Cancelled bool
+	Explain    bool
+	TimeoutMs  int
+	Cancelled  bool
+	timeoutSet bool
 }
 
 // SQLRequestOption customizes optional SQL request controls.
@@ -59,7 +143,7 @@ func WithSQLExplain() SQLRequestOption {
 
 // WithSQLTimeout sets the server SQL timeout in milliseconds.
 func WithSQLTimeout(timeoutMs int) SQLRequestOption {
-	return func(options *SQLExecuteOptions) { options.TimeoutMs = timeoutMs }
+	return func(options *SQLExecuteOptions) { options.TimeoutMs, options.timeoutSet = timeoutMs, true }
 }
 
 // WithSQLCancelled marks the SQL request as cancelled before execution.
@@ -131,7 +215,8 @@ func resolveSQLOptions(opts []any) (SQLExecuteOptions, []RequestOption, error) {
 			return SQLExecuteOptions{}, nil, fmt.Errorf("sdk: invalid SQL request option %T", option)
 		}
 	}
-	if sqlOptions.TimeoutMs < 0 || sqlOptions.TimeoutMs > 30000 {
+	if sqlOptions.TimeoutMs < 0 || sqlOptions.TimeoutMs > 30000 ||
+		(sqlOptions.timeoutSet && sqlOptions.TimeoutMs < 1) {
 		return SQLExecuteOptions{}, nil, fmt.Errorf("sdk: SQL timeout_ms must be between 1 and 30000")
 	}
 	return sqlOptions, requestOpts, nil
@@ -544,7 +629,7 @@ func SelectSchema(schema *CollectionSchema) (*QueryBuilder, error) {
 	}
 	seen := map[string]bool{}
 	for _, field := range schema.Fields {
-		if !validSQLIdentifier(field.Name) || seen[field.Name] {
+		if !validSQLIdentifier(field.Name) || strings.HasPrefix(field.Name, "_") || seen[field.Name] {
 			return nil, fmt.Errorf("sdk: invalid or duplicate schema field %q", field.Name)
 		}
 		seen[field.Name] = true
@@ -915,6 +1000,13 @@ func (q *QueryBuilder) checkField(field *FieldDef, context string) error {
 	if !validSQLIdentifier(field.Name) {
 		return fmt.Errorf("sdk: invalid %s field %q", context, field.Name)
 	}
+	if strings.HasPrefix(field.Name, "_") {
+		metadata, err := MetadataField(field.Name)
+		if err == nil && metadata.Type == field.Type {
+			return nil
+		}
+		return fmt.Errorf("sdk: unknown metadata %s field %q", context, field.Name)
+	}
 	for _, declared := range q.schema.Fields {
 		if declared == *field {
 			return nil
@@ -924,6 +1016,9 @@ func (q *QueryBuilder) checkField(field *FieldDef, context string) error {
 }
 
 func (q *QueryBuilder) hasSchemaField(name string) bool {
+	if _, err := MetadataField(name); err == nil {
+		return true
+	}
 	for _, field := range q.schema.Fields {
 		if field.Name == name {
 			return true
@@ -950,7 +1045,7 @@ func (q *QueryBuilder) Build() (string, []any, error) {
 	if q.buildErr != nil {
 		return "", nil, q.buildErr
 	}
-	if q.schema != nil && !validSQLIdentifier(q.collection) {
+	if !validSQLIdentifier(q.collection) {
 		return "", nil, fmt.Errorf("sdk: query collection must match [A-Za-z_][A-Za-z0-9_]*")
 	}
 	if strings.TrimSpace(q.collection) == "" {
@@ -969,8 +1064,15 @@ func (q *QueryBuilder) Build() (string, []any, error) {
 			if strings.TrimSpace(col) == "" {
 				return "", nil, fmt.Errorf("sdk: selected columns cannot be empty")
 			}
-			if q.schema != nil && !validSQLIdentifier(col) {
+			if col != "*" && !validSQLIdentifier(col) {
 				return "", nil, fmt.Errorf("sdk: selected columns must be valid identifiers")
+			}
+			if q.schema != nil && col != "*" && !q.hasSchemaField(col) {
+				return "", nil, fmt.Errorf("sdk: selected column %q is not declared by this collection", col)
+			}
+			if col == "*" {
+				quoted = append(quoted, col)
+				continue
 			}
 			quoted = append(quoted, quoteIdent(col))
 		}
@@ -1014,6 +1116,38 @@ func (c *Client) ExecuteQuery(ctx context.Context, databaseID string, qb *QueryB
 		requestOpts[i] = option
 	}
 	return c.ExecuteSQL(ctx, databaseID, statement, params, requestOpts...)
+}
+
+// Execute attaches the query once and returns its initial snapshot. Keeping
+// this method on QueryBuilder makes the typed builder and reactive surface a
+// single linked API while preserving Client.Execute for raw SQL callers.
+func (q *QueryBuilder) Execute(ctx context.Context, c *Client, databaseID string, opts ...RequestOption) (*Snapshot, error) {
+	if q == nil {
+		return nil, fmt.Errorf("sdk: query builder cannot be nil")
+	}
+	statement, params, err := q.Build()
+	if err != nil {
+		return nil, err
+	}
+	if c == nil {
+		return nil, fmt.Errorf("sdk: client cannot be nil")
+	}
+	return c.Execute(ctx, databaseID, statement, params, opts...)
+}
+
+// Subscribe links a typed query to the live reactive transport.
+func (q *QueryBuilder) Subscribe(ctx context.Context, c *Client, databaseID string, sub SubscriptionOptions, opts ...RequestOption) (*Subscription, error) {
+	if q == nil {
+		return nil, fmt.Errorf("sdk: query builder cannot be nil")
+	}
+	statement, params, err := q.Build()
+	if err != nil {
+		return nil, err
+	}
+	if c == nil {
+		return nil, fmt.Errorf("sdk: client cannot be nil")
+	}
+	return c.Subscribe(ctx, databaseID, statement, params, sub, opts...)
 }
 
 func validSQLIdentifier(value string) bool {

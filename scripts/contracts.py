@@ -17,6 +17,7 @@ import re
 import secrets
 import shutil
 import stat
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -470,7 +471,14 @@ def render_contract_go(openapi: dict, msgpack: dict, version: str, digests: dict
     for item in frames:
         lines.append("\t{" + go_string(item["name"]) + f", {item['tag']}, " + go_string(item["direction"]) + ", " + go_strings(item["fields"]) + "},")
     lines += ["}", ""]
-    return "\n".join(lines)
+    source = "\n".join(lines)
+    try:
+        formatted = subprocess.run(
+            ["gofmt"], input=source, text=True, capture_output=True, check=True
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        die(f"could not format generated Go contract metadata: {error}")
+    return formatted.stdout
 
 
 def render_generated(destination: Path, manifest: dict, digests: dict[str, str]) -> str:
@@ -568,6 +576,13 @@ def main() -> None:
             # Install only files named by the producer manifest. This prevents
             # an old consumer fixture or an unpinned producer extra entering
             # the committed bundle.
+            # The manifest describes those artifacts but is not itself listed
+            # as an artifact, so install it explicitly for the validation pass
+            # and for the committed bundle's provenance.
+            source_manifest = producer / "manifest.json"
+            destination_manifest = staging / "manifest.json"
+            regular_file(source_manifest, "producer manifest")
+            shutil.copyfile(source_manifest, destination_manifest)
             for relative in [entry["path"] for entry in manifest["artifacts"]]:
                 source_file = producer / relative
                 destination_file = staging / relative

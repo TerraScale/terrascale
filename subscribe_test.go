@@ -47,7 +47,7 @@ func TestReactiveMessagePackDecodesIndexedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reset != nil || len(updates) != 1 || updates[0].ID != "s" || checkpoint != "c" || offset != "" {
+	if reset != nil || len(updates) != 1 || updates[0].ID != "s" || updates[0].Position != 0 || checkpoint != "c" || offset != "" {
 		t.Fatalf("decoded snapshot = updates=%+v checkpoint=%q offset=%q reset=%v", updates, checkpoint, offset, reset)
 	}
 }
@@ -59,6 +59,17 @@ func TestSubscribeUsesCanonicalOffsetCapabilityAndCopiesSnapshotBody(t *testing.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/v1/reactive/views" && r.Method == http.MethodPost:
+			var request struct {
+				DatabaseID string `json:"databaseId"`
+				Statement  string `json:"statement"`
+				Parameters string `json:"parameters"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("attach request: %v", err)
+			}
+			if request.DatabaseID != "db" || request.Statement != "SELECT * FROM users" || request.Parameters != "e30=" {
+				t.Errorf("attach request = %+v", request)
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"view": "view-1", "generation": 7, "checkpoint": "opaque-0",
 				"log":    "http://" + r.Host + "/attacker-path?offset=0&ignored=must-drop",
@@ -99,12 +110,12 @@ func TestSubscribeUsesCanonicalOffsetCapabilityAndCopiesSnapshotBody(t *testing.
 		t.Fatal(err)
 	}
 	first := <-sub.Events()
-	if first.Kind != UpdateSnapshot || string(first.Body) != `{"a":1}` {
+	if first.Kind != UpdateSnapshot || first.Position != 0 || string(first.Body) != `{"a":1}` {
 		t.Fatalf("snapshot = %+v", first)
 	}
 	first.Body[5] = '9'
 	second := <-sub.Events()
-	if second.Kind != UpdateInsert || second.Checkpoint != "i" || second.ID != "e" {
+	if second.Kind != UpdateInsert || second.Checkpoint != "i" || second.ID != "e" || second.Position != 1 {
 		t.Fatalf("delta = %+v", second)
 	}
 	if sub.Checkpoint() != "i" {

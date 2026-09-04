@@ -175,6 +175,31 @@ func TestCoreTransportLearnsServingRegionAndPinsFollowingReadsAndWrites(t *testi
 	}
 }
 
+func TestStrictAffinitySendsRegionHintThroughCustomProxy(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("X-TerraScale-Preferred-Region")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(Config{
+		APIBaseURL:      srv.URL,
+		Affinity:        AffinityStrict,
+		PreferredRegion: RegionSFO,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.do(context.Background(), http.MethodGet, "/api/v1/read", nil, nil, nil, "read"); err != nil {
+		t.Fatal(err)
+	}
+	if got != string(RegionSFO) {
+		t.Fatalf("custom proxy region hint = %q, want %q", got, RegionSFO)
+	}
+}
+
 func TestCoreTransportDoesNotLearnMalformedOrMissingServingRegion(t *testing.T) {
 	for _, value := range []string{"", "SFO,GRU", "https://sfo.api.terrascale.tech", "evil.invalid"} {
 		t.Run(value, func(t *testing.T) {

@@ -86,6 +86,9 @@ type ListDocumentsResult struct {
 	Documents []DocumentRow `json:"documents"`
 }
 
+// DocumentsResponse is the generated contract name for ListDocumentsResult.
+type DocumentsResponse = ListDocumentsResult
+
 // DocumentsClient performs document CRUD. Reach it via Client.Documents.
 type DocumentsClient struct {
 	c *Client
@@ -179,7 +182,7 @@ func (d *DocumentsClient) Get(ctx context.Context, databaseID, collection, docID
 	if err := d.c.do(ctx, "GET", path, nil, nil, &body, "documents.get", opts...); err != nil {
 		return nil, err
 	}
-	return &Document{ID: docID, Collection: collection, Body: body}, nil
+	return &Document{ID: docID, Collection: collection, Body: body, Session: d.c.SessionToken()}, nil
 }
 
 // List pages documents in canonical key order. after is the last ID from the

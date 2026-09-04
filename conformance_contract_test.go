@@ -135,7 +135,7 @@ func TestP2BConformanceCanonicalHTTPParity(t *testing.T) {
 		Paths map[string]map[string]json.RawMessage `json:"paths"`
 	}
 	readPinnedJSON(t, "openapi.json", &spec)
-	assertOperation := func(path, method, operationID, requestType, responseType, responseMedia string) {
+	assertOperation := func(path, method, operationID, requestType, responseType, responseMedia, responseStatus string) {
 		t.Helper()
 		raw, ok := spec.Paths[path][method]
 		if !ok {
@@ -167,21 +167,27 @@ func TestP2BConformanceCanonicalHTTPParity(t *testing.T) {
 		if operation.RequestBody.Content["application/json"].Schema.Ref != requestType {
 			t.Fatalf("%s %s request schema mismatch", method, path)
 		}
-		if operation.Responses["200"].Content[responseMedia].Schema.Ref != responseType {
+		if responseStatus == "" {
+			if _, ok := operation.Responses["200"]; ok {
+				t.Fatalf("%s %s unexpectedly advertises a successful response", method, path)
+			}
+			return
+		}
+		if operation.Responses[responseStatus].Content[responseMedia].Schema.Ref != responseType {
 			t.Fatalf("%s %s response schema mismatch", method, path)
 		}
 	}
 	assertOperation(
 		"/api/v1/databases/{name}/sql", "post", "execute_sql",
-		"#/components/schemas/SqlRequest", "#/components/schemas/SqlResultResponse", "application/json",
+		"#/components/schemas/SqlRequest", "#/components/schemas/SqlResultResponse", "application/json", "200",
 	)
 	assertOperation(
 		"/api/v1/databases/{name}/collections/{collection}/documents/batch", "post", "batch_documents",
-		"#/components/schemas/BatchRequest", "#/components/schemas/BatchResponse", "application/json",
+		"#/components/schemas/BatchRequest", "#/components/schemas/BatchResponse", "application/json", "200",
 	)
 	assertOperation(
 		"/api/v1/databases/{name}/reactive/poll", "post", "poll",
-		"#/components/schemas/ReactivePollRequest", "#/components/schemas/ReactiveFramesResponse", "application/msgpack",
+		"#/components/schemas/ReactivePollRequest", "", "", "",
 	)
 }
 

@@ -34,12 +34,12 @@ type ContractFrame struct {
 
 const (
 	ContractVersion           = "v1"
-	ContractOpenAPIBLAKE3     = "45182d1ebd2ecfe047efcf0938715ae1adb7997ed5ec46dd2e515113ec1540a2"
+	ContractOpenAPIBLAKE3     = "c2bf884c9522a9f8412e6f237460e5b725d77f5c7f7fdf445057c3492e26d0ef"
 	ContractMessagePackBLAKE3 = "f3ed2d9998698d3ff2587aaf59039ad6557dedb07ffbfe2669194b4ecc213542"
 )
 
 var ContractOperations = []ContractMetadata{
-	{"attach_view", "POST", "/api/v1/reactive/views", "AttachViewRequest", ""},
+	{"attach_view", "POST", "/api/v1/reactive/views", "AttachViewRequest", "AttachViewResponse"},
 	{"batch_documents", "POST", "/api/v1/databases/{name}/collections/{collection}/documents/batch", "BatchRequest", "BatchResponse"},
 	{"create_branch", "POST", "/api/v1/databases/{name}/branches", "RestoreRequest", "DatabaseRecord"},
 	{"create_database", "POST", "/api/v1/databases", "CreateDatabaseRequest", "DatabaseRecord"},
@@ -66,13 +66,14 @@ var ContractOperations = []ContractMetadata{
 	{"list_indexes", "GET", "/api/v1/databases/{name}/collections/{collection}/indexes", "", "IndexListResponse"},
 	{"list_webhooks", "GET", "/api/v1/databases/{name}/webhooks", "", ""},
 	{"patch_document", "PATCH", "/api/v1/databases/{name}/collections/{collection}/documents/{id}", "JsonValue", "DocumentWriteResponse"},
-	{"poll", "POST", "/api/v1/databases/{name}/reactive/poll", "ReactivePollRequest", "ReactiveFramesResponse"},
+	{"poll", "POST", "/api/v1/databases/{name}/reactive/poll", "ReactivePollRequest", ""},
 	{"put_document", "PUT", "/api/v1/databases/{name}/collections/{collection}/documents/{id}", "JsonValue", "DocumentWriteResponse"},
-	{"put_schema", "PUT", "/api/v1/databases/{name}/collections/{collection}/schema", "", ""},
+	{"put_schema", "PUT", "/api/v1/databases/{name}/collections/{collection}/schema", "JsonValue", ""},
 	{"regions", "GET", "/api/v1/regions", "", "HealthResponse"},
 	{"restore_backup", "POST", "/api/v1/databases/{name}/backups/restore", "RestoreRequest", "DatabaseRecord"},
 	{"restore_database", "POST", "/api/v1/databases/{name}/restore", "", "DatabaseRecord"},
-	{"view_log", "GET", "/api/v1/reactive/views/{view}/{generation}/log", "", ""},
+	{"snapshot", "GET", "/api/v1/reactive/views/{view}/{generation}/snapshot/{chunk}", "", "ReactiveEnvelope"},
+	{"view_log", "GET", "/api/v1/reactive/views/{view}/{generation}/log", "", "ReactiveEnvelope"},
 	{"websocket", "GET", "/api/v1/databases/{name}/reactive", "", ""},
 }
 
@@ -111,11 +112,13 @@ var ContractRoutes = []ContractRoute{
 	{"GET", "/api/v1/health", "health"},
 	{"POST", "/api/v1/reactive/views", "attach_view"},
 	{"GET", "/api/v1/reactive/views/{view}/{generation}/log", "view_log"},
+	{"GET", "/api/v1/reactive/views/{view}/{generation}/snapshot/{chunk}", "snapshot"},
 	{"GET", "/api/v1/regions", "regions"},
 }
 
 var ContractModels = []ContractModel{
-	{"AttachViewRequest", []string{"id", "name", "view"}},
+	{"AttachViewRequest", []string{"checkpoint", "databaseId", "entitlement_epoch", "parameters", "statement", "subscription"}},
+	{"AttachViewResponse", []string{"capability", "capability_header", "checkpoint", "generation", "log", "offset", "snapshot_chunks", "view"}},
 	{"BackupStatusResponse", []string{"ready", "streaming"}},
 	{"BatchRequest", []string{"operations"}},
 	{"BatchResponse", []string{"committed", "count"}},

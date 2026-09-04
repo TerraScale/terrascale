@@ -100,9 +100,20 @@ const (
 
 // Update is one subscription delivery at a checkpoint.
 type Update struct {
-	Kind       UpdateKind      `json:"kind"`
-	Checkpoint Checkpoint      `json:"checkpoint,omitempty"`
-	ID         string          `json:"id,omitempty"`
+	Kind       UpdateKind `json:"kind"`
+	Checkpoint Checkpoint `json:"checkpoint,omitempty"`
+	ID         string     `json:"id,omitempty"`
+	// Position is the canonical zero-based result position for insert/move
+	// operations. It is omitted for operation kinds that do not carry one.
+	Position uint32 `json:"position,omitempty"`
+	// View and authorization generations, revision bounds, and digest are the
+	// atomic state metadata carried by every server result frame.
+	ViewGeneration          uint64 `json:"view_generation,omitempty"`
+	AuthorizationGeneration uint64 `json:"authorization_generation,omitempty"`
+	Revision                uint64 `json:"revision,omitempty"`
+	FromRevision            uint64 `json:"from_revision,omitempty"`
+	ToRevision              uint64 `json:"to_revision,omitempty"`
+	Digest                  string `json:"digest,omitempty"`
 	Collection string          `json:"collection,omitempty"`
 	Body       json.RawMessage `json:"body,omitempty"`
 	// Fields retains every projected field from the indexed wire item. Body is
@@ -144,11 +155,12 @@ type Snapshot struct {
 }
 
 type attachRequest struct {
-	DatabaseID string      `json:"databaseId"`
-	Statement  string      `json:"statement"`
-	Parameters []any       `json:"parameters"`
+	DatabaseID string `json:"databaseId"`
+	Statement  string `json:"statement"`
+	// Parameters is base64-encoded canonical JSON object bytes. The producer
+	// decodes this object into named SQL bindings before materializing a view.
+	Parameters string      `json:"parameters"`
 	Checkpoint *Checkpoint `json:"checkpoint"`
-	Transport  Transport   `json:"transport,omitempty"`
 }
 
 type attachResponse struct {
@@ -192,7 +204,7 @@ func (a *attachResponse) UnmarshalJSON(data []byte) error {
 	if a.ViewID == "" {
 		a.ViewID = v.View
 	}
-	a.Generation, a.Checkpoint, a.Snapshot, a.Region = v.Generation, v.Checkpoint, nil, v.Region
+	a.Generation, a.Checkpoint, a.Snapshot, a.Region = v.Generation, decodeCheckpoint(v.Checkpoint), nil, v.Region
 	if len(v.SnapshotRaw) != 0 && !bytes.Equal(v.SnapshotRaw, []byte("null")) {
 		var rawDocs []struct {
 			ID         string          `json:"id"`
@@ -483,9 +495,9 @@ func (c *Client) Subscribe(ctx context.Context, databaseID, statement string, pa
 		done:             make(chan struct{}),
 		cancel:           cancel,
 	}
-	for _, doc := range attach.Snapshot {
+	for index, doc := range attach.Snapshot {
 		cp := s.Checkpoint()
-		if !s.deliver(Update{Kind: UpdateSnapshot, Checkpoint: cp, ID: doc.ID, Collection: doc.Collection, Body: cloneRaw(doc.Body)}) {
+		if !s.deliver(Update{Kind: UpdateSnapshot, Checkpoint: cp, ID: doc.ID, Collection: doc.Collection, Body: cloneRaw(doc.Body), Position: uint32(index)}) {
 			return nil, fmt.Errorf("sdk: initial snapshot exceeds subscription buffer")
 		}
 	}
@@ -525,14 +537,19 @@ func (c *Client) attach(ctx context.Context, databaseID, statement string, param
 	req := attachRequest{
 		DatabaseID: databaseID,
 		Statement:  statement,
-		Parameters: append([]any(nil), params...),
-		Transport:  transport,
 	}
-	if req.Parameters == nil {
-		req.Parameters = []any{}
+	parameterMap, err := canonicalSQLParameters(params)
+	if err != nil {
+		return nil, err
 	}
+	parameterBytes, err := json.Marshal(parameterMap)
+	if err != nil {
+		return nil, fmt.Errorf("sdk: encode reactive parameters: %w", err)
+	}
+	req.Parameters = base64.StdEncoding.EncodeToString(parameterBytes)
 	if sub.ResumeFrom != "" {
-		req.Checkpoint = &sub.ResumeFrom
+		checkpoint := Checkpoint(base64.StdEncoding.EncodeToString([]byte(sub.ResumeFrom)))
+		req.Checkpoint = &checkpoint
 	}
 	var out attachResponse
 	if err := c.do(ctx, "POST", "/api/v1/reactive/views", nil, req, &out, "reactive.attach", opts...); err != nil {
@@ -542,6 +559,20 @@ func (c *Client) attach(ctx context.Context, databaseID, statement string, param
 		return nil, fmt.Errorf("sdk: attach response missing view id")
 	}
 	return &out, nil
+}
+
+// decodeCheckpoint converts the producer's base64 checkpoint spelling to the
+// SDK's opaque byte-string representation. Plain strings remain accepted for
+// older local fixtures that predate the published attach contract.
+func decodeCheckpoint(value Checkpoint) Checkpoint {
+	if value == "" {
+		return ""
+	}
+	decoded, err := base64.StdEncoding.DecodeString(string(value))
+	if err != nil || len(decoded) == 0 {
+		return value
+	}
+	return Checkpoint(string(decoded))
 }
 
 func cloneRaw(raw json.RawMessage) json.RawMessage {
@@ -1358,6 +1389,12 @@ type reactiveMPMessage struct {
 	reset           *ResetError
 	snapshot        []Document
 	snapshotFields  []map[string]json.RawMessage
+	viewGeneration  uint64
+	authorizationGeneration uint64
+	revision        uint64
+	fromRevision    uint64
+	toRevision      uint64
+	digest          string
 }
 
 func decodeReactiveMessagePack(body []byte, view string, generation uint64) ([]Update, Checkpoint, string, *ResetError, error) {
@@ -1369,26 +1406,15 @@ func decodeReactiveMessagePack(body []byte, view string, generation uint64) ([]U
 	if err != nil {
 		return nil, "", "", nil, err
 	}
-	var messages []reactiveMPMessage
-	if count == 7 && looksLikeUint2(body[r.i:]) {
-		r = reactiveMPReader{b: body}
-		m, e := decodeMPEnvelope(&r, view, generation)
-		if e != nil {
-			return nil, "", "", nil, e
-		}
-		messages = []reactiveMPMessage{m}
-	} else {
-		if count > maxSnapshotItems {
-			return nil, "", "", nil, fmt.Errorf("sdk: reactive frame list exceeds bound")
-		}
-		for i := 0; i < count; i++ {
-			m, e := decodeMPEnvelope(&r, view, generation)
-			if e != nil {
-				return nil, "", "", nil, e
-			}
-			messages = append(messages, m)
-		}
+	if count != 7 || !looksLikeUint2(body[r.i:]) {
+		return nil, "", "", nil, fmt.Errorf("sdk: reactive response must contain one indexed envelope")
 	}
+	r = reactiveMPReader{b: body}
+	m, err := decodeMPEnvelope(&r, view, generation)
+	if err != nil {
+		return nil, "", "", nil, err
+	}
+	messages := []reactiveMPMessage{m}
 	var updates []Update
 	var cp Checkpoint
 	var offset string
@@ -1426,23 +1452,15 @@ func decodeReactiveSnapshotMessagePack(body []byte, view string, generation uint
 	if err != nil {
 		return nil, "", "", err
 	}
-	var messages []reactiveMPMessage
-	if count == 7 && looksLikeUint2(body[r.i:]) {
-		r = reactiveMPReader{b: body}
-		m, e := decodeMPEnvelope(&r, view, generation)
-		if e != nil {
-			return nil, "", "", e
-		}
-		messages = []reactiveMPMessage{m}
-	} else {
-		for i := 0; i < count; i++ {
-			m, e := decodeMPEnvelope(&r, view, generation)
-			if e != nil {
-				return nil, "", "", e
-			}
-			messages = append(messages, m)
-		}
+	if count != 7 || !looksLikeUint2(body[r.i:]) {
+		return nil, "", "", fmt.Errorf("sdk: snapshot response must contain one indexed envelope")
 	}
+	r = reactiveMPReader{b: body}
+	m, err := decodeMPEnvelope(&r, view, generation)
+	if err != nil {
+		return nil, "", "", err
+	}
+	messages := []reactiveMPMessage{m}
 	var docs []Document
 	var cp Checkpoint
 	var off string
@@ -1500,7 +1518,14 @@ func decodeMPEnvelope(r *reactiveMPReader, view string, generation uint64) (reac
 	return decodeMPBody(r, int(tag), view, generation)
 }
 
-func decodeMPSnapshot(r *reactiveMPReader, view string, generation uint64) ([]Document, []map[string]json.RawMessage, Checkpoint, error) {
+type reactiveMPSnapshotMetadata struct {
+	viewGeneration          uint64
+	authorizationGeneration uint64
+	revision                uint64
+	digest                  string
+}
+
+func decodeMPSnapshot(r *reactiveMPReader, view string, generation uint64, metadata *reactiveMPSnapshotMetadata) ([]Document, []map[string]json.RawMessage, Checkpoint, error) {
 	if err := r.exactArray(6); err != nil {
 		return nil, nil, "", err
 	}
@@ -1514,7 +1539,12 @@ func decodeMPSnapshot(r *reactiveMPReader, view string, generation uint64) ([]Do
 	if _, e = mpUint(r, 64); e != nil {
 		return nil, nil, "", e
 	}
-	if _, e = mpUint(r, 64); e != nil {
+	authorizationGeneration, e := mpUint(r, 64)
+	if e != nil {
+		return nil, nil, "", e
+	}
+	revision, e := mpUint(r, 64)
+	if e != nil {
 		return nil, nil, "", e
 	}
 	n, e := mpArrayCount(r)
@@ -1561,6 +1591,9 @@ func decodeMPSnapshot(r *reactiveMPReader, view string, generation uint64) ([]Do
 			if fieldBytes > 1<<20 {
 				return nil, nil, "", fmt.Errorf("sdk: reactive document exceeds 1 MiB")
 			}
+			if _, exists := fieldValues[path]; exists {
+				return nil, nil, "", fmt.Errorf("sdk: reactive snapshot contains duplicate projected field %q", path)
+			}
 			fieldValues[path] = cloneRaw(value)
 			if path == "body" {
 				body = cloneRaw(value)
@@ -1573,12 +1606,19 @@ func decodeMPSnapshot(r *reactiveMPReader, view string, generation uint64) ([]Do
 		docs = append(docs, Document{ID: id, Body: body})
 		allFields = append(allFields, fieldValues)
 	}
-	if _, e = mpText(r, 0, 64); e != nil {
+	digest, e := mpText(r, 0, 64)
+	if e != nil {
 		return nil, nil, "", e
 	}
 	cp, e := mpBinary(r, 1, 4096)
 	if e != nil {
 		return nil, nil, "", e
+	}
+	if metadata != nil {
+		metadata.viewGeneration = gotGeneration
+		metadata.authorizationGeneration = authorizationGeneration
+		metadata.revision = revision
+		metadata.digest = digest
 	}
 	return docs, allFields, Checkpoint(string(cp)), nil
 }
@@ -1604,14 +1644,15 @@ func decodeMPOperation(r *reactiveMPReader) (Update, error) {
 		if e != nil {
 			return Update{}, e
 		}
-		if _, e = mpUint(r, 32); e != nil {
+		position, e := mpUint(r, 32)
+		if e != nil {
 			return Update{}, e
 		}
 		body, fields, e := decodeMPFields(r)
 		if e != nil {
 			return Update{}, e
 		}
-		return Update{Kind: UpdateInsert, ID: id, Body: body, Fields: fields}, nil
+		return Update{Kind: UpdateInsert, ID: id, Position: uint32(position), Body: body, Fields: fields}, nil
 	case 2:
 		if n != 3 {
 			return Update{}, fmt.Errorf("sdk: invalid update operation")
@@ -1650,6 +1691,9 @@ func decodeMPOperation(r *reactiveMPReader) (Update, error) {
 			path, e := mpText(r, 1, 256)
 			if e != nil {
 				return Update{}, e
+			}
+			if _, exists := fieldsMap[path]; exists {
+				return Update{}, fmt.Errorf("sdk: reactive patch contains duplicate field %q", path)
 			}
 			t, e := r.tag()
 			if e != nil {
@@ -1691,10 +1735,11 @@ func decodeMPOperation(r *reactiveMPReader) (Update, error) {
 		if e != nil {
 			return Update{}, e
 		}
-		if _, e = mpUint(r, 32); e != nil {
+		position, e := mpUint(r, 32)
+		if e != nil {
 			return Update{}, e
 		}
-		return Update{Kind: UpdateMove, ID: id}, nil
+		return Update{Kind: UpdateMove, ID: id, Position: uint32(position)}, nil
 	}
 	return Update{}, fmt.Errorf("sdk: unknown reactive operation %d", kind)
 }
@@ -1716,6 +1761,9 @@ func decodeMPFields(r *reactiveMPReader) (json.RawMessage, map[string]json.RawMe
 		path, e := mpText(r, 1, 256)
 		if e != nil {
 			return nil, nil, e
+		}
+		if _, exists := fields[path]; exists {
+			return nil, nil, fmt.Errorf("sdk: reactive operation contains duplicate projected field %q", path)
 		}
 		value, e := mpBinary(r, 0, 1<<20)
 		if e != nil {
@@ -1746,44 +1794,8 @@ func cloneProjectedFields(in map[string]json.RawMessage) map[string]json.RawMess
 
 func decodeMPBody(r *reactiveMPReader, tag int, view string, generation uint64) (reactiveMPMessage, error) {
 	switch tag {
-	case 1: // subscribe (accepted by the corpus validator; HTTP uses JSON attach)
-		if err := r.exactArray(4); err != nil {
-			return reactiveMPMessage{}, err
-		}
-		if _, err := mpText(r, 0, 128); err != nil {
-			return reactiveMPMessage{}, err
-		}
-		if _, err := mpText(r, 0, 262144); err != nil {
-			return reactiveMPMessage{}, err
-		}
-		if _, err := mpBinary(r, 0, 1<<20); err != nil {
-			return reactiveMPMessage{}, err
-		}
-		if r.i < len(r.b) && r.b[r.i] == 0xc0 {
-			_ = mpNil(r)
-		} else if _, err := mpBinary(r, 1, 4096); err != nil {
-			return reactiveMPMessage{}, err
-		}
-		return reactiveMPMessage{}, nil
-	case 2:
-		if err := r.exactArray(1); err != nil {
-			return reactiveMPMessage{}, err
-		}
-		if _, err := mpText(r, 0, 128); err != nil {
-			return reactiveMPMessage{}, err
-		}
-		return reactiveMPMessage{}, nil
-	case 7:
-		if err := r.exactArray(2); err != nil {
-			return reactiveMPMessage{}, err
-		}
-		if _, err := mpText(r, 0, 128); err != nil {
-			return reactiveMPMessage{}, err
-		}
-		if _, err := mpBinary(r, 1, 4096); err != nil {
-			return reactiveMPMessage{}, err
-		}
-		return reactiveMPMessage{}, nil
+	case 1, 2, 7:
+		return reactiveMPMessage{}, fmt.Errorf("sdk: reactive message tag %d is client-to-server", tag)
 	case 3: // snapshot
 		if err := r.exactArray(2); err != nil {
 			return reactiveMPMessage{}, err
@@ -1797,12 +1809,12 @@ func decodeMPBody(r *reactiveMPReader, tag int, view string, generation uint64) 
 			return reactiveMPMessage{}, e
 		}
 		u := make([]Update, 0, len(docs))
-		for _, d := range docs {
+		for index, d := range docs {
 			fields := map[string]json.RawMessage(nil)
 			if len(u) < len(snapshotFields) {
 				fields = cloneProjectedFields(snapshotFields[len(u)])
 			}
-			u = append(u, Update{Kind: UpdateSnapshot, Checkpoint: cp, CheckpointBytes: []byte(cp), ID: d.ID, Collection: d.Collection, Body: cloneRaw(d.Body), Fields: fields})
+			u = append(u, Update{Kind: UpdateSnapshot, Checkpoint: cp, CheckpointBytes: []byte(cp), ID: d.ID, Collection: d.Collection, Body: cloneRaw(d.Body), Fields: fields, Position: uint32(index)})
 		}
 		_ = subscription
 		return reactiveMPMessage{updates: u, checkpoint: cp, checkpointBytes: []byte(cp), snapshot: docs, snapshotFields: snapshotFields}, nil
@@ -1950,18 +1962,17 @@ func decodeMPBody(r *reactiveMPReader, tag int, view string, generation uint64) 
 				return reactiveMPMessage{}, e
 			}
 		}
-		reason := ResetGeneration
-		if code == 3 || code == 4 {
+		// Error enum values are distinct from reset-reason values. Errors
+		// that do not identify recoverable view state require reconnecting;
+		// never misclassify a generation error as an auth change.
+		reason := ResetReconnect
+		switch code {
+		case 3, 4: // authentication_expired, permission_denied
 			reason = ResetAuthChanged
-		}
-		if code == 5 {
+		case 5: // checkpoint_refused
 			reason = ResetCheckpointCurrent
-		}
-		if code == 6 {
+		case 6: // slow_consumer
 			reason = ResetBackpressure
-		}
-		if code == 7 || code == 8 {
-			return reactiveMPMessage{reset: &ResetError{Reason: ResetReconnect, ViewID: view, Generation: generation, Message: detail}}, nil
 		}
 		reset := &ResetError{Reason: reason, ViewID: view, Generation: generation, Message: detail}
 		return reactiveMPMessage{reset: reset}, nil
