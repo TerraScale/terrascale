@@ -348,7 +348,13 @@ impl Parser<'_> {
 }
 
 fn valid_name(value: &str) -> bool {
-    !value.is_empty() && value.len() <= 255 && value.split('.').all(|part| !part.is_empty() && part.chars().all(|char| char.is_ascii_alphanumeric() || char == '_'))
+    !value.is_empty()
+        && value.len() <= 255
+        && value.split('.').all(|part| {
+            !part.is_empty()
+                && !matches!(part, "matches" | "startsWith" | "endsWith" | "contains" | "size" | "exists")
+                && part.chars().all(|char| char.is_ascii_alphanumeric() || char == '_')
+        })
 }
 
 fn escape(value: &str) -> String {
@@ -373,7 +379,7 @@ mod tests {
         )
         .expect("rule");
         assert_eq!(rule.fields(), &BTreeSet::from(["owner".to_owned(), "active".to_owned()]));
-        assert_eq!(rule.expression(), "((resource.active==true)&&(resource.owner==request.auth.claims.tenant))");
+        assert_eq!(rule.expression(), "((resource.owner==request.auth.claims.tenant)&&(resource.active==true))");
         let row = BTreeMap::from([
             ("owner".to_owned(), AttributeValue::String("acme".to_owned())),
             ("active".to_owned(), AttributeValue::Boolean(true)),

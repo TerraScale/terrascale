@@ -1093,6 +1093,17 @@ impl Policy {
     /// predicate. The returned index set is deterministic and capped by the
     /// same limits as explicit publication.
     pub fn try_new_with_derived_indexes(
+        generation: u64,
+        rules: impl IntoIterator<Item = PolicyRule>,
+    ) -> Result<Self, AuthorizationError> {
+        Self::try_new_with_id_and_derived_indexes(
+            AuthorizationPolicyUlid::generate(), generation, rules,
+        )
+    }
+
+    /// Like [`Self::try_new_with_derived_indexes`] but with a caller-supplied
+    /// durable policy identity.
+    pub fn try_new_with_id_and_derived_indexes(
         policy_id: AuthorizationPolicyUlid,
         generation: u64,
         rules: impl IntoIterator<Item = PolicyRule>,

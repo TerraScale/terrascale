@@ -564,10 +564,10 @@ impl<A: StorageAdapter> Coordinator<A> {
     /// Records planner use.  The timestamp is durable when the next journal
     /// event is written, so restart cannot make a rare query look unused.
     pub fn note_used(&mut self, index: &str, at_millis: u64) -> Result<(), CoordinatorError> {
-        let state = self.states.get_mut(index).ok_or(CoordinatorError::InvalidTransition)?;
+        let state = self.states.get(index).ok_or(CoordinatorError::InvalidTransition)?;
         if state.phase != Phase::Active || !state.visible { return Err(CoordinatorError::InvalidTransition); }
-        state.last_used_millis = state.last_used_millis.max(at_millis);
-        Ok(())
+        let covered = state.covered;
+        self.append(LifecycleEvent { sequence: 0, index: index.to_owned(), phase: Phase::Active, watermark: Some(covered), target: None, evidence_digest: [0; 32], at_millis })
     }
     /// Applies an event to memory after journal replay validation.
     fn apply_event(&mut self, event: LifecycleEvent) -> Result<(), CoordinatorError> {
@@ -599,6 +599,7 @@ impl<A: StorageAdapter> Coordinator<A> {
         }
         state.phase = event.phase;
         state.visible = event.phase == Phase::Active;
+        if event.phase == Phase::Active { state.last_used_millis = state.last_used_millis.max(event.at_millis); }
         if event.phase == Phase::Invisible { state.invisible_since_millis = Some(event.at_millis); }
         Ok(())
     }
