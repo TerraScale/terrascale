@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -18,9 +19,15 @@ import (
 )
 
 const (
-	capabilityHeader  = "X-TerraScale-Capability"
-	maxLatencySamples = 1_000_000
+	capabilityHeader   = "X-TerraScale-Capability"
+	maxLatencySamples  = 1_000_000
+	maxFrameDigests    = 1_000_000
+	maxConnections     = 4_096
+	maxIdleConnections = 1_024
+	maxLatencyBuckets  = 15
 )
+
+var latencyBucketUpperBounds = [...]float64{0.5, 1, 2, 5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000, math.Inf(1)}
 
 type runConfig struct {
 	Endpoint        *url.URL
@@ -42,28 +49,26 @@ type stageCounters struct {
 	latencyMu                     sync.Mutex
 	latencies                     []float64
 	latencyTotal                  atomic.Uint64
+	latencyBuckets                [maxLatencyBuckets]uint64
+	maxLatency                    float64
 	orderedMu                     sync.Mutex
 	frames                        map[int64][32]byte
+	frameOrder                    []int64
+	frameCursor                   int
 	orderedViolations             atomic.Uint64
 	orderedResponses              atomic.Uint64
 	firstError                    atomic.Value
 }
 
 func runRamp(ctx context.Context, cfg runConfig) (Result, error) {
-	if len(cfg.Readers) == 0 {
-		return Result{}, errors.New("at least one reader stage is required")
-	}
-	if cfg.Endpoint == nil || strings.TrimSpace(cfg.Capability) == "" {
-		return Result{}, errors.New("endpoint and capability are required")
-	}
-	if cfg.MaxBodyBytes <= 0 {
-		return Result{}, errors.New("max body size must be positive")
+	if err := validateRunConfig(ctx, cfg); err != nil {
+		return Result{}, err
 	}
 	client := &http.Client{
 		Transport: &http.Transport{
-			MaxIdleConns:        1_000_000,
-			MaxIdleConnsPerHost: 1_000_000,
-			MaxConnsPerHost:     0,
+			MaxIdleConns:        maxIdleConnections,
+			MaxIdleConnsPerHost: maxIdleConnections,
+			MaxConnsPerHost:     maxConnections,
 			IdleConnTimeout:     90 * time.Second,
 		},
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
@@ -75,7 +80,9 @@ func runRamp(ctx context.Context, cfg runConfig) (Result, error) {
 		RunID:         fmt.Sprintf("%d", time.Now().UnixNano()),
 		Endpoint:      cfg.Endpoint.String(),
 		WriteRate:     cfg.WriteRate,
-		StartedAt:     time.Now().UTC(),
+		Bounds: ResourceBounds{MaxConnections: maxConnections, MaxIdleConnections: maxIdleConnections,
+			MaxLatencySamples: maxLatencySamples, MaxFrameDigests: maxFrameDigests},
+		StartedAt: time.Now().UTC(),
 		Evidence: Evidence{
 			Mode:            modeForEndpoint(cfg.Endpoint),
 			CredentialsUsed: strings.TrimSpace(cfg.Capability) != "" && (cfg.TelemetryToken != "" || modeForEndpoint(cfg.Endpoint) == "stub"),
@@ -83,7 +90,12 @@ func runRamp(ctx context.Context, cfg runConfig) (Result, error) {
 			InjectionSource: cfg.InjectionURL,
 		},
 	}
+	defer client.CloseIdleConnections()
 	for _, readers := range cfg.Readers {
+		if err := ctx.Err(); err != nil {
+			result.EndedAt = time.Now().UTC()
+			return result, err
+		}
 		stage, err := runStage(ctx, client, cfg, readers)
 		result.Stages = append(result.Stages, stage)
 		if err != nil {
@@ -91,12 +103,53 @@ func runRamp(ctx context.Context, cfg runConfig) (Result, error) {
 		}
 	}
 	if len(cfg.InjectionNames) > 0 {
+		if err := ctx.Err(); err != nil {
+			result.EndedAt = time.Now().UTC()
+			return result, err
+		}
 		result.Injections = runInjections(ctx, client, cfg)
 		result.Evidence.InjectionsRun = true
 	}
 	result.Evidence.TelemetryComplete = allTelemetryPresent(result.Stages)
 	result.EndedAt = time.Now().UTC()
 	return result, nil
+}
+
+func validateRunConfig(ctx context.Context, cfg runConfig) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(cfg.Readers) != len(requiredStages) {
+		return fmt.Errorf("readers must contain exactly %d stages", len(requiredStages))
+	}
+	for i, readers := range cfg.Readers {
+		if readers != requiredStages[i] {
+			return fmt.Errorf("reader stage %d is %d, want %d", i+1, readers, requiredStages[i])
+		}
+	}
+	if cfg.Endpoint == nil || strings.TrimSpace(cfg.Capability) == "" || strings.TrimSpace(cfg.MixedCapability) == "" {
+		return errors.New("endpoint, capability, and mixed capability are required")
+	}
+	if cfg.Duration <= 0 {
+		return errors.New("duration must be positive")
+	}
+	if cfg.WriteRate != 16 {
+		return errors.New("write-rate must be exactly 16")
+	}
+	if cfg.MaxBodyBytes <= 0 {
+		return errors.New("max body size must be positive")
+	}
+	seen := make(map[string]struct{}, len(cfg.InjectionNames))
+	for _, name := range cfg.InjectionNames {
+		if !isRequiredInjection(name) {
+			return fmt.Errorf("unknown injection %q", name)
+		}
+		if _, ok := seen[name]; ok {
+			return fmt.Errorf("duplicate injection %q", name)
+		}
+		seen[name] = struct{}{}
+	}
+	return nil
 }
 
 func modeForEndpoint(endpoint *url.URL) string {
@@ -135,6 +188,9 @@ func runStage(parent context.Context, client *http.Client, cfg runConfig, reader
 		OK:        counters.orderedViolations.Load() == 0 && counters.orderedResponses.Load() > 0,
 		Responses: counters.orderedResponses.Load(), Violations: counters.orderedViolations.Load(),
 	}
+	if err := parent.Err(); err != nil {
+		return stage, err
+	}
 	if value := counters.firstError.Load(); value != nil {
 		return stage, errors.New(value.(string))
 	}
@@ -155,7 +211,9 @@ func runStage(parent context.Context, client *http.Client, cfg runConfig, reader
 		cancelIsolation()
 		return stage, nil
 	}
-	after, err := fetchTelemetry(context.Background(), client, cfg.TelemetryURL, cfg.TelemetryToken, stage.EndedAt)
+	telemetryCtx, cancelTelemetry := context.WithTimeout(parent, 30*time.Second)
+	after, err := fetchTelemetry(telemetryCtx, client, cfg.TelemetryURL, cfg.TelemetryToken, stage.EndedAt)
+	cancelTelemetry()
 	if err != nil {
 		stage.TelemetryNote = "telemetry after stage: " + err.Error()
 		isolationCtx, cancelIsolation := context.WithTimeout(parent, 10*time.Second)
@@ -174,7 +232,7 @@ func runStage(parent context.Context, client *http.Client, cfg runConfig, reader
 
 func runIsolation(ctx context.Context, client *http.Client, cfg runConfig) Isolation {
 	status, body, dataBearing, err := probe(ctx, client, cfg.Endpoint, cfg.MixedCapability, cfg.MaxBodyBytes)
-	isolation := Isolation{Attempts: 1}
+	isolation := Isolation{Attempts: 1, MixedCredentialStatus: status}
 	if err != nil {
 		isolation.StatusFailures = 1
 		return isolation
@@ -190,6 +248,8 @@ func runIsolation(ctx context.Context, client *http.Client, cfg runConfig) Isola
 	if dataBearing {
 		isolation.LeakedBytes = uint64(len(body))
 	}
+	isolation.MixedCredentialBytes = isolation.LeakedBytes
+	isolation.AuthCrossover = status >= http.StatusOK && status < http.StatusMultipleChoices
 	isolation.OK = isolation.Denied == 1 && isolation.LeakedBytes == 0
 	return isolation
 }
@@ -243,6 +303,15 @@ func runReader(ctx context.Context, client *http.Client, cfg runConfig, counters
 			// allocation.
 			counters.latencies[seen%maxLatencySamples] = elapsed
 		}
+		for i, upper := range latencyBucketUpperBounds {
+			if elapsed <= upper {
+				counters.latencyBuckets[i]++
+				break
+			}
+		}
+		if elapsed > counters.maxLatency {
+			counters.maxLatency = elapsed
+		}
 		counters.latencyTotal.Add(1)
 		counters.latencyMu.Unlock()
 		if readErr != nil {
@@ -285,7 +354,17 @@ func runReader(ctx context.Context, client *http.Client, cfg runConfig, counters
 		if previous, ok := counters.frames[revision]; ok && previous != digest {
 			counters.orderedViolations.Add(1)
 		} else {
-			counters.frames[revision] = digest
+			if _, exists := counters.frames[revision]; !exists {
+				if len(counters.frameOrder) == maxFrameDigests {
+					old := counters.frameOrder[counters.frameCursor]
+					delete(counters.frames, old)
+					counters.frameOrder[counters.frameCursor] = revision
+					counters.frameCursor = (counters.frameCursor + 1) % maxFrameDigests
+				} else {
+					counters.frameOrder = append(counters.frameOrder, revision)
+				}
+				counters.frames[revision] = digest
+			}
 		}
 		counters.orderedMu.Unlock()
 		offset = revision
@@ -324,7 +403,11 @@ func summarizeLatency(counters *stageCounters) Latency {
 		index := int(p*float64(len(values)-1) + 0.5)
 		return values[index]
 	}
-	return Latency{Samples: counters.latencyTotal.Load(), P50: percentile(.50), P95: percentile(.95), P99: percentile(.99), Max: values[len(values)-1]}
+	buckets := make([]LatencyBucket, len(latencyBucketUpperBounds))
+	for i, upper := range latencyBucketUpperBounds {
+		buckets[i] = LatencyBucket{LE: upper, Count: counters.latencyBuckets[i]}
+	}
+	return Latency{Samples: counters.latencyTotal.Load(), P50: percentile(.50), P95: percentile(.95), P99: percentile(.99), Max: counters.maxLatency, Histogram: buckets}
 }
 
 func allTelemetryPresent(stages []StageResult) bool {
@@ -453,6 +536,32 @@ func runInjections(ctx context.Context, client *http.Client, cfg runConfig) []In
 			case dataBearing:
 				result.NoLeak = false
 				result.Error = "expired capability denial returned data bytes"
+			}
+		}
+		// Probe the unrelated credential after every transition. A cache rule
+		// or purge must never turn an authorization miss into a cache hit.
+		if strings.TrimSpace(cfg.MixedCapability) != "" {
+			mixedStatus, mixedBody, mixedDataBearing, mixedErr := probe(ctx, client, cfg.Endpoint, cfg.MixedCapability, cfg.MaxBodyBytes)
+			result.MixedProbeStatus = mixedStatus
+			if mixedDataBearing {
+				result.MixedProbeBytes = uint64(len(mixedBody))
+			}
+			if mixedErr != nil {
+				result.NoLeak = false
+				if result.Error == "" {
+					result.Error = "mixed credential probe: " + mixedErr.Error()
+				}
+			} else if mixedStatus != http.StatusUnauthorized {
+				result.AuthCrossover = true
+				result.NoLeak = false
+				if result.Error == "" {
+					result.Error = fmt.Sprintf("mixed credential was not denied (status %d)", mixedStatus)
+				}
+			} else if mixedDataBearing {
+				result.NoLeak = false
+				if result.Error == "" {
+					result.Error = "mixed credential denial returned data bytes"
+				}
 			}
 		}
 		result.EndedAt = time.Now().UTC()

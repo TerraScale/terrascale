@@ -69,6 +69,9 @@ func validateResult(result Result, allowStub bool) error {
 	if result.WriteRate != 16 {
 		problems = append(problems, "write_rate must be exactly 16")
 	}
+	if !allowStub && (result.Bounds.MaxConnections <= 0 || result.Bounds.MaxIdleConnections <= 0 || result.Bounds.MaxLatencySamples <= 0 || result.Bounds.MaxFrameDigests <= 0) {
+		problems = append(problems, "resource bounds are missing")
+	}
 	if len(result.Errors) > 0 {
 		problems = append(problems, fmt.Sprintf("runner reported %d errors", len(result.Errors)))
 	}
@@ -174,11 +177,31 @@ func validateStage(problems *[]string, stage StageResult, readers int, allowStub
 	if !finiteNonNegative(stage.Latency.P50) || !finiteNonNegative(stage.Latency.P95) || !finiteNonNegative(stage.Latency.P99) || !finiteNonNegative(stage.Latency.Max) || stage.Latency.P95 < stage.Latency.P50 || stage.Latency.P99 < stage.Latency.P95 || stage.Latency.Max < stage.Latency.P99 {
 		*problems = append(*problems, prefix+" latency percentiles are invalid")
 	}
+	if len(stage.Latency.Histogram) != len(latencyBucketUpperBounds) {
+		if !allowStub {
+			*problems = append(*problems, prefix+" latency histogram is missing or incomplete")
+		}
+	} else {
+		var total uint64
+		for i, bucket := range stage.Latency.Histogram {
+			if bucket.LE != latencyBucketUpperBounds[i] || (i > 0 && bucket.Count < stage.Latency.Histogram[i-1].Count) {
+				*problems = append(*problems, prefix+" latency histogram buckets are invalid")
+				break
+			}
+			total = bucket.Count
+		}
+		if total != stage.Latency.Samples {
+			*problems = append(*problems, prefix+" latency histogram does not match samples")
+		}
+	}
 	if !stage.OrderedBytes.OK || stage.OrderedBytes.Responses == 0 || stage.OrderedBytes.Responses > stage.Successes || stage.OrderedBytes.Violations != 0 {
 		*problems = append(*problems, prefix+" did not prove ordered byte equality")
 	}
-	if !stage.Isolation.OK || stage.Isolation.Attempts == 0 || stage.Isolation.Denied == 0 || !isolationAccountingBalanced(stage.Isolation) || stage.Isolation.LeakedBytes != 0 {
+	if !stage.Isolation.OK || stage.Isolation.Attempts == 0 || stage.Isolation.Denied == 0 || !isolationAccountingBalanced(stage.Isolation) || stage.Isolation.LeakedBytes != 0 || stage.Isolation.AuthCrossover {
 		*problems = append(*problems, prefix+" did not prove capability isolation")
+	}
+	if !allowStub && stage.Isolation.MixedCredentialStatus != http.StatusUnauthorized {
+		*problems = append(*problems, prefix+" mixed credential was not denied")
 	}
 	if stage.Worker == nil {
 		if !allowStub {

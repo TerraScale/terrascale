@@ -20,16 +20,21 @@ func validFixture() Result {
 		total, hit, worker, ratio, cost := uint64(1000), uint64(900), uint64(0), .9, .12
 		start := time.Unix(int64(1+i*2), 0)
 		end := start.Add(time.Second)
+		histogram := make([]LatencyBucket, len(latencyBucketUpperBounds))
+		for j, upper := range latencyBucketUpperBounds {
+			histogram[j] = LatencyBucket{LE: upper, Count: 10}
+		}
 		stages = append(stages, StageResult{
 			Readers: readers, WriteRate: 16, StartedAt: start, EndedAt: end,
-			Duration: 1, Requests: 10, Successes: 10, Latency: Latency{Samples: 10, P50: 1, P95: 2, P99: 3, Max: 4},
+			Duration: 1, Requests: 10, Successes: 10, Latency: Latency{Samples: 10, P50: 1, P95: 2, P99: 3, Max: 4, Histogram: histogram},
 			Cache:  CacheMetrics{EdgeMisses: ptr(uint64(2)), UpperTierMisses: ptr(uint64(1)), OriginFetches: ptr(uint64(1)), TotalBytes: &total, CacheHitBytes: &hit, ByteHitRatio: &ratio},
-			Worker: &worker, CostPerMillion: &cost, OrderedBytes: OrderedBytes{OK: true, Responses: 10}, Isolation: Isolation{OK: true, Attempts: 1, Denied: 1},
+			Worker: &worker, CostPerMillion: &cost, OrderedBytes: OrderedBytes{OK: true, Responses: 10}, Isolation: Isolation{OK: true, Attempts: 1, Denied: 1, MixedCredentialStatus: http.StatusUnauthorized},
 		})
 	}
 	return Result{
 		SchemaVersion: resultSchemaVersion, RunID: "run-1", Endpoint: "https://sync.example/log", WriteRate: 16,
 		StartedAt: time.Unix(1, 0), EndedAt: time.Unix(8, 0),
+		Bounds:   ResourceBounds{MaxConnections: 100, MaxIdleConnections: 100, MaxLatencySamples: 100, MaxFrameDigests: 100},
 		Evidence: Evidence{Mode: "real-zone", CredentialsUsed: true, TelemetrySource: "https://metrics.example", InjectionSource: "https://control.example", TelemetryComplete: true, InjectionsRun: true},
 		Stages:   stages,
 		Injections: []InjectionTest{

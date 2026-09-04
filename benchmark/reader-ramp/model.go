@@ -17,9 +17,20 @@ type Result struct {
 	StartedAt     time.Time       `json:"started_at"`
 	EndedAt       time.Time       `json:"ended_at"`
 	Evidence      Evidence        `json:"evidence"`
+	Bounds        ResourceBounds  `json:"resource_bounds"`
 	Stages        []StageResult   `json:"stages"`
 	Injections    []InjectionTest `json:"injections"`
 	Errors        []string        `json:"errors,omitempty"`
+}
+
+// ResourceBounds records the hard client-side ceilings used by the runner.
+// A million logical readers must not turn into a million retained idle
+// sockets or an unbounded evidence data structure.
+type ResourceBounds struct {
+	MaxConnections     int `json:"max_connections"`
+	MaxIdleConnections int `json:"max_idle_connections"`
+	MaxLatencySamples  int `json:"max_latency_samples"`
+	MaxFrameDigests    int `json:"max_frame_digests"`
 }
 
 type Evidence struct {
@@ -50,11 +61,17 @@ type StageResult struct {
 }
 
 type Latency struct {
-	Samples uint64  `json:"samples"`
-	P50     float64 `json:"p50"`
-	P95     float64 `json:"p95"`
-	P99     float64 `json:"p99"`
-	Max     float64 `json:"max"`
+	Samples   uint64          `json:"samples"`
+	P50       float64         `json:"p50"`
+	P95       float64         `json:"p95"`
+	P99       float64         `json:"p99"`
+	Max       float64         `json:"max"`
+	Histogram []LatencyBucket `json:"histogram"`
+}
+
+type LatencyBucket struct {
+	LE    float64 `json:"le"`
+	Count uint64  `json:"count"`
 }
 
 type CacheMetrics struct {
@@ -73,23 +90,29 @@ type OrderedBytes struct {
 }
 
 type Isolation struct {
-	OK             bool   `json:"ok"`
-	Attempts       uint64 `json:"attempts"`
-	Denied         uint64 `json:"denied"`
-	LeakedBytes    uint64 `json:"leaked_bytes"`
-	StatusFailures uint64 `json:"status_failures"`
+	OK                    bool   `json:"ok"`
+	Attempts              uint64 `json:"attempts"`
+	Denied                uint64 `json:"denied"`
+	LeakedBytes           uint64 `json:"leaked_bytes"`
+	StatusFailures        uint64 `json:"status_failures"`
+	MixedCredentialStatus int    `json:"mixed_credential_status"`
+	MixedCredentialBytes  uint64 `json:"mixed_credential_bytes"`
+	AuthCrossover         bool   `json:"auth_crossover"`
 }
 
 type InjectionTest struct {
-	Name        string    `json:"name"`
-	Requested   bool      `json:"requested"`
-	Observed    bool      `json:"observed"`
-	ProbeStatus int       `json:"probe_status"`
-	ProbeBytes  uint64    `json:"probe_bytes"`
-	NoLeak      bool      `json:"no_leak"`
-	StartedAt   time.Time `json:"started_at"`
-	EndedAt     time.Time `json:"ended_at"`
-	Error       string    `json:"error,omitempty"`
+	Name             string    `json:"name"`
+	Requested        bool      `json:"requested"`
+	Observed         bool      `json:"observed"`
+	ProbeStatus      int       `json:"probe_status"`
+	ProbeBytes       uint64    `json:"probe_bytes"`
+	NoLeak           bool      `json:"no_leak"`
+	MixedProbeStatus int       `json:"mixed_probe_status"`
+	MixedProbeBytes  uint64    `json:"mixed_probe_bytes"`
+	AuthCrossover    bool      `json:"auth_crossover"`
+	StartedAt        time.Time `json:"started_at"`
+	EndedAt          time.Time `json:"ended_at"`
+	Error            string    `json:"error,omitempty"`
 }
 
 type telemetrySnapshot struct {
