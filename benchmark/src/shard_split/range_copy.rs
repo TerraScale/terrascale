@@ -83,12 +83,16 @@ pub enum CopyError {
     EmptyKey,
 }
 
-/// Source-side range scan seam implemented by the SQLite worker later.
+/// Source-side range scan seam implemented by the storage worker.
 pub trait RangeCopySource {
     /// Source-specific I/O failure.
     type Error;
 
     /// Reads one bounded page strictly after `after_key` and below `upper`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the source scan fails.
     fn read_range(
         &mut self,
         after_key: Option<&[u8]>,
@@ -97,12 +101,16 @@ pub trait RangeCopySource {
     ) -> Result<CopyBatch, Self::Error>;
 }
 
-/// Target-side idempotent apply seam implemented by the SQLite worker later.
+/// Target-side idempotent apply seam implemented by the storage worker.
 pub trait RangeCopyTarget {
     /// Target-specific I/O failure.
     type Error;
 
     /// Applies one page transactionally and durably.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the page cannot be applied durably.
     fn apply_copy_batch(&mut self, batch: &CopyBatch) -> Result<(), Self::Error>;
 }
 
@@ -118,6 +126,10 @@ pub struct RangeCopier {
 
 impl RangeCopier {
     /// Starts a copy of keys below `upper`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CopyError::EmptyKey`] when `upper` is empty.
     pub fn new(upper: Vec<u8>) -> Result<Self, CopyError> {
         if upper.is_empty() {
             return Err(CopyError::EmptyKey);
@@ -150,6 +162,16 @@ impl RangeCopier {
     }
 
     /// Copies and applies one bounded page, preserving its checkpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CopyError::SourceFailed`] when the source scan fails,
+    /// [`CopyError::CheckpointRegressed`] when the page checkpoint moves
+    /// backwards, [`CopyError::NoProgress`] when a non-terminal empty page
+    /// repeats the current checkpoint, [`CopyError::EmptyKey`] for an empty
+    /// key, [`CopyError::KeysOutOfOrder`] for keys outside the range or out
+    /// of canonical order, and [`CopyError::TargetFailed`] when the target
+    /// cannot apply the page durably.
     pub fn step<S, T>(
         &mut self,
         source: &mut S,
@@ -190,11 +212,9 @@ impl RangeCopier {
         target.apply_copy_batch(&batch).map_err(|_| CopyError::TargetFailed)?;
         self.through = batch.through();
         self.copied = self.copied.saturating_add(batch.entries().len() as u64);
-        self.after_key = batch
-            .entries()
-            .last()
-            .map(|entry| entry.key.to_vec())
-            .or_else(|| self.after_key.clone());
+        if let Some(entry) = batch.entries().last() {
+            self.after_key = Some(entry.key().to_vec());
+        }
         self.done = batch.done();
         Ok(self.done)
     }

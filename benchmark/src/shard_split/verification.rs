@@ -68,10 +68,20 @@ pub trait Verifier {
     type Error;
 
     /// Reads a stable range fingerprint and checkpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the range facts cannot be read.
     fn range_facts(&mut self, upper: &[u8]) -> Result<RangeVerification, Self::Error>;
 }
 
 /// Runs a source/target comparison and refuses cleanup on any mismatch.
+///
+/// # Errors
+///
+/// Returns [`VerificationError::Mismatch`] when either side cannot supply
+/// range facts or the facts differ, and [`VerificationError::TargetBehind`]
+/// when the target checkpoint is behind the source checkpoint.
 pub fn verify<S, T>(
     source: &mut S,
     target: &mut T,

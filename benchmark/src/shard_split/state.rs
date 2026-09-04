@@ -79,6 +79,12 @@ impl DurableSplitState {
     ///
     /// Returns [`SplitStateError`] for an unsupported version, truncation,
     /// malformed bound, or unknown phase.
+    ///
+    /// # Panics
+    ///
+    /// Never panics in practice: every byte-slice conversion is guarded by
+    /// the length checks above, so the fallible conversions are infallible
+    /// for any input that reaches them.
     pub fn decode(bytes: &[u8]) -> Result<Self, SplitStateError> {
         if bytes.first().copied() != Some(SPLIT_STATE_VERSION) {
             return Err(SplitStateError::UnsupportedVersion(bytes.first().copied()));
@@ -135,9 +141,21 @@ pub trait SplitStateStore {
     type Error;
 
     /// Loads the record, if a split is in progress.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the record cannot be read.
     fn load(&self) -> Result<Option<DurableSplitState>, Self::Error>;
     /// Atomically replaces the record with the supplied state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the record cannot be replaced durably.
     fn save(&mut self, state: &DurableSplitState) -> Result<(), Self::Error>;
     /// Removes a terminal record after retention policy permits it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the record cannot be removed.
     fn remove(&mut self) -> Result<(), Self::Error>;
 }

@@ -59,22 +59,26 @@ impl RecoveryPlan {
             SplitPhase::Planned | SplitPhase::Backfilling => RecoveryAction::ResumeBackfill,
             SplitPhase::CatchingUp => RecoveryAction::ResumeCatchUp,
             SplitPhase::CutOver => RecoveryAction::VerifyCutOver,
-            SplitPhase::Complete => RecoveryAction::Noop,
-            SplitPhase::Aborted => RecoveryAction::Noop,
+            SplitPhase::Complete | SplitPhase::Aborted => RecoveryAction::Noop,
         };
         RecoveryDecision { action, phase: state.phase() }
     }
 
     /// Returns an action that safely removes a pre-cutover target.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RecoveryError::CutoverAlreadyInstalled`] when the persisted
+    /// phase is [`SplitPhase::CutOver`] or [`SplitPhase::Complete`].
     pub fn rollback(state: &DurableSplitState) -> Result<RecoveryAction, RecoveryError> {
         match state.phase() {
-            SplitPhase::Planned | SplitPhase::Backfilling | SplitPhase::CatchingUp => {
-                Ok(RecoveryAction::Noop)
-            }
+            SplitPhase::Planned
+            | SplitPhase::Backfilling
+            | SplitPhase::CatchingUp
+            | SplitPhase::Aborted => Ok(RecoveryAction::Noop),
             SplitPhase::CutOver | SplitPhase::Complete => {
                 Err(RecoveryError::CutoverAlreadyInstalled)
             }
-            SplitPhase::Aborted => Ok(RecoveryAction::Noop),
         }
     }
 }
