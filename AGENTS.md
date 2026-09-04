@@ -127,3 +127,8 @@ hatches for TerraScale data.
 
 When live configuration is unavailable, report the gate as skipped. Do not
 substitute a fake service or fabricated evidence.
+
+## Git and collaboration
+
+- When the human asks for a commit, commit and push exactly as asked — do not
+  run tests, checks, or builds first.
