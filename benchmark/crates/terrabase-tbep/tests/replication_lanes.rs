@@ -24,7 +24,8 @@ use terrabase::types::{
 use terrabase_member_transport::in_process::InProcessLane;
 use terrabase_member_transport::transport::MemberTransport;
 use terrabase_member_transport::{
-    Envelope, FrameKind, LaneInstant, MemberId, Payload, TenantId as LaneTenantId, encode,
+    Envelope, FrameKind, LaneInstant, MemberId, OperationId as LaneOperationId, Payload,
+    TenantId as LaneTenantId, encode,
 };
 use terrabase_tbep::registry::{BoundScope, ChannelBindRequest};
 use terrabase_tbep::replication::replicate_once;
@@ -180,7 +181,10 @@ fn acknowledgement_frame(
             reports: reports
                 .iter()
                 .map(|(operation, held)| {
-                    (OperationId::try_new(operation).expect("the operation identity parses"), *held)
+                    (
+                        LaneOperationId::try_new(operation).expect("the operation identity parses"),
+                        *held,
+                    )
                 })
                 .collect(),
         },
