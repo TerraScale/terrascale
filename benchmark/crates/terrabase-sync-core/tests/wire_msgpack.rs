@@ -147,7 +147,7 @@ fn hostile_shapes_fail_closed_before_allocation() {
         ("9701000006010091ca3fc00000", WireError::Float32Forbidden),
         ("97010000060100", WireError::Truncated),
         ("9701000006010090c0", WireError::TrailingBytes),
-        ("9701010006010090", WireError::UnsupportedMinor(0)),
+        ("9701010006010090", WireError::UnsupportedMinor(1)),
         ("9701000106010090", WireError::UnknownFeatures(1)),
         ("970100000c010090", WireError::UnknownTag(12)),
         ("970100000a01009263c0", WireError::UnknownEnum("error_code", 99)),
