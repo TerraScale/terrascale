@@ -78,7 +78,7 @@ func runRamp(ctx context.Context, cfg runConfig) (Result, error) {
 		StartedAt:     time.Now().UTC(),
 		Evidence: Evidence{
 			Mode:            modeForEndpoint(cfg.Endpoint),
-			CredentialsUsed: strings.TrimSpace(cfg.Capability) != "" && (cfg.TelemetryToken != "" || cfg.Endpoint.Scheme == "http"),
+			CredentialsUsed: strings.TrimSpace(cfg.Capability) != "" && (cfg.TelemetryToken != "" || modeForEndpoint(cfg.Endpoint) == "stub"),
 			TelemetrySource: cfg.TelemetryURL,
 			InjectionSource: cfg.InjectionURL,
 		},
@@ -100,7 +100,7 @@ func runRamp(ctx context.Context, cfg runConfig) (Result, error) {
 }
 
 func modeForEndpoint(endpoint *url.URL) string {
-	if endpoint.Scheme == "http" && isLoopback(endpoint.Hostname()) {
+	if isLoopback(strings.ToLower(endpoint.Hostname())) {
 		return "stub"
 	}
 	return "real-zone"
@@ -179,9 +179,14 @@ func runIsolation(ctx context.Context, client *http.Client, cfg runConfig) Isola
 		isolation.StatusFailures = 1
 		return isolation
 	}
-	if status < 200 || status >= 300 {
-		isolation.Denied = 1
+	// The Snippet's typed capability denial is 401. A 404/429/5xx is an
+	// origin or routing failure, not proof that the mixed credential was
+	// rejected, and must fail the isolation gate.
+	if status != http.StatusUnauthorized {
+		isolation.StatusFailures = 1
+		return isolation
 	}
+	isolation.Denied = 1
 	if dataBearing {
 		isolation.LeakedBytes = uint64(len(body))
 	}
@@ -428,12 +433,20 @@ func runInjections(ctx context.Context, client *http.Client, cfg runConfig) []In
 		if probeErr != nil {
 			result.Error = probeErr.Error()
 		}
-		// A capability-expiry injection must deny the old capability. The
-		// endpoint reports the expected transition; a successful old-cap read
-		// is evidence that the injection did not take effect.
-		if name == "capability-expiry" && dataBearing {
-			result.NoLeak = false
-			result.Error = "expired capability still returned bytes"
+		// A capability-expiry injection must deny the old capability. MIME is
+		// useful for detecting a data frame on a denial, but it is not proof of
+		// denial: a 200 JSON response is still an accepted old capability.
+		if name == "capability-expiry" {
+			switch {
+			case probeErr != nil:
+				// Keep the transport/body error from probe.
+			case status != http.StatusUnauthorized:
+				result.NoLeak = false
+				result.Error = fmt.Sprintf("expired capability was not denied (status %d)", status)
+			case dataBearing:
+				result.NoLeak = false
+				result.Error = "expired capability denial returned data bytes"
+			}
 		}
 		result.EndedAt = time.Now().UTC()
 		results = append(results, result)
@@ -490,7 +503,7 @@ func probe(ctx context.Context, client *http.Client, endpoint *url.URL, capabili
 	if int64(len(body)) > maxBody {
 		return resp.StatusCode, body, false, errors.New("probe response exceeded max body")
 	}
-	dataBearing := resp.StatusCode >= 200 && resp.StatusCode < 300 && strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "application/msgpack")
+	dataBearing := len(body) > 0 && strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "application/msgpack")
 	return resp.StatusCode, body, dataBearing, nil
 }
 
