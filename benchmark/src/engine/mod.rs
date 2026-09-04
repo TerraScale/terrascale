@@ -271,7 +271,6 @@ fn decode_usage_continuation(
 
 const fn map_usage_storage_error(error: UsageStorageError) -> UsageCommandError {
     match error {
-        UsageStorageError::UnsupportedBackend => UsageCommandError::UnsupportedBackend,
         UsageStorageError::Corrupt => UsageCommandError::CorruptStorage,
         UsageStorageError::IdentityConflict => UsageCommandError::IdentityConflict,
         UsageStorageError::Unavailable => UsageCommandError::StorageUnavailable,
@@ -948,6 +947,11 @@ pub struct Engine {
     /// one content-free event pair per run, engine-owned, with durable
     /// audit shipping belonging to the Platform side.
     bulk_audit: Arc<crate::query::bulk::BulkAuditJournal>,
+    /// Durable D-31 lifecycle journal and control state.  This metadata is
+    /// intentionally separate from the planner catalog: after a restart a
+    /// lifecycle record never makes an index visible without a fresh SQLite
+    /// segment at the matching publication boundary.
+    pub(crate) auto_index_lifecycle: Mutex<crate::auto_index::LifecycleStore>,
     /// The Storage Tier Mover's control state (P4): the configured
     /// policy and the pause gate. The handle is [`Engine::tiers`].
     /// The group-commit mailbox: waiting intents and the leader flag.
@@ -1030,6 +1034,8 @@ impl Engine {
         let storage: Box<dyn storage::StoragePort> = storage::SqliteStorage::open(&location)
             .map(|engine| Box::new(engine) as Box<dyn storage::StoragePort>)
             .map_err(|_| EngineOpenError::StorageUnavailable)?;
+        let auto_index_lifecycle = crate::auto_index::LifecycleStore::open(&location)
+            .map_err(|_| EngineOpenError::FormatMismatch)?;
         let subscriptions = Arc::new(PublicationRegistry::new());
         // W4-CA-3: register the Engine-owned index catalog's sink through the
         // production registry so index maintenance observes every publication.
@@ -1055,6 +1061,7 @@ impl Engine {
             indexes,
             _index_subscription: index_subscription,
             bulk_audit: Arc::new(crate::query::bulk::BulkAuditJournal::new()),
+            auto_index_lifecycle: Mutex::new(auto_index_lifecycle),
             commit_mailbox: Arc::new(Mutex::new(CommitMailbox::default())),
             commit_arrivals: std::sync::Condvar::new(),
         })
@@ -2480,7 +2487,7 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// Returns ScopeMismatch for a foreign scope or StorageFailure when the
+    /// Returns `ScopeMismatch` for a foreign scope or `StorageFailure` when the
     /// raw read cannot be served.
     pub fn raw_document_body_in_collection_at(
         &self,
@@ -2492,7 +2499,7 @@ impl Engine {
         self.validate_scope(scope)?;
         let storage = self.lock_storage()?;
         let connection =
-            storage.port.open_sqlite_read_connection().map_err(|_| EngineError::StorageFailure)?;
+            storage.port.open_sqlite_read_connection().map_err(|()| EngineError::StorageFailure)?;
         storage.port.record_read(scope.tenant().as_str());
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -2506,7 +2513,7 @@ impl Engine {
                     scope.tenant().as_str(),
                     collection.as_str(),
                     id.as_str(),
-                    snapshot.get() as i64
+                    snapshot.get().cast_signed()
                 ],
                 |row| {
                     Ok((
@@ -3266,11 +3273,11 @@ impl Engine {
         self.storage.lock().map_err(|_| EngineError::StorageFailure)
     }
 
-    /// Opens the backend's bounded `SQLite` read handle for SQL execution.
+    /// Opens the engine's bounded `SQLite` read handle for SQL execution.
     ///
-    /// The physical location and backend selection remain Engine-owned; this
-    /// capability is deliberately crate-private so callers cannot reopen an
-    /// arbitrary path or bypass ownership validation.
+    /// The physical location remains Engine-owned; this capability is
+    /// deliberately crate-private so callers cannot reopen an arbitrary path
+    /// or bypass ownership validation.
     pub(crate) fn open_sqlite_read_connection(&self) -> Result<rusqlite::Connection, EngineError> {
         let storage = self.lock_storage()?;
         storage.port.open_sqlite_read_connection().map_err(|()| EngineError::StorageFailure)

@@ -705,6 +705,11 @@ impl CanonicalFieldType {
     }
 
     /// Parses one canonical field type spelling; aliases are not accepted.
+    #[allow(
+        clippy::should_implement_trait,
+        reason = "the schema keeps an Option-based spelling without an Error type"
+    )]
+    #[must_use]
     pub fn from_str(value: &str) -> Option<Self> {
         Some(match value {
             "string" => Self::String,
@@ -751,6 +756,11 @@ impl SchemaMergePolicy {
     }
 
     /// Parses one canonical merge-policy spelling.
+    #[allow(
+        clippy::should_implement_trait,
+        reason = "the schema keeps an Option-based spelling without an Error type"
+    )]
+    #[must_use]
     pub fn from_str(value: &str) -> Option<Self> {
         Some(match value {
             "remove-wins" => Self::RemoveWins,
@@ -764,9 +774,9 @@ impl SchemaMergePolicy {
 /// The physical kind of one declared index.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum CanonicalIndexKind {
-    /// A SQLite B-tree over extracted columns.
+    /// A `SQLite` B-tree over extracted columns.
     BTree,
-    /// An SQLite FTS5 index over one text field.
+    /// An `SQLite` FTS5 index over one text field.
     Fts,
 }
 
@@ -786,6 +796,11 @@ impl CanonicalIndexKind {
     }
 
     /// Parses one canonical index-kind spelling.
+    #[allow(
+        clippy::should_implement_trait,
+        reason = "the schema keeps an Option-based spelling without an Error type"
+    )]
+    #[must_use]
     pub fn from_str(value: &str) -> Option<Self> {
         Some(match value {
             "btree" => Self::BTree,
@@ -804,6 +819,11 @@ pub struct SchemaFieldRename {
 
 impl SchemaFieldRename {
     /// Creates a validated rename.  A rename is never inferred from a diff.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaFormatError::MalformedValue`] when either name is not
+    /// a canonical identifier or both names match.
     pub fn try_new(
         from: impl Into<String>,
         to: impl Into<String>,
@@ -843,6 +863,11 @@ pub struct CanonicalField {
 
 impl CanonicalField {
     /// Creates one validated field definition.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaFormatError::MalformedValue`] when the name is not a
+    /// canonical identifier or the merge policy is not a CRDT kind.
     pub fn try_new(
         name: impl Into<String>,
         kind: CanonicalFieldType,
@@ -909,11 +934,21 @@ pub struct CanonicalIndex {
 
 impl CanonicalIndex {
     /// Creates a non-unique B-tree index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaFormatError::MalformedValue`] when the name or fields
+    /// are not canonical identifiers.
     pub fn btree(name: impl Into<String>, fields: Vec<String>) -> Result<Self, SchemaFormatError> {
         Self::try_new(name, fields, false, CanonicalIndexKind::BTree)
     }
 
     /// Creates a single-field FTS5 index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaFormatError::MalformedValue`] when the name, field, or
+    /// field count is invalid for an FTS5 index.
     pub fn fts(
         name: impl Into<String>,
         field: impl Into<String>,
@@ -922,6 +957,12 @@ impl CanonicalIndex {
     }
 
     /// Creates one validated index.  The kind is always explicit at this seam.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaFormatError::MalformedValue`] when the name or fields
+    /// are not canonical identifiers, or when an FTS index does not declare
+    /// exactly one field.
     pub fn try_new(
         name: impl Into<String>,
         fields: Vec<String>,
@@ -996,6 +1037,11 @@ pub struct CanonicalCollectionSchema {
 
 impl CanonicalCollectionSchema {
     /// Creates and validates one canonical collection schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaFormatError::MalformedValue`] when the collection,
+    /// fields, indexes, TTL, renames, or retention policy fail validation.
     #[allow(clippy::too_many_arguments)]
     pub fn try_new(
         name: impl Into<String>,
@@ -1029,6 +1075,12 @@ impl CanonicalCollectionSchema {
     }
 
     /// Validates references and the bounded retention policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaFormatError::MalformedValue`] when a name is invalid,
+    /// a reference dangles, or the retention policy leaves the 1-30 day
+    /// window.
     pub fn validate(&self) -> Result<(), SchemaFormatError> {
         validate_canonical_identifier(&self.name)?;
         if !(1..=30).contains(&self.history_retention_days) {
@@ -1062,17 +1114,16 @@ impl CanonicalCollectionSchema {
                 }
             }
         }
-        if let Some(ttl) = &self.ttl {
-            if !fields.contains(ttl.field.as_str())
+        if let Some(ttl) = &self.ttl
+            && (!fields.contains(ttl.field.as_str())
                 || self
                     .fields
                     .iter()
                     .find(|field| field.name == ttl.field)
                     .map(CanonicalField::kind)
-                    != Some(CanonicalFieldType::Timestamp)
-            {
-                return Err(SchemaFormatError::MalformedValue);
-            }
+                    != Some(CanonicalFieldType::Timestamp))
+        {
+            return Err(SchemaFormatError::MalformedValue);
         }
         let mut sources = BTreeSet::new();
         let mut targets = BTreeSet::new();
@@ -1139,6 +1190,11 @@ pub struct CanonicalSchemaDocument {
 
 impl CanonicalSchemaDocument {
     /// Creates one canonical document and sorts collections by name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaFormatError::MalformedValue`] when a collection name
+    /// repeats or a nested collection fails validation.
     pub fn try_new(
         collections: Vec<CanonicalCollectionSchema>,
         version: Option<SchemaVersion>,
@@ -1188,21 +1244,24 @@ impl CanonicalSchemaDocument {
     /// Serializes the canonical contract as stable UTF-8 JSON.
     ///
     /// This small serializer is kept at the family boundary so SDK and host
-    /// adapters do not each invent a schema encoding.  It accepts only values
-    /// produced by [`to_value`], and rejects non-finite numbers if this method
-    /// is ever reused with a future value extension.
-    pub fn to_json(&self) -> String {
-        let mut output = String::new();
-        // A canonical schema contains only finite integers, booleans, text,
-        // arrays, and objects.  Keep the defensive serializer error internal
-        // so the SDK-facing operation is as direct as the other builders.
-        if append_canonical_json(&self.to_value(), &mut output).is_err() {
-            return String::new();
-        }
-        output
+    /// adapters do not each invent a schema encoding. It rejects non-finite
+    /// numbers if this method is ever reused with a future value extension.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaFormatError::MalformedValue`] if the canonical value
+    /// contains a value that cannot be represented by JSON.
+    pub fn to_json(&self) -> Result<String, SchemaFormatError> {
+        self.try_to_json()
     }
 
-    /// Fallible form of [`Self::to_json`] for generic adapter code.
+    /// Fallible serializer retained as an explicit spelling for generic
+    /// adapter code.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaFormatError::MalformedValue`] if a value cannot be
+    /// represented by JSON.
     pub fn try_to_json(&self) -> Result<String, SchemaFormatError> {
         let mut output = String::new();
         append_canonical_json(&self.to_value(), &mut output)?;
@@ -1211,6 +1270,13 @@ impl CanonicalSchemaDocument {
 
     /// Parses exactly the canonical JSON-shaped value. Unknown keys and all
     /// former aliases (`merge`, `history`, `field_type`, and so on) fail closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaFormatError::NotAnObject`],
+    /// [`SchemaFormatError::UnsupportedKeyword`], or
+    /// [`SchemaFormatError::MalformedValue`] when the value is outside the
+    /// canonical contract.
     pub fn from_value(value: &DocumentValue) -> Result<Self, SchemaFormatError> {
         let DocumentValue::Object(root) = value else {
             return Err(SchemaFormatError::NotAnObject);
@@ -1227,6 +1293,11 @@ impl CanonicalSchemaDocument {
     }
 
     /// Parses one canonical JSON-shaped engine value.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same typed [`SchemaFormatError`] cases as
+    /// [`Self::from_value`].
     pub fn from_json_value(value: &DocumentValue) -> Result<Self, SchemaFormatError> {
         Self::from_value(value)
     }
@@ -1428,6 +1499,10 @@ fn bool_field(
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the collection decoder reads every contract field in order"
+)]
 fn collection_from_value(
     value: &DocumentValue,
 ) -> Result<CanonicalCollectionSchema, SchemaFormatError> {
@@ -1448,9 +1523,8 @@ fn collection_from_value(
         ],
     )?;
     let name = string_field(fields, "name")?;
-    let field_values = match fields.get("fields") {
-        Some(DocumentValue::Array(values)) => values,
-        _ => return Err(SchemaFormatError::MalformedValue),
+    let Some(DocumentValue::Array(field_values)) = fields.get("fields") else {
+        return Err(SchemaFormatError::MalformedValue);
     };
     let mut definitions = Vec::new();
     for value in field_values {
@@ -1549,6 +1623,10 @@ fn collection_from_value(
     )
 }
 
+#[allow(
+    clippy::items_after_test_module,
+    reason = "published SDK aliases stay at the file end by contract"
+)]
 #[cfg(test)]
 mod canonical_tests {
     use super::*;
@@ -1658,7 +1736,5 @@ pub type IndexDef = CanonicalIndex;
 pub type IndexKind = CanonicalIndexKind;
 /// Published SDK alias for an explicit field rename.
 pub type FieldRename = SchemaFieldRename;
-/// Published SDK alias for the optional collection TTL declaration.
-pub type TtlDef = SchemaTtl;
 /// Published SDK alias for the collection-level conflict policy.
 pub type MergePolicy = SchemaMergePolicy;

@@ -1,13 +1,13 @@
-//! Durable schema-catalog records and the SQLite adapter contract.
+//! Durable schema-catalog records and the `SQLite` adapter contract.
 //!
 //! `CanonicalSchemaDocument` is the customer-facing `terrascale.schema.json`
 //! value.  This module owns the envelope that makes that value durable: the
 //! database/branch pin, catalog entry identity, schema version, migration
 //! generation and status, and a checksum covering the complete envelope.
 //!
-//! The module deliberately does not open SQLite or know a table handle.  A
+//! The module deliberately does not open `SQLite` or know a table handle.  A
 //! member adapter implements [`SchemaCatalogAdapter`] and must perform the
-//! load and compare-and-swap in one SQLite write transaction.  The exact
+//! load and compare-and-swap in one `SQLite` write transaction.  The exact
 //! columns, constraints, and transaction ordering are documented by
 //! [`SQLITE_SCHEMA_CATALOG_DDL`] and the trait method documentation.  This
 //! keeps the record format testable without adding a second storage path.
@@ -23,15 +23,15 @@ use crate::types::DocumentValue;
 /// The reserved durable-record format marker.
 pub const SCHEMA_CATALOG_FORMAT: &str = "terrascale.schema.catalog.v1";
 
-/// The logical SQLite table an adapter must own.
+/// The logical `SQLite` table an adapter must own.
 pub const SQLITE_SCHEMA_CATALOG_TABLE: &str = "terrascale_schema_catalog";
 
-/// SQLite schema required by [`SchemaCatalogAdapter`].
+/// `SQLite` schema required by [`SchemaCatalogAdapter`].
 //
 // Keep this string as a reviewable contract.  The adapter may add SQLite
 // query-plan indexes, but may not remove a column, weaken a CHECK, or use a
 // lossy TEXT/JSON representation for the canonical schema and checksum.
-pub const SQLITE_SCHEMA_CATALOG_DDL: &str = r#"
+pub const SQLITE_SCHEMA_CATALOG_DDL: &str = r"
 CREATE TABLE IF NOT EXISTS terrascale_schema_catalog (
     database_id BLOB NOT NULL CHECK (length(database_id) = 16),
     branch TEXT NOT NULL CHECK (length(branch) BETWEEN 1 AND 255),
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS terrascale_schema_catalog (
     PRIMARY KEY (database_id, branch, branch_incarnation),
     UNIQUE (entry_id)
 );
-"#;
+";
 
 /// A branch/database incarnation to which a schema catalog is pinned.
 ///
@@ -67,6 +67,12 @@ pub type BranchPin = SchemaBranchPin;
 
 impl SchemaBranchPin {
     /// Creates a pin after validating the branch label and incarnation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaCatalogError::InvalidBranchPin`] when the branch label
+    /// is empty, too long, non-ASCII, or carries an unexpected byte, or when
+    /// the incarnation is zero.
     pub fn try_new(
         database: DatabaseUlid,
         branch: impl Into<String>,
@@ -142,6 +148,11 @@ impl SchemaMigrationStatus {
     }
 
     /// Parses the one accepted persisted spelling; aliases are rejected.
+    #[allow(
+        clippy::should_implement_trait,
+        reason = "the catalog persists an Option-based spelling without an Error type"
+    )]
+    #[must_use]
     pub fn from_str(value: &str) -> Option<Self> {
         Some(match value {
             "none" => Self::None,
@@ -224,6 +235,12 @@ pub struct SchemaCatalogRecord {
 
 impl SchemaCatalogRecord {
     /// Creates a record and computes its checksum over every persisted fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaCatalogError::InvalidSchemaVersion`],
+    /// [`SchemaCatalogError::InvalidMigrationGeneration`], or
+    /// [`SchemaCatalogError::Schema`] when the record fails validation.
     #[allow(clippy::too_many_arguments)]
     pub fn try_new(
         entry_id: SchemaCatalogEntryUlid,
@@ -308,6 +325,16 @@ impl SchemaCatalogRecord {
     }
 
     /// Decodes and verifies a strict durable value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaCatalogError::MalformedRecord`],
+    /// [`SchemaCatalogError::UnsupportedFormat`],
+    /// [`SchemaCatalogError::UnsupportedKeyword`],
+    /// [`SchemaCatalogError::Schema`],
+    /// [`SchemaCatalogError::MalformedChecksum`], or
+    /// [`SchemaCatalogError::ChecksumMismatch`] when the value fails to decode
+    /// or verify.
     pub fn from_value(value: &DocumentValue) -> Result<Self, SchemaCatalogError> {
         let DocumentValue::Object(fields) = value else {
             return Err(SchemaCatalogError::MalformedRecord);
@@ -359,21 +386,37 @@ impl SchemaCatalogRecord {
     }
 
     /// Alias for adapters that call the record codec directly.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same typed [`SchemaCatalogError`] cases as
+    /// [`Self::from_value`].
     pub fn decode(value: &DocumentValue) -> Result<Self, SchemaCatalogError> {
         Self::from_value(value)
     }
 
     /// Returns the canonical UTF-8 `terrascale.schema.json` representation.
     ///
-    /// SQLite adapters persist this exact byte sequence in `schema_json`;
+    /// `SQLite` adapters persist this exact byte sequence in `schema_json`;
     /// metadata is stored in its typed columns and reconstructed into this
     /// envelope before checksum verification on load.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the validated canonical schema cannot serialize; this is
+    /// unreachable for records built by [`Self::try_new`].
     #[must_use]
     pub fn schema_json(&self) -> String {
-        self.schema.to_json()
+        self.schema.to_json().expect("validated canonical schema serializes")
     }
 
     /// Re-checks the checksum after an adapter has loaded a record.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaCatalogError::ChecksumMismatch`] when the stored
+    /// checksum does not match the body, or the validation case when the
+    /// record itself is malformed.
     pub fn verify(&self) -> Result<(), SchemaCatalogError> {
         self.validate_without_checksum()?;
         if self.compute_checksum() == self.checksum {
@@ -508,7 +551,7 @@ pub enum SchemaCatalogError {
     UnsupportedKeyword,
     /// The canonical schema failed its own strict validation.
     Schema(SchemaFormatError),
-    /// A schema version is zero or outside the SQLite interchange domain.
+    /// A schema version is zero or outside the `SQLite` interchange domain.
     InvalidSchemaVersion,
     /// A branch name or incarnation is invalid.
     InvalidBranchPin,
@@ -574,6 +617,12 @@ pub struct SchemaCatalogCasRequest {
 
 impl SchemaCatalogCasRequest {
     /// Creates a request after verifying the desired record itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaCatalogError::CompareAndSwapConflict`] when only one
+    /// of the expected version and checksum is set, or the verification case
+    /// when the desired record is malformed.
     pub fn try_new(
         expected: SchemaCatalogExpectation,
         desired: SchemaCatalogRecord,
@@ -598,6 +647,15 @@ impl SchemaCatalogCasRequest {
     }
 
     /// Applies the pure CAS rules to a loaded current row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaCatalogError::BranchMismatch`],
+    /// [`SchemaCatalogError::NonMonotonicVersion`],
+    /// [`SchemaCatalogError::VersionContentMismatch`],
+    /// [`SchemaCatalogError::NonMonotonicMigrationGeneration`], or
+    /// [`SchemaCatalogError::IdempotencyConflict`] when the successor breaks
+    /// the transition rules.
     pub fn evaluate(
         &self,
         current: Option<&SchemaCatalogRecord>,
@@ -658,11 +716,15 @@ pub trait SchemaCatalogAdapter {
 
     /// Loads the row for exactly this branch pin.
     ///
-    /// The SQLite implementation must run a point lookup using the complete
+    /// The `SQLite` implementation must run a point lookup using the complete
     /// `(database_id, branch, branch_incarnation)` primary key, decode
     /// `schema_json` with [`SchemaCatalogRecord::from_value`], and return a
     /// checksum failure for any row that cannot be proved.  `NULL`, a missing
     /// row, and a corrupt row are distinct outcomes.
+    ///
+    /// # Errors
+    ///
+    /// Returns the adapter's `Error` when the point lookup cannot be served.
     fn load(
         &mut self,
         branch: &SchemaBranchPin,
@@ -670,13 +732,17 @@ pub trait SchemaCatalogAdapter {
 
     /// Atomically installs one idempotent successor.
     ///
-    /// The SQLite implementation must use one `BEGIN IMMEDIATE` transaction:
+    /// The `SQLite` implementation must use one `BEGIN IMMEDIATE` transaction:
     /// load and verify the current row, call [`SchemaCatalogCasRequest::evaluate`],
     /// and then insert/update the complete row before commit.  The update
     /// predicate must include the branch primary key plus the expected
     /// `schema_version` and `checksum`; a unique `entry_id` conflict is
     /// `AlreadyApplied` only when the stored bytes and checksum are identical.
     /// Never update schema JSON, metadata, or checksum in separate commits.
+    ///
+    /// # Errors
+    ///
+    /// Returns the adapter's `Error` when the atomic install cannot complete.
     fn compare_and_swap(
         &mut self,
         request: &SchemaCatalogCasRequest,
@@ -685,15 +751,14 @@ pub trait SchemaCatalogAdapter {
 
 fn append_json(value: &DocumentValue, output: &mut Vec<u8>) {
     match value {
-        DocumentValue::Null => output.extend_from_slice(b"null"),
         DocumentValue::Boolean(value) => {
-            output.extend_from_slice(if *value { b"true" } else { b"false" })
+            output.extend_from_slice(if *value { b"true" } else { b"false" });
         }
         DocumentValue::Integer(value) => output.extend_from_slice(value.to_string().as_bytes()),
         DocumentValue::Number(value) if value.is_finite() => {
-            output.extend_from_slice(value.to_string().as_bytes())
+            output.extend_from_slice(value.to_string().as_bytes());
         }
-        DocumentValue::Number(_) => output.extend_from_slice(b"null"),
+        DocumentValue::Null | DocumentValue::Number(_) => output.extend_from_slice(b"null"),
         DocumentValue::String(value) => append_json_string(value, output),
         DocumentValue::Array(values) => {
             output.push(b'[');
