@@ -237,8 +237,17 @@ func (c *Client) Subscribe(ctx context.Context, databaseID, statement string, pa
 		done:       make(chan struct{}),
 		cancel:     cancel,
 	}
-	// Detach the poll loop from the caller's ctx lifetime only via Close and
-	// the parent ctx: cancel the loop when the parent ctx ends.
+	for _, doc := range attach.Snapshot {
+		cp := s.Checkpoint()
+		if !s.deliver(Update{Kind: UpdateSnapshot, Checkpoint: cp, ID: doc.ID, Collection: doc.Collection, Body: doc.Body}) {
+			break
+		}
+	}
+	// Start polling only after the initial snapshot is queued, so a fast
+	// origin cannot deliver a delta ahead of the snapshot. Detach the poll
+	// loop from the caller's ctx lifetime via Close and the parent ctx.
+	s.wg.Add(1)
+	go s.pollLoop(pollCtx)
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -246,14 +255,6 @@ func (c *Client) Subscribe(ctx context.Context, databaseID, statement string, pa
 		case <-s.done:
 		}
 	}()
-	s.wg.Add(1)
-	go s.pollLoop(pollCtx)
-	for _, doc := range attach.Snapshot {
-		cp := s.Checkpoint()
-		if !s.deliver(Update{Kind: UpdateSnapshot, Checkpoint: cp, ID: doc.ID, Collection: doc.Collection, Body: doc.Body}) {
-			break
-		}
-	}
 	return s, nil
 }
 
@@ -286,6 +287,7 @@ func (c *Client) attach(ctx context.Context, databaseID, statement string, param
 }
 
 func (s *Subscription) pollLoop(ctx context.Context) {
+	defer s.wg.Done()
 	defer close(s.events)
 	defer s.cancel()
 	for {

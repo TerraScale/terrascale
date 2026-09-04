@@ -396,7 +396,7 @@ var retryableStatuses = map[int]bool{
 
 // do performs one API call: path must stay under /api/v1.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body any, out any, route string, opts ...RequestOption) error {
-	if !strings.HasPrefix(path, "/api/v1") {
+	if path != "/api/v1" && !strings.HasPrefix(path, "/api/v1/") {
 		return fmt.Errorf("sdk: path %q is outside the public /api/v1 contract", path)
 	}
 	rc := resolveRequestOptions(opts)
@@ -439,6 +439,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			if placement := placementOf(headers); IsRegionCode(placement) {
 				code, _ := ParseRegionCode(placement)
 				c.setPinned(code)
+				// The placement in a 421 is authoritative for this retry,
+				// including when the original request supplied a hint.
+				rc.regionHint = code
 				followed421 = true
 				continue
 			}
@@ -480,8 +483,13 @@ func (c *Client) roundTrip(ctx context.Context, method, base, path string, query
 		h.Set("X-TerraScale-Project-ID", c.cfg.ProjectID)
 	}
 	hint := rc.regionHint
-	if hint == "" && c.cfg.Affinity == AffinityFailover && c.cfg.PreferredRegion != "" {
-		hint = c.cfg.PreferredRegion
+	if hint == "" && c.cfg.Affinity == AffinityFailover {
+		// A learned 421 pin wins over the configured preferred region.
+		if p := c.PinnedRegion(); p != "" {
+			hint = p
+		} else if c.cfg.PreferredRegion != "" {
+			hint = c.cfg.PreferredRegion
+		}
 	}
 	if hint != "" {
 		h.Set("X-TerraScale-Preferred-Region", string(hint))

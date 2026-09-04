@@ -428,7 +428,7 @@ func TestP2BConformanceRegionPinning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	regions, err := c.Regions.List(context.Background())
+	regions, err := c.Regions.List(context.Background(), sdk.WithRegionHint(sdk.RegionGRU))
 	if err != nil {
 		t.Fatalf("List after 421: %v", err)
 	}
