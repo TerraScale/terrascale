@@ -783,16 +783,16 @@ impl Default for CompressConfig {
 #[derive(Clone, Debug, PartialEq)]
 pub struct WeightedTemplate {
     /// The template.
-    template: Template,
+    pub(crate) template: Template,
     /// Executions in the window.
-    executions: u64,
+    pub(crate) executions: u64,
     /// Total logical cost in the window (`frequency × average cost`).
-    total_cost: u64,
+    pub(crate) total_cost: u64,
     /// Average logical cost per execution.
-    average_cost: f64,
+    pub(crate) average_cost: f64,
     /// The compression weight (today: total cost; decay lands with the
     /// timestamped wave).
-    weight: f64,
+    pub(crate) weight: f64,
 }
 
 impl WeightedTemplate {
@@ -961,18 +961,18 @@ impl CandidateColumn {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Candidate {
     /// The indexed collection.
-    collection: String,
+    pub(crate) collection: String,
     /// The columns in index order.
-    columns: Vec<CandidateColumn>,
+    pub(crate) columns: Vec<CandidateColumn>,
     /// The physical kind.
-    kind: CandidateKind,
+    pub(crate) kind: CandidateKind,
     /// Why the candidate exists.
-    source: CandidateSource,
+    pub(crate) source: CandidateSource,
     /// Whether a JSON-path predicate needs a new descriptor plus the index.
-    needs_descriptor: bool,
+    pub(crate) needs_descriptor: bool,
     /// The skeleton's estimated benefit per index byte (Extend orders by
     /// this; the bandit replaces it with measured rewards).
-    benefit_per_byte: f64,
+    pub(crate) benefit_per_byte: f64,
 }
 
 impl Candidate {

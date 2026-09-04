@@ -21,6 +21,10 @@ pub(crate) const COST_CAP_MULTIPLE: f64 = super::later::SHADOW_COST_CAP_MULTIPLE
 pub(crate) const COST_CAP_FLOOR: f64 = 1.0;
 /// Conservative deterministic critical value for the Welch statistic.
 pub(crate) const WELCH_CRITICAL_VALUE: f64 = 2.0;
+/// A candidate may not make any logical-work safety metric worse by more than
+/// this amount for a template.  A template crossing this boundary is pinned
+/// to its baseline plan before the candidate is made visible.
+pub(crate) const MAX_REGRESSION_FRACTION: f64 = 0.05;
 
 /// A bounded pair of logical-cost samples for Welch verification.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -86,6 +90,34 @@ pub(crate) struct WelchEvidence {
     pub(crate) statistic: f64,
     /// Whether the means differ at the fixed conservative threshold.
     pub(crate) significant: bool,
+    /// Baseline p95 total logical work.
+    pub(crate) baseline_p95: f64,
+    /// Candidate p95 total logical work.
+    pub(crate) candidate_p95: f64,
+    /// Baseline mean pages read.
+    pub(crate) baseline_pages: f64,
+    /// Candidate mean pages read.
+    pub(crate) candidate_pages: f64,
+    /// Baseline mean rows examined.
+    pub(crate) baseline_rows: f64,
+    /// Candidate mean rows examined.
+    pub(crate) candidate_rows: f64,
+    /// Whether p95, pages, or rows crossed the hard five-percent guard.
+    pub(crate) hard_regression: bool,
+}
+
+impl WelchEvidence {
+    /// Whether this template must continue using its baseline plan.
+    #[must_use]
+    pub(crate) const fn needs_pin(&self) -> bool {
+        self.hard_regression || (self.improvement_fraction < 0.0 && self.significant)
+    }
+
+    /// Whether the candidate has the required statistically supported gain.
+    #[must_use]
+    pub(crate) const fn improves_enough(&self) -> bool {
+        self.improvement_fraction >= MIN_IMPROVEMENT_FRACTION && self.significant
+    }
 }
 
 /// Port for replaying templates without changing their serving plan.
@@ -125,6 +157,8 @@ pub(crate) fn verify_shadow(
     }
     let baseline = statistics(&samples.baseline)?;
     let candidate_stats = statistics(&samples.candidate)?;
+    let baseline_metrics = metric_statistics(&samples.baseline)?;
+    let candidate_metrics = metric_statistics(&samples.candidate)?;
     let cap = baseline.mean.mul_add(COST_CAP_MULTIPLE, COST_CAP_FLOOR);
     if !cap.is_finite() {
         return None;
@@ -155,19 +189,33 @@ pub(crate) fn verify_shadow(
         }
         (statistic, statistic >= WELCH_CRITICAL_VALUE)
     };
+    let baseline_p95 = baseline.p95;
+    let candidate_p95 = candidate_stats.p95;
+    let hard_regression = exceeds_guard(baseline_p95, candidate_p95)
+        || exceeds_guard(baseline_metrics.pages_mean, candidate_metrics.pages_mean)
+        || exceeds_guard(baseline_metrics.pages_p95, candidate_metrics.pages_p95)
+        || exceeds_guard(baseline_metrics.rows_mean, candidate_metrics.rows_mean)
+        || exceeds_guard(baseline_metrics.rows_p95, candidate_metrics.rows_p95);
     Some(WelchEvidence {
         baseline_mean: baseline.mean,
         candidate_mean: candidate_stats.mean,
         improvement_fraction,
         statistic,
         significant,
+        baseline_p95,
+        candidate_p95,
+        baseline_pages: baseline_metrics.pages_mean,
+        candidate_pages: candidate_metrics.pages_mean,
+        baseline_rows: baseline_metrics.rows_mean,
+        candidate_rows: candidate_metrics.rows_mean,
+        hard_regression,
     })
 }
 
 fn decision_for(evidence: WelchEvidence) -> ShadowDecision {
-    if evidence.improvement_fraction >= MIN_IMPROVEMENT_FRACTION && evidence.significant {
+    if evidence.improves_enough() && !evidence.hard_regression {
         ShadowDecision::Activate
-    } else if evidence.improvement_fraction < 0.0 && evidence.significant {
+    } else if evidence.needs_pin() {
         ShadowDecision::ActivateWithPins
     } else {
         ShadowDecision::Abandon
@@ -178,6 +226,7 @@ fn decision_for(evidence: WelchEvidence) -> ShadowDecision {
 struct Statistics {
     mean: f64,
     variance: f64,
+    p95: f64,
     count: f64,
 }
 
@@ -190,19 +239,131 @@ fn statistics(samples: &[LogicalCost]) -> Option<Statistics> {
     let mut values = samples.iter().map(|cost| scalar_cost(*cost)).collect::<Option<Vec<_>>>()?;
     values.sort_unstable_by(|left, right| left.total_cmp(right));
     let count = values.len() as f64;
-    let mean = values.iter().sum::<f64>() / count;
+    let sum = values.iter().try_fold(0.0, |sum, value| {
+        let next = sum + value;
+        next.is_finite().then_some(next)
+    })?;
+    let mean = sum / count;
     if !mean.is_finite() || mean <= 0.0 {
         return None;
     }
     let variance = if values.len() == 1 {
         0.0
     } else {
-        values.iter().map(|value| (value - mean).powi(2)).sum::<f64>() / (count - 1.0)
+        let sum = values.iter().try_fold(0.0, |sum, value| {
+            let next = sum + (value - mean).powi(2);
+            next.is_finite().then_some(next)
+        })?;
+        sum / (count - 1.0)
     };
     if !variance.is_finite() {
         return None;
     }
-    Some(Statistics { mean, variance, count })
+    Some(Statistics { mean, variance, p95: percentile(&values)?, count })
+}
+
+#[derive(Clone, Copy)]
+struct MetricStatistics {
+    pages_mean: f64,
+    pages_p95: f64,
+    rows_mean: f64,
+    rows_p95: f64,
+}
+
+fn metric_statistics(samples: &[LogicalCost]) -> Option<MetricStatistics> {
+    let mut pages = samples.iter().map(|cost| cost.pages_read() as f64).collect::<Vec<_>>();
+    let mut rows = samples.iter().map(|cost| cost.rows_examined() as f64).collect::<Vec<_>>();
+    pages.sort_unstable_by(f64::total_cmp);
+    rows.sort_unstable_by(f64::total_cmp);
+    let count = pages.len() as f64;
+    let pages_sum = pages.iter().try_fold(0.0, |sum, value| {
+        let next = sum + value;
+        next.is_finite().then_some(next)
+    })?;
+    let rows_sum = rows.iter().try_fold(0.0, |sum, value| {
+        let next = sum + value;
+        next.is_finite().then_some(next)
+    })?;
+    Some(MetricStatistics {
+        pages_mean: pages_sum / count,
+        pages_p95: percentile(&pages)?,
+        rows_mean: rows_sum / count,
+        rows_p95: percentile(&rows)?,
+    })
+}
+
+/// Nearest-rank p95.  The bounded sample size and sorted inputs make this
+/// deterministic across replay and independent of arrival order.
+fn percentile(values: &[f64]) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    let rank = (values.len() * 95).div_ceil(100).saturating_sub(1);
+    let value = *values.get(rank)?;
+    value.is_finite().then_some(value)
+}
+
+fn exceeds_guard(baseline: f64, candidate: f64) -> bool {
+    if !baseline.is_finite() || !candidate.is_finite() || baseline < 0.0 || candidate < 0.0 {
+        return true;
+    }
+    if baseline == 0.0 {
+        return candidate > 0.0;
+    }
+    candidate > baseline * (1.0 + MAX_REGRESSION_FRACTION)
+}
+
+/// Evidence and the exact templates that need a baseline-plan pin.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct TemplateSetDecision {
+    /// Aggregate lifecycle decision for the candidate.
+    pub(crate) decision: ShadowDecision,
+    /// Valid evidence in template order.
+    pub(crate) evidence: Vec<(Template, WelchEvidence)>,
+    /// Templates whose serving plan must exclude the candidate.
+    pub(crate) pins: Vec<Template>,
+}
+
+impl TemplateSetDecision {
+    /// Whether the candidate may become visible.
+    #[must_use]
+    pub(crate) const fn activates(&self) -> bool {
+        self.decision.activates()
+    }
+}
+
+/// Verifies every tuned template for one candidate and returns per-template
+/// pin decisions. Any malformed or mismatched entry abandons the candidate;
+/// partial evidence is never sufficient to publish an index.
+pub(crate) fn verify_templates(
+    candidate: &Candidate,
+    templates: &[(Template, ShadowSamples)],
+) -> TemplateSetDecision {
+    if templates.is_empty() {
+        return TemplateSetDecision::default();
+    }
+    let mut result = TemplateSetDecision {
+        decision: ShadowDecision::Abandon,
+        ..TemplateSetDecision::default()
+    };
+    for (template, samples) in templates {
+        let Some(evidence) = verify_shadow(template, candidate, samples) else {
+            return result;
+        };
+        let decision = decision_for(evidence);
+        if decision.needs_pin() {
+            result.pins.push(template.clone());
+        }
+        result.evidence.push((template.clone(), evidence));
+    }
+    if result.evidence.iter().any(|(_, evidence)| evidence.improves_enough()) {
+        result.decision = if result.pins.is_empty() {
+            ShadowDecision::Activate
+        } else {
+            ShadowDecision::ActivateWithPins
+        };
+    }
+    result
 }
 
 fn scalar_cost(cost: LogicalCost) -> Option<f64> {
