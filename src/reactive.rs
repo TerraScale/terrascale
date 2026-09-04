@@ -676,7 +676,9 @@ impl ReactiveClient {
                 "Reactive subscription identities are limited to 128 bytes.",
             ));
         }
-        let parameters = serde_json::to_vec(query.params()).map_err(|error| {
+        // The wire contract carries canonical named/ordinal parameter bytes.
+        // `params()` is only the compatibility positional accessor.
+        let parameters = serde_json::to_vec(query.parameters()).map_err(|error| {
             Error::new(
                 ErrorKind::Validation,
                 "invalid_parameters",
@@ -751,7 +753,12 @@ impl ReactiveClient {
         }
 
         let attempts = options.max_attempts.max(1);
-        let url = append_offset(&canonical_log_url(&view.view_id, view.generation), offset);
+        let log_url = if view.log_url.trim().is_empty() {
+            canonical_log_url(&view.view_id, view.generation)
+        } else {
+            view.log_url.as_str().to_owned()
+        };
+        let url = append_offset(&log_url, offset);
         let mut last_error = None;
         let deadline = options.deadline.min(MAX_POLL_WINDOW);
         let started = Instant::now();
@@ -817,13 +824,8 @@ impl ReactiveClient {
         }
         let mut state = Subscription::new(view.view_id.clone());
         if view.snapshot_urls.is_empty() {
-            if view.snapshot.revision == "0" {
-                return Err(Error::new(
-                    ErrorKind::InvalidResponse,
-                    "missing_snapshot",
-                    "The reactive attach response did not include a complete snapshot.",
-                ));
-            }
+            // A resume attach may legitimately return only checkpoint + offset;
+            // the local state is already represented by that position.
             state.apply_snapshot(view.snapshot.clone());
         } else {
             // A chunk URL is an immutable, authorized MessagePack snapshot
@@ -880,13 +882,6 @@ impl ReactiveClient {
                     )
                 })?;
             Checkpoint::try_new(chunk.checkpoint.to_bytes())?;
-            if chunk.revision == "0" {
-                return Err(Error::new(
-                    ErrorKind::InvalidResponse,
-                    "invalid_snapshot_chunk",
-                    "A reactive snapshot chunk cannot use revision zero.",
-                ));
-            }
             if let Some(current) = &mut assembled {
                 if current.view_generation != chunk.view_generation
                     || current.revision != chunk.revision
@@ -994,11 +989,13 @@ fn decode_attached_view(value: serde_json::Value) -> std::result::Result<Attache
         .ok_or_else(|| "reactive attach response has no view capability".to_owned())?;
     let checkpoint = object
         .get("checkpoint")
-        .map(|value| decode_checkpoint_value(value, "checkpoint"))
-        .transpose()?;
+        .ok_or_else(|| "reactive attach response has no checkpoint".to_owned())
+        .and_then(|value| decode_checkpoint_value(value, "checkpoint"))?;
 
     let raw_urls = object
-        .get("snapshotUrls")
+        .get("snapshot_chunks")
+        .or_else(|| object.get("snapshotChunks"))
+        .or_else(|| object.get("snapshotUrls"))
         .or_else(|| object.get("snapshot_urls"))
         .or_else(|| object.get("snapshotChunkUrls"))
         .or_else(|| object.get("snapshot_chunk_urls"));
@@ -1015,32 +1012,68 @@ fn decode_attached_view(value: serde_json::Value) -> std::result::Result<Attache
                 .iter()
                 .enumerate()
                 .map(|(index, value)| {
-                    if !value.is_string() {
+                    let advertised = value
+                        .as_str()
+                        .ok_or_else(|| format!("reactive snapshot URL {index} is not a string"))?;
+                    if advertised.trim().is_empty() {
                         return Err(format!("reactive snapshot URL {index} is not a string"));
                     }
-                    Ok(canonical_snapshot_url(&view_id, generation, index))
+                    advertised_url(
+                        advertised,
+                        &canonical_snapshot_path(&view_id, generation, index),
+                    )
                 })
                 .collect::<std::result::Result<Vec<_>, _>>()?
         }
     };
     let snapshot = object
         .get("snapshot")
-        .map(|value| decode_snapshot_value(value, checkpoint.as_ref(), generation))
+        .map(|value| decode_snapshot_value(value, Some(&checkpoint), generation))
         .transpose()?
-        .unwrap_or_else(|| empty_snapshot(generation, checkpoint.clone()));
+        .unwrap_or_else(|| {
+            let offset = object
+                .get("offset")
+                .and_then(value_string)
+                .unwrap_or_else(|| "0".to_owned());
+            empty_snapshot_at(generation, checkpoint.clone(), offset)
+        });
     if object.get("snapshot").is_none() && snapshot_urls.is_empty() {
-        return Err("reactive attach response has no snapshot or snapshot URLs".to_owned());
+        // A checkpoint-only attach is the normal resume response. Its offset
+        // is the state position; no synthetic revision is accepted.
+        if object.get("offset").and_then(value_string).is_none() {
+            return Err("checkpoint-only reactive attach has no offset".to_owned());
+        }
     }
-    let checkpoint = checkpoint.unwrap_or_else(|| snapshot.checkpoint.clone());
+    if snapshot.view_generation != generation {
+        return Err("reactive snapshot generation does not match attach generation".to_owned());
+    }
+    if snapshot.checkpoint != checkpoint {
+        return Err("reactive attach checkpoint disagrees with snapshot".to_owned());
+    }
+    let log_url = object
+        .get("log")
+        .or_else(|| object.get("logUrl"))
+        .or_else(|| object.get("log_url"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "reactive attach response has no log URL".to_owned())?;
+    let log_url = advertised_url(log_url, &canonical_log_path(&view_id, generation))?;
     Ok(AttachedView {
         view_id: view_id.clone(),
         generation,
         snapshot,
         checkpoint,
         snapshot_urls,
-        log_url: canonical_log_url(&view_id, generation),
+        log_url,
         capability: Some(capability),
     })
+}
+
+fn value_string(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(value) if !value.trim().is_empty() => Some(value.clone()),
+        serde_json::Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
 }
 
 fn string_field(
@@ -1081,12 +1114,12 @@ fn decode_checkpoint_value(
     Checkpoint::try_new(bytes).map_err(|error| error.message)
 }
 
-fn empty_snapshot(generation: u64, checkpoint: Option<Checkpoint>) -> ViewSnapshot {
+fn empty_snapshot_at(generation: u64, checkpoint: Checkpoint, revision: String) -> ViewSnapshot {
     ViewSnapshot {
         view_generation: generation,
-        revision: "0".to_owned(),
+        revision,
         items: Vec::new(),
-        checkpoint: checkpoint.unwrap_or_else(|| Checkpoint::new(vec![0])),
+        checkpoint,
     }
 }
 
@@ -1105,13 +1138,18 @@ fn decode_snapshot_value(
         Some(serde_json::Value::Number(value)) => value.to_string(),
         _ => "0".to_owned(),
     };
+    let inner_checkpoint = object
+        .get("checkpoint")
+        .map(|value| decode_checkpoint_value(value, "snapshot.checkpoint"))
+        .transpose()?;
+    if let (Some(outer), Some(inner)) = (outer_checkpoint, inner_checkpoint.as_ref()) {
+        if outer != inner {
+            return Err("reactive snapshot checkpoint disagrees with attach checkpoint".to_owned());
+        }
+    }
     let checkpoint = outer_checkpoint
         .cloned()
-        .or_else(|| {
-            object
-                .get("checkpoint")
-                .and_then(|value| decode_checkpoint_value(value, "snapshot.checkpoint").ok())
-        })
+        .or(inner_checkpoint)
         .ok_or_else(|| "reactive snapshot has no checkpoint".to_owned())?;
     let items = object
         .get("items")
@@ -1274,6 +1312,16 @@ impl LiveSubscription {
                     detail: Some(error.message),
                 }));
             }
+            Err(error) if http_reset_reason(&error).is_some() => {
+                let reason = http_reset_reason(&error).expect("checked above");
+                return Ok(PollOutcome::Reset(ResetFrame {
+                    reason,
+                    snapshot: None,
+                    checkpoint: self.state.checkpoint().cloned(),
+                    region: None,
+                    detail: Some(error.message),
+                }));
+            }
             Err(error) => return Err(error),
         };
         if let Some(mut reset) = response.reset {
@@ -1346,6 +1394,59 @@ pub(crate) fn decode_reactive_msgpack_json(bytes: &[u8]) -> Result<serde_json::V
         ));
     }
     let mut reader = MsgpackReader { bytes, cursor: 0 };
+    let envelope_count = reader.array_count(MSGPACK_MAX_ARRAY_ITEMS)?;
+    // A single envelope is itself an array of seven fields. The first field
+    // is protocol major=2, which disambiguates it from an envelope list.
+    let single = envelope_count == 7
+        && matches!(bytes.get(reader.cursor), Some(2) | Some(0xcc))
+        && (bytes.get(reader.cursor) == Some(&2) || bytes.get(reader.cursor + 1) == Some(&2));
+    let envelope_count = if single { 1 } else { envelope_count };
+    if envelope_count == 0 {
+        return Ok(serde_json::json!({}));
+    }
+    if single {
+        reader.cursor = 0;
+    }
+    let mut responses = Vec::with_capacity(envelope_count);
+    for _ in 0..envelope_count {
+        responses.push(decode_reactive_envelope(&mut reader)?);
+    }
+    if reader.cursor != bytes.len() {
+        return Err(Error::invalid_response(
+            "reactive MessagePack frame has trailing bytes",
+        ));
+    }
+    let mut response = serde_json::Map::new();
+    let mut deltas = Vec::new();
+    let mut checkpoint = None;
+    let mut reset = None;
+    for value in responses {
+        let object = value
+            .as_object()
+            .ok_or_else(|| Error::invalid_response("reactive envelope body is not an object"))?;
+        if let Some(items) = object.get("deltas").and_then(serde_json::Value::as_array) {
+            deltas.extend(items.iter().cloned());
+        }
+        if let Some(value) = object.get("checkpoint") {
+            checkpoint = Some(value.clone());
+        }
+        if let Some(value) = object.get("reset") {
+            reset = Some(value.clone());
+        }
+    }
+    if !deltas.is_empty() {
+        response.insert("deltas".to_owned(), serde_json::Value::Array(deltas));
+    }
+    if let Some(checkpoint) = checkpoint {
+        response.insert("checkpoint".to_owned(), checkpoint);
+    }
+    if let Some(reset) = reset {
+        response.insert("reset".to_owned(), reset);
+    }
+    Ok(serde_json::Value::Object(response))
+}
+
+fn decode_reactive_envelope(reader: &mut MsgpackReader<'_>) -> Result<serde_json::Value> {
     reader.array(7)?;
     if reader.u32()? != 2 || reader.u32()? != 1 {
         return Err(Error::invalid_response(
@@ -1360,13 +1461,7 @@ pub(crate) fn decode_reactive_msgpack_json(bytes: &[u8]) -> Result<serde_json::V
     let tag = reader.u32()?;
     let _correlation = reader.u64()?;
     let _causation = reader.u64()?;
-    let value = decode_msgpack_message(&mut reader, tag)?;
-    if reader.cursor != bytes.len() {
-        return Err(Error::invalid_response(
-            "reactive MessagePack frame has trailing bytes",
-        ));
-    }
-    Ok(value)
+    decode_msgpack_message(reader, tag)
 }
 
 fn msgpack_error(message: impl Into<String>) -> Error {
@@ -1613,6 +1708,14 @@ fn decode_msgpack_message(reader: &mut MsgpackReader<'_>, tag: u32) -> Result<se
             reader.array(0)?;
             Ok(serde_json::json!({}))
         }
+        7 => {
+            // checkpoint acknowledgement advances the opaque resume token
+            // without carrying a data-bearing delta.
+            reader.array(2)?;
+            let _subscription = reader.text(128)?;
+            let checkpoint = BASE64.encode(reader.binary(1, MAX_CHECKPOINT_BYTES)?);
+            Ok(serde_json::json!({"checkpoint": checkpoint}))
+        }
         8 => {
             // authorization changed is a typed permission reset
             reader.array(4)?;
@@ -1823,22 +1926,84 @@ fn decode_reset_reason(value: u32) -> Result<&'static str> {
 }
 
 fn append_offset(base: &str, offset: &str) -> String {
-    let separator = if base.contains('?') { '&' } else { '?' };
-    format!("{base}{separator}offset={}", percent_encode(offset))
+    // Keep immutable attach query fields (for example `cut`) while replacing
+    // the only mutable cache-key field, `offset`.
+    let (without_fragment, fragment) = base.split_once('#').map_or((base, ""), |(v, f)| (v, f));
+    let (path, query) = without_fragment
+        .split_once('?')
+        .map_or((without_fragment, ""), |(p, q)| (p, q));
+    let mut fields = query
+        .split('&')
+        .filter(|field| {
+            let field = *field;
+            !field.is_empty()
+                && !field
+                    .split_once('=')
+                    .map_or(field, |(name, _)| name)
+                    .eq_ignore_ascii_case("offset")
+        })
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    fields.push(format!("offset={}", percent_encode(offset)));
+    let mut result = format!("{path}?{}", fields.join("&"));
+    if !fragment.is_empty() {
+        result.push('#');
+        result.push_str(fragment);
+    }
+    result
 }
 
 fn canonical_log_url(view: &str, generation: u64) -> String {
+    format!("{SYNC_ORIGIN}{}", canonical_log_path(view, generation))
+}
+
+fn canonical_log_path(view: &str, generation: u64) -> String {
     format!(
-        "{SYNC_ORIGIN}/api/v1/reactive/views/{}/{generation}/log",
+        "/api/v1/reactive/views/{}/{generation}/log",
         percent_encode(view)
     )
 }
 
-fn canonical_snapshot_url(view: &str, generation: u64, index: usize) -> String {
+fn canonical_snapshot_path(view: &str, generation: u64, index: usize) -> String {
     format!(
-        "{SYNC_ORIGIN}/api/v1/reactive/views/{}/{generation}/snapshot/{index}",
+        "/api/v1/reactive/views/{}/{generation}/snapshot/{index}",
         percent_encode(view)
     )
+}
+
+/// Accept only member-issued sync URLs. Relative canonical paths are resolved
+/// against the production sync origin; query parameters are intentionally
+/// retained because snapshot cuts are part of immutable URL identity.
+fn advertised_url(advertised: &str, expected_path: &str) -> std::result::Result<String, String> {
+    let advertised = advertised.trim();
+    let url = if advertised.starts_with('/') {
+        if advertised.starts_with("//") {
+            return Err("reactive URL must not contain an alternate origin".to_owned());
+        }
+        format!("{SYNC_ORIGIN}{advertised}")
+    } else {
+        let (scheme, remainder) = advertised
+            .split_once("://")
+            .ok_or_else(|| "reactive URL must be absolute HTTPS or a canonical path".to_owned())?;
+        if !scheme.eq_ignore_ascii_case("https") {
+            return Err("reactive URL must use HTTPS".to_owned());
+        }
+        let authority_end = remainder.find(['/', '?', '#']).unwrap_or(remainder.len());
+        let authority = &remainder[..authority_end];
+        if authority != "sync.api.terrascale.tech" {
+            return Err("reactive URL origin is not an allowed sync origin".to_owned());
+        }
+        advertised.to_owned()
+    };
+    let path = url
+        .split_once("//")
+        .and_then(|(_, remainder)| remainder.find('/').map(|index| &remainder[index..]))
+        .unwrap_or("/");
+    let path = path.split(['?', '#']).next().unwrap_or(path);
+    if path != expected_path {
+        return Err("reactive URL path does not match its attached view".to_owned());
+    }
+    Ok(url)
 }
 
 fn percent_encode(value: &str) -> String {
@@ -1868,6 +2033,39 @@ fn is_retryable(error: &Error) -> bool {
     ) || error
         .status
         .is_some_and(|status| matches!(status, 408 | 425 | 429))
+}
+
+/// HTTP status and server error codes are the JSON counterpart of typed
+/// reset frames. In particular, 410 means the retained immutable log has
+/// expired and must never be retried as a transient availability failure.
+fn http_reset_reason(error: &Error) -> Option<ResetReason> {
+    let reason = match error.code.trim().to_ascii_lowercase().as_str() {
+        "permission_changed" | "permission_denied" | "auth_changed" => {
+            ResetReason::PermissionChanged
+        }
+        "auth_expired" | "authentication_expired" => ResetReason::AuthExpired,
+        "region_moved" | "misdirected_region" => ResetReason::RegionMoved,
+        "schema_changed" => ResetReason::SchemaChanged,
+        "generation_changed" => ResetReason::GenerationChanged,
+        "history_expired" | "retention" | "retention_advanced" => ResetReason::HistoryExpired,
+        "slow_consumer" | "backpressure" => ResetReason::Backpressure,
+        "checkpoint_expired" => ResetReason::CheckpointExpired,
+        "checkpoint_not_current" | "checkpoint_refused" => ResetReason::CheckpointNotCurrent,
+        "view_diverged" => ResetReason::ViewDiverged,
+        "invalid_checkpoint" => ResetReason::InvalidCheckpoint,
+        "oversized" => ResetReason::Oversized,
+        "invalid_operations" => ResetReason::InvalidOperations,
+        _ => match error.status {
+            Some(410) => ResetReason::HistoryExpired,
+            Some(409) => ResetReason::CheckpointNotCurrent,
+            Some(404) => ResetReason::GenerationChanged,
+            Some(401) => ResetReason::AuthExpired,
+            Some(403) => ResetReason::PermissionChanged,
+            Some(429) => ResetReason::Backpressure,
+            _ => return None,
+        },
+    };
+    Some(reason)
 }
 
 fn cancelled_error() -> Error {

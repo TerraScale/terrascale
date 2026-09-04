@@ -12,6 +12,7 @@ pub mod client;
 pub mod config;
 pub mod documents;
 pub mod error;
+pub mod generated_contract;
 pub mod management;
 pub mod reactive;
 pub mod regions;
@@ -38,8 +39,8 @@ pub use management::{
     CreateExport, CreateIndexRequest, CreatedApiKey, DatabaseBranch, DatabaseListResponse,
     DatabaseRecord, DatabaseSchema, Databases, DeletedDatabase, ExecuteBackupRequest, ExportJob,
     Exports, HealthResponse, IndexCreatedResponse, IndexDescriptor, IndexListResponse,
-    ManagementClient, OperationOptions, PageOptions, PlacementLock, PlanBackupRequest, Regions,
-    ProjectDatabase, RegionSummary, RestoreAt, RestoreJob, RestorePoint, RestoreRequest,
+    ManagementClient, OperationOptions, PageOptions, PlacementLock, PlanBackupRequest,
+    ProjectDatabase, RegionSummary, Regions, RestoreAt, RestoreJob, RestorePoint, RestoreRequest,
     RevokedApiKey, RotatedApiKey, Schemas, StartRestore, TransferFormat, Usage, UsageClient,
     UsagePoint, UsageRange, UsageSummary, UsageWorkload,
 };
@@ -60,7 +61,7 @@ pub use schema::{
 pub use sql::{
     metadata_field, metadata_fields, select, validate_parameters, validate_sql, Direction, Query,
     QueryParameters, SelectBuilder, SqlClient, SqlExecuteOptions, SqlParameters, SqlRow, SqlRows,
-    METADATA_FIELDS, MAX_SQL_PAGE_LIMIT, MAX_SQL_TEXT_BYTES, MAX_SQL_TIMEOUT_MS,
+    MAX_SQL_PAGE_LIMIT, MAX_SQL_TEXT_BYTES, MAX_SQL_TIMEOUT_MS, METADATA_FIELDS,
 };
 pub use tenants::{
     CreateTenant, CreateTenantBranch, CreateTenantKey, Tenant, TenantApiKey, TenantBranch,
@@ -71,4 +72,4 @@ pub use transport::{HttpTransport, Method, Request, ReqwestTransport, Response};
 
 /// Pinned contract version published by terrabase. Regenerate with
 /// `make contracts`; CI fails on drift.
-pub const CONTRACT_VERSION: &str = include_str!("../CONTRACT_VERSION");
+pub const CONTRACT_VERSION: &str = generated_contract::CONTRACT_VERSION;

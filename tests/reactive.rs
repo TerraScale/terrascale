@@ -66,7 +66,8 @@ fn attached() -> AttachedView {
         snapshot: snapshot(),
         checkpoint: terrascale::Checkpoint::new(b"cp1".to_vec()),
         snapshot_urls: vec!["https://sync.api.terrascale.tech/snapshot/1".to_owned()],
-        log_url: "https://sync.api.terrascale.tech/log?view=view-1".to_owned(),
+        log_url: "https://sync.api.terrascale.tech/api/v1/reactive/views/view-1/4/log?cut=1"
+            .to_owned(),
         capability: Some("capability".to_owned()),
     }
 }
@@ -114,7 +115,7 @@ async fn poll_sends_capability_header_and_keeps_canonical_log_url_immutable() {
     assert_eq!(requests[0].route_name, "reactive.poll");
     assert_eq!(
         requests[0].url,
-        "https://sync.api.terrascale.tech/api/v1/reactive/views/view-1/4/log?offset=r%202"
+        "https://sync.api.terrascale.tech/api/v1/reactive/views/view-1/4/log?cut=1&offset=r%202"
     );
     assert_eq!(
         requests[0]
@@ -126,7 +127,7 @@ async fn poll_sends_capability_header_and_keeps_canonical_log_url_immutable() {
     );
     assert_eq!(
         view.log_url,
-        "https://sync.api.terrascale.tech/log?view=view-1"
+        "https://sync.api.terrascale.tech/api/v1/reactive/views/view-1/4/log?cut=1"
     );
 }
 
@@ -135,11 +136,13 @@ async fn attach_uses_canonical_route_and_base64_wire_fields() {
     let mock = Mock::new([Ok(Response::json(
         200,
         &json!({
-            "viewId": "view/unsafe",
+            "view": "view-unsafe",
             "generation": 8,
             "checkpoint": "Y3Ax",
-            "snapshotUrls": ["https://evil.example/snapshot"],
-            "capability": "cap"
+            "snapshot_chunks": ["https://sync.api.terrascale.tech/api/v1/reactive/views/view-unsafe/8/snapshot/0?cut=1"],
+            "log": "/api/v1/reactive/views/view-unsafe/8/log?cut=1",
+            "capability": "cap",
+            "offset": 1
         }),
     ))]);
     client(Arc::clone(&mock))
@@ -165,7 +168,7 @@ async fn attach_uses_canonical_route_and_base64_wire_fields() {
         serde_json::from_slice(request.body.as_ref().expect("body")).expect("JSON attach body");
     assert_eq!(body["databaseId"], "database");
     assert_eq!(body["subscription"], "sub-1");
-    assert_eq!(body["parameters"], "Wzdd");
+    assert_eq!(body["parameters"], "eyIxIjo3fQ==");
     assert_eq!(body["checkpoint"], serde_json::Value::Null);
 }
 
@@ -228,6 +231,63 @@ async fn poll_decodes_strict_indexed_msgpack_and_empty_statuses() {
 }
 
 #[tokio::test]
+async fn poll_decodes_a_deterministic_array_of_envelopes() {
+    let envelope = vec![
+        0x97, 2, 1, 0, 4, 0, 0, 0x97, 0xa1, b's', 1, 1, 2, 0x90, 0xa0, 0xc4, 1, b'x',
+    ];
+    let mut frames = vec![0x92];
+    frames.extend_from_slice(&envelope);
+    frames.extend_from_slice(&envelope);
+    let mock = Mock::new([Ok(msgpack_response(frames))]);
+    let response = client(Arc::clone(&mock))
+        .reactive()
+        .poll_from(&attached(), "r1")
+        .await
+        .expect("MessagePack envelope array");
+    assert_eq!(response.deltas.len(), 2);
+    assert_eq!(response.deltas[0].checkpoint.to_bytes(), b"x");
+    assert_eq!(response.deltas[1].to_revision, "2");
+}
+
+#[tokio::test]
+async fn expired_http_log_is_a_typed_reset() {
+    let mock = Mock::new([
+        Ok(Response::json(
+            200,
+            &json!({
+                "view": "view-1",
+                "generation": 4,
+                "snapshot_chunks": [],
+                "log": "/api/v1/reactive/views/view-1/4/log?cut=1",
+                "checkpoint": "Y3Ax",
+                "capability": "capability",
+                "offset": 1
+            }),
+        )),
+        Ok(Response::json(
+            410,
+            &json!({"error": {"code": "retention_advanced", "message": "expired"}}),
+        )),
+    ]);
+    let mut live = client(Arc::clone(&mock))
+        .reactive()
+        .subscribe_live(
+            &DatabaseScope::new("db"),
+            &Query::raw("SELECT * FROM users".to_owned(), vec![]),
+            SubscribeOptions::new(),
+        )
+        .await
+        .expect("attach");
+    assert!(matches!(
+        live.next().await.expect("typed reset"),
+        PollOutcome::Reset(ResetFrame {
+            reason: ResetReason::HistoryExpired,
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
 async fn malformed_msgpack_fails_closed_before_json_fallback() {
     let mock = Mock::new([Ok(msgpack_response(vec![0x81, 0xa1, b'x', 1]))]);
     let error = client(Arc::clone(&mock))
@@ -286,12 +346,12 @@ async fn live_subscription_applies_deltas_and_surfaces_region_resets() {
         Ok(Response::json(
             200,
             &json!({
-                "view_id": "view-1",
+                "view": "view-1",
                 "generation": 4,
                 "snapshot": snapshot(),
-                "checkpoint": [99],
-                "snapshot_urls": ["https://sync.api.terrascale.tech/snapshot/1"],
-                "log_url": "https://sync.api.terrascale.tech/log",
+                "checkpoint": [99, 112, 49],
+                "snapshot_chunks": ["/api/v1/reactive/views/view-1/4/snapshot/0?cut=1"],
+                "log": "/api/v1/reactive/views/view-1/4/log",
                 "capability": "capability"
             }),
         )),

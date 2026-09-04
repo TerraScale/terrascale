@@ -1156,10 +1156,8 @@ fn validate_parameter_bounds(tokens: &[String], parameters: &SqlParameters) -> R
                 .parse::<u64>()
                 .map_err(|_| sql_error("LIMIT and OFFSET must be non-negative integers."))?
         };
-        if token.eq_ignore_ascii_case("limit") {
-            if number == 0 || number > MAX_SQL_PAGE_LIMIT {
-                return Err(sql_error("LIMIT must be between 1 and 1024."));
-            }
+        if token.eq_ignore_ascii_case("limit") && (number == 0 || number > MAX_SQL_PAGE_LIMIT) {
+            return Err(sql_error("LIMIT must be between 1 and 1024."));
         }
     }
     Ok(())

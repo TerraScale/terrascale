@@ -1,0 +1,321 @@
+{
+  "schemaVersion": 1,
+  "contractVersion": "v1",
+  "operations": [
+    {
+      "operationId": "attach_view",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/reactive/views"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "batch_documents",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/databases/{name}/collections/{collection}/documents/batch"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "create_branch",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/databases/{name}/branches"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "create_database",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/databases"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "create_export",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/databases/{name}/exports"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "create_index",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/databases/{name}/collections/{collection}/indexes"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "create_webhook",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/databases/{name}/webhooks"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "database_usage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/databases/{name}/usage"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "delete_database",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/databases/{name}"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "delete_document",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/databases/{name}/collections/{collection}/documents/{id}"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "delete_index",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/databases/{name}/collections/{collection}/indexes/{field}"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "delete_webhook",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/databases/{name}/webhooks/{id}"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "document_history",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/databases/{name}/collections/{collection}/documents/{id}/history"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "execute_sql",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/databases/{name}/sql"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "get_database",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/databases/{name}"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "get_document",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/databases/{name}/collections/{collection}/documents/{id}"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "get_schema",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/databases/{name}/collections/{collection}/schema"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "health",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/health"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "index_recommendations",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/databases/{name}/collections/{collection}/indexes/recommendations"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "list_backups",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/databases/{name}/backups"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "list_branches",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/databases/{name}/branches"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "list_collections",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/databases/{name}/collections"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "list_databases",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/databases"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "list_documents",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/databases/{name}/collections/{collection}/documents"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "list_indexes",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/databases/{name}/collections/{collection}/indexes"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "list_webhooks",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/databases/{name}/webhooks"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "patch_document",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/databases/{name}/collections/{collection}/documents/{id}"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "poll",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/databases/{name}/reactive/poll"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "put_document",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/databases/{name}/collections/{collection}/documents/{id}"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "put_schema",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/databases/{name}/collections/{collection}/schema"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "regions",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/regions"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "restore_backup",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/databases/{name}/backups/restore"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "restore_database",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/databases/{name}/restore"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "view_log",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/reactive/views/{view}/{generation}/log"
+      },
+      "responses": [],
+      "errors": []
+    },
+    {
+      "operationId": "websocket",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/databases/{name}/reactive"
+      },
+      "responses": [],
+      "errors": []
+    }
+  ]
+}

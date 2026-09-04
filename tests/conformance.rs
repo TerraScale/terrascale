@@ -431,7 +431,7 @@ fn subscription_applies_ordered_deltas_and_resets() {
 #[tokio::test]
 async fn subscribe_attaches_with_checkpoint_and_hint() {
     let snapshot = json!({
-        "view_id": "view_1",
+        "view": "view_1",
         "generation": 3,
         "snapshot": {
             "view_generation": 3,
@@ -440,6 +440,10 @@ async fn subscribe_attaches_with_checkpoint_and_hint() {
             "checkpoint": [3],
         },
         "checkpoint": [3],
+        "snapshot_chunks": [],
+        "log": "/api/v1/reactive/views/view_1/3/log?cut=1",
+        "capability": "capability",
+        "offset": 1,
     });
     let mock = Mock::new(vec![Response::json(200, &snapshot)]);
     let sdk = client(Arc::clone(&mock));

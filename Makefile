@@ -1,5 +1,10 @@
 .PHONY: check fmt clippy test contracts
 
+CONTRACT_VERSION ?= v1
+CONTRACT_SOURCE ?=
+CONTRACT_URL ?=
+CONTRACT_ARCHIVE_SHA256 ?=
+
 check: contracts fmt clippy test
 
 fmt:
@@ -12,6 +17,6 @@ test:
 	cargo test
 
 contracts:
-	@echo "contracts unavailable: terrabase has not published the pinned contract artifact ($$(cat CONTRACT_VERSION))" >&2
-	@echo "refusing to synthesize or fetch an unpublished contract; publish the version first, then regenerate." >&2
-	@false
+	@CONTRACT_VERSION="$(CONTRACT_VERSION)" CONTRACT_SOURCE="$(CONTRACT_SOURCE)" CONTRACT_URL="$(CONTRACT_URL)" CONTRACT_ARCHIVE_SHA256="$(CONTRACT_ARCHIVE_SHA256)" \
+		python3 scripts/contracts.py --version "$(CONTRACT_VERSION)"
+	rustfmt --edition 2021 src/generated_contract.rs

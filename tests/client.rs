@@ -289,7 +289,7 @@ fn root_reexports_all_published_client_types() {
         TransferFormat, Usage, UsageClient, UsagePoint, UsageRange, UsageSummary, UsageWorkload,
     };
 
-    let _: Option<(
+    type PublishedClientTypes = (
         CancellationToken,
         ApiKey,
         ApiKeyPage,
@@ -357,5 +357,7 @@ fn root_reexports_all_published_client_types() {
         UsageRange,
         UsageSummary,
         UsageWorkload,
-    )> = None;
+    );
+
+    let _: Option<PublishedClientTypes> = None;
 }

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "contractVersion": "v1",
+  "attach": {
+    "request": {}
+  },
+  "snapshot": {},
+  "log": {},
+  "reset": {},
+  "timeout": {}
+}

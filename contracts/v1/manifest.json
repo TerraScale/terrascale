@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "contractVersion": "v1",
+  "artifacts": [
+    {
+      "path": "conformance/http.json",
+      "mediaType": "application/vnd.terrascale.conformance.v1+json",
+      "blake3": "7d2d45556205a7ff51b2c38e7cd58f0388fe1eb3bd8f7f096bf4dc8b02f3f1e7"
+    },
+    {
+      "path": "conformance/msgpack/hostile-vectors.json",
+      "mediaType": "application/vnd.terrascale.conformance.v1+json",
+      "blake3": "5f107390b37d882b257360871eb1bb0573d38be64664f31ef7033c3acb4556de"
+    },
+    {
+      "path": "conformance/msgpack/message-vectors.json",
+      "mediaType": "application/vnd.terrascale.conformance.v1+json",
+      "blake3": "e1960d9833f04d15363a39d00d25ed77cfa966adc5d8a534a30452a2fce4c639"
+    },
+    {
+      "path": "conformance/reactive.json",
+      "mediaType": "application/vnd.terrascale.conformance.v1+json",
+      "blake3": "0d356b00dfc69573ed4f93610e51dd060ed43b22a77a34f9aa825551f84f94ad"
+    },
+    {
+      "path": "msgpack/terrascale.sync.v2.msgpack.json",
+      "mediaType": "application/vnd.terrascale.msgpack-manifest.v2+json",
+      "blake3": "f3ed2d9998698d3ff2587aaf59039ad6557dedb07ffbfe2669194b4ecc213542"
+    },
+    {
+      "path": "openapi.json",
+      "mediaType": "application/vnd.oai.openapi+json;version=3.1",
+      "blake3": "45182d1ebd2ecfe047efcf0938715ae1adb7997ed5ec46dd2e515113ec1540a2"
+    },
+    {
+      "path": "proto/terrabase/v1/engine.proto",
+      "mediaType": "text/x-protobuf",
+      "blake3": "697966a9c2673bdf745c3cd1a3885994877575b852736727e1b3201965c4de16"
+    },
+    {
+      "path": "proto/terrabase/v1/family.proto",
+      "mediaType": "text/x-protobuf",
+      "blake3": "5bcaff241de738e58018b81cbc09141b1ee453a3426a1b44dbf1afe934ec8d40"
+    }
+  ]
+}
