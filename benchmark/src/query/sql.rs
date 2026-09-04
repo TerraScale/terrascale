@@ -770,6 +770,16 @@ impl Visitor for AllowListVisitor {
         if FORBIDDEN_FUNCTIONS.contains(&normalized.as_str()) {
             return ControlFlow::Break(SqlError::at(SqlErrorClass::ForbiddenFunction, 0, name));
         }
+        // SQLite permits application-defined functions, and its grammar does
+        // not carry a volatility marker.  Unknown names therefore cannot be
+        // admitted safely: a function could read the host, mutate a
+        // connection, or vary between Regions.  Keep this explicit allow-list
+        // deliberately small and deterministic; aggregates/window functions
+        // remain executable through the bounded SQL adapter, while the live
+        // classifier marks them execute-only.
+        if !ALLOWED_FUNCTIONS.contains(&normalized.as_str()) {
+            return ControlFlow::Break(SqlError::at(SqlErrorClass::ForbiddenFunction, 0, name));
+        }
         ControlFlow::Continue(())
     }
 }
@@ -811,6 +821,63 @@ const FORBIDDEN_FUNCTIONS: &[&str] = &[
     "total_changes",
     "unixepoch",
     "writefile",
+];
+
+/// Deterministic built-ins supported by the read-only SQL contract.  This is
+/// an allow-list (rather than a deny-list) because SQLite extensions and
+/// application functions are otherwise indistinguishable from safe built-ins
+/// at parse time.
+const ALLOWED_FUNCTIONS: &[&str] = &[
+    "abs",
+    "avg",
+    "coalesce",
+    "count",
+    "dense_rank",
+    "first_value",
+    "group_concat",
+    "hex",
+    "ifnull",
+    "iif",
+    "instr",
+    "json",
+    "json_array",
+    "json_array_length",
+    "json_extract",
+    "json_insert",
+    "json_object",
+    "json_patch",
+    "json_remove",
+    "json_replace",
+    "json_set",
+    "json_type",
+    "json_valid",
+    "lag",
+    "last_value",
+    "lead",
+    "length",
+    "lower",
+    "ltrim",
+    "max",
+    "min",
+    "nullif",
+    "ntile",
+    "printf",
+    "quote",
+    "rank",
+    "replace",
+    "round",
+    "row_number",
+    "rtrim",
+    "sign",
+    "soundex",
+    "substr",
+    "substring",
+    "sum",
+    "total",
+    "trim",
+    "typeof",
+    "unicode",
+    "upper",
 ];
 
 /// Lowers the launch SQL subset (one collection, scalar predicates, ordering,
@@ -1111,13 +1178,13 @@ fn lower_projection(items: &[SelectItem]) -> Result<Option<Vec<SqlProjection>>, 
             }
         };
         let field = field_name(expr)?;
-        let output = output.unwrap_or(field.as_str());
-        if !valid_identifier(output)
+        let output = output.map_or_else(|| field.clone(), ToOwned::to_owned);
+        if !valid_identifier(&output)
             || fields.iter().any(|known: &SqlProjection| known.output == output)
         {
-            return Err(SqlError::binding(SqlErrorClass::InvalidIdentifier, output));
+            return Err(SqlError::binding(SqlErrorClass::InvalidIdentifier, &output));
         }
-        fields.push(SqlProjection { field, output: output.to_owned() });
+        fields.push(SqlProjection { field, output });
     }
     Ok(Some(fields))
 }
