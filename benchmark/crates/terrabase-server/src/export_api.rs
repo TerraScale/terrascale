@@ -34,6 +34,7 @@ use axum::http::{Response as HttpResponse, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
+use terrabase::Engine;
 use terrabase::encryption::ArtifactCipher;
 use terrabase::regions::RegionCode;
 
@@ -45,6 +46,8 @@ pub const MAX_PAGE_RECORDS: usize = 2_048;
 pub const MAX_PAGE_BYTES: usize = 8 * 1024 * 1024;
 /// Maximum metadata member size accepted from an Engine adapter.
 pub const MAX_METADATA_BYTES: usize = 64 * 1024 * 1024;
+/// Maximum opaque source cursor retained in durable job state.
+pub const MAX_SOURCE_CURSOR_BYTES: usize = 64 * 1024;
 /// Route exposed by [`http_router`].
 pub const EXPORT_ROUTE: &str = "/api/v1/databases/{name}/exports";
 
@@ -293,6 +296,98 @@ pub trait ExportSource: Send + Sync + 'static {
     ) -> Result<ExportPage, ExportSourceError>;
 }
 
+/// The production Engine read seam used by [`EngineExportSource`].
+///
+/// The server crate cannot reach the Engine's crate-private bounded snapshot
+/// methods directly.  A member adapter must therefore implement this seam at
+/// the Engine composition boundary and delegate it to the real Engine,
+/// schema catalog, index catalog, retained-history, and branch registry.  A
+/// production adapter must never implement these calls by materialising the
+/// whole database or by maintaining a second in-memory database.
+pub trait EngineExportReadPort: Send + Sync + 'static {
+    /// Captures the fixed boundary and all logical metadata for one database.
+    fn snapshot(&self, database: &str) -> Result<ExportSnapshot, ExportSourceError>;
+
+    /// Reads one bounded page at the pinned boundary.  `after` is an opaque
+    /// adapter cursor; returned canonical bytes remain opaque to this crate.
+    fn page(
+        &self,
+        database: &str,
+        snapshot: &ExportSnapshot,
+        phase: ExportPhase,
+        after: Option<&[u8]>,
+        limit: usize,
+    ) -> Result<ExportPage, ExportSourceError>;
+}
+
+/// Production source adapter backed by the member's Engine composition.
+///
+/// This type intentionally contains no fallback source.  The member must
+/// pass an adapter that reads the durable Engine boundary and metadata; a
+/// missing adapter is rejected by [`Self::try_new`].
+pub struct EngineExportSource {
+    read: Arc<dyn EngineExportReadPort>,
+    engine_database_id: Option<String>,
+    _engine: Option<Arc<Engine>>,
+}
+
+impl EngineExportSource {
+    /// Constructs a source from the member's real Engine read adapter.
+    pub fn try_new(read: Option<Arc<dyn EngineExportReadPort>>) -> Result<Self, ExportError> {
+        Ok(Self {
+            read: read.ok_or(ExportError::DependencyUnavailable)?,
+            engine_database_id: None,
+            _engine: None,
+        })
+    }
+
+    /// Constructs a source bound to a real durable Engine. The read port is
+    /// still mandatory because bounded page, schema/index, history, and
+    /// branch methods are currently exposed only at the Engine composition
+    /// boundary.
+    pub fn from_engine(
+        engine: Arc<Engine>,
+        read: Option<Arc<dyn EngineExportReadPort>>,
+    ) -> Result<Self, ExportError> {
+        Ok(Self {
+            read: read.ok_or(ExportError::DependencyUnavailable)?,
+            engine_database_id: Some(engine.database_id().to_text()),
+            _engine: Some(engine),
+        })
+    }
+}
+
+impl ExportSource for EngineExportSource {
+    fn snapshot(&self, database: &str) -> Result<ExportSnapshot, ExportSourceError> {
+        if database.trim().is_empty() {
+            return Err(ExportSourceError::InvalidPage("database is empty"));
+        }
+        let snapshot = self.read.snapshot(database)?;
+        if self
+            .engine_database_id
+            .as_deref()
+            .is_some_and(|database_id| database_id != snapshot.database_id)
+        {
+            return Err(ExportSourceError::Storage("engine database identity mismatch".into()));
+        }
+        Ok(snapshot)
+    }
+
+    fn page(
+        &self,
+        database: &str,
+        snapshot: &ExportSnapshot,
+        phase: ExportPhase,
+        after: Option<&[u8]>,
+        limit: usize,
+    ) -> Result<ExportPage, ExportSourceError> {
+        if limit == 0 || limit > MAX_PAGE_RECORDS {
+            return Err(ExportSourceError::InvalidPage("page limit is outside bound"));
+        }
+        self.read.page(database, snapshot, phase, after, limit)
+    }
+}
+
 /// Encryption/provider metadata attested by an artifact port.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EncryptionAttestation {
@@ -327,6 +422,14 @@ pub struct ArtifactFact {
 pub trait ArtifactWriter: Send {
     /// Publishes or verifies one encrypted member.
     fn put(&mut self, path: &str, plaintext: &[u8]) -> Result<ArtifactFact, ExportError>;
+    /// Returns facts for members already present in a resumable staging
+    /// artifact.  A restart uses this to rebuild the manifest without
+    /// retaining document bytes in the durable job state.  Ports that do not
+    /// support restart recovery must fail closed rather than return an empty
+    /// list for a non-empty staging artifact.
+    fn existing_facts(&mut self) -> Result<Vec<ArtifactFact>, ExportError> {
+        Err(ExportError::DependencyUnavailable)
+    }
     /// Atomically publishes the completed bundle and its commit marker.
     fn commit(self: Box<Self>, manifest: &ArtifactFact) -> Result<(), ExportError>;
     /// Removes uncommitted staging state after a terminal failure.
@@ -492,6 +595,7 @@ pub struct ExportService {
     store: Arc<dyn ExportStore>,
     artifacts: Arc<dyn ArtifactPort>,
     cursor_key: [u8; 32],
+    active_jobs: Arc<Mutex<BTreeSet<String>>>,
 }
 
 impl ExportService {
@@ -507,7 +611,27 @@ impl ExportService {
         let store = store.ok_or(ExportError::DependencyUnavailable)?;
         let artifacts = artifacts.ok_or(ExportError::DependencyUnavailable)?;
         artifacts.attestation().ok_or(ExportError::EncryptionUnavailable)?.validate()?;
-        Ok(Self { source, store, artifacts, cursor_key })
+        Ok(Self {
+            source,
+            store,
+            artifacts,
+            cursor_key,
+            active_jobs: Arc::new(Mutex::new(BTreeSet::new())),
+        })
+    }
+
+    /// Builds the handler state from explicit production seams.
+    ///
+    /// Returning an [`Arc`] makes the result directly usable with
+    /// [`http_router`]. Every seam remains mandatory; this constructor has no
+    /// local, echo, or in-memory production fallback.
+    pub fn handler_ready(
+        source: Option<Arc<dyn ExportSource>>,
+        store: Option<Arc<dyn ExportStore>>,
+        artifacts: Option<Arc<dyn ArtifactPort>>,
+        cursor_key: [u8; 32],
+    ) -> Result<Arc<Self>, ExportError> {
+        Ok(Arc::new(Self::new(source, store, artifacts, cursor_key)?))
     }
 
     /// Admits a job and schedules bounded work.  The initial state is durable
@@ -516,7 +640,10 @@ impl ExportService {
         validate_request(&request)?;
         let job_id = job_id(&request);
         if let Some(existing) = self.store.load(&job_id)? {
-            if existing.database != request.database || existing.destination != request.destination
+            validate_state(&existing)?;
+            if existing.database != request.database
+                || existing.destination != request.destination
+                || existing.placement != request.placement.regions().collect::<Vec<_>>()
             {
                 return Err(ExportError::IdempotencyConflict);
             }
@@ -552,6 +679,7 @@ impl ExportService {
     /// control record, so progress is visible well within five seconds.
     pub fn status(&self, job_id: &str) -> Result<Option<ExportStatus>, ExportError> {
         let Some(state) = self.store.load(job_id)? else { return Ok(None) };
+        validate_state(&state)?;
         let progress_basis_points = match state.status {
             JobStatus::Complete => 10_000,
             _ => state
@@ -588,6 +716,7 @@ impl ExportService {
     /// The cursor must be the latest cursor persisted for that job.
     pub async fn resume(&self, job_id: &str, token: &str) -> Result<ExportStatus, ExportError> {
         let state = self.store.load(job_id)?.ok_or(ExportError::InvalidRequest("unknown job"))?;
+        validate_state(&state)?;
         if state.resume_cursor != token {
             return Err(ExportError::InvalidRequest("resume cursor is stale"));
         }
@@ -604,6 +733,7 @@ impl ExportService {
             store: Arc::clone(&self.store),
             artifacts: Arc::clone(&self.artifacts),
             cursor_key: self.cursor_key,
+            active_jobs: Arc::clone(&self.active_jobs),
         }
     }
 
@@ -625,16 +755,49 @@ struct Worker {
     store: Arc<dyn ExportStore>,
     artifacts: Arc<dyn ArtifactPort>,
     cursor_key: [u8; 32],
+    active_jobs: Arc<Mutex<BTreeSet<String>>>,
+}
+
+struct ActiveJob {
+    jobs: Arc<Mutex<BTreeSet<String>>>,
+    id: String,
+}
+
+impl ActiveJob {
+    fn acquire(jobs: Arc<Mutex<BTreeSet<String>>>, id: &str) -> Result<Option<Self>, ExportError> {
+        let inserted = {
+            let mut active =
+                jobs.lock().map_err(|_| ExportError::Io("job lock poisoned".into()))?;
+            active.insert(id.to_owned())
+        };
+        if !inserted {
+            return Ok(None);
+        }
+        Ok(Some(Self { jobs, id: id.to_owned() }))
+    }
+}
+
+impl Drop for ActiveJob {
+    fn drop(&mut self) {
+        if let Ok(mut jobs) = self.jobs.lock() {
+            jobs.remove(&self.id);
+        }
+    }
 }
 
 impl Worker {
     fn run(&self, job_id: &str) -> Result<(), ExportError> {
+        let Some(_active) = ActiveJob::acquire(Arc::clone(&self.active_jobs), job_id)? else {
+            return Ok(());
+        };
         let mut state =
             self.store.load(job_id)?.ok_or(ExportError::InvalidRequest("unknown job"))?;
+        validate_state(&state)?;
         if state.status == JobStatus::Complete {
             return Ok(());
         }
         state.status = JobStatus::Running;
+        state.error = None;
         self.store.save(&state)?;
         let placement = PlacementLock::new(state.placement.iter().copied())?;
         let mut writer =
@@ -666,9 +829,28 @@ impl Worker {
         writer: &mut Box<dyn ArtifactWriter>,
     ) -> Result<ArtifactFact, ExportError> {
         let metadata = metadata_members(&state.snapshot)?;
+        let mut facts_by_path = BTreeSet::new();
         let mut facts = Vec::with_capacity(metadata.len() + 4);
+        for fact in writer.existing_facts()? {
+            validate_fact(&fact)?;
+            // Control members are rebuilt after every page commit. They must
+            // not be included in their own checksums or manifest.
+            if matches!(fact.path.as_str(), "checksums.txt" | "manifest.json") {
+                continue;
+            }
+            if !bundle_member_path(&fact.path) {
+                return Err(ExportError::IdempotencyConflict);
+            }
+            if !facts_by_path.insert(fact.path.clone()) {
+                return Err(ExportError::IdempotencyConflict);
+            }
+            facts.push(fact);
+        }
         for (path, bytes) in metadata {
-            facts.push(writer.put(&path, &bytes)?);
+            let fact = put_checked(writer, &path, &bytes)?;
+            if facts_by_path.insert(fact.path.clone()) {
+                facts.push(fact);
+            }
         }
         loop {
             if state.phase == ExportPhase::Done {
@@ -699,10 +881,18 @@ impl Worker {
                 let (jsonl, history) = encode_page(&page.records)?;
                 let page_number = state.pages;
                 if !jsonl.is_empty() {
-                    facts.push(writer.put(&format!("documents/{page_number:012}.jsonl"), &jsonl)?);
+                    let path = format!("documents/{page_number:012}.jsonl");
+                    let fact = put_checked(writer, &path, &jsonl)?;
+                    if facts_by_path.insert(fact.path.clone()) {
+                        facts.push(fact);
+                    }
                 }
                 if !history.is_empty() {
-                    facts.push(writer.put(&format!("history/{page_number:012}.jsonl"), &history)?);
+                    let path = format!("history/{page_number:012}.jsonl");
+                    let fact = put_checked(writer, &path, &history)?;
+                    if facts_by_path.insert(fact.path.clone()) {
+                        facts.push(fact);
+                    }
                 }
                 state.records = state.records.saturating_add(page.records.len() as u64);
                 state.pages = state.pages.saturating_add(1);
@@ -725,6 +915,7 @@ impl Worker {
             // the crash/idempotency ordering guarantee.
             self.store.save(state)?;
         }
+        facts.sort_by(|left, right| left.path.cmp(&right.path));
         let mut checksum_bytes = Vec::new();
         for fact in &facts {
             checksum_bytes.extend_from_slice(fact.path.as_bytes());
@@ -734,22 +925,61 @@ impl Worker {
             checksum_bytes.extend_from_slice(fact.checksum.as_bytes());
             checksum_bytes.push(b'\n');
         }
-        let checksums = writer.put("checksums.txt", &checksum_bytes)?;
-        facts.push(checksums);
+        let checksums = put_checked(writer, "checksums.txt", &checksum_bytes)?;
+        if facts_by_path.insert(checksums.path.clone()) {
+            facts.push(checksums);
+        }
         let manifest_bytes = manifest_bytes(state, &facts)?;
-        writer.put("manifest.json", &manifest_bytes)
+        put_checked(writer, "manifest.json", &manifest_bytes)
     }
+}
+
+fn validate_fact(fact: &ArtifactFact) -> Result<(), ExportError> {
+    if !safe_member_path(&fact.path)
+        || fact.length > (MAX_METADATA_BYTES.max(MAX_PAGE_BYTES) as u64)
+        || fact.checksum.len() != 64
+        || !fact.checksum.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(ExportError::IdempotencyConflict);
+    }
+    Ok(())
+}
+
+fn bundle_member_path(path: &str) -> bool {
+    ["schemas/", "indexes/", "branches/", "documents/", "history/"]
+        .iter()
+        .any(|prefix| path.starts_with(prefix))
+}
+
+fn put_checked(
+    writer: &mut Box<dyn ArtifactWriter>,
+    path: &str,
+    plaintext: &[u8],
+) -> Result<ArtifactFact, ExportError> {
+    let fact = writer.put(path, plaintext)?;
+    validate_fact(&fact)?;
+    if fact.path != path
+        || (!matches!(path, "checksums.txt" | "manifest.json") && !bundle_member_path(path))
+        || (fact.length == 0 && !plaintext.is_empty())
+    {
+        return Err(ExportError::IdempotencyConflict);
+    }
+    Ok(fact)
 }
 
 fn metadata_members(snapshot: &ExportSnapshot) -> Result<Vec<(String, Vec<u8>)>, ExportError> {
     let mut members = Vec::new();
+    let mut names = BTreeSet::new();
     for (prefix, input) in [
         ("schemas", &snapshot.schemas),
         ("indexes", &snapshot.indexes),
         ("branches", &snapshot.branches),
     ] {
         for member in input {
-            if member.bytes.len() > MAX_METADATA_BYTES || !safe_member_path(&member.name) {
+            if member.bytes.len() > MAX_METADATA_BYTES
+                || !safe_member_path(&member.name)
+                || !names.insert(format!("{prefix}/{}", member.name))
+            {
                 return Err(ExportError::InvalidRequest("metadata member is unsafe or too large"));
             }
             members.push((format!("{prefix}/{}", member.name), member.bytes.clone()));
@@ -881,6 +1111,14 @@ fn validate_page(page: &ExportPage, phase: ExportPhase) -> Result<(), ExportErro
     if page.records.len() > MAX_PAGE_RECORDS {
         return Err(ExportError::Source(ExportSourceError::InvalidPage("too many records")));
     }
+    if page.next_cursor.as_ref().is_some_and(|cursor| cursor.len() > MAX_SOURCE_CURSOR_BYTES) {
+        return Err(ExportError::Source(ExportSourceError::InvalidPage("cursor exceeds bound")));
+    }
+    if page.done && page.next_cursor.is_some() {
+        return Err(ExportError::Source(ExportSourceError::InvalidPage(
+            "terminal page has a cursor",
+        )));
+    }
     if phase == ExportPhase::Documents
         && page.records.iter().any(|record| !matches!(record, ExportRecord::Document { .. }))
     {
@@ -912,10 +1150,32 @@ fn validate_snapshot(snapshot: &ExportSnapshot) -> Result<(), ExportError> {
     Ok(())
 }
 
+fn validate_state(state: &ExportJobState) -> Result<(), ExportError> {
+    if state.job_id.len() != 32 || !state.job_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(ExportError::Io("durable export state is invalid".into()));
+    }
+    if state.database.trim().is_empty()
+        || state.database.contains('/')
+        || state.database.contains('\\')
+        || state.database.chars().any(char::is_control)
+        || state.placement.is_empty()
+        || state.source_cursor.as_ref().is_some_and(|cursor| cursor.len() > MAX_SOURCE_CURSOR_BYTES)
+    {
+        return Err(ExportError::Io("durable export state is invalid".into()));
+    }
+    state.destination.validate()?;
+    let placement = PlacementLock::new(state.placement.iter().copied())?;
+    if !placement.allows(state.destination.region()) {
+        return Err(ExportError::PlacementMismatch);
+    }
+    validate_snapshot(&state.snapshot)
+}
+
 fn validate_request(request: &ExportRequest) -> Result<(), ExportError> {
     if request.database.trim().is_empty()
         || request.database.contains('/')
         || request.database.contains('\\')
+        || request.database.chars().any(char::is_control)
     {
         return Err(ExportError::InvalidRequest("database is invalid"));
     }
@@ -988,6 +1248,9 @@ fn decode_cursor(
     job_id: &str,
     token: &str,
 ) -> Result<(ExportPhase, Option<Vec<u8>>), ExportError> {
+    if token.len() > 2 * MAX_SOURCE_CURSOR_BYTES + 64 {
+        return Err(ExportError::InvalidRequest("resume cursor is too large"));
+    }
     let mut parts = token.split('.');
     if parts.next() != Some("ex1") {
         return Err(ExportError::InvalidRequest("resume cursor is malformed"));
@@ -1000,6 +1263,9 @@ fn decode_cursor(
     };
     let source =
         hex_decode(parts.next().ok_or(ExportError::InvalidRequest("resume cursor is malformed"))?)?;
+    if source.len() > MAX_SOURCE_CURSOR_BYTES {
+        return Err(ExportError::InvalidRequest("resume cursor is too large"));
+    }
     let provided =
         hex_decode(parts.next().ok_or(ExportError::InvalidRequest("resume cursor is malformed"))?)?;
     if parts.next().is_some() || provided.len() != 16 {
@@ -1054,6 +1320,7 @@ impl FileExportStore {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, ExportError> {
         let root = root.into();
         fs::create_dir_all(&root).map_err(|error| ExportError::Io(error.to_string()))?;
+        ensure_no_symlink_components(&root)?;
         Ok(Self { root })
     }
 
@@ -1079,13 +1346,13 @@ impl ExportStore for FileExportStore {
 
     fn save(&self, state: &ExportJobState) -> Result<(), ExportError> {
         let path = self.path(&state.job_id)?;
-        let tmp = path.with_extension("json.tmp");
+        let tmp =
+            path.with_extension(format!("json.tmp.{}", NEXT_JOB.fetch_add(1, Ordering::Relaxed)));
         let bytes =
             serde_json::to_vec(state).map_err(|error| ExportError::Io(error.to_string()))?;
-        // A crash between the temporary write and rename leaves only control
-        // state. Replacing that stale temporary is safe and makes restart
-        // resumable.
-        let _ = fs::remove_file(&tmp);
+        // A crash between the temporary write and rename leaves the previous
+        // control state intact. Unique temporary names also keep concurrent
+        // process writers from deleting or truncating one another's state.
         let mut file = OpenOptions::new()
             .create_new(true)
             .write(true)
@@ -1098,12 +1365,15 @@ impl ExportStore for FileExportStore {
     }
 }
 
-/// In-memory durable store for embedding and focused tests.
+/// In-memory store used only by this module's focused tests.
+#[cfg(test)]
+#[doc(hidden)]
 #[derive(Default)]
 pub struct MemoryExportStore {
     states: Mutex<std::collections::BTreeMap<String, ExportJobState>>,
 }
 
+#[cfg(test)]
 impl ExportStore for MemoryExportStore {
     fn load(&self, job_id: &str) -> Result<Option<ExportJobState>, ExportError> {
         Ok(self
@@ -1181,9 +1451,65 @@ impl ArtifactWriter for EncryptedFileWriter {
         Ok(fact(path, &encrypted))
     }
 
+    fn existing_facts(&mut self) -> Result<Vec<ArtifactFact>, ExportError> {
+        let mut pending = vec![self.directory.clone()];
+        let mut facts = Vec::new();
+        let cipher =
+            self.cipher.lock().map_err(|_| ExportError::Io("cipher lock poisoned".into()))?;
+        while let Some(directory) = pending.pop() {
+            let entries =
+                fs::read_dir(&directory).map_err(|error| ExportError::Io(error.to_string()))?;
+            for entry in entries {
+                let entry = entry.map_err(|error| ExportError::Io(error.to_string()))?;
+                let file_type =
+                    entry.file_type().map_err(|error| ExportError::Io(error.to_string()))?;
+                if file_type.is_symlink() {
+                    return Err(ExportError::DestinationUnavailable);
+                }
+                let path = entry.path();
+                if file_type.is_dir() {
+                    pending.push(path);
+                    continue;
+                }
+                if !file_type.is_file() || path.file_name().is_some_and(|name| name == "COMMITTED")
+                {
+                    continue;
+                }
+                let relative = path
+                    .strip_prefix(&self.directory)
+                    .map_err(|_| ExportError::DestinationUnavailable)?;
+                let member = relative.to_str().ok_or(ExportError::DestinationUnavailable)?;
+                if member.ends_with(".part") || !safe_member_path(member) {
+                    continue;
+                }
+                let encrypted =
+                    fs::read(&path).map_err(|error| ExportError::Io(error.to_string()))?;
+                if encrypted.len() > MAX_METADATA_BYTES.max(MAX_PAGE_BYTES) {
+                    return Err(ExportError::DestinationUnavailable);
+                }
+                cipher.open(&encrypted).map_err(|_| ExportError::IdempotencyConflict)?;
+                facts.push(fact(member, &encrypted));
+                if facts.len() > MAX_PAGE_RECORDS.saturating_mul(4) {
+                    return Err(ExportError::DestinationUnavailable);
+                }
+            }
+        }
+        facts.sort_by(|left, right| left.path.cmp(&right.path));
+        Ok(facts)
+    }
+
     fn commit(self: Box<Self>, manifest: &ArtifactFact) -> Result<(), ExportError> {
+        if manifest.path != "manifest.json" {
+            return Err(ExportError::IdempotencyConflict);
+        }
         let marker = self.directory.join("COMMITTED");
         let bytes = format!("{}\t{}\t{}\n", manifest.path, manifest.length, manifest.checksum);
+        if let Ok(existing) = fs::read(&marker) {
+            if existing == bytes.as_bytes() {
+                return Ok(());
+            }
+            return Err(ExportError::IdempotencyConflict);
+        }
         let tmp = marker.with_extension("part");
         fs::write(&tmp, bytes).map_err(|error| ExportError::Io(error.to_string()))?;
         fs::rename(tmp, marker).map_err(|error| ExportError::Io(error.to_string()))
@@ -1215,10 +1541,29 @@ impl ArtifactPort for EncryptedFileArtifactPort {
         if root != &self.root {
             return Err(ExportError::DestinationUnavailable);
         }
+        ensure_no_symlink_components(root)?;
         let directory = self.root.join(database).join(job_id);
+        ensure_no_symlink_components(&self.root.join(database))?;
         fs::create_dir_all(&directory).map_err(|error| ExportError::Io(error.to_string()))?;
+        ensure_no_symlink_components(&directory)?;
         Ok(Box::new(EncryptedFileWriter { directory, cipher: Arc::clone(&self.cipher) }))
     }
+}
+
+fn ensure_no_symlink_components(path: &Path) -> Result<(), ExportError> {
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        current.push(component.as_os_str());
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(ExportError::DestinationUnavailable);
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => return Err(ExportError::DestinationUnavailable),
+        }
+    }
+    Ok(())
 }
 
 fn fact(path: &str, bytes: &[u8]) -> ArtifactFact {
@@ -1334,6 +1679,25 @@ mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
 
+    struct ReadPort;
+
+    impl EngineExportReadPort for ReadPort {
+        fn snapshot(&self, _database: &str) -> Result<ExportSnapshot, ExportSourceError> {
+            Err(ExportSourceError::Storage("engine seam unavailable".into()))
+        }
+
+        fn page(
+            &self,
+            _database: &str,
+            _snapshot: &ExportSnapshot,
+            _phase: ExportPhase,
+            _after: Option<&[u8]>,
+            _limit: usize,
+        ) -> Result<ExportPage, ExportSourceError> {
+            Err(ExportSourceError::Storage("engine seam unavailable".into()))
+        }
+    }
+
     struct Source {
         pages: Mutex<Vec<ExportPage>>,
     }
@@ -1387,6 +1751,15 @@ mod tests {
                 members.push((path.into(), plaintext.to_vec()));
             }
             Ok(fact(path, plaintext))
+        }
+        fn existing_facts(&mut self) -> Result<Vec<ArtifactFact>, ExportError> {
+            Ok(self
+                .members
+                .lock()
+                .expect("members")
+                .iter()
+                .map(|(path, bytes)| fact(path, bytes))
+                .collect())
         }
         fn commit(self: Box<Self>, _manifest: &ArtifactFact) -> Result<(), ExportError> {
             self.committed.fetch_add(1, Ordering::Relaxed);
@@ -1447,6 +1820,36 @@ mod tests {
     }
 
     #[test]
+    fn production_source_requires_the_real_engine_seam() {
+        assert!(matches!(
+            EngineExportSource::try_new(None),
+            Err(ExportError::DependencyUnavailable)
+        ));
+        let source = EngineExportSource::try_new(Some(Arc::new(ReadPort))).expect("source");
+        assert!(matches!(
+            source.snapshot("db"),
+            Err(ExportSourceError::Storage(detail)) if detail == "engine seam unavailable"
+        ));
+        assert!(matches!(
+            source.page(
+                "db",
+                &ExportSnapshot {
+                    boundary: 1,
+                    database_id: "db".into(),
+                    schemas: Vec::new(),
+                    indexes: Vec::new(),
+                    branches: Vec::new(),
+                    estimated_records: None,
+                },
+                ExportPhase::Documents,
+                None,
+                MAX_PAGE_RECORDS + 1
+            ),
+            Err(ExportSourceError::InvalidPage("page limit is outside bound"))
+        ));
+    }
+
+    #[test]
     fn jsonl_splices_document_bytes_without_value_parser() {
         let (documents, history) = encode_page(&[ExportRecord::Document {
             collection: "a\"b".into(),
@@ -1460,6 +1863,24 @@ mod tests {
             std::str::from_utf8(&documents).expect("utf8"),
             r#"{\"collection\":\"a\\\"b\",\"id\":\"1\",\"version\":3,\"value\":{\"x\":true}}\n"#
         );
+    }
+
+    #[test]
+    fn metadata_member_collisions_fail_closed() {
+        let snapshot = ExportSnapshot {
+            boundary: 1,
+            database_id: "db".into(),
+            schemas: vec![MetadataMember { name: "same.json".into(), bytes: br#"{}"#.to_vec() }],
+            indexes: vec![MetadataMember { name: "same.json".into(), bytes: br#"{}"#.to_vec() }],
+            branches: Vec::new(),
+            estimated_records: None,
+        };
+        // Prefixes are part of the member identity, so same names in schema
+        // and index namespaces are valid; a traversal name is not.
+        assert_eq!(metadata_members(&snapshot).expect("namespaces").len(), 2);
+        let mut unsafe_snapshot = snapshot;
+        unsafe_snapshot.schemas[0].name = "../escape".into();
+        assert!(metadata_members(&unsafe_snapshot).is_err());
     }
 
     #[test]

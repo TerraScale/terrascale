@@ -13,7 +13,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use axum::body::Body;
@@ -25,9 +25,23 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use terrabase::families::migrations::{
+    MigrationCoordinator, MigrationError, MigrationOptions, MigrationPlan, MigrationReceipt,
+    MigrationStatus as FamilyMigrationStatus, SchemaMigration,
+};
+use terrabase::families::{
+    CanonicalCollectionSchema, CanonicalFieldType, CanonicalIndexKind, CanonicalSchemaDocument,
+    MergePolicy as FamilyMergePolicy, SchemaBranchPin, SchemaCatalogAdapter,
+    SchemaCatalogCasOutcome, SchemaCatalogCasRequest, SchemaCatalogError, SchemaCatalogExpectation,
+    SchemaCatalogRecord, SchemaMigrationStatus, SchemaVersion,
+};
+use terrabase::identity::SchemaCatalogEntryUlid;
+use terrabase::types::{CollectionName, DocumentValue, TenantScope};
 
 /// The largest accepted schema document in bytes.
 pub const MAX_SCHEMA_BYTES: usize = 512 * 1024;
+/// Exact route hook merged into the authenticated parent router.
+pub const SCHEMA_ROUTE: &str = "/api/v1/databases/{database}/collections/{collection}/schema";
 /// The largest accepted collection name, field name, or index name.
 pub const MAX_IDENTIFIER_BYTES: usize = 255;
 /// The largest number of fields in one collection.
@@ -332,6 +346,242 @@ pub fn normalize_schema_json(mut schema: SchemaJson) -> Result<SchemaJson, Schem
     Ok(schema)
 }
 
+/// Converts the server DTO to the engine's one canonical schema contract.
+///
+/// The conversion builds the family's canonical [`DocumentValue`] shape and
+/// parses it with the family codec, which is the sole owner of canonical
+/// field/index/TTL/merge spellings.  Consequently every durable adapter
+/// receives the same value that the engine and SDKs verify.
+pub fn canonical_schema_document(
+    schema: &SchemaJson,
+) -> Result<CanonicalSchemaDocument, SchemaError> {
+    let schema = normalize_schema_json(schema.clone())?;
+    let collections =
+        schema.collections.iter().map(canonical_collection_value).collect::<Result<Vec<_>, _>>()?;
+    let mut document =
+        BTreeMap::from([("collections".to_owned(), DocumentValue::Array(collections))]);
+    if let Some(version) = schema.version {
+        document.insert(
+            "version".to_owned(),
+            DocumentValue::Integer(i64::try_from(version).unwrap_or(i64::MAX)),
+        );
+    }
+    CanonicalSchemaDocument::from_value(&DocumentValue::Object(document))
+        .map_err(|_| SchemaError::invalid("schema is not a canonical engine schema document"))
+}
+
+/// Converts a canonical family document into the wire DTO used by the HTTP
+/// handlers.  This is useful to adapters that must expose the exact
+/// `terrascale.schema.json` bytes after a restart.
+pub fn schema_json_from_canonical(
+    schema: &CanonicalSchemaDocument,
+) -> Result<SchemaJson, SchemaError> {
+    let collections = schema
+        .collections()
+        .iter()
+        .map(collection_from_canonical)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(SchemaJson { collections, version: schema.version().map(SchemaVersion::get) })
+}
+
+/// Builds one collection's canonical codec value.
+///
+/// Spellings are produced with the family's own `as_str` vocabulary so the
+/// subsequent [`CanonicalSchemaDocument::from_value`] parse applies the exact
+/// engine validation (identifiers, TTL ownership, rename shape, retention
+/// window, and merge policy) without naming crate-private family types.
+fn canonical_collection_value(schema: &CollectionSchema) -> Result<DocumentValue, SchemaError> {
+    let mut fields = Vec::with_capacity(schema.fields.len());
+    for field in &schema.fields {
+        let mut value = BTreeMap::from([
+            ("name".to_owned(), DocumentValue::String(field.name.clone())),
+            (
+                "type".to_owned(),
+                DocumentValue::String(canonical_field_type(field.r#type).as_str().to_owned()),
+            ),
+            ("required".to_owned(), DocumentValue::Boolean(field.required)),
+            ("indexed".to_owned(), DocumentValue::Boolean(field.indexed)),
+        ]);
+        if field.unique {
+            value.insert("unique".to_owned(), DocumentValue::Boolean(true));
+        }
+        if let Some(policy) = field.merge_policy {
+            value.insert(
+                "mergePolicy".to_owned(),
+                DocumentValue::String(canonical_field_type(policy).as_str().to_owned()),
+            );
+        }
+        fields.push(DocumentValue::Object(value));
+    }
+    let mut indexes = Vec::with_capacity(schema.indexes.len());
+    for index in &schema.indexes {
+        let kind = match index.kind.unwrap_or(IndexKind::Btree) {
+            IndexKind::Btree => CanonicalIndexKind::BTree,
+            IndexKind::Fts => CanonicalIndexKind::Fts,
+        };
+        let mut value = BTreeMap::from([
+            ("name".to_owned(), DocumentValue::String(index.name.clone())),
+            (
+                "fields".to_owned(),
+                DocumentValue::Array(
+                    index.fields.iter().cloned().map(DocumentValue::String).collect(),
+                ),
+            ),
+            ("kind".to_owned(), DocumentValue::String(kind.as_str().to_owned())),
+        ]);
+        if index.unique {
+            value.insert("unique".to_owned(), DocumentValue::Boolean(true));
+        }
+        indexes.push(DocumentValue::Object(value));
+    }
+    let mut collection = BTreeMap::from([
+        ("name".to_owned(), DocumentValue::String(schema.name.clone())),
+        ("fields".to_owned(), DocumentValue::Array(fields)),
+        (
+            "historyRetentionDays".to_owned(),
+            DocumentValue::Integer(i64::from(schema.history_retention_days)),
+        ),
+        (
+            "mergePolicy".to_owned(),
+            DocumentValue::String(canonical_merge_policy(schema.merge_policy).as_str().to_owned()),
+        ),
+    ]);
+    if !indexes.is_empty() {
+        collection.insert("indexes".to_owned(), DocumentValue::Array(indexes));
+    }
+    if let Some(ttl) = &schema.ttl {
+        collection.insert(
+            "ttl".to_owned(),
+            DocumentValue::Object(BTreeMap::from([(
+                "field".to_owned(),
+                DocumentValue::String(ttl.field.clone()),
+            )])),
+        );
+    }
+    if !schema.renames.is_empty() {
+        collection.insert(
+            "renames".to_owned(),
+            DocumentValue::Array(
+                schema
+                    .renames
+                    .iter()
+                    .map(|rename| {
+                        DocumentValue::Object(BTreeMap::from([
+                            ("from".to_owned(), DocumentValue::String(rename.from.clone())),
+                            ("to".to_owned(), DocumentValue::String(rename.to.clone())),
+                        ]))
+                    })
+                    .collect(),
+            ),
+        );
+    }
+    if let Some(version) = schema.version {
+        collection.insert(
+            "version".to_owned(),
+            DocumentValue::Integer(i64::try_from(version).unwrap_or(i64::MAX)),
+        );
+    }
+    Ok(DocumentValue::Object(collection))
+}
+
+fn collection_from_canonical(
+    schema: &CanonicalCollectionSchema,
+) -> Result<CollectionSchema, SchemaError> {
+    let fields = schema
+        .fields()
+        .iter()
+        .map(|field| FieldDescriptor {
+            name: field.name().to_owned(),
+            r#type: server_field_type(field.kind()),
+            required: field.required(),
+            indexed: field.indexed(),
+            unique: field.unique(),
+            merge_policy: field.merge_policy().map(server_field_type),
+            fts: false,
+        })
+        .collect();
+    let indexes = schema
+        .indexes()
+        .iter()
+        .map(|index| IndexDescriptor {
+            name: index.name().to_owned(),
+            fields: index.fields().to_vec(),
+            unique: index.unique(),
+            kind: Some(match index.kind() {
+                CanonicalIndexKind::BTree => IndexKind::Btree,
+                CanonicalIndexKind::Fts => IndexKind::Fts,
+            }),
+        })
+        .collect();
+    let ttl = schema.ttl().map(|ttl| TtlDescriptor { field: ttl.field().to_owned() });
+    let renames = schema
+        .renames()
+        .iter()
+        .map(|rename| FieldRename { from: rename.from().to_owned(), to: rename.to().to_owned() })
+        .collect();
+    Ok(CollectionSchema {
+        name: schema.name().to_owned(),
+        fields,
+        indexes,
+        fts: None,
+        ttl,
+        renames,
+        version: schema.version().map(SchemaVersion::get),
+        history_retention_days: schema.history_retention_days(),
+        merge_policy: server_merge_policy(schema.merge_policy()),
+    })
+}
+
+const fn canonical_field_type(value: FieldType) -> CanonicalFieldType {
+    match value {
+        FieldType::String => CanonicalFieldType::String,
+        FieldType::Int => CanonicalFieldType::Int,
+        FieldType::Float => CanonicalFieldType::Float,
+        FieldType::Bool => CanonicalFieldType::Bool,
+        FieldType::Bytes => CanonicalFieldType::Bytes,
+        FieldType::Json => CanonicalFieldType::Json,
+        FieldType::Timestamp => CanonicalFieldType::Timestamp,
+        FieldType::Text => CanonicalFieldType::Text,
+        FieldType::CounterPn => CanonicalFieldType::CounterPn,
+        FieldType::SetAddWins => CanonicalFieldType::SetAddWins,
+        FieldType::SetRemoveWins => CanonicalFieldType::SetRemoveWins,
+        FieldType::RegisterMv => CanonicalFieldType::RegisterMv,
+    }
+}
+
+const fn server_field_type(value: CanonicalFieldType) -> FieldType {
+    match value {
+        CanonicalFieldType::String => FieldType::String,
+        CanonicalFieldType::Int => FieldType::Int,
+        CanonicalFieldType::Float => FieldType::Float,
+        CanonicalFieldType::Bool => FieldType::Bool,
+        CanonicalFieldType::Bytes => FieldType::Bytes,
+        CanonicalFieldType::Json => FieldType::Json,
+        CanonicalFieldType::Timestamp => FieldType::Timestamp,
+        CanonicalFieldType::Text => FieldType::Text,
+        CanonicalFieldType::CounterPn => FieldType::CounterPn,
+        CanonicalFieldType::SetAddWins => FieldType::SetAddWins,
+        CanonicalFieldType::SetRemoveWins => FieldType::SetRemoveWins,
+        CanonicalFieldType::RegisterMv => FieldType::RegisterMv,
+    }
+}
+
+const fn canonical_merge_policy(value: MergePolicy) -> FamilyMergePolicy {
+    match value {
+        MergePolicy::RemoveWins => FamilyMergePolicy::RemoveWins,
+        MergePolicy::HlcTiebreak => FamilyMergePolicy::HlcTiebreak,
+        MergePolicy::LastWriteWins => FamilyMergePolicy::LastWriteWins,
+    }
+}
+
+const fn server_merge_policy(value: FamilyMergePolicy) -> MergePolicy {
+    match value {
+        FamilyMergePolicy::RemoveWins => MergePolicy::RemoveWins,
+        FamilyMergePolicy::HlcTiebreak => MergePolicy::HlcTiebreak,
+        FamilyMergePolicy::LastWriteWins => MergePolicy::LastWriteWins,
+    }
+}
+
 /// The durable response to an apply operation.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SchemaDocument {
@@ -450,6 +700,284 @@ pub trait SchemaDurablePort: Send + Sync {
     ) -> Result<DurableCommit, DurablePortError>;
 }
 
+/// Object-safe production bridge to the engine schema-catalog family.
+///
+/// A member's SQLite implementation normally implements
+/// [`SchemaCatalogAdapter`].  The HTTP service only needs this object-safe
+/// form, which keeps the adapter's associated error type out of handler state
+/// while preserving the family CAS/checksum rules.  There is intentionally no
+/// default or process-local implementation.
+pub trait SchemaCatalogPort: Send + Sync {
+    /// Load a complete canonical catalog row for one branch pin.
+    fn load_catalog(
+        &self,
+        branch: &SchemaBranchPin,
+    ) -> Result<Option<SchemaCatalogRecord>, DurablePortError>;
+
+    /// Atomically apply one family CAS request.
+    fn compare_and_swap_catalog(
+        &self,
+        request: &SchemaCatalogCasRequest,
+    ) -> Result<SchemaCatalogCasOutcome, DurablePortError>;
+}
+
+/// Adapter wrapper for a concrete [`SchemaCatalogAdapter`].
+///
+/// `SchemaCatalogAdapter` is mutable because it owns a SQLite connection;
+/// HTTP handlers are concurrent, so this wrapper serializes each family
+/// operation behind a mutex.  The mutex protects only the connection handle;
+/// durability and transaction atomicity remain the adapter's responsibility.
+pub struct DurableSchemaCatalogAdapter<A> {
+    adapter: Mutex<A>,
+}
+
+impl<A> DurableSchemaCatalogAdapter<A> {
+    /// Wrap a concrete family adapter for concurrent handler use.
+    #[must_use]
+    pub fn new(adapter: A) -> Self {
+        Self { adapter: Mutex::new(adapter) }
+    }
+}
+
+impl<A> SchemaCatalogPort for DurableSchemaCatalogAdapter<A>
+where
+    A: SchemaCatalogAdapter + Send,
+    A::Error: fmt::Debug,
+{
+    fn load_catalog(
+        &self,
+        branch: &SchemaBranchPin,
+    ) -> Result<Option<SchemaCatalogRecord>, DurablePortError> {
+        self.adapter
+            .lock()
+            .map_err(|_| DurablePortError {
+                detail: "schema catalog adapter lock poisoned".into(),
+            })?
+            .load(branch)
+            .map_err(|error| DurablePortError { detail: format!("{error:?}") })
+    }
+
+    fn compare_and_swap_catalog(
+        &self,
+        request: &SchemaCatalogCasRequest,
+    ) -> Result<SchemaCatalogCasOutcome, DurablePortError> {
+        self.adapter
+            .lock()
+            .map_err(|_| DurablePortError {
+                detail: "schema catalog adapter lock poisoned".into(),
+            })?
+            .compare_and_swap(request)
+            .map_err(|error| DurablePortError { detail: format!("{error:?}") })
+    }
+}
+
+/// Request for one canonical, branch-pinned catalog successor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanonicalSchemaApplyRequest {
+    /// Immutable database/branch incarnation pin.
+    pub branch: SchemaBranchPin,
+    /// Stable family entry identity. Reusing it is idempotent.
+    pub entry_id: SchemaCatalogEntryUlid,
+    /// Complete canonical `terrascale.schema.json` document.
+    pub schema: CanonicalSchemaDocument,
+    /// Monotonic schema version.
+    pub schema_version: SchemaVersion,
+    /// Monotonic migration generation.
+    pub migration_generation: u64,
+    /// Durable migration lifecycle state.
+    pub migration_status: SchemaMigrationStatus,
+    /// Exact CAS expectation, or [`SchemaCatalogExpectation::absent`].
+    pub expected: SchemaCatalogExpectation,
+}
+
+/// Result of applying one canonical catalog successor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanonicalSchemaApplyResponse {
+    /// The complete durable catalog record.
+    pub record: SchemaCatalogRecord,
+    /// Whether the family adapter found the same entry/checksum already
+    /// committed.
+    pub idempotent_replay: bool,
+}
+
+/// Production service over the durable schema-catalog family API.
+pub struct CanonicalSchemaService {
+    store: Arc<dyn SchemaCatalogPort>,
+}
+
+impl CanonicalSchemaService {
+    /// Construct a service from a real durable family adapter.
+    #[must_use]
+    pub fn new(store: Arc<dyn SchemaCatalogPort>) -> Self {
+        Self { store }
+    }
+
+    /// Read the complete canonical document and its durable metadata.
+    pub fn get(
+        &self,
+        branch: &SchemaBranchPin,
+    ) -> Result<Option<SchemaCatalogRecord>, SchemaError> {
+        self.store.load_catalog(branch).map_err(|error| durable_error(&error))
+    }
+
+    /// Read the exact canonical `terrascale.schema.json` bytes from durable
+    /// catalog state.  The family record's serializer is used directly, so a
+    /// restart cannot alter key order, aliases, or omitted defaults.
+    pub fn get_json(&self, branch: &SchemaBranchPin) -> Result<Option<String>, SchemaError> {
+        self.get(branch).map(|record| record.map(|record| record.schema_json()))
+    }
+
+    /// Apply one canonical document through the family compare-and-swap seam.
+    ///
+    /// The family API validates the branch pin, checksum, monotonic version,
+    /// migration generation, and idempotent entry identity before the adapter
+    /// is allowed to commit. No schema bytes are held in process state.
+    pub fn apply(
+        &self,
+        request: CanonicalSchemaApplyRequest,
+    ) -> Result<CanonicalSchemaApplyResponse, SchemaError> {
+        let record = SchemaCatalogRecord::try_new(
+            request.entry_id,
+            request.branch,
+            request.schema,
+            request.schema_version,
+            request.migration_generation,
+            request.migration_status,
+        )
+        .map_err(catalog_error)?;
+        let cas = SchemaCatalogCasRequest::try_new(request.expected, record.clone())
+            .map_err(catalog_error)?;
+        let outcome =
+            self.store.compare_and_swap_catalog(&cas).map_err(|error| durable_error(&error))?;
+        match outcome {
+            SchemaCatalogCasOutcome::Applied => {
+                Ok(CanonicalSchemaApplyResponse { record, idempotent_replay: false })
+            }
+            SchemaCatalogCasOutcome::AlreadyApplied => {
+                Ok(CanonicalSchemaApplyResponse { record, idempotent_replay: true })
+            }
+            SchemaCatalogCasOutcome::Conflict => Err(SchemaError::new(
+                409,
+                "schema_catalog_conflict",
+                "another writer changed the branch schema catalog",
+                "GET the schema catalog and retry with its exact version and checksum",
+            )),
+        }
+    }
+}
+
+fn catalog_error(error: SchemaCatalogError) -> SchemaError {
+    let (status, code, fix) = match error {
+        SchemaCatalogError::CompareAndSwapConflict => (
+            409,
+            "schema_catalog_conflict",
+            "GET the schema catalog and retry with its exact version and checksum",
+        ),
+        SchemaCatalogError::IdempotencyConflict => (
+            409,
+            "idempotency_conflict",
+            "retry the original request or use a new schema entry identity",
+        ),
+        SchemaCatalogError::BranchMismatch => (
+            409,
+            "branch_identity_changed",
+            "route the request to the branch's current database incarnation",
+        ),
+        SchemaCatalogError::NonMonotonicVersion | SchemaCatalogError::VersionContentMismatch => (
+            409,
+            "schema_version_regression",
+            "advance the schema version and preserve its canonical contents",
+        ),
+        SchemaCatalogError::NonMonotonicMigrationGeneration => (
+            409,
+            "migration_generation_regression",
+            "resume migration from its latest durable generation",
+        ),
+        _ => (422, "invalid_schema_catalog", "repair the canonical schema and retry the apply"),
+    };
+    SchemaError::new(status, code, format!("schema catalog rejected the request: {error:?}"), fix)
+}
+
+/// Reads restart-safe migration state from the engine migration family.
+///
+/// The coordinator is supplied by the member's durable engine; this function
+/// never maintains a second status cache in the server process.
+pub fn migration_status<C: MigrationCoordinator>(
+    coordinator: &C,
+    scope: &TenantScope,
+    collection: &CollectionName,
+) -> Result<FamilyMigrationStatus, SchemaError> {
+    coordinator.migration_status(scope, collection).map_err(migration_error)
+}
+
+/// Computes a durable-engine migration plan without mutating documents.
+pub fn migration_dry_run<C: MigrationCoordinator>(
+    coordinator: &C,
+    scope: &TenantScope,
+    contract: &SchemaMigration,
+) -> Result<MigrationPlan, SchemaError> {
+    coordinator.migration_dry_run(scope, contract).map_err(migration_error)
+}
+
+/// Drives one migration through the durable engine coordinator.
+///
+/// The engine records each bounded page and cursor, so an interrupted request
+/// resumes after restart.  `options` is passed unchanged, including the
+/// explicit acknowledgment required for irreversible transforms.
+pub fn migration_apply<C: MigrationCoordinator>(
+    coordinator: &C,
+    scope: &TenantScope,
+    contract: &SchemaMigration,
+    plan: &MigrationPlan,
+    options: MigrationOptions,
+) -> Result<MigrationReceipt, SchemaError> {
+    coordinator.migration_apply(scope, contract, plan, options).map_err(migration_error)
+}
+
+fn migration_error(error: MigrationError) -> SchemaError {
+    let (status, code, fix) = match error {
+        MigrationError::InvalidContract | MigrationError::TargetSchemaMalformed => {
+            (422, "invalid_migration", "repair the migration contract and run a fresh dry run")
+        }
+        MigrationError::FromVersionMismatch
+        | MigrationError::PlanMismatch
+        | MigrationError::ManifestMismatch => (
+            409,
+            "migration_version_conflict",
+            "refresh migration status and dry-run against the current schema",
+        ),
+        MigrationError::DriveInProgress => (
+            409,
+            "migration_in_progress",
+            "resume the durable migration owner instead of starting another drive",
+        ),
+        MigrationError::AcknowledgmentRequired => (
+            409,
+            "migration_acknowledgment_required",
+            "acknowledge the documented rollback limit before applying",
+        ),
+        MigrationError::StorageFailure
+        | MigrationError::ReservedStateInvalid
+        | MigrationError::ChecksumMismatch
+        | MigrationError::CountMismatch => (
+            503,
+            "migration_durable_store_error",
+            "recover the durable engine and retry with the same migration identity",
+        ),
+        _ => (
+            409,
+            "migration_rejected",
+            "inspect the typed migration status and follow its recovery action",
+        ),
+    };
+    SchemaError::new(
+        status,
+        code,
+        format!("migration coordinator rejected the request: {error:?}"),
+        fix,
+    )
+}
+
 /// Durable envelope persisted by [`SchemaDurablePort`].
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DurableSchemaRecord {
@@ -522,6 +1050,17 @@ impl SchemaHttpState {
     #[must_use]
     pub fn new(service: Arc<SchemaService>, identity: Option<Arc<dyn SchemaIdentityPort>>) -> Self {
         Self { service, identity }
+    }
+
+    /// Construct handler state for production wiring.
+    ///
+    /// Unlike [`Self::new`], this constructor cannot represent a missing
+    /// identity resolver.  The resolver and the service are both durable
+    /// parent-owned ports; tests that need fail-closed behavior may continue
+    /// using `new(..., None)`.
+    #[must_use]
+    pub fn production(service: Arc<SchemaService>, identity: Arc<dyn SchemaIdentityPort>) -> Self {
+        Self { service, identity: Some(identity) }
     }
 }
 
@@ -821,12 +1360,7 @@ pub struct BackfillProgress {
 
 /// Build the parent-wiring HTTP router for schema GET/PUT routes.
 pub fn router(state: Arc<SchemaHttpState>) -> Router {
-    Router::new()
-        .route(
-            "/api/v1/databases/{database}/collections/{collection}/schema",
-            get(get_schema).put(put_schema),
-        )
-        .with_state(state)
+    Router::new().route(SCHEMA_ROUTE, get(get_schema).put(put_schema)).with_state(state)
 }
 
 /// GET handler exposed for parent route tables that use their own router.
@@ -1376,9 +1910,43 @@ const fn is_false(value: &bool) -> bool {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+    use terrabase::identity::DatabaseUlid;
 
     #[derive(Default)]
     struct FakeStore(Mutex<BTreeMap<SchemaTarget, DurableSchemaRecord>>);
+
+    #[derive(Default)]
+    struct FakeCatalog(Mutex<Option<SchemaCatalogRecord>>);
+
+    impl SchemaCatalogAdapter for FakeCatalog {
+        type Error = String;
+
+        fn load(
+            &mut self,
+            branch: &SchemaBranchPin,
+        ) -> Result<Option<SchemaCatalogRecord>, Self::Error> {
+            Ok(self
+                .0
+                .lock()
+                .map_err(|_| "lock poisoned".to_owned())?
+                .as_ref()
+                .filter(|record| record.branch() == branch)
+                .cloned())
+        }
+
+        fn compare_and_swap(
+            &mut self,
+            request: &SchemaCatalogCasRequest,
+        ) -> Result<SchemaCatalogCasOutcome, Self::Error> {
+            let mut current = self.0.lock().map_err(|_| "lock poisoned".to_owned())?;
+            let outcome =
+                request.evaluate(current.as_ref()).map_err(|error| format!("{error:?}"))?;
+            if outcome == SchemaCatalogCasOutcome::Applied {
+                *current = Some(request.desired().clone());
+            }
+            Ok(outcome)
+        }
+    }
 
     impl SchemaDurablePort for FakeStore {
         fn load(
@@ -1546,5 +2114,50 @@ mod tests {
         changed.placement = vec!["SFO".into()];
         let error = service.get(&target(), &changed).expect_err("placement changed");
         assert_eq!(error.code, "database_identity_changed");
+    }
+
+    #[test]
+    fn canonical_family_document_round_trip_preserves_all_metadata() {
+        let input = SchemaJson { collections: vec![schema(Some(7))], version: Some(12) };
+        let canonical = canonical_schema_document(&input).expect("canonical schema");
+        assert_eq!(canonical.version().expect("document version").get(), 12);
+        let output = schema_json_from_canonical(&canonical).expect("wire schema");
+        assert_eq!(output.version, Some(12));
+        let collection = &output.collections[0];
+        assert_eq!(collection.version, Some(7));
+        assert_eq!(collection.history_retention_days, 7);
+        assert_eq!(collection.ttl, input.collections[0].ttl);
+        assert_eq!(collection.merge_policy, MergePolicy::RemoveWins);
+        assert_eq!(collection.indexes[0].kind, Some(IndexKind::Fts));
+    }
+
+    #[test]
+    fn canonical_service_delegates_family_cas_and_replays_entry_identity() {
+        let branch =
+            SchemaBranchPin::try_new(DatabaseUlid::generate(), "main", 1).expect("branch pin");
+        let store: Arc<dyn SchemaCatalogPort> =
+            Arc::new(DurableSchemaCatalogAdapter::new(FakeCatalog::default()));
+        let service = CanonicalSchemaService::new(store);
+        let schema = canonical_schema_document(&SchemaJson {
+            collections: vec![schema(Some(1))],
+            version: Some(1),
+        })
+        .expect("canonical schema");
+        let entry_id = SchemaCatalogEntryUlid::generate();
+        let request = CanonicalSchemaApplyRequest {
+            branch: branch.clone(),
+            entry_id,
+            schema,
+            schema_version: SchemaVersion::try_new(1).expect("version"),
+            migration_generation: 0,
+            migration_status: SchemaMigrationStatus::None,
+            expected: SchemaCatalogExpectation::absent(),
+        };
+        let first = service.apply(request.clone()).expect("first apply");
+        assert!(!first.idempotent_replay);
+        let replay = service.apply(request).expect("replay");
+        assert!(replay.idempotent_replay);
+        assert_eq!(replay.record.checksum(), first.record.checksum());
+        assert_eq!(service.get(&branch).expect("load").expect("record").branch(), &branch);
     }
 }

@@ -1,14 +1,15 @@
 //! Durable change-stream webhooks (S-07, D-39, D-64).
 //!
-//! This module deliberately contains no storage or networking implementation.
-//! Production composition must supply all five ports.  In particular, a
-//! missing port is a hard error; this surface never quietly substitutes an
-//! in-memory queue, an in-process secret, or a direct URL client.
+//! Production composition supplies all five ports. The Engine and shared
+//! member guard have adapters here; secret management and HTTPS/TLS remain
+//! explicit host-owned providers. A missing port is a hard error: this surface
+//! never quietly substitutes an in-memory queue, an in-process secret, or a
+//! direct URL client.
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Router;
@@ -19,6 +20,12 @@ use axum::http::{Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use serde::{Deserialize, Serialize};
+
+use terrabase::engine::Engine;
+use terrabase::types::{CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion};
+use terrabase::{CommitError, CommitOutcome, EngineError, LocalDurability, OperationId, TenantId};
+
+use crate::guards::AbuseGuards;
 
 /// Maximum endpoint URL length accepted by the service.
 pub const MAX_ENDPOINT_BYTES: usize = 2_048;
@@ -34,6 +41,9 @@ pub const MAX_ATTEMPTS: u32 = 8;
 pub const RETRY_HORIZON_SECONDS: u64 = 24 * 60 * 60;
 /// The largest retry delay.
 pub const MAX_RETRY_DELAY_SECONDS: u64 = 60 * 60;
+
+const WEBHOOK_ENDPOINTS_COLLECTION: &str = "__terrascale_webhook_endpoints";
+const WEBHOOK_DELIVERIES_COLLECTION: &str = "__terrascale_webhook_deliveries";
 
 /// The authenticated tenant/project/database scope of one API operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -233,6 +243,446 @@ pub trait WebhookJournal: Send + Sync + 'static {
     ) -> Result<Vec<Publication>, StorageError>;
 }
 
+/// Engine-backed publication journal adapter.
+///
+/// `Engine::journal_rows` is the same durable revision line consumed by the
+/// reactive and replication paths. The canonical row bytes are forwarded
+/// unchanged; an event identity is a BLAKE3 digest of those bytes, which is
+/// stable across restart and cannot collide merely because two documents share
+/// one commit sequence.
+pub struct EngineWebhookJournal {
+    engine: Arc<Engine>,
+}
+
+impl EngineWebhookJournal {
+    /// Binds the adapter to an already opened, durable Engine.
+    #[must_use]
+    pub fn new(engine: Arc<Engine>) -> Self {
+        Self { engine }
+    }
+}
+
+impl WebhookJournal for EngineWebhookJournal {
+    fn page(
+        &self,
+        scope: &TenantScope,
+        cursor: u64,
+        limit: usize,
+    ) -> Result<Vec<Publication>, StorageError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let tenant = TenantId::try_new(&scope.tenant).map_err(|_| StorageError::Conflict)?;
+        let engine_scope = self.engine.scope_for(&tenant);
+        let limit = u32::try_from(limit.min(MAX_JOURNAL_PAGE)).unwrap_or(MAX_JOURNAL_PAGE as u32);
+        let rows = self
+            .engine
+            .journal_rows(&engine_scope, cursor, limit)
+            .map_err(|_| StorageError::Unavailable)?;
+        let mut publications = Vec::with_capacity(rows.len());
+        for row in rows {
+            if row.commit_sequence == 0 || row.canonical.is_empty() {
+                return Err(StorageError::Unavailable);
+            }
+            if is_webhook_metadata_row(&row.canonical) {
+                continue;
+            }
+            let event_id = blake3::hash(&row.canonical).to_hex().to_string();
+            publications.push(Publication {
+                revision: row.commit_sequence,
+                event_id,
+                body: row.canonical,
+            });
+        }
+        Ok(publications)
+    }
+}
+
+/// Engine-backed durable endpoint and delivery records.
+///
+/// The adapter uses the Engine's ordinary SQLite document transaction, so
+/// endpoint creation, delivery idempotency, retry state, and replay survive a
+/// process restart. A process-local mutex only serializes this adapter's
+/// compare-and-write operations; it is not a source of state or a fallback.
+pub struct EngineWebhookStorage {
+    engine: Arc<Engine>,
+    writes: Mutex<()>,
+}
+
+impl EngineWebhookStorage {
+    /// Binds storage to an already opened, durable Engine.
+    #[must_use]
+    pub fn new(engine: Arc<Engine>) -> Self {
+        Self { engine, writes: Mutex::new(()) }
+    }
+
+    fn engine_scope(&self, scope: &TenantScope) -> Result<terrabase::TenantScope, StorageError> {
+        let tenant = TenantId::try_new(&scope.tenant).map_err(|_| StorageError::Conflict)?;
+        Ok(self.engine.scope_for(&tenant))
+    }
+
+    fn read_document(
+        &self,
+        scope: &TenantScope,
+        collection: &str,
+        id: &str,
+    ) -> Result<Option<Document>, StorageError> {
+        let engine_scope = self.engine_scope(scope)?;
+        let snapshot = self.engine.read_snapshot(&engine_scope).map_err(map_engine_storage)?;
+        let transaction = self
+            .engine
+            .begin(&engine_scope, snapshot, operation_id("webhook-read"))
+            .map_err(map_engine_storage)?;
+        let collection = CollectionName::try_new(collection).map_err(|_| StorageError::Conflict)?;
+        let id = DocumentId::try_new(id).map_err(|_| StorageError::Conflict)?;
+        transaction.read_in_collection(&collection, &id).map_err(map_engine_storage)
+    }
+
+    fn documents(
+        &self,
+        scope: &TenantScope,
+        collection: &str,
+    ) -> Result<Vec<Document>, StorageError> {
+        let engine_scope = self.engine_scope(scope)?;
+        let snapshot = self.engine.read_snapshot(&engine_scope).map_err(map_engine_storage)?;
+        let collection = CollectionName::try_new(collection).map_err(|_| StorageError::Conflict)?;
+        self.engine
+            .snapshot_documents_in_collection(&engine_scope, &snapshot, &collection)
+            .map_err(map_engine_storage)
+    }
+
+    fn write_document(
+        &self,
+        scope: &TenantScope,
+        collection: &str,
+        id: &str,
+        value: DocumentValue,
+        expected: ExpectedVersion,
+    ) -> Result<(), StorageError> {
+        let engine_scope = self.engine_scope(scope)?;
+        let snapshot = self.engine.read_snapshot(&engine_scope).map_err(map_engine_storage)?;
+        let mut transaction = self
+            .engine
+            .begin(&engine_scope, snapshot, operation_id("webhook-write"))
+            .map_err(map_engine_storage)?;
+        let collection = CollectionName::try_new(collection).map_err(|_| StorageError::Conflict)?;
+        let id = DocumentId::try_new(id).map_err(|_| StorageError::Conflict)?;
+        transaction
+            .put(Document::new(id, collection, value), expected)
+            .map_err(map_engine_storage)?;
+        match transaction.commit(LocalDurability::Synced) {
+            CommitOutcome::Committed(_) => Ok(()),
+            CommitOutcome::Rejected(
+                CommitError::Conflict | CommitError::OperationIdReuse { .. },
+            ) => Err(StorageError::Conflict),
+            CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => {
+                Err(StorageError::Unavailable)
+            }
+        }
+    }
+}
+
+fn map_engine_storage(error: EngineError) -> StorageError {
+    match error {
+        EngineError::ScopeMismatch
+        | EngineError::SnapshotEngineMismatch
+        | EngineError::SnapshotTenantMismatch => StorageError::Conflict,
+        _ => StorageError::Unavailable,
+    }
+}
+
+fn operation_id(prefix: &str) -> OperationId {
+    let id = format!("{prefix}-{}", terrabase::identity::process_generator().generate().to_text());
+    OperationId::try_new(&id).expect("generated webhook operation identity is valid")
+}
+
+fn delivery_id(endpoint_id: &str, event_id: &str) -> String {
+    format!("{endpoint_id}:{event_id}")
+}
+
+fn endpoint_value(record: &WebhookEndpoint) -> DocumentValue {
+    DocumentValue::Object(BTreeMap::from([
+        ("endpoint".into(), DocumentValue::String(record.endpoint.clone())),
+        ("created_at".into(), DocumentValue::Integer(record.created_at as i64)),
+        ("deleted".into(), DocumentValue::Boolean(record.deleted)),
+    ]))
+}
+
+fn endpoint_from_document(document: &Document) -> Option<WebhookEndpoint> {
+    let DocumentValue::Object(fields) = document.value() else { return None };
+    let endpoint = match fields.get("endpoint")? {
+        DocumentValue::String(value) => value.clone(),
+        _ => return None,
+    };
+    let created_at = match fields.get("created_at")? {
+        DocumentValue::Integer(value) => u64::try_from(*value).ok()?,
+        _ => return None,
+    };
+    let deleted = match fields.get("deleted")? {
+        DocumentValue::Boolean(value) => *value,
+        _ => return None,
+    };
+    Some(WebhookEndpoint { id: document.id().as_str().to_owned(), endpoint, created_at, deleted })
+}
+
+fn delivery_value(record: &DeliveryRecord) -> DocumentValue {
+    DocumentValue::Object(BTreeMap::from([
+        ("event_id".into(), DocumentValue::String(record.event_id.clone())),
+        ("revision".into(), DocumentValue::Integer(record.revision as i64)),
+        ("attempts".into(), DocumentValue::Integer(i64::from(record.attempts))),
+        ("next_attempt_at".into(), DocumentValue::Integer(record.next_attempt_at as i64)),
+        (
+            "status".into(),
+            record
+                .status
+                .map_or(DocumentValue::Null, |value| DocumentValue::Integer(i64::from(value))),
+        ),
+        ("delivered".into(), DocumentValue::Boolean(record.delivered)),
+        ("terminal".into(), DocumentValue::Boolean(record.terminal)),
+    ]))
+}
+
+fn delivery_from_document(document: &Document) -> Option<DeliveryRecord> {
+    let DocumentValue::Object(fields) = document.value() else { return None };
+    let string = |name: &str| match fields.get(name)? {
+        DocumentValue::String(value) => Some(value.clone()),
+        _ => None,
+    };
+    let integer = |name: &str| match fields.get(name)? {
+        DocumentValue::Integer(value) => u64::try_from(*value).ok(),
+        _ => None,
+    };
+    let boolean = |name: &str| match fields.get(name)? {
+        DocumentValue::Boolean(value) => Some(*value),
+        _ => None,
+    };
+    let status = match fields.get("status")? {
+        DocumentValue::Null => None,
+        DocumentValue::Integer(value) => Some(u16::try_from(*value).ok()?),
+        _ => return None,
+    };
+    Some(DeliveryRecord {
+        id: document.id().as_str().to_owned(),
+        event_id: string("event_id")?,
+        revision: integer("revision")?,
+        attempts: u32::try_from(integer("attempts")?).ok()?,
+        next_attempt_at: integer("next_attempt_at")?,
+        status,
+        delivered: boolean("delivered")?,
+        terminal: boolean("terminal")?,
+    })
+}
+
+/// Returns whether a canonical Engine journal row belongs to webhook metadata.
+/// Canonical rows start with a u32-length-prefixed collection name.
+fn is_webhook_metadata_row(canonical: &[u8]) -> bool {
+    let Some(length) = canonical.get(..4).and_then(|bytes| bytes.try_into().ok()) else {
+        return false;
+    };
+    let length = u32::from_le_bytes(length) as usize;
+    let Some(collection) = canonical.get(4..4_usize.saturating_add(length)) else { return false };
+    collection == WEBHOOK_ENDPOINTS_COLLECTION.as_bytes()
+        || collection == WEBHOOK_DELIVERIES_COLLECTION.as_bytes()
+}
+
+impl WebhookStorage for EngineWebhookStorage {
+    fn create_endpoint(
+        &self,
+        scope: &TenantScope,
+        endpoint: &str,
+        now: u64,
+    ) -> Result<WebhookEndpoint, StorageError> {
+        let _guard = self.writes.lock().map_err(|_| StorageError::Unavailable)?;
+        let record = WebhookEndpoint {
+            id: terrabase::identity::process_generator().generate().to_text(),
+            endpoint: endpoint.to_owned(),
+            created_at: now,
+            deleted: false,
+        };
+        self.write_document(
+            scope,
+            WEBHOOK_ENDPOINTS_COLLECTION,
+            &record.id,
+            endpoint_value(&record),
+            ExpectedVersion::New,
+        )?;
+        Ok(record)
+    }
+
+    fn delete_endpoint(
+        &self,
+        scope: &TenantScope,
+        id: &str,
+    ) -> Result<WebhookEndpoint, StorageError> {
+        let _guard = self.writes.lock().map_err(|_| StorageError::Unavailable)?;
+        let document = self
+            .read_document(scope, WEBHOOK_ENDPOINTS_COLLECTION, id)?
+            .ok_or(StorageError::NotFound)?;
+        let mut record = endpoint_from_document(&document).ok_or(StorageError::Unavailable)?;
+        if !record.deleted {
+            record.deleted = true;
+            self.write_document(
+                scope,
+                WEBHOOK_ENDPOINTS_COLLECTION,
+                id,
+                endpoint_value(&record),
+                ExpectedVersion::Exact(document.metadata().version()),
+            )?;
+        }
+        Ok(record)
+    }
+
+    fn endpoint(
+        &self,
+        scope: &TenantScope,
+        id: &str,
+    ) -> Result<Option<WebhookEndpoint>, StorageError> {
+        match self.read_document(scope, WEBHOOK_ENDPOINTS_COLLECTION, id)? {
+            Some(document) => {
+                endpoint_from_document(&document).map(Some).ok_or(StorageError::Unavailable)
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn list_endpoints(
+        &self,
+        scope: &TenantScope,
+        include_deleted: bool,
+    ) -> Result<Vec<WebhookEndpoint>, StorageError> {
+        let documents = self.documents(scope, WEBHOOK_ENDPOINTS_COLLECTION)?;
+        let mut records = Vec::with_capacity(documents.len());
+        for document in &documents {
+            let record = endpoint_from_document(document).ok_or(StorageError::Unavailable)?;
+            if include_deleted || !record.deleted {
+                records.push(record);
+            }
+        }
+        records.sort_by(|left, right| left.id.cmp(&right.id));
+        Ok(records)
+    }
+
+    fn ensure_delivery(
+        &self,
+        scope: &TenantScope,
+        endpoint_id: &str,
+        publication: &Publication,
+        now: u64,
+    ) -> Result<DeliveryRecord, StorageError> {
+        let _guard = self.writes.lock().map_err(|_| StorageError::Unavailable)?;
+        let id = delivery_id(endpoint_id, &publication.event_id);
+        if let Some(document) = self.read_document(scope, WEBHOOK_DELIVERIES_COLLECTION, &id)? {
+            let record = delivery_from_document(&document).ok_or(StorageError::Unavailable)?;
+            if record.event_id != publication.event_id || record.revision != publication.revision {
+                return Err(StorageError::Conflict);
+            }
+            return Ok(record);
+        }
+        let record = DeliveryRecord {
+            id: id.clone(),
+            event_id: publication.event_id.clone(),
+            revision: publication.revision,
+            attempts: 0,
+            next_attempt_at: now,
+            status: None,
+            delivered: false,
+            terminal: false,
+        };
+        self.write_document(
+            scope,
+            WEBHOOK_DELIVERIES_COLLECTION,
+            &id,
+            delivery_value(&record),
+            ExpectedVersion::New,
+        )?;
+        Ok(record)
+    }
+
+    fn record_attempt(
+        &self,
+        scope: &TenantScope,
+        endpoint_id: &str,
+        delivery_id: &str,
+        attempts: u32,
+        next_attempt_at: u64,
+        status: Option<u16>,
+        delivered: bool,
+        terminal: bool,
+    ) -> Result<(), StorageError> {
+        let _guard = self.writes.lock().map_err(|_| StorageError::Unavailable)?;
+        if !delivery_id.starts_with(&format!("{endpoint_id}:")) {
+            return Err(StorageError::NotFound);
+        }
+        let document = self
+            .read_document(scope, WEBHOOK_DELIVERIES_COLLECTION, delivery_id)?
+            .ok_or(StorageError::NotFound)?;
+        let mut record = delivery_from_document(&document).ok_or(StorageError::Unavailable)?;
+        if attempts != record.attempts.saturating_add(1) {
+            return if attempts <= record.attempts { Ok(()) } else { Err(StorageError::Conflict) };
+        }
+        record.attempts = attempts;
+        record.next_attempt_at = next_attempt_at;
+        record.status = status;
+        record.delivered = delivered;
+        record.terminal = terminal;
+        self.write_document(
+            scope,
+            WEBHOOK_DELIVERIES_COLLECTION,
+            delivery_id,
+            delivery_value(&record),
+            ExpectedVersion::Exact(document.metadata().version()),
+        )
+    }
+
+    fn delivery_log(
+        &self,
+        scope: &TenantScope,
+        endpoint_id: &str,
+        limit: usize,
+    ) -> Result<DeliveryLog, StorageError> {
+        let prefix = format!("{endpoint_id}:");
+        let documents = self.documents(scope, WEBHOOK_DELIVERIES_COLLECTION)?;
+        let mut records = Vec::with_capacity(documents.len());
+        for document in &documents {
+            let record = delivery_from_document(document).ok_or(StorageError::Unavailable)?;
+            if record.id.starts_with(&prefix) {
+                records.push(record);
+            }
+        }
+        records.sort_by(|left, right| left.id.cmp(&right.id));
+        records.truncate(limit.min(MAX_JOURNAL_PAGE));
+        Ok(DeliveryLog { deliveries: records })
+    }
+
+    fn replay_delivery(
+        &self,
+        scope: &TenantScope,
+        endpoint_id: &str,
+        delivery_id: &str,
+        now: u64,
+    ) -> Result<DeliveryRecord, StorageError> {
+        let _guard = self.writes.lock().map_err(|_| StorageError::Unavailable)?;
+        if !delivery_id.starts_with(&format!("{endpoint_id}:")) {
+            return Err(StorageError::NotFound);
+        }
+        let document = self
+            .read_document(scope, WEBHOOK_DELIVERIES_COLLECTION, delivery_id)?
+            .ok_or(StorageError::NotFound)?;
+        let mut record = delivery_from_document(&document).ok_or(StorageError::Unavailable)?;
+        record.next_attempt_at = now;
+        record.delivered = false;
+        record.terminal = false;
+        self.write_document(
+            scope,
+            WEBHOOK_DELIVERIES_COLLECTION,
+            delivery_id,
+            delivery_value(&record),
+            ExpectedVersion::Exact(document.metadata().version()),
+        )?;
+        Ok(record)
+    }
+}
+
 /// Placement-aware secret port.  Secret bytes must live in the configured
 /// secret manager/Vault and never in endpoint rows or this service.
 pub trait WebhookSecrets: Send + Sync + 'static {
@@ -268,6 +718,29 @@ pub trait WebhookGuard: Send + Sync + 'static {
     fn release(&self, scope: &TenantScope, endpoint: &str);
 }
 
+/// Adapter for the member's D-64 abuse guard.
+pub struct AbuseGuardWebhookGuard {
+    guards: Arc<AbuseGuards>,
+}
+
+impl AbuseGuardWebhookGuard {
+    /// Binds webhook reservations to the shared member guard state.
+    #[must_use]
+    pub fn new(guards: Arc<AbuseGuards>) -> Self {
+        Self { guards }
+    }
+}
+
+impl WebhookGuard for AbuseGuardWebhookGuard {
+    fn reserve(&self, scope: &TenantScope, endpoint: &str) -> Result<(), ()> {
+        self.guards.register_webhook(&scope.database, endpoint).map_err(|_| ())
+    }
+
+    fn release(&self, scope: &TenantScope, endpoint: &str) {
+        self.guards.unregister_webhook(&scope.database, endpoint);
+    }
+}
+
 /// Network egress port.  It owns DNS resolution and must reject every private,
 /// loopback, link-local, metadata, and otherwise non-public destination after
 /// resolution.  This explicit check prevents a DNS-to-private SSRF shortcut.
@@ -282,6 +755,158 @@ pub trait WebhookDelivery: Send + Sync + 'static {
         body: &[u8],
     ) -> Result<DeliveryResponse, DeliveryError>;
 }
+
+/// TLS-capable egress hook used by [`HttpsWebhookDelivery`].
+///
+/// The server crate intentionally does not ship a second HTTP client. A
+/// member host supplies the audited HTTPS implementation (certificate and
+/// hostname validation, connect/read deadlines, and bounded response reads),
+/// while this adapter owns the DNS rebinding/SSRF admission check.
+pub trait HttpsTransport: Send + Sync + 'static {
+    /// Resolves the endpoint immediately before use. Implementations must not
+    /// return cached addresses beyond the request's lifetime.
+    fn resolve(&self, endpoint: &str) -> Result<Vec<IpAddr>, DeliveryError>;
+    /// Sends one HTTPS request using the already validated endpoint.
+    fn send_https(
+        &self,
+        endpoint: &str,
+        addresses: &[IpAddr],
+        headers: &BTreeMap<String, String>,
+        body: &[u8],
+    ) -> Result<DeliveryResponse, DeliveryError>;
+}
+
+/// SSRF-safe adapter around the host's bounded HTTPS transport.
+pub struct HttpsWebhookDelivery<T> {
+    transport: Arc<T>,
+}
+
+impl<T> HttpsWebhookDelivery<T> {
+    /// Installs an explicit HTTPS provider. There is no direct URL or memory
+    /// transport fallback.
+    #[must_use]
+    pub fn new(transport: Arc<T>) -> Self {
+        Self { transport }
+    }
+}
+
+impl<T: HttpsTransport> WebhookDelivery for HttpsWebhookDelivery<T> {
+    fn validate_target(&self, endpoint: &str) -> Result<(), DeliveryError> {
+        let endpoint = validate_endpoint(endpoint).map_err(|_| DeliveryError::TargetRejected)?;
+        let addresses = self.transport.resolve(&endpoint)?;
+        if addresses.is_empty() || addresses.iter().any(|address| !is_public_ip(*address)) {
+            return Err(DeliveryError::TargetRejected);
+        }
+        Ok(())
+    }
+
+    fn send(
+        &self,
+        endpoint: &str,
+        headers: &BTreeMap<String, String>,
+        body: &[u8],
+    ) -> Result<DeliveryResponse, DeliveryError> {
+        // Re-resolve for every attempt. This closes the DNS-rebinding window
+        // between endpoint creation and a later retry.
+        let endpoint = validate_endpoint(endpoint).map_err(|_| DeliveryError::TargetRejected)?;
+        let addresses = self.transport.resolve(&endpoint)?;
+        if addresses.is_empty() || addresses.iter().any(|address| !is_public_ip(*address)) {
+            return Err(DeliveryError::TargetRejected);
+        }
+        self.transport.send_https(&endpoint, &addresses, headers, body)
+    }
+}
+
+/// The five production ports required by the webhook service.
+///
+/// Ports are optional at this composition boundary deliberately: a member can
+/// be assembled before all of its control-plane integrations are available.
+/// [`WebhookService::from_ports`] refuses the missing-port case, so an absent
+/// provider can never turn into an in-memory or direct-client fallback.
+#[derive(Default)]
+pub struct WebhookPorts {
+    /// Durable endpoint and delivery rows.
+    pub storage: Option<Arc<dyn WebhookStorage>>,
+    /// Engine publication journal.
+    pub journal: Option<Arc<dyn WebhookJournal>>,
+    /// Placement-aware secret manager.
+    pub secrets: Option<Arc<dyn WebhookSecrets>>,
+    /// D-64 endpoint guard.
+    pub guard: Option<Arc<dyn WebhookGuard>>,
+    /// HTTPS egress transport.
+    pub delivery: Option<Arc<dyn WebhookDelivery>>,
+}
+
+impl WebhookPorts {
+    /// Installs all five production ports in one explicit bundle.
+    #[must_use]
+    pub fn production(
+        storage: Arc<dyn WebhookStorage>,
+        journal: Arc<dyn WebhookJournal>,
+        secrets: Arc<dyn WebhookSecrets>,
+        guard: Arc<dyn WebhookGuard>,
+        delivery: Arc<dyn WebhookDelivery>,
+    ) -> Self {
+        Self {
+            storage: Some(storage),
+            journal: Some(journal),
+            secrets: Some(secrets),
+            guard: Some(guard),
+            delivery: Some(delivery),
+        }
+    }
+}
+
+/// A production port that was absent during composition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WebhookPort {
+    /// Durable endpoint and delivery rows.
+    Storage,
+    /// Engine publication journal.
+    Journal,
+    /// Placement-aware secret manager.
+    Secrets,
+    /// D-64 endpoint guard.
+    Guard,
+    /// HTTPS egress transport.
+    Delivery,
+}
+
+impl WebhookPort {
+    /// Stable operator-facing port name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Storage => "storage",
+            Self::Journal => "journal",
+            Self::Secrets => "secrets",
+            Self::Guard => "guard",
+            Self::Delivery => "delivery",
+        }
+    }
+}
+
+/// Failure to assemble a handler-ready production webhook service.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WebhookCompositionError {
+    /// One required port was not installed.
+    MissingPort(WebhookPort),
+    /// The placement region was empty.
+    EmptyRegion,
+}
+
+impl fmt::Display for WebhookCompositionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingPort(port) => {
+                write!(formatter, "webhook {} port is unavailable", port.as_str())
+            }
+            Self::EmptyRegion => formatter.write_str("webhook placement region is empty"),
+        }
+    }
+}
+
+impl std::error::Error for WebhookCompositionError {}
 
 /// Network response used to classify retry behavior.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -358,6 +983,31 @@ impl WebhookService {
         Ok(Self { storage, journal, secrets, guard, delivery, clock, region })
     }
 
+    /// Composes a service from explicit production ports.
+    ///
+    /// Every required dependency is checked before the service is returned;
+    /// callers get the exact missing hook and can keep the member unready.
+    pub fn from_ports(
+        ports: WebhookPorts,
+        clock: Arc<dyn WebhookClock>,
+        region: impl Into<String>,
+    ) -> Result<Arc<Self>, WebhookCompositionError> {
+        let storage =
+            ports.storage.ok_or(WebhookCompositionError::MissingPort(WebhookPort::Storage))?;
+        let journal =
+            ports.journal.ok_or(WebhookCompositionError::MissingPort(WebhookPort::Journal))?;
+        let secrets =
+            ports.secrets.ok_or(WebhookCompositionError::MissingPort(WebhookPort::Secrets))?;
+        let guard = ports.guard.ok_or(WebhookCompositionError::MissingPort(WebhookPort::Guard))?;
+        let delivery =
+            ports.delivery.ok_or(WebhookCompositionError::MissingPort(WebhookPort::Delivery))?;
+        let region = region.into();
+        if region.is_empty() {
+            return Err(WebhookCompositionError::EmptyRegion);
+        }
+        Ok(Arc::new(Self { storage, journal, secrets, guard, delivery, clock, region }))
+    }
+
     /// Creates an HTTPS endpoint.  Durable create precedes secret provisioning
     /// and D-64 reservation; every later failure rolls back durable state.
     pub fn create(
@@ -414,14 +1064,15 @@ impl WebhookService {
             .replay_delivery(scope, endpoint_id, delivery_id, now)
             .map_err(WebhookError::storage)?;
         self.attempt(scope, endpoint_id, &record, now).await?;
-        self.storage.delivery_log(scope, endpoint_id, 1).map_err(WebhookError::storage).and_then(
-            |log| {
+        self.storage
+            .delivery_log(scope, endpoint_id, MAX_JOURNAL_PAGE)
+            .map_err(WebhookError::storage)
+            .and_then(|log| {
                 log.deliveries
                     .into_iter()
                     .find(|item| item.id == record.id)
                     .ok_or_else(WebhookError::not_found)
-            },
-        )
+            })
     }
 
     /// Consumes one durable journal page, creating idempotent delivery rows and
@@ -493,10 +1144,10 @@ impl WebhookService {
         }
         let publication = self
             .journal
-            .page(scope, row.revision.saturating_sub(1), 1)
+            .page(scope, row.revision.saturating_sub(1), MAX_JOURNAL_PAGE)
             .map_err(WebhookError::storage)?
             .into_iter()
-            .find(|item| item.revision == row.revision)
+            .find(|item| item.revision == row.revision && item.event_id == row.event_id)
             .ok_or_else(WebhookError::not_found)?;
         let timestamp = now.to_string();
         let signature = sign_delivery(&secret, &timestamp, &publication.body);
@@ -544,6 +1195,19 @@ pub struct WebhookHttpState {
     pub authorizer: Arc<dyn WebhookAuthorizer>,
 }
 
+impl WebhookHttpState {
+    /// Builds handler state only after every production dependency is present.
+    pub fn from_ports(
+        ports: WebhookPorts,
+        authorizer: Arc<dyn WebhookAuthorizer>,
+        clock: Arc<dyn WebhookClock>,
+        region: impl Into<String>,
+    ) -> Result<Arc<Self>, WebhookCompositionError> {
+        let service = WebhookService::from_ports(ports, clock, region)?;
+        Ok(Arc::new(Self { service, authorizer }))
+    }
+}
+
 /// Mounts list/create/delete plus delivery-log/replay routes into a parent
 /// axum router.  The authorizer is mandatory and runs before any storage call.
 #[must_use = "the returned router must be merged into the public API"]
@@ -565,6 +1229,28 @@ pub fn router(service: Arc<WebhookService>, authorizer: Arc<dyn WebhookAuthorize
 #[must_use = "the returned router must be merged into the public API"]
 pub fn http_router(service: Arc<WebhookService>, authorizer: Arc<dyn WebhookAuthorizer>) -> Router {
     router(service, authorizer)
+}
+
+/// Builds the parent-router fragment and its state from explicit production
+/// ports. An absent secret provider, journal, storage, guard, or transport is
+/// reported before any route is returned.
+pub fn router_from_ports(
+    ports: WebhookPorts,
+    authorizer: Arc<dyn WebhookAuthorizer>,
+    clock: Arc<dyn WebhookClock>,
+    region: impl Into<String>,
+) -> Result<Router, WebhookCompositionError> {
+    let state = WebhookHttpState::from_ports(ports, authorizer, clock, region)?;
+    Ok(Router::new()
+        .route("/api/v1/databases/{database}/webhooks", get(list_webhooks).post(create_webhook))
+        .route("/api/v1/databases/{database}/webhooks/{id}", delete(delete_webhook))
+        .route("/api/v1/databases/{database}/webhooks/{id}/deliveries", get(list_deliveries))
+        .route(
+            "/api/v1/databases/{database}/webhooks/{id}/deliveries/{delivery_id}/replay",
+            post(replay_webhook),
+        )
+        .layer(axum::extract::DefaultBodyLimit::max(MAX_WEBHOOK_BODY_BYTES))
+        .with_state(state))
 }
 
 /// Parent-callable list handler.
@@ -928,6 +1614,7 @@ fn retry_state(status: u16, attempt: u32, now: u64) -> (Option<u16>, bool, bool,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     #[test]
     fn endpoint_policy_rejects_ssrf_forms() {
@@ -962,5 +1649,108 @@ mod tests {
         assert_eq!(one, two);
         assert_eq!(one.len(), 64);
         assert_ne!(one, sign_delivery(b"other", "42", br#"{"revision":1}"#));
+    }
+
+    #[test]
+    fn composition_refuses_the_first_missing_durable_port() {
+        let result = WebhookService::from_ports(
+            WebhookPorts::default(),
+            Arc::new(SystemWebhookClock),
+            "GRU",
+        );
+        assert!(matches!(result, Err(WebhookCompositionError::MissingPort(WebhookPort::Storage))));
+    }
+
+    struct TestHttpsTransport {
+        addresses: Vec<IpAddr>,
+        sent: Mutex<Vec<Vec<IpAddr>>>,
+    }
+
+    impl HttpsTransport for TestHttpsTransport {
+        fn resolve(&self, _endpoint: &str) -> Result<Vec<IpAddr>, DeliveryError> {
+            Ok(self.addresses.clone())
+        }
+
+        fn send_https(
+            &self,
+            _endpoint: &str,
+            addresses: &[IpAddr],
+            _headers: &BTreeMap<String, String>,
+            _body: &[u8],
+        ) -> Result<DeliveryResponse, DeliveryError> {
+            self.sent.lock().expect("test transport lock").push(addresses.to_vec());
+            Ok(DeliveryResponse { status: 204 })
+        }
+    }
+
+    #[test]
+    fn https_adapter_rejects_private_resolution_and_pins_public_resolution() {
+        let private = Arc::new(TestHttpsTransport {
+            addresses: vec!["10.0.0.1".parse().expect("ip")],
+            sent: Mutex::new(Vec::new()),
+        });
+        let private_delivery = HttpsWebhookDelivery::new(private);
+        assert_eq!(
+            private_delivery.validate_target("https://hooks.example/events"),
+            Err(DeliveryError::TargetRejected)
+        );
+
+        let public = Arc::new(TestHttpsTransport {
+            addresses: vec!["1.1.1.1".parse().expect("ip")],
+            sent: Mutex::new(Vec::new()),
+        });
+        let public_delivery = HttpsWebhookDelivery::new(Arc::clone(&public));
+        let response = public_delivery
+            .send("https://hooks.example/events", &BTreeMap::new(), b"body")
+            .expect("public target");
+        assert_eq!(response.status, 204);
+        assert_eq!(public.sent.lock().expect("test transport lock").len(), 1);
+    }
+
+    #[test]
+    fn engine_storage_round_trips_endpoint_and_delivery_rows() {
+        let root = std::env::temp_dir().join(format!(
+            "terrascale-webhook-{}",
+            terrabase::identity::process_generator().generate().to_text()
+        ));
+        let engine = Arc::new(
+            Engine::open(
+                terrabase::EngineConfig::durable(root.clone()).expect("durable test location"),
+            )
+            .expect("durable engine"),
+        );
+        let owner = engine.database_owner();
+        let scope = TenantScope::new(
+            owner.tenant().to_text(),
+            owner.project().to_text(),
+            owner.database().to_text(),
+        )
+        .expect("owner scope");
+        let storage = EngineWebhookStorage::new(Arc::clone(&engine));
+        let endpoint =
+            storage.create_endpoint(&scope, "https://hooks.example/events", 42).expect("endpoint");
+        assert_eq!(storage.endpoint(&scope, &endpoint.id), Ok(Some(endpoint.clone())));
+        let publication =
+            Publication { revision: 7, event_id: "event-7".into(), body: b"body".to_vec() };
+        let delivery =
+            storage.ensure_delivery(&scope, &endpoint.id, &publication, 42).expect("delivery");
+        assert_eq!(
+            storage.ensure_delivery(&scope, &endpoint.id, &publication, 99),
+            Ok(delivery.clone())
+        );
+        storage
+            .record_attempt(&scope, &endpoint.id, &delivery.id, 1, 0, Some(204), true, true)
+            .expect("attempt");
+        assert_eq!(
+            storage.delivery_log(&scope, &endpoint.id, 10).expect("log").deliveries.len(),
+            1
+        );
+        drop(storage);
+        let engine = match Arc::try_unwrap(engine) {
+            Ok(engine) => engine,
+            Err(_) => panic!("sole engine"),
+        };
+        engine.shutdown().expect("flush");
+        let _ = std::fs::remove_dir_all(root);
     }
 }

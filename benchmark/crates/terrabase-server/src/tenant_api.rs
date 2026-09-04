@@ -358,7 +358,7 @@ pub enum TenantOperation {
 pub struct TenantActor {
     /// Stable principal label, never key material or an external subject.
     pub principal: Identifier,
-    /// Tenant context bound by the parent gateway.
+    /// Tenant context bound by the parent public API layer.
     pub tenant_id: TenantId,
 }
 
@@ -589,6 +589,32 @@ impl TenantService {
         Self { ports }
     }
 
+    /// Creates a handler-ready service from the complete production port set.
+    ///
+    /// Unlike [`Self::new`], this constructor rejects an incomplete
+    /// composition at startup.  It is the constructor a serving HTTP router
+    /// should use: every operation has a durable implementation and an
+    /// authorization decision, and no in-process catalogue can be selected by
+    /// accident.
+    pub fn handler_ready(ports: TenantPorts) -> Result<Self, TenantApiError> {
+        if ports.authorization.is_none() {
+            return Err(TenantApiError::AdapterUnavailable("authorization"));
+        }
+        if ports.control.is_none() {
+            return Err(TenantApiError::AdapterUnavailable("control"));
+        }
+        if ports.database.is_none() {
+            return Err(TenantApiError::AdapterUnavailable("database"));
+        }
+        if ports.keys.is_none() {
+            return Err(TenantApiError::AdapterUnavailable("key"));
+        }
+        if ports.usage.is_none() {
+            return Err(TenantApiError::AdapterUnavailable("usage"));
+        }
+        Ok(Self::new(ports))
+    }
+
     /// Returns a service that refuses every operation until real adapters are
     /// supplied. This is useful for startup wiring and fail-closed tests.
     #[must_use]
@@ -606,7 +632,18 @@ impl TenantService {
         command.template.key_policy.validate()?;
         validate_actor_target(actor, &command.template.owner_tenant)?;
         self.authorize(actor, TenantOperation::CreateTemplate, &command.template.owner_tenant)?;
-        self.control()?.create_template(&command).map_err(map_port)
+        let template = self.control()?.create_template(&command).map_err(map_port)?;
+        // A durable adapter is part of the trust boundary.  Never expose a
+        // row under a different owner or identity than the command that was
+        // authorized, and never let it silently widen the lock/policy.
+        if template.id != command.template.id
+            || template.owner_tenant != command.template.owner_tenant
+            || template.placement_lock != command.template.placement_lock
+            || template.key_policy != command.template.key_policy
+        {
+            return Err(TenantApiError::PortFailure("control"));
+        }
+        Ok(template)
     }
 
     /// Gets one template in one owner's scope. Inaccessible and absent
@@ -619,10 +656,19 @@ impl TenantService {
     ) -> Result<TenantTemplate, TenantApiError> {
         validate_actor_target(actor, owner_tenant)?;
         self.authorize(actor, TenantOperation::ReadTemplate, owner_tenant)?;
-        self.control()?
+        let template = self
+            .control()?
             .get_template(owner_tenant, template_id)
             .map_err(map_port)?
-            .ok_or(TenantApiError::NotFound)
+            .ok_or(TenantApiError::NotFound)?;
+        if template.owner_tenant != *owner_tenant
+            || template.id != *template_id
+            || template.placement_lock.validate().is_err()
+            || template.key_policy.validate().is_err()
+        {
+            return Err(TenantApiError::NotFound);
+        }
+        Ok(template)
     }
 
     /// Lists templates only for one explicitly named owner tenant.
@@ -635,7 +681,17 @@ impl TenantService {
         page.validate()?;
         validate_actor_target(actor, owner_tenant)?;
         self.authorize(actor, TenantOperation::ListTemplates, owner_tenant)?;
-        self.control()?.list_templates(owner_tenant, &page).map_err(map_port)
+        let result = self.control()?.list_templates(owner_tenant, &page).map_err(map_port)?;
+        validate_page(&result, &page, |template| {
+            if template.owner_tenant != *owner_tenant
+                || template.placement_lock.validate().is_err()
+                || template.key_policy.validate().is_err()
+            {
+                return Err(TenantApiError::PortFailure("control"));
+            }
+            Ok(())
+        })?;
+        Ok(result)
     }
 
     /// Deletes one template in one owner scope.
@@ -669,18 +725,36 @@ impl TenantService {
             .get_template(&request.owner_tenant, &request.template_id)
             .map_err(map_port)?
             .ok_or(TenantApiError::NotFound)?;
-        template.placement_lock.validate()?;
-        template.key_policy.validate()?;
+        if template.owner_tenant != request.owner_tenant || template.id != request.template_id {
+            return Err(TenantApiError::NotFound);
+        }
+        if template.placement_lock.validate().is_err() || template.key_policy.validate().is_err() {
+            return Err(TenantApiError::PortFailure("control"));
+        }
+        let expected_owner = request.owner_tenant.clone();
+        let expected_tenant = request.tenant_id.clone();
+        let expected_template = request.template_id.clone();
+        let expected_lock = template.placement_lock.clone();
         let database = TenantDatabase {
             owner_tenant: request.owner_tenant,
             tenant_id: request.tenant_id,
-            template_id: template.id,
+            template_id: template.id.clone(),
             placement_lock: template.placement_lock,
             parent_tenant: None,
         };
-        self.database()?
+        let created = self
+            .database()?
             .create(&DatabaseCreateCommand { database, idempotency_key })
-            .map_err(map_port)
+            .map_err(map_port)?;
+        if created.owner_tenant != expected_owner
+            || created.tenant_id != expected_tenant
+            || created.template_id != expected_template
+            || created.parent_tenant.is_some()
+            || created.placement_lock != expected_lock
+        {
+            return Err(TenantApiError::PortFailure("database"));
+        }
+        Ok(created)
     }
 
     /// Gets exactly one tenant/database after authorization.
@@ -693,7 +767,7 @@ impl TenantService {
         self.authorize(actor, TenantOperation::ReadTenant, tenant_id)?;
         let database =
             self.database()?.get(tenant_id).map_err(map_port)?.ok_or(TenantApiError::NotFound)?;
-        if database.tenant_id != *tenant_id {
+        if database.tenant_id != *tenant_id || database.placement_lock.validate().is_err() {
             return Err(TenantApiError::NotFound);
         }
         Ok(database)
@@ -711,9 +785,16 @@ impl TenantService {
         validate_actor_target(actor, owner_tenant)?;
         self.authorize(actor, TenantOperation::ListTenants, owner_tenant)?;
         let result = self.database()?.list(owner_tenant, &page).map_err(map_port)?;
-        if result.items.iter().any(|database| database.owner_tenant != *owner_tenant) {
-            return Err(TenantApiError::PortFailure("database"));
-        }
+        validate_page(&result, &page, |database| {
+            if database.owner_tenant != *owner_tenant
+                || database.tenant_id.as_str().is_empty()
+                || database.template_id.as_str().is_empty()
+                || database.placement_lock.validate().is_err()
+            {
+                return Err(TenantApiError::PortFailure("database"));
+            }
+            Ok(())
+        })?;
         Ok(result)
     }
 
@@ -745,21 +826,42 @@ impl TenantService {
             .get(source_tenant)
             .map_err(map_port)?
             .ok_or(TenantApiError::NotFound)?;
+        if source.tenant_id != *source_tenant {
+            return Err(TenantApiError::NotFound);
+        }
+        source.placement_lock.validate().map_err(|_| TenantApiError::PortFailure("database"))?;
         let lock = source.placement_lock.child(request.placement_lock.as_ref())?;
+        let expected_branch = request.branch_tenant_id.clone();
+        if expected_branch == *source_tenant {
+            return Err(TenantApiError::Conflict);
+        }
+        let expected_template = source.template_id.clone();
+        let expected_owner = source.owner_tenant.clone();
+        let expected_lock = lock.clone();
         let branch = TenantDatabase {
             owner_tenant: source.owner_tenant.clone(),
             tenant_id: request.branch_tenant_id,
-            template_id: source.template_id,
+            template_id: source.template_id.clone(),
             placement_lock: lock,
             parent_tenant: Some(source.tenant_id),
         };
-        self.database()?
+        let created = self
+            .database()?
             .create_branch(&BranchCreateCommand {
                 source_tenant: source_tenant.clone(),
                 branch,
                 idempotency_key,
             })
-            .map_err(map_port)
+            .map_err(map_port)?;
+        if created.owner_tenant != expected_owner
+            || created.tenant_id != expected_branch
+            || created.template_id != expected_template
+            || created.placement_lock != expected_lock
+            || created.parent_tenant.as_ref() != Some(source_tenant)
+        {
+            return Err(TenantApiError::PortFailure("database"));
+        }
+        Ok(created)
     }
 
     /// Mints a tenant-scoped key using the database's inherited key policy.
@@ -776,7 +878,7 @@ impl TenantService {
         self.authorize(actor, TenantOperation::MintKey, tenant_id)?;
         let database =
             self.database()?.get(tenant_id).map_err(map_port)?.ok_or(TenantApiError::NotFound)?;
-        if database.tenant_id != *tenant_id {
+        if database.tenant_id != *tenant_id || database.placement_lock.validate().is_err() {
             return Err(TenantApiError::NotFound);
         }
         let template = self
@@ -784,6 +886,14 @@ impl TenantService {
             .get_template(&database.owner_tenant, &database.template_id)
             .map_err(map_port)?
             .ok_or(TenantApiError::NotFound)?;
+        if template.owner_tenant != database.owner_tenant
+            || template.id != database.template_id
+            || template.placement_lock != database.placement_lock
+            || template.placement_lock.validate().is_err()
+            || template.key_policy.validate().is_err()
+        {
+            return Err(TenantApiError::NotFound);
+        }
         let minted = self
             .keys()?
             .mint(&KeyMintCommand {
@@ -803,6 +913,9 @@ impl TenantService {
         {
             return Err(TenantApiError::KeyMaterialInvalid);
         }
+        if minted.id.as_str().is_empty() {
+            return Err(TenantApiError::KeyMaterialInvalid);
+        }
         Ok(TenantApiKey { id: minted.id, secret: minted.secret })
     }
 
@@ -814,7 +927,11 @@ impl TenantService {
     ) -> Result<TenantUsage, TenantApiError> {
         validate_actor_target(actor, tenant_id)?;
         self.authorize(actor, TenantOperation::ReadUsage, tenant_id)?;
-        self.usage()?.get(tenant_id).map_err(map_port)
+        let usage = self.usage()?.get(tenant_id).map_err(map_port)?;
+        if usage.tenant_id != *tenant_id || usage.window_end_millis < usage.window_start_millis {
+            return Err(TenantApiError::PortFailure("usage"));
+        }
+        Ok(usage)
     }
 
     fn authorize(
@@ -869,6 +986,27 @@ fn map_port(error: PortError) -> TenantApiError {
         PortError::Invalid => TenantApiError::InvalidInput("durable_request"),
         PortError::Failed => TenantApiError::PortFailure("durable"),
     }
+}
+
+/// Verifies the shape of a page before it crosses the service boundary.
+/// Durable adapters own ordering and cursor encoding, but they must not be
+/// able to exceed the caller's bound or return the same cursor forever.
+fn validate_page<T>(
+    page: &Page<T>,
+    request: &PageRequest,
+    mut validate_item: impl FnMut(&T) -> Result<(), TenantApiError>,
+) -> Result<(), TenantApiError> {
+    if page.items.len() > usize::from(request.limit)
+        || page.next_cursor.as_ref().is_some_and(|cursor| {
+            request.cursor.as_ref().is_some_and(|previous| previous == cursor)
+        })
+    {
+        return Err(TenantApiError::PortFailure("durable"));
+    }
+    for item in &page.items {
+        validate_item(item)?;
+    }
+    Ok(())
 }
 
 /// One proposed parent-router/OpenAPI operation. This list is descriptive;
@@ -994,7 +1132,9 @@ mod tests {
         }
     }
 
-    struct Control;
+    struct Control {
+        corrupt_create: bool,
+    }
     impl ControlPort for Control {
         fn create_template(
             &self,
@@ -1002,7 +1142,11 @@ mod tests {
         ) -> Result<TenantTemplate, PortError> {
             Ok(TenantTemplate {
                 id: command.template.id.clone(),
-                owner_tenant: command.template.owner_tenant.clone(),
+                owner_tenant: if self.corrupt_create {
+                    id("other")
+                } else {
+                    command.template.owner_tenant.clone()
+                },
                 placement_lock: command.template.placement_lock.clone(),
                 key_policy: command.template.key_policy.clone(),
             })
@@ -1091,7 +1235,7 @@ mod tests {
     fn service() -> TenantService {
         TenantService::new(TenantPorts {
             database: Some(Arc::new(Database { seen: Mutex::new(Vec::new()) })),
-            control: Some(Arc::new(Control)),
+            control: Some(Arc::new(Control { corrupt_create: false })),
             keys: Some(Arc::new(Keys)),
             usage: Some(Arc::new(Usage)),
             authorization: Some(Arc::new(Allow)),
@@ -1102,7 +1246,15 @@ mod tests {
     fn absent_adapters_fail_closed_without_a_local_tenant() {
         let tenant = id("owner");
         let result = TenantService::without_adapters().get_tenant(&actor("owner"), &tenant);
-        assert_eq!(result, Err(TenantApiError::AdapterUnavailable("database")));
+        assert_eq!(result, Err(TenantApiError::AdapterUnavailable("authorization")));
+    }
+
+    #[test]
+    fn handler_ready_rejects_an_incomplete_production_composition() {
+        assert!(matches!(
+            TenantService::handler_ready(TenantPorts::default()),
+            Err(TenantApiError::AdapterUnavailable("authorization"))
+        ));
     }
 
     #[test]
@@ -1130,6 +1282,34 @@ mod tests {
             )
             .expect("create");
         assert_eq!(result.placement_lock, lock());
+    }
+
+    #[test]
+    fn adapter_cannot_return_a_template_for_another_owner() {
+        let service = TenantService::new(TenantPorts {
+            control: Some(Arc::new(Control { corrupt_create: true })),
+            authorization: Some(Arc::new(Allow)),
+            ..TenantPorts::default()
+        });
+        let template = CreateTenantTemplate {
+            id: id("default"),
+            owner_tenant: id("owner"),
+            placement_lock: lock(),
+            key_policy: TenantKeyPolicy {
+                read: true,
+                write: true,
+                admin: false,
+                expires_in_seconds: 3600,
+            },
+        };
+        let result = service.create_template(
+            &actor("owner"),
+            TemplateCreateCommand {
+                template,
+                idempotency_key: IdempotencyKey::try_new("template-1").expect("key"),
+            },
+        );
+        assert_eq!(result, Err(TenantApiError::PortFailure("control")));
     }
 
     #[test]
