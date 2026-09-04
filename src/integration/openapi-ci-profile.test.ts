@@ -7,18 +7,7 @@ import { fileURLToPath } from "node:url";
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 test("the static CI profile runs the Vitest suite against the cloned Dashboard snapshot", async () => {
-  const [configurationJson, workflow] = await Promise.all([
-    readFile(path.join(repositoryRoot, ".terrascale", "deploy.json"), "utf8"),
-    readFile(path.join(repositoryRoot, ".forgejo", "workflows", "ci.yml"), "utf8"),
-  ]);
-  const config = JSON.parse(configurationJson) as DeployConfiguration;
-  const staticProfile = config.prProfiles.find((profile) => profile.name === "static");
-
-  assert.ok(staticProfile);
-  assert.deepEqual(
-    staticProfile.commands.map((command) => `${command.command} ${command.arguments.join(" ")}`),
-    ["npm ci", "npm run typecheck", "npm run build", "npm test"],
-  );
+  const workflow = await readFile(path.join(repositoryRoot, ".forgejo", "workflows", "ci.yml"), "utf8");
 
   // The OpenAPI drift and public-contract-fixture Vitest gates resolve the
   // Dashboard OpenAPI snapshot from the working directory first, so CI must
@@ -33,14 +22,3 @@ test("the static CI profile runs the Vitest suite against the cloned Dashboard s
   assert.ok(staticJob.indexOf("ts-dashboard.git Dashboard") < staticJob.indexOf("npm test"));
   assert.doesNotMatch(workflow, /(?:check:openapi|check:forbidden-surface|check:route-manifest|check:public-contract-fixture|node --test)/u);
 });
-
-type DeployConfiguration = {
-  readonly prProfiles: readonly {
-    readonly name: string;
-    readonly commands: readonly {
-      readonly description: string;
-      readonly command: string;
-      readonly arguments: readonly string[];
-    }[];
-  }[];
-};

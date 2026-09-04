@@ -4,6 +4,5 @@ coverage/
 test-results/
 .npm/
 /.tools/
-.terrascale/
 *.tsbuildinfo
 /artifacts/

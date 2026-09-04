@@ -140,7 +140,6 @@ function parseBuildReceipt(bytes) {
     "mediaType",
     "repository",
     "source",
-    "configurationDigest",
     "deployCli",
     "target",
     "output",
@@ -169,7 +168,6 @@ function parseBuildReceipt(bytes) {
     throw new Error("Candidate source tree is invalid.");
   }
   requireDigest(receipt.source.treeDigest, "Candidate source tree digest");
-  requireDigest(receipt.configurationDigest, "Candidate configuration digest");
   if (
     receipt.deployCli.package !== "TerraScale.Deploy.Cli" ||
     typeof receipt.deployCli.version !== "string" ||
@@ -211,15 +209,11 @@ async function verifyBuildReceiptSource(receipt, source) {
   if (!source.clean || receipt.source.commit !== source.revision || receipt.source.tree !== source.tree) {
     throw new Error("Candidate build receipt does not match the clean checked-out source.");
   }
-  const [treeDigest, configurationDigest] = await Promise.all([
-    gitTreeDigest(repositoryRoot, source.revision),
-    sha256File(path.join(repositoryRoot, ".terrascale", "deploy.json")),
-  ]);
-  if (
-    receipt.source.treeDigest !== treeDigest ||
-    receipt.configurationDigest !== `sha256:${configurationDigest}`
-  ) {
-    throw new Error("Candidate build receipt tree or configuration evidence is stale.");
+  // The configuration digest bound .terrascale/deploy.json (deleted per D-68);
+  // ts-deploy's build receipt replaces this evidence.
+  const treeDigest = await gitTreeDigest(repositoryRoot, source.revision);
+  if (receipt.source.treeDigest !== treeDigest) {
+    throw new Error("Candidate build receipt tree evidence is stale.");
   }
 }
 

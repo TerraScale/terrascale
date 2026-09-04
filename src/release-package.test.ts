@@ -22,37 +22,8 @@ type PackedRouteManifest = {
 };
 
 test("release paths clean-install, build, test, and pack the SDK independently", async () => {
-  const [deploymentJson, workflow] = await Promise.all([
-    readFile(path.join(repositoryRoot, ".terrascale", "deploy.json"), "utf8"),
-    readFile(path.join(repositoryRoot, ".forgejo", "workflows", "ci.yml"), "utf8"),
-  ]);
-  const deployment = JSON.parse(deploymentJson) as DeployConfiguration;
+  const workflow = await readFile(path.join(repositoryRoot, ".forgejo", "workflows", "ci.yml"), "utf8");
 
-  for (const commands of [
-    ...deployment.releaseProfiles.map((profile) => profile.commands),
-    ...deployment.buildTargets.map((target) => target.commands),
-  ]) {
-    assert.deepEqual(commands.slice(0, 2).map((command) => command.description), [
-      "Clean install",
-      "Build SDK",
-    ]);
-  }
-  assert.deepEqual(
-    deployment.buildTargets[0]?.commands.map((command) => command.description),
-    ["Clean install", "Build SDK", "Unit and contract regression", "Qualify npm release candidate"],
-  );
-  assert.equal(deployment.buildTargets[0]?.outputPath, "artifacts/candidate");
-  assert.deepEqual(deployment.buildTargets[0]?.commands.at(-1), {
-    description: "Qualify npm release candidate",
-    command: "node",
-    arguments: ["scripts/qualify-npm-artifact.mjs", "--release", "--output", "artifacts/candidate"],
-  });
-  assert.doesNotMatch(deploymentJson, /"command": "npm", "arguments": \["pack"/u);
-  assert.equal(deployment.releaseProfiles.every((profile) => profile.required), true);
-  assert.deepEqual(
-    deployment.releaseProfiles.find((profile) => profile.name === "release-e2e")?.commands.map((command) => command.description),
-    ["Clean install", "Build SDK", "Require live integration configuration", "Authenticated live API integration"],
-  );
   assert.doesNotMatch(workflow, /^  (?:REGISTRY_TOKEN|FORGEJO_TOKEN|NPM_TOKEN):/mu);
   const actionReferences = [...workflow.matchAll(/^\s*- uses: \S+@(\S+)$/gmu)];
   assert.ok(actionReferences.length > 0);
@@ -408,13 +379,3 @@ async function readPackedEntry(tarball: string, entry: string): Promise<string> 
   return result.stdout;
 }
 
-type DeployCommand = {
-  readonly description: string;
-  readonly command: string;
-  readonly arguments: readonly string[];
-};
-
-type DeployConfiguration = {
-  readonly releaseProfiles: readonly { readonly name: string; readonly required: boolean; readonly commands: readonly DeployCommand[] }[];
-  readonly buildTargets: readonly { readonly outputPath?: string; readonly commands: readonly DeployCommand[] }[];
-};

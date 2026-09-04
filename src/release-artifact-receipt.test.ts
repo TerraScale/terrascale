@@ -265,7 +265,6 @@ async function initializeGitCheckout(checkout: string): Promise<void> {
   await run("git", ["config", "user.email", "release-test@terrascale.test"], { cwd: checkout });
   await run("git", ["config", "user.name", "TerraScale Release Test"], { cwd: checkout });
   await run("git", ["add", "."], { cwd: checkout });
-  await run("git", ["add", "--force", ".terrascale/deploy.json"], { cwd: checkout });
   await run("git", ["commit", "--quiet", "-m", "fixture"], { cwd: checkout });
 }
 
@@ -408,7 +407,6 @@ async function createCandidateFixture(checkout: string, workspace: string): Prom
     revision: revision.stdout.trim(),
     tree: tree.stdout.trim(),
     treeDigest: `sha256:${sha256(Buffer.from(treeListing.stdout))}`,
-    configurationDigest: `sha256:${sha256(await readFile(path.join(checkout, ".terrascale", "deploy.json")))}`,
     startedAt: new Date(now - 3_000).toISOString(),
     completedAt: new Date(now).toISOString(),
   };
@@ -436,7 +434,6 @@ async function createCandidateFixture(checkout: string, workspace: string): Prom
         tree: buildIdentity.tree,
         treeDigest: buildIdentity.treeDigest,
       },
-      configurationDigest: buildIdentity.configurationDigest,
       deployCli: {
         package: "TerraScale.Deploy.Cli",
         version: "1.1.0",
@@ -667,7 +664,6 @@ type BuildReceipt = {
   mediaType: string;
   repository: string;
   source: { commit: string; tree: string; treeDigest: string };
-  configurationDigest: string;
   deployCli: { package: string; version: string; executableDigest: string };
   target: string;
   output: {
