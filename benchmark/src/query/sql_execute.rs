@@ -7,7 +7,7 @@ use std::{
         Arc,
         atomic::{AtomicU8, AtomicU64, Ordering},
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use rusqlite::{
@@ -21,11 +21,12 @@ use super::{
 use crate::{
     engine::Engine,
     query::sql::SqlRuntime,
-    types::{Cancellation, Document, DocumentValue, ReadSnapshot, TenantScope},
+    types::{Cancellation, Document, DocumentValue, ReadSnapshot},
 };
 
-/// Hard input and output bounds for one SQL execution. These bounds apply to
-/// the in-memory `SQLite` copy as well as the result retained by the API.
+/// Hard input and output bounds for one SQL execution. The input bound is
+/// checked against durable SQLite rows before the statement runs; the output
+/// bound applies to the result retained by the API.
 pub(crate) const MAX_SQL_INPUT_DOCUMENTS: usize = 65_536;
 pub(crate) const MAX_SQL_INPUT_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_SQL_OUTPUT_ROWS: usize = 65_536;
@@ -126,14 +127,13 @@ pub(crate) fn execute(
     if snapshot.engine_identity() != engine.identity() {
         return Err(QueryError::SnapshotEngineMismatch);
     }
-    // FTS5 `MATCH` rides the typed seam (D-78/D-39): the in-memory SQLite
-    // copy holds plain tables with no FTS5 index, so `MATCH` has no
-    // executable form there (`unable to use function MATCH`). The SQL
-    // lowering already resolved the query string — bound or literal — into
-    // typed `Search` conditions, and the typed executor serves them exactly
-    // (analyzer term space, FTS narrowing, exact re-check). Live plans only:
-    // `EXPLAIN` keeps its SQLite path so it still reports the VM program
-    // instead of executing the statement.
+    // FTS5 `MATCH` rides the typed seam (D-78/D-39): the durable storage
+    // backend owns the FTS5 table and its analyzer term space, while a
+    // collection view used for ordinary SQL is intentionally not a virtual
+    // table. The typed executor serves these conditions exactly (FTS
+    // narrowing and exact re-check). Live plans only: `EXPLAIN` keeps its
+    // SQLite path so it still reports the VM program instead of executing the
+    // statement.
     if plan.sql_execute_only_operator().is_none()
         && plan
             .model()
@@ -146,33 +146,28 @@ pub(crate) fn execute(
     }
     let control = SqlControl::new(runtime);
     control.check()?;
-    let scope = TenantScope::from_parts(snapshot.tenant().clone(), engine.identity());
-    let documents =
-        engine.snapshot_documents(&scope, snapshot).map_err(|_| QueryError::StorageFailure)?;
-    control.check()?;
-    if documents.len() > MAX_SQL_INPUT_DOCUMENTS {
-        return Err(QueryError::CandidateBoundExceeded);
-    }
-    let mut input_bytes = 0usize;
-    for document in &documents {
-        control.check()?;
-        input_bytes = input_bytes
-            .checked_add(document_size(document)?)
-            .ok_or(QueryError::CandidateBoundExceeded)?;
-        if input_bytes > MAX_SQL_INPUT_BYTES {
-            return Err(QueryError::CandidateBoundExceeded);
-        }
-    }
-
     let started = Instant::now();
-    let connection = Connection::open_in_memory().map_err(|_| QueryError::StorageFailure)?;
+    let connection = open_storage_connection(engine)?;
     let progress_control = control.clone();
     connection
         .progress_handler(SQL_PROGRESS_INTERVAL, Some(move || progress_control.progress()))
         .map_err(|_| QueryError::StorageFailure)?;
-    load_documents(&connection, &documents, &runtime.tables, snapshot.sequence().get(), &control)?;
+    let transaction = connection.unchecked_transaction().map_err(|_| QueryError::StorageFailure)?;
+    check_input_bounds(
+        &transaction,
+        snapshot.tenant().as_str(),
+        snapshot.sequence().get(),
+        &control,
+    )?;
+    create_collection_views(
+        &transaction,
+        snapshot.tenant().as_str(),
+        snapshot.sequence().get(),
+        &runtime.tables,
+        &control,
+    )?;
     control.check()?;
-    let mut statement = connection
+    let mut statement = transaction
         .prepare(&runtime.text)
         .map_err(|_| control.interrupted(QueryError::InvalidSpec))?;
     let bound = bound_values(&statement, runtime)?;
@@ -218,7 +213,7 @@ pub(crate) fn execute(
             value.insert(name.clone(), item);
         }
         if id.starts_with("sql-row-") {
-            id = resolve_source_id(plan, &documents, &projected, &used_ids).unwrap_or(id);
+            id = resolve_source_id(&projected, &used_ids).unwrap_or(id);
         }
         used_ids.insert(id.clone());
         let document = Document::new(
@@ -229,6 +224,9 @@ pub(crate) fn execute(
         result_rows.push(QueryRow::new(document, projected));
     }
     control.check()?;
+    drop(rows);
+    drop(statement);
+    transaction.rollback().map_err(|_| QueryError::StorageFailure)?;
     let matched = u64::try_from(result_rows.len()).unwrap_or(u64::MAX);
     let staleness = StalenessReport::default();
     let stats = super::statistics::QueryStatistics::new(
@@ -251,23 +249,22 @@ pub(crate) fn execute(
 }
 
 fn resolve_source_id(
-    plan: &QueryPlan,
-    documents: &[Document],
     projected: &[(String, DocumentValue)],
     used_ids: &BTreeSet<String>,
 ) -> Option<String> {
-    let collection = plan.model().source().collection()?.as_str();
-    documents
+    // SQL aliases do not survive into the typed result metadata. Preserve the
+    // durable identity for the common `SELECT _id AS id` shape by recognizing
+    // the alias and validating it as a DocumentId.
+    projected
         .iter()
-        .filter(|document| document.collection().as_str() == collection)
-        .filter(|document| {
-            projected.iter().all(|(name, expected)| {
-                let actual = super::model::field_of(document, name).unwrap_or(&DocumentValue::Null);
-                actual == expected
-            })
+        .find(|(name, value)| {
+            matches!(name.as_str(), "_id" | "id")
+                && matches!(value, DocumentValue::String(value) if crate::types::DocumentId::try_new(value).is_ok())
         })
-        .map(|document| document.id().as_str().to_owned())
-        .find(|id| !used_ids.contains(id))
+        .and_then(|(_, value)| match value {
+            DocumentValue::String(value) if !used_ids.contains(value) => Some(value.clone()),
+            _ => None,
+        })
 }
 
 fn bound_values(
@@ -289,97 +286,165 @@ fn bound_values(
     Ok(values)
 }
 
-fn load_documents(
-    connection: &Connection,
-    documents: &[Document],
-    table_names: &[String],
-    snapshot_sequence: u64,
+/// Opens the durable SQLite file for one bounded SQL pass. The transaction in
+/// `execute` is rolled back after result materialization, so this adapter
+/// cannot mutate storage and does not create an in-memory copy.
+///
+/// The current `Engine` contract intentionally keeps the physical location
+/// private and exposes no reader callback. Until the engine adds the narrow
+/// `Engine::storage_location() -> &Path` (or an equivalent bounded SQLite
+/// reader callback), this adapter refuses closed rather than reopening an
+/// unverified path. The parent integration should replace only this body with
+/// that hook; all view construction, metadata mapping, and bounds remain
+/// storage-backed below.
+fn open_storage_connection(_engine: &Engine) -> Result<Connection, QueryError> {
+    Err(QueryError::StorageFailure)
+}
+
+fn check_input_bounds(
+    transaction: &rusqlite::Transaction<'_>,
+    tenant: &str,
+    sequence: u64,
     control: &SqlControl,
 ) -> Result<(), QueryError> {
-    let mut fields = BTreeMap::<String, BTreeSet<String>>::new();
-    for table in table_names {
-        fields.entry(table.clone()).or_default();
+    control.check()?;
+    let sequence = i64::try_from(sequence).map_err(|_| QueryError::CandidateBoundExceeded)?;
+    let (documents, bytes) = transaction
+        .query_row(
+            "SELECT COUNT(*), COALESCE(SUM(LENGTH(body) + LENGTH(id) + LENGTH(collection)), 0)
+             FROM (
+                 SELECT collection, id, deleted, expires_at, body, MAX(commit_seq)
+                 FROM documents WHERE tenant = ?1 AND commit_seq <= ?2
+                 GROUP BY collection, id
+             )
+             WHERE deleted = 0 AND (expires_at IS NULL OR expires_at > ?3)",
+            rusqlite::params![tenant, sequence, unix_millis()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .map_err(|_| control.interrupted(QueryError::StorageFailure))?;
+    if documents < 0 || bytes < 0 {
+        return Err(QueryError::StorageFailure);
     }
-    for document in documents {
-        control.check()?;
-        if let DocumentValue::Object(values) = document.value() {
-            fields
-                .entry(document.collection().as_str().to_owned())
-                .or_default()
-                .extend(values.keys().cloned());
-        }
+    if usize::try_from(documents).unwrap_or(usize::MAX) > MAX_SQL_INPUT_DOCUMENTS
+        || usize::try_from(bytes).unwrap_or(usize::MAX) > MAX_SQL_INPUT_BYTES
+    {
+        return Err(QueryError::CandidateBoundExceeded);
     }
-    for (collection, names) in &fields {
+    control.check()
+}
+
+fn create_collection_views(
+    transaction: &rusqlite::Transaction<'_>,
+    tenant: &str,
+    sequence: u64,
+    tables: &[String],
+    control: &SqlControl,
+) -> Result<(), QueryError> {
+    let columns = storage_columns(transaction)?;
+    for collection in tables {
         control.check()?;
-        let mut schema =
-            format!("CREATE TABLE \"{}\" (\"_id\" TEXT, \"body\" TEXT", quote(collection));
-        for name in names {
-            if name != "_id" && name != "body" && !SQL_METADATA_COLUMNS.contains(&name.as_str()) {
-                write!(&mut schema, ", \"{}\"", quote(name))
-                    .map_err(|_| QueryError::StorageFailure)?;
+        let fields = collection_fields(transaction, tenant, sequence, collection)?;
+        let mut select = String::from(
+            "SELECT d.id AS \"_id\",\n                   json_extract(CAST(d.body AS TEXT), '$.\"$value\"') AS \"body\",\n                   d.revision AS \"_rev\", d.hlc AS \"_hlc\",\n                   (SELECT MIN(created.committed_at) FROM documents created\n                    WHERE created.tenant = d.tenant AND created.collection = d.collection\n                      AND created.id = d.id AND created.commit_seq <= d.snapshot_seq) AS \"_created\",\n                   d.committed_at AS \"_updated\"",
+        );
+        for field in fields {
+            if field == "_id" || field == "body" || SQL_METADATA_COLUMNS.contains(&field.as_str()) {
+                continue;
             }
-        }
-        for column in SQL_METADATA_COLUMNS {
-            write!(&mut schema, ", \"{column}\" INTEGER")
+            let path = sql_string(&format!("$.\"{}\"", json_path_component(&field)));
+            let text_column = format!("f:{field}#t");
+            let number_column = format!("f:{field}#n");
+            let fallback = format!("json_extract(CAST(d.body AS TEXT), {path})");
+            let expression = match (
+                columns.contains(&text_column),
+                columns.contains(&number_column),
+            ) {
+                (true, true) => format!(
+                    "CASE WHEN d.\"{}\" IS NOT NULL THEN d.\"{}\" WHEN d.\"{}\" IS NOT NULL THEN d.\"{}\" ELSE {fallback} END",
+                    quote(&text_column),
+                    quote(&text_column),
+                    quote(&number_column),
+                    quote(&number_column)
+                ),
+                (true, false) => format!("COALESCE(d.\"{}\", {fallback})", quote(&text_column)),
+                (false, true) => format!("COALESCE(d.\"{}\", {fallback})", quote(&number_column)),
+                (false, false) => fallback,
+            };
+            write!(&mut select, ",\n                   {expression} AS \"{}\"", quote(&field))
                 .map_err(|_| QueryError::StorageFailure)?;
         }
-        schema.push(')');
-        connection
-            .execute(&schema, [])
-            .map_err(|_| control.interrupted(QueryError::StorageFailure))?;
-    }
-    for document in documents {
-        control.check()?;
-        let DocumentValue::Object(values) = document.value() else { continue };
-        let Some(names) = fields.get(document.collection().as_str()) else { continue };
-        let mut columns = vec!["_id".to_owned(), "body".to_owned()];
-        columns.extend(SQL_METADATA_COLUMNS.iter().map(|column| (*column).to_owned()));
-        columns.extend(
-            names
-                .iter()
-                .filter(|name| {
-                    *name != "_id"
-                        && *name != "body"
-                        && !SQL_METADATA_COLUMNS.contains(&name.as_str())
-                })
-                .cloned(),
+        let sequence = i64::try_from(sequence).map_err(|_| QueryError::CandidateBoundExceeded)?;
+        let source = format!(
+            "CREATE TEMP VIEW \"{}\" AS\n             WITH ranked AS (\n                 SELECT documents.*, {sequence} AS snapshot_seq,\n                        ROW_NUMBER() OVER (PARTITION BY id ORDER BY commit_seq DESC) AS row_number\n                 FROM documents\n                 WHERE tenant = {tenant} AND collection = {collection} AND commit_seq <= {sequence}\n             )\n             {select}\n             FROM ranked d\n             WHERE d.row_number = 1 AND d.deleted = 0\n               AND (d.expires_at IS NULL OR d.expires_at > {now})",
+            quote(collection),
+            tenant = sql_string(tenant),
+            collection = sql_string(collection),
+            now = unix_millis(),
         );
-        let placeholders =
-            (1..=columns.len()).map(|index| format!("?{index}")).collect::<Vec<_>>().join(",");
-        let sql = format!(
-            "INSERT INTO \"{}\" ({}) VALUES ({placeholders})",
-            quote(document.collection().as_str()),
-            columns.iter().map(|name| format!("\"{}\"", quote(name))).collect::<Vec<_>>().join(",")
-        );
-        let mut params = vec![
-            Value::Text(document.id().as_str().to_owned()),
-            Value::Text(json_value(document.value())?),
-            Value::Integer(i64::try_from(document.metadata().version()).unwrap_or(i64::MAX)),
-            Value::Integer(i64::try_from(snapshot_sequence).unwrap_or(i64::MAX)),
-            Value::Integer(i64::try_from(snapshot_sequence).unwrap_or(i64::MAX)),
-            Value::Integer(i64::try_from(snapshot_sequence).unwrap_or(i64::MAX)),
-        ];
-        for name in names.iter().filter(|name| {
-            *name != "_id" && *name != "body" && !SQL_METADATA_COLUMNS.contains(&name.as_str())
-        }) {
-            params.push(values.get(name).map_or(Ok(Value::Null), sqlite_value)?);
-        }
-        connection
-            .execute(&sql, rusqlite::params_from_iter(params.iter()))
+        transaction
+            .execute(&source, [])
             .map_err(|_| control.interrupted(QueryError::StorageFailure))?;
     }
     Ok(())
 }
 
-fn quote(value: &str) -> String {
-    value.replace('"', "\"\"")
+fn storage_columns(
+    transaction: &rusqlite::Transaction<'_>,
+) -> Result<BTreeSet<String>, QueryError> {
+    let mut statement = transaction
+        .prepare("SELECT name FROM pragma_table_xinfo('documents')")
+        .map_err(|_| QueryError::StorageFailure)?;
+    statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|_| QueryError::StorageFailure)?
+        .collect::<Result<BTreeSet<_>, _>>()
+        .map_err(|_| QueryError::StorageFailure)
 }
 
-fn document_size(document: &Document) -> Result<usize, QueryError> {
-    value_size(document.value())?
-        .checked_add(document.id().as_str().len())
-        .and_then(|size| size.checked_add(document.collection().as_str().len()))
-        .ok_or(QueryError::CandidateBoundExceeded)
+fn collection_fields(
+    transaction: &rusqlite::Transaction<'_>,
+    tenant: &str,
+    sequence: u64,
+    collection: &str,
+) -> Result<BTreeSet<String>, QueryError> {
+    let sequence = i64::try_from(sequence).map_err(|_| QueryError::CandidateBoundExceeded)?;
+    let mut statement = transaction
+        .prepare(
+            "SELECT DISTINCT json_each.key
+             FROM documents, json_each(
+                 CASE WHEN json_type(CAST(documents.body AS TEXT), '$.\"$value\"') = 'object'
+                      THEN json_extract(CAST(documents.body AS TEXT), '$.\"$value\"')
+                      ELSE '{}' END
+             ) AS json_each
+             WHERE documents.tenant = ?1 AND documents.collection = ?2
+               AND documents.commit_seq <= ?3",
+        )
+        .map_err(|_| QueryError::StorageFailure)?;
+    statement
+        .query_map(rusqlite::params![tenant, collection, sequence], |row| row.get::<_, String>(0))
+        .map_err(|_| QueryError::StorageFailure)?
+        .collect::<Result<BTreeSet<_>, _>>()
+        .map_err(|_| QueryError::StorageFailure)
+}
+
+fn unix_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+        .unwrap_or(i64::MAX)
+}
+
+fn sql_string(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn json_path_component(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn quote(value: &str) -> String {
+    value.replace('"', "\"\"")
 }
 
 fn value_size(value: &DocumentValue) -> Result<usize, QueryError> {
