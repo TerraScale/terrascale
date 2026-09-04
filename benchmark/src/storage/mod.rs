@@ -28,7 +28,7 @@ pub use sqlite::database_file;
 /// Failures opening one durable location.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StorageOpenError {
-    /// The location holds a format this build does not serve.
+    /// The location is not an owned SQLite database directory.
     FormatMismatch,
     /// The location cannot be opened or recovered.
     Unavailable,

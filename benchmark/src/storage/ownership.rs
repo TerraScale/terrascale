@@ -1,10 +1,9 @@
 //! Durable ownership identity for one engine location.
 //!
-//! The record is deliberately separate from the storage format bytes. It is
-//! an additive, owner-controlled metadata file used to bind a location to one
-//! environment and typed database scope. Existing locations may acquire the
-//! record once through the explicitly local-development open path; a scoped
-//! production open can never adopt a local record or a foreign location.
+//! The owner-controlled metadata file binds a location to one environment and
+//! typed database scope. Existing locations may acquire the record once
+//! through the explicitly local-development open path; a scoped production
+//! open can never adopt a local record or a foreign location.
 
 use std::{
     fs::{self, File, OpenOptions},
@@ -19,6 +18,8 @@ use crate::{
     identity::{DatabaseUlid, ProjectUlid, TenantUlid},
     regions::RegionCode,
 };
+
+use super::sqlite::DATABASE_FILE;
 
 const MAGIC: &[u8; 8] = b"TBOwner1";
 const VERSION: u8 = 1;
@@ -238,12 +239,13 @@ fn validate_location(location: &Path) -> Result<(), OwnershipError> {
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(OwnershipError::InvalidLocation);
     }
-    // A non-empty directory without a recognized TerraBase marker is never
-    // silently adopted as a database location. The owner file itself is the
-    // only permitted exception while a first open is being completed.
+    // A location consists only of its durable owner and SQLite's files. The
+    // owner is the TerraBase identity; SQLite's own header identifies the
+    // database. Unknown files and orphaned SQLite files are never adopted.
     let entries = fs::read_dir(location).map_err(|_| OwnershipError::Unavailable)?;
-    let mut has_format = false;
-    let mut has_other = false;
+    let mut has_owner = false;
+    let mut has_database = false;
+    let mut has_companion = false;
     for entry in entries {
         let entry = entry.map_err(|_| OwnershipError::Unavailable)?;
         let name = entry.file_name();
@@ -252,30 +254,45 @@ fn validate_location(location: &Path) -> Result<(), OwnershipError> {
             if name == FILE_NAME {
                 return Err(OwnershipError::InvalidLocation);
             }
-            has_other = true;
-            continue;
-        }
-        if name == FILE_NAME
-            || name == "format.tmp"
-            || name == "manifest.tmp"
-            || name.to_str().is_some_and(|name| name.starts_with("owner.tbv1.tmp-"))
-        {
-            continue;
-        }
-        if name == "format" {
-            let bytes = fs::read(entry.path()).map_err(|_| OwnershipError::ForeignLocation)?;
-            if bytes.starts_with(b"TBV3SQLITE") {
-                has_format = true;
-                continue;
-            }
             return Err(OwnershipError::ForeignLocation);
         }
-        has_other = true;
-    }
-    if has_other && !has_format {
-        // Existing known engine artifacts imply a recognized location only
-        // when the format marker is present; reject everything else.
+        if name == FILE_NAME {
+            if !entry_type.is_file() {
+                return Err(OwnershipError::ForeignLocation);
+            }
+            has_owner = true;
+            continue;
+        }
+        if name.to_str().is_some_and(|name| name.starts_with("owner.tbv1.tmp-")) {
+            if !entry_type.is_file() {
+                return Err(OwnershipError::ForeignLocation);
+            }
+            continue;
+        }
+        if name == DATABASE_FILE {
+            if !entry_type.is_file() {
+                return Err(OwnershipError::ForeignLocation);
+            }
+            has_database = true;
+            continue;
+        }
+        if name == format!("{DATABASE_FILE}-wal")
+            || name == format!("{DATABASE_FILE}-shm")
+            || name == format!("{DATABASE_FILE}-journal")
+        {
+            if !entry_type.is_file() {
+                return Err(OwnershipError::ForeignLocation);
+            }
+            has_companion = true;
+            continue;
+        }
         return Err(OwnershipError::ForeignLocation);
+    }
+    if (has_database || has_companion) && !has_owner {
+        return Err(OwnershipError::ForeignLocation);
+    }
+    if has_companion && !has_database {
+            return Err(OwnershipError::ForeignLocation);
     }
     Ok(())
 }

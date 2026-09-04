@@ -7,6 +7,7 @@
 //! the write path already produced — no re-planning per write — and every
 //! subscription whose key the row touches gets one delta.
 
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::ops::Bound;
 
@@ -122,21 +123,187 @@ pub struct CommittedRow<'row> {
     pub extracted: Vec<(&'row str, FieldValue)>,
 }
 
+/// One registered range and its owning subscription.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct IntervalEntry {
+    key: DependencyKey,
+    owner: u64,
+}
+
+/// One balanced interval-tree node, augmented with the farthest end in
+/// its subtree. Registrations rebuild the tree; committed rows only run
+/// point queries, which are the write-path operation D-46 keeps bounded.
+#[derive(Debug)]
+struct IntervalNode {
+    entry: IntervalEntry,
+    max_end: RangeEnd,
+    left: Option<Box<Self>>,
+    right: Option<Box<Self>>,
+}
+
+/// All dependency ranges for one `(collection, index field)` key.
+#[derive(Default)]
+struct IntervalTree {
+    entries: Vec<IntervalEntry>,
+    root: Option<Box<IntervalNode>>,
+}
+
+impl IntervalTree {
+    fn insert(&mut self, key: DependencyKey, owner: u64) {
+        self.entries.push(IntervalEntry { key, owner });
+        self.rebuild();
+    }
+
+    fn retract(&mut self, owner: u64) {
+        self.entries.retain(|entry| entry.owner != owner);
+        self.rebuild();
+    }
+
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    fn contains(&self, owner: u64, key: &DependencyKey) -> bool {
+        self.entries.iter().any(|entry| entry.owner == owner && &entry.key == key)
+    }
+
+    fn match_point(&self, value: &FieldValue, affected: &mut Vec<u64>) {
+        let mut visited = 0;
+        visit_intervals(self.root.as_deref(), value, affected, &mut visited);
+    }
+
+    #[cfg(test)]
+    fn match_point_counted(&self, value: &FieldValue) -> (Vec<u64>, usize) {
+        let mut affected = Vec::new();
+        let mut visited = 0;
+        visit_intervals(self.root.as_deref(), value, &mut affected, &mut visited);
+        (affected, visited)
+    }
+
+    fn rebuild(&mut self) {
+        self.entries.sort_by(|left, right| {
+            compare_starts(&left.key.range.start, &right.key.range.start)
+                .then_with(|| compare_ends(&left.key.range.end, &right.key.range.end))
+                .then_with(|| left.owner.cmp(&right.owner))
+        });
+        self.root = build_interval_tree(&self.entries);
+    }
+}
+
+impl std::fmt::Debug for IntervalTree {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_list().entries(&self.entries).finish()
+    }
+}
+
+/// Builds a balanced search tree over lower bounds and records the farthest
+/// upper bound reachable below every node.
+fn build_interval_tree(entries: &[IntervalEntry]) -> Option<Box<IntervalNode>> {
+    let (entry, left_entries, right_entries) = match entries.len() {
+        0 => return None,
+        len => {
+            let middle = len / 2;
+            (&entries[middle], &entries[..middle], &entries[middle + 1..])
+        }
+    };
+    let left = build_interval_tree(left_entries);
+    let right = build_interval_tree(right_entries);
+    let mut max_end = entry.key.range.end.clone();
+    if let Some(child) = &left {
+        max_end = farther_end(max_end, &child.max_end);
+    }
+    if let Some(child) = &right {
+        max_end = farther_end(max_end, &child.max_end);
+    }
+    Some(Box::new(IntervalNode { entry: entry.clone(), max_end, left, right }))
+}
+
+/// Point-searches one interval tree. The left subtree is skipped when its
+/// farthest upper bound cannot reach the point; the right subtree is skipped
+/// when this node's lower bound is already beyond it.
+fn visit_intervals(
+    node: Option<&IntervalNode>,
+    value: &FieldValue,
+    affected: &mut Vec<u64>,
+    visited: &mut usize,
+) {
+    let Some(node) = node else {
+        return;
+    };
+    *visited = visited.saturating_add(1);
+    if node.left.as_ref().is_some_and(|left| end_reaches(&left.max_end, value)) {
+        visit_intervals(node.left.as_deref(), value, affected, visited);
+    }
+    if node.entry.key.range.contains(value) {
+        affected.push(node.entry.owner);
+    }
+    if start_reaches(&node.entry.key.range.start, value) {
+        visit_intervals(node.right.as_deref(), value, affected, visited);
+    }
+}
+
+/// Orders lower bounds as `-infinity`, then by value, with an included bound
+/// before an excluded bound at the same value.
+fn compare_starts(left: &RangeEnd, right: &RangeEnd) -> Ordering {
+    match (left, right) {
+        (RangeEnd::Unbounded, RangeEnd::Unbounded) => Ordering::Equal,
+        (RangeEnd::Unbounded, _) => Ordering::Less,
+        (_, RangeEnd::Unbounded) => Ordering::Greater,
+        (RangeEnd::Included(left), RangeEnd::Included(right))
+        | (RangeEnd::Excluded(left), RangeEnd::Excluded(right)) => left.cmp(right),
+        (RangeEnd::Included(left), RangeEnd::Excluded(right)) => {
+            left.cmp(right).then(Ordering::Less)
+        }
+        (RangeEnd::Excluded(left), RangeEnd::Included(right)) => {
+            left.cmp(right).then(Ordering::Greater)
+        }
+    }
+}
+
+/// Orders upper bounds by reach. An unbounded upper end is positive infinity;
+/// at the same value an included end reaches farther than an excluded end.
+fn compare_ends(left: &RangeEnd, right: &RangeEnd) -> Ordering {
+    match (left, right) {
+        (RangeEnd::Unbounded, RangeEnd::Unbounded) => Ordering::Equal,
+        (RangeEnd::Unbounded, _) => Ordering::Greater,
+        (_, RangeEnd::Unbounded) => Ordering::Less,
+        (RangeEnd::Included(left), RangeEnd::Included(right))
+        | (RangeEnd::Excluded(left), RangeEnd::Excluded(right)) => left.cmp(right),
+        (RangeEnd::Included(left), RangeEnd::Excluded(right)) => {
+            left.cmp(right).then(Ordering::Greater)
+        }
+        (RangeEnd::Excluded(left), RangeEnd::Included(right)) => {
+            left.cmp(right).then(Ordering::Less)
+        }
+    }
+}
+
+fn farther_end(current: RangeEnd, candidate: &RangeEnd) -> RangeEnd {
+    if compare_ends(&current, candidate).is_lt() { candidate.clone() } else { current }
+}
+
+fn start_reaches(start: &RangeEnd, value: &FieldValue) -> bool {
+    match start {
+        RangeEnd::Unbounded => true,
+        RangeEnd::Included(bound) => bound <= value,
+        RangeEnd::Excluded(bound) => bound < value,
+    }
+}
+
+fn end_reaches(end: &RangeEnd, value: &FieldValue) -> bool {
+    match end {
+        RangeEnd::Unbounded => true,
+        RangeEnd::Included(bound) => bound >= value,
+        RangeEnd::Excluded(bound) => bound > value,
+    }
+}
+
 /// The dependency index: subscriptions keyed by their
-/// `(collection, field, range)` dependencies, matched by committed rows
-/// (D-46).
-///
-/// The tree is one ordered map per `(collection, field)` whose entries
-/// carry the range's start end; a row probes the map with its value and
-/// walks backwards over every range that could still cover it. The
-/// per-key start ordering bounds the walk: once a start end sorts above
-/// the value's own position, no earlier subscription can match.
-// ponytail: per-key sorted starts with a backward walk; a max-end
-// augmented interval tree replaces it when one (collection, field) hosts
-// thousands of overlapping range subscriptions.
+/// `(collection, index field, range)` dependencies and matched by committed
+/// rows through a max-end-augmented interval tree (D-46).
 #[derive(Default)]
 pub struct DependencyIndex {
-    keys: BTreeMap<(String, String), Vec<(DependencyKey, u64)>>,
+    keys: BTreeMap<(String, String), IntervalTree>,
 }
 
 impl DependencyIndex {
@@ -150,35 +317,25 @@ impl DependencyIndex {
     /// A subscription with no dependency keys depends on nothing and is
     /// never matched.
     pub fn register(&mut self, subscription: u64, key: DependencyKey, remove: bool) {
-        let entries = self.keys.entry((key.collection.clone(), key.field.clone())).or_default();
+        let bucket = (key.collection.clone(), key.field.clone());
         if remove {
-            entries.retain(|(_, owner)| *owner != subscription);
-            if entries.is_empty() {
-                self.keys.remove(&(key.collection, key.field));
+            if let Some(tree) = self.keys.get_mut(&bucket) {
+                tree.retract(subscription);
+                if tree.is_empty() {
+                    self.keys.remove(&bucket);
+                }
             }
             return;
         }
-        let pair = (key, subscription);
-        let position =
-            entries.partition_point(|(owned, _)| owned.range.start <= pair.0.range.start);
-        entries.insert(position, pair);
+        self.keys.entry(bucket).or_default().insert(key, subscription);
     }
 
     /// Retracts every dependency of one subscription.
     pub fn retract(&mut self, subscription: u64) {
-        let mut empty = Vec::new();
-        for ((collection, field), entries) in &mut self.keys {
-            let before = entries.len();
-            entries.retain(|(_, owner)| *owner != subscription);
-            if entries.len() != before {
-                empty.push((collection.clone(), field.clone()));
-            }
-        }
-        for key in empty {
-            if self.keys.get(&key).is_some_and(Vec::is_empty) {
-                self.keys.remove(&key);
-            }
-        }
+        self.keys.retain(|_, tree| {
+            tree.retract(subscription);
+            !tree.is_empty()
+        });
     }
 
     /// Returns every subscription whose dependency the committed row
@@ -191,11 +348,7 @@ impl DependencyIndex {
             else {
                 continue;
             };
-            for (key, owner) in entries {
-                if key.range.contains(value) {
-                    affected.push(*owner);
-                }
-            }
+            entries.match_point(value, &mut affected);
         }
         affected.sort_unstable();
         affected.dedup();
@@ -208,7 +361,7 @@ impl DependencyIndex {
     fn is_registered(&self, subscription: u64, key: &DependencyKey) -> bool {
         self.keys
             .get(&(key.collection.clone(), key.field.clone()))
-            .is_some_and(|entries| entries.iter().any(|(_, owner)| *owner == subscription))
+            .is_some_and(|tree| tree.contains(subscription, key))
     }
 }
 

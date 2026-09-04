@@ -140,7 +140,7 @@ fn engine_opens_only_configured_durable_storage() {
 
     let foreign = location("engine-opens-foreign");
     EngineConfig::durable(&foreign).expect("creates the directory");
-    std::fs::write(foreign.join("format"), b"FOREIGNFORMAT-v9").expect("foreign format");
+    std::fs::write(foreign.join("unrelated"), b"foreign bytes").expect("foreign file");
     assert_eq!(
         Engine::open(EngineConfig::durable(&foreign).expect("durable")).err(),
         Some(EngineOpenError::FormatMismatch)

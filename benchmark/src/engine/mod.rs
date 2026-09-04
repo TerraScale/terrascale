@@ -60,7 +60,7 @@ use crate::{
     families::FamilyStore,
     observability::{CommitResult as MetricCommitResult, MetricsRegistry},
     operations::{EngineRequest, EngineResponse},
-    query::{QueryStore, tql as tql_surface},
+    query::QueryStore,
     storage::{
         self, CommitIntent, CommitPublicationEvent, CommitResult, PublishedCommit, StagedWrite,
         StoragePort, UsageFactPosition, UsageStorageError,
@@ -396,7 +396,7 @@ impl Drop for SubscriptionGuard {
     }
 }
 
-/// Describes a durable Engine location selecting the V2 Storage Format.
+/// Describes one durable SQLite Engine location.
 ///
 /// ```compile_fail
 /// // No ephemeral durable Engine constructor exists. This must not compile.
@@ -496,8 +496,7 @@ pub enum EngineConfigError {
 pub enum EngineOpenError {
     /// The configuration was invalid.
     InvalidConfig,
-    /// The location holds another storage format, or its recorded bytes do
-    /// not verify.
+    /// The location is not an owned SQLite database directory.
     FormatMismatch,
     /// Durable storage could not be opened.
     StorageUnavailable,
@@ -849,8 +848,8 @@ pub enum DurableResolution {
 ///
 /// The identity is unique per open Engine and is never reused, so a snapshot,
 /// scope, or transaction cannot leak across Engine instances. It is separate
-/// from the persistent storage-format identity recorded on disk, which detects
-/// [`EngineOpenError::FormatMismatch`].
+/// from the durable owner identity recorded on disk, which detects a location
+/// mismatch before SQLite opens.
 pub(crate) struct EngineIdentity(u128);
 
 impl EngineIdentity {
@@ -958,13 +957,13 @@ impl Drop for LeaderGuard {
 }
 
 impl Engine {
-    /// Opens a durable Engine from a V2 configuration.
+    /// Opens a durable SQLite Engine.
     ///
     /// # Errors
     ///
     /// Returns [`EngineOpenError::InvalidConfig`] for an unusable
     /// configuration, [`EngineOpenError::FormatMismatch`] when the location
-    /// holds a different storage format or bytes that do not verify, and
+    /// is not an owned SQLite database directory, and
     /// [`EngineOpenError::StorageUnavailable`] when the location cannot be
     /// opened.
     #[allow(clippy::needless_pass_by_value)]
@@ -2477,14 +2476,6 @@ impl Engine {
     ) -> Option<bool> {
         let storage = self.lock_storage().ok()?;
         storage.port.index_descriptor_state(collection, field)
-    }
-
-    /// Returns the TQL capabilities this engine reports to the parser:
-    /// full-text search ships (S-02 slice D), vector search stays gated
-    /// (workspace goal D-40: vector is post-launch).
-    #[must_use]
-    pub fn tql_capabilities(&self) -> tql_surface::TqlCapabilities {
-        tql_surface::engine_capabilities()
     }
 
     /// Registers one full-text descriptor for a collection (S-02 slice D,

@@ -87,15 +87,6 @@
 //! (`rule` is stored as the `MintingRule` discriminant, whose integer
 //! order is the type's `Ord`).
 //!
-//! ## Detection and wiring
-//!
-//! A location self-describes through its `format` marker (magic
-//! `TBV3SQLITE` + schema version); ownership validation recognizes the
-//! marker. A marker naming another format never converts, a missing
-//! marker beside durable artifacts is loss (not a fresh location), and a
-//! marker without its database file is loss too — `Connection::open`
-//! would otherwise silently mint a fresh database over a location whose
-//! data was lost.
 #![allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
 
 #[cfg(test)]
@@ -148,14 +139,8 @@ fn unix_millis() -> i64 {
 /// thirty days regardless of consumer frontiers.
 const HISTORY_FLOOR_MILLIS: i64 = 30 * 24 * 60 * 60 * 1000;
 
-/// Magic bytes prefixing the `SQLite` location's `format` marker.
-const SQLITE_FORMAT_MAGIC: &[u8; 10] = b"TBV3SQLITE";
-
-/// The `SQLite` storage schema version written after the marker magic.
-const SQLITE_FORMAT_VERSION: u64 = 2;
-
 /// The database file name inside one location directory.
-const DATABASE_FILE: &str = "terrabase.sqlite3";
+pub(super) const DATABASE_FILE: &str = "terrabase.sqlite3";
 
 /// The database file's path inside one location directory — the file
 /// Litestream streams per database (D-29).
@@ -615,34 +600,33 @@ impl SqliteStorage {
     ///
     /// # Errors
     ///
-    /// Returns [`StorageOpenError::FormatMismatch`] when the location's
-    /// marker names another format or is missing beside durable artifacts,
-    /// and [`StorageOpenError::Unavailable`] when the database cannot be
+    /// Returns [`StorageOpenError::Unavailable`] when the database cannot be
     /// opened or initialized.
     pub(crate) fn open(dir: &Path) -> Result<Self, StorageOpenError> {
         // The engine path pre-creates the location; creating here too keeps
         // the seam's direct callers (and the FileStorage reference's
         // behavior) working on a named-but-absent directory.
         std::fs::create_dir_all(dir).map_err(|_| StorageOpenError::Unavailable)?;
-        let marker_created_fresh = verify_or_create_format(dir)?;
         let database_path = dir.join(DATABASE_FILE);
-        if !marker_created_fresh && !database_path.exists() {
-            // A marker without its database is loss, not a fresh location:
-            // opening would silently mint an empty database over it.
-            return Err(StorageOpenError::FormatMismatch);
-        }
         let writer = open_connection(&database_path)?;
         writer.execute_batch(SCHEMA).map_err(|_| StorageOpenError::Unavailable)?;
         migrate_documents_provenance(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         migrate_documents_ttl(&writer).map_err(|()| StorageOpenError::Unavailable)?;
-        // Seed the identity rows idempotently: `INSERT OR IGNORE` keeps an
-        // existing location's root chain and format version untouched.
-        let seed = format!(
-            "INSERT OR IGNORE INTO meta (key, value) VALUES
-                ('format_version', '{SQLITE_FORMAT_VERSION}'),
-                ('root_head', '{INITIAL_ROOT_HEAD}');"
-        );
-        writer.execute_batch(&seed).map_err(|_| StorageOpenError::Unavailable)?;
+        // The SQLite schema is authoritative. Remove the retired external
+        // selector's in-database companion if an earlier development build
+        // wrote it, then seed the publication identity idempotently.
+        writer
+            .execute(
+                "DELETE FROM meta WHERE key = 'format_version'",
+                [],
+            )
+            .map_err(|_| StorageOpenError::Unavailable)?;
+        writer
+            .execute(
+                "INSERT OR IGNORE INTO meta (key, value) VALUES ('root_head', ?1)",
+                [INITIAL_ROOT_HEAD],
+            )
+            .map_err(|_| StorageOpenError::Unavailable)?;
         // Usage-counter reconciliation (D-42): the counter is a cache of
         // the journal, never an independent source of truth. On open, a
         // counter whose high-water trails the folded rows — or no counter
@@ -1804,53 +1788,6 @@ fn configure_connection(connection: &Connection) -> Result<(), StorageOpenError>
         )
         .map_err(|_| StorageOpenError::Unavailable)?;
     Ok(())
-}
-
-/// Verifies the location's format marker, creating it for a fresh location.
-fn verify_or_create_format(dir: &Path) -> Result<bool, StorageOpenError> {
-    let path = dir.join("format");
-    match std::fs::read(&path) {
-        Ok(bytes) => {
-            if !bytes.starts_with(SQLITE_FORMAT_MAGIC) {
-                // A location self-describes: a marker naming another format
-                // never silently converts.
-                return Err(StorageOpenError::FormatMismatch);
-            }
-            if bytes.len() != SQLITE_FORMAT_MAGIC.len() + 8 {
-                return Err(StorageOpenError::FormatMismatch);
-            }
-            let raw: [u8; 8] = bytes[SQLITE_FORMAT_MAGIC.len()..]
-                .try_into()
-                .map_err(|_| StorageOpenError::FormatMismatch)?;
-            if u64::from_le_bytes(raw) != SQLITE_FORMAT_VERSION {
-                return Err(StorageOpenError::FormatMismatch);
-            }
-            Ok(false)
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            // A missing marker beside any durable artifact is loss, not a
-            // fresh location — the same rule the other backends enforce.
-            let entries = std::fs::read_dir(dir).map_err(|_| StorageOpenError::Unavailable)?;
-            for entry in entries {
-                let entry = entry.map_err(|_| StorageOpenError::Unavailable)?;
-                let name = entry.file_name();
-                if name != "owner.tbv1"
-                    && !name.to_str().is_some_and(|name| name.starts_with("owner.tbv1.tmp-"))
-                {
-                    return Err(StorageOpenError::FormatMismatch);
-                }
-            }
-            let mut bytes = Vec::new();
-            bytes.extend_from_slice(SQLITE_FORMAT_MAGIC);
-            bytes.extend_from_slice(&SQLITE_FORMAT_VERSION.to_le_bytes());
-            std::fs::write(&path, bytes).map_err(|_| StorageOpenError::Unavailable)?;
-            std::fs::File::open(dir)
-                .and_then(|directory| directory.sync_all())
-                .map_err(|_| StorageOpenError::Unavailable)?;
-            Ok(true)
-        }
-        Err(_) => Err(StorageOpenError::Unavailable),
-    }
 }
 
 /// The reserved family collection, spelled as `spec.rs` spells it: family

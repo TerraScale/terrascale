@@ -22,8 +22,8 @@ use crate::types::{Cancellation, Deadline, Document, DocumentValue, TenantId};
 ///
 /// The rank travels beside the plan, never inside the typed specification:
 /// the specification is the frozen multi-entry seam, while the rank only
-/// exists for queries the TQL layer lowered from a `search(...)` filter
-/// with a `score()` ordering key. The ranked field and query string live
+/// exists for full-text queries with a `search(...)` filter and a `score()`
+/// ordering key. The ranked field and query string live
 /// in the predicate's single `search` condition; the rank only says which
 /// way relevance orders the matches.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -224,9 +224,9 @@ impl NormalizedQuery {
         self.cancellation.clone()
     }
 
-    /// Binds the score-rank request of a lowered `search(...)` query with a
-    /// `score()` ordering key. Crate-only: the TQL lowering is the only
-    /// producer; the typed specification path never ranks.
+    /// Binds the score-rank request of a `search(...)` query with a
+    /// `score()` ordering key. Crate-only: the SQL planner (E-4) is the
+    /// only producer; the typed specification path never ranks.
     pub(crate) fn with_search_rank(mut self, rank: SearchRank) -> Self {
         self.search_rank = Some(rank);
         self

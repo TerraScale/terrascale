@@ -1448,8 +1448,7 @@ type ResolvedLoad<'a> = (&'a LoadShape, Option<&'a Document>);
 ///
 /// A load reads its field's string value as a document id; a missing field,
 /// a non-string value, or an unknown id resolves to nothing and the alias
-/// binds null — the TQL reference contract (Section 4.2 of
-/// `docs/tql/spec.md`) and V1's id-lookup `LOAD` agree on that shape. An id
+/// binds null — the reference contract V1's id-lookup `LOAD` defines. An id
 /// reused across the tenant's collections resolves to the first document in
 /// canonical key order, the rule of the engine's identifier-only point read.
 fn resolve_loads<'a>(

@@ -5,8 +5,8 @@
 //! over one field of one ordinary collection
 //! ([`VectorIndexDeclaration`], the PB-4051 anchor), the filtered k-NN
 //! request and its typed error taxonomy ([`VectorSearchRequest`], the
-//! PB-4024 anchor), the versioned TQL predicate handoff
-//! ([`TqlVectorPredicate`], whose grammar integration rides TQL-03 #34),
+//! PB-4024 anchor), the versioned vector predicate handoff
+//! ([`VectorPredicate`], lowered directly into typed requests),
 //! and [`QueryStore::vector_search`] — the execution against one
 //! immutable snapshot. The decision record with the substrate decision,
 //! the V1 anchors, and the WS-PARITY proposals is
@@ -81,19 +81,18 @@ pub const MAX_VECTOR_DIMENSIONS: usize = 4096;
 /// is 1..=256).
 pub const MAX_VECTOR_SEARCH_LIMIT: u32 = 256;
 
-/// The k a bare TQL vector predicate — one written without an explicit
+/// The k a bare vector predicate — one written without an explicit
 /// `limit` — lowers to.
 ///
-/// An initial engine value, tunable with measured evidence; the TQL-03
-/// grammar integration (#34) may revisit it with its paging model.
+/// An initial engine value, tunable with measured evidence; the SQL planner
+/// (E-4) may revisit it with its paging model.
 pub const DEFAULT_VECTOR_SEARCH_LIMIT: u32 = 10;
 
-/// The version identity of the typed TQL vector predicate surface.
+/// The version identity of the typed vector predicate surface.
 ///
-/// The predicate shape (field, parameter, threshold, limit) and its render
-/// are versioned together: additive changes bump within `vec/1.0`'s minor
-/// line by appending, breaking changes open `vec/2.0`, and the TQL-03
-/// lowering consumes exactly the version it names.
+/// The predicate shape (field, parameter, threshold, limit) is versioned:
+/// additive changes bump within `vec/1.0`'s minor line by appending,
+/// breaking changes open `vec/2.0`.
 pub const VECTOR_PREDICATE_VERSION: &str = "vec/1.0";
 
 /// The reserved family collection, spelled as `spec.rs` spells it: the
@@ -832,35 +831,29 @@ fn validate_query_vector(vector: &[f32]) -> Result<(), VectorSearchError> {
 }
 
 // ---------------------------------------------------------------------------
-// The TQL predicate handoff (TQL-03 #34 seam)
+// The typed vector predicate (lowered directly into typed requests)
 // ---------------------------------------------------------------------------
 
-/// The typed, versioned TQL vector predicate: the shape whose grammar
-/// text is fixed by `docs/tql/spec.md` 8.2 and whose parser integration
-/// rides the TQL wave (#34, TQL-03).
+/// The typed, versioned vector predicate: a field, a bound parameter name,
+/// and the threshold/limit options.
 ///
-/// The predicate renders the grammar's `where vector.search(field,
-/// $parameter [, threshold])` clause and its `limit` line, and lowers —
-/// together with the bound parameter value — into the engine's typed
-/// [`VectorSearchRequest`]. The vector operand stays a `$parameter`:
-/// vectors are data, not text, exactly as the spec's recommended form
-/// pins it.
+/// The predicate lowers — together with the bound parameter value — into
+/// the engine's typed [`VectorSearchRequest`]. The vector operand stays a
+/// `$parameter`: vectors are data, never SQL text.
 #[derive(Clone, Debug, PartialEq)]
-pub struct TqlVectorPredicate {
+pub struct VectorPredicate {
     field: String,
     parameter: String,
     threshold: Option<f64>,
     limit: Option<u32>,
 }
 
-impl TqlVectorPredicate {
+impl VectorPredicate {
     /// Creates one predicate after validating its parts.
     ///
-    /// The field and parameter names are TQL identifiers — the grammar's
-    /// bare-identifier alphabet (ASCII letter or underscore first, then
-    /// ASCII letters, digits, or underscores) — because both land verbatim
-    /// in grammar text: a name carrying a comma, parenthesis, or space
-    /// refuses typed rather than injecting grammar through the render.
+    /// The field and parameter names use the bare-identifier alphabet
+    /// (ASCII letter or underscore first, then ASCII letters, digits, or
+    /// underscores): a name carrying SQL metacharacters refuses typed.
     ///
     /// # Errors
     ///
@@ -876,7 +869,7 @@ impl TqlVectorPredicate {
         threshold: Option<f64>,
         limit: Option<u32>,
     ) -> Result<Self, VectorSearchError> {
-        if !validate_tql_identifier(field) || !validate_tql_identifier(parameter) {
+        if !validate_sql_identifier(field) || !validate_sql_identifier(parameter) {
             return Err(VectorSearchError::InvalidField);
         }
         if let Some(limit) = limit
@@ -922,26 +915,8 @@ impl TqlVectorPredicate {
         VECTOR_PREDICATE_VERSION
     }
 
-    /// Renders the predicate's TQL grammar text, the shape fixed by
-    /// `docs/tql/spec.md` 8.2 and consumed by the TQL-03 lowering.
-    #[must_use]
-    pub fn render(&self) -> String {
-        use std::fmt::Write as _;
-        let mut text = format!("where vector.search({}, ${}", self.field, self.parameter);
-        if let Some(threshold) = self.threshold {
-            // Writing to a `String` cannot fail; the result is discarded.
-            let _ = write!(text, ", {threshold}");
-        }
-        text.push(')');
-        if let Some(limit) = self.limit {
-            let _ = write!(text, "\nlimit {limit}");
-        }
-        text
-    }
-
     /// Lowers the predicate and one bound parameter value into the
-    /// engine's typed request — the path the TQL-03 grammar integration
-    /// wires.
+    /// engine's typed request.
     ///
     /// A predicate without an explicit limit lowers to
     /// [`DEFAULT_VECTOR_SEARCH_LIMIT`].
@@ -988,19 +963,15 @@ impl TqlVectorPredicate {
     }
 }
 
-/// Validates one TQL identifier — a field or parameter name that lands
-/// verbatim in grammar text: non-empty, at most
-/// [`MAX_FIELD_BYTES`](super::spec::MAX_FIELD_BYTES) bytes, ASCII letter
-/// or underscore first, then ASCII letters, digits, or underscores.
+/// Validates one bare identifier — a field or parameter name: non-empty, at
+/// most [`MAX_FIELD_BYTES`](super::spec::MAX_FIELD_BYTES) bytes, ASCII
+/// letter or underscore first, then ASCII letters, digits, or underscores.
 ///
-/// The bare-identifier alphabet carries none of the grammar's
-/// metacharacters (comma, parenthesis, space, `$`), so the render can
-/// never be corrupted through a name. The field-name rule of `spec.rs`
-/// is looser (it must admit the seam's dotted field paths); the render
-/// asks the stricter question because its output is grammar text. A
-/// future TQL-03 grammar that spells vector fields as paths is an
-/// additive widening of this rule within `vec/1.0`'s minor line.
-fn validate_tql_identifier(name: &str) -> bool {
+/// The bare-identifier alphabet carries none of SQL's metacharacters
+/// (comma, parenthesis, space, `$`). The field-name rule of `spec.rs` is
+/// looser (it must admit the seam's dotted field paths); binding names ask
+/// the stricter question.
+fn validate_sql_identifier(name: &str) -> bool {
     if name.is_empty() || name.len() > MAX_FIELD_BYTES {
         return false;
     }

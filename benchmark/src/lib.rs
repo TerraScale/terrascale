@@ -79,8 +79,8 @@ pub use index::operations::{
 };
 pub use operations::{
     DocumentReadRequest, DocumentWriteRequest, FamilyOperation, MAX_QUERY_TEXT_BYTES,
-    PublicOperation, PublicResponse, QueryInput, QueryInputError, QueryOperation,
-    RequestValidationError, TqlQueryText,
+    MAX_SQL_TEXT_BYTES, PublicOperation, PublicResponse, QueryInput, QueryInputError,
+    QueryOperation, RequestValidationError, SqlQueryText,
 };
 pub use query::{
     BulkAuditEntry, BulkAuditStage, BulkByQueryOptions, BulkByQueryReceipt, BulkDetail,

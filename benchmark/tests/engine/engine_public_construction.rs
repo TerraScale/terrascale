@@ -31,7 +31,7 @@ fn durable_config_creates_an_absent_directory_and_engine_reopens() {
     assert!(dir.is_dir());
     let engine = Engine::open(config).expect("opens");
     engine.shutdown().expect("shuts down");
-    // The location stays a valid V2 store, so it opens again.
+    // The owned SQLite location opens again.
     let engine = Engine::open(EngineConfig::durable(&dir).expect("still durable"))
         .expect("reopens the same location");
     engine.shutdown().expect("shuts down");
@@ -43,7 +43,7 @@ fn engine_open_fails_closed_on_unrelated_files_in_the_location() {
     let dir = location("foreign");
     std::fs::remove_dir_all(&dir).ok();
     EngineConfig::durable(&dir).expect("creates the directory");
-    std::fs::write(dir.join("format"), b"unrelated-bytes").expect("foreign format marker");
+    std::fs::write(dir.join("unrelated"), b"foreign bytes").expect("foreign file");
     assert_eq!(
         Engine::open(EngineConfig::durable(&dir).expect("still durable")).err(),
         Some(EngineOpenError::FormatMismatch)

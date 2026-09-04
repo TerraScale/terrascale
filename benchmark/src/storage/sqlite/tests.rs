@@ -456,29 +456,29 @@ fn concurrent_writers_produce_one_continuous_journal() {
 }
 
 #[test]
-fn sqlite_marker_is_sniffed_without_the_selector() {
-    let (dir, engine) = open_sqlite_engine("marker-sniff");
+fn sqlite_file_is_the_storage_identity_without_an_external_marker() {
+    let (dir, engine) = open_sqlite_engine("file-identity");
     committed_sequence(commit_put(
         &engine,
         "tenant-a",
         "op-1",
         "doc-1",
         "users",
-        "marked",
+        "stored",
         ExpectedVersion::New,
         LocalDurability::Synced,
     ));
-    assert!(
-        std::fs::read(dir.join("format")).expect("format marker exists").starts_with(b"TBV3SQLITE")
-    );
+    assert!(!dir.join("format").exists(), "the retired selector is never created");
+    let bytes = std::fs::read(super::database_file(&dir)).expect("SQLite file exists");
+    assert_eq!(bytes.get(..16), Some(b"SQLite format 3\0".as_slice()));
     drop(engine);
-    // The location's own marker self-describes the storage: reopening
-    // reads the document back through it.
+    // SQLite's own file and the durable owner are enough to reopen the
+    // location without a separate backend selector.
     let reopened =
         Engine::open(EngineConfig::durable(&dir).expect("durable location")).expect("reopens");
     assert_eq!(
         read_document(&reopened, "tenant-a", "doc-1").expect("persisted").value(),
-        &DocumentValue::String("marked".to_owned())
+        &DocumentValue::String("stored".to_owned())
     );
     drop(reopened);
     std::fs::remove_dir_all(&dir).ok();
@@ -868,37 +868,16 @@ fn group_commit_batches_are_atomic() {
 // ---- SQLite-focused: detection fails closed ------------------------------
 
 #[test]
-fn foreign_and_stranded_locations_fail_closed() {
-    // A foreign format marker refuses the location.
-    let foreign = location("detect-foreign");
+fn a_non_sqlite_database_file_fails_closed() {
+    let foreign = location("detect-non-sqlite");
     std::fs::create_dir_all(&foreign).unwrap();
-    std::fs::write(foreign.join("format"), b"TBV2LSM1").unwrap();
+    std::fs::write(super::database_file(&foreign), b"not a SQLite database").unwrap();
     assert_eq!(
         SqliteStorage::open(&foreign).err(),
-        Some(StorageOpenError::FormatMismatch),
-        "a location naming another format never converts"
+        Some(StorageOpenError::Unavailable),
+        "SQLite refuses foreign bytes instead of replacing them"
     );
-    // A marker without its database is loss, not a fresh location.
-    let stranded = location("detect-stranded");
-    std::fs::create_dir_all(&stranded).unwrap();
-    let mut marker = Vec::new();
-    marker.extend_from_slice(super::SQLITE_FORMAT_MAGIC);
-    marker.extend_from_slice(&1_u64.to_le_bytes());
-    std::fs::write(stranded.join("format"), marker).unwrap();
-    assert_eq!(
-        SqliteStorage::open(&stranded).err(),
-        Some(StorageOpenError::FormatMismatch),
-        "a marker without its database never mints a fresh database over it"
-    );
-    // Foreign artifacts beside a would-be fresh location refuse it.
-    let occupied = location("detect-occupied");
-    std::fs::create_dir_all(&occupied).unwrap();
-    std::fs::write(occupied.join("stranger"), b"not ours").unwrap();
-    assert_eq!(
-        SqliteStorage::open(&occupied).err(),
-        Some(StorageOpenError::FormatMismatch),
-        "a fresh location may not sit beside foreign artifacts"
-    );
+    std::fs::remove_dir_all(&foreign).ok();
 }
 
 // ---- S-01 gates: one row, the counter cache -------------------------------
