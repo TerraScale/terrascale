@@ -8,12 +8,10 @@
 
 The repository contains two materially different v2 concerns:
 
-- `TerraScaleSyncV2Protocol` and `TerraScaleSyncV2Client` provide the checked-in
-  frame and checkpoint-session implementation used by the migration corpus and
-  loopback HTTP/SSE tests; and
 - `TerraScaleSyncV2ViewEngine` provides the result-view state machine, including
   atomic snapshots, result deltas, opaque checkpoints, authorization changes,
-  and reversible optimistic presentation.
+  and reversible optimistic presentation. The old server-ack-only frame and
+  checkpoint-session implementation was deleted with the legacy sync protocol.
 
 The view engine source explicitly owns no transport, route, framing, or
 credential validation. The workspace goal requires a reviewed public result-view
@@ -30,9 +28,8 @@ binding must translate transport failures into the engine's typed protocol
 errors without giving the engine private server context or a raw request escape
 route.
 
-The existing checkpoint session remains a separately documented implementation
-record. Its passing tests are evidence for that implementation, not proof that
-the result-view replacement is complete.
+The engine's passing unit tests are evidence for its state machine only, not
+proof that the result-view replacement is complete.
 
 ## Consequences
 

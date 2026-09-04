@@ -112,26 +112,12 @@ internal static class TerraScaleApiRoutes
 
 
 
-    public static string PricingPlansList() =>
-        "/api/v1/pricing/plans";
 
-    public static string BillingAccountGet(string organizationId) =>
-        $"/api/v1/organizations/{Escape(organizationId)}/billing";
 
-    public static string BillingInvoicesList(string organizationId, int skip, int take) =>
-        WithQuery($"{BillingAccountGet(organizationId)}/invoices", ("skip", Number(skip)), ("take", Number(take)));
 
-    public static string BillingCheckoutSessionsCreate(string organizationId) =>
-        $"{BillingAccountGet(organizationId)}/checkout-sessions";
 
-    public static string BillingPortalSessionsCreate(string organizationId) =>
-        $"{BillingAccountGet(organizationId)}/portal-sessions";
 
-    public static string BillingAccessList(string organizationId) =>
-        $"{BillingAccountGet(organizationId)}/access";
 
-    public static string BillingAccessUpdate(string organizationId, string userId) =>
-        $"{BillingAccessList(organizationId)}/{Escape(userId)}";
 
     public static string ApiKeysList(string projectId, string? cursor, int limit) =>
         WithQuery($"/api/v1/projects/{Escape(projectId)}/auth/api-keys", ("cursor", NormalizeOptional(cursor)), ("limit", Number(limit)));
@@ -145,80 +131,32 @@ internal static class TerraScaleApiRoutes
     public static string ApiKeyRevoke(string projectId, string keyId) =>
         $"/api/v1/projects/{Escape(projectId)}/auth/api-keys/{Escape(keyId)}";
 
-    public static string M2MApplicationsList(string projectId, string? cursor, int limit) =>
-        WithQuery($"/api/v1/projects/{Escape(projectId)}/auth/m2m-applications", ("cursor", NormalizeOptional(cursor)), ("limit", Number(limit)));
-
-    public static string M2MApplicationsCreate(string projectId) =>
-        $"/api/v1/projects/{Escape(projectId)}/auth/m2m-applications";
-
-    public static string M2MApplicationRotate(string projectId, string clientId) =>
-        $"/api/v1/projects/{Escape(projectId)}/auth/m2m-applications/{Escape(clientId)}/rotate";
-
-    public static string M2MApplicationDelete(string projectId, string clientId) =>
-        $"/api/v1/projects/{Escape(projectId)}/auth/m2m-applications/{Escape(clientId)}";
-
-    public static string M2MTokenCreate(string projectId) =>
-        $"/api/v1/projects/{Escape(projectId)}/auth/m2m/token";
 
 
 
 
-    public static string AdminOverviewGet() =>
-        "/api/v1/admin";
 
-    public static string AdminUsersList(int skip, int take, string? search) =>
-        WithQuery("/api/v1/admin/users", ("skip", Number(skip)), ("take", Number(take)), ("search", NormalizeOptional(search)));
 
-    public static string AdminUserGet(string userId) =>
-        $"/api/v1/admin/users/{Escape(userId)}";
 
-    public static string AdminUserEnable(string userId) =>
-        $"{AdminUserGet(userId)}:enable";
 
-    public static string AdminUserDisable(string userId) =>
-        $"{AdminUserGet(userId)}:disable";
 
-    public static string AdminSupportNotesCreate() =>
-        "/api/v1/admin/support-notes";
 
-    public static string AdminOrganizationsList(int skip, int take) =>
-        WithQuery("/api/v1/admin/organizations", ("skip", Number(skip)), ("take", Number(take)));
 
-    public static string AdminProjectsList(int skip, int take) =>
-        WithQuery("/api/v1/admin/projects", ("skip", Number(skip)), ("take", Number(take)));
 
-    public static string AdminDatabasesList(int skip, int take) =>
-        WithQuery("/api/v1/admin/databases", ("skip", Number(skip)), ("take", Number(take)));
 
-    public static string AdminUsageGet() =>
-        "/api/v1/admin/usage";
 
-    public static string AdminPlansList() =>
-        "/api/v1/admin/plans";
 
-    public static string AdminPlanGet(string planId) =>
-        $"{AdminPlansList()}/{Escape(planId)}";
 
-    public static string AdminAuditList(int skip, int take) =>
-        WithQuery("/api/v1/admin/audit", ("skip", Number(skip)), ("take", Number(take)));
 
-    public static string AdminNotificationsList(int skip, int take) =>
-        WithQuery("/api/v1/admin/notifications", ("skip", Number(skip)), ("take", Number(take)));
 
-    public static string AdminPaymentWebhookGet(string provider, string eventId) =>
-        $"/api/v1/admin/billing/webhooks/{Escape(provider)}/{Escape(eventId)}";
 
-    public static string AdminPaymentWebhookDeadLettersList(int skip, int take) =>
-        WithQuery("/api/v1/admin/billing/webhooks/dead-lettered", ("skip", Number(skip)), ("take", Number(take)));
 
-    public static string AdminPaymentWebhookReplay(string provider, string eventId) =>
-        $"{AdminPaymentWebhookGet(provider, eventId)}:replay";
 
-    public static string AdminBillingReconciliationTrigger(string organizationId) =>
-        $"/api/v1/admin/billing/reconciliation/{Escape(organizationId)}:trigger";
 
-    public static string AdminBillingReconciliationGet(string organizationId, string attemptId) =>
-        $"/api/v1/admin/billing/reconciliation/{Escape(organizationId)}/{Escape(attemptId)}";
+
+
+
+
 
     public static TerraScaleBoundRoute BackupPolicyConfigure(string projectId, string databaseId) =>
         new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/databases/{Escape(databaseId)}/backups/policy");

@@ -1,6 +1,6 @@
 # ADR 0004: owner-published public contract parity
 
-Status: Accepted boundary; canonical route binding implemented, qualification pending.
+Status: Accepted boundary; the hand-copied route binding was deleted; the pinned contract (product item P-2b) is the mechanism.
 
 Date: 2026-08-29
 
@@ -12,11 +12,11 @@ operation identity, parameters, media types, typed models, nullability,
 security scope, limits, errors, partial outcomes, idempotency, retry,
 pagination, checkpoints, and cancellation behavior.
 
-The SDK route manifest and generated contract checks compare the package with
-the owner schema. A missing or changed server operation blocks the affected
-SDK member or requires a versioned compatibility decision. No generic request,
-arbitrary path, custom header, private route, or direct engine path hides a
-contract gap.
+The SDK is generated from the contract terrabase publishes (D-33); CI fails on
+drift. A missing or changed server operation blocks the affected SDK member or
+requires a versioned compatibility decision. No generic request, arbitrary
+path, custom header, private route, or direct engine path hides a contract
+gap.
 
 ## Exit evidence
 
