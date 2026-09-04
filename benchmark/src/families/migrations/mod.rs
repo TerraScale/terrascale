@@ -97,11 +97,16 @@ pub const MAX_MIGRATION_PAGE: usize = 1024;
 ///
 /// A coordinator owns no schema bytes and has no alternate in-memory state:
 /// all three methods below are backed by the collection's durable migration
-/// record.  This keeps the EnginePort, the member host, and SDK/CLI adapters
+/// record.  This keeps the `EnginePort`, the member host, and SDK/CLI adapters
 /// on one status/dry-run/apply vocabulary while allowing a host to drive
 /// pages through [`apply`] without knowing the record layout.
 pub trait MigrationCoordinator {
     /// Return the durable state of one collection's migration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MigrationError::StorageFailure`] when the engine, scope, or
+    /// storage fails.
     fn migration_status(
         &self,
         scope: &TenantScope,
@@ -109,6 +114,12 @@ pub trait MigrationCoordinator {
     ) -> Result<MigrationStatus, MigrationError>;
 
     /// Compute a non-mutating, evidence-bearing migration plan.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MigrationError::FromVersionMismatch`],
+    /// [`MigrationError::DriveInProgress`],
+    /// [`MigrationError::StorageFailure`], or the typed scan failures.
     fn migration_dry_run(
         &self,
         scope: &TenantScope,
@@ -116,6 +127,10 @@ pub trait MigrationCoordinator {
     ) -> Result<MigrationPlan, MigrationError>;
 
     /// Apply a ready plan, resuming from the durable cursor after restart.
+    ///
+    /// # Errors
+    ///
+    /// Returns every typed step refusal unchanged.
     fn migration_apply(
         &self,
         scope: &TenantScope,

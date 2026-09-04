@@ -424,12 +424,22 @@ impl AuthorizationPolicyStore {
     /// Returns the durable authorization revision for an exact scope. This
     /// advances on policy publication and revocation and is suitable for
     /// invalidating query/view authorization caches.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthorizationError::PolicyMissing`] when no policy is
+    /// published for the scope.
     pub fn revision(&self, scope: &ResourceScope) -> Result<u64, AuthorizationError> {
         self.generations.get(scope).copied().ok_or(AuthorizationError::PolicyMissing)
     }
 
     /// Returns the generation at which this scope last invalidated grants.
     /// A missing scope is fail-closed rather than interpreted as generation 0.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthorizationError::PolicyMissing`] when no policy is
+    /// published for the scope.
     pub fn revocation_generation(&self, scope: &ResourceScope) -> Result<u64, AuthorizationError> {
         self.revision(scope)
     }

@@ -20,6 +20,15 @@ pub struct AccessRule;
 
 impl AccessRule {
     /// Compiles an expression and verifies every document field has an index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthorizationError::InvalidAccessRule`] when the expression
+    /// is not in the bounded supported subset,
+    /// [`AuthorizationError::AccessRuleTooLarge`] when it exceeds the token
+    /// or node bound, or
+    /// [`AuthorizationError::UnindexedAccessRuleField`] when a document field
+    /// has no index.
     pub fn try_compile(
         expression: &str,
         indexed_fields: &BTreeSet<String>,
@@ -40,6 +49,15 @@ pub struct CompiledAccessRule {
 
 impl CompiledAccessRule {
     /// Parses and validates one bounded expression.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthorizationError::InvalidAccessRule`] when the expression
+    /// is not in the bounded supported subset,
+    /// [`AuthorizationError::AccessRuleTooLarge`] when it exceeds the token
+    /// or node bound, or
+    /// [`AuthorizationError::UnindexedAccessRuleField`] when a document field
+    /// has no index.
     pub fn try_compile(
         expression: &str,
         indexed_fields: &BTreeSet<String>,
@@ -230,6 +248,7 @@ enum Token {
     End,
 }
 
+#[allow(clippy::too_many_lines, reason = "the lexer is one linear token match per input class")]
 fn lex(input: &str) -> Result<Vec<Token>, AuthorizationError> {
     let bytes = input.as_bytes();
     let mut tokens = Vec::new();

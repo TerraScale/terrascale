@@ -1510,6 +1510,7 @@ pub trait DeletionOrchestratorAdapter {
 
 /// Integration checklist for deletion startup diagnostics.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[allow(clippy::struct_excessive_bools, reason = "four independent startup checklist flags")]
 pub struct DeletionWiringReport {
     /// Request and workflow bytes share the engine transaction.
     pub engine_workflow_transaction: bool,

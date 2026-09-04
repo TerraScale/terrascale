@@ -919,6 +919,15 @@ impl PolicyRule {
     }
 
     /// Compiles and attaches a CEL row predicate to this grant.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthorizationError::InvalidAccessRule`] when the expression
+    /// is not in the bounded supported subset,
+    /// [`AuthorizationError::AccessRuleTooLarge`] when it exceeds the token
+    /// or node bound, or
+    /// [`AuthorizationError::UnindexedAccessRuleField`] when a document field
+    /// has no index.
     pub fn try_with_access_rule(
         self,
         expression: &str,
@@ -1143,6 +1152,10 @@ impl Policy {
     /// Builds a policy after deriving indexes from every bounded row/claim
     /// predicate. The returned index set is deterministic and capped by the
     /// same limits as explicit publication.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same publication errors as [`Self::try_new`].
     pub fn try_new_with_derived_indexes(
         generation: u64,
         rules: impl IntoIterator<Item = PolicyRule>,
@@ -1156,6 +1169,10 @@ impl Policy {
 
     /// Like [`Self::try_new_with_derived_indexes`] but with a caller-supplied
     /// durable policy identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same publication errors as [`Self::try_new`].
     pub fn try_new_with_id_and_derived_indexes(
         policy_id: AuthorizationPolicyUlid,
         generation: u64,
