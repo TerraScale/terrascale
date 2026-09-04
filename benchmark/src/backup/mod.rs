@@ -33,7 +33,8 @@
 //! the caller's pinned fact, not the run's high-water mark.
 //!
 //! Every production plan is constructed with a database-bound OCI Vault key
-//! lease. Plaintext is available only to the in-crate `cfg(test)` fixtures;
+//! lease. Plaintext is available only to the in-crate `cfg(test)` fixtures
+//! and the documented `#[doc(hidden)]` integration-test constructors;
 //! there is no production plaintext default.
 //!
 //! # Fail-closed and disclosure rules
@@ -93,11 +94,13 @@
 
 mod manifest;
 mod records;
+mod restore;
 mod sha256;
 #[cfg(test)]
 mod tests;
 
 pub use manifest::{BackupManifest, BackupMember, BackupTenantCount};
+pub use restore::{RecoveryReceipt, RestoreChainLink, RestoredTenant};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -301,7 +304,9 @@ pub struct BackupPlan {
 #[derive(Clone, Debug)]
 enum BackupEncryptionMode {
     Encrypted(BackupEncryption),
-    #[cfg(test)]
+    /// Plaintext for tests only. Production constructors never produce it;
+    /// it is reachable only through the `#[doc(hidden)]` integration-test
+    /// constructors and the in-crate `cfg(test)` fixtures.
     Plaintext,
 }
 
@@ -319,6 +324,29 @@ impl BackupPlan {
             progress: None,
             cancellation: None,
             encryption: BackupEncryptionMode::Encrypted(encryption),
+        }
+    }
+
+    /// Creates a plaintext full plan for integration tests only.
+    ///
+    /// TEST-ONLY: the `tests/recovery` integration target is compiled
+    /// without `cfg(test)`, so it cannot use the in-crate `local_test_*`
+    /// fixtures. This constructor fills that gap so integration tests can
+    /// exercise the public backup seam against empty sources. It writes
+    /// unencrypted members and a plaintext manifest, is hidden from
+    /// documentation, and must never appear in production code: no
+    /// production path uses it.
+    #[doc(hidden)]
+    pub fn for_integration_tests_full() -> Self {
+        Self {
+            kind: BackupKind::Full,
+            pinned_boundary: None,
+            member_bound_bytes: DEFAULT_MEMBER_BOUND_BYTES,
+            read_ops_per_second: None,
+            tenants: None,
+            progress: None,
+            cancellation: None,
+            encryption: BackupEncryptionMode::Plaintext,
         }
     }
 
@@ -346,6 +374,16 @@ impl BackupPlan {
     #[must_use]
     pub fn incremental_since(base: StorageSequence, encryption: BackupEncryption) -> Self {
         Self { kind: BackupKind::Incremental { base }, ..Self::full(encryption) }
+    }
+
+    /// Creates a plaintext incremental plan for integration tests only.
+    ///
+    /// TEST-ONLY: same contract as
+    /// [`BackupPlan::for_integration_tests_full`]; hidden from
+    /// documentation and never used by production code.
+    #[doc(hidden)]
+    pub fn for_integration_tests_incremental_since(base: StorageSequence) -> Self {
+        Self { kind: BackupKind::Incremental { base }, ..Self::for_integration_tests_full() }
     }
 
     /// Creates a plaintext incremental plan for in-crate unit tests only.
@@ -604,6 +642,17 @@ pub struct BackupResult {
     source_reads: u64,
 }
 
+/// A restore request marker. Restore selection and execution are exposed as
+/// associated functions so a request cannot accidentally carry a mutable
+/// source or target handle across a crash boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RestorePlan {
+    plan: std::marker::PhantomData<()>,
+}
+
+/// Compatibility name for the terminal restore receipt.
+pub type RestoreResult = RecoveryReceipt;
+
 impl BackupResult {
     /// Creates the terminal result of one sealed run.
     pub(crate) fn new(
@@ -656,6 +705,8 @@ pub enum BackupError {
     /// The incremental chain is missing, reordered, truncated, or otherwise
     /// incomplete.
     ChainIncomplete,
+    /// The restore target is not a fresh, empty location.
+    TargetNotEmpty,
     /// The backup source is unavailable, cannot serve the requested
     /// boundary, or no provable history exists for the requested range.
     SourceUnavailable,
@@ -865,7 +916,6 @@ fn execute(
             encryption.validate_for_engine(engine)?;
             Some(Arc::clone(&encryption.cipher))
         }
-        #[cfg(test)]
         BackupEncryptionMode::Plaintext => None,
     };
     let mut writer = match &encryption {

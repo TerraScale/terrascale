@@ -7,7 +7,11 @@
 //! in-crate suite at `src/backup/tests.rs`; this file proves what an
 //! external caller of the backup seam can construct and observe — the
 //! empty-source lifecycle, crafted-corruption rejection, and admission —
-//! end to end on real destinations.
+//! end to end on real destinations. Plans use the `#[doc(hidden)]`
+//! TEST-ONLY `BackupPlan::for_integration_tests_*` constructors, which are
+//! the integration-target counterpart of the in-crate `local_test_*`
+//! fixtures: integration targets compile without `cfg(test)`, so the
+//! fixtures are unreachable here.
 //!
 //! No claim here extends beyond observable behavior: formal Recovery
 //! Receipts come exclusively from the exclusive recovery lane.
@@ -39,8 +43,8 @@ fn empty_source_full_backup_creates_a_verifiable_recovery_point() {
     let destination = location("empty-full-dest");
     std::fs::remove_dir_all(&destination).ok();
 
-    let result =
-        run_backup(&engine, BackupPlan::full(), &destination).expect("an empty source backs up");
+    let result = run_backup(&engine, BackupPlan::for_integration_tests_full(), &destination)
+        .expect("an empty source backs up");
 
     let manifest = result.manifest();
     assert_eq!(manifest.kind(), BackupKind::Full);
@@ -77,7 +81,7 @@ fn empty_source_incremental_fails_closed_with_a_typed_error() {
 
     let empty_range = run_backup(
         &engine,
-        BackupPlan::incremental_since(terrabase::StorageSequence::default()),
+        BackupPlan::for_integration_tests_incremental_since(terrabase::StorageSequence::default()),
         &destination,
     );
     assert_eq!(
@@ -98,7 +102,8 @@ fn manifest_validation_rejects_path_traversal_and_in_progress_manifests() {
     let (_source, engine) = open_engine("validation");
     let destination = location("validation-dest");
     std::fs::remove_dir_all(&destination).ok();
-    let result = run_backup(&engine, BackupPlan::full(), &destination).expect("seeds a point");
+    let result = run_backup(&engine, BackupPlan::for_integration_tests_full(), &destination)
+        .expect("seeds a point");
     let identity = result.manifest().identity().to_owned();
 
     // Traversal: a manifest that names a member outside its point directory
@@ -194,8 +199,8 @@ fn unsealed_orphan_directories_do_not_break_discovery_or_retry() {
     let destination = location("orphan-dest");
     std::fs::remove_dir_all(&destination).ok();
 
-    let sealed =
-        run_backup(&engine, BackupPlan::full(), &destination).expect("an empty source backs up");
+    let sealed = run_backup(&engine, BackupPlan::for_integration_tests_full(), &destination)
+        .expect("an empty source backs up");
     let identity = sealed.manifest().identity().to_owned();
     assert!(sealed.archive().verify(&destination).is_ok());
 
@@ -213,7 +218,8 @@ fn unsealed_orphan_directories_do_not_break_discovery_or_retry() {
     let crashed = location("orphan-crashed-dest");
     std::fs::remove_dir_all(&crashed).ok();
     create_unsealed_orphan(&crashed, &identity);
-    let retry = run_backup(&engine, BackupPlan::full(), &crashed).expect("retry over orphan");
+    let retry = run_backup(&engine, BackupPlan::for_integration_tests_full(), &crashed)
+        .expect("retry over orphan");
     assert_eq!(retry.manifest().identity(), identity, "the retry is idempotent");
     assert!(retry.archive().verify(&crashed).is_ok());
     assert!(
@@ -270,7 +276,7 @@ fn concurrent_backup_attempts_on_the_public_seam_reject_the_second() {
                 }
             }
         });
-    let held_plan = BackupPlan::full().with_progress(observer);
+    let held_plan = BackupPlan::for_integration_tests_full().with_progress(observer);
     let engine_for_job = Arc::clone(&engine);
     let job_destination = destination.clone();
     let job = std::thread::spawn(move || {
@@ -279,7 +285,7 @@ fn concurrent_backup_attempts_on_the_public_seam_reject_the_second() {
 
     entered_rx.recv().expect("the first job is running");
     assert_eq!(
-        run_backup(&engine, BackupPlan::full(), &destination).err(),
+        run_backup(&engine, BackupPlan::for_integration_tests_full(), &destination).err(),
         Some(BackupError::Throttled),
         "admission rejects the concurrent attempt with a typed error"
     );
