@@ -92,7 +92,7 @@ impl KeyPurpose {
 /// The artifact domain whose key is derived from a database key.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ArtifactKind {
-    /// The SQLite database file and its durable catalog metadata.
+    /// The `SQLite` database file and its durable catalog metadata.
     Database,
     /// A write-ahead log artifact.
     Wal,
@@ -137,6 +137,7 @@ impl ArtifactKind {
 
     /// Returns the key hierarchy this artifact must use.
     #[must_use]
+    #[allow(clippy::match_same_arms, reason = "backup kinds stay readable per artifact")]
     pub const fn key_purpose(self) -> KeyPurpose {
         match self {
             Self::Backup => KeyPurpose::Backup,
@@ -443,6 +444,12 @@ impl DatabaseKeyHierarchy {
     /// caller can unwrap any key.  It is the catalog-read hook used by the
     /// Orchestrator/member integration; no provider or OCI identifier is
     /// stored in the public value beyond the opaque wrapper bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncryptionError::InvalidWrappedKey`] for an empty or
+    /// unregistered Region set, a wrapper with mismatched metadata, a
+    /// non-`OciVault` provider, or a duplicate or incomplete Region set.
     pub fn from_wrappers(
         metadata: KeyVersionMetadata,
         selected_regions: impl IntoIterator<Item = RegionCode>,
@@ -478,6 +485,12 @@ impl DatabaseKeyHierarchy {
     /// currently shipped provider is intentionally unconfigured, so this
     /// method returns [`EncryptionError::KeyProviderUnconfigured`] until the
     /// Orchestrator supplies an authorized adapter.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncryptionError::InvalidWrappedKey`] for an empty or
+    /// unregistered Region set or a wrapper that fails validation, and
+    /// propagates key-generation or provider wrapping failures.
     pub fn create(
         provider: &dyn KeyWrappingProvider,
         scope: KeyScope,
@@ -506,7 +519,7 @@ impl DatabaseKeyHierarchy {
             wrappers.push(wrapper);
         }
         dek.destroy();
-        let wrapper_regions: Vec<_> = wrappers.iter().map(|wrapper| wrapper.region()).collect();
+        let wrapper_regions: Vec<_> = wrappers.iter().map(WrappedDatabaseKey::region).collect();
         Self::from_wrappers(metadata, wrapper_regions, wrappers)
     }
 
@@ -517,7 +530,7 @@ impl DatabaseKeyHierarchy {
     }
 
     /// Returns the exact selected Regions carrying wrappers.
-    #[must_use]
+    #[must_use = "the selected Region set must be used for wrapper checks"]
     pub fn regions(&self) -> impl Iterator<Item = RegionCode> + '_ {
         self.wrappers.keys().copied()
     }
@@ -541,6 +554,17 @@ impl DatabaseKeyHierarchy {
     /// destroyed before a provider error are removed, while the remaining
     /// wrappers stay available for a later repair attempt.  No success is
     /// reported until every selected Region is gone.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EncryptionError::InvalidWrappedKey`] when the provider is not
+    /// `OciVault`, and propagates the provider's destruction failure with
+    /// already-destroyed wrappers removed for retry.
+    ///
+    /// # Panics
+    ///
+    /// Never panics on a consistent hierarchy; the internal lookup expects a
+    /// wrapper key collected from the same hierarchy.
     pub fn crypto_shred(
         &mut self,
         provider: &dyn KeyWrappingProvider,

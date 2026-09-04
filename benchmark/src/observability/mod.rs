@@ -145,7 +145,7 @@ pub const MAX_CLOCK_SERIES: usize = 2;
 /// tenant, view, document, and query identifiers cannot become labels.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Subsystem {
-    /// SQLite pages, WAL and storage accounting.
+    /// `SQLite` pages, WAL and storage accounting.
     Storage,
     /// Group commit and durability.
     Commit,
@@ -254,7 +254,7 @@ pub const MAX_GUARD_SERIES: usize = GUARD_KINDS.len();
 pub enum BoundedLabel {
     /// The deployment host is supplied by the scrape target.
     Host,
-    /// A closed TerraScale Region.
+    /// A closed `TerraScale` Region.
     Region(Region),
     /// A closed engine subsystem.
     Subsystem(Subsystem),
@@ -1562,6 +1562,13 @@ impl BoundedLabelSet {
 
     /// Converts textual adapter metadata while rejecting high-cardinality
     /// names and values that are not in the closed vocabulary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LabelBoundaryError::HighCardinality`] for a customer or
+    /// operation identifier, [`LabelBoundaryError::Duplicate`] for a repeated
+    /// key, [`LabelBoundaryError::InvalidValue`] for a malformed or unadmitted
+    /// value, and [`LabelBoundaryError::Unsupported`] for an unknown key.
     pub fn try_from_pairs(pairs: &[(&str, &str)]) -> Result<Self, LabelBoundaryError> {
         let mut labels = Self::new(false, None, None);
         for (name, value) in pairs {
@@ -1632,6 +1639,11 @@ pub trait MetricsSource {
 
     /// Renders one bounded exposition body, or rejects it if a future schema
     /// expansion exceeds the configured response limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExpositionTooLarge`] when the rendered body exceeds
+    /// [`MAX_PROMETHEUS_BODY_BYTES`].
     fn metrics_body(&self) -> Result<String, ExpositionTooLarge> {
         self.metrics_snapshot().try_render_prometheus()
     }
@@ -1753,7 +1765,7 @@ impl MetricsRegistry {
         saturating_increment(state.guard_hits.entry(guard).or_default());
     }
 
-    /// Sets current logical bytes occupied by SQLite data and retained
+    /// Sets current logical bytes occupied by `SQLite` data and retained
     /// history. Non-finite values cannot enter because the value is integral.
     pub fn set_storage_bytes(&self, bytes: u64) {
         lock(&self.state).storage_bytes = Some(bytes);
@@ -2471,6 +2483,7 @@ fn write_egress_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
     }
 }
 
+#[allow(clippy::too_many_lines, reason = "subsystem exposition writes fixed lanes together")]
 fn write_subsystem_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
     write_help_type(
         output,

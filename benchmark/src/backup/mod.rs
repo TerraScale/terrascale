@@ -153,11 +153,13 @@ impl PlacementLock {
     }
 
     /// Creates the Brazil residency lock (`GRU`).
+    #[must_use]
     pub fn br_only() -> Self {
         Self { regions: std::collections::BTreeSet::from([RegionCode::GRU]) }
     }
 
     /// Creates the European residency lock (`FRA`).
+    #[must_use]
     pub fn eu_only() -> Self {
         Self { regions: std::collections::BTreeSet::from([RegionCode::FRA]) }
     }
@@ -169,7 +171,7 @@ impl PlacementLock {
     }
 
     /// Returns the exact locked Region set in canonical order.
-    #[must_use]
+    #[must_use = "the locked Region set must be used for placement checks"]
     pub fn regions(&self) -> impl Iterator<Item = RegionCode> + '_ {
         self.regions.iter().copied()
     }

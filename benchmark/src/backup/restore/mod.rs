@@ -842,6 +842,12 @@ impl RestorePlan {
     /// placement and must call this checked entry point for PITR and branch
     /// creation.  This native seam verifies the requested target Region
     /// before admitting the target directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackupError::PlacementMismatch`] when `target_region` is not
+    /// admitted by `placement`, and the same typed failures as
+    /// [`RestorePlan::restore_latest`] afterwards.
     pub fn restore_latest_in_region(
         destination: &Path,
         target: &Path,
@@ -872,6 +878,12 @@ impl RestorePlan {
     }
 
     /// Encrypted counterpart of [`Self::restore_latest_in_region`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackupError::PlacementMismatch`] when `target_region` is not
+    /// admitted by `placement`, and the same typed failures as
+    /// [`Self::restore_latest_encrypted`] afterwards.
     pub fn restore_latest_encrypted_in_region(
         destination: &Path,
         target: &Path,
@@ -909,6 +921,13 @@ impl RestorePlan {
     /// Restores a named point only into a Region admitted by the placement
     /// lock.  This is the PITR/branch integration hook for a selected chain
     /// depth.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackupError::ManifestInvalid`] for a malformed identity,
+    /// [`BackupError::PlacementMismatch`] when `target_region` is not admitted
+    /// by `placement`, and the same typed failures as
+    /// [`RestorePlan::restore_latest`] afterwards.
     pub fn restore_recovery_point_in_region(
         identity: &str,
         destination: &Path,
@@ -947,6 +966,13 @@ impl RestorePlan {
 
     /// Encrypted named-point counterpart of
     /// [`Self::restore_recovery_point_in_region`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackupError::ManifestInvalid`] for a malformed identity,
+    /// [`BackupError::PlacementMismatch`] when `target_region` is not admitted
+    /// by `placement`, and the same typed failures as
+    /// [`Self::restore_recovery_point_encrypted`] afterwards.
     pub fn restore_recovery_point_encrypted_in_region(
         identity: &str,
         destination: &Path,

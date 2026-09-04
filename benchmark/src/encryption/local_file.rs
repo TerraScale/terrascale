@@ -71,6 +71,12 @@ impl LocalFileKeyProvider {
     /// use the OCI provider seam and cannot accidentally treat this provider
     /// as a production key source.  The implementation shares the hardened
     /// owner-only file checks with [`Self::load_or_create`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::load_or_create`]:
+    /// [`EncryptionError::UnsafeLocalKeyFile`] for an unsafe path and
+    /// [`EncryptionError::LocalKeyUnavailable`] for I/O or randomness failure.
     pub fn load_or_create_for_ci(&self) -> Result<DatabaseKey, EncryptionError> {
         self.load_or_create()
     }
