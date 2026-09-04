@@ -40,7 +40,7 @@ fn generated_contract_is_pinned_to_the_committed_bundle() {
         generated_contract::OPENAPI_BLAKE3
     );
     assert_eq!(
-        artifacts["msgpack/terrascale.sync.v2.msgpack.json"],
+        artifacts["msgpack/terrascale.sync.v1.msgpack.json"],
         generated_contract::MSGPACK_MANIFEST_BLAKE3
     );
 }

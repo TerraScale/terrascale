@@ -1,7 +1,7 @@
 //! Reactive live queries: `subscribe` / `execute`, checkpoints, typed resets.
 //!
 //! `.subscribe()` uses bounded HTTP long-polling on `sync.api.` by default;
-//! snapshot and log bodies are strict indexed `terrascale.sync.v2.msgpack`
+//! snapshot and log bodies are strict indexed `terrascale.sync.v1.msgpack`
 //! envelopes with the manifest's allocation bounds.
 //! [`Transport::WebSocket`] remains an explicit boundary and fails closed in
 //! this HTTP-only crate until a WebSocket transport is published. `.execute()`
@@ -1522,7 +1522,7 @@ pub(crate) fn decode_reactive_msgpack_json(bytes: &[u8]) -> Result<serde_json::V
 
 fn decode_reactive_envelope(reader: &mut MsgpackReader<'_>) -> Result<serde_json::Value> {
     reader.array(7)?;
-    if reader.u32()? != 2 || reader.u32()? != 1 {
+    if reader.u32()? != 1 || reader.u32()? != 0 {
         return Err(Error::new(
             ErrorKind::InvalidResponse,
             "unsupported_version",

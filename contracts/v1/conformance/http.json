@@ -1,7 +1,7 @@
 {
   "contractVersion": "v1",
-  "openapiBlake3": "c2bf884c9522a9f8412e6f237460e5b725d77f5c7f7fdf445057c3492e26d0ef",
-  "openapiSha256": "8c8d52d92403a7fd64b06e85f314d072151d39f6a5df8b643965722a350d9a66",
+  "openapiBlake3": "f51146b13ae8a7217342d0d4c9e7d14c645f56c07c9f3365d9b2a3895d58e7a9",
+  "openapiSha256": "e28d87f5121e94bfe67006da0e7cbefdd18f84e5952762fae0c33f6a5ec82601",
   "operations": [
     {
       "errors": [

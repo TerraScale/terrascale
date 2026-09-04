@@ -5,13 +5,13 @@ use serde::{Deserialize, Serialize};
 
 pub const CONTRACT_VERSION: &str = "v1";
 pub const MANIFEST_SHA256: &str =
-    "f39b70bf5066840b55d2256e259a2e2ec1f7da24cadecbdcad2f4ce6ce7abe53";
-pub const OPENAPI_BLAKE3: &str = "c2bf884c9522a9f8412e6f237460e5b725d77f5c7f7fdf445057c3492e26d0ef";
+    "288215aceaef5d97d00b4ae9dcb20ec31ee32573ed8f68a4b38ce925e1a78cd2";
+pub const OPENAPI_BLAKE3: &str = "f51146b13ae8a7217342d0d4c9e7d14c645f56c07c9f3365d9b2a3895d58e7a9";
 pub const MSGPACK_MANIFEST_BLAKE3: &str =
-    "f3ed2d9998698d3ff2587aaf59039ad6557dedb07ffbfe2669194b4ecc213542";
-pub const MSGPACK_PROTOCOL: &str = "terrascale.sync.v2.msgpack";
-pub const MSGPACK_PROTOCOL_MAJOR: u32 = 2;
-pub const MSGPACK_PROTOCOL_MINOR: u32 = 1;
+    "b18dd38c268fa5848f6b87f83adc909954156391c4b0491a04ad0ddeec398a27";
+pub const MSGPACK_PROTOCOL: &str = "terrascale.sync.v1.msgpack";
+pub const MSGPACK_PROTOCOL_MAJOR: u32 = 1;
+pub const MSGPACK_PROTOCOL_MINOR: u32 = 0;
 pub const MSGPACK_SUPPORTED_FEATURES: u32 = 0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,35 +23,35 @@ pub struct ContractArtifact {
 pub const ARTIFACTS: &[ContractArtifact] = &[
     ContractArtifact {
         path: "conformance/http.json",
-        blake3: "2727e5792aebebe3a00852055a29d3bcba0a9f742d849036d60ebde85ac86f24",
+        blake3: "1235130c1318d3d2d772913b09c34b241ca0bb1085666570da63c8af947e79ca",
     },
     ContractArtifact {
         path: "conformance/msgpack/hostile-vectors.json",
-        blake3: "56cc57c450fa1c6340f60392c1550a0c6a5dda56b1bfa3c0cec187e1a86cd799",
+        blake3: "f0b3945c856a1330e837a5233907f87a24a3bef47b4a86db7b4920c891cef2e3",
     },
     ContractArtifact {
         path: "conformance/msgpack/message-vectors.json",
-        blake3: "bb6b684d3c828b3338f190332292607c6c42ddc32c91f8f9c713ebe5dee646b4",
+        blake3: "d636f18eddd1b172ba81ef6fce7035695871808a5aa74a587b3890332505b96c",
     },
     ContractArtifact {
         path: "conformance/reactive.json",
-        blake3: "2aafa58d745ac592c3a7810f51c36123909277e70fac7625509f293a712a1573",
+        blake3: "a6e2a9016aa78863dc88daa1660062ed4a169b77890bf5c3c279c6f8df78ade4",
     },
     ContractArtifact {
         path: "msgpack/hostile-vectors.json",
-        blake3: "56cc57c450fa1c6340f60392c1550a0c6a5dda56b1bfa3c0cec187e1a86cd799",
+        blake3: "f0b3945c856a1330e837a5233907f87a24a3bef47b4a86db7b4920c891cef2e3",
     },
     ContractArtifact {
         path: "msgpack/message-vectors.json",
-        blake3: "bb6b684d3c828b3338f190332292607c6c42ddc32c91f8f9c713ebe5dee646b4",
+        blake3: "d636f18eddd1b172ba81ef6fce7035695871808a5aa74a587b3890332505b96c",
     },
     ContractArtifact {
-        path: "msgpack/terrascale.sync.v2.msgpack.json",
-        blake3: "f3ed2d9998698d3ff2587aaf59039ad6557dedb07ffbfe2669194b4ecc213542",
+        path: "msgpack/terrascale.sync.v1.msgpack.json",
+        blake3: "b18dd38c268fa5848f6b87f83adc909954156391c4b0491a04ad0ddeec398a27",
     },
     ContractArtifact {
         path: "openapi.json",
-        blake3: "c2bf884c9522a9f8412e6f237460e5b725d77f5c7f7fdf445057c3492e26d0ef",
+        blake3: "f51146b13ae8a7217342d0d4c9e7d14c645f56c07c9f3365d9b2a3895d58e7a9",
     },
     ContractArtifact {
         path: "proto/terrabase/v1/engine.proto",
@@ -695,10 +695,10 @@ pub const MSGPACK_SCAN: MessagePackScan = MessagePackScan {
 };
 
 pub const MESSAGE_VECTOR_SHA256: &str =
-    "f315df09c166c4f1a5bcecaca390982bea14a98235a8450c780bc6a1a9e77972";
+    "350b03983df8bd3052db25e010b5dd5cc94ef3b4d77ccb9bc0a3d819674300ba";
 pub const HOSTILE_VECTOR_SHA256: &str =
-    "25f8ded8d88ae3e5f57c8ad5def1d1f577853b10444d0f37f47c2b4bcd243828";
+    "e6d8e6d92a87fe4d37fb00e5b441d0c351eecaf6117e5ac50631ce94d18890f5";
 pub const HTTP_CONFORMANCE_SHA256: &str =
-    "7a1452788c0df2c45c9a336cabe2fd9ec03388d74a76e91b0bfbe6934ade846c";
+    "16eacb64b21bf7696c0c3dfa167db76bedcbb9177652e1f6fe46fdc8e5d57645";
 pub const REACTIVE_CONFORMANCE_SHA256: &str =
-    "c5c4eae86bcdf65c39b21b3865c6242e0273942501f56731190c4cdad97902a5";
+    "a617860259b2d1acc8edd7964f76eed34c9dca3990b07bfc987700c8dd09176b";

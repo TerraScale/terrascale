@@ -257,9 +257,9 @@ async fn poll_retries_only_within_the_explicit_bounded_budget() {
 
 #[tokio::test]
 async fn poll_decodes_strict_indexed_msgpack_and_empty_statuses() {
-    // [2,1,0,delta,0,0,[subscription,generation,from,to,[],digest,checkpoint]]
+    // [1,0,0,delta,0,0,[subscription,generation,from,to,[],digest,checkpoint]]
     let frame = vec![
-        0x97, 2, 1, 0, 4, 0, 0, 0x97, 0xa1, b's', 1, 1, 2, 0x90, 0xa0, 0xc4, 1, b'x',
+        0x97, 1, 0, 0, 4, 0, 0, 0x97, 0xa1, b's', 1, 1, 2, 0x90, 0xa0, 0xc4, 1, b'x',
     ];
     let mock = Mock::new([Ok(msgpack_response(frame))]);
     let response = client(Arc::clone(&mock))
@@ -288,10 +288,10 @@ async fn poll_decodes_strict_indexed_msgpack_and_empty_statuses() {
 
 #[tokio::test]
 async fn poll_preserves_opaque_projected_bytes_and_digest() {
-    // [2,1,0,delta,0,0,[subscription,generation,from,to,[update],digest,checkpoint]]
+    // [1,0,0,delta,0,0,[subscription,generation,from,to,[update],digest,checkpoint]]
     // The projected value is deliberately not JSON; it must remain opaque.
     let frame = vec![
-        0x97, 2, 1, 0, 4, 0, 0, 0x97, 0xa1, b's', 1, 1, 2, 0x91, 0x93, 2, 0xa1, b'd', 0x91, 0x92,
+        0x97, 1, 0, 0, 4, 0, 0, 0x97, 0xa1, b's', 1, 1, 2, 0x91, 0x93, 2, 0xa1, b'd', 0x91, 0x92,
         0xa1, b'x', 0xc4, 1, 0xff, 0xa0, 0xc4, 1, b'k',
     ];
     let mock = Mock::new([Ok(msgpack_response(frame))]);
@@ -403,7 +403,7 @@ async fn poll_rejects_unsupported_versions_and_wrong_direction_tags() {
     assert_eq!(error.code, "unsupported_version");
 
     let wrong_direction = vec![
-        0x97, 2, 1, 0, 1, 0, 0, 0x94, 0xa1, b's', 0xa0, 0xc4, 0, 0xc0,
+        0x97, 1, 0, 0, 1, 0, 0, 0x94, 0xa1, b's', 0xa0, 0xc4, 0, 0xc0,
     ];
     let mock = Mock::new([Ok(msgpack_response(wrong_direction))]);
     let error = client(Arc::clone(&mock))
@@ -417,7 +417,7 @@ async fn poll_rejects_unsupported_versions_and_wrong_direction_tags() {
 #[tokio::test]
 async fn poll_rejects_noncanonical_envelope_batches() {
     let envelope = vec![
-        0x97, 2, 1, 0, 4, 0, 0, 0x97, 0xa1, b's', 1, 1, 2, 0x90, 0xa0, 0xc4, 1, b'x',
+        0x97, 1, 0, 0, 4, 0, 0, 0x97, 0xa1, b's', 1, 1, 2, 0x90, 0xa0, 0xc4, 1, b'x',
     ];
     let mut frames = vec![0x92];
     frames.extend_from_slice(&envelope);
@@ -434,7 +434,7 @@ async fn poll_rejects_noncanonical_envelope_batches() {
 #[tokio::test]
 async fn poll_rejects_a_batch_of_seven_envelopes() {
     let envelope = vec![
-        0x97, 2, 1, 0, 4, 0, 0, 0x97, 0xa1, b's', 1, 1, 2, 0x90, 0xa0, 0xc4, 1, b'x',
+        0x97, 1, 0, 0, 4, 0, 0, 0x97, 0xa1, b's', 1, 1, 2, 0x90, 0xa0, 0xc4, 1, b'x',
     ];
     let mut frames = vec![0x97];
     for _ in 0..7 {
