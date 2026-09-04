@@ -19,6 +19,12 @@ npx create-terrascale-app@latest my-app
 cd my-app
 ```
 
+`terrascale` is a Go binary from the separate `ts-cli` repository, not an npm
+dependency. Install it from a checkout with `go install ./cmd/terrascale`.
+The currently published CLI branch lifecycle is
+`terrascale dev <database> --watch=false --no-log-tail`; seed execution,
+log tailing, and codegen watch are pending their public CLI contracts.
+
 The starter is a Next.js app wired to `@terrascale/sdk`. Sign in when prompted.
 A card is required at signup for fraud screening; you can continue on the free
 plan without subscribing, and your first paid month is free if you subscribe
@@ -31,74 +37,75 @@ the CLI. `terrascale.schema.json` is the contract: it is what `terrascale push`
 applies and what codegen reads.
 
 ```ts
-import { defineSchema, s } from '@terrascale/sdk'
+import { defineSchema, string, timestamp } from '@terrascale/sdk'
 
 export const schema = defineSchema({
-  collections: {
     posts: {
       fields: {
-        title: s.string(),
-        authorId: s.string(),
-        publishedAt: s.timestamp(),
+        title: string().required(),
+        authorId: string().required().indexed(),
+        publishedAt: timestamp().required(),
       },
       indexes: { byAuthor: ['authorId'] },
     },
-  },
 })
 ```
 
 ```bash
-terrascale push        # apply the schema
-terrascale codegen     # generate types for your language
+terrascale push        # applies the schema when the CLI contract is published
+terrascale codegen     # generates types when the CLI contract is published
 ```
 
 ## 3. Open a cloud dev branch
 
 ```bash
-terrascale dev --seed ./seed.ts
+terrascale dev <database> --watch=false --no-log-tail
 ```
 
-This creates or reuses a personal branch of the project's database in the
-nearest region, runs your seed script, tails the log, and watches codegen. Use
-`--faults` to test against injected failures. Database and branch creation
-takes under 5 seconds.
+This creates or reuses a cloud branch of the named database. The current CLI
+does not claim seed execution, log tailing, codegen watch, or fault injection;
+those flags fail closed until their public routes exist. There is no local
+emulator.
 
-## 4. Write, then subscribe
+## 4. Attach a live query
 
-Writes are document operations (create/update/patch/delete) — there is no SQL
-DML. Queries are SQL, and any query in the live subset can end in
-`.subscribe()` for live results delivered over CDN-backed HTTP by default.
+The current SDK exposes named management clients and a reactive
+`TerraScaleSyncV2Client`; its typed document CRUD family is not yet published.
+Do not copy the removed legacy constructor or collection-facade examples. A
+live query uses the exact current SDK call below and must include `databaseId`:
 
 ```ts
-import { TerraScale } from '@terrascale/sdk'
+import { TerraScaleSyncV2Client } from '@terrascale/sdk'
 
-const ts = new TerraScale({ apiKey: process.env.TERRASCALE_API_KEY! })
-
-await ts.from('posts').create({
-  title: 'Hello TerraScale',
-  authorId: 'mario',
+const databaseId = process.env.TERRASCALE_DATABASE_ID!
+const sync = new TerraScaleSyncV2Client({
+  apiBaseUrl: process.env.TERRASCALE_API_URL,
+  accessToken: process.env.TERRASCALE_API_KEY,
 })
 
-// Live query: re-runs never — the server pushes deltas as writes land.
-ts
-  .from('posts')
-  .where(c => c.authorId.eq('mario'))
-  .orderBy(c => c.publishedAt.desc())
-  .limit(20)
-  .subscribe({
-    onRows: rows => render(rows),
-    onError: err => console.error(err.message, err.fix),
-  })
+const live = await sync.subscribe({
+  databaseId,
+  subscription: 'posts',
+  query: 'SELECT * FROM posts ORDER BY publishedAt DESC LIMIT 20',
+  parameters: new Uint8Array(),
+})
+const stop = live.view.subscribe(() => {
+  // Projected fields are canonical JSON bytes; parse at the browser boundary.
+  render(live.view.getVisibleItems())
+})
+
+// On teardown: stop(); live.close()
 ```
 
-Optimistic updates are built into the React hooks (`./react`), and
-collection sync feeds the TanStack DB adapter for local-first reads.
+`Query.raw(sql, parameters).execute()` and `.subscribe()` create validated
+descriptors for the same read-only SQL contract. Optimistic updates and the
+TanStack adapter remain separate SDK surfaces; writes should wait for the
+published typed document contract.
 
 ## 5. Verify it is live
 
-Open the app in two tabs. Write in one tab; the other tab updates without a
-refresh. That round trip — from `npx create-terrascale-app` to a live query —
-is the metric we hold ourselves to: under five minutes on a fresh machine.
+Open the app to attach the live result view. Document writes are not shown in
+this starter until the typed Database API contract is published.
 
 ## Where to go next
 

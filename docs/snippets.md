@@ -27,8 +27,8 @@ npm run test:stub
 
 ## Database per tenant
 
-Tenant = database (D-51): `ts.tenants.create(key)` provisions a database
-inheriting the tenant template. Runs in both modes; remote uses
-`POST /api/v1/tenants`.
+Tenant = database (D-51), but the tenant provisioning route is not published
+yet. The snippet is retained as a deterministic stub fixture and is skipped in
+both qualification modes; no remote runner calls `/api/v1/tenants`.
 
 <<< ./snippets/tenants.ts

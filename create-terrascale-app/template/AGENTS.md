@@ -5,13 +5,22 @@ AI-assisted builder gets a working assistant on minute one.
 
 ## SDK
 
-- Import from `@terrascale/sdk`. Create one client per request/server action.
-- Document CRUD: `ts.from(collection).create/update/patch/delete`.
-- Never concatenate SQL strings on the happy path; use the typed builder.
+- Import from `@terrascale/sdk`. The public factory is
+  `createTerraScaleClient(config)`; create one client per request/server action.
+- Database management calls always include the `databaseId`, for example
+  `client.databases.get(databaseId)`.
+- The current SDK's reactive client is `TerraScaleSyncV2Client`. Call
+  `await sync.subscribe({ databaseId, subscription, query, parameters })` and
+  observe `live.view`; do not use the removed legacy constructor,
+  collection facade, or callback-per-document APIs.
+- The checked-in SDK currently has no typed document CRUD family. Do not invent
+  `client.from`, `client.documents`, or a generic request helper; wait for the
+  published Database API contract before adding writes to application code.
 
 ## Schema builder
 
-- Author the schema with `defineSchema` + `s` in code; `terrascale.schema.json`
+- Author the schema with `defineSchema` plus field builders such as `string()`
+  and `timestamp()` in code; `terrascale.schema.json`
   is the contract that `terrascale push` applies and codegen reads.
 - After editing the schema: `terrascale push`, then `terrascale codegen`.
 
@@ -25,10 +34,10 @@ AI-assisted builder gets a working assistant on minute one.
 
 ## terrascale dev
 
-- `terrascale dev --seed ./seed.ts` opens a personal cloud dev branch in the
-  nearest region (no emulator, nothing to install but the CLI).
-- Useful flags: `--faults` to test injected failures; `terrascale diff` to
-  preview schema changes; `terrascale doctor` when stuck.
+- `terrascale dev <database> --watch=false --no-log-tail` creates or reuses a
+  cloud dev branch (no emulator). Seed execution is pending its CLI contract.
+- `terrascale diff`, `terrascale doctor`, fault injection, codegen, and seed
+  execution become available as their public CLI contracts are published.
 
 ## MCP setup
 

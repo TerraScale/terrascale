@@ -1,14 +1,15 @@
 {
-  "collections": {
-    "posts": {
-      "fields": {
-        "title": { "type": "string" },
-        "authorId": { "type": "string" },
-        "publishedAt": { "type": "timestamp" }
-      },
-      "indexes": {
-        "byAuthor": ["authorId"]
-      }
+  "collections": [
+    {
+      "name": "posts",
+      "fields": [
+        { "name": "title", "type": "string", "required": true, "indexed": false },
+        { "name": "authorId", "type": "string", "required": true, "indexed": true },
+        { "name": "publishedAt", "type": "timestamp", "required": true, "indexed": false }
+      ],
+      "indexes": [{ "name": "byAuthor", "fields": ["authorId"], "kind": "btree" }],
+      "historyRetentionDays": 7,
+      "mergePolicy": "remove-wins"
     }
-  }
+  ]
 }

@@ -19,9 +19,10 @@ function requestedMode() {
   return requested[0] ?? "remote";
 }
 
-// The reactive API's envelope is intentionally small: maps, arrays, strings,
-// and unsigned revisions. Keeping this decoder local avoids making docs depend
-// on an SDK or a second transport implementation.
+// Decode the indexed `terrascale.sync.v2.msgpack` envelope (protocol 2.1).
+// This intentionally duplicates only the wire boundary needed by the runner;
+// projected values remain canonical JSON bytes and are never treated as the
+// retired `{t,id,body}` JSON frame shape.
 class MsgpackCursor {
   constructor(bytes) {
     this.bytes = bytes;
@@ -82,7 +83,60 @@ class MsgpackCursor {
   }
 }
 
-function decodeMessagePack(bytes) { return new MsgpackCursor(bytes).value(); }
+function decodeMessagePack(bytes) {
+  const cursor = new MsgpackCursor(bytes);
+  const value = cursor.value();
+  if (cursor.offset !== bytes.length) throw new Error("trailing bytes after MessagePack envelope");
+  return value;
+}
+
+const resetReasons = new Map([[1, "checkpoint-expired"], [2, "retention-advanced"], [3, "generation-changed"], [4, "checkpoint-not-current"], [5, "view-diverged"], [6, "oversized"], [7, "invalid-operations"], [8, "invalid-checkpoint"], [9, "backpressure"]]);
+function bytesToBase64(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+function canonicalEnvelope(bytes) {
+  const value = decodeMessagePack(bytes);
+  if (!Array.isArray(value) || value.length !== 7) throw new Error("pending canonical reactive contract: envelope must be an indexed array of seven fields");
+  const [major, minor, features, tag, correlation, causation, body] = value;
+  if (major !== 2 || minor !== 1 || features !== 0 || !Number.isSafeInteger(tag) || !Number.isSafeInteger(correlation) || !Number.isSafeInteger(causation)) {
+    throw new Error("pending canonical reactive contract: expected protocol 2.1 indexed envelope");
+  }
+  const messages = { 3: "snapshot", 4: "delta", 5: "reset", 6: "heartbeat", 8: "authorization_changed", 9: "region_route_change", 10: "error", 11: "backpressure" };
+  const kind = messages[tag];
+  if (!kind || !Array.isArray(body)) throw new Error(`pending canonical reactive contract: unsupported server tag ${String(tag)}`);
+  return { major, minor, features, tag, correlation, causation, kind, body };
+}
+
+function canonicalFields(fields) {
+  if (!Array.isArray(fields)) throw new Error("pending canonical reactive contract: fields must be indexed arrays");
+  return fields.map((field) => {
+    if (!Array.isArray(field) || field.length !== 2 || typeof field[0] !== "string" || !(field[1] instanceof Uint8Array)) throw new Error("pending canonical reactive contract: invalid projected field");
+    return { path: field[0], value: field[1] };
+  });
+}
+
+function canonicalMessage(envelope) {
+  const body = envelope.body;
+  if (envelope.kind === "snapshot") {
+    if (body.length !== 2 || typeof body[0] !== "string" || !Array.isArray(body[1])) throw new Error("pending canonical reactive contract: invalid snapshot");
+    const snapshot = body[1];
+    if (snapshot.length !== 6 || !Array.isArray(snapshot[3])) throw new Error("pending canonical reactive contract: invalid snapshot body");
+    return { kind: "snapshot", subscription: body[0], snapshot: { view_generation: snapshot[0], authorization_generation: snapshot[1], revision: snapshot[2], items: snapshot[3].map((item) => ({ identity: item[0], fields: canonicalFields(item[1]) })), digest: snapshot[4], checkpoint: snapshot[5] } };
+  }
+  if (envelope.kind === "delta") {
+    if (body.length !== 7 || typeof body[0] !== "string" || !Array.isArray(body[4])) throw new Error("pending canonical reactive contract: invalid delta");
+    return { kind: "delta", subscription: body[0], view_generation: body[1], from_revision: body[2], to_revision: body[3], operations: body[4], digest: body[5], checkpoint: body[6] };
+  }
+  if (envelope.kind === "reset") {
+    if (body.length !== 3 || typeof body[0] !== "string" || !resetReasons.has(body[1])) throw new Error("pending canonical reactive contract: invalid reset");
+    return { kind: "reset", subscription: body[0], reason: resetReasons.get(body[1]), snapshot: body[2] };
+  }
+  return { kind: envelope.kind };
+}
+
+export { canonicalEnvelope, canonicalMessage };
 
 function createRemoteSandbox() {
   const base = process.env.TERRASCALE_SANDBOX_URL?.replace(/\/$/, "");
@@ -128,12 +182,11 @@ function createRemoteSandbox() {
   };
 
   const reactiveRequest = async (body) => {
-    const path = `/api/v1/databases/${encodeURIComponent(database)}/reactive/poll`;
+    const path = "/api/v1/reactive/views";
     const response = await fetch(`${base}${path}`, {
       method: "POST",
       headers: {
         ...headers,
-        accept: "application/msgpack",
         ...(session ? { "x-terrascale-session": session } : {}),
       },
       body: JSON.stringify(body),
@@ -144,28 +197,54 @@ function createRemoteSandbox() {
       const detail = await response.text();
       throw new Error(`remote POST ${path} failed: ${response.status}${detail ? `: ${detail.slice(0, 500)}` : ""}`);
     }
-    return { frames: decodeMessagePack(new Uint8Array(await response.arrayBuffer())), response };
+    let value;
+    try { value = await response.json(); } catch { throw new Error("pending canonical reactive contract: attach response was not JSON"); }
+    return { value, response };
   };
 
   const subscriptions = new Set();
   const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-  const consume = (state, frames) => {
-    let delivered = 0;
-    for (const frame of Array.isArray(frames) ? frames : []) {
-      if (!frame || frame.t !== "delta" || typeof frame.id !== "string") continue;
-      const body = typeof frame.body === "string" ? JSON.parse(frame.body) : frame.body;
-      const doc = body && typeof body === "object" ? { ...body, id: frame.id } : { id: frame.id, value: body };
-      state.callback({ doc });
-      delivered += 1;
+  const installSnapshot = (state, message) => {
+    const snapshot = message.snapshot;
+    state.items = snapshot.items.map((item) => ({ identity: item.identity, fields: item.fields }));
+    state.revision = snapshot.revision;
+    for (const listener of state.listeners) listener();
+  };
+  const consume = (state, bytes) => {
+    const envelope = canonicalEnvelope(bytes);
+    const message = canonicalMessage(envelope);
+    if (message.kind === "snapshot") { installSnapshot(state, message); return true; }
+    if (message.kind === "delta") {
+      if (message.subscription !== state.subscription) throw new Error("pending canonical reactive contract: subscription identity mismatch");
+      for (const operation of message.operations) {
+        if (!Array.isArray(operation) || operation.length < 2) throw new Error("pending canonical reactive contract: invalid indexed result operation");
+        const [tag, identity] = operation;
+        if (typeof identity !== "string") throw new Error("pending canonical reactive contract: result identity is not text");
+        const index = state.items.findIndex((item) => item.identity === identity);
+        if (tag === 1) state.items.splice(operation[2], 0, { identity, fields: canonicalFields(operation[3]) });
+        else if (tag === 2) { if (index < 0) throw new Error("pending canonical reactive contract: update identity missing"); state.items[index] = { identity, fields: canonicalFields(operation[2]) }; }
+        else if (tag === 3) { if (index < 0) throw new Error("pending canonical reactive contract: patch identity missing"); }
+        else if (tag === 4) { if (index >= 0) state.items.splice(index, 1); }
+        else if (tag === 5) { if (index < 0) throw new Error("pending canonical reactive contract: move identity missing"); const [item] = state.items.splice(index, 1); state.items.splice(operation[2], 0, item); }
+        else throw new Error("pending canonical reactive contract: unknown result operation tag");
+      }
+      state.revision = message.to_revision;
+      for (const listener of state.listeners) listener();
+      return true;
     }
-    return delivered;
+    if (message.kind === "reset") { throw new Error("pending canonical reactive contract: reset requires a fresh snapshot"); }
+    return false;
   };
   const waitForData = async (state) => {
     const deadline = Date.now() + 10_000;
-    while (!state.controller.signal.aborted && Date.now() < deadline) {
-      if (state.error) throw state.error;
-      const { frames } = await reactiveRequest({ op: "poll", subscription: state.id });
-      if (consume(state, frames)) return;
+    while (!state.closed && Date.now() < deadline) {
+      const url = new URL(state.logUrl);
+      url.searchParams.set("offset", String(state.revision));
+      const response = await fetch(url, { headers: { ...headers, accept: "application/msgpack", "x-terrascale-capability": state.capability } });
+      if (!response.ok) throw new Error(`remote GET ${url.pathname} failed: ${response.status}`);
+      if (response.status !== 204 && response.status !== 304) {
+        if (consume(state, new Uint8Array(await response.arrayBuffer()))) return;
+      }
       await delay(100);
     }
     throw new Error("remote reactive log produced no delta within 10 seconds");
@@ -173,10 +252,11 @@ function createRemoteSandbox() {
 
   return {
     mode: "remote",
-    async put(collection, doc) {
+    databaseId: database,
+    async put({ databaseId: requestedDatabaseId, collection, doc }) {
+      if (requestedDatabaseId !== database) throw new Error("remote databaseId does not match TERRASCALE_DATABASE_ID");
       if (!doc || typeof doc.id !== "string" || !doc.id) throw new Error("doc must have a string id");
       const active = [...subscriptions].filter((state) => state.collection === collection);
-      await Promise.all(active.map((state) => state.setup));
       const { body } = await request(pathFor(collection, doc.id), {
         method: "PUT",
         headers: { "idempotency-key": `docs-snippet-${++writeNumber}-${collection}-${doc.id}` },
@@ -185,15 +265,18 @@ function createRemoteSandbox() {
       await Promise.all(active.map((state) => waitForData(state)));
       return { ...doc, _rev: body?.revision ?? body?.rev ?? "remote" };
     },
-    async get(collection, id) {
+    async get({ databaseId: requestedDatabaseId, collection, id }) {
+      if (requestedDatabaseId !== database) throw new Error("remote databaseId does not match TERRASCALE_DATABASE_ID");
       const { body, response } = await request(pathFor(collection, id), {}, [404]);
       return response.status === 404 ? null : body;
     },
-    async remove(collection, id) {
+    async remove({ databaseId: requestedDatabaseId, collection, id }) {
+      if (requestedDatabaseId !== database) throw new Error("remote databaseId does not match TERRASCALE_DATABASE_ID");
       const { response } = await request(pathFor(collection, id), { method: "DELETE" }, [404]);
       return response.status !== 404;
     },
-    async query(collection, query) {
+    async query({ databaseId: requestedDatabaseId, collection, query }) {
+      if (requestedDatabaseId !== database) throw new Error("remote databaseId does not match TERRASCALE_DATABASE_ID");
       if (!query || query.op !== "=") throw new Error("remote snippet supports equality SQL only");
       const escapedCollection = collection.replaceAll('"', '""');
       const escapedField = query.field.replaceAll('"', '""');
@@ -210,40 +293,31 @@ function createRemoteSandbox() {
         return value && typeof value === "object" ? { ...value, id: row.id ?? value.id } : { id: row.id, value };
       });
     },
-    subscribe(collection, callback) {
-      const controller = new AbortController();
-      const state = { collection, callback, controller, id: null, error: null, closed: false };
-      state.setup = reactiveRequest({ op: "subscribe", collection, conditions: [], projection: [] })
-        .then(({ response }) => {
-          const id = Number(response.headers.get("x-terrascale-subscription"));
-          if (!Number.isSafeInteger(id) || id <= 0) throw new Error("remote subscribe returned no valid subscription id");
-          if (state.closed) {
-            void reactiveRequest({ op: "unsubscribe", subscription: id }).catch(() => {});
-          } else {
-            state.id = id;
-          }
-        });
-      state.setup.catch((error) => { state.error = error; });
-      subscriptions.add(state);
-      return () => {
-        state.closed = true;
-        controller.abort();
-        subscriptions.delete(state);
-        if (state.id) void reactiveRequest({ op: "unsubscribe", subscription: state.id }).catch(() => {});
-      };
-    },
-    async createTenant(key) {
-      if (!key || typeof key !== "string") throw new Error("tenant key required");
-      const { body } = await request("/api/v1/tenants", {
-        method: "POST",
-        headers: { "idempotency-key": `docs-snippet-tenant-${key}` },
-        body: JSON.stringify({ key }),
-      });
-      const databaseId = body?.databaseId ?? body?.database_id ?? body?.id;
-      if (typeof databaseId !== "string" || !databaseId) {
-        throw new Error("remote createTenant response did not contain databaseId");
+    async subscribe({ databaseId: requestedDatabaseId, subscription, query, parameters }) {
+      if (requestedDatabaseId !== database) throw new Error("remote databaseId does not match TERRASCALE_DATABASE_ID");
+      const { value } = await reactiveRequest({ databaseId, subscription, statement: query, parameters: bytesToBase64(parameters), checkpoint: null, transport: "http" });
+      const view = value?.viewId ?? value?.view_id ?? value?.view;
+      const generation = value?.generation ?? value?.view_generation;
+      const capability = value?.capability ?? value?.viewCapability ?? value?.view_capability;
+      const logUrl = value?.logUrl ?? value?.log_url ?? value?.log;
+      const snapshots = value?.snapshotUrls ?? value?.snapshot_urls ?? value?.snapshotChunkUrls ?? value?.snapshot_chunks;
+      if (typeof view !== "string" || !Number.isInteger(Number(generation)) || typeof capability !== "string" || typeof logUrl !== "string" || !Array.isArray(snapshots)) {
+        throw new Error("pending canonical reactive contract: attach response is missing canonical view metadata");
       }
-      return { databaseId, key: body?.key ?? key };
+      const state = { collection: query.match(/FROM\s+([A-Za-z_][A-Za-z0-9_]*)/iu)?.[1], subscription, capability, logUrl, revision: 0, items: [], listeners: new Set(), closed: false };
+      subscriptions.add(state);
+      for (const snapshotUrl of snapshots) {
+        const response = await fetch(snapshotUrl, { headers: { ...headers, accept: "application/msgpack", "x-terrascale-capability": capability } });
+        if (!response.ok) throw new Error(`remote snapshot failed: ${response.status}`);
+        consume(state, new Uint8Array(await response.arrayBuffer()));
+      }
+      return {
+        view: {
+          subscribe(listener) { state.listeners.add(listener); return () => state.listeners.delete(listener); },
+          getVisibleItems() { return state.items; },
+        },
+        close() { state.closed = true; subscriptions.delete(state); },
+      };
     },
   };
 }
@@ -253,15 +327,11 @@ export async function runAll(mode = requestedMode()) {
   if (files.length === 0) throw new Error("no snippets found in docs/snippets/");
   if (mode !== "remote" && mode !== "stub") throw new Error(`unknown snippet mode: ${mode}`);
   const sandbox = mode === "remote" ? createRemoteSandbox() : createStubSandbox();
-  if (mode === "stub") {
-    const query = sandbox.query;
-    sandbox.query = (collection, descriptor) => query(collection, (doc) => doc[descriptor.field] === descriptor.value);
-  }
   const results = [];
   for (const file of files) {
     const mod = await import(pathToFileURL(join(snippetsDir, file)).href);
     if (mod.runnable === false) {
-      console.log(`skip - ${file} (pending TerraBase v1 tenant contract)`);
+      console.log(`skip - ${file} (pending published tenant contract; remote route is never called)`);
       continue;
     }
     if (typeof mod.run !== "function") throw new Error(`${file} must export run(sandbox)`);

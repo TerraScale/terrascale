@@ -1,8 +1,10 @@
 // Runnable snippet: database-per-tenant (D-51).
-// ts.tenants.create(key) -> a database inheriting the tenant template.
-// Runs in the stub harness; remote uses POST /api/v1/tenants and fails
-// closed when the contract is unavailable.
+// Tenant creation will use the named SDK tenant client once published.
+// This remains a credential-free stub only. The tenant route is not published,
+// so remote mode must never call it.
 import { strict as assert } from "node:assert";
+
+export const runnable = false;
 
 type Sandbox = {
   createTenant(key: string): Promise<{ databaseId: string; key: string }>;

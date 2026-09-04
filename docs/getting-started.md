@@ -6,11 +6,13 @@ tab in under 5 minutes (D-74), on the free tier.
 ```bash
 npx create-terrascale-app my-app
 cd my-app
-terrascale dev --seed ./seed.ts
+go install ./cmd/terrascale   # from a ts-cli checkout; CLI is not an npm package
+terrascale dev <database> --watch=false --no-log-tail
 ```
 
-Every snippet on this site runs against a real sandbox branch pre-filled with
-the reader's key (D-56). Try CRUD:
+The CRUD, SQL, and reactive snippets run against a real sandbox branch
+pre-filled with the reader's key (D-56). Tenant provisioning is shown as a
+pending stub because its public route is not published. Try CRUD:
 
 <<< ./snippets/crud.ts
 

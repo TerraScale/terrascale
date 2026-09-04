@@ -9,7 +9,9 @@
     "build": "vitepress build docs",
     "preview": "vitepress preview docs",
     "test": "node scripts/check-build.mjs",
-    "test:stub": "node scripts/check-build.mjs --sandbox=stub"
+    "test:stub": "node scripts/check-build.mjs --sandbox=stub",
+    "i18n:sync": "node scripts/i18n-sync.mjs",
+    "i18n:status": "node scripts/i18n-status.mjs"
   },
   "dependencies": {
     "vue": "3.5.42"

@@ -1,0 +1,18 @@
+---
+---
+<!-- i18n:fallback:ru -->
+> **Перевод на проверке.** У этой страницы пока нет проверенного человеком перевода на русский, поэтому показан английский оригинал.
+
+# Changelog
+
+TerraScale is pre-launch (waitlist beta). This changelog starts with the first
+beta release.
+
+What you can rely on before then:
+
+- **`/api/v1` is additive-only from launch.** Fields and endpoints are added,
+  never renamed or removed. Deprecations are announced here and kept for at
+  least 12 months. A breaking change would be `/api/v2`, served side by side.
+- **SDKs follow semver**; a major bump is a product event, not routine.
+- **Prices only go down.** Any price change is announced here before it takes
+  effect.

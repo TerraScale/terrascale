@@ -1,10 +1,7 @@
-// Seed script for `terrascale dev --seed ./seed.ts`.
-// Runs against your personal cloud dev branch (same engine as prod, D-18).
-export default async function seed(ts: {
-  from(collection: string): { create(doc: Record<string, unknown>): Promise<unknown> };
-}) {
-  await ts.from("posts").create({
-    title: "Hello TerraScale",
-    authorId: "mario",
-  });
+// Seed placeholder for the cloud `terrascale dev` flow.
+// The published CLI currently has no seed execution route. Keep this file so
+// the starter is ready when that contract is published; do not invent a local
+// emulator or a fake SDK CRUD client.
+export default async function seed(): Promise<void> {
+  console.warn("Seed execution is pending the published CLI seed contract.");
 }
