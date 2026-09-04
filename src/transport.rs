@@ -49,8 +49,9 @@ impl Request {
         url: String,
         body: &impl serde::Serialize,
     ) -> Result<Self> {
-        let bytes = serde_json::to_vec(body)
-            .map_err(|e| Error::invalid_response(format!("request body is not serializable: {e}")))?;
+        let bytes = serde_json::to_vec(body).map_err(|e| {
+            Error::invalid_response(format!("request body is not serializable: {e}"))
+        })?;
         Ok(Self {
             route_name: route_name.into(),
             method,

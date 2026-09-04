@@ -149,11 +149,8 @@ impl ClientConfigBuilder {
                 "Strict regional affinity requires a preferredRegion.",
             ));
         }
-        let api_base_url = normalize_base_url(
-            self.api_base_url
-                .as_deref()
-                .unwrap_or(GLOBAL_API_BASE_URL),
-        )?;
+        let api_base_url =
+            normalize_base_url(self.api_base_url.as_deref().unwrap_or(GLOBAL_API_BASE_URL))?;
         Ok(ClientConfig {
             api_base_url,
             api_key: self.api_key,

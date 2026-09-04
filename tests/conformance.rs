@@ -1,0 +1,468 @@
+//! SDK conformance suite stub (GOAL D-13).
+//!
+//! terrabase publishes HTTP + reactive fixtures with the pinned contract;
+//! an SDK is not done until it passes. Until those fixtures land, this suite
+//! pins the SDK's own request shapes, error mapping, region pinning,
+//! checkpoint/resets, and builder rendering against a mock transport so
+//! contract drift fails loudly here first.
+
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+
+use async_trait::async_trait;
+use serde_json::json;
+use terrascale::DocumentSchema;
+use terrascale::{
+    ApplyOutcome, AttachedView, Checkpoint, ClientConfig, CreateTenant, DatabaseScope, Direction,
+    Document, ErrorKind, FieldDef, FieldType, HttpTransport, Query, RegionAffinity, RegionCode,
+    Request, ResetReason, Response, Result, SubscribeOptions, Subscription, TerraScaleClient,
+    Transport, ViewDelta, ViewOperation, ViewSnapshot,
+};
+
+#[derive(Debug)]
+struct Mock {
+    recorded: Mutex<Vec<Request>>,
+    responses: Mutex<VecDeque<Response>>,
+}
+
+impl Mock {
+    fn new(responses: Vec<Response>) -> Arc<Self> {
+        Arc::new(Self {
+            recorded: Mutex::new(Vec::new()),
+            responses: Mutex::new(responses.into()),
+        })
+    }
+
+    fn last_request(self: &Arc<Self>) -> Request {
+        self.recorded
+            .lock()
+            .expect("mock mutex")
+            .last()
+            .expect("one request")
+            .clone()
+    }
+}
+
+#[async_trait]
+impl HttpTransport for Mock {
+    async fn send(&self, request: Request) -> Result<Response> {
+        self.recorded.lock().expect("mock mutex").push(request);
+        self.responses
+            .lock()
+            .expect("mock mutex")
+            .pop_front()
+            .ok_or_else(|| terrascale::Error::transport("mock ran out of responses"))
+    }
+}
+
+fn client(mock: Arc<Mock>) -> TerraScaleClient {
+    let transport: Arc<dyn HttpTransport> = mock;
+    TerraScaleClient::with_transport(
+        ClientConfig::builder()
+            .api_key("ts_test_key")
+            .project_id("proj_test")
+            .build()
+            .expect("config"),
+        transport,
+    )
+}
+
+fn doc_response() -> Response {
+    Response::json(
+        200,
+        &json!({
+            "id": "doc_1",
+            "collection": "users",
+            "revision": "rev_1",
+            "body": {"name": " Ada "},
+        }),
+    )
+}
+
+fn scope() -> DatabaseScope {
+    DatabaseScope::new("db_1")
+}
+
+#[tokio::test]
+async fn document_crud_request_shapes() {
+    let mock = Mock::new(vec![
+        doc_response(),
+        doc_response(),
+        doc_response(),
+        doc_response(),
+        Response {
+            status: 204,
+            headers: Vec::new(),
+            body: Vec::new(),
+        },
+    ]);
+    let sdk = client(Arc::clone(&mock));
+
+    let created: Document = sdk
+        .documents()
+        .create(&scope(), "users", json!({"name": "Ada"}))
+        .await
+        .expect("create");
+    assert_eq!(created.revision, "rev_1");
+    let request = mock.last_request();
+    assert_eq!(request.route_name, "documents.create");
+    assert!(request
+        .url
+        .ends_with("/api/v1/projects/proj_test/databases/db_1/collections/users/documents"));
+
+    let fetched = sdk
+        .documents()
+        .get(&scope(), "users", "doc_1")
+        .await
+        .expect("get");
+    assert_eq!(fetched.id, "doc_1");
+    assert!(mock.last_request().url.ends_with("/documents/doc_1"));
+
+    sdk.documents()
+        .put(&scope(), "users", "doc_1", json!({"name": "B"}))
+        .await
+        .expect("put");
+    assert_eq!(mock.last_request().route_name, "documents.put");
+
+    sdk.documents()
+        .patch(&scope(), "users", "doc_1", json!({"name": "C"}))
+        .await
+        .expect("patch");
+    assert_eq!(mock.last_request().route_name, "documents.patch");
+
+    sdk.documents()
+        .delete(&scope(), "users", "doc_1")
+        .await
+        .expect("delete");
+    let request = mock.last_request();
+    assert_eq!(request.route_name, "documents.delete");
+}
+
+#[tokio::test]
+async fn document_history_and_errors() {
+    let mock = Mock::new(vec![
+        Response::json(200, &json!([{"revision": "rev_0", "body": {}}])),
+        Response::json(
+            404,
+            &json!({"code": "not_found", "message": "No such document. Check the id."}),
+        ),
+    ]);
+    let sdk = client(Arc::clone(&mock));
+
+    let history = sdk
+        .documents()
+        .history(&scope(), "users", "doc_1")
+        .await
+        .expect("history");
+    assert_eq!(history.len(), 1);
+    assert!(mock
+        .last_request()
+        .url
+        .ends_with("/documents/doc_1/history"));
+
+    let error = sdk
+        .documents()
+        .get(&scope(), "users", "missing")
+        .await
+        .expect_err("404");
+    assert_eq!(error.kind, ErrorKind::NotFound);
+    assert_eq!(error.status, Some(404));
+}
+
+#[test]
+fn schema_builder_and_derive_stub() {
+    let schema = terrascale::CollectionSchema::new("users")
+        .field(FieldDef::required("name", FieldType::String).indexed())
+        .field(FieldDef::optional("age", FieldType::Integer));
+    let built = terrascale::SchemaBuilder::new().collection(schema).build();
+    assert_eq!(built.len(), 1);
+    assert_eq!(built[0].fields.len(), 2);
+    assert!(built[0].fields[0].indexed);
+
+    #[derive(terrascale::schema::Schema)]
+    struct User {
+        #[allow(dead_code)]
+        name: String,
+    }
+    assert_eq!(User::collection(), "user");
+    assert_eq!(User::schema().name, "user");
+    let _ = terrascale::CONTRACT_VERSION;
+}
+
+#[test]
+fn sql_builder_renders_parameterized_statements() {
+    let query = Query::select(&["id", "body"])
+        .from("users")
+        .expect("collection")
+        .where_("age > $1")
+        .order_by("age", Direction::Desc)
+        .expect("order")
+        .limit(10)
+        .offset(5)
+        .param(json!(18))
+        .build()
+        .expect("query");
+    assert_eq!(
+        query.sql(),
+        "SELECT id, body FROM users WHERE age > $1 ORDER BY age DESC LIMIT 10 OFFSET 5"
+    );
+    assert_eq!(query.params(), &[json!(18)]);
+
+    let raw = Query::raw(
+        "SELECT * FROM users WHERE id = $1".to_owned(),
+        vec![json!("doc_1")],
+    );
+    assert!(raw.sql().contains("$1"));
+
+    assert!(Query::select(&["id"]).build().is_err());
+    assert!(Query::select(&[])
+        .from("users")
+        .expect("ok")
+        .build()
+        .is_err());
+    assert!(
+        Query::select(&["id; DROP"]).from("users").is_err()
+            || Query::select(&["id"])
+                .from("users")
+                .expect("ok")
+                .order_by("x; DROP", Direction::Asc)
+                .is_err()
+    );
+}
+
+#[tokio::test]
+async fn sql_execute_posts_to_sql_endpoint() {
+    let mock = Mock::new(vec![Response::json(
+        200,
+        &json!({"columns": ["id"], "rows": [{"id": "doc_1"}]}),
+    )]);
+    let sdk = client(Arc::clone(&mock));
+    let rows = sdk
+        .sql()
+        .execute(
+            &scope(),
+            &Query::raw("SELECT * FROM users".to_owned(), vec![]),
+        )
+        .await
+        .expect("execute");
+    assert_eq!(rows.columns, vec!["id".to_owned()]);
+    assert_eq!(rows.rows.len(), 1);
+    let request = mock.last_request();
+    assert_eq!(request.route_name, "sql.execute");
+    assert!(request.url.ends_with("/databases/db_1/sql"));
+}
+
+#[test]
+fn checkpoint_base64_roundtrip() {
+    let checkpoint = Checkpoint::new(vec![1, 2, 3, 250]);
+    let encoded = checkpoint.to_base64();
+    assert_eq!(
+        Checkpoint::from_base64(&encoded)
+            .expect("decode")
+            .to_bytes(),
+        vec![1, 2, 3, 250]
+    );
+    assert!(Checkpoint::from_base64("!!! not base64 !!!").is_err());
+}
+
+#[test]
+fn typed_resets_cover_required_reasons() {
+    for reason in [
+        ResetReason::PermissionChanged,
+        ResetReason::AuthExpired,
+        ResetReason::RegionMoved,
+        ResetReason::SchemaChanged,
+        ResetReason::GenerationChanged,
+        ResetReason::HistoryExpired,
+        ResetReason::SlowConsumer,
+        ResetReason::Reconnect,
+    ] {
+        assert!(!reason.to_string().is_empty());
+    }
+    // Unknown future reasons still parse through the catch-all.
+    let parsed: ResetReason =
+        serde_json::from_value(json!({"server_reset": {"detail": "new policy"}}))
+            .expect("catch-all");
+    assert!(matches!(parsed, ResetReason::ServerReset { .. }));
+}
+
+#[test]
+fn subscription_applies_ordered_deltas_and_resets() {
+    let mut subscription = Subscription::new("sub_1");
+    subscription.apply_snapshot(ViewSnapshot {
+        view_generation: 7,
+        revision: "r1".to_owned(),
+        items: vec![],
+        checkpoint: Checkpoint::new(vec![7]),
+    });
+    let outcome = subscription.apply_delta(ViewDelta {
+        view_generation: 7,
+        from_revision: "r1".to_owned(),
+        to_revision: "r2".to_owned(),
+        operations: vec![ViewOperation::Insert {
+            identity: "doc_1".to_owned(),
+            position: 0,
+            value: json!({"name": "Ada"}),
+        }],
+        checkpoint: Checkpoint::new(vec![8]),
+    });
+    assert_eq!(outcome, ApplyOutcome::Applied);
+    assert_eq!(subscription.items().len(), 1);
+
+    // Replaying the same cut is a duplicate, not an error.
+    let outcome = subscription.apply_delta(ViewDelta {
+        view_generation: 7,
+        from_revision: "r0".to_owned(),
+        to_revision: "r2".to_owned(),
+        operations: vec![],
+        checkpoint: Checkpoint::new(vec![8]),
+    });
+    assert_eq!(outcome, ApplyOutcome::Duplicate);
+
+    // A skipped cut forces a typed reset, never a silent gap.
+    let outcome = subscription.apply_delta(ViewDelta {
+        view_generation: 7,
+        from_revision: "r9".to_owned(),
+        to_revision: "r10".to_owned(),
+        operations: vec![],
+        checkpoint: Checkpoint::new(vec![9]),
+    });
+    assert_eq!(outcome, ApplyOutcome::ResetRequired(ResetReason::Reconnect));
+}
+
+#[tokio::test]
+async fn subscribe_attaches_with_checkpoint_and_hint() {
+    let snapshot = json!({
+        "view_id": "view_1",
+        "generation": 3,
+        "snapshot": {
+            "view_generation": 3,
+            "revision": "r1",
+            "items": [],
+            "checkpoint": [3],
+        },
+        "checkpoint": [3],
+    });
+    let mock = Mock::new(vec![Response::json(200, &snapshot)]);
+    let sdk = client(Arc::clone(&mock));
+    let attached: AttachedView = sdk
+        .reactive()
+        .subscribe(
+            &scope(),
+            &Query::raw("SELECT * FROM users".to_owned(), vec![]),
+            SubscribeOptions::new()
+                .with_transport(Transport::LongPolling)
+                .with_region_hint(RegionCode::Sfo)
+                .with_checkpoint(Checkpoint::new(vec![2])),
+        )
+        .await
+        .expect("subscribe");
+    assert_eq!(attached.view_id, "view_1");
+    let request = mock.last_request();
+    assert_eq!(request.route_name, "reactive.subscribe");
+    assert!(request.url.starts_with("https://sfo.api.terrascale.tech"));
+    assert!(request.url.contains("/reactive/views"));
+}
+
+#[tokio::test]
+async fn region_pinning_and_421_repair() {
+    // Failover without a pin uses global first contact.
+    let mock = Mock::new(vec![Response::json(200, &json!([]))]);
+    let sdk = client(Arc::clone(&mock));
+    sdk.management().regions().list().await.expect("regions");
+    assert!(mock
+        .last_request()
+        .url
+        .starts_with("https://api.terrascale.tech"));
+
+    // Strict affinity pins REST to the regional hostname.
+    let mock = Mock::new(vec![Response::json(200, &json!([]))]);
+    let transport: Arc<dyn HttpTransport> = mock;
+    let strict = TerraScaleClient::with_transport(
+        ClientConfig::builder()
+            .api_key("ts_test_key")
+            .project_id("proj_test")
+            .preferred_region(RegionCode::Gru)
+            .region_affinity(RegionAffinity::Strict)
+            .build()
+            .expect("config"),
+        Arc::clone(&transport),
+    );
+    strict.management().regions().list().await.expect("regions");
+    assert!(strict.pinned_region() == Some(RegionCode::Gru));
+
+    // A 421 repairs the pin from X-TerraScale-Placement and surfaces retry.
+    let mock = Mock::new(vec![Response {
+        status: 421,
+        headers: vec![("x-terrascale-placement".to_owned(), "fra".to_owned())],
+        body: b"{}".to_vec(),
+    }]);
+    let sdk = client(Arc::clone(&mock));
+    let error = sdk
+        .documents()
+        .get(&scope(), "users", "doc_1")
+        .await
+        .expect_err("421");
+    assert_eq!(error.kind, ErrorKind::RegionRedirect);
+    assert_eq!(error.placement.as_deref(), Some("fra"));
+    assert_eq!(sdk.pinned_region(), Some(RegionCode::Fra));
+}
+
+#[tokio::test]
+async fn tenants_and_management_shapes() {
+    let mock = Mock::new(vec![
+        Response::json(
+            200,
+            &json!({"key": "acme", "database_id": "db_t1", "regions": ["GRU"]}),
+        ),
+        Response::json(
+            200,
+            &json!({
+                "database_id": "db_1",
+                "project_id": "proj_test",
+                "name": "main",
+                "regions": ["GRU"],
+                "version": 1,
+            }),
+        ),
+    ]);
+    let sdk = client(Arc::clone(&mock));
+
+    let tenant = sdk
+        .tenants()
+        .create(CreateTenant::new("acme", "default"), None)
+        .await
+        .expect("tenant");
+    assert_eq!(tenant.database_id, "db_t1");
+    assert!(mock.last_request().url.contains("/tenants"));
+
+    let database = sdk
+        .management()
+        .databases()
+        .get("db_1", None)
+        .await
+        .expect("database");
+    assert_eq!(database.name, "main");
+    assert!(mock.last_request().url.contains("/databases/db_1"));
+
+    // Destructive calls require explicit confirmation.
+    assert!(sdk
+        .management()
+        .databases()
+        .delete("db_1", false, None)
+        .await
+        .is_err());
+}
+
+#[test]
+fn config_validation() {
+    assert!(ClientConfig::builder()
+        .region_affinity(RegionAffinity::Strict)
+        .build()
+        .is_err());
+    assert!(ClientConfig::builder()
+        .max_retry_attempts(9)
+        .build()
+        .is_err());
+    assert!(ClientConfig::builder().api_base_url("   ").build().is_err());
+}

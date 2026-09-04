@@ -31,10 +31,7 @@ impl DatabaseScope {
 
     /// Scope to one database inside an explicit project.
     #[must_use]
-    pub fn in_project(
-        database_id: impl Into<String>,
-        project_id: impl Into<String>,
-    ) -> Self {
+    pub fn in_project(database_id: impl Into<String>, project_id: impl Into<String>) -> Self {
         Self {
             database_id: database_id.into(),
             project_id: Some(project_id.into()),
@@ -111,9 +108,11 @@ impl DocumentsClient {
     }
 
     fn collection_root(&self, scope: &DatabaseScope, collection: &str) -> Result<String> {
-        self.shared
-            .require_collection(collection)
-            .map(|name| format!("{}/collections/{name}/documents", self.scope_root(scope)?))
+        let name = self.shared.require_collection(collection)?;
+        Ok(format!(
+            "{}/collections/{name}/documents",
+            self.scope_root(scope)?
+        ))
     }
 
     /// Create a document with a server-assigned id.
@@ -129,12 +128,7 @@ impl DocumentsClient {
     }
 
     /// Read one document by id.
-    pub async fn get(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        id: &str,
-    ) -> Result<Document> {
+    pub async fn get(&self, scope: &DatabaseScope, collection: &str, id: &str) -> Result<Document> {
         let root = self.collection_root(scope, collection)?;
         let request = Request {
             route_name: "documents.get".to_owned(),
@@ -183,12 +177,7 @@ impl DocumentsClient {
     }
 
     /// Delete one document.
-    pub async fn delete(
-        &self,
-        scope: &DatabaseScope,
-        collection: &str,
-        id: &str,
-    ) -> Result<()> {
+    pub async fn delete(&self, scope: &DatabaseScope, collection: &str, id: &str) -> Result<()> {
         let root = self.collection_root(scope, collection)?;
         let request = Request {
             route_name: "documents.delete".to_owned(),

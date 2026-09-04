@@ -42,11 +42,7 @@ pub struct Error {
 
 impl Error {
     /// Build a fully specified error.
-    pub fn new(
-        kind: ErrorKind,
-        code: impl Into<String>,
-        message: impl Into<String>,
-    ) -> Self {
+    pub fn new(kind: ErrorKind, code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             kind,
             code: code.into(),
@@ -77,7 +73,7 @@ impl Error {
             409 => ErrorKind::Conflict,
             421 => ErrorKind::RegionRedirect,
             429 => ErrorKind::RateLimit,
-            502 | 503 | 504 => ErrorKind::Unavailable,
+            502..=504 => ErrorKind::Unavailable,
             500..=599 => ErrorKind::Server,
             _ => ErrorKind::Domain,
         };

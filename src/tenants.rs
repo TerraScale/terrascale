@@ -96,19 +96,17 @@ impl TenantsClient {
     }
 
     fn root(&self, project_id: Option<&str>) -> Result<String> {
-        Ok(format!(
-            "{}/tenants",
-            self.shared.project_root(project_id)?
-        ))
+        Ok(format!("{}/tenants", self.shared.project_root(project_id)?))
     }
 
     /// Provision a tenant database from a template.
-    pub async fn create(
-        &self,
-        request: CreateTenant,
-        project_id: Option<&str>,
-    ) -> Result<Tenant> {
-        let request = Request::json("tenants.create", Method::Post, self.root(project_id)?, &request)?;
+    pub async fn create(&self, request: CreateTenant, project_id: Option<&str>) -> Result<Tenant> {
+        let request = Request::json(
+            "tenants.create",
+            Method::Post,
+            self.root(project_id)?,
+            &request,
+        )?;
         self.shared.send_typed(request).await
     }
 
@@ -153,11 +151,7 @@ impl TenantsClient {
     }
 
     /// Mint a tenant-scoped API key from the template's key policy.
-    pub async fn create_key(
-        &self,
-        key: &str,
-        project_id: Option<&str>,
-    ) -> Result<TenantApiKey> {
+    pub async fn create_key(&self, key: &str, project_id: Option<&str>) -> Result<TenantApiKey> {
         let url = format!("{}/{}/keys", self.root(project_id)?, encode_key(key)?);
         let request = Request::json(
             "tenants.keys.create",
@@ -169,11 +163,7 @@ impl TenantsClient {
     }
 
     /// Open a per-tenant support branch.
-    pub async fn create_branch(
-        &self,
-        key: &str,
-        project_id: Option<&str>,
-    ) -> Result<TenantBranch> {
+    pub async fn create_branch(&self, key: &str, project_id: Option<&str>) -> Result<TenantBranch> {
         let url = format!("{}/{}/branches", self.root(project_id)?, encode_key(key)?);
         let request = Request::json(
             "tenants.branches.create",

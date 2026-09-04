@@ -76,7 +76,11 @@ impl Databases {
     }
 
     /// Fetch one database.
-    pub async fn get(&self, database_id: &str, project_id: Option<&str>) -> Result<ProjectDatabase> {
+    pub async fn get(
+        &self,
+        database_id: &str,
+        project_id: Option<&str>,
+    ) -> Result<ProjectDatabase> {
         let request = Request {
             route_name: "databases.get".to_owned(),
             method: Method::Get,
@@ -159,12 +163,7 @@ impl Branches {
             "{}/databases/{database_id}/branches",
             self.shared.project_root(project_id)?
         );
-        let request = Request::json(
-            "branches.create",
-            Method::Post,
-            url,
-            &serde_json::json!({}),
-        )?;
+        let request = Request::json("branches.create", Method::Post, url, &serde_json::json!({}))?;
         self.shared.send_typed(request).await
     }
 
@@ -219,11 +218,7 @@ impl Backups {
     }
 
     /// Start a backup. Restores always land as a new database.
-    pub async fn create(
-        &self,
-        database_id: &str,
-        project_id: Option<&str>,
-    ) -> Result<Backup> {
+    pub async fn create(&self, database_id: &str, project_id: Option<&str>) -> Result<Backup> {
         let url = format!(
             "{}/databases/{database_id}/backups",
             self.shared.project_root(project_id)?
@@ -253,11 +248,7 @@ impl Backups {
     }
 
     /// List backup jobs for a database.
-    pub async fn list(
-        &self,
-        database_id: &str,
-        project_id: Option<&str>,
-    ) -> Result<Vec<Backup>> {
+    pub async fn list(&self, database_id: &str, project_id: Option<&str>) -> Result<Vec<Backup>> {
         let request = Request {
             route_name: "backups.list".to_owned(),
             method: Method::Get,
@@ -363,7 +354,11 @@ impl Regions {
         let request = Request {
             route_name: "regions.get".to_owned(),
             method: Method::Get,
-            url: format!("{}/regions/{}", self.shared.global_base_url(), region.as_str()),
+            url: format!(
+                "{}/regions/{}",
+                self.shared.global_base_url(),
+                region.as_str()
+            ),
             headers: Vec::new(),
             body: None,
         };

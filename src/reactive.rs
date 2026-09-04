@@ -36,6 +36,7 @@ pub enum Transport {
 /// authorization revision, entitlement epoch, region/replica epoch, the
 /// retained journal boundary, and expiry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct Checkpoint {
     bytes: Vec<u8>,
 }
@@ -352,9 +353,7 @@ fn merge_patch(value: &mut serde_json::Value, changes: &serde_json::Value) {
                     target.remove(key);
                 } else {
                     merge_patch(
-                        target
-                            .entry(key.clone())
-                            .or_insert(serde_json::Value::Null),
+                        target.entry(key.clone()).or_insert(serde_json::Value::Null),
                         change,
                     );
                 }

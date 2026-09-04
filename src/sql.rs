@@ -128,7 +128,11 @@ impl SelectBuilder {
     /// Render the parameterized statement.
     pub fn build(self) -> Result<Query> {
         let from = self.from.ok_or_else(|| {
-            Error::new(ErrorKind::Validation, "missing_from", "A query requires .from(collection).")
+            Error::new(
+                ErrorKind::Validation,
+                "missing_from",
+                "A query requires .from(collection).",
+            )
         })?;
         if self.columns.is_empty() {
             return Err(Error::new(

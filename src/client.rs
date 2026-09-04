@@ -17,7 +17,7 @@ use crate::reactive::ReactiveClient;
 use crate::regions::{normalize_base_url, pin_base_url, RegionAffinity, RegionCode};
 use crate::sql::SqlClient;
 use crate::tenants::TenantsClient;
-use crate::transport::{HttpTransport, ReqwestTransport, Request, Response};
+use crate::transport::{HttpTransport, Request, ReqwestTransport, Response};
 
 /// REST root for the public API (GOAL D-34).
 pub const API_ROOT: &str = "/api/v1";
@@ -146,7 +146,10 @@ impl Shared {
     /// Current session token (causal frontier for read-your-writes).
     #[must_use]
     pub fn session_token(&self) -> Option<String> {
-        self.session_token.read().ok().and_then(|guard| guard.clone())
+        self.session_token
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
     }
 
     /// Install a session token; it is carried on subsequent requests and
@@ -159,10 +162,9 @@ impl Shared {
 
     fn decorate(&self, request: &mut Request) {
         if let Some(api_key) = self.config.api_key() {
-            request.headers.push((
-                "authorization".to_owned(),
-                format!("Bearer {api_key}"),
-            ));
+            request
+                .headers
+                .push(("authorization".to_owned(), format!("Bearer {api_key}")));
         }
         if !request
             .headers
@@ -174,10 +176,9 @@ impl Shared {
                 .push(("accept".to_owned(), "application/json".to_owned()));
         }
         if let Some(token) = self.session_token() {
-            request.headers.push((
-                "x-terrascale-session".to_owned(),
-                token,
-            ));
+            request
+                .headers
+                .push(("x-terrascale-session".to_owned(), token));
         }
         if self.config.preferred_region().is_some() || self.pinned_region().is_some() {
             if let Some(region) = self.pinned_region() {
@@ -282,7 +283,12 @@ fn decode_error(route_name: &str, response: &Response) -> Error {
     let message = body
         .as_ref()
         .and_then(|b| b.message.clone())
-        .unwrap_or_else(|| format!("Request {route_name} failed with status {}.", response.status));
+        .unwrap_or_else(|| {
+            format!(
+                "Request {route_name} failed with status {}.",
+                response.status
+            )
+        });
     let mut error = Error::for_status(response.status, code, message);
     error.request_id = response.header("x-request-id").map(str::to_owned);
     error
