@@ -212,18 +212,27 @@ func runReader(ctx context.Context, client *http.Client, cfg runConfig, counters
 		}
 		req.Header.Set(capabilityHeader, cfg.Capability)
 		req.Header.Set("Accept", "application/msgpack")
-		counters.requests.Add(1)
 		resp, err := client.Do(req)
 		if err != nil {
-			counters.failures.Add(1)
-			if ctx.Err() == nil {
-				counters.firstError.CompareAndSwap(nil, err.Error())
+			// A stage timeout intentionally cancels long-poll requests. Those
+			// in-flight requests are not completed samples and must not turn a
+			// healthy ramp into a reported request error at the stage boundary.
+			if ctx.Err() != nil {
+				return
 			}
+			counters.failures.Add(1)
+			counters.firstError.CompareAndSwap(nil, err.Error())
 			return
 		}
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, cfg.MaxBodyBytes+1))
 		_ = resp.Body.Close()
+		if readErr != nil && ctx.Err() != nil {
+			// As above, a long poll canceled by the stage deadline never
+			// produced a response sample.
+			return
+		}
 		elapsed := float64(time.Since(started).Microseconds()) / 1000
+		counters.requests.Add(1)
 		counters.latencyMu.Lock()
 		seen := counters.latencyTotal.Load()
 		if len(counters.latencies) < maxLatencySamples {
@@ -238,9 +247,7 @@ func runReader(ctx context.Context, client *http.Client, cfg runConfig, counters
 		counters.latencyMu.Unlock()
 		if readErr != nil {
 			counters.failures.Add(1)
-			if ctx.Err() == nil {
-				counters.firstError.CompareAndSwap(nil, readErr.Error())
-			}
+			counters.firstError.CompareAndSwap(nil, readErr.Error())
 			return
 		}
 		if int64(len(body)) > cfg.MaxBodyBytes {
