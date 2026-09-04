@@ -285,14 +285,31 @@ func (d *DocumentsClient) Delete(ctx context.Context, databaseID, collection, do
 
 // History returns retained versions of a document.
 func (d *DocumentsClient) History(ctx context.Context, databaseID, collection, docID string, opts ...RequestOption) ([]HistoryEntry, error) {
+	return d.HistoryPage(ctx, databaseID, collection, docID, 0, "", opts...)
+}
+
+// HistoryPage returns a bounded page of retained document versions. after is
+// the opaque revision identity from the preceding page; zero limit preserves
+// the server default.
+func (d *DocumentsClient) HistoryPage(ctx context.Context, databaseID, collection, docID string, limit int, after string, opts ...RequestOption) ([]HistoryEntry, error) {
 	path, err := documentPath(databaseID, collection, docID)
 	if err != nil {
 		return nil, err
 	}
+	if limit < 0 || limit > MaxDocumentPageSize {
+		return nil, fmt.Errorf("sdk: document history limit must be between 0 and %d", MaxDocumentPageSize)
+	}
+	query := url.Values{}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	if strings.TrimSpace(after) != "" {
+		query.Set("after", after)
+	}
 	var out struct {
 		History []HistoryEntry `json:"history"`
 	}
-	if err := d.c.do(ctx, "GET", path+"/history", nil, nil, &out, "documents.history", opts...); err != nil {
+	if err := d.c.do(ctx, "GET", path+"/history", query, nil, &out, "documents.history", opts...); err != nil {
 		return nil, err
 	}
 	return out.History, nil

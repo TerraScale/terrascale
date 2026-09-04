@@ -366,3 +366,18 @@ func TestNewClientValidatesRequestTimeoutCeiling(t *testing.T) {
 		t.Fatal("oversized session token was accepted")
 	}
 }
+
+func TestNewClientRejectsInsecureOrCredentialBearingEndpoints(t *testing.T) {
+	for _, endpoint := range []string{
+		"http://api.terrascale.tech",
+		"https://user:secret@api.terrascale.tech",
+		"https://api.terrascale.tech/?access_token=leaked",
+	} {
+		if _, err := NewClient(Config{APIBaseURL: endpoint}); err == nil {
+			t.Fatalf("unsafe endpoint %q was accepted", endpoint)
+		}
+	}
+	if _, err := NewClient(Config{APIBaseURL: "http://api.example.test", HTTPClient: &http.Client{}}); err != nil {
+		t.Fatalf("explicit test transport should allow .test HTTP endpoint: %v", err)
+	}
+}

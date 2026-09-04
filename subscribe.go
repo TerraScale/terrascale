@@ -54,27 +54,37 @@ const (
 
 // ResetError is a typed reset: discard local view state and resubscribe.
 type ResetError struct {
-	Reason          ResetReason `json:"reason"`
-	Message         string      `json:"message,omitempty"`
-	ViewID          string      `json:"viewId,omitempty"`
-	Generation      uint64      `json:"generation,omitempty"`
-	Snapshot        []Document  `json:"snapshot,omitempty"`
-	CheckpointBytes []byte      `json:"-"`
+	Reason                  ResetReason `json:"reason"`
+	Message                 string      `json:"message,omitempty"`
+	ViewID                  string      `json:"viewId,omitempty"`
+	Generation              uint64      `json:"generation,omitempty"`
+	ViewGeneration          uint64      `json:"view_generation,omitempty"`
+	AuthorizationGeneration uint64      `json:"authorization_generation,omitempty"`
+	Revision                uint64      `json:"revision,omitempty"`
+	Digest                  string      `json:"digest,omitempty"`
+	Removed                 []string    `json:"removed,omitempty"`
+	Snapshot                []Document  `json:"snapshot,omitempty"`
+	CheckpointBytes         []byte      `json:"-"`
 }
 
 func (e *ResetError) UnmarshalJSON(data []byte) error {
 	type wire struct {
-		Reason     ResetReason `json:"reason"`
-		Message    string      `json:"message"`
-		ViewID     string      `json:"viewId"`
-		View       string      `json:"view"`
-		Generation uint64      `json:"generation"`
+		Reason                  ResetReason `json:"reason"`
+		Message                 string      `json:"message"`
+		ViewID                  string      `json:"viewId"`
+		View                    string      `json:"view"`
+		Generation              uint64      `json:"generation"`
+		ViewGeneration          uint64      `json:"view_generation"`
+		AuthorizationGeneration uint64      `json:"authorization_generation"`
+		Revision                uint64      `json:"revision"`
+		Digest                  string      `json:"digest"`
 	}
 	var v wire
 	if err := json.Unmarshal(data, &v); err != nil {
 		return err
 	}
 	e.Reason, e.Message, e.ViewID, e.Generation = v.Reason, v.Message, v.ViewID, v.Generation
+	e.ViewGeneration, e.AuthorizationGeneration, e.Revision, e.Digest = v.ViewGeneration, v.AuthorizationGeneration, v.Revision, v.Digest
 	if e.ViewID == "" {
 		e.ViewID = v.View
 	}
@@ -108,14 +118,14 @@ type Update struct {
 	Position uint32 `json:"position,omitempty"`
 	// View and authorization generations, revision bounds, and digest are the
 	// atomic state metadata carried by every server result frame.
-	ViewGeneration          uint64 `json:"view_generation,omitempty"`
-	AuthorizationGeneration uint64 `json:"authorization_generation,omitempty"`
-	Revision                uint64 `json:"revision,omitempty"`
-	FromRevision            uint64 `json:"from_revision,omitempty"`
-	ToRevision              uint64 `json:"to_revision,omitempty"`
-	Digest                  string `json:"digest,omitempty"`
-	Collection string          `json:"collection,omitempty"`
-	Body       json.RawMessage `json:"body,omitempty"`
+	ViewGeneration          uint64          `json:"view_generation,omitempty"`
+	AuthorizationGeneration uint64          `json:"authorization_generation,omitempty"`
+	Revision                uint64          `json:"revision,omitempty"`
+	FromRevision            uint64          `json:"from_revision,omitempty"`
+	ToRevision              uint64          `json:"to_revision,omitempty"`
+	Digest                  string          `json:"digest,omitempty"`
+	Collection              string          `json:"collection,omitempty"`
+	Body                    json.RawMessage `json:"body,omitempty"`
 	// Fields retains every projected field from the indexed wire item. Body is
 	// populated as a convenience when the projection contains the body path.
 	Fields          map[string]json.RawMessage `json:"fields,omitempty"`
@@ -246,7 +256,7 @@ func (a *attachResponse) UnmarshalJSON(data []byte) error {
 				a.Snapshot = append(a.Snapshot, doc)
 			}
 			if a.Checkpoint == "" && inline.Checkpoint != "" {
-				a.Checkpoint = Checkpoint(inline.Checkpoint)
+				a.Checkpoint = decodeCheckpoint(Checkpoint(inline.Checkpoint))
 			}
 		} else {
 			for _, item := range rawDocs {
@@ -1382,19 +1392,19 @@ func scanTakeBounded(r *reactiveMPReader, n, max int) error {
 }
 
 type reactiveMPMessage struct {
-	updates         []Update
-	checkpoint      Checkpoint
-	checkpointBytes []byte
-	offset          string
-	reset           *ResetError
-	snapshot        []Document
-	snapshotFields  []map[string]json.RawMessage
-	viewGeneration  uint64
+	updates                 []Update
+	checkpoint              Checkpoint
+	checkpointBytes         []byte
+	offset                  string
+	reset                   *ResetError
+	snapshot                []Document
+	snapshotFields          []map[string]json.RawMessage
+	viewGeneration          uint64
 	authorizationGeneration uint64
-	revision        uint64
-	fromRevision    uint64
-	toRevision      uint64
-	digest          string
+	revision                uint64
+	fromRevision            uint64
+	toRevision              uint64
+	digest                  string
 }
 
 func decodeReactiveMessagePack(body []byte, view string, generation uint64) ([]Update, Checkpoint, string, *ResetError, error) {
@@ -1535,9 +1545,6 @@ func decodeMPSnapshot(r *reactiveMPReader, view string, generation uint64, metad
 	}
 	if generation != 0 && gotGeneration != generation {
 		return nil, nil, "", fmt.Errorf("sdk: reactive snapshot generation mismatch")
-	}
-	if _, e = mpUint(r, 64); e != nil {
-		return nil, nil, "", e
 	}
 	authorizationGeneration, e := mpUint(r, 64)
 	if e != nil {
@@ -1804,7 +1811,8 @@ func decodeMPBody(r *reactiveMPReader, tag int, view string, generation uint64) 
 		if e != nil {
 			return reactiveMPMessage{}, e
 		}
-		docs, snapshotFields, cp, e := decodeMPSnapshot(r, view, generation)
+		var metadata reactiveMPSnapshotMetadata
+		docs, snapshotFields, cp, e := decodeMPSnapshot(r, view, generation, &metadata)
 		if e != nil {
 			return reactiveMPMessage{}, e
 		}
@@ -1814,10 +1822,10 @@ func decodeMPBody(r *reactiveMPReader, tag int, view string, generation uint64) 
 			if len(u) < len(snapshotFields) {
 				fields = cloneProjectedFields(snapshotFields[len(u)])
 			}
-			u = append(u, Update{Kind: UpdateSnapshot, Checkpoint: cp, CheckpointBytes: []byte(cp), ID: d.ID, Collection: d.Collection, Body: cloneRaw(d.Body), Fields: fields, Position: uint32(index)})
+			u = append(u, Update{Kind: UpdateSnapshot, Checkpoint: cp, CheckpointBytes: []byte(cp), ID: d.ID, Collection: d.Collection, Body: cloneRaw(d.Body), Fields: fields, Position: uint32(index), ViewGeneration: metadata.viewGeneration, AuthorizationGeneration: metadata.authorizationGeneration, Revision: metadata.revision, Digest: metadata.digest})
 		}
 		_ = subscription
-		return reactiveMPMessage{updates: u, checkpoint: cp, checkpointBytes: []byte(cp), snapshot: docs, snapshotFields: snapshotFields}, nil
+		return reactiveMPMessage{updates: u, checkpoint: cp, checkpointBytes: []byte(cp), snapshot: docs, snapshotFields: snapshotFields, viewGeneration: metadata.viewGeneration, authorizationGeneration: metadata.authorizationGeneration, revision: metadata.revision, digest: metadata.digest}, nil
 	case 4: // delta
 		if err := r.exactArray(7); err != nil {
 			return reactiveMPMessage{}, err
@@ -1838,8 +1846,8 @@ func decodeMPBody(r *reactiveMPReader, tag int, view string, generation uint64) 
 		if e != nil {
 			return reactiveMPMessage{}, e
 		}
-		if to < from {
-			return reactiveMPMessage{}, fmt.Errorf("sdk: reactive delta revision regressed")
+		if to <= from {
+			return reactiveMPMessage{}, fmt.Errorf("sdk: reactive delta revision must advance")
 		}
 		n, e := mpArrayCount(r)
 		if e != nil {
@@ -1857,7 +1865,8 @@ func decodeMPBody(r *reactiveMPReader, tag int, view string, generation uint64) 
 			u.Checkpoint = ""
 			updates = append(updates, u)
 		}
-		if _, e = mpText(r, 0, 64); e != nil {
+		digest, e := mpText(r, 0, 64)
+		if e != nil {
 			return reactiveMPMessage{}, e
 		}
 		cpBytes, e := mpBinary(r, 1, 4096)
@@ -1867,12 +1876,16 @@ func decodeMPBody(r *reactiveMPReader, tag int, view string, generation uint64) 
 		cp := Checkpoint(string(cpBytes))
 		for i := range updates {
 			updates[i].Checkpoint, updates[i].CheckpointBytes = cp, []byte(cp)
+			updates[i].ViewGeneration = viewGeneration
+			updates[i].FromRevision = from
+			updates[i].ToRevision = to
+			updates[i].Digest = digest
 		}
 		if generation != 0 && viewGeneration != generation {
 			return reactiveMPMessage{}, fmt.Errorf("sdk: reactive delta generation mismatch")
 		}
 		_ = subscription
-		return reactiveMPMessage{updates: updates, checkpoint: cp, checkpointBytes: []byte(cp), offset: strconv.FormatUint(to, 10)}, nil
+		return reactiveMPMessage{updates: updates, checkpoint: cp, checkpointBytes: []byte(cp), offset: strconv.FormatUint(to, 10), viewGeneration: viewGeneration, fromRevision: from, toRevision: to, digest: digest}, nil
 	case 5: // reset with replacement snapshot
 		if err := r.exactArray(3); err != nil {
 			return reactiveMPMessage{}, err
@@ -1885,16 +1898,17 @@ func decodeMPBody(r *reactiveMPReader, tag int, view string, generation uint64) 
 		if e != nil {
 			return reactiveMPMessage{}, e
 		}
-		docs, _, cp, e := decodeMPSnapshot(r, view, 0)
+		var metadata reactiveMPSnapshotMetadata
+		docs, _, cp, e := decodeMPSnapshot(r, view, 0, &metadata)
 		if e != nil {
 			return reactiveMPMessage{}, e
 		}
-		reset := &ResetError{Reason: reason, ViewID: view, Generation: generation, Message: "reactive view requires a replacement snapshot"}
+		reset := &ResetError{Reason: reason, ViewID: view, Generation: generation, ViewGeneration: metadata.viewGeneration, AuthorizationGeneration: metadata.authorizationGeneration, Revision: metadata.revision, Digest: metadata.digest, Message: "reactive view requires a replacement snapshot"}
 		reset.Snapshot = cloneDocuments(docs)
 		reset.CheckpointBytes = []byte(cp)
-		u := Update{Kind: UpdateReset, Checkpoint: cp, CheckpointBytes: []byte(cp), Snapshot: cloneDocuments(docs), Reset: reset}
+		u := Update{Kind: UpdateReset, Checkpoint: cp, CheckpointBytes: []byte(cp), Snapshot: cloneDocuments(docs), Reset: reset, ViewGeneration: metadata.viewGeneration, AuthorizationGeneration: metadata.authorizationGeneration, Revision: metadata.revision, Digest: metadata.digest}
 		_ = subscription
-		return reactiveMPMessage{updates: []Update{u}, checkpoint: cp, checkpointBytes: []byte(cp), reset: reset}, nil
+		return reactiveMPMessage{updates: []Update{u}, checkpoint: cp, checkpointBytes: []byte(cp), reset: reset, viewGeneration: metadata.viewGeneration, authorizationGeneration: metadata.authorizationGeneration, revision: metadata.revision, digest: metadata.digest}, nil
 	case 6:
 		if err := r.exactArray(0); err != nil {
 			return reactiveMPMessage{}, err
@@ -1908,7 +1922,8 @@ func decodeMPBody(r *reactiveMPReader, tag int, view string, generation uint64) 
 		if e != nil {
 			return reactiveMPMessage{}, e
 		}
-		if _, e = mpUint(r, 64); e != nil {
+		authorizationGeneration, e := mpUint(r, 64)
+		if e != nil {
 			return reactiveMPMessage{}, e
 		}
 		n, e := mpArrayCount(r)
@@ -1918,20 +1933,28 @@ func decodeMPBody(r *reactiveMPReader, tag int, view string, generation uint64) 
 		if n > maxSnapshotItems {
 			return reactiveMPMessage{}, fmt.Errorf("sdk: reactive removed list exceeds bound")
 		}
+		removed := make([]string, 0, n)
 		for i := 0; i < n; i++ {
-			if _, e = mpText(r, 0, 256); e != nil {
+			identity, e := mpText(r, 0, 256)
+			if e != nil {
 				return reactiveMPMessage{}, e
 			}
+			removed = append(removed, identity)
 		}
-		docs, _, cp, e := decodeMPSnapshot(r, view, 0)
+		var metadata reactiveMPSnapshotMetadata
+		docs, _, cp, e := decodeMPSnapshot(r, view, 0, &metadata)
 		if e != nil {
 			return reactiveMPMessage{}, e
 		}
-		reset := &ResetError{Reason: ResetAuthChanged, ViewID: view, Generation: generation, Message: "authorization changed; replacement snapshot supplied"}
+		if metadata.authorizationGeneration < authorizationGeneration {
+			metadata.authorizationGeneration = authorizationGeneration
+		}
+		reset := &ResetError{Reason: ResetAuthChanged, ViewID: view, Generation: generation, ViewGeneration: metadata.viewGeneration, AuthorizationGeneration: metadata.authorizationGeneration, Revision: metadata.revision, Digest: metadata.digest, Removed: removed, Message: "authorization changed; replacement snapshot supplied"}
 		reset.Snapshot = cloneDocuments(docs)
 		reset.CheckpointBytes = []byte(cp)
 		_ = subscription
-		return reactiveMPMessage{updates: []Update{{Kind: UpdateReset, Checkpoint: cp, CheckpointBytes: []byte(cp), Snapshot: cloneDocuments(docs), Reset: reset}}, checkpoint: cp, checkpointBytes: []byte(cp), reset: reset}, nil
+		u := Update{Kind: UpdateReset, Checkpoint: cp, CheckpointBytes: []byte(cp), Snapshot: cloneDocuments(docs), Reset: reset, ViewGeneration: metadata.viewGeneration, AuthorizationGeneration: metadata.authorizationGeneration, Revision: metadata.revision, Digest: metadata.digest}
+		return reactiveMPMessage{updates: []Update{u}, checkpoint: cp, checkpointBytes: []byte(cp), reset: reset, viewGeneration: metadata.viewGeneration, authorizationGeneration: metadata.authorizationGeneration, revision: metadata.revision, digest: metadata.digest}, nil
 	case 9:
 		if err := r.exactArray(1); err != nil {
 			return reactiveMPMessage{}, err

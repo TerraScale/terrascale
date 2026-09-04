@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -164,6 +165,20 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 	if u.RawQuery != "" || u.Fragment != "" {
 		return nil, fmt.Errorf("sdk: API base URL must not contain a query or fragment")
+	}
+	if u.User != nil {
+		return nil, fmt.Errorf("sdk: API base URL must not contain userinfo")
+	}
+	if u.Scheme == "http" {
+		host := strings.ToLower(u.Hostname())
+		loopback := host == "localhost"
+		if ip := net.ParseIP(host); ip != nil {
+			loopback = ip.IsLoopback()
+		}
+		testHost := host == "test" || strings.HasSuffix(host, ".test")
+		if !loopback && !(cfg.HTTPClient != nil && testHost) {
+			return nil, fmt.Errorf("sdk: API endpoints must use HTTPS, except explicit loopback/test transports")
+		}
 	}
 	lowerHost := strings.ToLower(u.Hostname())
 	if strings.Contains(lowerHost, "tbep") || strings.Contains(lowerHost, "terrabase") {

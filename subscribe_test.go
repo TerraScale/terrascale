@@ -38,6 +38,21 @@ func TestReactiveMessagePackRejectsMapsAndHostileBounds(t *testing.T) {
 	}
 }
 
+func TestReactiveMessagePackRejectsClientFramesBatchesAndDuplicateFields(t *testing.T) {
+	if _, _, _, _, err := decodeReactiveMessagePack(mustHex("9702010001010094a173a171c4020102c0"), "v", 1); err == nil {
+		t.Fatal("client-to-server subscribe frame was accepted as a response")
+	}
+	single := mustHex("9702010006060590")
+	batch := append([]byte{0x92}, append(append([]byte(nil), single...), single...)...)
+	if _, _, _, _, err := decodeReactiveMessagePack(batch, "v", 1); err == nil {
+		t.Fatal("batched response envelopes were accepted")
+	}
+	duplicate := mustHex("9702010003000092a173960100009192a17392a173c40161a173c40162a0c40163")
+	if _, _, _, _, err := decodeReactiveMessagePack(duplicate, "v", 1); err == nil {
+		t.Fatal("duplicate projected fields were accepted")
+	}
+}
+
 func TestReactiveMessagePackDecodesIndexedSnapshot(t *testing.T) {
 	body, err := hex.DecodeString("9702010003000092a173960100009192a17390a0c40163")
 	if err != nil {
@@ -47,7 +62,7 @@ func TestReactiveMessagePackDecodesIndexedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reset != nil || len(updates) != 1 || updates[0].ID != "s" || updates[0].Position != 0 || checkpoint != "c" || offset != "" {
+	if reset != nil || len(updates) != 1 || updates[0].ID != "s" || updates[0].Position != 0 || updates[0].ViewGeneration != 1 || updates[0].Revision != 0 || checkpoint != "c" || offset != "" {
 		t.Fatalf("decoded snapshot = updates=%+v checkpoint=%q offset=%q reset=%v", updates, checkpoint, offset, reset)
 	}
 }
@@ -59,16 +74,15 @@ func TestSubscribeUsesCanonicalOffsetCapabilityAndCopiesSnapshotBody(t *testing.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/v1/reactive/views" && r.Method == http.MethodPost:
-			var request struct {
-				DatabaseID string `json:"databaseId"`
-				Statement  string `json:"statement"`
-				Parameters string `json:"parameters"`
-			}
+			var request map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("attach request: %v", err)
 			}
-			if request.DatabaseID != "db" || request.Statement != "SELECT * FROM users" || request.Parameters != "e30=" {
+			if request["databaseId"] != "db" || request["statement"] != "SELECT * FROM users" || request["parameters"] != "e30=" {
 				t.Errorf("attach request = %+v", request)
+			}
+			if _, ok := request["transport"]; ok {
+				t.Error("attach request invented undeclared transport member")
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"view": "view-1", "generation": 7, "checkpoint": "opaque-0",
@@ -115,7 +129,7 @@ func TestSubscribeUsesCanonicalOffsetCapabilityAndCopiesSnapshotBody(t *testing.
 	}
 	first.Body[5] = '9'
 	second := <-sub.Events()
-	if second.Kind != UpdateInsert || second.Checkpoint != "i" || second.ID != "e" || second.Position != 1 {
+	if second.Kind != UpdateInsert || second.Checkpoint != "i" || second.ID != "e" || second.Position != 1 || second.ViewGeneration != 7 || second.FromRevision != 3 || second.ToRevision != 4 || second.Digest != "" {
 		t.Fatalf("delta = %+v", second)
 	}
 	if sub.Checkpoint() != "i" {

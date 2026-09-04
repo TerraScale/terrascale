@@ -154,3 +154,24 @@ func TestDocumentTypesRetainRawJSONValues(t *testing.T) {
 		t.Fatalf("row = %+v", row)
 	}
 }
+
+func TestDocumentHistoryPageUsesPublishedPagination(t *testing.T) {
+	var query url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"history":[{"revision":"rev-2","deleted":false}]}`))
+	}))
+	defer server.Close()
+	client, err := sdk.NewClient(sdk.Config{APIBaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	history, err := client.Documents.HistoryPage(context.Background(), "db", "users", "ada", 25, "rev-1")
+	if err != nil || len(history) != 1 || history[0].Revision != "rev-2" {
+		t.Fatalf("HistoryPage = %+v, err = %v", history, err)
+	}
+	if query.Get("limit") != "25" || query.Get("after") != "rev-1" {
+		t.Fatalf("history query = %v", query)
+	}
+}
