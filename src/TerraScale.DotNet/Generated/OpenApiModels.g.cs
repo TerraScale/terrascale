@@ -7,9 +7,23 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 
 public sealed record AttachViewRequest(
-    [property: JsonPropertyName("id")] string? Id,
-    [property: JsonPropertyName("name")] string? Name,
-    [property: JsonPropertyName("view")] string? View
+    [property: JsonPropertyName("checkpoint")] string? Checkpoint,
+    [property: JsonPropertyName("databaseId")] string DatabaseId,
+    [property: JsonPropertyName("entitlement_epoch")] long? EntitlementEpoch,
+    [property: JsonPropertyName("parameters")] string? Parameters,
+    [property: JsonPropertyName("statement")] string Statement,
+    [property: JsonPropertyName("subscription")] string? Subscription
+);
+
+public sealed record AttachViewResponse(
+    [property: JsonPropertyName("capability")] string Capability,
+    [property: JsonPropertyName("capability_header")] string CapabilityHeader,
+    [property: JsonPropertyName("checkpoint")] string Checkpoint,
+    [property: JsonPropertyName("generation")] long Generation,
+    [property: JsonPropertyName("log")] string Log,
+    [property: JsonPropertyName("offset")] long Offset,
+    [property: JsonPropertyName("snapshot_chunks")] IReadOnlyList<string> SnapshotChunks,
+    [property: JsonPropertyName("view")] string View
 );
 
 public sealed record BackupStatusResponse(

@@ -5,7 +5,7 @@ using System.Text.Json.Nodes;
 namespace TerraScale.DotNet;
 
 /// <summary>
-/// The native <c>terrascale.sync.v2</c> client-side view engine
+/// The native <c>terrascale.sync.v1</c> client-side view engine
 /// (ADR-0024): one server-authoritative authorized query result, its
 /// logical session states, its snapshot assembly, its result revisions,
 /// its opaque checkpoint, its acknowledgements, and its reversible
@@ -19,7 +19,7 @@ namespace TerraScale.DotNet;
 /// optimistic layer is presentation that never advances a revision or a
 /// checkpoint and never becomes durable state.
 /// </summary>
-public sealed class TerraScaleSyncV2ViewEngine
+public sealed class TerraScaleSyncV1ViewEngine
 {
     private const int MaxIdempotencyKeyBytes = 128;
 
@@ -66,7 +66,7 @@ public sealed class TerraScaleSyncV2ViewEngine
         long LogicalBytes);
 
     /// <summary>Initializes a fresh engine in the <c>Connecting</c> state: no view, no cache, no checkpoint.</summary>
-    public TerraScaleSyncV2ViewEngine()
+    public TerraScaleSyncV1ViewEngine()
     {
     }
 
@@ -966,7 +966,7 @@ public sealed class TerraScaleSyncV2ViewEngine
                 default:
                     throw new TerraScaleViewProtocolException(
                         TerraScaleViewProtocolError.MalformedDelta,
-                        $"The result operation {operation.Kind} is not part of the closed v2 operation set.");
+                        $"The result operation {operation.Kind} is not part of the closed v1 operation set.");
             }
         }
 

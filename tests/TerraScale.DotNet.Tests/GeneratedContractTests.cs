@@ -37,13 +37,13 @@ public sealed class GeneratedContractTests
     [Test]
     public async Task GeneratedMessagePackMetadataPreservesTagsAndFields()
     {
-        var protocolMajor = TerraScaleSyncV2Contract.ProtocolMajor;
-        var protocolMinor = TerraScaleSyncV2Contract.ProtocolMinor;
-        await Assert.That(protocolMajor).IsEqualTo(2);
-        await Assert.That(protocolMinor).IsEqualTo(1);
-        await Assert.That(TerraScaleSyncV2Contract.Messages).Count().IsEqualTo(11);
+        var protocolMajor = TerraScaleSyncV1Contract.ProtocolMajor;
+        var protocolMinor = TerraScaleSyncV1Contract.ProtocolMinor;
+        await Assert.That(protocolMajor).IsEqualTo(1);
+        await Assert.That(protocolMinor).IsEqualTo(0);
+        await Assert.That(TerraScaleSyncV1Contract.Messages).Count().IsEqualTo(11);
 
-        var delta = TerraScaleSyncV2Contract.Messages.Single(message => message.Name == "delta");
+        var delta = TerraScaleSyncV1Contract.Messages.Single(message => message.Name == "delta");
         await Assert.That(delta.Tag).IsEqualTo(4);
         await Assert.That(delta.Fields).Contains("checkpoint");
         await Assert.That(delta.Direction).IsEqualTo("server_to_client");

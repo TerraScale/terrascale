@@ -32,7 +32,7 @@ VERSION_RE = re.compile(r"v[1-9][0-9]*\Z")
 HEX64_RE = re.compile(r"[0-9a-fA-F]{64}\Z")
 REQUIRED_ARTIFACTS = (
     "openapi.json",
-    "msgpack/terrascale.sync.v2.msgpack.json",
+    "msgpack/terrascale.sync.v1.msgpack.json",
     "proto/terrabase/v1/engine.proto",
     "proto/terrabase/v1/family.proto",
 )
@@ -237,7 +237,7 @@ def validate_bundle(root: Path, version: str) -> tuple[dict, dict[str, str]]:
 
 def validate_corpus(root: Path, version: str | None = None) -> dict[str, str]:
     result = {}
-    manifest_path = root / "msgpack/terrascale.sync.v2.msgpack.json"
+    manifest_path = root / "msgpack/terrascale.sync.v1.msgpack.json"
     regular_file(manifest_path, "MessagePack manifest")
     manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     for relative in CORPUS_FILES:
@@ -259,8 +259,8 @@ def validate_corpus(root: Path, version: str | None = None) -> dict[str, str]:
             if not isinstance(vectors, list):
                 fail(f"corpus {relative} has no vector list")
             if relative.endswith("message-vectors.json"):
-                if value.get("protocol") != "terrascale.sync.v2.msgpack" or value.get("version") != "2.1":
-                    fail("MessagePack corpus identity is not 2.1")
+                if value.get("protocol") != "terrascale.sync.v1.msgpack" or value.get("version") != "1.0":
+                    fail("MessagePack corpus identity is not 1.0")
                 if value.get("manifestSha256") != manifest_sha:
                     fail("MessagePack corpus pins a different manifest SHA-256")
                 if len(vectors) < 11:

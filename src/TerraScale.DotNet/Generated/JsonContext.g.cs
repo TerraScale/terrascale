@@ -7,6 +7,7 @@ using System.Text.Json.Serialization;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, GenerationMode = JsonSourceGenerationMode.Metadata)]
 [JsonSerializable(typeof(AttachViewRequest))]
+[JsonSerializable(typeof(AttachViewResponse))]
 [JsonSerializable(typeof(BackupStatusResponse))]
 [JsonSerializable(typeof(BatchRequest))]
 [JsonSerializable(typeof(BatchResponse))]

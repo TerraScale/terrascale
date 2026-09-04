@@ -4,7 +4,7 @@ using System.Text.Json;
 namespace TerraScale.DotNet;
 
 /// <summary>
-/// The logical session states of the native <c>terrascale.sync.v2</c> public
+/// The logical session states of the native <c>terrascale.sync.v1</c> public
 /// reactive protocol (ADR-0024): the client connection walks
 /// <c>Connecting</c>, <c>Authenticated</c>, <c>Subscribing</c>,
 /// <c>Snapshotting</c>, <c>Live</c>, <c>Resuming</c>, <c>Resetting</c>,

@@ -143,11 +143,11 @@ public sealed record BackpressureMessage(
     [property: MessagePackFieldName("mode")] BackpressureMode Mode
 ) : TerraScaleSyncMessage;
 
-/// <summary>Language-neutral names and limits for terrascale.sync.v2.</summary>
-public static class TerraScaleSyncV2Contract
+/// <summary>Language-neutral names and limits for terrascale.sync.v1.</summary>
+public static class TerraScaleSyncV1Contract
 {
-    public const int ProtocolMajor = 2;
-    public const int ProtocolMinor = 1;
+    public const int ProtocolMajor = 1;
+    public const int ProtocolMinor = 0;
     public const uint SupportedFeatures = 0u;
     public const int EnvelopeArity = 7;
     public const int MaxMessageBytes = 8388608;

@@ -1,4 +1,4 @@
-# ADR 0002: keep the v2 result engine separate from transport
+# ADR 0002: keep the v1 result engine separate from transport
 
 - Status: Accepted for the current repository boundary
 - Date: 2026-08-29
@@ -6,9 +6,9 @@
 
 ## Context
 
-The repository contains two materially different v2 concerns:
+The repository contains two materially different v1 concerns:
 
-- `TerraScaleSyncV2ViewEngine` provides the result-view state machine, including
+- `TerraScaleSyncV1ViewEngine` provides the result-view state machine, including
   atomic snapshots, result deltas, opaque checkpoints, authorization changes,
   and reversible optimistic presentation. The old server-ack-only frame and
   checkpoint-session implementation was deleted with the legacy sync protocol.
@@ -37,5 +37,5 @@ The engine can be tested deterministically without a server and cannot claim
 transport conformance by itself. The eventual binding will need explicit
 integration tests for authentication, reconnect, authorization changes,
 history expiry, Region movement, slow consumers, tenant isolation, and
-cross-language vectors. Until those artifacts exist, v2 production qualification
+cross-language vectors. Until those artifacts exist, v1 production qualification
 is blocked and no new route or payload is added here.

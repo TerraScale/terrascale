@@ -13,7 +13,7 @@ namespace TerraScale.DotNet.Tests;
 /// state-machine coverage: wire binding and golden-vector conformance
 /// land with the owning public contract and corpus.
 /// </summary>
-public sealed class TerraScaleSyncV2ViewEngineTests
+public sealed class TerraScaleSyncV1ViewEngineTests
 {
     private static readonly TerraScaleViewId ViewId = new(Guid.Parse("0123456789abcdef0123456789abcdef"));
 
@@ -62,9 +62,9 @@ public sealed class TerraScaleSyncV2ViewEngineTests
         new(ViewId, generation, fromRevision, toRevision, new("cut-next"), operations, new(digest), new(checkpoint));
 
     /// <summary>Drives one engine to <c>Live</c> through a validated two-chunk snapshot.</summary>
-    private static TerraScaleSyncV2ViewEngine LiveEngine(params TerraScaleViewRow[] rows)
+    private static TerraScaleSyncV1ViewEngine LiveEngine(params TerraScaleViewRow[] rows)
     {
-        var engine = new TerraScaleSyncV2ViewEngine();
+        var engine = new TerraScaleSyncV1ViewEngine();
         engine.Authenticate();
         engine.Subscribe();
         engine.BeginSnapshot(Begin());
@@ -93,7 +93,7 @@ public sealed class TerraScaleSyncV2ViewEngineTests
     [Test]
     public async Task SessionStatesAdvanceThroughSubscriptionToLive()
     {
-        var engine = new TerraScaleSyncV2ViewEngine();
+        var engine = new TerraScaleSyncV1ViewEngine();
         await Assert.That(engine.State).IsEqualTo(TerraScaleViewSessionState.Connecting);
 
         engine.Authenticate();
@@ -117,7 +117,7 @@ public sealed class TerraScaleSyncV2ViewEngineTests
     [Test]
     public async Task WrongStateMessagesAreTypedProtocolErrors()
     {
-        var engine = new TerraScaleSyncV2ViewEngine();
+        var engine = new TerraScaleSyncV1ViewEngine();
         engine.Authenticate();
 
         var deltaInSubscribing = await Rejects(() => engine.ApplyResultDelta(Delta(11, [new TerraScaleViewRemove(Id("a"))])));
@@ -156,7 +156,7 @@ public sealed class TerraScaleSyncV2ViewEngineTests
     [Test]
     public async Task InterruptedSnapshotReplacesNothingAndRestartsSafely()
     {
-        var engine = new TerraScaleSyncV2ViewEngine();
+        var engine = new TerraScaleSyncV1ViewEngine();
         engine.Authenticate();
         engine.Subscribe();
         engine.BeginSnapshot(Begin());
@@ -178,7 +178,7 @@ public sealed class TerraScaleSyncV2ViewEngineTests
     [Test]
     public async Task BrokenChunkOrdinalFailsClosed()
     {
-        var engine = new TerraScaleSyncV2ViewEngine();
+        var engine = new TerraScaleSyncV1ViewEngine();
         engine.Authenticate();
         engine.Subscribe();
         engine.BeginSnapshot(Begin());
@@ -193,7 +193,7 @@ public sealed class TerraScaleSyncV2ViewEngineTests
     [Test]
     public async Task RepeatedIdentityInsideAnAssemblyFailsClosed()
     {
-        var engine = new TerraScaleSyncV2ViewEngine();
+        var engine = new TerraScaleSyncV1ViewEngine();
         engine.Authenticate();
         engine.Subscribe();
         engine.BeginSnapshot(Begin());
@@ -412,7 +412,7 @@ public sealed class TerraScaleSyncV2ViewEngineTests
     [Test]
     public async Task DeclaredRowBoundFailsClosed()
     {
-        var engine = new TerraScaleSyncV2ViewEngine();
+        var engine = new TerraScaleSyncV1ViewEngine();
         engine.Authenticate();
         engine.Subscribe();
         engine.BeginSnapshot(Begin(rowBound: 1));
@@ -501,7 +501,7 @@ public sealed class TerraScaleSyncV2ViewEngineTests
     [Test]
     public async Task ResumeRequiresACheckpointAndAppliesReplay()
     {
-        var fresh = new TerraScaleSyncV2ViewEngine();
+        var fresh = new TerraScaleSyncV1ViewEngine();
         fresh.Authenticate();
         var noCheckpoint = await Rejects(() => fresh.BeginResume());
         await Assert.That(noCheckpoint.Error).IsEqualTo(TerraScaleViewProtocolError.WrongState);

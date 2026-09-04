@@ -26,7 +26,7 @@ version and migration record.
 
 ## Compatibility disposition: unpublished saved-query versions
 
-The SDK previously carried `/api/v2` conditional-revision and `/api/v3`
+The SDK previously carried unpublished conditional-revision and field-merge
 snapshot-pagination saved-query clients. Dashboard's OpenAPI, the TypeScript
 route manifest, and the shared contract descriptor publish only the five
 `/api/v1` saved-query operations. The unsupported clients entered the

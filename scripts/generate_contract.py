@@ -248,7 +248,7 @@ def messagepack(manifest: dict) -> str:
         else:
             lines.append(f"public sealed record {name} : TerraScaleSyncMessage;\n")
     scan = manifest.get("scan", {})
-    lines += ["/// <summary>Language-neutral names and limits for terrascale.sync.v2.</summary>", "public static class TerraScaleSyncV2Contract", "{", f"    public const int ProtocolMajor = {manifest.get('protocolMajor', 0)};", f"    public const int ProtocolMinor = {manifest.get('protocolMinor', 0)};", f"    public const uint SupportedFeatures = {manifest.get('supportedFeatures', 0)}u;", "    public const int EnvelopeArity = 7;", f"    public const int MaxMessageBytes = {scan.get('maxMessageBytes', 0)};", f"    public const int MaxDepth = {scan.get('maxDepth', 0)};", f"    public const int MaxStringBytes = {scan.get('maxStringBytes', 0)};", f"    public const int MaxBinaryBytes = {scan.get('maxBinaryBytes', 0)};", f"    public const int MaxArrayItems = {scan.get('maxArrayItems', 0)};", f"    public const int MaxMapEntries = {scan.get('maxMapEntries', 0)};", f"    public const bool ExtensionsAllowed = {str(scan.get('extensionsAllowed', False)).lower()};", f"    public const bool Float32Allowed = {str(scan.get('float32Allowed', False)).lower()};", "    public static IReadOnlyList<TerraScaleMessageDescriptor> Messages { get; } = new[]", "    {"]
+    lines += ["/// <summary>Language-neutral names and limits for terrascale.sync.v1.</summary>", "public static class TerraScaleSyncV1Contract", "{", f"    public const int ProtocolMajor = {manifest.get('protocolMajor', 0)};", f"    public const int ProtocolMinor = {manifest.get('protocolMinor', 0)};", f"    public const uint SupportedFeatures = {manifest.get('supportedFeatures', 0)}u;", "    public const int EnvelopeArity = 7;", f"    public const int MaxMessageBytes = {scan.get('maxMessageBytes', 0)};", f"    public const int MaxDepth = {scan.get('maxDepth', 0)};", f"    public const int MaxStringBytes = {scan.get('maxStringBytes', 0)};", f"    public const int MaxBinaryBytes = {scan.get('maxBinaryBytes', 0)};", f"    public const int MaxArrayItems = {scan.get('maxArrayItems', 0)};", f"    public const int MaxMapEntries = {scan.get('maxMapEntries', 0)};", f"    public const bool ExtensionsAllowed = {str(scan.get('extensionsAllowed', False)).lower()};", f"    public const bool Float32Allowed = {str(scan.get('float32Allowed', False)).lower()};", "    public static IReadOnlyList<TerraScaleMessageDescriptor> Messages { get; } = new[]", "    {"]
     for message in manifest.get("messages", []):
         fields = "new string[] { " + ", ".join(string_literal(field["name"]) for field in message.get("fields", [])) + " }"
         lines.append(f"        new TerraScaleMessageDescriptor({string_literal(message['name'])}, {message['tag']}, {string_literal(message['direction'])}, {fields}),")
@@ -275,7 +275,7 @@ def generate(contract: Path, output: Path, version: str) -> dict[str, bytes]:
     manifest_bytes = manifest_path.read_bytes()
     manifest, _ = validate_bundle(contract, version)
     openapi = read_json(contract / "openapi.json")
-    msgpack = read_json(contract / "msgpack" / "terrascale.sync.v2.msgpack.json")
+    msgpack = read_json(contract / "msgpack" / "terrascale.sync.v1.msgpack.json")
     api = OpenApiGenerator(openapi)
     api.collect_inline()
     files = {

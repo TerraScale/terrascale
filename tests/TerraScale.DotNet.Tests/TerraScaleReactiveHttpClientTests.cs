@@ -179,7 +179,7 @@ public sealed class TerraScaleReactiveHttpClientTests
 
     private static byte[] Envelope(uint tag, ulong correlation = 0, byte[]? body = null, uint features = 0)
     {
-        var result = new List<byte> { 0x97, 0x02, 0x01, (byte)features, (byte)tag, 0, 0 };
+        var result = new List<byte> { 0x97, 0x01, 0x00, (byte)features, (byte)tag, 0, 0 };
         result.AddRange(body ?? Array.Empty<byte>());
         return result.ToArray();
     }
