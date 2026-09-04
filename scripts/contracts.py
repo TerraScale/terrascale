@@ -36,9 +36,15 @@ REQUIRED_ARTIFACTS = (
     "proto/terrabase/v1/engine.proto",
     "proto/terrabase/v1/family.proto",
 )
+# Conformance is published by the producer at the same seam as the contract.
+# Keep it in the installed bundle even while older draft manifests only list
+# the four protocol artifacts; a consumer must never silently reuse a stale
+# local corpus.
 CORPUS_FILES = (
-    "msgpack/message-vectors.json",
-    "msgpack/hostile-vectors.json",
+    "conformance/http.json",
+    "conformance/reactive.json",
+    "conformance/msgpack/message-vectors.json",
+    "conformance/msgpack/hostile-vectors.json",
 )
 
 
@@ -229,53 +235,62 @@ def validate_bundle(root: Path, version: str) -> tuple[dict, dict[str, str]]:
     return manifest, digests
 
 
-def validate_corpus(root: Path) -> dict[str, str]:
+def validate_corpus(root: Path, version: str | None = None) -> dict[str, str]:
     result = {}
     manifest_path = root / "msgpack/terrascale.sync.v2.msgpack.json"
     regular_file(manifest_path, "MessagePack manifest")
     manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     for relative in CORPUS_FILES:
-        path = root / relative
+        path = corpus_file(root, relative)
         regular_file(path, relative)
         if path.stat().st_size > MAX_CORPUS_BYTES:
             fail(f"corpus file is too large: {relative}")
         value = read_json(path)
-        vectors = value.get("vectors")
-        if not isinstance(vectors, list):
-            fail(f"corpus {relative} has no vector list")
-        if relative.endswith("message-vectors.json"):
-            if value.get("protocol") != "terrascale.sync.v2.msgpack" or value.get("version") != "2.1":
-                fail("MessagePack corpus identity is not 2.1")
-            if value.get("manifestSha256") != manifest_sha:
-                fail("MessagePack corpus pins a different manifest SHA-256")
-            if len(vectors) < 11:
-                fail("MessagePack corpus is incomplete")
-            for vector in vectors:
-                if not isinstance(vector, dict) or not isinstance(vector.get("hex"), str):
-                    fail("MessagePack corpus contains an invalid vector")
-                try:
-                    wire = bytes.fromhex(vector["hex"])
-                except ValueError:
-                    fail("MessagePack corpus contains non-hex wire data")
-                if not wire or len(wire) > MAX_CORPUS_BYTES:
-                    fail("MessagePack corpus contains an oversized wire vector")
+        if version is not None and value.get("contractVersion") != version:
+            fail(f"corpus {relative} pins a different contract version")
+        if relative.endswith("http.json"):
+            if value.get("schemaVersion") != 1 or not isinstance(value.get("operations"), list) or not value["operations"]:
+                fail("HTTP conformance fixture is incomplete")
+        elif relative.endswith("reactive.json"):
+            if value.get("schemaVersion") != 1 or not isinstance(value.get("attach"), dict):
+                fail("reactive conformance fixture is incomplete")
         else:
-            if len(vectors) < 10:
-                fail("hostile MessagePack corpus is incomplete")
-            for vector in vectors:
-                if not isinstance(vector, dict):
-                    fail("hostile corpus contains an invalid vector")
-                if "repeat" in vector:
-                    repeat = vector["repeat"]
-                    if not isinstance(repeat, dict) or not isinstance(repeat.get("count"), int) or repeat["count"] < 0 or repeat["count"] > MAX_CORPUS_BYTES:
-                        fail("hostile corpus repeat is outside the bound")
-                elif isinstance(vector.get("hex"), str):
+            vectors = value.get("vectors")
+            if not isinstance(vectors, list):
+                fail(f"corpus {relative} has no vector list")
+            if relative.endswith("message-vectors.json"):
+                if value.get("protocol") != "terrascale.sync.v2.msgpack" or value.get("version") != "2.1":
+                    fail("MessagePack corpus identity is not 2.1")
+                if value.get("manifestSha256") != manifest_sha:
+                    fail("MessagePack corpus pins a different manifest SHA-256")
+                if len(vectors) < 11:
+                    fail("MessagePack corpus is incomplete")
+                for vector in vectors:
+                    if not isinstance(vector, dict) or not isinstance(vector.get("hex"), str):
+                        fail("MessagePack corpus contains an invalid vector")
                     try:
-                        bytes.fromhex(vector["hex"])
+                        wire = bytes.fromhex(vector["hex"])
                     except ValueError:
-                        fail("hostile corpus contains non-hex wire data")
-                else:
-                    fail("hostile corpus contains an invalid vector")
+                        fail("MessagePack corpus contains non-hex wire data")
+                    if not wire or len(wire) > MAX_CORPUS_BYTES:
+                        fail("MessagePack corpus contains an oversized wire vector")
+            else:
+                if len(vectors) < 10:
+                    fail("hostile MessagePack corpus is incomplete")
+                for vector in vectors:
+                    if not isinstance(vector, dict):
+                        fail("hostile corpus contains an invalid vector")
+                    if "repeat" in vector:
+                        repeat = vector["repeat"]
+                        if not isinstance(repeat, dict) or not isinstance(repeat.get("count"), int) or repeat["count"] < 0 or repeat["count"] > MAX_CORPUS_BYTES:
+                            fail("hostile corpus repeat is outside the bound")
+                    elif isinstance(vector.get("hex"), str):
+                        try:
+                            bytes.fromhex(vector["hex"])
+                        except ValueError:
+                            fail("hostile corpus contains non-hex wire data")
+                    else:
+                        fail("hostile corpus contains an invalid vector")
         result[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
     return result
 
@@ -354,14 +369,36 @@ def load_producer(source: str, url: str, archive_sha256: str, temporary: Path) -
 
 
 def find_corpus(source: Path, explicit: str, existing: Path | None) -> Path:
-    for candidate in ([Path(explicit).expanduser()] if explicit else []):
-        reject_links_and_specials(candidate)
-        return candidate
-    if all((source / relative).is_file() for relative in CORPUS_FILES):
-        return source
-    if existing is not None and all((existing / relative).is_file() for relative in CORPUS_FILES):
-        return existing
+    candidates = [Path(explicit).expanduser()] if explicit else []
+    # A pre-publication terrabase checkout keeps the generated conformance
+    # directory beside its contracts directory. This is considered only after
+    # an explicit source has been supplied; no sibling inference is used to
+    # select a contract bundle.
+    candidates.extend([source, source.parent, source.parent / "conformance"])
+    if existing is not None:
+        candidates.append(existing)
+    seen: set[Path] = set()
+    for candidate in candidates:
+        candidate = candidate.absolute()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        # Accept either a contract root (conformance/...) or the conformance
+        # directory itself (http.json, reactive.json, msgpack/...).
+        if all(corpus_file(candidate, relative).is_file() for relative in CORPUS_FILES):
+            reject_links_and_specials(candidate)
+            return candidate
     fail("MessagePack corpus is missing; pass explicit CONTRACT_CORPUS_SOURCE")
+
+
+def corpus_file(root: Path, relative: str) -> Path:
+    candidates = [root / relative, root / relative.removeprefix("conformance/")]
+    if relative.startswith("conformance/msgpack/"):
+        candidates.append(root / "msgpack" / Path(relative).name)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return candidates[0]
 
 
 def write_provenance(root: Path, manifest: dict, digests: dict[str, str], corpus: dict[str, str]) -> None:
@@ -377,7 +414,7 @@ def write_provenance(root: Path, manifest: dict, digests: dict[str, str], corpus
             }
             for relative, digest in sorted(digests.items())
         },
-        "corpus": {relative: {"sha256": digest, "bytes": (root / relative).stat().st_size} for relative, digest in sorted(corpus.items())},
+        "corpus": {relative: {"sha256": digest, "bytes": corpus_file(root, relative).stat().st_size} for relative, digest in sorted(corpus.items())},
     }
     (root / "provenance.json").write_text(json.dumps(values, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -415,12 +452,14 @@ def install(version: str, source: str = "", url: str = "", archive_sha256: str =
         installed = False
         try:
             shutil.copytree(producer, staging, symlinks=False, dirs_exist_ok=True)
-            (staging / "msgpack").mkdir(exist_ok=True)
+            (staging / "conformance/msgpack").mkdir(parents=True, exist_ok=True)
             for relative in CORPUS_FILES:
-                shutil.copyfile(corpus / relative, staging / relative)
+                destination_file = staging / relative
+                destination_file.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(corpus_file(corpus, relative), destination_file)
             reject_links_and_specials(staging)
             manifest, digests = validate_bundle(staging, version)
-            corpus_digests = validate_corpus(staging)
+            corpus_digests = validate_corpus(staging, version)
             write_provenance(staging, manifest, digests, corpus_digests)
             if destination.exists():
                 backup = contracts_root / f".{version}.backup-{uuid.uuid4().hex}"
@@ -448,10 +487,10 @@ def install(version: str, source: str = "", url: str = "", archive_sha256: str =
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--version", default=os.environ.get("CONTRACT_VERSION", ""))
-    parser.add_argument("--source", default=os.environ.get("CONTRACT_SOURCE", ""))
-    parser.add_argument("--url", default=os.environ.get("CONTRACT_URL", ""))
-    parser.add_argument("--archive-sha256", default=os.environ.get("CONTRACT_ARCHIVE_SHA256", ""))
-    parser.add_argument("--corpus-source", default=os.environ.get("CONTRACT_CORPUS_SOURCE", ""))
+    parser.add_argument("--source", default=os.environ.get("CONTRACT_SOURCE") or os.environ.get("TERRASCALE_CONTRACT_SOURCE", ""))
+    parser.add_argument("--url", default=os.environ.get("CONTRACT_URL") or os.environ.get("TERRASCALE_CONTRACT_URL") or os.environ.get("CONTRACT_REGISTRY_URL") or os.environ.get("TERRASCALE_CONTRACT_REGISTRY_URL", ""))
+    parser.add_argument("--archive-sha256", default=os.environ.get("CONTRACT_ARCHIVE_SHA256") or os.environ.get("TERRASCALE_CONTRACT_ARCHIVE_SHA256") or os.environ.get("CONTRACT_BUNDLE_SHA256") or os.environ.get("TERRASCALE_CONTRACT_BUNDLE_SHA256", ""))
+    parser.add_argument("--corpus-source", default=os.environ.get("CONTRACT_CORPUS_SOURCE") or os.environ.get("TERRASCALE_CONTRACT_CORPUS_SOURCE", ""))
     args = parser.parse_args()
     try:
         install(args.version, args.source, args.url, args.archive_sha256, args.corpus_source)

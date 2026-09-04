@@ -2,8 +2,6 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Net.ServerSentEvents;
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
@@ -729,66 +727,6 @@ public sealed class TerraScaleClient
         }
     }
 
-    internal IAsyncEnumerable<TEvent> StreamServerSentEventsAsync<TEvent>(
-        string requestUri,
-        string eventName,
-        CancellationToken cancellationToken) =>
-        new GuardedServerSentEventEnumerable<TEvent>(
-            ReadServerSentEventsAsync<TEvent>(requestUri, eventName, cancellationToken));
-
-    private async IAsyncEnumerable<TEvent> ReadServerSentEventsAsync<TEvent>(
-        string requestUri,
-        string eventName,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        using var activity = StartActivity(HttpMethod.Get, requestUri);
-        HttpRequestMessage? request = null;
-        HttpResponseMessage? response = null;
-        Stream? stream = null;
-
-        try
-        {
-            request = new HttpRequestMessage(HttpMethod.Get, requestUri);
-            ApplyRequestVersion(request);
-            await ApplyAuthenticationAsync(request, cancellationToken).ConfigureAwait(false);
-            ApplyRequestHeaders(
-                request,
-                CreateRequestId(),
-                idempotencyKey: null);
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
-
-            response = await httpClient.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken).ConfigureAwait(false);
-            SetResponseTags(activity, response);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                activity?.SetStatus(ActivityStatusCode.Error, response.ReasonPhrase);
-                throw await TerraScaleApiException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
-            }
-
-            stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-            var parser = SseParser.Create(stream);
-
-            await foreach (var item in parser.EnumerateAsync(cancellationToken).ConfigureAwait(false))
-            {
-                if (string.Equals(item.EventType, eventName, StringComparison.Ordinal))
-                {
-                    yield return JsonSerializer.Deserialize<TEvent>(item.Data, jsonOptions)
-                        ?? throw new InvalidOperationException($"TerraScale SSE event '{eventName}' contained an empty payload.");
-                }
-            }
-        }
-        finally
-        {
-            DisposeIgnoringNotSupported(stream);
-            DisposeIgnoringNotSupported(response);
-            DisposeIgnoringNotSupported(request);
-        }
-    }
-
     private async Task<HttpResponseMessage> SendWithRetriesAsync(
         HttpMethod method,
         string requestUri,
@@ -1047,46 +985,6 @@ public sealed class TerraScaleClient
             throw new ArgumentException(
                 $"The serialized TerraScale operation exceeds the {MaxOperationBytes} byte limit.",
                 "body");
-        }
-    }
-
-    private sealed class GuardedServerSentEventEnumerable<TEvent>(
-        IAsyncEnumerable<TEvent> inner) : IAsyncEnumerable<TEvent>
-    {
-        public IAsyncEnumerator<TEvent> GetAsyncEnumerator(CancellationToken cancellationToken = default) =>
-            new GuardedServerSentEventEnumerator<TEvent>(inner.GetAsyncEnumerator(cancellationToken));
-    }
-
-    private sealed class GuardedServerSentEventEnumerator<TEvent>(
-        IAsyncEnumerator<TEvent> inner) : IAsyncEnumerator<TEvent>
-    {
-        private bool hasReadEvent;
-
-        public TEvent Current => inner.Current;
-
-        public async ValueTask<bool> MoveNextAsync()
-        {
-            try
-            {
-                var moved = await inner.MoveNextAsync().ConfigureAwait(false);
-                hasReadEvent |= moved;
-                return moved;
-            }
-            catch (NotSupportedException) when (hasReadEvent)
-            {
-                return false;
-            }
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            try
-            {
-                await inner.DisposeAsync().ConfigureAwait(false);
-            }
-            catch (NotSupportedException)
-            {
-            }
         }
     }
 
@@ -1445,22 +1343,6 @@ public sealed class TerraScaleClient
         response.Headers.TryGetValues("X-Request-Id", out var requestIds)
             ? requestIds.FirstOrDefault()
             : null;
-
-    private static void DisposeIgnoringNotSupported(IDisposable? disposable)
-    {
-        if (disposable is null)
-        {
-            return;
-        }
-
-        try
-        {
-            disposable.Dispose();
-        }
-        catch (NotSupportedException)
-        {
-        }
-    }
 
     private enum RequestAuthenticationMode
     {

@@ -49,16 +49,11 @@ public sealed class TerraScaleMediaTypeContractTests
             {
                 "/api/v1/databases" => "{\"databases\":[]}",
                 "/api/v1/regions" => "{\"region\":\"GRU\",\"healthy\":true}",
-                "/api/v1/repositories/repository-a/events" =>
-                    "event: document\ndata: {\"repositoryId\":\"repository-a\",\"repository\":\"orders\",\"collection\":\"orders\",\"id\":\"document-a\",\"type\":\"put\",\"changeToken\":null,\"observedAt\":\"2026-08-30T00:00:00Z\"}\n\n",
                 _ => throw new InvalidOperationException($"Unexpected media-type fixture route '{requestUri.AbsolutePath}'.")
             };
-            var mediaType = requestUri.AbsolutePath.EndsWith("/events", StringComparison.Ordinal)
-                ? "text/event-stream"
-                : "application/json";
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent(responseBody, Encoding.UTF8, mediaType)
+                Content = new StringContent(responseBody, Encoding.UTF8, "application/json")
             });
         }
     }
