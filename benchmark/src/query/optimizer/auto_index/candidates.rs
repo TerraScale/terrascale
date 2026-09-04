@@ -11,13 +11,28 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::Connection;
 
-use super::{Candidate, CandidateKind, ColumnSketch, PredicateKind, Template, WeightedTemplate};
+use super::{
+    Candidate, CandidateColumn, CandidateKind, CandidateSource, ColumnRole, ColumnSketch,
+    PredicateKind, Template, WeightedTemplate, equality_selectivity, estimated_width_bytes,
+};
 
 /// The maximum number of candidates one collection may retain.
 pub(crate) const MAX_CANDIDATES: usize = super::MAX_CANDIDATES_PER_COLLECTION;
 
 /// The maximum number of fields a hypothetical candidate may contain.
 pub(crate) const MAX_CANDIDATE_FIELDS: usize = super::super::MAX_DEFINITION_FIELDS;
+
+/// The scratch table may contain fields from predicates, ordering, and the
+/// projection.  Each input is bounded by the candidate field limit, so three
+/// bounded groups are the largest statement the compiler will construct.
+const MAX_HYPOTHETICAL_FIELDS: usize = MAX_CANDIDATE_FIELDS.saturating_mul(3);
+
+/// Fixed row count used to give SQLite a useful, deterministic cardinality
+/// without copying production data into the what-if connection.
+const HYPOTHETICAL_ROWS: usize = 256;
+
+/// Refuse unexpectedly large generated SQL before passing it to SQLite.
+const MAX_HYPOTHETICAL_SQL_BYTES: usize = 128 * 1024;
 
 /// Why candidate generation or hypothetical compilation refused to proceed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -55,29 +70,135 @@ pub(crate) trait HypotheticalCompiler {
 
 /// Generates the deterministic candidates for one weighted template.
 ///
-/// The underlying compatibility generator already applies the frozen order:
-/// equality prefix, one range field, ordering keys, and an optional covering
-/// tail.  This wrapper makes the bounds explicit and fails closed if a future
-/// generator ever returns an over-sized result rather than truncating it.
+/// Applies the frozen order: equality prefix, one range field, ordering keys,
+/// and an optional covering tail. Every emitted field must already be
+/// extracted; descriptor creation belongs to the write/schema path. Bounds
+/// are checked before and after construction, and no input is truncated.
 pub(crate) fn try_generate(
     template: &WeightedTemplate,
     sketches: &BTreeMap<(String, String), ColumnSketch>,
     extracted: &BTreeSet<String>,
 ) -> Result<Vec<Candidate>, CandidateError> {
     validate_template(template.template())?;
-    let candidates = super::candidates_for_template(template, sketches, extracted);
-    if candidates.iter().any(|candidate| {
-        !valid_identifier(candidate.collection())
-            || candidate.columns().iter().any(|column| !valid_identifier(column.field()))
-    }) {
-        return Err(CandidateError::InvalidIdentifier);
+    let inner = template.template();
+
+    // Candidates are executable only over STORED/extracted columns.  A
+    // missing descriptor is a separate write-path operation and must never be
+    // smuggled into an index proposal by this read-side generator.
+    if inner.has_full_text() {
+        let Some(field) = inner
+            .predicates()
+            .iter()
+            .find(|predicate| predicate.kind() == PredicateKind::FullText)
+            .map(|predicate| predicate.field())
+        else {
+            return Ok(Vec::new());
+        };
+        if !extracted.contains(field) {
+            return Ok(Vec::new());
+        }
+        let column = CandidateColumn::try_new(field, ColumnRole::Equality)
+            .map_err(|_| CandidateError::InvalidIdentifier)?;
+        return Ok(vec![Candidate {
+            collection: inner.collection().to_owned(),
+            columns: vec![column],
+            kind: CandidateKind::Fts,
+            source: CandidateSource::Workload,
+            needs_descriptor: false,
+            benefit_per_byte: template.weight().max(1.0),
+        }]);
     }
-    if candidates.len() > MAX_CANDIDATES
-        || candidates.iter().any(|candidate| candidate.columns().len() > MAX_CANDIDATE_FIELDS)
-    {
+
+    let mut columns = Vec::new();
+    let mut seen = BTreeSet::new();
+    for predicate in inner.predicates() {
+        if predicate.kind() != PredicateKind::Equality
+            || !extracted.contains(predicate.field())
+            || !seen.insert(predicate.field().to_owned())
+        {
+            continue;
+        }
+        columns.push(candidate_column(predicate.field(), ColumnRole::Equality)?);
+    }
+    if let Some(predicate) = inner.predicates().iter().find(|predicate| {
+        predicate.kind() == PredicateKind::Range
+            && extracted.contains(predicate.field())
+            && !seen.contains(predicate.field())
+    }) {
+        seen.insert(predicate.field().to_owned());
+        columns.push(candidate_column(predicate.field(), ColumnRole::Range)?);
+    }
+    for field in inner.ordering() {
+        if extracted.contains(field) && seen.insert(field.clone()) {
+            columns.push(candidate_column(field, ColumnRole::Order)?);
+        }
+    }
+    if columns.is_empty() {
+        return Ok(Vec::new());
+    }
+    if columns.len() > MAX_CANDIDATE_FIELDS {
+        return Err(CandidateError::BoundExceeded);
+    }
+
+    let width = estimated_width_bytes(&columns).max(1);
+    let prior = columns
+        .iter()
+        .filter(|column| column.role() == ColumnRole::Equality)
+        .map(|column| {
+            equality_selectivity(
+                sketches,
+                inner.collection(),
+                column.field(),
+                &crate::types::DocumentValue::Null,
+            )
+        })
+        .fold(1.0, |acc, selectivity| acc * (1.0 - selectivity * 0.5));
+    let base = Candidate {
+        collection: inner.collection().to_owned(),
+        columns: columns.clone(),
+        kind: CandidateKind::BTree,
+        source: CandidateSource::Workload,
+        needs_descriptor: false,
+        benefit_per_byte: (template.weight() * prior / width as f64).max(0.0),
+    };
+    let mut candidates = vec![base];
+
+    // The covering form appends only extracted projected fields.  Projection
+    // order is already canonicalized by Template::try_new; retaining it here
+    // makes output stable across runs and keeps the classic prefix intact.
+    if let Some(projection) = inner.projection() {
+        let mut covering = columns;
+        for field in projection {
+            if seen.contains(field) || !extracted.contains(field) {
+                continue;
+            }
+            covering.push(candidate_column(field, ColumnRole::Covering)?);
+            seen.insert(field.clone());
+        }
+        if covering.len() > MAX_CANDIDATE_FIELDS {
+            return Err(CandidateError::BoundExceeded);
+        }
+        let covering_width = estimated_width_bytes(&covering).max(1);
+        if covering.len() > candidates[0].columns.len() && covering_width <= width.saturating_mul(2)
+        {
+            candidates.push(Candidate {
+                collection: inner.collection().to_owned(),
+                columns: covering,
+                kind: CandidateKind::BTree,
+                source: CandidateSource::Workload,
+                needs_descriptor: false,
+                benefit_per_byte: (template.weight() * prior / covering_width as f64).max(0.0),
+            });
+        }
+    }
+    if candidates.len() > MAX_CANDIDATES {
         return Err(CandidateError::BoundExceeded);
     }
     Ok(candidates)
+}
+
+fn candidate_column(field: &str, role: ColumnRole) -> Result<CandidateColumn, CandidateError> {
+    CandidateColumn::try_new(field, role).map_err(|_| CandidateError::InvalidIdentifier)
 }
 
 /// Descriptive alias for integrations that use the operation's full name.
@@ -312,6 +433,12 @@ fn validate_candidate(candidate: &Candidate) -> Result<(), CandidateError> {
     if candidate.columns().is_empty() || candidate.columns().len() > MAX_CANDIDATE_FIELDS {
         return Err(CandidateError::BoundExceeded);
     }
+    let mut seen = BTreeSet::new();
+    for column in candidate.columns() {
+        if !seen.insert(column.field()) {
+            return Err(CandidateError::InvalidIdentifier);
+        }
+    }
     Ok(())
 }
 
@@ -328,7 +455,7 @@ fn template_fields(
         fields.extend(projection.iter().cloned());
     }
     fields.extend(candidate.columns().iter().map(|column| column.field().to_owned()));
-    if fields.is_empty() || fields.len() > MAX_CANDIDATE_FIELDS {
+    if fields.is_empty() || fields.len() > MAX_HYPOTHETICAL_FIELDS {
         return Err(CandidateError::BoundExceeded);
     }
     if fields.iter().any(|field| !valid_identifier(field)) {
@@ -347,12 +474,20 @@ fn push_identifier(sql: &mut String, identifier: &str) {
     }
 }
 
+fn quote_identifier(identifier: &str) -> String {
+    let mut quoted = String::with_capacity(identifier.len().saturating_add(2));
+    quoted.push('"');
+    push_identifier(&mut quoted, identifier);
+    quoted.push('"');
+    quoted
+}
+
 fn query_for(template: &Template, fields: &[String]) -> Result<String, CandidateError> {
     let projection = template
         .projection()
         .filter(|projection| !projection.is_empty())
         .map(|projection| {
-            projection.iter().map(|field| format!("\"{field}\"")).collect::<Vec<_>>().join(",")
+            projection.iter().map(|field| quote_identifier(field)).collect::<Vec<_>>().join(",")
         })
         .unwrap_or_else(|| "*".to_owned());
     let mut query = format!("SELECT {projection} FROM \"__terrabase_hypothetical\"");
@@ -365,7 +500,7 @@ fn query_for(template: &Template, fields: &[String]) -> Result<String, Candidate
             PredicateKind::FullText => return Err(CandidateError::UnsupportedCandidate),
             PredicateKind::Other => continue,
         };
-        conditions.push(format!("\"{}\" {operator} ?{parameter}", predicate.field()));
+        conditions.push(format!("{} {operator} ?{parameter}", quote_identifier(predicate.field())));
         parameter += 1;
     }
     if !conditions.is_empty() {
@@ -378,14 +513,26 @@ fn query_for(template: &Template, fields: &[String]) -> Result<String, Candidate
             &template
                 .ordering()
                 .iter()
-                .map(|field| format!("\"{field}\" ASC"))
+                .map(|field| format!("{} ASC", quote_identifier(field)))
                 .collect::<Vec<_>>()
                 .join(","),
         );
     }
     // Keep this argument meaningful at the validation boundary: all fields
     // named by the generated statement must come from the scratch schema.
-    if !conditions.iter().all(|condition| fields.iter().any(|field| condition.contains(field))) {
+    let known_fields = fields.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    if template
+        .predicates()
+        .iter()
+        .filter(|predicate| {
+            !matches!(predicate.kind(), PredicateKind::FullText | PredicateKind::Other)
+        })
+        .any(|predicate| !known_fields.contains(predicate.field()))
+        || template.ordering().iter().any(|field| !known_fields.contains(field.as_str()))
+        || template.projection().is_some_and(|projection| {
+            projection.iter().any(|field| !known_fields.contains(field.as_str()))
+        })
+    {
         return Err(CandidateError::InvalidIdentifier);
     }
     Ok(query)
@@ -419,8 +566,15 @@ mod tests {
             Some(vec!["id".into(), "total".into()]),
         )
         .expect("template");
-        let result = try_generate(&weighted(template), &BTreeMap::new(), &BTreeSet::new())
-            .expect("candidate");
+        let extracted = BTreeSet::from([
+            String::from("tenant"),
+            String::from("state"),
+            String::from("total"),
+            String::from("created"),
+            String::from("id"),
+        ]);
+        let result =
+            try_generate(&weighted(template), &BTreeMap::new(), &extracted).expect("candidate");
         assert_eq!(result.len(), 2, "base and covering candidates");
         let fields = result[0].fields();
         assert_eq!(fields, vec!["tenant", "state", "total", "created"]);
@@ -439,7 +593,10 @@ mod tests {
             })
             .collect();
         let template = Template::try_new("orders", predicates, Vec::new(), None).expect("template");
-        let error = try_generate(&weighted(template), &BTreeMap::new(), &BTreeSet::new())
+        let extracted = (0..=MAX_CANDIDATE_FIELDS)
+            .map(|index| format!("field{index}"))
+            .collect::<BTreeSet<_>>();
+        let error = try_generate(&weighted(template), &BTreeMap::new(), &extracted)
             .expect_err("bound refusal");
         assert_eq!(error, CandidateError::BoundExceeded);
     }
@@ -457,11 +614,14 @@ mod tests {
             None,
         )
         .expect("template");
-        let candidate =
-            try_generate(&weighted(template.clone()), &BTreeMap::new(), &BTreeSet::new())
-                .expect("candidate")
-                .pop()
-                .expect("candidate");
+        let candidate = try_generate(
+            &weighted(template.clone()),
+            &BTreeMap::new(),
+            &BTreeSet::from([String::from("state")]),
+        )
+        .expect("candidate")
+        .pop()
+        .expect("candidate");
         let mut compiler = SqliteHypotheticalCompiler::new(2).expect("compiler");
         assert_eq!(
             compiler.compile_checked(&template, &candidate, 1),
@@ -478,11 +638,14 @@ mod tests {
             None,
         )
         .expect("template");
-        let candidate =
-            try_generate(&weighted(template.clone()), &BTreeMap::new(), &BTreeSet::new())
-                .expect("candidate")
-                .pop()
-                .expect("candidate");
+        let candidate = try_generate(
+            &weighted(template.clone()),
+            &BTreeMap::new(),
+            &BTreeSet::from([String::from("state")]),
+        )
+        .expect("candidate")
+        .pop()
+        .expect("candidate");
         let mut compiler = SqliteHypotheticalCompiler::default();
         let decision = compiler.compile(&template, &candidate);
         assert!(matches!(decision, CompileDecision::Used | CompileDecision::NotUsed));
