@@ -70,6 +70,8 @@ ulid = { version = "1", default-features = false }
 # native bundled engine and prepared-statement cache explicitly; rusqlite's
 # default wasm VFS is not part of this native server product.
 rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "cache"] }
+# D-54/E-4: validate the public SQL AST before authorization or planning.
+sqlparser = { version = "0.62.0", features = ["visitor"] }
 
 
 [target.'cfg(all(target_arch = "aarch64", target_os = "linux"))'.dependencies]

@@ -2334,7 +2334,7 @@ mod tests {
         let backup_root = std::env::temp_dir().join("terrabase-api-test-backup-root");
         let timetravel = Arc::new(crate::backup::TimeTravelCache::new(
             Arc::clone(&backups),
-            backup_root.clone(),
+            &backup_root,
         ));
         Arc::new(ApiState {
             region: RegionCode::GRU,
@@ -2374,7 +2374,7 @@ mod tests {
         let backups = Arc::new(crate::backup::BackupStreams::open_member());
         let timetravel = Arc::new(crate::backup::TimeTravelCache::new(
             Arc::clone(&backups),
-            dir.join("backup-timetravel"),
+            &dir.join("backup-timetravel"),
         ));
         Arc::new(ApiState {
             region: RegionCode::GRU,
@@ -2516,7 +2516,7 @@ mod tests {
         // (schema-init segments already in it don't count).
         let wal = backup_root.join("live").join("ltx").join("0");
         let shipped = |dir: &std::path::Path| {
-            std::fs::read_dir(dir).map(|entries| entries.flatten().count()).unwrap_or(0)
+            std::fs::read_dir(dir).map_or(0, |entries| entries.flatten().count())
         };
         let baseline = shipped(&wal);
         let response = router
@@ -2605,7 +2605,7 @@ mod tests {
         let id = DocumentId::try_new("orders/first").expect("the document id parses");
         let headers = axum::http::HeaderMap::new();
         let ten_days_ago_millis =
-            (super::unix_now_seconds().saturating_sub(10 * 86_400) as i64) * 1000;
+            super::unix_now_seconds().saturating_sub(10 * 86_400).cast_signed() * 1000;
 
         let refused = super::time_travel_document(
             &state,
@@ -2687,7 +2687,7 @@ mod tests {
         // the segment count must grow past the pre-write baseline.
         let wal = backup_root.join("tt").join("ltx").join("0");
         let shipped = |dir: &std::path::Path| {
-            std::fs::read_dir(dir).map(|entries| entries.flatten().count()).unwrap_or(0)
+            std::fs::read_dir(dir).map_or(0, |entries| entries.flatten().count())
         };
         let wait_for_ship = |baseline: usize, what: &str| {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);

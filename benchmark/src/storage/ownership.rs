@@ -276,9 +276,10 @@ fn validate_location(location: &Path) -> Result<(), OwnershipError> {
             has_database = true;
             continue;
         }
-        if name == format!("{DATABASE_FILE}-wal")
-            || name == format!("{DATABASE_FILE}-shm")
-            || name == format!("{DATABASE_FILE}-journal")
+        if name
+            .to_str()
+            .and_then(|name| name.strip_prefix(DATABASE_FILE))
+            .is_some_and(|suffix| matches!(suffix, "-wal" | "-shm" | "-journal"))
         {
             if !entry_type.is_file() {
                 return Err(OwnershipError::ForeignLocation);
@@ -292,7 +293,7 @@ fn validate_location(location: &Path) -> Result<(), OwnershipError> {
         return Err(OwnershipError::ForeignLocation);
     }
     if has_companion && !has_database {
-            return Err(OwnershipError::ForeignLocation);
+        return Err(OwnershipError::ForeignLocation);
     }
     Ok(())
 }
@@ -446,8 +447,21 @@ mod tests {
     fn local_owner_is_created_once_and_recovered() {
         let path = location("restart");
         let first = load_or_create(&path, None, OwnershipMode::LocalDevelopment).expect("create");
+        fs::write(path.join(DATABASE_FILE), b"sqlite-owned-by-test").expect("database fixture");
         let second = load_or_create(&path, None, OwnershipMode::LocalDevelopment).expect("read");
         assert_eq!(first, second);
+        assert!(!path.join("format").exists(), "ownership needs no backend selector");
+        let _ = fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn sqlite_files_without_an_owner_are_never_adopted() {
+        let path = location("orphan");
+        fs::write(path.join(DATABASE_FILE), b"orphaned").expect("database fixture");
+        assert_eq!(
+            load_or_create(&path, None, OwnershipMode::LocalDevelopment),
+            Err(OwnershipError::ForeignLocation)
+        );
         let _ = fs::remove_dir_all(path);
     }
 

@@ -7,8 +7,9 @@
 //! collection-query runner (AX-1). Every other execution selects the best
 //! available index, prefers an explicit index that equivalently serves the
 //! query over any auto index (ADR 0010 D-3), and creates a deterministic
-//! `Auto/` index when nothing serves the query (D-2). TQL lowers through the
-//! same compile seam, so lowered plans select through this one path.
+//! `Auto/` index when nothing serves the query (D-2). SQL text plans
+//! through the same compile seam once E-4 lands, so planned SQL selects
+//! through this one path.
 //!
 //! # Recorded selections (D-1)
 //!

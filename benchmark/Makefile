@@ -1,10 +1,3 @@
-# TerraBase make contracts (Wave-0 foundation, track item E-1; D-47).
-#
-# `make check` is the repository verification set, exactly what CI runs.
-# `make contracts` regenerates the published contract artifacts in place;
-# registry publish arrives with the full E-1 publish.
-# `make stack` is the local three-member harness (track item E-15).
-
 .PHONY: check contracts stack
 
 check:
@@ -19,11 +12,13 @@ check:
 		(cd terrabase-go && go vet ./... && go test -race ./...); \
 	fi
 
+CONTRACT_VERSION ?= v1
+
 contracts:
-	mkdir -p contracts/protos/terrabase/v1
-	cargo run --locked -p terrabase-server --bin terrabase-openapi -- contracts/openapi.json
-	cp crates/terrabase-tbep/proto/terrabase/v1/engine.proto contracts/protos/terrabase/v1/engine.proto
-	cp crates/terrabase-tbep/proto/terrabase/v1/family.proto contracts/protos/terrabase/v1/family.proto
+	cargo run --quiet --locked -p terrabase-server --bin terrabase-contracts -- \
+		--repository-root . \
+		--output contracts \
+		--version "$(CONTRACT_VERSION)"
 
 stack:
 	@echo "NOT-IMPLEMENTED: the local three-member harness is track item E-15 (after E-3, E-5, E-6); this target fails closed until it lands." >&2

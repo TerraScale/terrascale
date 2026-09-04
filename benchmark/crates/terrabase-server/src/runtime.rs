@@ -240,7 +240,7 @@ async fn serve_public_api(
     let backup_root = public.data_root.join("backup");
     let timetravel = Arc::new(crate::backup::TimeTravelCache::new(
         Arc::clone(&backups),
-        backup_root.join("timetravel"),
+        &backup_root.join("timetravel"),
     ));
     let state = Arc::new(crate::api::ApiState {
         region,

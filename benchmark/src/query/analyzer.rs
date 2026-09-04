@@ -25,7 +25,7 @@
 //!    compiles user analyzer source at deployment; V2 rejects that entire
 //!    execution model — the charter's no-arbitrary-code rule
 //!    (PD-2026-08-26-08 D2) applied to the analysis surface, the same rule
-//!    that replaced RQL's JavaScript projections with typed TQL
+//!    that replaced RQL's JavaScript projections with typed
 //!    expressions.
 //! 2. **Bounded tokenization.** Input size, term size, and token count are
 //!    each capped by a named constant, and every cap refuses with a typed
@@ -55,9 +55,9 @@ use super::spec::validate_field_name;
 
 /// The identity prefix of the analyzer contract version.
 ///
-/// Mirrors the TQL grammar version and the index-definition language
-/// version (`tql/`, `idx/`): one version identity per artifact, carried by
-/// every term vector this contract produces and accepted from nowhere else.
+/// Mirrors the index-definition language version (`idx/`): one version
+/// identity per artifact, carried by every term vector this contract
+/// produces and accepted from nowhere else.
 pub const ANALYZER_LANGUAGE_PREFIX: &str = "analyzer/";
 
 /// The analyzer and term-vector contract version this engine speaks.
@@ -817,8 +817,7 @@ impl TermVector {
     /// This is the inbound seam for a stored or wire-carried term vector:
     /// a vector authored against any other `analyzer/MAJOR.MINOR`
     /// identity — older, newer, or malformed — is refused whole, exactly
-    /// as an unknown TQL grammar version or index-definition language
-    /// version is.
+    /// as an unknown index-definition language version is.
     ///
     /// # Errors
     ///

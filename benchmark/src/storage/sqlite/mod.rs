@@ -259,7 +259,7 @@ fn text_column(field: &str) -> String {
 
 /// Returns the numeric-column name of one extracted field: integers and
 /// floats live here (integers stored as INTEGER, floats as REAL — `SQLite`
-/// compares the two numerically, the `tql/1.0` number rule).
+/// compares the two numerically, the SQL number rule).
 fn numeric_column(field: &str) -> String {
     format!("f:{field}#n")
 }
@@ -612,15 +612,8 @@ impl SqliteStorage {
         writer.execute_batch(SCHEMA).map_err(|_| StorageOpenError::Unavailable)?;
         migrate_documents_provenance(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         migrate_documents_ttl(&writer).map_err(|()| StorageOpenError::Unavailable)?;
-        // The SQLite schema is authoritative. Remove the retired external
-        // selector's in-database companion if an earlier development build
-        // wrote it, then seed the publication identity idempotently.
-        writer
-            .execute(
-                "DELETE FROM meta WHERE key = 'format_version'",
-                [],
-            )
-            .map_err(|_| StorageOpenError::Unavailable)?;
+        // The SQLite schema is authoritative; the metadata table carries only
+        // runtime state, never a backend selector.
         writer
             .execute(
                 "INSERT OR IGNORE INTO meta (key, value) VALUES ('root_head', ?1)",

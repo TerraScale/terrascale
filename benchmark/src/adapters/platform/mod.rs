@@ -327,7 +327,7 @@ pub(crate) trait PlatformPort {
 ///
 /// The match is exhaustive over the closed registry with no wildcard arm, so
 /// a new variant that carries a tenant claim fails compilation until it is
-/// checked here. The V1-compatible query form and family reads carry no
+/// checked here. The SQL text form and family reads carry no
 /// tenant claim: the derived backend scope is their only tenant input, so
 /// there is nothing else to compare for them.
 fn enforce_tenant_isolation(
@@ -340,9 +340,9 @@ fn enforce_tenant_isolation(
         PublicOperation::DocumentWrite(request) => request.tenant_claim() != tenant,
         PublicOperation::Query(request) => match request.input() {
             QueryInput::Typed(spec) => spec.tenant_claim() != tenant,
-            // The grammar's forms bind the tenant at execution, not in
+            // SQL text binds the tenant at execution, not in
             // the text.
-            QueryInput::Tql(_) | QueryInput::TqlBounded { .. } => false,
+            QueryInput::Sql(_) | QueryInput::SqlBounded { .. } => false,
         },
         PublicOperation::Family(FamilyOperation::Read(_)) => false,
         PublicOperation::Family(FamilyOperation::Write(request)) => {

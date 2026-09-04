@@ -18,7 +18,7 @@
 //! accepted 16-byte unsigned big-endian binary form ([`Ulid::to_bytes`]),
 //! compared in unsigned lexicographic byte order, which is the ULID
 //! chronological order. Private TBEP protobuf fields carry the 16 binary
-//! bytes; REST, logs, operator displays, and TQL literals carry the canonical
+//! bytes; REST, logs, operator displays, and SQL literals carry the canonical
 //! text (ADR 0027).
 //!
 //! The typed newtypes below are the ADR's entity list. Each wraps the 16-byte

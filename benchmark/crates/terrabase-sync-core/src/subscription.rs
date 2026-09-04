@@ -1,7 +1,7 @@
 //! Subscription keys and the interval structure that matches committed
 //! rows against them (`S-04`, D-46).
 //!
-//! A subscription is a planned TQL query plus its dependency keys: the
+//! A subscription is a planned SQL query plus its dependency keys: the
 //! `(collection, index field, value range)` triples its plan reads. Each
 //! committed row is matched against those keys using the extracted values
 //! the write path already produced — no re-planning per write — and every
@@ -163,6 +163,7 @@ impl IntervalTree {
         self.entries.is_empty()
     }
 
+    #[cfg(test)]
     fn contains(&self, owner: u64, key: &DependencyKey) -> bool {
         self.entries.iter().any(|entry| entry.owner == owner && &entry.key == key)
     }
@@ -389,6 +390,8 @@ mod tests {
     use super::DependencyIndex;
     use super::DependencyKey;
     use super::FieldValue;
+    use super::IntervalTree;
+    use super::RangeEnd;
     use super::ValueRange;
 
     fn key(collection: &str, field: &str, range: ValueRange) -> DependencyKey {
@@ -521,5 +524,69 @@ mod tests {
         let row = CommittedRow { collection: "orders", document: "o-1", extracted: Vec::new() };
         // No extracted value for `status`: the row cannot prove membership.
         assert!(index.match_row(&row).is_empty());
+    }
+
+    #[test]
+    fn interval_tree_prunes_disjoint_ranges_for_a_point_query() {
+        let mut tree = IntervalTree::default();
+        for owner in 0..2_047_u32 {
+            tree.insert(
+                key("orders", "total", ValueRange::equals(FieldValue::Number(f64::from(owner)))),
+                u64::from(owner),
+            );
+        }
+
+        let (affected, visited) = tree.match_point_counted(&FieldValue::Number(1_023.5));
+        assert!(affected.is_empty());
+        assert!(
+            visited <= 24,
+            "a point query visited {visited} of 2,047 disjoint intervals instead of pruning"
+        );
+    }
+
+    #[test]
+    fn interval_tree_preserves_open_closed_and_unbounded_ranges() {
+        let mut tree = IntervalTree::default();
+        tree.insert(
+            key(
+                "orders",
+                "total",
+                ValueRange {
+                    start: RangeEnd::Unbounded,
+                    end: RangeEnd::Excluded(FieldValue::Number(10.0)),
+                },
+            ),
+            1,
+        );
+        tree.insert(
+            key(
+                "orders",
+                "total",
+                ValueRange {
+                    start: RangeEnd::Included(FieldValue::Number(10.0)),
+                    end: RangeEnd::Unbounded,
+                },
+            ),
+            2,
+        );
+        tree.insert(
+            key(
+                "orders",
+                "total",
+                ValueRange {
+                    start: RangeEnd::Excluded(FieldValue::Number(5.0)),
+                    end: RangeEnd::Included(FieldValue::Number(10.0)),
+                },
+            ),
+            3,
+        );
+
+        let (mut below, _) = tree.match_point_counted(&FieldValue::Number(9.0));
+        below.sort_unstable();
+        assert_eq!(below, [1, 3]);
+
+        let (mut boundary, _) = tree.match_point_counted(&FieldValue::Number(10.0));
+        boundary.sort_unstable();
+        assert_eq!(boundary, [2, 3]);
     }
 }

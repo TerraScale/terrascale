@@ -296,7 +296,7 @@ impl Ulid {
 
     /// Returns the one accepted text form as an owned string: exactly
     /// [`ULID_TEXT_LENGTH`] uppercase Crockford characters. REST, logs,
-    /// operator displays, and TQL literals carry this form.
+    /// operator displays, and SQL literals carry this form.
     #[must_use]
     pub fn to_text(self) -> String {
         let mut buffer = [0; ULID_TEXT_LENGTH];

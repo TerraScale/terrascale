@@ -4,8 +4,8 @@
 //! (`try_new` or a named builder) and observed only through read-only
 //! accessors. None of them accepts a route, arbitrary SQL, a generic map, or
 //! generic bytes: the raw-query escape hatch is the separately validated
-//! [`TqlQueryText`](crate::operations::TqlQueryText), which normalizes through
-//! the same compile seam as these typed values.
+//! [`SqlQueryText`](crate::operations::SqlQueryText), which validates
+//! through the read-only front end.
 
 use super::includes::IncludeClause;
 use crate::families::{TimeSeriesPaging, TimeSeriesRange};

@@ -87,7 +87,7 @@ pub(crate) enum SnapshotReadError {
 
 /// One pushable condition of a collection scan filter (D-42): a scalar
 /// comparison against one field's extracted index column. The comparison
-/// semantics are `tql/1.0`'s: strings compare by code point, numbers compare
+/// semantics are SQL's: strings compare by code point, numbers compare
 /// numerically across int/float, and a condition whose value kind the
 /// extracted columns do not carry is never pushed.
 #[derive(Clone, Debug, PartialEq)]

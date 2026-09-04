@@ -18,7 +18,7 @@
 //! closed with a typed, content-safe error: an error names the violated
 //! rule, never a document value.
 //!
-//! Versioning follows the TQL pattern: every definition carries the
+//! Versioning follows the SQL front-end pattern: every definition carries the
 //! `idx/MAJOR.MINOR` language version it was authored against, and the
 //! engine accepts only the version it speaks — any other version fails
 //! closed before any other validation runs. Additive grammar changes bump

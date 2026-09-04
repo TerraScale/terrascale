@@ -1,27 +1,25 @@
 //! SQL text validation for the read-only query endpoint (D-78/D-54).
 //!
-//! SQL is the only query language. This module is the fail-closed front end
-//! the SQL planner (track item **E-4**) replaces with the full allow-list
-//! parser, collection-as-table model, live-subset classification, and
-//! hypothetical-index planning.
-//!
-//! What this stub owns:
+//! SQL is the only query language. This module is the fail-closed E-4 front
+//! end. It parses SQLite syntax into an AST and validates every nested query
+//! before authorization or planning sees it.
 //!
 //! - [`SqlQueryText`] validation through [`validate_sql_text`]: non-empty,
 //!   bounded by [`MAX_SQL_TEXT_BYTES`](crate::operations::MAX_SQL_TEXT_BYTES),
-//!   and shaped as read-only SQL (`SELECT`, `WITH`, or `EXPLAIN` first
-//!   keyword; no DDL, DML, pragma, attachment, or multi-statement text).
+//!   and parsed as one read-only `SELECT`, `WITH ... SELECT`, or
+//!   `EXPLAIN [QUERY PLAN] SELECT` statement.
 //! - [`SqlParameters`]: named, typed, out-of-band bindings. Values are data,
 //!   never parsed text, so a binding can never inject a clause.
 //! - [`SqlError`] / [`SqlErrorClass`]: the typed refusals the endpoint and
 //!   the planner share.
-//!
-//! What this stub does NOT do (E-4): parse SQL into a plan. Authorization
-//! compilation and index derivation operate on the typed AST
-//! ([`QuerySpec`](super::QuerySpec) / `NormalizedQuery`), which is the SQL
-//! AST surface until E-4 lands its parser. Compiling [`SqlQueryText`]
-//! through [`QueryStore::compile`](super::QueryStore::compile) fails closed
-//! with [`QueryError::InvalidSpec`](super::QueryError::InvalidSpec).
+
+use std::ops::ControlFlow;
+
+use sqlparser::{
+    ast::{DescribeAlias, Expr, ObjectName, Statement, TableFactor, Visit, Visitor},
+    dialect::SQLiteDialect,
+    parser::Parser,
+};
 
 use crate::types::DocumentValue;
 
@@ -31,6 +29,17 @@ use crate::types::DocumentValue;
 /// this constant exists so error messages and the endpoint can name what was
 /// validated.
 pub const SQL_DIALECT: &str = "sql/sqlite-readonly";
+
+/// The admitted top-level SQL shape.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SqlStatementKind {
+    /// A `SELECT` without a leading common-table expression.
+    Select,
+    /// A `WITH ... SELECT` query.
+    With,
+    /// An `EXPLAIN SELECT` or `EXPLAIN QUERY PLAN SELECT` query.
+    Explain,
+}
 
 /// The fail-closed refusal classes of the SQL front end.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,6 +52,15 @@ pub enum SqlErrorClass {
     /// The text carries a forbidden keyword (DDL, DML, pragma, attachment,
     /// or any non-deterministic escape hatch).
     ForbiddenKeyword,
+    /// A volatile, connection-specific, or host-sensitive function appeared
+    /// anywhere in the query tree.
+    ForbiddenFunction,
+    /// A qualified name or SQLite-private relation appeared anywhere in the
+    /// query tree.
+    ForbiddenRelation,
+    /// A table-valued function could reach a PRAGMA, extension, virtual
+    /// table, or host-specific source.
+    ForbiddenTableFunction,
     /// A `$name` reference has no binding.
     UnboundParameter,
     /// A binding is never referenced.
@@ -59,6 +77,33 @@ pub struct SqlError {
     class: SqlErrorClass,
     position: Option<usize>,
     construct: Option<String>,
+}
+
+/// One parsed SQL statement that passed the D-54 allow-list.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParsedSql {
+    text: String,
+    kind: SqlStatementKind,
+    statement: Statement,
+}
+
+impl ParsedSql {
+    /// Returns the caller's SQL text unchanged.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.text
+    }
+
+    /// Returns the admitted top-level statement shape.
+    #[must_use]
+    pub const fn kind(&self) -> SqlStatementKind {
+        self.kind
+    }
+
+    /// Returns the parsed tree to the crate-private planner seam.
+    pub(crate) const fn statement(&self) -> &Statement {
+        &self.statement
+    }
 }
 
 impl SqlError {
@@ -205,11 +250,7 @@ pub fn validate_text(text: &str, max_bytes: usize) -> Result<(), SqlError> {
     }
     for keyword in FORBIDDEN_KEYWORDS {
         if contains_keyword(stripped, keyword) {
-            return Err(SqlError::at(
-                SqlErrorClass::ForbiddenKeyword,
-                0,
-                keyword,
-            ));
+            return Err(SqlError::at(SqlErrorClass::ForbiddenKeyword, 0, keyword));
         }
     }
     Ok(())
@@ -217,9 +258,29 @@ pub fn validate_text(text: &str, max_bytes: usize) -> Result<(), SqlError> {
 
 /// Keywords the read-only endpoint never accepts (D-54 allow-list).
 const FORBIDDEN_KEYWORDS: &[&str] = &[
-    "insert", "update", "delete", "merge", "replace", "upsert", "create", "drop", "alter",
-    "truncate", "attach", "detach", "pragma", "vacuum", "reindex", "analyze", "grant", "revoke",
-    "begin", "commit", "rollback", "savepoint", "release",
+    "insert",
+    "update",
+    "delete",
+    "merge",
+    "replace",
+    "upsert",
+    "create",
+    "drop",
+    "alter",
+    "truncate",
+    "attach",
+    "detach",
+    "pragma",
+    "vacuum",
+    "reindex",
+    "analyze",
+    "grant",
+    "revoke",
+    "begin",
+    "commit",
+    "rollback",
+    "savepoint",
+    "release",
 ];
 
 /// Skips leading whitespace and `--` / `/* */` comments.
@@ -288,9 +349,7 @@ fn contains_keyword(text: &str, keyword: &str) -> bool {
             {
                 index += 1;
             }
-            if text[start..index].eq_ignore_ascii_case(keyword)
-                && !needle.is_empty()
-            {
+            if text[start..index].eq_ignore_ascii_case(keyword) && !needle.is_empty() {
                 return true;
             }
             continue;
