@@ -114,9 +114,8 @@ use crate::types::{
     OperationId, StorageSequence, TenantId,
 };
 use crate::usage::{
-    DurableUsageFact, MAX_ADMITTED_REQUEST_UNITS_PER_FACT, MAX_PUBLIC_EGRESS_BYTES_PER_FACT,
-    MAX_USAGE_PAGE_SIZE, MeasurementWindow, MeterCatalog, MeterKind, MintingIdentity, MintingRule,
-    UsageFact,
+    DurableUsageFact, MAX_DOCUMENT_WRITE_UNITS_PER_FACT, MAX_USAGE_PAGE_SIZE, MeasurementWindow,
+    MeterCatalog, MeterKind, MintingIdentity, MintingRule, UsageFact,
 };
 
 #[cfg(test)]
@@ -1827,12 +1826,23 @@ fn stage_intent(
     if intent.writes.is_empty() || codec::staged_writes_have_duplicate_targets(&intent.writes) {
         return Ok(CommitResult::Rejected(CommitRejection::Validation));
     }
-    // The `SQLite` backend mints no usage facts yet, so it refuses an
-    // admission-bound intent exactly as the root-file backend does instead
-    // of silently dropping billable evidence.
-    if intent.usage_admission.is_some() {
-        return Ok(CommitResult::Rejected(CommitRejection::Storage));
-    }
+    // An admitted mutation must be locally synced: its billable fact is
+    // bound to this transaction's durable sequence. The admission identity
+    // is also the operation identity, so retries can verify the exact fact
+    // instead of minting a second one.
+    let admitted_fact = if let Some(admission) = &intent.usage_admission {
+        if intent.durability != LocalDurability::Synced
+            || admission.request_id().as_str() != intent.operation.as_str()
+        {
+            return Ok(CommitResult::Rejected(CommitRejection::Validation));
+        }
+        let Ok(fact) = admission.fact_for(intent.tenant.clone()) else {
+            return Ok(CommitResult::Rejected(CommitRejection::Validation));
+        };
+        Some(fact)
+    } else {
+        None
+    };
     // The row identity and provenance a replicated intent carries: the
     // SOURCE region's commit identity rides the `commit_ulid` column — the
     // operation-id-to-write-set binding resolves by it, so a re-applied
@@ -1870,6 +1880,25 @@ fn stage_intent(
     {
         if entry.digest != intent.digest {
             return Ok(CommitResult::Rejected(CommitRejection::OperationIdReuse));
+        }
+        if entry.rejection.is_none()
+            && let Some(fact) = &admitted_fact
+        {
+            // A committed replay must find the exact durable fact this
+            // identity minted, including its original commit sequence.
+            let Some(expected) = DurableUsageFact::try_new(fact.clone(), entry.sequence, 1).ok()
+            else {
+                return Ok(CommitResult::Rejected(CommitRejection::Storage));
+            };
+            let minted = match usage_fact_body(transaction, expected.fact())? {
+                Some(body) => {
+                    DurableUsageFact::decode(&body).is_ok_and(|durable| durable == expected)
+                }
+                None => false,
+            };
+            if !minted {
+                return Ok(CommitResult::Rejected(CommitRejection::Storage));
+            }
         }
         if let Some(reason) = entry.rejection {
             // A durably rejected identity replays its rejection, never a
@@ -1975,6 +2004,41 @@ fn stage_intent(
     };
     *watermark = sequence;
     let root = chained_root(root_head, sequence, intent.digest);
+    // Mint admission accounting inside the same transaction as the folded
+    // document rows and operation fact. A rollback therefore drops both the
+    // billable evidence and the mutation; identity reuse is refused before
+    // any row is written.
+    if let Some(fact) = &admitted_fact {
+        if usage_fact_body(transaction, fact)?.is_some() {
+            return Ok(CommitResult::Rejected(CommitRejection::OperationIdReuse));
+        }
+        let Some(durable) = DurableUsageFact::try_new(fact.clone(), sequence, 1).ok() else {
+            return Ok(CommitResult::Rejected(CommitRejection::Storage));
+        };
+        let scope = durable.fact().scope();
+        let identity = durable.fact().identity();
+        transaction
+            .execute(
+                "INSERT INTO usage_facts
+                 (tenant, project, database, partition, region, rule, fact_id,
+                  seq, start_millis, end_millis, body)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                rusqlite::params![
+                    scope.tenant_id().as_str(),
+                    scope.project_id().as_str(),
+                    scope.database_id().as_str(),
+                    scope.partition_id().as_str(),
+                    scope.region_id().as_str(),
+                    minting_rule_code(identity.rule()),
+                    identity.id().as_str(),
+                    sequence as i64,
+                    durable.fact().window().start_millis() as i64,
+                    durable.fact().window().end_millis() as i64,
+                    durable.encoded(),
+                ],
+            )
+            .map_err(|_| ())?;
+    }
     // Step 5: documents rows ride one transaction, and every row of the
     // commit carries the commit's own identity — the journal is the table.
     // A replicated commit carries the source region's identity and its
@@ -1987,7 +2051,19 @@ fn stage_intent(
         origin: provenance.origin(),
         origin_sequence,
         hlc: provenance.hlc(),
-        context: context_frontier(transaction, &intent.tenant)?,
+        context: intent
+            .writes
+            .iter()
+            .find_map(|write| match write {
+                StagedWrite::ReplicatedPut { context, .. }
+                | StagedWrite::ReplicatedDelete { context, .. }
+                    if !context.is_empty() =>
+                {
+                    Some(context.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or(context_frontier(transaction, &intent.tenant)?),
     };
     let mut published_writes: Vec<PublishedWrite> = Vec::with_capacity(intent.writes.len());
     let mut billed_writes = 0_u64;
@@ -2853,24 +2929,28 @@ fn usage_fact_body(connection: &Connection, fact: &UsageFact) -> Result<Option<V
 }
 
 /// Reports whether one standalone authoritative fact is valid to mint —
-/// the reference engines' rule for `UsageFactSource::Standalone`.
+/// the reference engines' rule for `UsageFactSource::Standalone`: only the
+/// closed billable document-write command (`UsageRecordRequest` accepts
+/// solely `DocumentWriteUnits`; storage byte-seconds are interval rollups,
+/// never standalone). Legacy admitted/egress meters are unbilled and rejected
+/// here; already-persisted rows remain decodable via the page path.
 fn standalone_usage_fact_is_valid(fact: &UsageFact) -> bool {
     let known_version = MeterCatalog::initial().get(fact.meter(), fact.meter_version()).is_some();
     let instant = fact.window().start_millis() != 0
         && fact.window().start_millis() == fact.window().end_millis();
-    let admitted = fact.meter() == MeterKind::AdmittedRequestUnits
-        && matches!(fact.identity(), MintingIdentity::StableAdmittedRequest(_))
+    let document_write = fact.meter() == MeterKind::DocumentWriteUnits
+        && matches!(fact.identity(), MintingIdentity::DocumentWrite(_))
         && fact.delta() > 0
-        && fact.delta() <= MAX_ADMITTED_REQUEST_UNITS_PER_FACT;
-    let public_egress = fact.meter() == MeterKind::PublicEgressBytes
-        && matches!(fact.identity(), MintingIdentity::PublicResponse(_))
-        && fact.delta() > 0
-        && fact.delta() <= MAX_PUBLIC_EGRESS_BYTES_PER_FACT;
-    known_version && instant && (admitted || public_egress)
+        && fact.delta() <= MAX_DOCUMENT_WRITE_UNITS_PER_FACT;
+    known_version && instant && document_write
 }
 
 /// Maps a minting rule to its integer code — the discriminant whose order
 /// is the type's `Ord`, so SQL ordering equals `UsageFactPosition` order.
+/// Codes are wire-compat: `MintingRule::DocumentWrite` shares 0 with
+/// `AcceptedOriginCommit` and `LogicalStorage` shares 1 with
+/// `StableAdmittedRequest`, so both current and legacy identities order
+/// identically without extra arms.
 fn minting_rule_code(rule: MintingRule) -> i64 {
     match rule {
         MintingRule::AcceptedOriginCommit => 0,
