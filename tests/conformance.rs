@@ -389,8 +389,10 @@ fn subscription_applies_ordered_deltas_and_resets() {
     let mut subscription = Subscription::new("sub_1");
     subscription.apply_snapshot(ViewSnapshot {
         view_generation: 7,
+        authorization_generation: 1,
         revision: "r1".to_owned(),
         items: vec![],
+        digest: "digest-r1".to_owned(),
         checkpoint: Checkpoint::new(vec![7]),
     });
     let outcome = subscription.apply_delta(ViewDelta {
@@ -400,8 +402,9 @@ fn subscription_applies_ordered_deltas_and_resets() {
         operations: vec![ViewOperation::Insert {
             identity: "doc_1".to_owned(),
             position: 0,
-            value: json!({"name": "Ada"}),
+            value: std::collections::BTreeMap::from([("name".to_owned(), br#""Ada""#.to_vec())]),
         }],
+        digest: "digest-r2".to_owned(),
         checkpoint: Checkpoint::new(vec![8]),
     });
     assert_eq!(outcome, ApplyOutcome::Applied);
@@ -413,6 +416,7 @@ fn subscription_applies_ordered_deltas_and_resets() {
         from_revision: "r0".to_owned(),
         to_revision: "r2".to_owned(),
         operations: vec![],
+        digest: "digest-r2".to_owned(),
         checkpoint: Checkpoint::new(vec![8]),
     });
     assert_eq!(outcome, ApplyOutcome::Duplicate);
@@ -423,6 +427,7 @@ fn subscription_applies_ordered_deltas_and_resets() {
         from_revision: "r9".to_owned(),
         to_revision: "r10".to_owned(),
         operations: vec![],
+        digest: "digest-r10".to_owned(),
         checkpoint: Checkpoint::new(vec![9]),
     });
     assert_eq!(outcome, ApplyOutcome::ResetRequired(ResetReason::Reconnect));

@@ -53,8 +53,10 @@ fn client(mock: Arc<Mock>) -> TerraScaleClient {
 fn snapshot() -> ViewSnapshot {
     ViewSnapshot {
         view_generation: 4,
+        authorization_generation: 1,
         revision: "r1".to_owned(),
         items: vec![],
+        digest: "digest-r1".to_owned(),
         checkpoint: terrascale::Checkpoint::new(b"cp1".to_vec()),
     }
 }
@@ -80,8 +82,9 @@ fn delta() -> ViewDelta {
         operations: vec![ViewOperation::Insert {
             identity: "doc-1".to_owned(),
             position: 0,
-            value: json!({"name": "Ada"}),
+            value: std::collections::BTreeMap::from([("name".to_owned(), br#""Ada""#.to_vec())]),
         }],
+        digest: "digest-r2".to_owned(),
         checkpoint: terrascale::Checkpoint::new(b"cp2".to_vec()),
     }
 }
@@ -92,6 +95,39 @@ fn msgpack_response(bytes: Vec<u8>) -> Response {
         headers: vec![("content-type".to_owned(), "application/msgpack".to_owned())],
         body: bytes,
     }
+}
+
+fn hex_bytes(value: &str) -> Vec<u8> {
+    (0..value.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&value[index..index + 2], 16).expect("fixture hex"))
+        .collect()
+}
+
+fn reactive_fixture(name: &str) -> Vec<u8> {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../contracts/v1/conformance/reactive.json"))
+            .expect("reactive fixture");
+    hex_bytes(
+        fixture[name]
+            .get("hex")
+            .and_then(serde_json::Value::as_str)
+            .expect("fixture frame"),
+    )
+}
+
+fn message_fixture(name: &str) -> Vec<u8> {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../contracts/v1/conformance/msgpack/message-vectors.json"
+    ))
+    .expect("message fixture");
+    let vector = fixture["vectors"]
+        .as_array()
+        .expect("message vectors")
+        .iter()
+        .find(|vector| vector["name"] == name)
+        .expect("named message vector");
+    hex_bytes(vector["hex"].as_str().expect("message vector hex"))
 }
 
 #[tokio::test]
@@ -170,6 +206,7 @@ async fn attach_uses_canonical_route_and_base64_wire_fields() {
     assert_eq!(body["subscription"], "sub-1");
     assert_eq!(body["parameters"], "eyIxIjo3fQ==");
     assert_eq!(body["checkpoint"], serde_json::Value::Null);
+    assert!(body.get("transport").is_none());
 }
 
 #[tokio::test]
@@ -231,7 +268,135 @@ async fn poll_decodes_strict_indexed_msgpack_and_empty_statuses() {
 }
 
 #[tokio::test]
-async fn poll_decodes_a_deterministic_array_of_envelopes() {
+async fn poll_preserves_opaque_projected_bytes_and_digest() {
+    // [2,1,0,delta,0,0,[subscription,generation,from,to,[update],digest,checkpoint]]
+    // The projected value is deliberately not JSON; it must remain opaque.
+    let frame = vec![
+        0x97, 2, 1, 0, 4, 0, 0, 0x97, 0xa1, b's', 1, 1, 2, 0x91, 0x93, 2, 0xa1, b'd', 0x91, 0x92,
+        0xa1, b'x', 0xc4, 1, 0xff, 0xa0, 0xc4, 1, b'k',
+    ];
+    let mock = Mock::new([Ok(msgpack_response(frame))]);
+    let response = client(Arc::clone(&mock))
+        .reactive()
+        .poll_from(&attached(), "r1")
+        .await
+        .expect("opaque MessagePack delta");
+    assert_eq!(response.deltas[0].digest, "");
+    let ViewOperation::Update { value, .. } = &response.deltas[0].operations[0] else {
+        panic!("expected update operation");
+    };
+    assert_eq!(value["x"], vec![0xff]);
+}
+
+#[tokio::test]
+async fn producer_reactive_fixture_preserves_snapshot_log_and_reset_metadata() {
+    let mock = Mock::new([
+        Ok(msgpack_response(reactive_fixture("snapshot"))),
+        Ok(msgpack_response(reactive_fixture("log"))),
+        Ok(msgpack_response(reactive_fixture("reset"))),
+    ]);
+    let sdk = client(Arc::clone(&mock));
+    let view = attached();
+
+    let snapshot = sdk
+        .reactive()
+        .poll_from(&view, "0")
+        .await
+        .expect("snapshot fixture");
+    let reset = snapshot.reset.expect("snapshot is a replacement frame");
+    let snapshot = reset.snapshot.expect("snapshot payload");
+    assert_eq!(snapshot.authorization_generation, 1);
+    assert_eq!(
+        snapshot.digest,
+        "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+    );
+    let delta = sdk
+        .reactive()
+        .poll_from(&view, "1")
+        .await
+        .expect("log fixture");
+    assert_eq!(
+        delta.deltas[0].digest,
+        "30fa4379f701fe4bee34f17138d363bf302341c24cf5588c8d6bb353caed855f"
+    );
+    assert_eq!(delta.deltas[0].operations.len(), 1);
+    let ViewOperation::Insert { value, .. } = &delta.deltas[0].operations[0] else {
+        panic!("expected insert operation");
+    };
+    assert_eq!(value["status"], br#""paid""#.to_vec());
+
+    let reset = sdk
+        .reactive()
+        .poll_from(&view, "2")
+        .await
+        .expect("reset fixture");
+    assert!(matches!(
+        reset.reset.map(|reset| reset.reason),
+        Some(ResetReason::CheckpointExpired)
+    ));
+}
+
+#[tokio::test]
+async fn authorization_change_preserves_generation_and_removed_identities() {
+    let mock = Mock::new([Ok(msgpack_response(message_fixture(
+        "authorization_changed",
+    )))]);
+    let response = client(Arc::clone(&mock))
+        .reactive()
+        .poll_from(&attached(), "1")
+        .await
+        .expect("authorization change fixture");
+    let reset = response.reset.expect("authorization replacement reset");
+    assert_eq!(reset.reason, ResetReason::PermissionChanged);
+    assert_eq!(reset.authorization_generation, Some(3));
+    assert_eq!(reset.removed, vec!["d"]);
+    assert_eq!(
+        reset
+            .snapshot
+            .expect("replacement snapshot")
+            .authorization_generation,
+        3
+    );
+}
+
+#[tokio::test]
+async fn typed_message_errors_keep_the_published_error_code() {
+    let mock = Mock::new([Ok(msgpack_response(message_fixture("error")))]);
+    let error = client(Arc::clone(&mock))
+        .reactive()
+        .poll_from(&attached(), "1")
+        .await
+        .expect_err("typed server error");
+    assert_eq!(error.kind, terrascale::ErrorKind::Unavailable);
+    assert_eq!(error.code, "overloaded");
+    assert!(error.message.contains("retry"));
+}
+
+#[tokio::test]
+async fn poll_rejects_unsupported_versions_and_wrong_direction_tags() {
+    let unsupported = vec![0x97, 1, 1, 0, 6, 0, 0, 0x90];
+    let mock = Mock::new([Ok(msgpack_response(unsupported))]);
+    let error = client(Arc::clone(&mock))
+        .reactive()
+        .poll_from(&attached(), "r1")
+        .await
+        .expect_err("unsupported version");
+    assert_eq!(error.code, "unsupported_version");
+
+    let wrong_direction = vec![
+        0x97, 2, 1, 0, 1, 0, 0, 0x94, 0xa1, b's', 0xa0, 0xc4, 0, 0xc0,
+    ];
+    let mock = Mock::new([Ok(msgpack_response(wrong_direction))]);
+    let error = client(Arc::clone(&mock))
+        .reactive()
+        .poll_from(&attached(), "r1")
+        .await
+        .expect_err("client-to-server tag");
+    assert!(error.message.contains("client-to-server reactive message"));
+}
+
+#[tokio::test]
+async fn poll_rejects_noncanonical_envelope_batches() {
     let envelope = vec![
         0x97, 2, 1, 0, 4, 0, 0, 0x97, 0xa1, b's', 1, 1, 2, 0x90, 0xa0, 0xc4, 1, b'x',
     ];
@@ -239,18 +404,16 @@ async fn poll_decodes_a_deterministic_array_of_envelopes() {
     frames.extend_from_slice(&envelope);
     frames.extend_from_slice(&envelope);
     let mock = Mock::new([Ok(msgpack_response(frames))]);
-    let response = client(Arc::clone(&mock))
+    let error = client(Arc::clone(&mock))
         .reactive()
         .poll_from(&attached(), "r1")
         .await
-        .expect("MessagePack envelope array");
-    assert_eq!(response.deltas.len(), 2);
-    assert_eq!(response.deltas[0].checkpoint.to_bytes(), b"x");
-    assert_eq!(response.deltas[1].to_revision, "2");
+        .expect_err("MessagePack envelope batch");
+    assert_eq!(error.code, "malformed_frame");
 }
 
 #[tokio::test]
-async fn poll_disambiguates_a_batch_of_seven_envelopes_from_one_envelope() {
+async fn poll_rejects_a_batch_of_seven_envelopes() {
     let envelope = vec![
         0x97, 2, 1, 0, 4, 0, 0, 0x97, 0xa1, b's', 1, 1, 2, 0x90, 0xa0, 0xc4, 1, b'x',
     ];
@@ -259,12 +422,12 @@ async fn poll_disambiguates_a_batch_of_seven_envelopes_from_one_envelope() {
         frames.extend_from_slice(&envelope);
     }
     let mock = Mock::new([Ok(msgpack_response(frames))]);
-    let response = client(Arc::clone(&mock))
+    let error = client(Arc::clone(&mock))
         .reactive()
         .poll_from(&attached(), "r1")
         .await
-        .expect("seven-envelope MessagePack batch");
-    assert_eq!(response.deltas.len(), 7);
+        .expect_err("seven-envelope MessagePack batch");
+    assert_eq!(error.code, "malformed_frame");
 }
 
 #[tokio::test]
@@ -314,6 +477,7 @@ async fn malformed_msgpack_fails_closed_before_json_fallback() {
         .await
         .expect_err("maps are not indexed frames");
     assert_eq!(error.kind, terrascale::ErrorKind::InvalidResponse);
+    assert_eq!(error.code, "malformed_frame");
 }
 
 #[test]
@@ -328,11 +492,13 @@ fn invalid_operations_reset_atomically() {
     let mut subscription = terrascale::Subscription::new("sub");
     subscription.apply_snapshot(ViewSnapshot {
         view_generation: 1,
+        authorization_generation: 1,
         revision: "1".to_owned(),
         items: vec![terrascale::ResultItem {
             identity: "known".to_owned(),
-            value: json!({"ok": true}),
+            value: std::collections::BTreeMap::from([("ok".to_owned(), b"true".to_vec())]),
         }],
+        digest: "digest-1".to_owned(),
         checkpoint: terrascale::Checkpoint::new(vec![1]),
     });
     let outcome = subscription.apply_delta(ViewDelta {
@@ -342,12 +508,13 @@ fn invalid_operations_reset_atomically() {
         operations: vec![
             ViewOperation::Update {
                 identity: "missing".to_owned(),
-                value: json!({}),
+                value: std::collections::BTreeMap::new(),
             },
             ViewOperation::Remove {
                 identity: "known".to_owned(),
             },
         ],
+        digest: "digest-2".to_owned(),
         checkpoint: terrascale::Checkpoint::new(vec![2]),
     });
     assert_eq!(
@@ -383,6 +550,9 @@ async fn live_subscription_applies_deltas_and_surfaces_region_resets() {
                     snapshot: Some(snapshot()),
                     checkpoint: None,
                     region: None,
+                    authorization_generation: None,
+                    removed: Vec::new(),
+                    digest: String::new(),
                     detail: None,
                 }),
             },
@@ -405,6 +575,9 @@ async fn live_subscription_applies_deltas_and_surfaces_region_resets() {
                     snapshot: None,
                     checkpoint: None,
                     region: Some(RegionCode::Fra),
+                    authorization_generation: None,
+                    removed: Vec::new(),
+                    digest: String::new(),
                     detail: None,
                 }),
             },

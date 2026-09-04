@@ -219,8 +219,10 @@ async fn not_modified_is_an_empty_reactive_poll_only() {
         generation: 1,
         snapshot: terrascale::ViewSnapshot {
             view_generation: 1,
+            authorization_generation: 1,
             revision: "r1".to_owned(),
             items: Vec::new(),
+            digest: "digest-r1".to_owned(),
             checkpoint: terrascale::Checkpoint::new(vec![1]),
         },
         checkpoint: terrascale::Checkpoint::new(vec![1]),

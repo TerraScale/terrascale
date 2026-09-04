@@ -5,7 +5,7 @@
     {
       "path": "conformance/http.json",
       "mediaType": "application/vnd.terrascale.conformance.v1+json",
-      "blake3": "962bf76933f863c32f7a432f71f352d591972621411c90afb49a90c142b9e47e"
+      "blake3": "2727e5792aebebe3a00852055a29d3bcba0a9f742d849036d60ebde85ac86f24"
     },
     {
       "path": "conformance/msgpack/hostile-vectors.json",

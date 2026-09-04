@@ -377,6 +377,7 @@ impl<'de> Deserialize<'de> for PollResponse {
 
 /// Result of consuming one immutable log response.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum PollOutcome {
     Data {
         deltas: Vec<ViewDelta>,
@@ -795,11 +796,18 @@ impl ReactiveClient {
         }
 
         let attempts = options.max_attempts.max(1);
-        let log_url = if view.log_url.trim().is_empty() {
+        let advertised_log_url = if view.log_url.trim().is_empty() {
             canonical_log_url(&view.view_id, view.generation)
         } else {
             view.log_url.as_str().to_owned()
         };
+        let log_url = advertised_url(
+            &advertised_log_url,
+            &canonical_log_path(&view.view_id, view.generation),
+        )
+        .map_err(|message| {
+            Error::new(ErrorKind::Validation, "invalid_reactive_endpoint", message)
+        })?;
         let url = append_offset(&log_url, offset);
         let mut last_error = None;
         let deadline = options.deadline.min(MAX_POLL_WINDOW);
@@ -837,7 +845,7 @@ impl ReactiveClient {
                     }
                 },
             };
-            match result {
+            match result.map_err(normalize_msgpack_error) {
                 Ok(response) => return Ok(response),
                 Err(error) if is_retryable(&error) && attempt + 1 < attempts => {
                     last_error = Some(error);
@@ -1401,7 +1409,11 @@ impl LiveSubscription {
             }
             if let Some(snapshot) = reset.snapshot.clone() {
                 if let Some(auth_generation) = reset.authorization_generation {
-                    if snapshot.authorization_generation != auth_generation
+                    if self
+                        .state
+                        .authorization_generation()
+                        .is_some_and(|current| auth_generation <= current)
+                        || snapshot.authorization_generation != auth_generation
                         || snapshot.items.iter().any(|item| {
                             reset
                                 .removed
@@ -1439,6 +1451,9 @@ impl LiveSubscription {
                         snapshot: None,
                         checkpoint: self.state.checkpoint().cloned(),
                         region: None,
+                        authorization_generation: None,
+                        removed: Vec::new(),
+                        digest: String::new(),
                         detail: Some(
                             "The immutable log did not form a contiguous view.".to_owned(),
                         ),
@@ -1494,7 +1509,7 @@ pub(crate) fn decode_reactive_msgpack_json(bytes: &[u8]) -> Result<serde_json::V
     // indexed envelope per binary frame. An outer array of envelopes is an
     // old/noncanonical transport shape and must fail closed; accepting it
     // would let callers observe a partial batch as one revision.
-    if envelope_count != 7 || peek_u32(bytes, reader.cursor) != Some(2) {
+    if envelope_count != 7 {
         return Err(msgpack_error("noncanonical top-level envelope batch"));
     }
     reader.cursor = 0;
@@ -1503,28 +1518,6 @@ pub(crate) fn decode_reactive_msgpack_json(bytes: &[u8]) -> Result<serde_json::V
         return Err(msgpack_error("trailing bytes after reactive envelope"));
     }
     Ok(response)
-}
-
-fn peek_u32(bytes: &[u8], cursor: usize) -> Option<u32> {
-    let tag = *bytes.get(cursor)?;
-    match tag {
-        0x00..=0x7f => Some(u32::from(tag)),
-        0xcc => bytes.get(cursor + 1).copied().map(u32::from),
-        0xcd => bytes
-            .get(cursor + 1..cursor + 3)
-            .and_then(|bytes| bytes.try_into().ok())
-            .map(u16::from_be_bytes)
-            .map(u32::from),
-        0xce => bytes
-            .get(cursor + 1..cursor + 5)
-            .and_then(|bytes| bytes.try_into().ok())
-            .map(u32::from_be_bytes),
-        0xcf => bytes
-            .get(cursor + 1..cursor + 9)
-            .and_then(|bytes| bytes.try_into().ok())
-            .and_then(|bytes| u64::from_be_bytes(bytes).try_into().ok()),
-        _ => None,
-    }
 }
 
 fn decode_reactive_envelope(reader: &mut MsgpackReader<'_>) -> Result<serde_json::Value> {
@@ -1769,7 +1762,17 @@ fn decode_msgpack_message(reader: &mut MsgpackReader<'_>, tag: u32) -> Result<se
             reader.array(2)?;
             let _subscription = reader.text(128)?;
             let snapshot = decode_msgpack_snapshot(reader)?;
-            Ok(serde_json::json!({"reset": {"reason": "reconnect", "snapshot": snapshot}}))
+            let authorization_generation = snapshot
+                .get("authorization_generation")
+                .cloned()
+                .unwrap_or(serde_json::Value::from(0));
+            let digest = snapshot
+                .get("digest")
+                .cloned()
+                .unwrap_or(serde_json::Value::from(""));
+            Ok(
+                serde_json::json!({"reset": {"reason": "reconnect", "authorization_generation": authorization_generation, "digest": digest, "snapshot": snapshot}}),
+            )
         }
         4 => {
             // delta
@@ -1791,7 +1794,17 @@ fn decode_msgpack_message(reader: &mut MsgpackReader<'_>, tag: u32) -> Result<se
             let _subscription = reader.text(128)?;
             let reason = decode_reset_reason(reader.u32()?)?;
             let snapshot = decode_msgpack_snapshot(reader)?;
-            Ok(serde_json::json!({"reset": {"reason": reason, "snapshot": snapshot}}))
+            let authorization_generation = snapshot
+                .get("authorization_generation")
+                .cloned()
+                .unwrap_or(serde_json::Value::from(0));
+            let digest = snapshot
+                .get("digest")
+                .cloned()
+                .unwrap_or(serde_json::Value::from(""));
+            Ok(
+                serde_json::json!({"reset": {"reason": reason, "authorization_generation": authorization_generation, "digest": digest, "snapshot": snapshot}}),
+            )
         }
         6 => {
             reader.array(0)?;
@@ -1840,16 +1853,19 @@ fn decode_msgpack_message(reader: &mut MsgpackReader<'_>, tag: u32) -> Result<se
             } else {
                 Some(reader.text(256)?)
             };
-            let message = detail.unwrap_or_else(|| "reactive server error".to_owned());
+            let detail = detail.unwrap_or_else(|| "reactive server error".to_owned());
             let (kind, name) = match code {
-                3 => (ErrorKind::Authentication, "auth_expired"),
-                4 => (ErrorKind::Authorization, "permission_changed"),
+                1 => (ErrorKind::InvalidResponse, "unsupported_version"),
+                2 => (ErrorKind::InvalidResponse, "malformed_frame"),
+                3 => (ErrorKind::Authentication, "authentication_expired"),
+                4 => (ErrorKind::Authorization, "permission_denied"),
                 5 => (ErrorKind::Validation, "checkpoint_refused"),
                 6 => (ErrorKind::Unavailable, "slow_consumer"),
-                7 | 8 => (ErrorKind::Unavailable, "reactive_unavailable"),
+                7 => (ErrorKind::Unavailable, "overloaded"),
+                8 => (ErrorKind::Unavailable, "unavailable"),
                 _ => return Err(msgpack_error("unknown reactive error code")),
             };
-            Err(Error::new(kind, name, message))
+            Err(Error::new(kind, name, format!("{name}: {detail}")))
         }
         11 => {
             reader.array(1)?;
@@ -1860,7 +1876,7 @@ fn decode_msgpack_message(reader: &mut MsgpackReader<'_>, tag: u32) -> Result<se
             Err(Error::new(
                 ErrorKind::Unavailable,
                 "slow_consumer",
-                "Reactive server applied backpressure.",
+                "slow_consumer: Reactive server applied backpressure.",
             ))
         }
         _ => Err(msgpack_error(
@@ -1897,7 +1913,7 @@ fn decode_msgpack_snapshot(reader: &mut MsgpackReader<'_>) -> Result<serde_json:
         reader.array(2)?;
         let identity = reader.text(256)?;
         let fields = decode_msgpack_fields(reader)?;
-        items.push(serde_json::json!({"identity": identity, "value": fields}));
+        items.push(serde_json::json!({"identity": identity, "fields": fields}));
     }
     let digest = reader.text(64)?;
     let checkpoint = BASE64.encode(reader.binary(1, MAX_CHECKPOINT_BYTES)?);
@@ -1952,14 +1968,14 @@ fn decode_msgpack_operations(reader: &mut MsgpackReader<'_>) -> Result<Vec<serde
                 }
                 let position = reader.u32()?;
                 let fields = decode_msgpack_fields(reader)?;
-                serde_json::json!({"kind":"insert","identity":identity,"position":position,"value":fields})
+                serde_json::json!({"kind":"insert","identity":identity,"position":position,"value":fields_to_value_map(fields)})
             }
             2 => {
                 if variant_count != 3 {
                     return Err(msgpack_error("invalid update shape"));
                 }
                 let fields = decode_msgpack_fields(reader)?;
-                serde_json::json!({"kind":"update","identity":identity,"value":fields})
+                serde_json::json!({"kind":"update","identity":identity,"value":fields_to_value_map(fields)})
             }
             3 => {
                 if variant_count != 3 {
@@ -2012,6 +2028,23 @@ fn decode_msgpack_operations(reader: &mut MsgpackReader<'_>) -> Result<Vec<serde
         operations.push(operation);
     }
     Ok(operations)
+}
+
+/// Convert the indexed wire representation to the public map representation
+/// without interpreting the projected byte strings.
+fn fields_to_value_map(fields: serde_json::Value) -> serde_json::Value {
+    let mut values = serde_json::Map::new();
+    if let serde_json::Value::Array(fields) = fields {
+        for field in fields {
+            if let (Some(path), Some(value)) = (
+                field.get("path").and_then(serde_json::Value::as_str),
+                field.get("value"),
+            ) {
+                values.insert(path.to_owned(), value.clone());
+            }
+        }
+    }
+    serde_json::Value::Object(values)
 }
 
 fn decode_reset_reason(value: u32) -> Result<&'static str> {
@@ -2127,7 +2160,16 @@ fn percent_encode(value: &str) -> String {
 fn is_retryable(error: &Error) -> bool {
     if matches!(
         error.code.as_str(),
-        "slow_consumer" | "auth_expired" | "permission_changed" | "checkpoint_refused"
+        "slow_consumer"
+            | "auth_expired"
+            | "authentication_expired"
+            | "permission_changed"
+            | "permission_denied"
+            | "checkpoint_refused"
+            | "overloaded"
+            | "unavailable"
+            | "malformed_frame"
+            | "unsupported_version"
     ) {
         return false;
     }
@@ -2137,6 +2179,43 @@ fn is_retryable(error: &Error) -> bool {
     ) || error
         .status
         .is_some_and(|status| matches!(status, 408 | 425 | 429))
+}
+
+/// `Shared::send_typed` annotates all decode failures with its route code.
+/// Recover the protocol's typed MessagePack vocabulary at the reactive
+/// boundary so callers can distinguish malformed/unsupported frames from a
+/// typed remote authentication or availability failure.
+fn normalize_msgpack_error(mut error: Error) -> Error {
+    if error.code != "reactive_poll.invalid_response" && error.code != "invalid_response" {
+        return error;
+    }
+    let message = error.message.to_ascii_lowercase();
+    let (kind, code) = if message.contains("unsupported reactive messagepack protocol version")
+        || message.contains("unsupported_version")
+    {
+        (ErrorKind::InvalidResponse, "unsupported_version")
+    } else if message.contains("authentication_expired") {
+        (ErrorKind::Authentication, "authentication_expired")
+    } else if message.contains("permission_denied") {
+        (ErrorKind::Authorization, "permission_denied")
+    } else if message.contains("checkpoint_refused") {
+        (ErrorKind::Validation, "checkpoint_refused")
+    } else if message.contains("slow_consumer") {
+        (ErrorKind::Unavailable, "slow_consumer")
+    } else if message.contains("overloaded") {
+        (ErrorKind::Unavailable, "overloaded")
+    } else if message.contains("unavailable") {
+        (ErrorKind::Unavailable, "unavailable")
+    } else if message.contains("malformed reactive messagepack frame")
+        || message.contains("malformed_frame")
+    {
+        (ErrorKind::InvalidResponse, "malformed_frame")
+    } else {
+        return error;
+    };
+    error.kind = kind;
+    error.code = code.to_owned();
+    error
 }
 
 /// HTTP status and server error codes are the JSON counterpart of typed

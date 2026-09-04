@@ -827,13 +827,25 @@
         "query": {}
       },
       "response": {
-        "body": null,
+        "body": {
+          "error": {
+            "code": "surface_pending",
+            "fix": "follow the contract and retry when safe",
+            "message": "conformance 501 response"
+          }
+        },
         "mediaType": "application/json",
         "status": 501
       },
       "responses": [
         {
-          "body": null,
+          "body": {
+            "error": {
+              "code": "surface_pending",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 501 response"
+            }
+          },
           "mediaType": "application/json",
           "status": 501
         }
@@ -1148,13 +1160,25 @@
         "query": {}
       },
       "response": {
-        "body": null,
+        "body": {
+          "error": {
+            "code": "surface_pending",
+            "fix": "follow the contract and retry when safe",
+            "message": "conformance 501 response"
+          }
+        },
         "mediaType": "application/json",
         "status": 501
       },
       "responses": [
         {
-          "body": null,
+          "body": {
+            "error": {
+              "code": "surface_pending",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 501 response"
+            }
+          },
           "mediaType": "application/json",
           "status": 501
         }
@@ -1306,13 +1330,25 @@
         "query": {}
       },
       "response": {
-        "body": null,
+        "body": {
+          "error": {
+            "code": "surface_pending",
+            "fix": "follow the contract and retry when safe",
+            "message": "conformance 501 response"
+          }
+        },
         "mediaType": "application/json",
         "status": 501
       },
       "responses": [
         {
-          "body": null,
+          "body": {
+            "error": {
+              "code": "surface_pending",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 501 response"
+            }
+          },
           "mediaType": "application/json",
           "status": 501
         }
@@ -1775,13 +1811,25 @@
         "query": {}
       },
       "response": {
-        "body": null,
+        "body": {
+          "error": {
+            "code": "surface_pending",
+            "fix": "follow the contract and retry when safe",
+            "message": "conformance 501 response"
+          }
+        },
         "mediaType": "application/json",
         "status": 501
       },
       "responses": [
         {
-          "body": null,
+          "body": {
+            "error": {
+              "code": "surface_pending",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 501 response"
+            }
+          },
           "mediaType": "application/json",
           "status": 501
         }
@@ -1933,13 +1981,25 @@
         "query": {}
       },
       "response": {
-        "body": null,
+        "body": {
+          "error": {
+            "code": "surface_pending",
+            "fix": "follow the contract and retry when safe",
+            "message": "conformance 501 response"
+          }
+        },
         "mediaType": "application/json",
         "status": 501
       },
       "responses": [
         {
-          "body": null,
+          "body": {
+            "error": {
+              "code": "surface_pending",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 501 response"
+            }
+          },
           "mediaType": "application/json",
           "status": 501
         }
@@ -2723,13 +2783,25 @@
         "query": {}
       },
       "response": {
-        "body": null,
+        "body": {
+          "error": {
+            "code": "surface_pending",
+            "fix": "follow the contract and retry when safe",
+            "message": "conformance 501 response"
+          }
+        },
         "mediaType": "application/json",
         "status": 501
       },
       "responses": [
         {
-          "body": null,
+          "body": {
+            "error": {
+              "code": "surface_pending",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 501 response"
+            }
+          },
           "mediaType": "application/json",
           "status": 501
         }
@@ -3034,13 +3106,25 @@
         "query": {}
       },
       "response": {
-        "body": null,
+        "body": {
+          "error": {
+            "code": "surface_pending",
+            "fix": "follow the contract and retry when safe",
+            "message": "conformance 501 response"
+          }
+        },
         "mediaType": "application/json",
         "status": 501
       },
       "responses": [
         {
-          "body": null,
+          "body": {
+            "error": {
+              "code": "surface_pending",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 501 response"
+            }
+          },
           "mediaType": "application/json",
           "status": 501
         }
@@ -4103,13 +4187,25 @@
         "query": {}
       },
       "response": {
-        "body": null,
+        "body": {
+          "error": {
+            "code": "surface_pending",
+            "fix": "follow the contract and retry when safe",
+            "message": "conformance 501 response"
+          }
+        },
         "mediaType": "application/json",
         "status": 501
       },
       "responses": [
         {
-          "body": null,
+          "body": {
+            "error": {
+              "code": "surface_pending",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 501 response"
+            }
+          },
           "mediaType": "application/json",
           "status": 501
         }
@@ -4430,15 +4526,27 @@
         "query": {}
       },
       "response": {
-        "body": null,
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "fix": "follow the contract and retry when safe",
+            "message": "conformance 400 response"
+          }
+        },
         "mediaType": "application/json",
-        "status": 501
+        "status": 400
       },
       "responses": [
         {
-          "body": null,
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
           "mediaType": "application/json",
-          "status": 501
+          "status": 400
         }
       ]
     },
@@ -4748,13 +4856,25 @@
         "query": {}
       },
       "response": {
-        "body": null,
+        "body": {
+          "error": {
+            "code": "surface_pending",
+            "fix": "follow the contract and retry when safe",
+            "message": "conformance 501 response"
+          }
+        },
         "mediaType": "application/json",
         "status": 501
       },
       "responses": [
         {
-          "body": null,
+          "body": {
+            "error": {
+              "code": "surface_pending",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 501 response"
+            }
+          },
           "mediaType": "application/json",
           "status": 501
         }
@@ -5706,15 +5826,27 @@
         "query": {}
       },
       "response": {
-        "body": null,
+        "body": {
+          "error": {
+            "code": "request_failed",
+            "fix": "follow the contract and retry when safe",
+            "message": "conformance 101 response"
+          }
+        },
         "mediaType": "application/json",
-        "status": 501
+        "status": 101
       },
       "responses": [
         {
-          "body": null,
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 101 response"
+            }
+          },
           "mediaType": "application/json",
-          "status": 501
+          "status": 101
         }
       ]
     }
