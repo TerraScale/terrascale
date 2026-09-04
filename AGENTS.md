@@ -148,6 +148,8 @@ on it.
   unrelated work.
 - Stage named paths only.
 - Commit coherent changes often and push directly to `origin/develop`.
+- When the human asks for a commit, commit and push exactly as asked — do not
+  run tests, checks, or builds first.
 - Fetch before push and stop if the remote moved.
 - Do not create a feature branch, worktree, pull request, release, deployment,
   or live external mutation unless explicitly requested.
@@ -157,5 +159,4 @@ on it.
 
 ## Agent skills
 
-See `docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md`, and
-`docs/agents/domain.md`.
+See `docs/agents/domain.md`.
