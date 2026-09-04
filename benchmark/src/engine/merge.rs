@@ -154,9 +154,9 @@ impl DocumentContext {
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(5 + self.0.len() * 20);
         bytes.push(1);
-        bytes.extend_from_slice(&(self.0.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&u32::try_from(self.0.len()).unwrap_or(u32::MAX).to_le_bytes());
         for (origin, sequence) in &self.0 {
-            bytes.extend_from_slice(&(origin.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&u32::try_from(origin.len()).unwrap_or(u32::MAX).to_le_bytes());
             bytes.extend_from_slice(origin.as_bytes());
             bytes.extend_from_slice(&sequence.to_le_bytes());
         }

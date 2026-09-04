@@ -60,7 +60,7 @@ fn operation(name: &str) -> OperationId {
 fn context(origin: &str, sequence: u64) -> Vec<u8> {
     let mut bytes = vec![1];
     bytes.extend_from_slice(&1_u32.to_le_bytes());
-    bytes.extend_from_slice(&(origin.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&u32::try_from(origin.len()).unwrap_or(u32::MAX).to_le_bytes());
     bytes.extend_from_slice(origin.as_bytes());
     bytes.extend_from_slice(&sequence.to_le_bytes());
     bytes
@@ -76,7 +76,7 @@ fn document(id: &str, collection: &str, text: &str) -> Document {
 
 fn usage_record_request(fact_id: &str, recorded_at_millis: u64) -> UsageRecordRequest {
     UsageRecordRequest::try_new(
-        UsageRecordMeter::PublicEgressBytes,
+        UsageRecordMeter::DocumentWriteUnits,
         "project-a",
         "database-a",
         "partition-a",

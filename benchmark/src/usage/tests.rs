@@ -190,29 +190,26 @@ fn durable_fact_identities_are_scoped_and_do_not_collide_across_tenants() {
 
 #[test]
 fn standalone_usage_record_is_closed_bounded_and_tenant_bound() {
-    for (meter, expected_kind, expected_rule) in [(
-        UsageRecordMeter::DocumentWriteUnits,
-        MeterKind::DocumentWriteUnits,
-        MintingRule::DocumentWrite,
-    )] {
-        let request = UsageRecordRequest::try_new(
-            meter,
-            "project-a",
-            "database-a",
-            "partition-a",
-            RegionCode::GRU,
-            UsageFactId::try_new("fact-1").expect("id"),
-            1_788_105_600_000,
-            1,
-            11,
-        )
-        .expect("request");
-        let fact = request.fact_for(TenantId::try_new("tenant-b").expect("tenant")).expect("fact");
-        assert_eq!(fact.meter(), expected_kind);
-        assert_eq!(fact.identity().rule(), expected_rule);
-        assert_eq!(fact.scope().tenant_id().as_str(), "tenant-b");
-        assert_eq!(fact.delta(), 11);
-    }
+    let meter = UsageRecordMeter::DocumentWriteUnits;
+    let expected_kind = MeterKind::DocumentWriteUnits;
+    let expected_rule = MintingRule::DocumentWrite;
+    let request = UsageRecordRequest::try_new(
+        meter,
+        "project-a",
+        "database-a",
+        "partition-a",
+        RegionCode::GRU,
+        UsageFactId::try_new("fact-1").expect("id"),
+        1_788_105_600_000,
+        1,
+        11,
+    )
+    .expect("request");
+    let fact = request.fact_for(TenantId::try_new("tenant-b").expect("tenant")).expect("fact");
+    assert_eq!(fact.meter(), expected_kind);
+    assert_eq!(fact.identity().rule(), expected_rule);
+    assert_eq!(fact.scope().tenant_id().as_str(), "tenant-b");
+    assert_eq!(fact.delta(), 11);
 }
 
 #[test]
@@ -461,6 +458,9 @@ fn all_serving_and_maintenance_activity_is_unbilled() {
 }
 
 #[test]
+// D-16 guard: the deprecated unbilled request meter must stay non-billable.
+// Wire-compat use only; new code mints `DocumentWriteUnits`.
+#[allow(deprecated)]
 fn legacy_request_and_egress_meters_cannot_mint_charges() {
     let request = UsageRecordRequest::try_new(
         UsageRecordMeter::AdmittedRequestUnits,
