@@ -1,0 +1,22 @@
+[package]
+name = "terrascale"
+version = "0.1.0"
+edition = "2021"
+description = "Rust SDK for TerraScale (document CRUD, typed SQL, reactive subscribe, tenants, management)"
+license = "Apache-2.0"
+
+[workspace]
+members = ["terrascale-derive"]
+
+[dependencies]
+terrascale-derive = { path = "terrascale-derive", version = "0.1.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+async-trait = "0.1"
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
