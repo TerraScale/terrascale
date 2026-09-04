@@ -171,6 +171,15 @@ impl fmt::Display for UsageError {
     }
 }
 
+impl MintingRule {
+    /// Compatibility spelling for the document-write minting rule.
+    #[allow(non_upper_case_globals)]
+    pub const DocumentWrite: Self = Self::AcceptedOriginCommit;
+    /// Compatibility spelling for logical-storage observations.
+    #[allow(non_upper_case_globals)]
+    pub const LogicalStorage: Self = Self::StableAdmittedRequest;
+}
+
 impl std::error::Error for UsageError {}
 
 /// A validated identifier used for Project, Database, and Partition scope.
@@ -356,7 +365,10 @@ impl MeterKind {
 
     /// Returns the stable wire key, or `None` for legacy guard/attribution
     /// kinds. Unknown keys must not be converted into a meter by callers.
+    /// Legacy arms are wire-compat for already-persisted bytes; new code uses
+    /// only the two billable keys via `from_key`.
     #[must_use]
+    #[allow(deprecated)]
     pub const fn key(self) -> Option<&'static str> {
         match self {
             Self::DocumentWriteUnits => Some(DOCUMENT_WRITE_UNITS_KEY),
@@ -423,10 +435,6 @@ pub enum ChargeScope {
 /// The rule that mints a unit and identifies excluded internal work.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum MintingRule {
-    /// Mint exactly once for an accepted document mutation.
-    DocumentWrite,
-    /// Mint from retained logical current/history revisions.
-    LogicalStorage,
     /// Mint once for an accepted origin commit; retries and replicas do not mint.
     AcceptedOriginCommit,
     /// Mint once for a stable admitted request identity.
@@ -624,10 +632,16 @@ impl MintingIdentity {
     #[must_use]
     pub fn rule(&self) -> MintingRule {
         match self {
-            Self::DocumentWrite(_) => MintingRule::DocumentWrite,
-            Self::LogicalStorage(_) => MintingRule::LogicalStorage,
-            Self::AcceptedOriginCommit(_) => MintingRule::AcceptedOriginCommit,
-            Self::StableAdmittedRequest(_) => MintingRule::StableAdmittedRequest,
+            // These two identities are the new closed billable vocabulary.
+            // Their wire-compatible legacy rule values keep older storage
+            // readers exhaustive; callers must use `MeterKind::is_billable`
+            // (and never infer billing from this compatibility rule alone).
+            Self::DocumentWrite(_) | Self::AcceptedOriginCommit(_) => {
+                MintingRule::AcceptedOriginCommit
+            }
+            Self::LogicalStorage(_) | Self::StableAdmittedRequest(_) => {
+                MintingRule::StableAdmittedRequest
+            }
             Self::PublicResponse(_) => MintingRule::PublicResponseBytes,
             Self::ActiveRegionHour(_) => MintingRule::ActiveRegionHour,
             Self::BackupByteHour(_) => MintingRule::BackupByteHour,
@@ -1029,6 +1043,31 @@ impl UsageAdmissionContext {
         self.integer_units
     }
 
+    /// Builds the tenant-bound billable document-write fact after the Engine
+    /// has authenticated the tenant. Admission is metadata on an origin
+    /// mutation, so its fact uses the accepted-origin identity and the
+    /// document-write meter; replicas and retries never mint another fact.
+    pub(crate) fn fact_for(&self, tenant: TenantId) -> Result<UsageFact, UsageError> {
+        let definition = MeterCatalog::initial()
+            .get(MeterKind::DocumentWriteUnits, self.meter_version)
+            .copied()
+            .ok_or(UsageError::UnknownMeterDefinition)?;
+        let scope = UsageScope {
+            tenant_id: tenant,
+            project_id: self.project_id.clone(),
+            database_id: self.database_id.clone(),
+            partition_id: self.partition_id.clone(),
+            region_id: self.origin_region,
+        };
+        UsageFact::try_new(
+            definition,
+            scope,
+            MintingIdentity::AcceptedOriginCommit(self.request_id.clone()),
+            MeasurementWindow::instant(self.accepted_at_millis),
+            self.integer_units,
+        )
+    }
+
     /// Returns canonical bytes used to bind this context into an operation
     /// digest. Tenant is added by the caller's existing request digest.
     pub(crate) fn digest_bytes(&self) -> Vec<u8> {
@@ -1066,6 +1105,9 @@ impl UsageRecordMeter {
     #[allow(non_upper_case_globals)]
     pub const WriteUnits: Self = Self::DocumentWriteUnits;
 
+    // Wire-compat: deprecated command meters still map to their legacy kinds
+    // so persisted/queued commands decode; `try_new` rejects them as unbilled.
+    #[allow(deprecated)]
     const fn meter_kind(self) -> MeterKind {
         match self {
             Self::DocumentWriteUnits => MeterKind::DocumentWriteUnits,
@@ -1091,6 +1133,9 @@ impl UsageRecordMeter {
     }
 }
 
+// Wire-compat per-fact limits for legacy command meters; billed path uses
+// only `DocumentWriteUnits`. `try_new` rejects unbilled meters before billing.
+#[allow(deprecated)]
 const fn usage_record_unit_limit(meter: UsageRecordMeter) -> i128 {
     match meter {
         UsageRecordMeter::DocumentWriteUnits => MAX_DOCUMENT_WRITE_UNITS_PER_FACT,
@@ -1226,6 +1271,9 @@ impl UsageRecordRequest {
     }
 
     /// Builds the tenant-bound domain fact after the Engine validates scope.
+    // Wire-compat: legacy command arms decode old bytes; `try_new` guarantees
+    // only `DocumentWriteUnits` reaches billing.
+    #[allow(deprecated)]
     pub(crate) fn fact_for(&self, tenant: TenantId) -> Result<UsageFact, UsageError> {
         let kind = self.meter.meter_kind();
         let definition = MeterCatalog::initial()
@@ -2762,6 +2810,10 @@ fn validate_identifier(value: &str) -> Result<(), UsageError> {
     Ok(())
 }
 
+// Wire-compat meter contracts for already-persisted bytes. Billed paths use
+// only `DocumentWriteUnits`/`StorageByteSeconds`; legacy arms keep old
+// readers exhaustive and `is_billable` false. New code must not mint them.
+#[allow(deprecated)]
 const fn expected_meter(
     kind: MeterKind,
 ) -> (MeterUnit, ChargeScope, MintingRule, MeasurementCadence, CorrectionProcedure) {
@@ -2825,6 +2877,8 @@ const fn expected_meter(
     }
 }
 
+// Wire-compat discriminant for already-persisted facts/segments.
+#[allow(deprecated)]
 fn meter_to_u8(meter: MeterKind) -> u8 {
     match meter {
         MeterKind::DocumentWriteUnits => 0,
@@ -2838,6 +2892,9 @@ fn meter_to_u8(meter: MeterKind) -> u8 {
     }
 }
 
+// Wire-compat decoder for already-persisted facts/segments; callers reject
+// unbilled kinds via `is_billable`/`validate_shape`.
+#[allow(deprecated)]
 fn meter_from_u8(value: u8) -> Result<MeterKind, UsageError> {
     Ok(match value {
         0 => MeterKind::DocumentWriteUnits,
