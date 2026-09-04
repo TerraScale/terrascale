@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { createTerraScaleClient, toUlid } from "@terrascale/sdk";
+import { createTerraScaleClient } from "@terrascale/sdk";
 
 const apiBaseUrl = process.env.TERRASCALE_API_BASE_URL;
 const accessToken = process.env.TERRASCALE_E2E_ACCESS_TOKEN;
-const projectId = toUlid(process.env.TERRASCALE_E2E_PROJECT_ID);
-const organizationId = toUlid(process.env.TERRASCALE_E2E_ORGANIZATION_ID);
-const savedQueriesProjectId = toUlid(process.env.TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID);
+const projectId = process.env.TERRASCALE_E2E_PROJECT_ID;
+const organizationId = process.env.TERRASCALE_E2E_ORGANIZATION_ID;
+const savedQueriesProjectId = process.env.TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID;
 const client = createTerraScaleClient({ apiBaseUrl, accessToken, projectId });
 
 const [organizations, projects, invitations, placements, usage, notifications] = await Promise.all([

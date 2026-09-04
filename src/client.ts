@@ -1,6 +1,5 @@
 import type { ResolvedTerraScaleRuntimeConfig, TerraScaleRuntimeConfig } from "./config.js";
 import { TerraScaleHttp } from "./http.js";
-import { type Ulid, ulidPathSegment } from "./ids.js";
 import type * as Models from "./models.js";
 import {
   normalizeRegionCodes,
@@ -153,103 +152,103 @@ export class OrganizationsClient {
     });
   }
 
-  get(organizationId: Ulid): Promise<TerraScaleResult<Models.Organization>> {
+  get(organizationId: string): Promise<TerraScaleResult<Models.Organization>> {
     return this.#http.request({
       method: "GET",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}`,
+      path: `${apiRoot}/organizations/${idPathSegment(organizationId)}`,
       routeName: "organizations.get",
     });
   }
 
   update(
-    organizationId: Ulid,
+    organizationId: string,
     request: Models.UpdateOrganizationRequest,
   ): Promise<TerraScaleResult<Models.Organization>> {
     return this.#http.request({
       method: "PATCH",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}`,
+      path: `${apiRoot}/organizations/${idPathSegment(organizationId)}`,
       routeName: "organizations.update",
       body: request,
     });
   }
 
   requestDeletion(
-    organizationId: Ulid,
+    organizationId: string,
     request: Models.RequestOrganizationDeletionRequest,
   ): Promise<TerraScaleResult<Models.Organization>> {
     return this.#http.request({
       method: "POST",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}:request-deletion`,
+      path: `${apiRoot}/organizations/${idPathSegment(organizationId)}:request-deletion`,
       routeName: "organizations.deletion.request",
       body: request,
     });
   }
 
-  leave(organizationId: Ulid): Promise<TerraScaleResult<void>> {
+  leave(organizationId: string): Promise<TerraScaleResult<void>> {
     return this.#http.request({
       method: "POST",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}:leave`,
+      path: `${apiRoot}/organizations/${idPathSegment(organizationId)}:leave`,
       routeName: "organizations.leave",
     });
   }
 
   listProjects(
-    organizationId: Ulid,
+    organizationId: string,
     query?: Models.PageRequest,
   ): Promise<TerraScaleResult<readonly Models.Project[]>> {
     return this.#http.request({
       method: "GET",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/projects`,
+      path: `${apiRoot}/organizations/${idPathSegment(organizationId)}/projects`,
       routeName: "organizations.projects.list",
       query,
     });
   }
 
   listMembers(
-    organizationId: Ulid,
+    organizationId: string,
     query?: Models.PageRequest,
   ): Promise<TerraScaleResult<readonly Models.OrganizationMember[]>> {
     return this.#http.request({
       method: "GET",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/members`,
+      path: `${apiRoot}/organizations/${idPathSegment(organizationId)}/members`,
       routeName: "organizations.members.list",
       query,
     });
   }
 
   updateMemberRole(
-    organizationId: Ulid,
-    userId: Ulid,
+    organizationId: string,
+    userId: string,
     request: Models.UpdateOrganizationMemberRoleRequest,
   ): Promise<TerraScaleResult<Models.OrganizationMember>> {
     return this.#http.request({
       method: "PATCH",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/members/${ulidPathSegment(userId)}`,
+      path: `${apiRoot}/organizations/${idPathSegment(organizationId)}/members/${idPathSegment(userId)}`,
       routeName: "organizations.members.updateRole",
       body: request,
     });
   }
 
   removeMember(
-    organizationId: Ulid,
-    userId: Ulid,
+    organizationId: string,
+    userId: string,
     request: Models.RemoveOrganizationMemberRequest = { confirm: true },
   ): Promise<TerraScaleResult<void>> {
     return this.#http.request({
       method: "POST",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/members/${ulidPathSegment(userId)}:remove`,
+      path: `${apiRoot}/organizations/${idPathSegment(organizationId)}/members/${idPathSegment(userId)}:remove`,
       routeName: "organizations.members.remove",
       body: request,
     });
   }
 
   createProject(
-    organizationId: Ulid,
+    organizationId: string,
     request: Models.CreateProjectRequest,
   ): Promise<TerraScaleResult<Models.Project>> {
     return this.#http.request({
       method: "POST",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/projects`,
+      path: `${apiRoot}/organizations/${idPathSegment(organizationId)}/projects`,
       routeName: "organizations.projects.create",
       body: {
         ...request,
@@ -259,7 +258,7 @@ export class OrganizationsClient {
     });
   }
 
-  getProject(projectId?: Ulid): Promise<TerraScaleResult<Models.Project>> {
+  getProject(projectId?: string): Promise<TerraScaleResult<Models.Project>> {
     return this.#http.request({
       method: "GET",
       path: projectRoot(this.#http, projectId),
@@ -268,7 +267,7 @@ export class OrganizationsClient {
   }
 
   listProjectRegionPlacements(
-    projectId?: Ulid,
+    projectId?: string,
   ): Promise<TerraScaleResult<readonly Models.ProjectRegionPlacement[]>> {
     return this.#http.request({
       method: "GET",
@@ -278,7 +277,7 @@ export class OrganizationsClient {
   }
 
   updateProject(
-    projectId: Ulid,
+    projectId: string,
     request: Models.UpdateProjectRequest,
   ): Promise<TerraScaleResult<Models.Project>> {
     return this.#http.request({
@@ -297,7 +296,7 @@ export class OrganizationsClient {
   }
 
   deleteProject(
-    projectId: Ulid,
+    projectId: string,
     request: Models.DeleteProjectRequest,
   ): Promise<TerraScaleResult<Models.DeletedProject>> {
     return this.#http.request({
@@ -309,69 +308,69 @@ export class OrganizationsClient {
   }
 
   listInvitations(
-    organizationId: Ulid,
+    organizationId: string,
     query?: Models.PageRequest,
   ): Promise<TerraScaleResult<readonly Models.Invitation[]>> {
     return this.#http.request({
       method: "GET",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations`,
+      path: `${apiRoot}/organizations/${idPathSegment(organizationId)}/invitations`,
       routeName: "organizations.invitations.list",
       query,
     });
   }
 
   createInvitation(
-    organizationId: Ulid,
+    organizationId: string,
     request: Models.CreateInvitationRequest,
   ): Promise<TerraScaleResult<Models.Invitation>> {
     return this.#http.request({
       method: "POST",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations`,
+      path: `${apiRoot}/organizations/${idPathSegment(organizationId)}/invitations`,
       routeName: "organizations.invitations.create",
       body: request,
     });
   }
 
   acceptInvitation(
-    organizationId: Ulid,
-    invitationId: Ulid,
+    organizationId: string,
+    invitationId: string,
   ): Promise<TerraScaleResult<Models.Invitation>> {
     return this.#http.request({
       method: "POST",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations/${ulidPathSegment(invitationId)}:accept`,
+      path: `${apiRoot}/organizations/${idPathSegment(organizationId)}/invitations/${idPathSegment(invitationId)}:accept`,
       routeName: "organizations.invitations.accept",
     });
   }
 
   declineInvitation(
-    organizationId: Ulid,
-    invitationId: Ulid,
+    organizationId: string,
+    invitationId: string,
   ): Promise<TerraScaleResult<Models.Invitation>> {
     return this.#http.request({
       method: "POST",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations/${ulidPathSegment(invitationId)}:decline`,
+      path: `${apiRoot}/organizations/${idPathSegment(organizationId)}/invitations/${idPathSegment(invitationId)}:decline`,
       routeName: "organizations.invitations.decline",
     });
   }
 
   resendInvitation(
-    organizationId: Ulid,
-    invitationId: Ulid,
+    organizationId: string,
+    invitationId: string,
   ): Promise<TerraScaleResult<Models.Invitation>> {
     return this.#http.request({
       method: "POST",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations/${ulidPathSegment(invitationId)}:resend`,
+      path: `${apiRoot}/organizations/${idPathSegment(organizationId)}/invitations/${idPathSegment(invitationId)}:resend`,
       routeName: "organizations.invitations.resend",
     });
   }
 
   cancelInvitation(
-    organizationId: Ulid,
-    invitationId: Ulid,
+    organizationId: string,
+    invitationId: string,
   ): Promise<TerraScaleResult<Models.Invitation>> {
     return this.#http.request({
       method: "POST",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/invitations/${ulidPathSegment(invitationId)}:cancel`,
+      path: `${apiRoot}/organizations/${idPathSegment(organizationId)}/invitations/${idPathSegment(invitationId)}:cancel`,
       routeName: "organizations.invitations.cancel",
     });
   }
@@ -385,7 +384,7 @@ export class SavedQueriesClient {
   }
 
   list(
-    projectId?: Ulid,
+    projectId?: string,
     query?: Models.ProjectSavedQueryPageRequest,
   ): Promise<TerraScaleResult<Models.ProjectSavedQueryPageResponse>> {
     return this.#http.request({
@@ -401,19 +400,19 @@ export class SavedQueriesClient {
   }
 
   get(
-    savedQueryId: Ulid,
-    projectId?: Ulid,
+    savedQueryId: string,
+    projectId?: string,
   ): Promise<TerraScaleResult<Models.ProjectSavedQueryResponse>> {
     return this.#http.request({
       method: "GET",
-      path: `${projectRoot(this.#http, projectId)}/saved-queries/${ulidPathSegment(savedQueryId)}`,
+      path: `${projectRoot(this.#http, projectId)}/saved-queries/${idPathSegment(savedQueryId)}`,
       routeName: "savedQueries.get",
     });
   }
 
   create(
     request: Models.ProjectSavedQueryRequest,
-    projectId?: Ulid,
+    projectId?: string,
   ): Promise<TerraScaleResult<Models.ProjectSavedQueryResponse>> {
     return this.#http.request({
       method: "POST",
@@ -424,25 +423,25 @@ export class SavedQueriesClient {
   }
 
   update(
-    savedQueryId: Ulid,
+    savedQueryId: string,
     request: Models.UpdateProjectSavedQueryRequest,
-    projectId?: Ulid,
+    projectId?: string,
   ): Promise<TerraScaleResult<Models.ProjectSavedQueryResponse>> {
     return this.#http.request({
       method: "PUT",
-      path: `${projectRoot(this.#http, projectId)}/saved-queries/${ulidPathSegment(savedQueryId)}`,
+      path: `${projectRoot(this.#http, projectId)}/saved-queries/${idPathSegment(savedQueryId)}`,
       routeName: "savedQueries.update",
       body: request,
     });
   }
 
   delete(
-    savedQueryId: Ulid,
-    projectId?: Ulid,
+    savedQueryId: string,
+    projectId?: string,
   ): Promise<TerraScaleResult<Models.DeletedProjectSavedQueryResponse>> {
     return this.#http.request({
       method: "DELETE",
-      path: `${projectRoot(this.#http, projectId)}/saved-queries/${ulidPathSegment(savedQueryId)}`,
+      path: `${projectRoot(this.#http, projectId)}/saved-queries/${idPathSegment(savedQueryId)}`,
       routeName: "savedQueries.delete",
     });
   }
@@ -456,7 +455,7 @@ export class DatabasesClient {
   }
 
   list(
-    projectId?: Ulid,
+    projectId?: string,
     query?: Models.PageRequest,
   ): Promise<TerraScaleResult<readonly Models.ProjectDatabase[]>> {
     return this.#http.request({
@@ -469,7 +468,7 @@ export class DatabasesClient {
 
   create(
     request: Models.CreateDatabaseRequest,
-    projectId?: Ulid,
+    projectId?: string,
   ): Promise<TerraScaleResult<Models.ProjectDatabase>> {
     return this.#http.request({
       method: "POST",
@@ -479,7 +478,7 @@ export class DatabasesClient {
     });
   }
 
-  get(databaseId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<Models.ProjectDatabase>> {
+  get(databaseId: string, projectId?: string): Promise<TerraScaleResult<Models.ProjectDatabase>> {
     return this.#http.request({
       method: "GET",
       path: databaseRoot(this.#http, { projectId, databaseId }),
@@ -488,7 +487,7 @@ export class DatabasesClient {
   }
 
   delete(
-    databaseId: Ulid,
+    databaseId: string,
     options: Models.DeleteProjectDatabaseOptions,
   ): Promise<TerraScaleResult<Models.DeletedProjectDatabaseResponse>> {
     if (options?.confirm !== true) {
@@ -512,7 +511,7 @@ export class DatabaseBranchesClient {
   }
 
   getCapability(
-    projectId?: Ulid,
+    projectId?: string,
   ): Promise<TerraScaleResult<Models.DatabaseBranchCapabilityResponse>> {
     return this.#http.request({
       method: "GET",
@@ -523,7 +522,7 @@ export class DatabaseBranchesClient {
 
   requestClone(
     request: Models.CreateDatabaseBranchRequest,
-    projectId?: Ulid,
+    projectId?: string,
   ): Promise<TerraScaleResult<never>> {
     return this.#http.request({
       method: "POST",
@@ -543,9 +542,9 @@ export class BackupsClient {
   }
 
   configurePolicy(
-    databaseId: Ulid,
+    databaseId: string,
     request: Models.ConfigureBackupPolicyRequest,
-    projectId?: Ulid,
+    projectId?: string,
   ): Promise<TerraScaleResult<Models.BackupPolicyResponse>> {
     return this.#http.request({
       method: "PUT",
@@ -556,9 +555,9 @@ export class BackupsClient {
   }
 
   planBackup(
-    databaseId: Ulid,
+    databaseId: string,
     request: Models.DatabaseBackupConfirmationPlanRequest,
-    projectId?: Ulid,
+    projectId?: string,
   ): Promise<TerraScaleResult<Models.DatabaseBackupConfirmationPlanResponse>> {
     validateBackupConfirmationValue(request?.operationSessionId, "operationSessionId", 128);
 
@@ -571,10 +570,10 @@ export class BackupsClient {
   }
 
   executeBackup(
-    databaseId: Ulid,
+    databaseId: string,
     request: Models.DatabaseBackupConfirmationExecuteRequest,
     idempotencyKey: string,
-    projectId?: Ulid,
+    projectId?: string,
   ): Promise<TerraScaleResult<Models.BackupJobResponse>> {
     validateBackupConfirmationValue(request?.operationSessionId, "operationSessionId", 128);
     validateBackupConfirmationValue(request?.confirmationToken, "confirmationToken", 8192);
@@ -590,9 +589,9 @@ export class BackupsClient {
   }
 
   listBackups(
-    databaseId: Ulid,
+    databaseId: string,
     query?: Models.BackupListQuery,
-    projectId?: Ulid,
+    projectId?: string,
   ): Promise<TerraScaleResult<readonly Models.BackupJobResponse[]>> {
     return this.#http.request({
       method: "GET",
@@ -603,20 +602,20 @@ export class BackupsClient {
   }
 
   getBackup(
-    databaseId: Ulid,
-    backupId: Ulid,
-    projectId?: Ulid,
+    databaseId: string,
+    backupId: string,
+    projectId?: string,
   ): Promise<TerraScaleResult<Models.BackupJobResponse>> {
     return this.#http.request({
       method: "GET",
-      path: `${databaseRoot(this.#http, { projectId, databaseId })}/backups/${ulidPathSegment(backupId)}`,
+      path: `${databaseRoot(this.#http, { projectId, databaseId })}/backups/${idPathSegment(backupId)}`,
       routeName: "backups.get",
     });
   }
 
   listRestorePoints(
-    databaseId: Ulid,
-    projectId?: Ulid,
+    databaseId: string,
+    projectId?: string,
   ): Promise<TerraScaleResult<readonly Models.RestorePointResponse[]>> {
     return this.#http.request({
       method: "GET",
@@ -626,9 +625,9 @@ export class BackupsClient {
   }
 
   startRestore(
-    databaseId: Ulid,
+    databaseId: string,
     request: Models.StartRestoreRequest,
-    projectId?: Ulid,
+    projectId?: string,
   ): Promise<TerraScaleResult<Models.RestoreJobResponse>> {
     return this.#http.request({
       method: "POST",
@@ -639,21 +638,21 @@ export class BackupsClient {
   }
 
   getRestore(
-    databaseId: Ulid,
-    restoreId: Ulid,
-    projectId?: Ulid,
+    databaseId: string,
+    restoreId: string,
+    projectId?: string,
   ): Promise<TerraScaleResult<Models.RestoreJobResponse>> {
     return this.#http.request({
       method: "GET",
-      path: `${databaseRoot(this.#http, { projectId, databaseId })}/restores/${ulidPathSegment(restoreId)}`,
+      path: `${databaseRoot(this.#http, { projectId, databaseId })}/restores/${idPathSegment(restoreId)}`,
       routeName: "backups.restores.get",
     });
   }
 
   listRestores(
-    databaseId: Ulid,
+    databaseId: string,
     query?: Models.RestoreListQuery,
-    projectId?: Ulid,
+    projectId?: string,
   ): Promise<TerraScaleResult<readonly Models.RestoreJobResponse[]>> {
     return this.#http.request({
       method: "GET",
@@ -672,7 +671,7 @@ export class AccessClient {
   }
 
   listTeamMembers(
-    projectId?: Ulid,
+    projectId?: string,
     query?: Models.PageRequest,
   ): Promise<TerraScaleResult<Models.Page<Models.TeamMember>>> {
     return this.#http.request({
@@ -685,7 +684,7 @@ export class AccessClient {
 
   addTeamMember(
     request: Models.AddTeamMemberRequest,
-    projectId?: Ulid,
+    projectId?: string,
   ): Promise<TerraScaleResult<Models.TeamMember>> {
     return this.#http.request({
       method: "POST",
@@ -696,22 +695,22 @@ export class AccessClient {
   }
 
   updateTeamMember(
-    userId: Ulid,
+    userId: string,
     request: Models.UpdateTeamMemberRequest,
-    projectId?: Ulid,
+    projectId?: string,
   ): Promise<TerraScaleResult<Models.TeamMember>> {
     return this.#http.request({
       method: "PATCH",
-      path: `${projectRoot(this.#http, projectId)}/access/team-members/${ulidPathSegment(userId)}`,
+      path: `${projectRoot(this.#http, projectId)}/access/team-members/${idPathSegment(userId)}`,
       routeName: "access.teamMembers.update",
       body: request,
     });
   }
 
-  removeTeamMember(userId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<void>> {
+  removeTeamMember(userId: string, projectId?: string): Promise<TerraScaleResult<void>> {
     return this.#http.request({
       method: "DELETE",
-      path: `${projectRoot(this.#http, projectId)}/access/team-members/${ulidPathSegment(userId)}`,
+      path: `${projectRoot(this.#http, projectId)}/access/team-members/${idPathSegment(userId)}`,
       routeName: "access.teamMembers.remove",
     });
   }
@@ -724,7 +723,7 @@ export class UsageClient {
     this.#http = http;
   }
 
-  getProjectUsage(projectId?: Ulid): Promise<TerraScaleResult<Models.UsageSummary>> {
+  getProjectUsage(projectId?: string): Promise<TerraScaleResult<Models.UsageSummary>> {
     return this.#http.request({
       method: "GET",
       path: `${projectRoot(this.#http, projectId)}/usage`,
@@ -733,18 +732,18 @@ export class UsageClient {
   }
 
   getOrganizationUsage(
-    organizationId: Ulid,
+    organizationId: string,
   ): Promise<TerraScaleResult<Models.OrganizationUsage>> {
     return this.#http.request({
       method: "GET",
-      path: `${apiRoot}/organizations/${ulidPathSegment(organizationId)}/usage`,
+      path: `${apiRoot}/organizations/${idPathSegment(organizationId)}/usage`,
       routeName: "usage.organization.get",
     });
   }
 
   getProjectUsageWorkload(
     range: Models.UsageWorkloadRange,
-    projectId?: Ulid,
+    projectId?: string,
   ): Promise<TerraScaleResult<Models.UsageWorkload>> {
     return this.#http.request({
       method: "GET",
@@ -755,7 +754,7 @@ export class UsageClient {
   }
 
   getProjectLatency(
-    projectId?: Ulid,
+    projectId?: string,
     query?: Models.ProjectLatencyRequest,
   ): Promise<TerraScaleResult<Models.ProjectLatency>> {
     return this.#http.request({
@@ -768,7 +767,7 @@ export class UsageClient {
 
   getProjectUsageHistory(
     range: Models.UsageHistoryRange,
-    projectId?: Ulid,
+    projectId?: string,
   ): Promise<TerraScaleResult<Models.ProjectUsageHistory>> {
     return this.#http.request({
       method: "GET",
@@ -787,7 +786,7 @@ export class AuditClient {
   }
 
   list(
-    projectId?: Ulid,
+    projectId?: string,
     query?: Models.PageRequest,
   ): Promise<TerraScaleResult<Models.Page<Models.AuditEvent>>> {
     return this.#http.request({
@@ -798,10 +797,10 @@ export class AuditClient {
     });
   }
 
-  get(auditEventId: Ulid, projectId?: Ulid): Promise<TerraScaleResult<Models.AuditEvent>> {
+  get(auditEventId: string, projectId?: string): Promise<TerraScaleResult<Models.AuditEvent>> {
     return this.#http.request({
       method: "GET",
-      path: `${projectRoot(this.#http, projectId)}/audit/${ulidPathSegment(auditEventId)}`,
+      path: `${projectRoot(this.#http, projectId)}/audit/${idPathSegment(auditEventId)}`,
       routeName: "audit.get",
     });
   }
@@ -817,8 +816,8 @@ export class NotificationsClient {
   list(
     query?: Models.PageRequest & {
       readonly unreadOnly?: boolean;
-      readonly projectId?: Ulid;
-      readonly organizationId?: Ulid;
+      readonly projectId?: string;
+      readonly organizationId?: string;
       readonly includeOrganizationNotifications?: boolean;
     },
   ): Promise<TerraScaleResult<readonly Models.Notification[]>> {
@@ -830,16 +829,16 @@ export class NotificationsClient {
     });
   }
 
-  markRead(notificationId: Ulid): Promise<TerraScaleResult<Models.Notification>> {
+  markRead(notificationId: string): Promise<TerraScaleResult<Models.Notification>> {
     return this.#http.request({
       method: "POST",
-      path: `${apiRoot}/users/me/notifications/${ulidPathSegment(notificationId)}:mark-read`,
+      path: `${apiRoot}/users/me/notifications/${idPathSegment(notificationId)}:mark-read`,
       routeName: "notifications.markRead",
     });
   }
 
   markAllRead(query?: {
-    readonly organizationId?: Ulid;
+    readonly organizationId?: string;
   }): Promise<TerraScaleResult<Models.MarkAllNotificationsReadResponse>> {
     return this.#http.request({
       method: "POST",
@@ -876,26 +875,26 @@ export class AdminClient {
     });
   }
 
-  getUser(userId: Ulid): Promise<TerraScaleResult<Models.AdminUser>> {
+  getUser(userId: string): Promise<TerraScaleResult<Models.AdminUser>> {
     return this.#http.request({
       method: "GET",
-      path: `${apiRoot}/admin/users/${ulidPathSegment(userId)}`,
+      path: `${apiRoot}/admin/users/${idPathSegment(userId)}`,
       routeName: "admin.users.get",
     });
   }
 
-  setUserEnabled(userId: Ulid, enabled: boolean): Promise<TerraScaleResult<Models.AdminUser>> {
+  setUserEnabled(userId: string, enabled: boolean): Promise<TerraScaleResult<Models.AdminUser>> {
     return this.#http.request({
       method: "POST",
-      path: `${apiRoot}/admin/users/${ulidPathSegment(userId)}:${enabled ? "enable" : "disable"}`,
+      path: `${apiRoot}/admin/users/${idPathSegment(userId)}:${enabled ? "enable" : "disable"}`,
       routeName: enabled ? "admin.users.enable" : "admin.users.disable",
     });
   }
 
-  deleteUser(userId: Ulid): Promise<TerraScaleResult<void>> {
+  deleteUser(userId: string): Promise<TerraScaleResult<void>> {
     return this.#http.request({
       method: "DELETE",
-      path: `${apiRoot}/admin/users/${ulidPathSegment(userId)}`,
+      path: `${apiRoot}/admin/users/${idPathSegment(userId)}`,
       routeName: "admin.users.delete",
     });
   }
@@ -981,7 +980,7 @@ function validateBackupConfirmationValue(
   }
 }
 
-function projectRootId(http: TerraScaleHttp, projectId: Ulid | undefined): Ulid {
+function projectRootId(http: TerraScaleHttp, projectId: string | undefined): string {
   const selectedProjectId = projectId ?? http.config.projectId;
 
   if (selectedProjectId === undefined) {
@@ -993,12 +992,16 @@ function projectRootId(http: TerraScaleHttp, projectId: Ulid | undefined): Ulid 
   return selectedProjectId;
 }
 
-function projectRoot(http: TerraScaleHttp, projectId: Ulid | undefined): string {
-  return `${apiRoot}/projects/${ulidPathSegment(projectRootId(http, projectId))}`;
+function projectRoot(http: TerraScaleHttp, projectId: string | undefined): string {
+  return `${apiRoot}/projects/${idPathSegment(projectRootId(http, projectId))}`;
 }
 
 function databaseRoot(http: TerraScaleHttp, scope: Models.DatabaseScoped): string {
-  return `${projectRoot(http, scope.projectId)}/databases/${ulidPathSegment(scope.databaseId)}`;
+  return `${projectRoot(http, scope.projectId)}/databases/${idPathSegment(scope.databaseId)}`;
+}
+
+function idPathSegment(value: string): string {
+  return encodeURIComponent(value);
 }
 
 function decodeRegionResult<TValue>(
@@ -1097,4 +1100,3 @@ function requireFiniteNumber(value: unknown, path: string): number {
   }
   return value;
 }
-

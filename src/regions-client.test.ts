@@ -2,9 +2,8 @@ import assert from "node:assert/strict";
 import { describe, test } from "vitest";
 
 import { createTerraScaleClient } from "./factory.js";
-import { toUlid } from "./ids.js";
 
-const organizationId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+const organizationId = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const gru = {
   code: "GRU",
   name: "Sao Paulo",

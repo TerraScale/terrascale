@@ -10,7 +10,6 @@ import {
   resolveRuntimeConfig,
   type TerraScaleRegionCode,
 } from "../index.js";
-import { tryUlid } from "../ids.js";
 import {
   fixtureCredentialFingerprint,
   withFixtureLease,
@@ -19,9 +18,9 @@ import {
 
 const apiBaseUrl = process.env.TERRASCALE_API_BASE_URL;
 const accessToken = process.env.TERRASCALE_E2E_ACCESS_TOKEN;
-const tenantId = tryUlid(process.env.TERRASCALE_E2E_TENANT_ID ?? "");
-const projectId = tryUlid(process.env.TERRASCALE_E2E_PROJECT_ID ?? "");
-const databaseId = tryUlid(process.env.TERRASCALE_E2E_DATABASE_ID ?? "");
+const tenantId = process.env.TERRASCALE_E2E_TENANT_ID?.trim() || undefined;
+const projectId = process.env.TERRASCALE_E2E_PROJECT_ID?.trim() || undefined;
+const databaseId = process.env.TERRASCALE_E2E_DATABASE_ID?.trim() || undefined;
 const leasePath = process.env.TERRASCALE_E2E_DATABASE_WRITE_LEASE;
 const routingRegion = exactRegionFromEnvironment("TERRASCALE_E2E_ROUTING_REGION");
 const strictRegion = exactRegionFromEnvironment("TERRASCALE_E2E_STRICT_REGION");

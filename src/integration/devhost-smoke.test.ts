@@ -2,13 +2,13 @@ import { describe, test } from "vitest";
 import assert from "node:assert/strict";
 
 import { createTerraScaleClient } from "../factory.js";
-import { type Ulid, tryUlid } from "../ids.js";
 
 const apiBaseUrl = process.env.TERRASCALE_API_BASE_URL;
 const accessToken = process.env.TERRASCALE_E2E_ACCESS_TOKEN;
-const projectId = tryUlid(process.env.TERRASCALE_E2E_PROJECT_ID ?? "");
-const organizationId = tryUlid(process.env.TERRASCALE_E2E_ORGANIZATION_ID ?? "");
-const savedQueriesProjectId = tryUlid(process.env.TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID ?? "");
+const projectId = process.env.TERRASCALE_E2E_PROJECT_ID?.trim() || undefined;
+const organizationId = process.env.TERRASCALE_E2E_ORGANIZATION_ID?.trim() || undefined;
+const savedQueriesProjectId =
+  process.env.TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID?.trim() || undefined;
 const savedQueriesSkipReason =
   apiBaseUrl === undefined || accessToken === undefined
     ? "Set TERRASCALE_API_BASE_URL and TERRASCALE_E2E_ACCESS_TOKEN."
@@ -76,7 +76,7 @@ describe.skipIf(Boolean(savedQueriesSkipReason))(
       projectId: savedQueriesProjectId!,
       idempotencyKeyFactory: () => `saved-query-${crypto.randomUUID()}`,
     });
-    let savedQueryId: Ulid | undefined;
+    let savedQueryId: string | undefined;
 
     try {
       const created = await client.savedQueries.create({

@@ -1,17 +1,15 @@
-import type {
-  AuditEventId,
-  BackupId,
-  BackupPolicyId,
-  DatabaseId,
-  InvitationId,
-  NotificationId,
-  OrganizationId,
-  ProjectId,
-  RestoreId,
-  Ulid,
-  UserId,
-} from "./ids.js";
 import type { TerraScaleRegion, TerraScaleRegionCode } from "./regions.js";
+
+export type AuditEventId = string;
+export type BackupId = string;
+export type BackupPolicyId = string;
+export type DatabaseId = string;
+export type InvitationId = string;
+export type NotificationId = string;
+export type OrganizationId = string;
+export type ProjectId = string;
+export type RestoreId = string;
+export type UserId = string;
 
 export type Timestamp = string;
 export type JsonPrimitive = boolean | null | number | string;
@@ -153,7 +151,7 @@ export type OnboardingState = {
   readonly email: string;
   readonly journeyType: OnboardingJourneyType;
   readonly locale: string;
-  readonly invitationId?: Ulid | null;
+  readonly invitationId?: string | null;
   readonly invitationOrganizationId?: OrganizationId | null;
   readonly invitationProjectId?: ProjectId | null;
   readonly invitationAccepted: boolean;
@@ -262,7 +260,7 @@ export type ProjectSavedQueryRequest = {
 };
 
 export type ProjectSavedQueryResponse = {
-  readonly savedQueryId: Ulid;
+  readonly savedQueryId: string;
   readonly projectId: ProjectId;
   readonly name: string;
   readonly query: string;
@@ -290,7 +288,7 @@ export type ProjectSavedQueryPageResponse = {
 };
 
 export type DeletedProjectSavedQueryResponse = {
-  readonly savedQueryId: Ulid;
+  readonly savedQueryId: string;
   readonly projectId: ProjectId;
   readonly deleted: boolean;
 };
@@ -576,7 +574,7 @@ export type AuditEvent = {
   readonly actorUserId?: UserId;
   readonly action: string;
   readonly targetType: string;
-  readonly targetId?: Ulid;
+  readonly targetId?: string;
   readonly occurredAt: Timestamp;
   readonly metadata?: JsonObject;
 };
@@ -608,7 +606,7 @@ export type AdminUser = {
 };
 
 export type AdminSupportNote = {
-  readonly supportNoteId: Ulid;
+  readonly supportNoteId: string;
   readonly userId?: UserId;
   readonly organizationId?: OrganizationId;
   readonly projectId?: ProjectId;

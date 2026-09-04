@@ -298,7 +298,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { open, unlink } from "node:fs/promises";
 import { hostname } from "node:os";
 import path from "node:path";
-import { createTerraScaleClient, toUlid } from "@terrascale/sdk";
+import { createTerraScaleClient } from "@terrascale/sdk";
 
 const required = [
   "TERRASCALE_API_BASE_URL",
@@ -314,9 +314,9 @@ if (missing.length > 0) {
   process.exit(0);
 }
 
-const tenantId = toUlid(process.env.TERRASCALE_E2E_TENANT_ID);
-const projectId = toUlid(process.env.TERRASCALE_E2E_PROJECT_ID);
-const databaseId = toUlid(process.env.TERRASCALE_E2E_DATABASE_ID);
+const tenantId = process.env.TERRASCALE_E2E_TENANT_ID;
+const projectId = process.env.TERRASCALE_E2E_PROJECT_ID;
+const databaseId = process.env.TERRASCALE_E2E_DATABASE_ID;
 const leasePath = process.env.TERRASCALE_E2E_DATABASE_WRITE_LEASE.trim();
 if (!path.isAbsolute(leasePath) || path.dirname(leasePath) === leasePath) {
   throw new TypeError("TERRASCALE_E2E_DATABASE_WRITE_LEASE must be an absolute file path.");

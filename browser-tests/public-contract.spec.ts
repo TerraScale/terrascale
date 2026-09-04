@@ -8,14 +8,14 @@ test("the browser entrypoint keeps regional routing behavior", async ({ page }) 
     const requests: { url: string; headers: Record<string, string> }[] = [];
     const client = sdk.createTerraScaleClient({
       preferredRegion: "FRA",
-      projectId: sdk.toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+      projectId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
       fetch: async (input: RequestInfo | URL) => {
         const request = input instanceof Request ? input : new Request(input);
         requests.push({ url: request.url, headers: Object.fromEntries(request.headers) });
         return Response.json({});
       },
     });
-    const databaseId = sdk.toUlid("01BX5ZZKBKACTAV9WEVGEMMVRZ");
+    const databaseId = "01BX5ZZKBKACTAV9WEVGEMMVRZ";
 
     const result = await client.databases.get(databaseId);
     return { requests, ok: result.ok };

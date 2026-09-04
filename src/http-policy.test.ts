@@ -3,10 +3,9 @@ import { describe, test } from "vitest";
 
 import { createTerraScaleClient } from "./index.js";
 import { TerraScaleHttp } from "./http.js";
-import { toUlid } from "./ids.js";
 
-const projectId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV");
-const databaseId = toUlid("01BX5ZZKBKACTAV9WEVGEMMVRZ");
+const projectId = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const databaseId = "01BX5ZZKBKACTAV9WEVGEMMVRZ";
 
 describe("TerraScaleHttp request policy", () => {
   test("attaches idempotency keys to all requested mutation methods only", async () => {

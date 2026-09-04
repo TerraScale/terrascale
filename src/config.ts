@@ -1,4 +1,4 @@
-import type { ProjectId } from "./ids.js";
+import type { ProjectId } from "./models.js";
 import { parseRegionCode, type TerraScaleRegionCode } from "./regions.js";
 
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;

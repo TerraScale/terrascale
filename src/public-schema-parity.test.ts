@@ -21,7 +21,6 @@ import type {
   SavedQueriesClient,
 } from "./client.js";
 import type { TerraScaleClient } from "./factory.js";
-import type { Ulid } from "./ids.js";
 import type { TerraScaleResult } from "./result.js";
 
 type Equal<Left, Right> =
@@ -36,8 +35,8 @@ type MissingKey<Container, Key extends PropertyKey> =
 type PublicSdk = typeof import("./index.js");
 
 type ExpectedSavedQueryResponse = {
-  readonly savedQueryId: Ulid;
-  readonly projectId: Ulid;
+  readonly savedQueryId: string;
+  readonly projectId: string;
   readonly name: string;
   readonly query: string;
   readonly createdAt: Timestamp;
@@ -52,7 +51,7 @@ type ExpectedSavedQueryPage = {
 };
 
 type ExpectedDatabaseBranchCapability = {
-  readonly projectId: Ulid;
+  readonly projectId: string;
   readonly admissionState: string;
   readonly physicalCloneAvailable: boolean;
   readonly promotionAvailable: boolean;
@@ -61,7 +60,7 @@ type ExpectedDatabaseBranchCapability = {
 };
 
 type ExpectedProjectTeamMember = {
-  readonly userId: Ulid;
+  readonly userId: string;
   readonly email: string;
   readonly displayName: string;
   readonly role: AccessRole;
@@ -69,7 +68,7 @@ type ExpectedProjectTeamMember = {
 };
 
 type ExpectedCreateDatabaseBranchRequest = {
-  readonly sourceDatabaseId?: Ulid;
+  readonly sourceDatabaseId?: string;
 };
 
 const staticSdkParity: readonly [
@@ -89,7 +88,7 @@ const staticSdkParity: readonly [
       DatabaseBranchesClient["requestClone"],
       (
         request: ExpectedCreateDatabaseBranchRequest,
-        projectId?: Ulid,
+        projectId?: string,
       ) => Promise<TerraScaleResult<never>>
     >
   >,

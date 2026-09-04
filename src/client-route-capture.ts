@@ -5,19 +5,18 @@ import {
   type TerraScaleRequestMetric,
   type TerraScaleRouteName,
 } from "./http.js";
-import { toUlid } from "./ids.js";
 
 const sampleIds = {
-  auditEventId: toUlid("01FRZ3NDEKTSV4RRFFQ69G5FAV"),
-  backupId: toUlid("01NRZ3NDEKTSV4RRFFQ69G5FAV"),
-  databaseId: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAW"),
-  invitationId: toUlid("01GRZ3NDEKTSV4RRFFQ69G5FAV"),
-  notificationId: toUlid("01DRZ3NDEKTSV4RRFFQ69G5FAV"),
-  organizationId: toUlid("01ERZ3NDEKTSV4RRFFQ69G5FAV"),
-  projectId: toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
-  restoreId: toUlid("01MRZ3NDEKTSV4RRFFQ69G5FAV"),
-  savedQueryId: toUlid("01SRZ3NDEKTSV4RRFFQ69G5FAV"),
-  userId: toUlid("01KRZ3NDEKTSV4RRFFQ69G5FAV"),
+  auditEventId: "01FRZ3NDEKTSV4RRFFQ69G5FAV",
+  backupId: "01NRZ3NDEKTSV4RRFFQ69G5FAV",
+  databaseId: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+  invitationId: "01GRZ3NDEKTSV4RRFFQ69G5FAV",
+  notificationId: "01DRZ3NDEKTSV4RRFFQ69G5FAV",
+  organizationId: "01ERZ3NDEKTSV4RRFFQ69G5FAV",
+  projectId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  restoreId: "01MRZ3NDEKTSV4RRFFQ69G5FAV",
+  savedQueryId: "01SRZ3NDEKTSV4RRFFQ69G5FAV",
+  userId: "01KRZ3NDEKTSV4RRFFQ69G5FAV",
 } as const;
 
 const pathTemplateSegments = new Map<string, string>(

@@ -5,7 +5,6 @@ import { describe, test } from "vitest";
 import { capturePublicClientRoutes } from "./client-route-capture.js";
 import { createTerraScaleClient } from "./factory.js";
 import type { TerraScaleClient } from "./factory.js";
-import { toUlid } from "./ids.js";
 import type {
   DatabaseBranchCapabilityResponse,
   CreateDatabaseBranchRequest,
@@ -14,16 +13,16 @@ import type {
   ProjectSavedQueryResponse,
 } from "./models.js";
 
-const projectId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAV");
-const databaseId = toUlid("01ARZ3NDEKTSV4RRFFQ69G5FAW");
-const notificationId = toUlid("01DRZ3NDEKTSV4RRFFQ69G5FAV");
-const organizationId = toUlid("01ERZ3NDEKTSV4RRFFQ69G5FAV");
-const backupPolicyId = toUlid("01NRZ3NDEKTSV4RRFFQ69G5FAW");
-const backupId = toUlid("01NRZ3NDEKTSV4RRFFQ69G5FAV");
-const restoreId = toUlid("01MRZ3NDEKTSV4RRFFQ69G5FAV");
-const restoredDatabaseId = toUlid("01QRZ3NDEKTSV4RRFFQ69G5FAV");
-const savedQueryId = toUlid("01SRZ3NDEKTSV4RRFFQ69G5FAV");
-const otherProjectId = toUlid("01TRZ3NDEKTSV4RRFFQ69G5FAV");
+const projectId = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const databaseId = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+const notificationId = "01DRZ3NDEKTSV4RRFFQ69G5FAV";
+const organizationId = "01ERZ3NDEKTSV4RRFFQ69G5FAV";
+const backupPolicyId = "01NRZ3NDEKTSV4RRFFQ69G5FAW";
+const backupId = "01NRZ3NDEKTSV4RRFFQ69G5FAV";
+const restoreId = "01MRZ3NDEKTSV4RRFFQ69G5FAV";
+const restoredDatabaseId = "01QRZ3NDEKTSV4RRFFQ69G5FAV";
+const savedQueryId = "01SRZ3NDEKTSV4RRFFQ69G5FAV";
+const otherProjectId = "01TRZ3NDEKTSV4RRFFQ69G5FAV";
 
 type CapturedRequest = {
   readonly method: string;
