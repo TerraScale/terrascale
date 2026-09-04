@@ -1,0 +1,92 @@
+{
+  "$comment": "L-1 draft source of truth. Generated pages (docs/pricing.md, docs/limits.md) must match this file. Values mirror GOAL.md D-16/D-17/D-21/D-25/D-64. A write is billed once regardless of views/subscribers (D-22); infrastructure is never claimed free.",
+  "billingDimensions": {
+    "billed": ["writes", "storage"],
+    "freeUnlimitedUnbilled": [
+      "reads",
+      "queries",
+      "egress",
+      "CDN delivery",
+      "fan-out",
+      "concurrent subscribers",
+      "WebSocket connections",
+      "webhook delivery",
+      "catch-up and replay",
+      "TTL expiry"
+    ]
+  },
+  "writeUnit": {
+    "definition": "One create/update/patch/delete of <= 4 KiB (ceil(bytes / 4 KiB)).",
+    "replication": "Replicating a write to another selected region = +1 write per region, shown up front.",
+    "billedOnce": "A write is billed once regardless of how many shared views it affects or how many clients are attached (D-22)."
+  },
+  "storage": {
+    "definition": "Logical bytes (canonical bytes of current documents + retained history, TTL-aware, measured in byte-seconds) x regions, at $/GB-month.",
+    "notBilled": ["indexes", "WAL", "backups"]
+  },
+  "freeTier": {
+    "plan": "Free",
+    "databases": 1,
+    "storage": "100 MB",
+    "writesPerMonth": 100000,
+    "maxRegions": 3,
+    "support": "community",
+    "notes": "Card required at signup (Radar + rate limits). First paid month free if subscribing during onboarding."
+  },
+  "plans": [
+    {
+      "name": "Free",
+      "price": "$0",
+      "writes": "100k writes/month",
+      "storage": "100 MB",
+      "databases": 1,
+      "pitrDays": 1
+    },
+    {
+      "name": "Starter",
+      "price": "$5",
+      "writes": "1M writes",
+      "storage": "5 GB",
+      "databases": 5,
+      "pitrDays": 7
+    },
+    {
+      "name": "Pro",
+      "price": "$50",
+      "writes": "100M writes",
+      "storage": "25 GB",
+      "databases": 25,
+      "pitrDays": 30
+    },
+    {
+      "name": "Scale",
+      "price": "$500",
+      "writes": "PAYG (support-and-compliance fee)",
+      "storage": "PAYG",
+      "databases": "soft-unlimited",
+      "pitrDays": 35,
+      "notes": "Priority support, SOC 2 report access, security questionnaires, DPA/SLA."
+    }
+  ],
+  "overagePayg": {
+    "writes": "$1 per 1M writes",
+    "storage": "$0.20 per GB-month per region",
+    "note": "Both may only go down."
+  },
+  "branchAllowance": "Every org, on any plan, gets 100k writes/month + 1 GB shared across all of its branches (dev branches included) on top of plan quotas; branches beyond it bill like databases.",
+  "limits": {
+    "pitrRetentionDays": { "Free": 1, "Starter": 7, "Pro": 30, "Scale": 35 },
+    "databasesPerOrg": { "Free": 1, "Starter": 5, "Pro": 25, "Scale": "soft-unlimited" },
+    "maxDocument": "1 MiB",
+    "historyRetention": "Default 7 days, configurable per collection 1-30 days (plan-capped at the PITR figure), billed as storage.",
+    "abuseGuards": {
+      "_note": "Unbilled, enforced, no upsell UI (D-64). CDN-delivered reactive data has no bandwidth guard. Subscribers per view are unlimited on every plan.",
+      "readQueryRequestsPerSec": { "Free": 100, "Starter": 1000, "Pro": 5000, "Scale": "custom" },
+      "directMemberReadBandwidthPerMonth": { "Free": "50 GB", "Starter": "500 GB", "Pro": "2 TB", "Scale": "custom" },
+      "distinctActiveSharedViews": { "Free": 1000, "Starter": 10000, "Pro": 100000, "Scale": "custom" },
+      "optionalWebSocketConnections": { "Free": 100, "Starter": 1000, "Pro": 10000, "Scale": "custom" },
+      "webhookEndpoints": { "Free": 3, "Starter": 10, "Pro": 50, "Scale": "custom" }
+    }
+  },
+  "reaper": "A Free database with no request for 30 days is paused (snapshot kept); at 90 days idle, after two more emails, it is deleted. Paid plans are never reaped (D-76)."
+}
