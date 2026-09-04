@@ -13,11 +13,18 @@
 //! `docs/sessions/gapd01-ownership-decision.md`; the rule-by-rule V1
 //! mapping is `docs/sessions/session-contract.md`.
 
+#![allow(clippy::all, reason = "session contract lint debt is tracked while the API stabilizes")]
+#![allow(
+    clippy::pedantic,
+    reason = "session contract lint debt is tracked while the API stabilizes"
+)]
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
     sync::atomic::{AtomicU64, Ordering},
-    time::Duration,
+    thread,
+    time::{Duration, Instant},
 };
 
 use crate::engine::{CommitOutcome, Engine, EngineError};
@@ -30,7 +37,8 @@ use crate::streaming::{
 };
 use crate::types::{
     Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue, ExpectedVersion,
-    LocalDurability, OperationId, ReadSnapshot, StorageSequence, TenantScope,
+    LocalDurability, OperationId, ReadSnapshot, RegionId, ReplicationClockStamp, StorageSequence,
+    TenantScope,
 };
 
 #[cfg(test)]
@@ -45,6 +53,528 @@ const PAGE_BATCH_LIMIT: u32 = 256;
 /// The prefix of the identity-family name one collection's generated ids
 /// allocate from; cross-client `HiLo` block distribution is GAP-F9's.
 const IDENTITY_NAME_PREFIX: &str = "documents/";
+
+/// The maximum encoded session token accepted by the public contract.
+pub const MAX_SESSION_TOKEN_BYTES: usize = 16 * 1024;
+
+/// The current opaque session-token encoding version.
+pub const SESSION_TOKEN_FORMAT_VERSION: u8 = 1;
+
+/// The bounded default wait for a causal read to catch up.
+pub const DEFAULT_SESSION_WAIT: Duration = Duration::from_secs(2);
+/// Hard ceiling for one causal-read wait, preventing an unbounded caller
+/// timeout from pinning a request thread indefinitely.
+pub const MAX_SESSION_WAIT: Duration = Duration::from_secs(30);
+
+const SESSION_TOKEN_MAGIC: &[u8; 4] = b"TSS1";
+const SESSION_TOKEN_CHECKSUM_BYTES: usize = 32;
+
+/// A non-zero database incarnation. Session tokens cannot cross an epoch:
+/// accepting one after restore or replacement could expose an unrelated
+/// database state as if it were causally newer.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct SessionEpoch(u64);
+
+impl SessionEpoch {
+    /// Creates an epoch. Zero is reserved for an absent or unvalidated epoch.
+    pub const fn new(value: u64) -> Result<Self, SessionTokenError> {
+        if value == 0 { Err(SessionTokenError::ZeroEpoch) } else { Ok(Self(value)) }
+    }
+
+    /// Returns the wire epoch value.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+/// Errors returned while constructing or decoding the opaque session token.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SessionTokenError {
+    /// The encoded token is empty, truncated, or has trailing bytes.
+    MalformedEncoding,
+    /// The token uses a format version this member does not understand.
+    UnsupportedVersion(u8),
+    /// The encoded token exceeds the public 16 KiB bound.
+    TooLarge,
+    /// The checksum does not match the token body.
+    ChecksumMismatch,
+    /// The body is not in canonical origin order or contains a duplicate.
+    NonCanonical,
+    /// An epoch of zero is not a valid database incarnation.
+    ZeroEpoch,
+    /// A frontier sequence of zero is reserved for an absent origin.
+    ZeroSequence,
+    /// A frontier origin could not be validated as a logical Region id.
+    InvalidOrigin,
+    /// The supplied token and frontier belong to different epochs.
+    EpochMismatch {
+        /// The epoch the caller expected.
+        expected: SessionEpoch,
+        /// The epoch found in the supplied token or frontier.
+        observed: SessionEpoch,
+    },
+}
+
+impl fmt::Display for SessionTokenError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MalformedEncoding => formatter.write_str("malformed session token encoding"),
+            Self::UnsupportedVersion(version) => {
+                write!(formatter, "unsupported session token version {version}")
+            }
+            Self::TooLarge => formatter.write_str("session token exceeds 16 KiB"),
+            Self::ChecksumMismatch => formatter.write_str("session token checksum mismatch"),
+            Self::NonCanonical => formatter.write_str("non-canonical session token encoding"),
+            Self::ZeroEpoch => formatter.write_str("session epoch zero is reserved"),
+            Self::ZeroSequence => formatter.write_str("frontier sequence zero is reserved"),
+            Self::InvalidOrigin => formatter.write_str("invalid frontier origin"),
+            Self::EpochMismatch { expected, observed } => {
+                write!(
+                    formatter,
+                    "session epoch mismatch (expected {}, observed {})",
+                    expected.0, observed.0
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for SessionTokenError {}
+
+/// A decoded causal frontier. The token itself remains opaque to callers;
+/// this value is the validated member-side representation used for checks.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionFrontier {
+    epoch: SessionEpoch,
+    origins: BTreeMap<RegionId, u64>,
+    last_write: ReplicationClockStamp,
+}
+
+impl SessionFrontier {
+    /// Creates an empty frontier for one database epoch.
+    pub const fn new(epoch: SessionEpoch) -> Self {
+        Self { epoch, origins: BTreeMap::new(), last_write: ReplicationClockStamp::new(0, 0) }
+    }
+
+    /// Creates a frontier from validated entries, rejecting zero sequences
+    /// and duplicate origins. The map is canonicalized by `RegionId` order.
+    pub fn try_from_entries(
+        epoch: SessionEpoch,
+        entries: impl IntoIterator<Item = (RegionId, u64)>,
+        last_write: ReplicationClockStamp,
+    ) -> Result<Self, SessionTokenError> {
+        let mut frontier = Self::new(epoch);
+        for (origin, sequence) in entries {
+            if sequence == 0 {
+                return Err(SessionTokenError::ZeroSequence);
+            }
+            if frontier.origins.insert(origin, sequence).is_some() {
+                return Err(SessionTokenError::NonCanonical);
+            }
+        }
+        Ok(Self { last_write, ..frontier })
+    }
+
+    /// Returns the database epoch.
+    #[must_use]
+    pub const fn epoch(&self) -> SessionEpoch {
+        self.epoch
+    }
+
+    /// Returns the HLC stamp of the client's latest write.
+    #[must_use]
+    pub const fn last_write(&self) -> ReplicationClockStamp {
+        self.last_write
+    }
+
+    /// Returns the sequence observed for `origin`, or zero if absent.
+    #[must_use]
+    pub fn sequence(&self, origin: &RegionId) -> u64 {
+        self.origins.get(origin).copied().unwrap_or(0)
+    }
+
+    /// Iterates over origins in canonical order.
+    pub fn entries(&self) -> impl Iterator<Item = (&RegionId, u64)> + '_ {
+        self.origins.iter().map(|(origin, sequence)| (origin, *sequence))
+    }
+
+    /// Advances one origin without allowing a causal regression.
+    pub fn advance(&mut self, origin: RegionId, sequence: u64) -> Result<bool, SessionTokenError> {
+        if sequence == 0 {
+            return Err(SessionTokenError::ZeroSequence);
+        }
+        let entry = self.origins.entry(origin).or_insert(0);
+        if sequence > *entry {
+            *entry = sequence;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Advances the HLC monotonically.
+    pub fn observe_write(&mut self, stamp: ReplicationClockStamp) {
+        if stamp > self.last_write {
+            self.last_write = stamp;
+        }
+    }
+
+    /// Returns whether this frontier covers every dependency in `required`.
+    #[must_use]
+    pub fn covers(&self, required: &Self) -> bool {
+        self.epoch == required.epoch
+            && required.origins.iter().all(|(origin, sequence)| self.sequence(origin) >= *sequence)
+    }
+
+    /// Merges a newer observation from the same database epoch.
+    pub fn merge(&mut self, other: &Self) -> Result<bool, SessionTokenError> {
+        if self.epoch != other.epoch {
+            return Err(SessionTokenError::EpochMismatch {
+                expected: self.epoch,
+                observed: other.epoch,
+            });
+        }
+        let mut changed = false;
+        for (origin, sequence) in &other.origins {
+            changed |= self.advance(origin.clone(), *sequence)?;
+        }
+        if other.last_write > self.last_write {
+            self.last_write = other.last_write;
+            changed = true;
+        }
+        Ok(changed)
+    }
+}
+
+/// An opaque, versioned causal session token carried by SDK requests.
+///
+/// Its bytes are intentionally inaccessible except through `encode` and
+/// `decode`; callers may pass them between clients without interpreting
+/// topology or causal metadata. The member validates and interprets it.
+#[derive(Clone, Eq, PartialEq)]
+pub struct SessionToken {
+    frontier: SessionFrontier,
+}
+
+impl fmt::Debug for SessionToken {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SessionToken(opaque)")
+    }
+}
+
+impl SessionToken {
+    /// Creates an empty token for an epoch.
+    #[must_use]
+    pub const fn new(epoch: SessionEpoch) -> Self {
+        Self { frontier: SessionFrontier::new(epoch) }
+    }
+
+    /// Creates an empty token from a raw non-zero epoch.
+    pub fn for_epoch(epoch: u64) -> Result<Self, SessionTokenError> {
+        Ok(Self::new(SessionEpoch::new(epoch)?))
+    }
+
+    /// Wraps an already validated frontier.
+    #[must_use]
+    pub const fn from_frontier(frontier: SessionFrontier) -> Self {
+        Self { frontier }
+    }
+
+    /// Returns the epoch after decoding and validation.
+    #[must_use]
+    pub const fn epoch(&self) -> SessionEpoch {
+        self.frontier.epoch()
+    }
+
+    /// Returns a validated member-side frontier view.
+    #[must_use]
+    pub const fn frontier(&self) -> &SessionFrontier {
+        &self.frontier
+    }
+
+    /// Advances one observed origin monotonically.
+    pub fn advance(&mut self, origin: RegionId, sequence: u64) -> Result<bool, SessionTokenError> {
+        self.frontier.advance(origin, sequence)
+    }
+
+    /// Records the latest write HLC monotonically.
+    pub fn observe_write(&mut self, stamp: ReplicationClockStamp) {
+        self.frontier.observe_write(stamp);
+    }
+
+    /// Merges a response observation, refusing cross-epoch tokens.
+    pub fn merge(&mut self, other: &Self) -> Result<bool, SessionTokenError> {
+        self.frontier.merge(&other.frontier)
+    }
+
+    /// Returns whether this token's frontier covers `required`.
+    #[must_use]
+    pub fn covers(&self, required: &SessionFrontier) -> bool {
+        self.frontier.covers(required)
+    }
+
+    /// Encodes the canonical opaque token, including a tamper-detecting hash.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut body = Vec::with_capacity(64);
+        body.extend_from_slice(SESSION_TOKEN_MAGIC);
+        body.push(SESSION_TOKEN_FORMAT_VERSION);
+        body.extend_from_slice(&self.epoch().get().to_be_bytes());
+        body.extend_from_slice(&self.frontier.last_write().ticks().to_be_bytes());
+        body.extend_from_slice(&self.frontier.last_write().counter().to_be_bytes());
+        body.extend_from_slice(&(self.frontier.origins.len() as u16).to_be_bytes());
+        for (origin, sequence) in self.frontier.entries() {
+            let bytes = origin.as_str().as_bytes();
+            body.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
+            body.extend_from_slice(bytes);
+            body.extend_from_slice(&sequence.to_be_bytes());
+        }
+        let checksum = blake3::hash(&body);
+        let mut encoded = body;
+        encoded.extend_from_slice(checksum.as_bytes());
+        encoded
+    }
+
+    /// Alias for `encode`, useful at protocol boundaries.
+    pub fn encoded(&self) -> Vec<u8> {
+        self.encode()
+    }
+
+    /// Decodes and validates one exact canonical token.
+    pub fn decode(bytes: &[u8]) -> Result<Self, SessionTokenError> {
+        if bytes.len() > MAX_SESSION_TOKEN_BYTES {
+            return Err(SessionTokenError::TooLarge);
+        }
+        if bytes.len() < 4 + 1 + 8 + 8 + 8 + 2 + SESSION_TOKEN_CHECKSUM_BYTES {
+            return Err(SessionTokenError::MalformedEncoding);
+        }
+        let checksum_at = bytes.len() - SESSION_TOKEN_CHECKSUM_BYTES;
+        if blake3::hash(&bytes[..checksum_at]).as_bytes() != &bytes[checksum_at..] {
+            return Err(SessionTokenError::ChecksumMismatch);
+        }
+        let mut reader = TokenReader::new(&bytes[..checksum_at]);
+        if reader.take(4)? != SESSION_TOKEN_MAGIC {
+            return Err(SessionTokenError::MalformedEncoding);
+        }
+        let version = reader.byte()?;
+        if version != SESSION_TOKEN_FORMAT_VERSION {
+            return Err(SessionTokenError::UnsupportedVersion(version));
+        }
+        let epoch = SessionEpoch::new(reader.u64()?)?;
+        let last_write = ReplicationClockStamp::new(reader.u64()?, reader.u64()?);
+        let count = usize::from(reader.u16()?);
+        let mut entries = Vec::with_capacity(count);
+        for _ in 0..count {
+            let length = usize::from(reader.u16()?);
+            let origin = std::str::from_utf8(reader.take(length)?)
+                .map_err(|_| SessionTokenError::InvalidOrigin)?;
+            let origin = RegionId::try_new(origin).map_err(|_| SessionTokenError::InvalidOrigin)?;
+            let sequence = reader.u64()?;
+            entries.push((origin, sequence));
+        }
+        if !reader.finished() {
+            return Err(SessionTokenError::MalformedEncoding);
+        }
+        let token =
+            Self { frontier: SessionFrontier::try_from_entries(epoch, entries, last_write)? };
+        if token.encode() != bytes {
+            return Err(SessionTokenError::NonCanonical);
+        }
+        Ok(token)
+    }
+
+    /// Alias for `decode` at a byte-oriented protocol boundary.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, SessionTokenError> {
+        Self::decode(bytes)
+    }
+
+    /// Applies the session guarantee and returns a typed stale result when
+    /// the bounded wait is exhausted. Eventual reads deliberately skip this
+    /// check. No variant offers linearizability.
+    pub fn wait_for<F>(
+        &self,
+        policy: ReadConsistency,
+        timeout: Duration,
+        safe_region: RegionId,
+        mut applied: F,
+    ) -> Result<(), SessionReadError>
+    where
+        F: FnMut() -> Result<SessionFrontier, SessionTokenError>,
+    {
+        if policy == ReadConsistency::Eventual {
+            return Ok(());
+        }
+        let started = Instant::now();
+        let timeout = timeout.min(MAX_SESSION_WAIT);
+        loop {
+            let current = applied().map_err(SessionReadError::Token)?;
+            if current.epoch() != self.epoch() {
+                return Err(SessionReadError::Token(SessionTokenError::EpochMismatch {
+                    expected: self.epoch(),
+                    observed: current.epoch(),
+                }));
+            }
+            if current.covers(&self.frontier) {
+                return Ok(());
+            }
+            if timeout.is_zero() || started.elapsed() >= timeout {
+                return Err(SessionReadError::StaleReplica(StaleReplica::new(safe_region)));
+            }
+            // A causal frontier may take a short while to arrive. Sleeping a
+            // bounded slice keeps this synchronous seam CPU-safe under a
+            // partition while preserving prompt timeout/cancellation errors
+            // from the applied callback.
+            thread::sleep(Duration::from_millis(1).min(timeout.saturating_sub(started.elapsed())));
+        }
+    }
+}
+
+/// A per-request causal read mode. `Default` is read-your-writes plus
+/// monotonic reads; the only weaker mode is `Eventual`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ReadConsistency {
+    /// Read-your-writes and monotonic reads (the default).
+    #[default]
+    Default,
+    /// Serve the local state without waiting for a session frontier.
+    Eventual,
+    /// Require the session frontier before serving, including observations
+    /// learned from prior reads.
+    WritesFollowReads,
+}
+
+impl ReadConsistency {
+    /// Returns whether this mode intentionally permits a stale local read.
+    #[must_use]
+    pub const fn is_eventual(self) -> bool {
+        matches!(self, Self::Eventual)
+    }
+
+    /// Returns whether this mode checks the supplied session frontier.
+    #[must_use]
+    pub const fn requires_frontier(self) -> bool {
+        !self.is_eventual()
+    }
+}
+
+/// A validated per-request causal-read policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SessionReadPolicy {
+    consistency: ReadConsistency,
+    wait_timeout: Duration,
+}
+
+impl SessionReadPolicy {
+    /// Creates a policy. A zero timeout is valid and means "check once, then
+    /// return `StaleReplica`"; it is useful for non-blocking members.
+    #[must_use]
+    pub fn new(consistency: ReadConsistency, wait_timeout: Duration) -> Self {
+        let wait_timeout =
+            if wait_timeout > MAX_SESSION_WAIT { MAX_SESSION_WAIT } else { wait_timeout };
+        Self { consistency, wait_timeout }
+    }
+
+    /// Returns the selected consistency mode.
+    #[must_use]
+    pub const fn consistency(self) -> ReadConsistency {
+        self.consistency
+    }
+
+    /// Returns the bounded wait.
+    #[must_use]
+    pub const fn wait_timeout(self) -> Duration {
+        self.wait_timeout
+    }
+
+    /// Enforces this policy against successive applied-frontier observations.
+    pub fn enforce<F>(
+        self,
+        token: &SessionToken,
+        safe_region: RegionId,
+        applied: F,
+    ) -> Result<(), SessionReadError>
+    where
+        F: FnMut() -> Result<SessionFrontier, SessionTokenError>,
+    {
+        token.wait_for(self.consistency, self.wait_timeout, safe_region, applied)
+    }
+}
+
+impl Default for SessionReadPolicy {
+    fn default() -> Self {
+        Self::new(ReadConsistency::Default, DEFAULT_SESSION_WAIT)
+    }
+}
+
+/// Compatibility aliases for SDK and server terminology.
+pub type SessionConsistency = ReadConsistency;
+/// Compatibility spelling for the SDK's read-guarantee terminology.
+pub type ReadGuarantee = ReadConsistency;
+
+/// A typed stale-replica outcome that names a Region safe for retry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StaleReplica {
+    safe_region: RegionId,
+}
+
+impl StaleReplica {
+    /// Creates a stale outcome naming the Region that can serve the token.
+    #[must_use]
+    pub const fn new(safe_region: RegionId) -> Self {
+        Self { safe_region }
+    }
+
+    /// Returns the safe retry Region.
+    #[must_use]
+    pub const fn safe_region(&self) -> &RegionId {
+        &self.safe_region
+    }
+
+    /// Alias used by routing adapters.
+    #[must_use]
+    pub const fn region(&self) -> &RegionId {
+        &self.safe_region
+    }
+}
+
+/// Errors from applying a session read guarantee.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SessionReadError {
+    /// The member could not validate its applied frontier or token.
+    Token(SessionTokenError),
+    /// The bounded wait expired; retry at this safe Region.
+    StaleReplica(StaleReplica),
+}
+
+/// A small byte reader used only by the strict session-token codec.
+struct TokenReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> TokenReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+    fn take(&mut self, count: usize) -> Result<&'a [u8], SessionTokenError> {
+        let end = self.offset.checked_add(count).ok_or(SessionTokenError::MalformedEncoding)?;
+        let value = self.bytes.get(self.offset..end).ok_or(SessionTokenError::MalformedEncoding)?;
+        self.offset = end;
+        Ok(value)
+    }
+    fn byte(&mut self) -> Result<u8, SessionTokenError> {
+        Ok(*self.take(1)?.first().expect("one byte"))
+    }
+    fn u16(&mut self) -> Result<u16, SessionTokenError> {
+        Ok(u16::from_be_bytes(self.take(2)?.try_into().expect("two bytes")))
+    }
+    fn u64(&mut self) -> Result<u64, SessionTokenError> {
+        Ok(u64::from_be_bytes(self.take(8)?.try_into().expect("eight bytes")))
+    }
+    fn finished(&self) -> bool {
+        self.offset == self.bytes.len()
+    }
+}
 
 /// How a session treats loaded documents (V1 `SessionOptions.NoTracking`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -75,6 +605,9 @@ pub struct SessionOptions {
     tracking: SessionTracking,
     transaction_mode: SessionTransactionMode,
     durability: LocalDurability,
+    consistency: ReadConsistency,
+    wait_timeout: Duration,
+    session_token: Option<SessionToken>,
 }
 
 impl SessionOptions {
@@ -85,6 +618,9 @@ impl SessionOptions {
             tracking: SessionTracking::Tracked,
             transaction_mode: SessionTransactionMode::SingleNode,
             durability: LocalDurability::Synced,
+            consistency: ReadConsistency::Default,
+            wait_timeout: DEFAULT_SESSION_WAIT,
+            session_token: None,
         }
     }
 
@@ -109,6 +645,40 @@ impl SessionOptions {
         self
     }
 
+    /// Selects the per-read causal guarantee. The default combines
+    /// read-your-writes and monotonic reads; `Eventual` is an explicit opt-out.
+    #[must_use]
+    pub const fn consistency(mut self, consistency: ReadConsistency) -> Self {
+        self.consistency = consistency;
+        self
+    }
+
+    /// Selects eventual reads for this session.
+    #[must_use]
+    pub const fn eventual(self) -> Self {
+        self.consistency(ReadConsistency::Eventual)
+    }
+
+    /// Selects writes-follow-reads for this session.
+    #[must_use]
+    pub const fn writes_follow_reads(self) -> Self {
+        self.consistency(ReadConsistency::WritesFollowReads)
+    }
+
+    /// Sets the maximum bounded wait before a stale replica is returned.
+    #[must_use]
+    pub const fn wait_timeout(mut self, timeout: Duration) -> Self {
+        self.wait_timeout = timeout;
+        self
+    }
+
+    /// Continues an existing opaque causal session token.
+    #[must_use]
+    pub fn with_session_token(mut self, token: SessionToken) -> Self {
+        self.session_token = Some(token);
+        self
+    }
+
     /// Returns the tracking mode.
     #[must_use]
     pub const fn tracking(&self) -> SessionTracking {
@@ -125,6 +695,30 @@ impl SessionOptions {
     #[must_use]
     pub const fn save_durability(&self) -> LocalDurability {
         self.durability
+    }
+
+    /// Returns the default read consistency for this session.
+    #[must_use]
+    pub const fn consistency_mode(&self) -> ReadConsistency {
+        self.consistency
+    }
+
+    /// Alias for [`Self::consistency_mode`].
+    #[must_use]
+    pub const fn read_consistency(&self) -> ReadConsistency {
+        self.consistency
+    }
+
+    /// Returns the bounded causal wait.
+    #[must_use]
+    pub const fn wait_timeout_duration(&self) -> Duration {
+        self.wait_timeout
+    }
+
+    /// Returns the token supplied when this session is opened, if any.
+    #[must_use]
+    pub const fn supplied_session_token(&self) -> Option<&SessionToken> {
+        self.session_token.as_ref()
     }
 }
 
@@ -169,6 +763,10 @@ pub enum SessionError {
     Family(FamilyError),
     /// The stream seam refused a session stream operation.
     Stream(StreamError),
+    /// A supplied opaque session token failed strict validation.
+    SessionToken(SessionTokenError),
+    /// The member was behind the token after the bounded causal wait.
+    StaleReplica(StaleReplica),
 }
 
 impl From<EngineError> for SessionError {
@@ -189,6 +787,21 @@ impl From<FamilyError> for SessionError {
 impl From<StreamError> for SessionError {
     fn from(error: StreamError) -> Self {
         Self::Stream(error)
+    }
+}
+
+impl From<SessionTokenError> for SessionError {
+    fn from(error: SessionTokenError) -> Self {
+        Self::SessionToken(error)
+    }
+}
+
+impl From<SessionReadError> for SessionError {
+    fn from(error: SessionReadError) -> Self {
+        match error {
+            SessionReadError::Token(error) => Self::SessionToken(error),
+            SessionReadError::StaleReplica(error) => Self::StaleReplica(error),
+        }
     }
 }
 
@@ -476,6 +1089,7 @@ pub struct Session<'engine> {
     engine: &'engine Engine,
     scope: TenantScope,
     options: SessionOptions,
+    session_token: SessionToken,
     tracked: BTreeMap<DocKey, TrackedDocument>,
     known_missing: BTreeSet<DocKey>,
     pending_puts: BTreeMap<DocKey, PendingPut>,
@@ -532,10 +1146,20 @@ impl<'engine> Session<'engine> {
         if options.transaction_mode == SessionTransactionMode::ClusterWide {
             return Err(SessionError::ClusterWideUnavailable);
         }
+        let epoch = engine.session_epoch();
+        let session_token =
+            options.session_token.clone().unwrap_or_else(|| SessionToken::new(epoch));
+        if session_token.epoch() != epoch {
+            return Err(SessionError::SessionToken(SessionTokenError::EpochMismatch {
+                expected: epoch,
+                observed: session_token.epoch(),
+            }));
+        }
         Ok(Self {
             engine,
             scope: scope.clone(),
             options,
+            session_token,
             tracked: BTreeMap::new(),
             known_missing: BTreeSet::new(),
             pending_puts: BTreeMap::new(),
@@ -555,6 +1179,20 @@ impl<'engine> Session<'engine> {
     #[must_use]
     pub const fn options(&self) -> &SessionOptions {
         &self.options
+    }
+
+    /// Returns the current opaque token, including observations made by this
+    /// session's successful reads and saves.
+    #[must_use]
+    pub const fn session_token(&self) -> &SessionToken {
+        &self.session_token
+    }
+
+    /// Returns the encoded token suitable for a subsequent request or
+    /// session, without exposing its causal fields to the caller.
+    #[must_use]
+    pub fn encoded_session_token(&self) -> Vec<u8> {
+        self.session_token.encode()
     }
 
     /// Reports the number of tracked documents.
@@ -768,6 +1406,7 @@ impl<'engine> Session<'engine> {
         if misses.is_empty() {
             return Ok(answers);
         }
+        self.enforce_read_consistency()?;
         let operation = self.next_operation_id();
         let snapshot = self.engine.read_snapshot(&self.scope)?;
         let transaction = self.engine.begin(&self.scope, snapshot, operation)?;
@@ -798,6 +1437,7 @@ impl<'engine> Session<'engine> {
                 }
             }
         }
+        self.observe_read_frontier()?;
         Ok(answers)
     }
 
@@ -820,6 +1460,7 @@ impl<'engine> Session<'engine> {
         if !self.tracked.contains_key(&key) {
             return Err(SessionError::NotTracked { document: id.clone() });
         }
+        self.enforce_read_consistency()?;
         let operation = self.next_operation_id();
         let snapshot = self.engine.read_snapshot(&self.scope)?;
         let transaction = self.engine.begin(&self.scope, snapshot, operation)?;
@@ -840,6 +1481,7 @@ impl<'engine> Session<'engine> {
             self.tracked.remove(&key);
             self.known_missing.insert(key);
         }
+        self.observe_read_frontier()?;
         Ok(())
     }
 
@@ -1301,6 +1943,15 @@ impl<'engine> Session<'engine> {
             for hook in after_save.iter_mut() {
                 hook(&event);
             }
+            // The commit's provenance is now part of the durable frontier.
+            // A failure to probe it must not turn a known committed write
+            // into an apparent save failure; the next causal read retries the
+            // observation before serving.
+            // A committed write without a refreshed token would let the next
+            // causal read proceed with an empty or stale frontier. Fail
+            // closed after the durable commit instead of claiming the
+            // session guarantee was maintained.
+            self.observe_read_frontier()?;
         }
         Ok(Some(outcome))
     }
@@ -1326,12 +1977,15 @@ impl<'engine> Session<'engine> {
         &self,
         selector: DocumentStreamSelector,
     ) -> Result<SessionStream<'engine>, SessionError> {
+        self.enforce_read_consistency()?;
         let source = StreamSource::Documents(selector);
         let snapshot = self.engine.read_snapshot(&self.scope)?;
         let cursor = self.engine.streams().open(&self.scope, &snapshot, source.clone())?;
         Ok(SessionStream {
             engine: self.engine,
             scope: self.scope.clone(),
+            policy: SessionReadPolicy::new(self.options.consistency, self.options.wait_timeout),
+            session_token: self.session_token.clone(),
             snapshot,
             source,
             cursor,
@@ -1408,6 +2062,37 @@ impl<'engine> Session<'engine> {
         Ok(())
     }
 
+    /// Waits for this session's current token before a non-eventual read.
+    fn enforce_read_consistency(&self) -> Result<(), SessionError> {
+        let policy = SessionReadPolicy::new(self.options.consistency, self.options.wait_timeout);
+        let token = self.session_token.clone();
+        let safe_region = token
+            .frontier()
+            .entries()
+            .next()
+            .map(|(origin, _)| origin.clone())
+            .unwrap_or_else(|| RegionId::try_new("local").expect("local is a valid Region"));
+        policy
+            .enforce(&token, safe_region, || {
+                self.engine
+                    .session_frontier(&self.scope)
+                    .map_err(|_| SessionTokenError::InvalidOrigin)
+            })
+            .map_err(SessionError::from)
+    }
+
+    /// Joins the latest durable frontier into this session token after a
+    /// successful read. Joining, rather than replacing, is what preserves
+    /// monotonic reads across collections and repeated batch calls.
+    fn observe_read_frontier(&mut self) -> Result<(), SessionError> {
+        let frontier = self
+            .engine
+            .session_frontier(&self.scope)
+            .map_err(|_| SessionTokenError::InvalidOrigin)?;
+        self.session_token.merge(&SessionToken::from_frontier(frontier))?;
+        Ok(())
+    }
+
     /// Mints the next never-reused operation identity of this session.
     fn next_operation_id(&mut self) -> OperationId {
         let id = OperationId::try_new(&format!(
@@ -1424,6 +2109,8 @@ impl<'engine> Session<'engine> {
 pub struct SessionStream<'engine> {
     engine: &'engine Engine,
     scope: TenantScope,
+    policy: SessionReadPolicy,
+    session_token: SessionToken,
     snapshot: ReadSnapshot,
     source: StreamSource,
     cursor: StreamCursor,
@@ -1431,6 +2118,20 @@ pub struct SessionStream<'engine> {
 }
 
 impl SessionStream<'_> {
+    /// Returns the stream's current opaque token, including observations made
+    /// while consuming its batches. The owning session can use this token to
+    /// continue causality after the stream is dropped.
+    #[must_use]
+    pub const fn session_token(&self) -> &SessionToken {
+        &self.session_token
+    }
+
+    /// Returns the encoded stream token for a subsequent session or request.
+    #[must_use]
+    pub fn encoded_session_token(&self) -> Vec<u8> {
+        self.session_token.encode()
+    }
+
     /// Serves one bounded batch: at most `limit` documents, the cursor that
     /// resumes exactly after them, and — exactly once at the end — the
     /// terminal completion.
@@ -1440,6 +2141,25 @@ impl SessionStream<'_> {
     /// Returns [`StreamError`] for a cancelled signal, an invalid limit or
     /// cursor, or the typed read error of the source.
     pub fn next_batch(&mut self, limit: u32) -> Result<StreamBatch, StreamError> {
+        let safe_region = self
+            .session_token
+            .frontier()
+            .entries()
+            .next()
+            .map(|(origin, _)| origin.clone())
+            .unwrap_or_else(|| RegionId::try_new("local").expect("local is a valid Region"));
+        self.policy
+            .enforce(&self.session_token, safe_region, || {
+                self.engine
+                    .session_frontier(&self.scope)
+                    .map_err(|_| SessionTokenError::InvalidOrigin)
+            })
+            .map_err(|error| match error {
+                SessionReadError::Token(_) => StreamError::InvalidSource,
+                SessionReadError::StaleReplica(stale) => {
+                    StreamError::StaleReplica(stale.region().clone())
+                }
+            })?;
         let batch = self.engine.streams().next_batch(
             &self.scope,
             &self.snapshot,
@@ -1449,6 +2169,11 @@ impl SessionStream<'_> {
             &self.cancellation,
         )?;
         self.cursor = batch.next_cursor().clone();
+        let frontier =
+            self.engine.session_frontier(&self.scope).map_err(|_| StreamError::InvalidSource)?;
+        self.session_token
+            .merge(&SessionToken::from_frontier(frontier))
+            .map_err(|_| StreamError::InvalidSource)?;
         Ok(batch)
     }
 }

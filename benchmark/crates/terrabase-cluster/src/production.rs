@@ -486,7 +486,7 @@ impl ProductionMemberRuntime {
         member: Member,
         transport: ProductionQuicEndpoint,
     ) -> Result<Self, ProductionMemberError> {
-        let member_databases = member.database_ids().cloned().collect::<BTreeSet<_>>();
+        let member_databases = member.database_ids().into_iter().collect::<BTreeSet<_>>();
         let route_databases = routes.routes.values().cloned().collect::<BTreeSet<_>>();
         if member_databases != route_databases || member.status().databases != routes.len() {
             return Err(ProductionMemberError::CatalogMismatch);

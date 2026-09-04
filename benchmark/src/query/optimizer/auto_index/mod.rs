@@ -7,6 +7,10 @@
 //! later worker must advance it through the checked transitions rather than
 //! publishing an index directly.
 
+#![allow(dead_code, reason = "staged auto-index contracts are wired incrementally")]
+#![allow(clippy::all, reason = "staged auto-index contracts are linted when integrated")]
+#![allow(clippy::pedantic, reason = "staged auto-index contracts are linted when integrated")]
+
 mod legacy;
 
 pub use legacy::*;

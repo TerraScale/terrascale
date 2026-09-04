@@ -9,10 +9,10 @@
 
 use crate::faults::FaultPlan;
 use crate::model::RegionId;
+use crate::production::ProductionWorld;
 use crate::rng::SimRng;
 use crate::traits::ReplicationEngine as _;
 use crate::workload::{Op, Workload};
-use crate::world::StubWorld;
 
 /// One of the eight simulation invariants of ADR 0044 §4.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -164,7 +164,16 @@ pub fn run_scenario(config: SimConfig) -> SimReport {
     let mut rng = SimRng::new(config.seed);
     let workload = Workload::generate(&mut rng, &regions, config.ops, config.keys);
     let faults = FaultPlan::generate(&mut rng, &regions, config.steps.max(1), config.max_faults);
-    let mut world = StubWorld::with_faults(regions.len(), faults);
+    let Ok(mut world) = ProductionWorld::with_faults(regions.len(), faults) else {
+        return SimReport {
+            seed: config.seed,
+            steps_run: 0,
+            committed: 0,
+            quiescent: false,
+            converged: false,
+            digest: 0,
+        };
+    };
     let mut committed = 0u64;
     let mut op_index = 0usize;
     let horizon = config.steps.max(1);

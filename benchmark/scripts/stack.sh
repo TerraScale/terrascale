@@ -473,6 +473,16 @@ require_base_inputs() {
   need_cmd python3 "install python3 for the local webhook receiver"
   need_cmd openssl "install openssl to mint the stack's throwaway dev certificates"
   need_cmd setsid "install util-linux for deterministic process groups"
+  need_cmd ss "install iproute2 so the stack never takes ports owned by another process"
+}
+
+ensure_stack_ports_free() {
+  local port
+  for port in 7000 7080 7090 7100 7101 7102 7103 8421 8422 8423 9461 9462 9463; do
+    if ss -H -ltn "sport = :$port" | grep -q .; then
+      die "port $port is already owned by another process; stop that stack explicitly before starting this one"
+    fi
+  done
 }
 
 start_proxy() {
@@ -650,6 +660,7 @@ cmd_up() {
   else
     stop_all || true
   fi
+  ensure_stack_ports_free
   mkdir -p "$STACK_DIR" "$LOG_DIR"
   : >"$PIDS_FILE"
   ensure_tls
@@ -711,8 +722,8 @@ cmd_test() {
   (cd "$TYPESCRIPT_DIR" && \
     TERRASCALE_API_BASE_URL="http://127.0.0.1:7101" \
     TERRASCALE_E2E_ACCESS_TOKEN="$(bootstrap_key)" \
-    TERRASCALE_E2E_PROJECT_ID="${TERRASCALE_E2E_PROJECT_ID:-local}" \
-    TERRASCALE_E2E_ORGANIZATION_ID="${TERRASCALE_E2E_ORGANIZATION_ID:-local}" \
+    TERRASCALE_G1_STRICT=1 \
+    TERRASCALE_E2E_REGION_BASE_URLS="GRU=http://127.0.0.1:7101,SFO=http://127.0.0.1:7102,FRA=http://127.0.0.1:7103" \
     npm test -- --run test/journey.test.ts) 2>&1 | tee "$LOG_DIR/p3-journey.log"
   run_x6 1
   log "stack test passed: P-3 journey + X-6 10,000-subscriber qualification"
@@ -733,6 +744,7 @@ cmd_pre_engine() {
   [ -d "$PROXY_DIR/stub" ] || die "missing X-4 stub at $PROXY_DIR/stub"
   trap stop_on_failure EXIT
   stop_all || true
+  ensure_stack_ports_free
   mkdir -p "$STACK_DIR" "$LOG_DIR"
   : >"$PIDS_FILE"
   ensure_tls

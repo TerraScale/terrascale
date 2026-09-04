@@ -1,6 +1,6 @@
 //! Atomic key-range routing contracts.
 
-use super::CutoverPermit;
+use super::{CutoverPermit, WriterFence};
 
 /// One shard's inclusive-lower/exclusive-upper key range.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -63,6 +63,10 @@ pub enum RouteError {
     Overlap,
     /// The source shard was not present.
     SourceMissing,
+    /// The target shard identifier is already in the route table.
+    TargetExists,
+    /// The cutover permit was not issued by a writer fence.
+    InvalidPermit,
 }
 
 /// Immutable-style route table replaced as one value at cutover.
@@ -111,9 +115,14 @@ impl RouteTable {
         upper: Vec<u8>,
         permit: CutoverPermit,
     ) -> Result<(), RouteError> {
-        let _ = permit;
+        if !permit.is_valid() {
+            return Err(RouteError::InvalidPermit);
+        }
         if upper.is_empty() {
             return Err(RouteError::EmptyBound);
+        }
+        if target == source || self.routes.iter().any(|route| route.shard_id == target) {
+            return Err(RouteError::TargetExists);
         }
         let index = self
             .routes
@@ -171,6 +180,23 @@ impl ShardRouter {
         upper: Vec<u8>,
         permit: CutoverPermit,
     ) -> Result<(), RouteError> {
+        self.table.split(source, target, upper, permit)
+    }
+
+    /// Installs a split only when the permit belongs to the supplied fenced
+    /// writer.  Keeping the fence check adjacent to route replacement makes
+    /// it difficult for a caller to accidentally mix two split sessions.
+    pub fn cut_over_fenced(
+        &mut self,
+        source: u64,
+        target: u64,
+        upper: Vec<u8>,
+        fence: &WriterFence,
+        permit: CutoverPermit,
+    ) -> Result<(), RouteError> {
+        if !fence.permits(permit) {
+            return Err(RouteError::InvalidPermit);
+        }
         self.table.split(source, target, upper, permit)
     }
 }

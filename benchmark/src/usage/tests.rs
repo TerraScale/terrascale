@@ -342,3 +342,73 @@ fn corrections_are_append_only_and_reference_an_existing_matching_base() {
     let missing = segment("missing-correction", 5, 5, -1, Some("unknown"));
     assert_eq!(ledger.insert(missing), Err(UsageError::MissingCorrectionTarget));
 }
+
+#[test]
+fn d16_write_units_apply_the_region_multiplier_once() {
+    assert_eq!(write_units_for_bytes(0), 1);
+    assert_eq!(write_units_for_bytes(4_096), 1);
+    assert_eq!(write_units_for_bytes(4_097), 2);
+    assert_eq!(write_units_for_regions(4_097, 3), Ok(6));
+    assert_eq!(billed_write_units(1, 2), Ok(2));
+    assert_eq!(write_units_for_regions(1, 0), Err(UsageError::InvalidRegionCount));
+}
+
+#[test]
+fn group_commit_retries_are_idempotent_and_reconcile_from_journal() {
+    let first = UsageFactId::try_new("op-1").expect("id");
+    let second = UsageFactId::try_new("op-2").expect("id");
+    let mut wave = GroupCommitAccumulator::try_new("db-a", 7, 2).expect("wave");
+    assert!(wave.add(first.clone(), 4_096).expect("first"));
+    assert!(!wave.add(first.clone(), 4_096).expect("retry"));
+    assert_eq!(wave.add(first.clone(), 4_097), Err(UsageError::FactIdentityConflict));
+    assert!(wave.add(second.clone(), 4_097).expect("second"));
+    let fact = wave.finish().expect("fact");
+    assert_eq!(fact.db(), "db-a");
+    assert_eq!(fact.seq_hi(), 7);
+    assert_eq!(fact.writes(), 6);
+    assert_eq!(fact.logical_bytes(), 8_193);
+
+    let row_a = JournalWriteFact::try_new("db-a", 7, first, 4_096, 2).expect("row");
+    let row_b = JournalWriteFact::try_new("db-a", 7, second, 4_097, 2).expect("row");
+    let reconciled = reconcile_journal(&[row_a.clone(), row_b.clone(), row_a]).expect("reconcile");
+    assert_eq!(reconciled, vec![fact]);
+}
+
+#[test]
+fn storage_byte_seconds_include_current_and_history_and_are_ttl_bounded() {
+    let current = [(10_u64, 0_u64, 2_000_u64)];
+    let history = [(5_u64, 500_u64, 1_500_u64)];
+    assert_eq!(storage_byte_seconds_current_and_history(&current, &history, 2), Ok(50));
+    assert_eq!(storage_byte_seconds(10, 2, 0, 2_000), Ok(40));
+    assert_eq!(
+        storage_byte_seconds_current_and_history(&[(1, 0, 500)], &[], 1),
+        Ok(0),
+        "sub-second remainder is not billed as a whole byte-second"
+    );
+    assert_eq!(storage_byte_seconds(1, 0, 0, 1), Err(UsageError::InvalidRegionCount));
+}
+
+#[test]
+fn export_cursor_is_checksummed_and_monotonic_across_retries() {
+    let mut cursor = UsageExportCursor::initial();
+    let first = UsageExportCursor::try_new(3, "db-a").expect("cursor");
+    assert!(cursor.advance(&first).expect("advance"));
+    assert!(!cursor.advance(&first).expect("retry"));
+    let encoded = cursor.encoded();
+    assert_eq!(UsageExportCursor::decode(&encoded).expect("decode"), first);
+    let old = UsageExportCursor::try_new(2, "db-z").expect("cursor");
+    assert_eq!(cursor.advance(&old), Err(UsageError::CursorRegression));
+    let mut damaged = encoded;
+    damaged[8] ^= 1;
+    assert_eq!(UsageExportCursor::decode(&damaged), Err(UsageError::ChecksumMismatch));
+}
+
+#[test]
+fn reads_and_queries_are_explicitly_unbilled() {
+    assert!(UsageActivity::Write.is_billed());
+    assert!(!UsageActivity::Write.is_unbilled());
+    assert!(!UsageActivity::Read.is_billed());
+    assert!(UsageActivity::Read.is_unbilled());
+    assert!(!UsageActivity::Query.is_billed());
+    assert!(UsageActivity::Query.is_unbilled());
+}

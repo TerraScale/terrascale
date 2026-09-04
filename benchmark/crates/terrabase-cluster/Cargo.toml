@@ -17,5 +17,8 @@ serde_json = "1"
 # `ProductionDataPlane`.
 terrabase-member-transport = { path = "../terrabase-member-transport", default-features = false }
 terrabase = { path = "../..", default-features = false }
+# The follower folds WAL frames with the same bundled SQLite substrate as the
+# engine, so promotion and recovery cannot disagree on the on-disk format.
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "cache"] }
 
 [dev-dependencies]

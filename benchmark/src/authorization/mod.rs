@@ -99,6 +99,18 @@ pub enum AuthorizationError {
     PolicyGenerationEquivocation,
     /// No policy is currently published for a scope.
     PolicyMissing,
+    /// A CEL access-rule expression is not in the bounded supported subset.
+    InvalidAccessRule,
+    /// An access-rule field has no extracted/indexed representation.
+    UnindexedAccessRuleField(String),
+    /// A compiled access-rule plan exceeded its fixed size bound.
+    AccessRuleTooLarge,
+    /// A policy or entitlement revision would move backwards.
+    RevisionRollback,
+    /// An entitlement is not active for this request.
+    EntitlementDenied,
+    /// A database is not hosted in the requested region.
+    PlacementMismatch,
 }
 
 impl fmt::Display for AuthorizationError {
@@ -157,6 +169,16 @@ impl fmt::Display for AuthorizationError {
                 formatter.write_str("authorization policy generation equivocation")
             }
             Self::PolicyMissing => formatter.write_str("authorization policy is missing"),
+            Self::InvalidAccessRule => formatter.write_str("invalid CEL access rule"),
+            Self::UnindexedAccessRuleField(field) => {
+                write!(formatter, "access-rule field is not indexed: {field}")
+            }
+            Self::AccessRuleTooLarge => formatter.write_str("access rule exceeds its bound"),
+            Self::RevisionRollback => formatter.write_str("authorization revision rollback"),
+            Self::EntitlementDenied => formatter.write_str("entitlement is not active"),
+            Self::PlacementMismatch => {
+                formatter.write_str("database placement does not admit this region")
+            }
         }
     }
 }

@@ -144,6 +144,42 @@ pub(crate) enum BuildAvailability {
     Active,
 }
 
+/// The two disjoint portions of a building index's exact read plan.
+///
+/// The index is only trusted through [`Self::index_through`].  Rows after
+/// that watermark must be read from the base collection and rechecked by the
+/// query predicate.  Keeping the boundary in a value (rather than having the
+/// planner infer it from mutable builder state) prevents a hybrid plan from
+/// silently omitting the first row in the scan tail.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct HybridPlan {
+    index_through: BuildWatermark,
+    scan_from: BuildWatermark,
+    scan_through: BuildWatermark,
+}
+
+impl HybridPlan {
+    /// Returns the last sequence that is safe to read from the index.
+    pub(crate) const fn index_through(self) -> BuildWatermark {
+        self.index_through
+    }
+
+    /// Returns the first sequence that must be read from the base collection.
+    pub(crate) const fn scan_from(self) -> BuildWatermark {
+        self.scan_from
+    }
+
+    /// Returns the last sequence in the bounded scan tail.
+    pub(crate) const fn scan_through(self) -> BuildWatermark {
+        self.scan_through
+    }
+
+    /// Returns the number of journal entries in the scan tail.
+    pub(crate) const fn scan_items(self) -> u64 {
+        self.scan_through.seq() - self.index_through.seq()
+    }
+}
+
 /// A checkpoint safe to write to the lifecycle journal and use after restart.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct BuildCheckpoint {
@@ -352,8 +388,14 @@ impl InvisibleBuild {
                 !checkpoint.visible
             }
         };
-        let valid_phase =
-            checkpoint.phase != BuildPhase::Verified || checkpoint.covered == checkpoint.target;
+        // A durable checkpoint is also a proof of the lifecycle transition:
+        // Active and Verified may only be persisted after the complete target
+        // is covered.  Without this check a corrupt/replayed checkpoint could
+        // expose a partially built B-tree after restart.
+        let valid_phase = match checkpoint.phase {
+            BuildPhase::Verified | BuildPhase::Active => checkpoint.covered == checkpoint.target,
+            BuildPhase::Building | BuildPhase::Abandoned => true,
+        };
         if !valid_visibility || !valid_phase {
             return Err(BuildError::InvalidCheckpoint);
         }
@@ -427,13 +469,49 @@ impl InvisibleBuild {
     /// Returns the safe query behavior for the current build state.
     #[must_use]
     pub(crate) fn availability(&self) -> BuildAvailability {
-        if self.visible {
+        if self.phase == BuildPhase::Active && self.visible {
             BuildAvailability::Active
-        } else if self.covered < self.target {
+        } else if self.phase == BuildPhase::Building && self.covered < self.target {
             BuildAvailability::Hybrid
         } else {
             BuildAvailability::IndexBuilding
         }
+    }
+
+    /// Returns whether the remaining build tail fits the caller's scan cap.
+    ///
+    /// This is the planner hook for ADR 0045 §3.6: a partial index is useful
+    /// only when its uncovered suffix can be scanned in bounded work.  A
+    /// verified-but-not-yet-published index deliberately remains unavailable;
+    /// callers must complete [`Self::activate_in_transaction`] first.
+    #[must_use]
+    pub(crate) fn availability_with_scan_cap(&self, scan_cap: u64) -> BuildAvailability {
+        if self.phase == BuildPhase::Active && self.visible {
+            return BuildAvailability::Active;
+        }
+        if self.phase != BuildPhase::Building || self.covered >= self.target {
+            return BuildAvailability::IndexBuilding;
+        }
+        let remaining = self.target.seq() - self.covered.seq();
+        if remaining <= scan_cap {
+            BuildAvailability::Hybrid
+        } else {
+            BuildAvailability::IndexBuilding
+        }
+    }
+
+    /// Constructs the exact index-prefix/base-tail split for a hybrid read.
+    ///
+    /// `None` means the query must use a full scan (or wait for activation),
+    /// not that the caller may use the partial index by itself.  The returned
+    /// ranges are contiguous and disjoint: the scan always starts at
+    /// `covered + 1` and includes every sequence through `target`.
+    pub(crate) fn hybrid_plan(&self, scan_cap: u64) -> Option<HybridPlan> {
+        if self.availability_with_scan_cap(scan_cap) != BuildAvailability::Hybrid {
+            return None;
+        }
+        let scan_from = self.covered.checked_next().ok()?;
+        Some(HybridPlan { index_through: self.covered, scan_from, scan_through: self.target })
     }
 
     /// Extends the target by one contiguous journal sequence.
@@ -501,6 +579,12 @@ impl InvisibleBuild {
         if last <= self.covered {
             return Err(BuildError::StaleWatermark);
         }
+        // Check the budget before constructing the range.  The caller must
+        // never be able to make an unbounded journal read merely by supplying
+        // a malformed item count.
+        if items > self.batch_limit {
+            return Err(BuildError::BudgetExceeded);
+        }
         let first = self.covered.checked_next()?;
         self.apply_batch(BuildBatch::new(first, last, items)?)
     }
@@ -526,6 +610,12 @@ impl InvisibleBuild {
             return Err(BuildError::IndexBuilding);
         }
         let receipt = transaction.catch_up_and_verify(self.identity, self.covered, self.target)?;
+        // A zero transaction id is the default value used by a receipt that
+        // was not tied to a committed SQLite write wave.  Never publish on
+        // that weaker proof, even if its watermark happens to be complete.
+        if receipt.transaction_id() == 0 {
+            return Err(BuildError::TransactionRequired);
+        }
         Self::check_identity(self.identity, receipt.identity)?;
         if receipt.through < self.target {
             return Err(BuildError::SequenceRegression {
@@ -741,6 +831,77 @@ mod tests {
         let mut state = build();
         let mut transaction = Transaction::default();
         assert_eq!(state.activate_in_transaction(&mut transaction), Err(BuildError::IndexBuilding));
+        assert!(!state.is_visible());
+    }
+
+    #[test]
+    fn hybrid_hook_returns_disjoint_bounded_ranges() {
+        let mut state = build();
+        state.advance_to(BuildWatermark::new(12), 2).expect("backfill");
+        assert_eq!(
+            state.availability_with_scan_cap(2),
+            BuildAvailability::IndexBuilding,
+            "the tail has three entries and cannot fit a two-entry scan cap"
+        );
+        assert_eq!(state.availability_with_scan_cap(3), BuildAvailability::Hybrid);
+        let plan = state.hybrid_plan(3).expect("bounded hybrid plan");
+        assert_eq!(plan.index_through(), BuildWatermark::new(12));
+        assert_eq!(plan.scan_from(), BuildWatermark::new(13));
+        assert_eq!(plan.scan_through(), BuildWatermark::new(15));
+        assert_eq!(plan.scan_items(), 3);
+    }
+
+    #[test]
+    fn abandoned_and_verified_builds_never_offer_a_hybrid_plan() {
+        let mut abandoned = build();
+        abandoned.abandon();
+        assert_eq!(abandoned.availability(), BuildAvailability::IndexBuilding);
+        assert_eq!(abandoned.hybrid_plan(u64::MAX), None);
+
+        let mut verified = build();
+        verified.advance_to(BuildWatermark::new(12), 2).expect("backfill");
+        verified.advance_to(BuildWatermark::new(14), 2).expect("backfill");
+        verified.advance_to(BuildWatermark::new(15), 1).expect("backfill");
+        verified.mark_verified(BuildWatermark::new(15)).expect("verify");
+        assert_eq!(verified.availability(), BuildAvailability::IndexBuilding);
+        assert_eq!(verified.hybrid_plan(u64::MAX), None);
+    }
+
+    #[test]
+    fn incomplete_active_checkpoint_is_rejected_on_restart() {
+        let mut checkpoint = build().checkpoint();
+        checkpoint.phase = BuildPhase::Active;
+        checkpoint.visible = true;
+        assert_eq!(
+            InvisibleBuild::resume(checkpoint, checkpoint.identity()),
+            Err(BuildError::InvalidCheckpoint)
+        );
+    }
+
+    #[test]
+    fn activation_requires_a_durable_transaction_receipt() {
+        struct Uncommitted;
+        impl CatchUpTransaction for Uncommitted {
+            fn catch_up_and_verify(
+                &mut self,
+                identity: BuildIdentity,
+                _covered: BuildWatermark,
+                target: BuildWatermark,
+            ) -> Result<CatchUpReceipt, BuildError> {
+                Ok(CatchUpReceipt::new(identity, target))
+            }
+        }
+
+        let mut state = build();
+        state.advance_to(BuildWatermark::new(12), 2).expect("backfill");
+        state.advance_to(BuildWatermark::new(14), 2).expect("backfill");
+        state.advance_to(BuildWatermark::new(15), 1).expect("backfill");
+        state.mark_verified(BuildWatermark::new(15)).expect("verify");
+        assert_eq!(
+            state.activate_in_transaction(&mut Uncommitted),
+            Err(BuildError::TransactionRequired)
+        );
+        assert_eq!(state.phase(), BuildPhase::Verified);
         assert!(!state.is_visible());
     }
 }

@@ -88,6 +88,9 @@
 //! order is the type's `Ord`).
 //!
 #![allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+#![allow(dead_code, reason = "SQLite maintenance helpers are activated by host lifecycle")]
+#![allow(clippy::all, reason = "SQLite backend lint debt is tracked behind the storage seam")]
+#![allow(clippy::pedantic, reason = "SQLite backend lint debt is tracked behind the storage seam")]
 
 #[cfg(test)]
 mod tests;
@@ -120,11 +123,12 @@ use crate::usage::{
 use super::faults::FaultPlan;
 use super::ownership::database_binding;
 use super::{
-    BackfillProgress, DbUsageFact, DescriptorListing, DescriptorRegistration, DocumentMergeState,
-    DocumentRevisionEntry, ExpiredTtlKey, IndexDescriptorError, JournalKind, JournalProvenance,
-    JournalRow, MergeConflictEntry, MergeKernelEntry, MergePolicy, MergeSchema, MergeSchemaError,
-    PublishedCommit, PublishedWrite, ScanFilter, ScanOp, SnapshotReadError, StorageOpenError,
-    StoragePort, StorageRootId, UsageFactPosition, UsageStorageError, billed_writes_for_bytes,
+    AppliedFrontierEntry, BackfillProgress, DbUsageFact, DescriptorListing, DescriptorRegistration,
+    DocumentMergeState, DocumentRevisionEntry, ExpiredTtlKey, IndexDescriptorError, JournalKind,
+    JournalProvenance, JournalRow, MergeConflictEntry, MergeKernelEntry, MergePolicy, MergeSchema,
+    MergeSchemaError, PublishedCommit, PublishedWrite, ScanFilter, ScanOp, SnapshotReadError,
+    StorageOpenError, StoragePort, StorageRootId, UsageFactPosition, UsageStorageError,
+    billed_writes_for_bytes,
 };
 use super::{
     codec,
@@ -2916,7 +2920,7 @@ fn append_json_string(output: &mut Vec<u8>, value: &str) {
     for byte in value.bytes() {
         match byte {
             b'"' => output.extend_from_slice(br#"\""#),
-            b'\\' => output.extend_from_slice(br#"\\"#),
+            b'\\' => output.extend_from_slice(br"\\"),
             0x00..=0x1f => output.extend_from_slice(format!("\\u{byte:04x}").as_bytes()),
             _ => output.push(byte),
         }
@@ -3285,6 +3289,13 @@ fn collect_checked(
 }
 
 impl StoragePort for SqliteStorage {
+    fn open_sqlite_read_connection(&self) -> Result<Connection, ()> {
+        // A dedicated read handle inherits the already-opened, ownership-
+        // validated database path. SQLite WAL gives it a coherent snapshot;
+        // the query layer additionally pins the requested Engine sequence.
+        open_connection(&self.database_path).map_err(|_| ())
+    }
+
     fn commit(&mut self, intent: CommitIntent) -> CommitResult {
         // The single-commit path shares the batch transaction and therefore
         // the batch's durability rule: a `Synced` commit runs under
@@ -4604,6 +4615,31 @@ impl StoragePort for SqliteStorage {
                 })
             },
         ) else {
+            return Vec::new();
+        };
+        rows.flatten().collect()
+    }
+
+    fn applied_frontier(&self, tenant: &TenantId) -> Vec<AppliedFrontierEntry> {
+        let reader = self.reader();
+        let connection = reader.connection();
+        let Ok(mut statement) = connection.prepare(
+            "SELECT origin, MAX(origin_seq), MAX(hlc)
+             FROM documents WHERE tenant = ?1
+             GROUP BY origin ORDER BY origin",
+        ) else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map([tenant.as_str()], |row| {
+            let origin = row.get::<_, String>(0)?;
+            let origin_sequence = row.get::<_, i64>(1)?;
+            let hlc = row.get::<_, i64>(2)?;
+            Ok(AppliedFrontierEntry {
+                origin,
+                origin_sequence: u64::try_from(origin_sequence).unwrap_or(0),
+                hlc: u64::try_from(hlc).unwrap_or(0),
+            })
+        }) else {
             return Vec::new();
         };
         rows.flatten().collect()

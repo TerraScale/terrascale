@@ -138,11 +138,17 @@ impl JournalCatchUp {
             .filter(|entry| self.upper.as_deref().is_none_or(|upper| entry.key() < upper))
             .cloned()
             .collect();
+        // The checkpoint is for the source journal, rather than only for the
+        // rows which happen to belong to this range.  Advancing it when a
+        // page contains only rows for another range is essential: otherwise
+        // the same page is read forever and a split can never catch up.
         if !selected.is_empty() {
             writer.apply_journal(&selected).map_err(|_| CatchUpError::WriterFailed)?;
-            self.applied_through =
-                entries.last().map_or(self.applied_through, JournalEntry::sequence);
         }
+        // Do this only after the target has durably accepted the selected
+        // rows.  A retry after a crash before the caller persists this value
+        // is safe because JournalWriter is explicitly idempotent.
+        self.applied_through = entries.last().map_or(self.applied_through, JournalEntry::sequence);
         Ok(entries.len())
     }
 }

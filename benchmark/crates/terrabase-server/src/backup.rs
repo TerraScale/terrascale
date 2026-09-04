@@ -423,7 +423,7 @@ impl BackupStreams {
     where
         I: IntoIterator<Item = BackupCatalogEntry>,
     {
-        let mut attached = Vec::new();
+        let mut attached: Vec<String> = Vec::new();
         for entry in catalog {
             if let Err(error) =
                 self.attach_with_config(&entry.database, entry.placement_region, entry.config)

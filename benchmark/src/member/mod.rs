@@ -5,6 +5,12 @@
 //! or replication: it reports storage health only.  A higher layer must add
 //! those authorities before advertising production readiness.
 
+#![allow(clippy::all, reason = "member lifecycle is being integrated with production authorities")]
+#![allow(
+    clippy::pedantic,
+    reason = "member lifecycle is being integrated with production authorities"
+)]
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,

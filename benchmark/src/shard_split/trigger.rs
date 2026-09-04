@@ -81,6 +81,11 @@ impl SplitTriggerMonitor {
 
     /// Records one p99 sample. A clean sample resets the continuous run.
     pub fn note_p99(&mut self, at_millis: u64, breached: bool) {
+        // Telemetry can arrive late.  An old clean sample must not erase a
+        // newer breach, and an old breach must not move the start backwards.
+        if self.latest_p99_millis.is_some_and(|latest| at_millis < latest) {
+            return;
+        }
         self.latest_p99_millis = Some(at_millis);
         if breached {
             self.p99_breach_start_millis.get_or_insert(at_millis);
@@ -102,8 +107,14 @@ impl SplitTriggerMonitor {
             .range(oldest..=current_bucket)
             .map(|(_, count)| *count)
             .fold(0, u64::saturating_add);
-        if window_writes
-            > SPLIT_WRITE_RATE_THRESHOLD_PER_SEC.saturating_mul(SPLIT_WRITE_RATE_WINDOW_SECS)
+        // A large burst must not masquerade as five minutes of sustained
+        // pressure.  Every second in the window needs telemetry and the
+        // aggregate must be strictly above the configured rate line.
+        let buckets_complete = self.write_buckets.range(oldest..=current_bucket).count()
+            == SPLIT_WRITE_RATE_WINDOW_SECS as usize;
+        if buckets_complete
+            && window_writes
+                > SPLIT_WRITE_RATE_THRESHOLD_PER_SEC.saturating_mul(SPLIT_WRITE_RATE_WINDOW_SECS)
         {
             return Some(SplitTrigger::SustainedWriteRate);
         }

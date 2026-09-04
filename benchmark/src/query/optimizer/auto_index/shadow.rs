@@ -98,11 +98,20 @@ pub(crate) struct WelchEvidence {
     pub(crate) baseline_pages: f64,
     /// Candidate mean pages read.
     pub(crate) candidate_pages: f64,
+    /// Baseline p95 pages read.
+    pub(crate) baseline_pages_p95: f64,
+    /// Candidate p95 pages read.
+    pub(crate) candidate_pages_p95: f64,
     /// Baseline mean rows examined.
     pub(crate) baseline_rows: f64,
     /// Candidate mean rows examined.
     pub(crate) candidate_rows: f64,
-    /// Whether p95, pages, or rows crossed the hard five-percent guard.
+    /// Baseline p95 rows examined.
+    pub(crate) baseline_rows_p95: f64,
+    /// Candidate p95 rows examined.
+    pub(crate) candidate_rows_p95: f64,
+    /// Whether logical work, p95, pages, or rows crossed the hard
+    /// five-percent guard.
     pub(crate) hard_regression: bool,
 }
 
@@ -191,7 +200,12 @@ pub(crate) fn verify_shadow(
     };
     let baseline_p95 = baseline.p95;
     let candidate_p95 = candidate_stats.p95;
-    let hard_regression = exceeds_guard(baseline_p95, candidate_p95)
+    // The mean logical-work comparison is included in the hard guard as well
+    // as the Welch result.  Welch significance protects us from noisy small
+    // changes, while the guard protects the no-regression invariant when a
+    // large mean shift happens to have high variance.
+    let hard_regression = exceeds_guard(baseline.mean, candidate_stats.mean)
+        || exceeds_guard(baseline_p95, candidate_p95)
         || exceeds_guard(baseline_metrics.pages_mean, candidate_metrics.pages_mean)
         || exceeds_guard(baseline_metrics.pages_p95, candidate_metrics.pages_p95)
         || exceeds_guard(baseline_metrics.rows_mean, candidate_metrics.rows_mean)
@@ -206,8 +220,12 @@ pub(crate) fn verify_shadow(
         candidate_p95,
         baseline_pages: baseline_metrics.pages_mean,
         candidate_pages: candidate_metrics.pages_mean,
+        baseline_pages_p95: baseline_metrics.pages_p95,
+        candidate_pages_p95: candidate_metrics.pages_p95,
         baseline_rows: baseline_metrics.rows_mean,
         candidate_rows: candidate_metrics.rows_mean,
+        baseline_rows_p95: baseline_metrics.rows_p95,
+        candidate_rows_p95: candidate_metrics.rows_p95,
         hard_regression,
     })
 }
@@ -342,13 +360,21 @@ pub(crate) fn verify_templates(
     if templates.is_empty() {
         return TemplateSetDecision::default();
     }
-    let mut result = TemplateSetDecision {
-        decision: ShadowDecision::Abandon,
-        ..TemplateSetDecision::default()
-    };
+    // A template is a set key. Duplicate entries would make the pin list
+    // ambiguous and could let one occurrence hide another in aggregation.
+    if templates.iter().enumerate().any(|(index, (template, _))| {
+        templates[..index].iter().any(|(previous, _)| previous == template)
+    }) {
+        return TemplateSetDecision::default();
+    }
+    let mut result =
+        TemplateSetDecision { decision: ShadowDecision::Abandon, ..TemplateSetDecision::default() };
     for (template, samples) in templates {
         let Some(evidence) = verify_shadow(template, candidate, samples) else {
-            return result;
+            // Do not return the prefix: callers must not persist or display
+            // partial evidence as if the complete tuned set had been
+            // verified.  A malformed entry fails the candidate closed.
+            return TemplateSetDecision::default();
         };
         let decision = decision_for(evidence);
         if decision.needs_pin() {
@@ -548,5 +574,74 @@ mod tests {
             verify_shadow(&template(), &candidate(), &first),
             verify_shadow(&template(), &candidate(), &second)
         );
+    }
+
+    #[test]
+    fn evidence_retains_p95_pages_and_rows() {
+        let mut baseline = Vec::with_capacity(MIN_SHADOW_SAMPLES);
+        let mut candidate_costs = Vec::with_capacity(MIN_SHADOW_SAMPLES);
+        for _ in 0..(MIN_SHADOW_SAMPLES - 1) {
+            baseline.push(LogicalCost::new(1, 10));
+            candidate_costs.push(LogicalCost::new(2, 10));
+        }
+        baseline.push(LogicalCost::new(8, 10));
+        candidate_costs.push(LogicalCost::new(8, 10));
+        let evidence = verify_shadow(
+            &template(),
+            &candidate(),
+            &ShadowSamples::new(baseline, candidate_costs),
+        )
+        .expect("valid bounded evidence");
+        assert_eq!(evidence.baseline_pages_p95, 8.0);
+        assert_eq!(evidence.candidate_pages_p95, 8.0);
+        assert_eq!(evidence.baseline_rows_p95, 10.0);
+        assert_eq!(evidence.candidate_rows_p95, 10.0);
+        assert!(evidence.hard_regression);
+    }
+
+    #[test]
+    fn mean_logical_work_regression_crosses_the_five_percent_guard() {
+        // Keep p95 equal while shifting the body of the distribution. This
+        // catches regressions that a tail-only guard would miss.
+        let mut baseline = vec![LogicalCost::new(100, 0); MIN_SHADOW_SAMPLES - 1];
+        let mut candidate_costs = vec![LogicalCost::new(110, 0); MIN_SHADOW_SAMPLES - 1];
+        baseline.push(LogicalCost::new(150, 0));
+        candidate_costs.push(LogicalCost::new(150, 0));
+        let evidence = verify_shadow(
+            &template(),
+            &candidate(),
+            &ShadowSamples::new(baseline, candidate_costs),
+        )
+        .expect("valid bounded evidence");
+        assert_eq!(evidence.baseline_p95, evidence.candidate_p95);
+        assert!(evidence.candidate_mean > evidence.baseline_mean * 1.05);
+        assert!(evidence.hard_regression);
+        assert_eq!(decision_for(evidence), ShadowDecision::ActivateWithPins);
+    }
+
+    #[test]
+    fn template_set_returns_only_complete_evidence_and_exact_pins() {
+        let other = Template::try_new(
+            "users",
+            vec![TemplatePredicate::try_new("region", PredicateKind::Equality).unwrap()],
+            vec![],
+            None,
+        )
+        .unwrap();
+        let verified = verify_templates(
+            &candidate(),
+            &[(template(), samples(100, 50)), (other.clone(), samples(100, 120))],
+        );
+        assert_eq!(verified.decision, ShadowDecision::ActivateWithPins);
+        assert_eq!(verified.evidence.len(), 2);
+        assert_eq!(verified.pins, vec![other]);
+
+        let short = ShadowSamples::new(
+            vec![LogicalCost::new(1, 1); MIN_SHADOW_SAMPLES - 1],
+            vec![LogicalCost::new(1, 1); MIN_SHADOW_SAMPLES - 1],
+        );
+        let incomplete =
+            verify_templates(&candidate(), &[(template(), samples(100, 50)), (template(), short)]);
+        assert_eq!(incomplete, TemplateSetDecision::default());
     }
 }

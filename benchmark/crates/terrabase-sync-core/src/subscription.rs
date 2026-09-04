@@ -150,7 +150,18 @@ struct IntervalTree {
 
 impl IntervalTree {
     fn insert(&mut self, key: DependencyKey, owner: u64) {
+        // Registration is a replayable control-plane operation.  Treat an
+        // identical `(owner, key)` registration as idempotent so a retry
+        // cannot make one point query visit the same interval repeatedly.
+        if self.entries.iter().any(|entry| entry.owner == owner && entry.key == key) {
+            return;
+        }
         self.entries.push(IntervalEntry { key, owner });
+        self.rebuild();
+    }
+
+    fn remove(&mut self, owner: u64, key: &DependencyKey) {
+        self.entries.retain(|entry| !(entry.owner == owner && &entry.key == key));
         self.rebuild();
     }
 
@@ -321,7 +332,7 @@ impl DependencyIndex {
         let bucket = (key.collection.clone(), key.field.clone());
         if remove {
             if let Some(tree) = self.keys.get_mut(&bucket) {
-                tree.retract(subscription);
+                tree.remove(subscription, &key);
                 if tree.is_empty() {
                     self.keys.remove(&bucket);
                 }
@@ -512,9 +523,26 @@ mod tests {
     fn register_with_remove_retracts_one_key() {
         let mut index = DependencyIndex::new();
         let status = key("orders", "status", ValueRange::all());
+        let total = key("orders", "status", ValueRange::equals(FieldValue::Text("paid".into())));
         index.register(6, status.clone(), false);
+        index.register(6, total.clone(), false);
         index.register(6, status.clone(), true);
         assert!(!index.is_registered(6, &status));
+        assert!(index.is_registered(6, &total));
+    }
+
+    #[test]
+    fn repeated_registration_is_idempotent() {
+        let mut index = DependencyIndex::new();
+        let status = key("orders", "status", ValueRange::all());
+        index.register(6, status.clone(), false);
+        index.register(6, status, false);
+        let row = CommittedRow {
+            collection: "orders",
+            document: "o-1",
+            extracted: vec![("status", FieldValue::Text("paid".into()))],
+        };
+        assert_eq!(index.match_row(&row), vec![6]);
     }
 
     #[test]

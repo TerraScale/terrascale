@@ -93,8 +93,6 @@
 //! exclusive recovery lane, which BK-02 owns for this wave; the tracked
 //! receipts live under `docs/evidence/recovery/`.
 
-#![allow(dead_code)]
-
 mod decode;
 
 use std::collections::{BTreeMap, BTreeSet};

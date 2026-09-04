@@ -290,15 +290,8 @@ fn bound_values(
 /// `execute` is rolled back after result materialization, so this adapter
 /// cannot mutate storage and does not create an in-memory copy.
 ///
-/// The current `Engine` contract intentionally keeps the physical location
-/// private and exposes no reader callback. Until the engine adds the narrow
-/// `Engine::storage_location() -> &Path` (or an equivalent bounded SQLite
-/// reader callback), this adapter refuses closed rather than reopening an
-/// unverified path. The parent integration should replace only this body with
-/// that hook; all view construction, metadata mapping, and bounds remain
-/// storage-backed below.
-fn open_storage_connection(_engine: &Engine) -> Result<Connection, QueryError> {
-    Err(QueryError::StorageFailure)
+fn open_storage_connection(engine: &Engine) -> Result<Connection, QueryError> {
+    engine.open_sqlite_read_connection().map_err(|_| QueryError::StorageFailure)
 }
 
 fn check_input_bounds(
@@ -351,7 +344,9 @@ fn create_collection_views(
             if field == "_id" || field == "body" || SQL_METADATA_COLUMNS.contains(&field.as_str()) {
                 continue;
             }
-            let path = sql_string(&format!("$.\"{}\"", json_path_component(&field)));
+            // Document bodies are stored as an envelope; user fields live
+            // below the `$value` object rather than at the envelope root.
+            let path = sql_string(&format!("$.\"$value\".\"{}\"", json_path_component(&field)));
             let text_column = format!("f:{field}#t");
             let number_column = format!("f:{field}#n");
             let fallback = format!("json_extract(CAST(d.body AS TEXT), {path})");

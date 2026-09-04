@@ -10,11 +10,183 @@
 //! store none. Every merge renders a deterministic explanation so both
 //! regions record the same loser history.
 
+#![allow(dead_code, reason = "merge algebra is consumed by the replication integration")]
+
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::storage::{MergeFieldKind, MergePolicy, MergeSchema};
 use crate::types::DocumentValue;
+
+/// One document event identity.  The pair is the durable dot carried by a
+/// replicated row; `origin` is intentionally text here because the engine's
+/// journal and transport contracts use the canonical region string.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct DocumentDot {
+    origin: String,
+    sequence: u64,
+}
+
+impl DocumentDot {
+    /// Creates a dot.  Sequence zero is reserved by the journal, but keeping
+    /// construction infallible makes this value useful in pure merge tests;
+    /// admission validates the wire value before calling the join.
+    #[must_use]
+    pub(crate) fn new(origin: impl Into<String>, sequence: u64) -> Self {
+        Self { origin: origin.into(), sequence }
+    }
+
+    #[must_use]
+    pub(crate) fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    #[must_use]
+    pub(crate) const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+}
+
+/// A normalized causal frontier.  Each origin maps to the highest contiguous
+/// sequence known to the receiver.  A frontier never infers a sequence below
+/// a received gap; callers that need sparse dots should retain the individual
+/// event until the gap is repaired.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct DocumentContext(BTreeMap<String, u64>);
+
+impl DocumentContext {
+    #[must_use]
+    pub(crate) const fn empty() -> Self {
+        Self(BTreeMap::new())
+    }
+
+    /// Builds a context and drops zero entries, which are not publication
+    /// facts.  Duplicate origins normalize to their greatest frontier.
+    #[must_use]
+    pub(crate) fn from_frontier(entries: impl IntoIterator<Item = (String, u64)>) -> Self {
+        let mut context = Self::empty();
+        for (origin, sequence) in entries {
+            if sequence != 0 {
+                context.advance(origin, sequence);
+            }
+        }
+        context
+    }
+
+    /// Adds one observed dot to the frontier.  This operation is a join of
+    /// summaries; callers must only pass a contiguous verified prefix.
+    pub(crate) fn advance(&mut self, origin: impl Into<String>, sequence: u64) {
+        if sequence == 0 {
+            return;
+        }
+        let origin = origin.into();
+        let entry = self.0.entry(origin).or_default();
+        *entry = (*entry).max(sequence);
+    }
+
+    #[must_use]
+    pub(crate) fn contains(&self, dot: &DocumentDot) -> bool {
+        self.0.get(dot.origin()).copied().unwrap_or(0) >= dot.sequence()
+    }
+
+    /// Returns the normalized union of both frontiers.
+    #[must_use]
+    pub(crate) fn joined(&self, other: &Self) -> Self {
+        let mut joined = self.clone();
+        for (origin, sequence) in &other.0 {
+            joined.advance(origin.clone(), *sequence);
+        }
+        joined
+    }
+
+    #[must_use]
+    pub(crate) fn frontier(&self) -> &BTreeMap<String, u64> {
+        &self.0
+    }
+}
+
+/// The causal metadata attached to one document mutation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DocumentVersion {
+    context: DocumentContext,
+    dot: DocumentDot,
+}
+
+impl DocumentVersion {
+    #[must_use]
+    pub(crate) fn new(context: DocumentContext, dot: DocumentDot) -> Self {
+        Self { context, dot }
+    }
+
+    #[must_use]
+    pub(crate) fn context(&self) -> &DocumentContext {
+        &self.context
+    }
+
+    #[must_use]
+    pub(crate) fn dot(&self) -> &DocumentDot {
+        &self.dot
+    }
+
+    #[must_use]
+    pub(crate) fn is_well_formed(&self) -> bool {
+        !self.context.contains(&self.dot)
+    }
+
+    /// Reports whether this version causally dominates `other`.
+    #[must_use]
+    pub(crate) fn dominates(&self, other: &Self) -> bool {
+        self.dot != other.dot && self.context.contains(&other.dot)
+    }
+
+    #[must_use]
+    pub(crate) fn concurrent_with(&self, other: &Self) -> bool {
+        !self.dominates(other) && !other.dominates(self)
+    }
+
+    /// Joins contexts and records both event dots so a discarded loser cannot
+    /// reappear when a later delivery is merged.
+    #[must_use]
+    pub(crate) fn joined_context(&self, other: &Self) -> DocumentContext {
+        let mut context = self.context.joined(&other.context);
+        context.advance(self.dot.origin.clone(), self.dot.sequence);
+        context.advance(other.dot.origin.clone(), other.dot.sequence);
+        context
+    }
+}
+
+/// Pure document input used by the causal join.  Bodies are `None` for
+/// tombstones; merge policy never parses a tombstone body.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DocumentMergeInput {
+    pub(crate) body: Option<DocumentValue>,
+    pub(crate) deleted: bool,
+    pub(crate) version: DocumentVersion,
+    pub(crate) hlc: u64,
+    pub(crate) origin: String,
+    pub(crate) commit_ulid: String,
+}
+
+/// Result of joining two document inputs.  `Dropped` is deliberately a
+/// distinct outcome from a conflict: a dominated row must not create a new
+/// publication or a second loser-history entry.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum DocumentMergeResult {
+    Clean {
+        input: DocumentMergeInput,
+        context: DocumentContext,
+    },
+    Dropped {
+        context: DocumentContext,
+    },
+    Conflict {
+        input: DocumentMergeInput,
+        loser: DocumentMergeInput,
+        policy: MergePolicy,
+        explanation: String,
+        context: DocumentContext,
+    },
+}
 
 /// Compares two `(hlc, origin)` stamps: physical stamp first, origin text
 /// second. Total, deterministic, and shared by every merge decision.
@@ -26,6 +198,21 @@ pub(crate) fn compare_stamps(
     right_origin: &str,
 ) -> Ordering {
     (left_hlc, left_origin).cmp(&(right_hlc, right_origin))
+}
+
+/// Compares the complete deterministic register key.  The commit identity is
+/// the final guard for two mutations from one origin carrying the same HLC;
+/// without it, equal stamps would make the result depend on delivery order.
+#[must_use]
+fn compare_version_keys(
+    left_hlc: u64,
+    left_origin: &str,
+    left_commit: &str,
+    right_hlc: u64,
+    right_origin: &str,
+    right_commit: &str,
+) -> Ordering {
+    (left_hlc, left_origin, left_commit).cmp(&(right_hlc, right_origin, right_commit))
 }
 
 /// Returns the canonical sort key of one value: distinct across types, so

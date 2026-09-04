@@ -1,10 +1,10 @@
 //! Deterministic simulation harness skeleton for replication + sync (E-12).
 //!
 //! Qualifies the two engines of ADR 0044 against the eight invariants of
-//! ADR 0044 §4 under seeded faults. The harness starts on day one against
-//! trait interfaces ([`traits::ReplicationEngine`], [`traits::SyncEngine`]);
-//! once E-5/E-6 land, one adapter per engine replaces the in-memory
-//! [`world::StubWorld`] without changing any invariant test.
+//! ADR 0044 §4 under seeded faults. The invariant qualification runs through
+//! the durable [`production::ProductionWorld`] adapter and the trait seams
+//! ([`traits::ReplicationEngine`], [`traits::SyncEngine`]); the in-memory
+//! [`world::StubWorld`] remains a small reference model for unit tests.
 //!
 //! The modules, in dependency order:
 //!
@@ -15,7 +15,7 @@
 //! - [`faults`]: fault injectors — partition, kill, clock skew, slow link,
 //!   duplicate and reordered delivery — driven by a deterministic [`faults::FaultPlan`].
 //! - [`workload`]: deterministic client-operation generator.
-//! - [`world`]: in-memory stub engine proving the harness mechanics.
+//! - [`world`]: in-memory reference engine for harness mechanics.
 //! - [`check`]: the eight-invariant checklist and the seed-batch runner.
 
 pub mod check;

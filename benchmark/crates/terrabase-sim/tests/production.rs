@@ -88,3 +88,39 @@ fn reconciliation_uses_production_range_kernel() {
     assert!(stats.rows_shipped > 0);
     assert_eq!(world.fingerprint(left), world.fingerprint(right));
 }
+
+#[test]
+fn healthy_intermediate_relays_a_third_origin() {
+    let mut faults = FaultPlan::new();
+    faults.push(Fault::partition(
+        terrabase_sim::RegionId::new(0),
+        terrabase_sim::RegionId::new(2),
+        0,
+        100,
+    ));
+    let mut world = ProductionWorld::with_faults(3, faults).expect("durable simulation world");
+    let origin = terrabase_sim::RegionId::new(0);
+    let relay = terrabase_sim::RegionId::new(1);
+    let target = terrabase_sim::RegionId::new(2);
+    let row = world.submit(origin, 19, 190).expect("origin commit");
+    for _ in 0..8 {
+        world.step();
+    }
+    assert!(world.applied_frontier(relay).covers(&row.context));
+    assert!(world.is_uniform(&row, &[origin, relay]));
+    // The direct origin→target link remains partitioned, so this can only
+    // become uniform through the healthy intermediate member.
+    assert!(world.is_uniform(&row, &[origin, relay, target]));
+    assert_eq!(world.fingerprint(origin), world.fingerprint(target));
+}
+
+#[test]
+fn historical_revision_survives_later_write() {
+    let mut world = ProductionWorld::new(1).expect("durable simulation world");
+    let region = terrabase_sim::RegionId::new(0);
+    world.submit(region, 4, 40).expect("first write");
+    let revision = world.view_revision("all", region).expect("historical revision");
+    world.submit(region, 4, 41).expect("later write");
+    assert!(world.verify_revision_at(&revision, region));
+    assert!(world.verify_revision("all", region));
+}

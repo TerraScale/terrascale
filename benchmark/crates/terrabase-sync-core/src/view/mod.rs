@@ -215,13 +215,43 @@ impl SharedViewKey {
 
 fn normalize_sql(sql: &str) -> String {
     let mut output = String::with_capacity(sql.len());
-    let mut quoted = false;
+    let mut quote = None;
     let mut pending_space = false;
-    for character in sql.trim().chars() {
-        if character == '\'' {
-            quoted = !quoted;
+    let mut comment = false;
+    let mut chars = sql.trim().chars().peekable();
+    while let Some(character) = chars.next() {
+        if comment {
+            if character == '\n' {
+                comment = false;
+                pending_space = !output.is_empty();
+            }
+            continue;
         }
-        if character.is_whitespace() && !quoted {
+        if quote.is_none() && character == '-' && chars.peek() == Some(&'-') {
+            chars.next();
+            comment = true;
+            continue;
+        }
+        if let Some(delimiter) = quote {
+            if character == delimiter {
+                // SQL escapes a quote by doubling it. Keep both bytes and
+                // remain in the quoted token after the first one.
+                if chars.peek() == Some(&delimiter) {
+                    output.push(character);
+                    output.push(chars.next().expect("peeked quote"));
+                    continue;
+                }
+                quote = None;
+            }
+            output.push(character);
+            continue;
+        }
+        if matches!(character, '\'' | '"' | '`' | '[') {
+            quote = Some(if character == '[' { ']' } else { character });
+            output.push(character);
+            continue;
+        }
+        if character.is_whitespace() {
             pending_space = !output.is_empty();
             continue;
         }
@@ -229,9 +259,11 @@ fn normalize_sql(sql: &str) -> String {
             output.push(' ');
             pending_space = false;
         }
-        output.push(character);
+        // SQL keywords and unquoted identifiers are case-insensitive in the
+        // SQLite dialect. Quoted identifiers/literals were handled above.
+        output.extend(character.to_lowercase());
     }
-    output
+    output.trim_end().to_owned()
 }
 
 fn push_text(output: &mut Vec<u8>, value: &str) {
@@ -1185,6 +1217,635 @@ impl SharedViewRegistry {
             .sum()
     }
 }
+
+/// The small, transport-independent incremental plan used by live views.
+///
+/// This is deliberately separate from `SQLite`'s executor.  It describes only
+/// the launch subset whose incremental form is linear (`filter`, `projection`,
+/// FTS) or bounded (`ORDER BY … LIMIT`).  An execute-only statement is rejected
+/// before it can create a shared view.
+#[allow(missing_docs)]
+pub mod plan {
+    use super::{MAX_TOP_K_ITEMS, OrderKey, ResultItem, SharedViewKey, normalize_sql};
+    use std::cmp::Ordering;
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::fmt;
+
+    /// A typed value used by dependency ranges and live predicates.
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum Value {
+        Null,
+        Bool(bool),
+        Number(f64),
+        Text(String),
+        Bytes(Vec<u8>),
+    }
+
+    impl Eq for Value {}
+    impl PartialOrd for Value {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+    impl Ord for Value {
+        fn cmp(&self, other: &Self) -> Ordering {
+            let rank = |value: &Self| match value {
+                Self::Null => 0_u8,
+                Self::Bool(_) => 1,
+                Self::Number(_) => 2,
+                Self::Text(_) => 3,
+                Self::Bytes(_) => 4,
+            };
+            rank(self).cmp(&rank(other)).then_with(|| match (self, other) {
+                (Self::Bool(left), Self::Bool(right)) => left.cmp(right),
+                (Self::Number(left), Self::Number(right)) => left.total_cmp(right),
+                (Self::Text(left), Self::Text(right)) => left.cmp(right),
+                (Self::Bytes(left), Self::Bytes(right)) => left.cmp(right),
+                _ => Ordering::Equal,
+            })
+        }
+    }
+
+    impl Value {
+        fn bytes(&self) -> Vec<u8> {
+            match self {
+                Self::Null => b"null".to_vec(),
+                Self::Bool(value) => value.to_string().into_bytes(),
+                Self::Number(value) => value.to_string().into_bytes(),
+                Self::Text(value) => value.as_bytes().to_vec(),
+                Self::Bytes(value) => value.clone(),
+            }
+        }
+    }
+
+    /// An interval endpoint. Included and excluded endpoints are distinct.
+    #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+    pub enum RangeEnd {
+        Unbounded,
+        Included(Value),
+        Excluded(Value),
+    }
+
+    /// A half-open/closed value interval used for dependency matching.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct ValueRange {
+        pub start: RangeEnd,
+        pub end: RangeEnd,
+    }
+
+    impl ValueRange {
+        #[must_use]
+        pub fn all() -> Self {
+            Self { start: RangeEnd::Unbounded, end: RangeEnd::Unbounded }
+        }
+        #[must_use]
+        pub fn equals(value: Value) -> Self {
+            Self { start: RangeEnd::Included(value.clone()), end: RangeEnd::Included(value) }
+        }
+        #[must_use]
+        pub fn contains(&self, value: &Value) -> bool {
+            let lower = match &self.start {
+                RangeEnd::Unbounded => true,
+                RangeEnd::Included(bound) => value >= bound,
+                RangeEnd::Excluded(bound) => value > bound,
+            };
+            let upper = match &self.end {
+                RangeEnd::Unbounded => true,
+                RangeEnd::Included(bound) => value <= bound,
+                RangeEnd::Excluded(bound) => value < bound,
+            };
+            lower && upper
+        }
+    }
+
+    /// A dependency on one physical/indexed value range.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct DependencyKey {
+        pub collection: String,
+        pub index_id: String,
+        pub range: ValueRange,
+    }
+
+    /// Values extracted once by the write path for dependency matching.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct ExtractedRow {
+        pub collection: String,
+        pub identity: String,
+        pub values: BTreeMap<String, Value>,
+        pub fields: BTreeMap<String, Value>,
+        pub fts: String,
+    }
+
+    impl ExtractedRow {
+        #[must_use]
+        pub fn new(collection: impl Into<String>, identity: impl Into<String>) -> Self {
+            Self {
+                collection: collection.into(),
+                identity: identity.into(),
+                values: BTreeMap::new(),
+                fields: BTreeMap::new(),
+                fts: String::new(),
+            }
+        }
+        #[must_use]
+        pub fn with_value(mut self, field: impl Into<String>, value: Value) -> Self {
+            let field = field.into();
+            self.values.insert(field.clone(), value.clone());
+            self.fields.insert(field, value);
+            self
+        }
+        #[must_use]
+        pub fn with_fts(mut self, text: impl Into<String>) -> Self {
+            self.fts = text.into();
+            self
+        }
+    }
+
+    /// The write-side index for `(collection, index_id, range)` dependencies.
+    #[derive(Clone, Debug, Default)]
+    pub struct DependencyIndex {
+        entries: BTreeMap<(String, String), Vec<(ValueRange, u64)>>,
+    }
+
+    impl DependencyIndex {
+        #[must_use]
+        pub fn new() -> Self {
+            Self::default()
+        }
+        pub fn register(&mut self, owner: u64, dependency: DependencyKey) {
+            self.entries
+                .entry((dependency.collection, dependency.index_id))
+                .or_default()
+                .push((dependency.range, owner));
+        }
+        pub fn retract(&mut self, owner: u64) {
+            self.entries.retain(|_, values| {
+                values.retain(|(_, candidate)| *candidate != owner);
+                !values.is_empty()
+            });
+        }
+        #[must_use]
+        pub fn match_row(&self, row: &ExtractedRow) -> Vec<u64> {
+            let mut matched = BTreeSet::new();
+            for ((collection, index), ranges) in &self.entries {
+                if collection != &row.collection {
+                    continue;
+                }
+                let Some(value) = row.values.get(index) else { continue };
+                for (range, owner) in ranges {
+                    if range.contains(value) {
+                        matched.insert(*owner);
+                    }
+                }
+            }
+            matched.into_iter().collect()
+        }
+        #[must_use]
+        pub fn len(&self) -> usize {
+            self.entries.values().map(Vec::len).sum()
+        }
+        #[must_use]
+        pub fn is_empty(&self) -> bool {
+            self.entries.is_empty()
+        }
+    }
+
+    /// Scalar predicate supported by an incremental filter.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub enum Compare {
+        Equal,
+        NotEqual,
+        Less,
+        LessOrEqual,
+        Greater,
+        GreaterOrEqual,
+    }
+
+    /// One scalar predicate over an extracted field.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct Predicate {
+        pub field: String,
+        pub compare: Compare,
+        pub value: Value,
+    }
+
+    impl Predicate {
+        #[must_use]
+        pub fn matches(&self, row: &ExtractedRow) -> bool {
+            let Some(actual) = row.values.get(&self.field) else { return false };
+            let ordering = actual.cmp(&self.value);
+            match self.compare {
+                Compare::Equal => ordering == Ordering::Equal,
+                Compare::NotEqual => ordering != Ordering::Equal,
+                Compare::Less => ordering == Ordering::Less,
+                Compare::LessOrEqual => ordering != Ordering::Greater,
+                Compare::Greater => ordering == Ordering::Greater,
+                Compare::GreaterOrEqual => ordering != Ordering::Less,
+            }
+        }
+        #[must_use]
+        pub fn dependency(&self, collection: &str, index_id: impl Into<String>) -> DependencyKey {
+            let range = match self.compare {
+                Compare::Equal => ValueRange::equals(self.value.clone()),
+                Compare::NotEqual => ValueRange::all(),
+                Compare::Less => ValueRange {
+                    start: RangeEnd::Unbounded,
+                    end: RangeEnd::Excluded(self.value.clone()),
+                },
+                Compare::LessOrEqual => ValueRange {
+                    start: RangeEnd::Unbounded,
+                    end: RangeEnd::Included(self.value.clone()),
+                },
+                Compare::Greater => ValueRange {
+                    start: RangeEnd::Excluded(self.value.clone()),
+                    end: RangeEnd::Unbounded,
+                },
+                Compare::GreaterOrEqual => ValueRange {
+                    start: RangeEnd::Included(self.value.clone()),
+                    end: RangeEnd::Unbounded,
+                },
+            };
+            DependencyKey { collection: collection.to_owned(), index_id: index_id.into(), range }
+        }
+    }
+
+    /// A full-text predicate evaluated against the maintained FTS delta.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct FtsPredicate {
+        pub query: String,
+    }
+    impl FtsPredicate {
+        #[must_use]
+        pub fn matches(&self, row: &ExtractedRow) -> bool {
+            let haystack = row.fts.to_ascii_lowercase();
+            self.query.split_whitespace().all(|term| haystack.contains(&term.to_ascii_lowercase()))
+        }
+    }
+
+    /// A live plan: one collection, scalar conjunction, projection, FTS, and
+    /// an optional bounded ordered window.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct ViewPlan {
+        pub collection: String,
+        pub predicates: Vec<Predicate>,
+        pub projection: Vec<String>,
+        pub fts: Option<FtsPredicate>,
+        pub order: Vec<OrderKey>,
+        pub limit: usize,
+    }
+
+    /// The operator that made a plan execute-only.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub enum UnsupportedOperator {
+        Join,
+        Aggregate,
+        Window,
+        Subquery,
+        MultiCollection,
+        Unknown,
+    }
+
+    impl fmt::Display for UnsupportedOperator {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(match self {
+                Self::Join => "join",
+                Self::Aggregate => "aggregate",
+                Self::Window => "window",
+                Self::Subquery => "subquery",
+                Self::MultiCollection => "multi_collection",
+                Self::Unknown => "unsupported",
+            })
+        }
+    }
+
+    /// Errors from planning a subscribable view.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub enum PlanError {
+        Empty,
+        Invalid,
+        Unsupported(UnsupportedOperator),
+        InvalidLimit,
+        TooLarge,
+    }
+
+    impl fmt::Display for PlanError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                Self::Empty => f.write_str("empty view plan"),
+                Self::Invalid => f.write_str("invalid live view plan"),
+                Self::Unsupported(op) => write!(f, "execute-only plan: {op}"),
+                Self::InvalidLimit => f.write_str("view limit is outside the top-k bound"),
+                Self::TooLarge => f.write_str("view plan exceeds its bound"),
+            }
+        }
+    }
+    impl std::error::Error for PlanError {}
+
+    impl ViewPlan {
+        /// Validates a manually lowered live plan.
+        pub fn new(
+            collection: impl Into<String>,
+            predicates: Vec<Predicate>,
+            projection: Vec<String>,
+            fts: Option<FtsPredicate>,
+            order: Vec<OrderKey>,
+            limit: usize,
+        ) -> Result<Self, PlanError> {
+            let plan =
+                Self { collection: collection.into(), predicates, projection, fts, order, limit };
+            if plan.collection.is_empty()
+                || plan.collection.len() > super::MAX_PLAN_TEXT_BYTES
+                || plan.projection.iter().any(|field| field.is_empty() || field.len() > 1_024)
+                || plan.predicates.len() > 1_024
+                || plan.order.len() > 1_024
+            {
+                return Err(PlanError::TooLarge);
+            }
+            if limit == 0 || limit > MAX_TOP_K_ITEMS {
+                return Err(PlanError::InvalidLimit);
+            }
+            Ok(plan)
+        }
+
+        /// Returns the row's projected result, or `None` when it is filtered.
+        #[must_use]
+        pub fn evaluate(&self, row: &ExtractedRow) -> Option<ResultItem> {
+            if row.collection != self.collection
+                || !self.predicates.iter().all(|predicate| predicate.matches(row))
+                || self.fts.as_ref().is_some_and(|fts| !fts.matches(row))
+            {
+                return None;
+            }
+            let fields = if self.projection.is_empty() {
+                row.fields
+                    .iter()
+                    .map(|(path, value)| crate::wire::ProjectedField {
+                        path: path.clone(),
+                        value: value.bytes(),
+                    })
+                    .collect()
+            } else {
+                self.projection
+                    .iter()
+                    .filter_map(|path| {
+                        row.fields.get(path).map(|value| crate::wire::ProjectedField {
+                            path: path.clone(),
+                            value: value.bytes(),
+                        })
+                    })
+                    .collect()
+            };
+            Some(ResultItem { identity: row.identity.clone(), fields })
+        }
+
+        /// Creates the canonical shared-view identity for this plan.
+        pub fn key(
+            &self,
+            database: impl Into<String>,
+            branch: impl Into<String>,
+            parameters: Vec<u8>,
+            schema: u64,
+            index_plan: u64,
+            authorization: impl Into<String>,
+            rule: u64,
+            entitlement: u64,
+            region: impl Into<String>,
+        ) -> Result<SharedViewKey, super::KeyError> {
+            let sql = format!(
+                "select {} from {}",
+                if self.projection.is_empty() { "*".to_owned() } else { self.projection.join(",") },
+                self.collection
+            );
+            SharedViewKey::new(
+                database,
+                branch,
+                sql,
+                parameters,
+                self.projection.clone(),
+                self.order.clone(),
+                self.limit,
+                schema,
+                index_plan,
+                authorization,
+                rule,
+                entitlement,
+                region,
+            )
+        }
+    }
+
+    /// One row with a signed Z-set multiplicity.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct ZSetEntry {
+        pub row: ExtractedRow,
+        pub weight: i32,
+    }
+    /// A batch of inserts/removals. A row's transition is represented by -1
+    /// for the old value and +1 for the new value.
+    #[derive(Clone, Debug, Eq, PartialEq, Default)]
+    pub struct ZSetDelta {
+        pub entries: Vec<ZSetEntry>,
+    }
+    impl ZSetDelta {
+        #[must_use]
+        pub fn new(entries: Vec<ZSetEntry>) -> Self {
+            Self { entries }
+        }
+        #[must_use]
+        pub fn insert(row: ExtractedRow) -> Self {
+            Self { entries: vec![ZSetEntry { row, weight: 1 }] }
+        }
+        #[must_use]
+        pub fn remove(row: ExtractedRow) -> Self {
+            Self { entries: vec![ZSetEntry { row, weight: -1 }] }
+        }
+        #[must_use]
+        pub fn transition(old: Option<ExtractedRow>, new: Option<ExtractedRow>) -> Self {
+            let mut entries = Vec::with_capacity(2);
+            if let Some(row) = old {
+                entries.push(ZSetEntry { row, weight: -1 });
+            }
+            if let Some(row) = new {
+                entries.push(ZSetEntry { row, weight: 1 });
+            }
+            Self { entries }
+        }
+    }
+
+    /// A bounded incremental result materializer. Top-k plans retain at most
+    /// `2 * limit` boundary candidates; unbounded plans retain at most `limit`.
+    #[derive(Clone, Debug)]
+    pub struct Materializer {
+        plan: ViewPlan,
+        rows: BTreeMap<String, ExtractedRow>,
+        result: Vec<ResultItem>,
+        boundary: usize,
+    }
+
+    impl Materializer {
+        #[must_use]
+        pub fn new(plan: ViewPlan) -> Self {
+            let boundary = plan.limit.saturating_mul(2).min(MAX_TOP_K_ITEMS);
+            Self { plan, rows: BTreeMap::new(), result: Vec::new(), boundary }
+        }
+        pub fn seed(&mut self, rows: impl IntoIterator<Item = ExtractedRow>) {
+            self.rows.clear();
+            for row in rows {
+                self.rows.insert(row.identity.clone(), row);
+            }
+            self.rebuild();
+        }
+        /// Applies a Z-set delta and returns the deterministic result delta.
+        pub fn apply(&mut self, delta: &ZSetDelta) -> Vec<crate::wire::ResultOperation> {
+            let before = self.result.clone();
+            for entry in &delta.entries {
+                if entry.weight < 0 {
+                    self.rows.remove(&entry.row.identity);
+                } else if entry.weight > 0 {
+                    self.rows.insert(entry.row.identity.clone(), entry.row.clone());
+                }
+            }
+            self.rebuild();
+            diff(&before, &self.result)
+        }
+        #[must_use]
+        pub fn result(&self) -> &[ResultItem] {
+            &self.result
+        }
+        #[must_use]
+        pub fn boundary_len(&self) -> usize {
+            self.rows.len().min(self.boundary)
+        }
+        fn rebuild(&mut self) {
+            let mut rows: Vec<&ExtractedRow> = self.rows.values().collect();
+            rows.sort_by(|left, right| compare_rows(&self.plan, left, right));
+            rows.truncate(self.boundary);
+            self.result = rows
+                .into_iter()
+                .filter_map(|row| self.plan.evaluate(row))
+                .take(self.plan.limit)
+                .collect();
+        }
+    }
+
+    fn compare_rows(plan: &ViewPlan, left: &ExtractedRow, right: &ExtractedRow) -> Ordering {
+        for key in &plan.order {
+            let l = left.values.get(&key.field);
+            let r = right.values.get(&key.field);
+            let ordering = match (l, r) {
+                (None, None) => Ordering::Equal,
+                (None, Some(_)) => {
+                    if key.nulls_last {
+                        Ordering::Greater
+                    } else {
+                        Ordering::Less
+                    }
+                }
+                (Some(_), None) => {
+                    if key.nulls_last {
+                        Ordering::Less
+                    } else {
+                        Ordering::Greater
+                    }
+                }
+                (Some(l), Some(r)) => l.cmp(r),
+            };
+            if ordering != Ordering::Equal {
+                return if key.descending { ordering.reverse() } else { ordering };
+            }
+        }
+        left.identity.cmp(&right.identity)
+    }
+
+    fn diff(before: &[ResultItem], after: &[ResultItem]) -> Vec<crate::wire::ResultOperation> {
+        let old: BTreeMap<&str, (usize, &ResultItem)> = before
+            .iter()
+            .enumerate()
+            .map(|(position, item)| (item.identity.as_str(), (position, item)))
+            .collect();
+        let new: BTreeMap<&str, (usize, &ResultItem)> = after
+            .iter()
+            .enumerate()
+            .map(|(position, item)| (item.identity.as_str(), (position, item)))
+            .collect();
+        let mut operations = Vec::new();
+        for (identity, (_, _)) in &old {
+            if !new.contains_key(identity) {
+                operations.push(crate::wire::ResultOperation::Remove {
+                    identity: (*identity).to_owned(),
+                });
+            }
+        }
+        for (identity, (position, item)) in &new {
+            match old.get(identity) {
+                None => operations.push(crate::wire::ResultOperation::Insert {
+                    identity: (*identity).to_owned(),
+                    position: *position as u32,
+                    fields: item.fields.clone(),
+                }),
+                Some((old_position, old_item)) if old_item.fields != item.fields => operations
+                    .push(crate::wire::ResultOperation::Update {
+                        identity: (*identity).to_owned(),
+                        fields: item.fields.clone(),
+                    }),
+                Some((old_position, _)) if old_position != position => {
+                    operations.push(crate::wire::ResultOperation::Move {
+                        identity: (*identity).to_owned(),
+                        position: *position as u32,
+                    });
+                }
+                _ => {}
+            }
+        }
+        operations
+    }
+
+    /// Classifies SQL text without pretending unsupported operators are live.
+    pub fn classify_sql(sql: &str) -> Result<(), PlanError> {
+        let normalized = normalize_sql(sql);
+        if normalized.is_empty() {
+            return Err(PlanError::Empty);
+        }
+        let words: Vec<&str> = normalized.split_whitespace().collect();
+        let operator = if words.iter().any(|word| word.eq_ignore_ascii_case("join")) {
+            Some(UnsupportedOperator::Join)
+        } else if words.iter().any(|word| matches!(*word, "group" | "having"))
+            || words.iter().any(|word| {
+                ["count(", "sum(", "avg(", "min(", "max("]
+                    .iter()
+                    .any(|prefix| word.starts_with(prefix))
+            })
+        {
+            Some(UnsupportedOperator::Aggregate)
+        } else if normalized.contains(" over(") || normalized.contains(" over ") {
+            Some(UnsupportedOperator::Window)
+        } else if normalized.contains("select (select")
+            || normalized.contains(" in (select")
+            || normalized.contains(" exists (select")
+        {
+            Some(UnsupportedOperator::Subquery)
+        } else {
+            None
+        };
+        if let Some(operator) = operator {
+            return Err(PlanError::Unsupported(operator));
+        }
+        if !normalized.starts_with("select ") {
+            return Err(PlanError::Invalid);
+        }
+        if normalized.matches(" from ").count() != 1 {
+            return Err(PlanError::Unsupported(UnsupportedOperator::MultiCollection));
+        }
+        Ok(())
+    }
+}
+
+pub use plan::{
+    Compare, DependencyIndex as ViewDependencyIndex, DependencyKey as ViewDependencyKey,
+    ExtractedRow, FtsPredicate, Materializer, PlanError, Predicate, RangeEnd as ViewRangeEnd,
+    UnsupportedOperator, Value, ValueRange as ViewValueRange, ViewPlan, ZSetDelta, ZSetEntry,
+    classify_sql,
+};
 
 #[cfg(test)]
 mod tests {

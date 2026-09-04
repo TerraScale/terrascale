@@ -32,10 +32,26 @@ use terrabase_sync_core::subscription::FieldValue;
 /// readers use the same identity and therefore share one materializer; the
 /// scope component prevents a reader from ever sharing rows across database
 /// or authorization boundaries.
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SharedViewKey {
     scope: String,
     spec: SubscriptionSpec,
+    /// Canonical in-process ordering key. `SubscriptionSpec` intentionally
+    /// does not expose ordering because its field values only promise
+    /// equality; the debug form is deterministic for the closed enum model.
+    order_key: String,
+}
+
+impl Ord for SharedViewKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.scope.cmp(&other.scope).then_with(|| self.order_key.cmp(&other.order_key))
+    }
+}
+
+impl PartialOrd for SharedViewKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 /// The compile-ready adapter passed from the SQL query registry to the sync
@@ -70,7 +86,9 @@ impl ReactivePlanAdapter {
 
 impl SharedViewKey {
     pub(crate) fn new(scope: impl Into<String>, spec: SubscriptionSpec) -> Self {
-        Self { scope: scope.into(), spec }
+        let scope = scope.into();
+        let order_key = format!("{spec:?}");
+        Self { scope, spec, order_key }
     }
 
     pub(crate) fn spec(&self) -> &SubscriptionSpec {

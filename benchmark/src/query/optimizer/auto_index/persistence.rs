@@ -15,6 +15,8 @@ pub(crate) const MAX_JOURNAL_RECORDS: usize = 16_384;
 const MAGIC: [u8; 4] = *b"AIXJ";
 const VERSION: u8 = 1;
 const HEADER_BYTES: usize = 4 + 1 + 4 + 32;
+const METADATA_VERSION: u8 = 1;
+const METADATA_BYTES: usize = 1 + 8 + 1 + 32;
 
 /// A persistence record for one candidate lifecycle update.
 #[derive(Clone, Debug)]
@@ -27,6 +29,10 @@ pub(crate) struct JournalRecord {
     pub(crate) watermark: Option<super::build::BuildWatermark>,
     pub(crate) seq: u64,
     pub(crate) candidate_digest: [u8; 32],
+    /// Durable transition timestamp (milliseconds since Unix epoch).
+    pub(crate) at_millis: u64,
+    /// Additional evidence digest supplied by the verifier/monitor.
+    pub(crate) evidence_digest: [u8; 32],
 }
 
 impl JournalRecord {
@@ -51,11 +57,32 @@ impl JournalRecord {
             phase: to,
             watermark,
             candidate_digest,
+            at_millis: 0,
+            evidence_digest: candidate_digest,
         })
+    }
+
+    /// Adds the timestamp used by restart-safe lifecycle timers.
+    pub(crate) const fn with_timestamp(mut self, at_millis: u64) -> Self {
+        self.at_millis = at_millis;
+        self
+    }
+
+    /// Attaches a digest of verifier/monitor evidence to the audit record.
+    pub(crate) const fn with_evidence_digest(mut self, digest: [u8; 32]) -> Self {
+        self.evidence_digest = digest;
+        self
     }
 
     pub(crate) fn encode(&self) -> Result<Vec<u8>, JournalError> {
         if self.seq != self.identity.sequence() || self.seq == 0 {
+            return Err(JournalError::InvalidRecord);
+        }
+        if self
+            .candidate
+            .as_ref()
+            .is_some_and(|candidate| digest_candidate(candidate) != self.candidate_digest)
+        {
             return Err(JournalError::InvalidRecord);
         }
         let mut payload = Vec::with_capacity(128);
@@ -70,8 +97,17 @@ impl JournalRecord {
         put_name(&mut payload, self.identity.index())?;
         payload.extend_from_slice(&self.candidate_digest);
         if let Some(watermark) = self.watermark {
+            if watermark.seq() == 0 {
+                return Err(JournalError::InvalidRecord);
+            }
             payload.extend_from_slice(&watermark.seq().to_le_bytes());
         }
+        payload.push(METADATA_VERSION);
+        payload.extend_from_slice(&self.at_millis.to_le_bytes());
+        // Bit 0 is reserved for future flags.  Keeping it zero makes unknown
+        // flag additions fail closed during replay.
+        payload.push(0);
+        payload.extend_from_slice(&self.evidence_digest);
         if payload.len() > MAX_RECORD_BYTES {
             return Err(JournalError::RecordTooLarge);
         }
@@ -121,10 +157,30 @@ impl JournalRecord {
         let collection = cursor.name()?;
         let index = cursor.name()?;
         let candidate_digest = cursor.array32()?;
-        let watermark = if has_watermark == 1 { Some(cursor.u64()?) } else { None };
-        if cursor.remaining() != 0 {
-            return Err(JournalError::InvalidRecord);
-        }
+        let watermark = if has_watermark == 1 {
+            let value = cursor.u64()?;
+            if value == 0 {
+                return Err(JournalError::InvalidRecord);
+            }
+            Some(value)
+        } else {
+            None
+        };
+        // Version-one records did not have timer/evidence metadata.  They are
+        // accepted with zero defaults; every newly written record carries the
+        // metadata trailer so timer decisions survive a restart.
+        let (at_millis, evidence_digest) = if cursor.remaining() == 0 {
+            (0, candidate_digest)
+        } else {
+            if cursor.remaining() != METADATA_BYTES || cursor.byte()? != METADATA_VERSION {
+                return Err(JournalError::InvalidRecord);
+            }
+            let at_millis = cursor.u64()?;
+            if cursor.byte()? != 0 {
+                return Err(JournalError::InvalidRecord);
+            }
+            (at_millis, cursor.array32()?)
+        };
         let identity = LifecycleIdentity::new(collection, index, generation, schema, sequence)
             .map_err(|_| JournalError::InvalidRecord)?;
         if matches!(
@@ -142,6 +198,8 @@ impl JournalRecord {
             watermark,
             candidate_digest,
             checksum: *blake3::hash(payload).as_bytes(),
+            at_millis,
+            evidence_digest,
         })
     }
 }
@@ -208,6 +266,8 @@ pub(crate) struct DecodedRecord {
     pub(crate) watermark: Option<u64>,
     pub(crate) candidate_digest: [u8; 32],
     pub(crate) checksum: [u8; 32],
+    pub(crate) at_millis: u64,
+    pub(crate) evidence_digest: [u8; 32],
 }
 
 impl DecodedRecord {
@@ -219,6 +279,9 @@ impl DecodedRecord {
             to: self.to,
             watermark: self.watermark,
             checksum: self.checksum,
+            candidate_digest: self.candidate_digest,
+            evidence_digest: self.evidence_digest,
+            at_millis: self.at_millis,
         }
     }
 }
@@ -236,6 +299,11 @@ pub(crate) enum JournalError {
     Truncated,
     Corrupt,
     InvalidTransition,
+    StaleTimestamp,
+    TimerNotElapsed,
+    MissingWatermark,
+    StaleWatermark,
+    InvalidIdentity,
 }
 
 /// In-memory byte journal used by the SQLite integration.
@@ -400,8 +468,13 @@ impl<'a> Cursor<'a> {
 impl From<LifecycleError> for JournalError {
     fn from(error: LifecycleError) -> Self {
         match error {
+            LifecycleError::InvalidIdentity => Self::InvalidIdentity,
             LifecycleError::InvalidTransition => Self::InvalidTransition,
             LifecycleError::SequenceConflict => Self::SequenceConflict,
+            LifecycleError::MissingWatermark => Self::MissingWatermark,
+            LifecycleError::StaleWatermark => Self::StaleWatermark,
+            LifecycleError::StaleTimestamp => Self::StaleTimestamp,
+            LifecycleError::TimerNotElapsed => Self::TimerNotElapsed,
             _ => Self::InvalidRecord,
         }
     }

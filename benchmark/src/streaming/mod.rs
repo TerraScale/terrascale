@@ -42,7 +42,7 @@ use crate::{
     query::{QueryPlan, QueryRow},
     types::{
         Cancellation, CollectionName, Deadline, Document, DocumentId, OperationId, ReadSnapshot,
-        StorageSequence, TenantScope,
+        RegionId, StorageSequence, TenantScope,
     },
 };
 
@@ -731,8 +731,8 @@ impl StreamBatch {
     /// Returns the terminal observation, present exactly once at the end of
     /// the stream.
     #[must_use]
-    pub const fn completion(&self) -> Option<StreamCompletion> {
-        self.completion
+    pub fn completion(&self) -> Option<StreamCompletion> {
+        self.completion.clone()
     }
 
     /// Returns the index generation the query execution used, or `None` for
@@ -784,7 +784,7 @@ pub enum StreamItem {
 ///
 /// `EndOfStream`, `Cancelled`, `Failed`, and `SlowConsumer` are distinct
 /// terminal observations; none is silently collapsed into another.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StreamCompletion {
     /// The source is exhausted.
     EndOfStream,
@@ -806,7 +806,7 @@ pub enum StreamCompletion {
 /// The frozen variant set has no storage-failure case: an unreachable or
 /// poisoned Engine storage lock is reported as [`StreamError::EngineClosed`],
 /// and a family or query rejection is reported as a typed stream error.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StreamError {
     /// The `Engine` has closed.
     EngineClosed,
@@ -828,6 +828,8 @@ pub enum StreamError {
     Deadline,
     /// The operation was cancelled.
     Cancelled,
+    /// The member is behind the session token; retry at this Region.
+    StaleReplica(RegionId),
 }
 
 /// The public observation of a cursor: storage sequence and source kind,
@@ -1441,7 +1443,7 @@ impl SubscriptionAcknowledgement {
 }
 
 /// The negotiated state of one subscription (PB-6005).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SubscriptionStatus {
     /// The subscription is being opened.
     Opening,

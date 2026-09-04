@@ -1783,11 +1783,7 @@ impl UsageSegmentLedger {
 #[must_use]
 pub const fn write_units_for_bytes(logical_bytes: u64) -> u64 {
     let units = logical_bytes.div_ceil(WRITE_UNIT_BYTES);
-    if units < 1 {
-        1
-    } else {
-        units
-    }
+    if units < 1 { 1 } else { units }
 }
 
 /// Returns the billed write units for one operation replicated to the selected
@@ -1900,9 +1896,14 @@ impl GroupCommitFact {
     }
 
     /// Creates one fact, panicking only when called with invalid internal data.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `seq_hi` or the unit fields violate the validated fact
+    /// contract. Call [`Self::try_new`] when handling untrusted input.
     #[must_use]
-    pub fn new(db: String, seq_hi: u64, writes: u64, logical_bytes: u64) -> Self {
-        Self::try_new(&db, seq_hi, writes, logical_bytes)
+    pub fn new(db: &str, seq_hi: u64, writes: u64, logical_bytes: u64) -> Self {
+        Self::try_new(db, seq_hi, writes, logical_bytes)
             .expect("group-commit facts must carry validated values")
     }
 

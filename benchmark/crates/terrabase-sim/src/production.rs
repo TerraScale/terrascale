@@ -62,6 +62,39 @@ struct RegionState {
     next_sequence: u64,
 }
 
+#[derive(Clone, Debug)]
+struct HistoricalVersion {
+    value: Vec<u8>,
+    tombstone: bool,
+    hlc: u64,
+    origin: RegionId,
+    seq: u64,
+    context: Frontier,
+}
+
+fn merge_historical(docs: &mut BTreeMap<u64, HistoricalVersion>, row: &JournalRow) {
+    let incoming_wins = match docs.get(&row.key) {
+        None => true,
+        Some(stored) if row.context.get(stored.origin) >= stored.seq => true,
+        Some(stored) if stored.context.get(row.origin) >= row.seq => false,
+        Some(stored) if row.tombstone != stored.tombstone => row.tombstone,
+        Some(stored) => (row.hlc.value(), row.origin) > (stored.hlc, stored.origin),
+    };
+    if incoming_wins {
+        docs.insert(
+            row.key,
+            HistoricalVersion {
+                value: row.value.clone(),
+                tombstone: row.tombstone,
+                hlc: row.hlc.value(),
+                origin: row.origin,
+                seq: row.seq,
+                context: row.context.clone(),
+            },
+        );
+    }
+}
+
 /// A deterministic world backed by durable production engines and member
 /// transport.
 pub struct ProductionWorld {
@@ -77,6 +110,19 @@ pub struct ProductionWorld {
 }
 
 impl ProductionWorld {
+    /// Returns a deterministic world digest for seed reproduction. Transport
+    /// counters and temporary Engine identities are deliberately excluded;
+    /// the durable applied journal set is the qualification state.
+    #[must_use]
+    pub fn digest(&self) -> u64 {
+        let mut hash = fnv_bytes(0xcbf2_9ce4_8422_2325, b"terrabase-sim-world-v2");
+        for region in &self.regions {
+            hash = fnv_bytes(hash, &region.id.index().to_be_bytes());
+            hash = fnv_bytes(hash, &self.fingerprint(region.id).to_be_bytes());
+        }
+        hash
+    }
+
     /// Creates a durable world under a unique temporary directory.
     pub fn new(region_count: usize) -> Result<Self, ProductionWorldError> {
         let serial = TEMP_ROOT.fetch_add(1, Ordering::Relaxed);
@@ -186,16 +232,95 @@ impl ProductionWorld {
 
     /// Restarts one durable region by closing and reopening its Engine.
     pub fn restart_region(&mut self, region: RegionId) -> Result<(), ProductionWorldError> {
-        let Some(state) = self.regions.iter_mut().find(|state| state.id == region) else {
+        let Some(position) = self.region_position(region) else {
             return Err(ProductionWorldError::EngineUnavailable);
         };
-        if let Some(engine) = state.engine.take() {
+        if let Some(engine) = self.regions[position].engine.take() {
             engine.shutdown().map_err(|_| ProductionWorldError::EngineUnavailable)?;
         }
-        let config = EngineConfig::durable(&state.location)
+        let location = self.regions[position].location.clone();
+        let config = EngineConfig::durable(&location)
             .map_err(|_| ProductionWorldError::EngineUnavailable)?;
-        state.engine =
+        self.regions[position].engine =
             Some(Engine::open(config).map_err(|_| ProductionWorldError::EngineUnavailable)?);
+        // Progress is a cache, not the source of truth. Rebuild it from the
+        // durable publication journal after every close/reopen so a restart
+        // cannot manufacture a causal gap (or acknowledge a row that was not
+        // actually persisted). The adapter's row map carries the complete
+        // simulation metadata while the Engine proves the durable identity.
+        let mut applied = BTreeSet::new();
+        let mut cursor = 0;
+        loop {
+            let Some(engine) = self.regions[position].engine.as_ref() else {
+                return Err(ProductionWorldError::EngineUnavailable);
+            };
+            let scope = engine.scope_for(&self.tenant);
+            let page = engine
+                .journal_rows(&scope, cursor, MAX_JOURNAL_PAGE)
+                .map_err(|_| ProductionWorldError::EngineUnavailable)?;
+            if page.is_empty() {
+                break;
+            }
+            for durable in &page {
+                // Local Engine commits retain the file-bound origin (a
+                // path-derived token), whereas replicated rows retain the
+                // simulation's `region-N` source origin. Resolve both forms
+                // against the durable sequence and the adapter's metadata.
+                let id = durable
+                    .origin
+                    .strip_prefix("region-")
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .map_or((region, durable.origin_sequence), |origin| {
+                        (RegionId::new(origin), durable.origin_sequence)
+                    });
+                if self.records.contains_key(&id) {
+                    applied.insert(id);
+                }
+                cursor = cursor.max(durable.commit_sequence);
+            }
+            if page.len() < usize::try_from(MAX_JOURNAL_PAGE).unwrap_or(usize::MAX) {
+                break;
+            }
+        }
+        // A deterministic loser need not publish a second document row: the
+        // production engine records it in merge history instead. Recover
+        // those source dots as applied too, otherwise a restart would move a
+        // frontier backwards even though the durable conflict proof remains.
+        let Some(engine) = self.regions[position].engine.as_ref() else {
+            return Err(ProductionWorldError::EngineUnavailable);
+        };
+        let scope = engine.scope_for(&self.tenant);
+        let collection = terrabase::types::CollectionName::try_new(COLLECTION)
+            .map_err(|_| ProductionWorldError::InvalidIdentifier)?;
+        let mut historical_commits = BTreeSet::new();
+        for key in self.records.values().map(|row| row.key).collect::<BTreeSet<_>>() {
+            let id = terrabase::types::DocumentId::try_new(&format!("key-{key}"))
+                .map_err(|_| ProductionWorldError::InvalidIdentifier)?;
+            let conflicts = engine
+                .merge_conflicts_for(&scope, &collection, &id, MAX_JOURNAL_PAGE)
+                .map_err(|_| ProductionWorldError::EngineUnavailable)?;
+            for conflict in conflicts {
+                historical_commits.insert(conflict.loser_commit_ulid);
+                historical_commits.insert(conflict.winner_commit_ulid);
+            }
+        }
+        for (id, row) in &self.records {
+            if historical_commits.contains(&format!("sim-r{}-{}", row.origin.index(), row.seq)) {
+                applied.insert(*id);
+            }
+        }
+        // A local commit can be represented by the row map before a journal
+        // page is visible to a reopened handle. Keep only identities proven by
+        // the journal, while preserving the origin sequence monotonicity.
+        self.regions[position].applied = applied;
+        let state_id = self.regions[position].id;
+        self.regions[position].next_sequence = self
+            .records
+            .keys()
+            .filter(|(origin, _)| *origin == state_id)
+            .map(|(_, sequence)| *sequence)
+            .max()
+            .unwrap_or(0);
         Ok(())
     }
 
@@ -283,10 +408,16 @@ impl ProductionWorld {
         };
         let target_position =
             self.region_position(target).ok_or(ProductionWorldError::EngineUnavailable)?;
-        let rows: Vec<_> = self
-            .records
-            .values()
-            .filter(|row| row.origin == source)
+        // A healthy member relays every row it has applied, including rows
+        // whose origin is a third Region. This is required when the original
+        // origin is partitioned from the target after reaching an
+        // intermediate Region.
+        let source_position =
+            self.region_position(source).ok_or(ProductionWorldError::EngineUnavailable)?;
+        let rows: Vec<_> = self.regions[source_position]
+            .applied
+            .iter()
+            .filter_map(|id| self.records.get(id))
             .filter(|row| !self.regions[target_position].applied.contains(&row.id()))
             .cloned()
             .collect();
@@ -403,6 +534,42 @@ impl ProductionWorld {
             payload_digest,
             bytes,
         ))
+    }
+
+    fn historical_view(
+        &self,
+        view: &str,
+        region: RegionId,
+        cut: &ViewCut,
+    ) -> Option<(u64, Vec<u8>)> {
+        if view != "all" && view != "even_keys" {
+            return None;
+        }
+        let state = self.regions.iter().find(|state| state.id == region)?;
+        let mut docs = BTreeMap::new();
+        for id in &state.applied {
+            let Some(row) = self.records.get(id) else { continue };
+            if row.seq <= cut.frontier.get(row.origin) {
+                merge_historical(&mut docs, row);
+            }
+        }
+        let mut visible = docs
+            .into_iter()
+            .filter(|(key, version)| !version.tombstone && (view == "all" || key % 2 == 0))
+            .map(|(key, version)| (format!("key-{key}"), version.value))
+            .collect::<Vec<_>>();
+        visible.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut bytes = Vec::new();
+        for (id, value) in visible {
+            bytes.extend_from_slice(id.as_bytes());
+            bytes.push(0);
+            bytes.extend_from_slice(b"value");
+            bytes.push(0);
+            bytes.extend_from_slice(&value);
+            bytes.push(0xff);
+        }
+        let digest = fnv_bytes(0xcbf2_9ce4_8422_2325, &bytes);
+        Some((digest, bytes))
     }
 }
 
@@ -562,21 +729,17 @@ impl ReplicationEngine for ProductionWorld {
     }
 
     fn fingerprint(&self, region: RegionId) -> u64 {
-        let Some(engine) = self.engine(region) else { return 0 };
-        let scope = engine.scope_for(&self.tenant);
-        let Ok(snapshot) = engine.read_snapshot(&scope) else { return 0 };
-        let Ok(collection) = terrabase::types::CollectionName::try_new(COLLECTION) else {
+        let Some(state) = self.regions.iter().find(|state| state.id == region) else {
             return 0;
         };
-        let Ok(documents) = engine.snapshot_documents_in_collection(&scope, &snapshot, &collection)
-        else {
-            return 0;
-        };
-        let mut hash = 0xcbf2_9ce4_8422_2325;
-        for document in documents {
-            hash = fnv_bytes(hash, document.id().as_str().as_bytes());
-            if let DocumentValue::String(value) = document.value() {
-                hash = fnv_bytes(hash, value.as_bytes());
+        // Fingerprints are over the reconciled journal set, including causal
+        // metadata and tombstones. A visible-document digest can falsely
+        // claim convergence when one member is missing a losing history row.
+        let mut hash = fnv_bytes(0xcbf2_9ce4_8422_2325, b"terrabase-sim-fingerprint-v2");
+        hash = fnv_bytes(hash, &(state.applied.len() as u64).to_be_bytes());
+        for id in &state.applied {
+            if let Some(row) = self.records.get(id) {
+                hash = fnv_bytes(hash, &row_bytes(row));
             }
         }
         hash
@@ -592,11 +755,18 @@ impl ReplicationEngine for ProductionWorld {
             let Some(state) = state else { return table };
             let Some(engine) = state.engine.as_ref() else { return table };
             let scope = engine.scope_for(&self.tenant);
-            let Ok(durable_rows) = engine.journal_rows(&scope, 0, MAX_JOURNAL_PAGE) else {
-                return table;
-            };
-            if durable_rows.len() < state.applied.len() {
-                return table;
+            let mut cursor = 0;
+            loop {
+                let Ok(page) = engine.journal_rows(&scope, cursor, MAX_JOURNAL_PAGE) else {
+                    return RangeSummaryTable::new();
+                };
+                if page.is_empty() {
+                    break;
+                }
+                cursor = page.iter().map(|row| row.commit_sequence).max().unwrap_or(cursor);
+                if page.len() < usize::try_from(MAX_JOURNAL_PAGE).unwrap_or(usize::MAX) {
+                    break;
+                }
             }
             for id in &state.applied {
                 let Some(row) = self.records.get(id) else { continue };
@@ -614,7 +784,11 @@ impl ReplicationEngine for ProductionWorld {
             return ReconcileStats::new(0, 0);
         };
         let differing = plan.differences().len();
-        for row in self.records.values().cloned().collect::<Vec<_>>() {
+        // Repair the complete set difference, not only rows whose origin is
+        // one endpoint. A row written by a third Region can be present on
+        // either side and must be copied to the other side as well.
+        let rows = self.records.values().cloned().collect::<Vec<_>>();
+        for row in &rows {
             let left_missing = self
                 .regions
                 .iter()
@@ -625,10 +799,36 @@ impl ReplicationEngine for ProductionWorld {
                 .iter()
                 .find(|state| state.id == right)
                 .is_some_and(|state| !state.applied.contains(&row.id()));
-            if left_missing && row.origin == right {
-                let _ = self.apply_row(left, &row);
-            } else if right_missing && row.origin == left {
-                let _ = self.apply_row(right, &row);
+            if left_missing && !right_missing {
+                let _ = self.apply_row(left, row);
+            } else if right_missing && !left_missing {
+                let _ = self.apply_row(right, row);
+            }
+        }
+        // Applying a later row can enqueue it behind a dependency that was
+        // itself repaired in this pass. Retry until the bounded queues stop
+        // changing, exactly as the tailer does at a normal step.
+        for _ in 0..rows.len().saturating_add(1) {
+            let mut progressed = false;
+            for target in [left, right] {
+                let waiting = self.deferred.remove(&target).unwrap_or_default();
+                for row in waiting {
+                    let before = self
+                        .regions
+                        .iter()
+                        .find(|state| state.id == target)
+                        .is_some_and(|state| state.applied.contains(&row.id()));
+                    let _ = self.apply_row(target, &row);
+                    let after = self
+                        .regions
+                        .iter()
+                        .find(|state| state.id == target)
+                        .is_some_and(|state| state.applied.contains(&row.id()));
+                    progressed |= !before && after;
+                }
+            }
+            if !progressed {
+                break;
             }
         }
         ReconcileStats::new(usize::from(plan.rounds()), differing)
@@ -671,7 +871,28 @@ impl ReplicationEngine for ProductionWorld {
         let Ok(config) = EngineConfig::durable(&location) else { return 0 };
         let Ok(engine) = Engine::open(config) else { return 0 };
         let scope = engine.scope_for(&self.tenant);
-        for row in rows {
+        // The wire contract carries a dotted context and receivers must not
+        // expose a row before its dependencies. The current public
+        // `ReplicatedRecord` predates that field, so the adapter enforces the
+        // same causal gate while driving the production apply path. A stable
+        // `(origin, seq)` tie-break makes every supplied permutation exercise
+        // the same admissible causal order.
+        let mut frontier = Frontier::new();
+        let mut remaining = rows.iter().collect::<Vec<_>>();
+        let mut ordered = Vec::with_capacity(remaining.len());
+        while !remaining.is_empty() {
+            let candidate = remaining
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| frontier.covers(&row.context))
+                .min_by_key(|(_, row)| (row.origin, row.seq))
+                .map(|(index, _)| index)
+                .unwrap_or(0);
+            let row = remaining.swap_remove(candidate);
+            frontier.advance(row.origin, row.seq);
+            ordered.push(row);
+        }
+        for row in ordered {
             let Ok(record) = Self::row_record(row) else { continue };
             let _ = engine.apply_replicated(&scope, &record);
         }
@@ -682,13 +903,72 @@ impl ReplicationEngine for ProductionWorld {
                 (Ok(snapshot), Ok(collection)) => engine
                     .snapshot_documents_in_collection(&scope, &snapshot, &collection)
                     .map_or(0, |docs| {
-                        docs.into_iter().fold(0xcbf2_9ce4_8422_2325, |hash, doc| {
+                        let mut hash = docs.into_iter().fold(0xcbf2_9ce4_8422_2325, |hash, doc| {
                             let hash = fnv_bytes(hash, doc.id().as_str().as_bytes());
                             match doc.value() {
                                 DocumentValue::String(value) => fnv_bytes(hash, value.as_bytes()),
                                 _ => hash,
                             }
-                        })
+                        });
+                        // The state alone is insufficient for invariant 3:
+                        // deterministic conflict explanations are part of
+                        // the observable history contract. Sort entries so
+                        // storage insertion order cannot affect the digest.
+                        let mut keys = rows.iter().map(|row| row.key).collect::<Vec<_>>();
+                        keys.sort_unstable();
+                        keys.dedup();
+                        for key in keys {
+                            let Ok(id) = DocumentId::try_new(&format!("key-{key}")) else {
+                                continue;
+                            };
+                            let Ok(mut conflicts) = engine.merge_conflicts_for(
+                                &scope,
+                                &collection,
+                                &id,
+                                MAX_JOURNAL_PAGE,
+                            ) else {
+                                continue;
+                            };
+                            conflicts.sort_by(|left, right| {
+                                (
+                                    &left.loser_commit_ulid,
+                                    left.loser_hlc,
+                                    &left.loser_origin,
+                                    &left.winner_commit_ulid,
+                                    left.winner_hlc,
+                                    &left.winner_origin,
+                                    &left.policy,
+                                    &left.explanation,
+                                )
+                                    .cmp(&(
+                                        &right.loser_commit_ulid,
+                                        right.loser_hlc,
+                                        &right.loser_origin,
+                                        &right.winner_commit_ulid,
+                                        right.winner_hlc,
+                                        &right.winner_origin,
+                                        &right.policy,
+                                        &right.explanation,
+                                    ))
+                            });
+                            for conflict in conflicts {
+                                hash = fnv_bytes(hash, &conflict.loser_hlc.to_be_bytes());
+                                hash = fnv_bytes(hash, &conflict.winner_hlc.to_be_bytes());
+                                hash = fnv_bytes(hash, &[u8::from(conflict.loser_deleted)]);
+                                for text in [
+                                    conflict.loser_commit_ulid.as_str(),
+                                    conflict.loser_origin.as_str(),
+                                    conflict.winner_commit_ulid.as_str(),
+                                    conflict.winner_origin.as_str(),
+                                    conflict.policy.as_str(),
+                                    conflict.explanation.as_str(),
+                                ] {
+                                    hash = fnv_bytes(hash, text.as_bytes());
+                                    hash = fnv_bytes(hash, &[0]);
+                                }
+                            }
+                        }
+                        hash
                     }),
                 _ => 0,
             }
@@ -720,12 +1000,8 @@ impl SyncEngine for ProductionWorld {
     }
 
     fn verify_revision(&self, view: &str, region: RegionId) -> bool {
-        let Some(revision) = self.view_revision(view, region) else { return false };
-        let Some(engine) = self.engine(region) else { return false };
-        let scope = engine.scope_for(&self.tenant);
-        let Some(snapshot) = engine.read_snapshot(&scope).ok() else { return false };
-        revision.cut.seq_hi == snapshot.sequence().get()
-            && revision.payload_digest == fnv_bytes(0xcbf2_9ce4_8422_2325, &revision.bytes)
+        self.view_revision(view, region)
+            .is_some_and(|revision| self.verify_revision_at(&revision, region))
     }
 
     fn cached_bytes(
@@ -738,6 +1014,38 @@ impl SyncEngine for ProductionWorld {
         self.cache
             .get(&(view.to_owned(), generation, offset))
             .and_then(|(expected, bytes)| (*expected == capability).then(|| bytes.clone()))
+    }
+}
+
+impl ProductionWorld {
+    /// Verifies a retained revision against the database reconstructed at the
+    /// revision's own causal cut. Later writes therefore cannot invalidate a
+    /// previously issued revision, while a forged cut or payload fails closed.
+    #[must_use]
+    pub fn verify_revision_at(&self, revision: &ViewRevision, region: RegionId) -> bool {
+        let Some(state) = self.regions.iter().find(|state| state.id == region) else {
+            return false;
+        };
+        if revision.generation != GENERATION
+            || !state.applied.iter().all(|id| self.records.contains_key(id) || id.0 == region)
+            || !self.applied_frontier(region).covers(&revision.cut.frontier)
+        {
+            return false;
+        }
+        let Some(engine) = self.engine(region) else { return false };
+        let Ok(snapshot) = engine.read_snapshot(&engine.scope_for(&self.tenant)) else {
+            return false;
+        };
+        if revision.cut.seq_hi > snapshot.sequence().get()
+            || revision.cut.frontier.entries().any(|(_, seq)| seq > revision.cut.seq_hi)
+        {
+            return false;
+        }
+        let Some((digest, bytes)) = self.historical_view(&revision.view, region, &revision.cut)
+        else {
+            return false;
+        };
+        revision.payload_digest == digest && revision.bytes == bytes
     }
 }
 

@@ -573,12 +573,32 @@ pub fn billed_writes_for_bytes(body_len: u64) -> u64 {
     body_len.div_ceil(4096).max(1)
 }
 
+/// One origin's applied causal progress for a tenant.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AppliedFrontierEntry {
+    /// The logical origin that produced the rows.
+    pub(crate) origin: String,
+    /// The greatest origin sequence retained for this tenant.
+    pub(crate) origin_sequence: u64,
+    /// The greatest HLC stamp observed for this origin.
+    pub(crate) hlc: u64,
+}
+
 /// The private storage adapter seam the Engine depends on.
 ///
 /// The production implementation is [`SqliteStorage`]. The trait exists so the
 /// storage seam stays substitutable behind one typed contract instead of
 /// leaking file, codec, or page details into the Engine.
 pub(crate) trait StoragePort: Send {
+    /// Opens a read-only `SQLite` handle for one bounded SQL execution.
+    ///
+    /// This narrow capability keeps physical storage access behind the Engine;
+    /// query execution never reconstructs a database from an unverified path.
+    /// Backends that are not `SQLite` fail closed.
+    fn open_sqlite_read_connection(&self) -> Result<rusqlite::Connection, ()> {
+        Err(())
+    }
+
     /// Runs the publication order for one validated commit intent.
     fn commit(&mut self, intent: CommitIntent) -> CommitResult;
 
@@ -969,6 +989,14 @@ pub(crate) trait StoragePort: Send {
         _after: StorageSequence,
         _limit: u32,
     ) -> Vec<JournalRow> {
+        Vec::new()
+    }
+
+    /// Returns the tenant's durable per-origin causal progress.
+    ///
+    /// Backends without replication provenance return an empty result; the
+    /// Engine then cannot claim a frontier for those backends.
+    fn applied_frontier(&self, _tenant: &TenantId) -> Vec<AppliedFrontierEntry> {
         Vec::new()
     }
 

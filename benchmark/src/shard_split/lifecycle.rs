@@ -1,6 +1,9 @@
 //! Split lifecycle and zero-loss cutover gate.
 
-use super::state::{DurableSplitState, SplitStateError};
+use super::{
+    CutoverPermit,
+    state::{DurableSplitState, SplitStateError},
+};
 
 /// One key-range split's lifecycle phase.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -36,6 +39,8 @@ pub enum SplitCutoverError {
         /// Highest sequence required before cutover.
         required: u64,
     },
+    /// A route cutover must carry a permit produced by the writer fence.
+    InvalidFencePermit,
     /// The transition is not valid in the current phase.
     WrongPhase(SplitPhase),
 }
@@ -123,32 +128,60 @@ impl ShardSplit {
 
     /// Marks the target shard file created and begins range backfill.
     pub fn begin_backfill(&mut self) -> Result<(), SplitCutoverError> {
-        self.require_phase(SplitPhase::Planned)?;
-        self.phase = SplitPhase::Backfilling;
-        Ok(())
+        match self.phase {
+            SplitPhase::Planned => {
+                self.phase = SplitPhase::Backfilling;
+                Ok(())
+            }
+            // Recovery may replay the operation after the durable transition
+            // was committed but before the worker observed its response.
+            SplitPhase::Backfilling => Ok(()),
+            _ => Err(SplitCutoverError::WrongPhase(self.phase)),
+        }
     }
 
     /// Marks backfill complete through `through` and begins journal catch-up.
     pub fn begin_catch_up(&mut self, through: u64) -> Result<(), SplitCutoverError> {
-        self.require_phase(SplitPhase::Backfilling)?;
-        self.target_applied_through = self.target_applied_through.max(through);
-        self.phase = SplitPhase::CatchingUp;
-        Ok(())
+        match self.phase {
+            SplitPhase::Backfilling => {
+                self.target_applied_through = self.target_applied_through.max(through);
+                self.phase = SplitPhase::CatchingUp;
+                Ok(())
+            }
+            // The catch-up start is also a retry-safe checkpoint update.
+            SplitPhase::CatchingUp => {
+                self.target_applied_through = self.target_applied_through.max(through);
+                Ok(())
+            }
+            _ => Err(SplitCutoverError::WrongPhase(self.phase)),
+        }
     }
 
     /// Advances the source high-water mark monotonically.
     pub fn note_source_high_water(&mut self, sequence: u64) {
-        self.source_high_water = self.source_high_water.max(sequence);
+        if matches!(
+            self.phase,
+            SplitPhase::Planned | SplitPhase::Backfilling | SplitPhase::CatchingUp
+        ) {
+            self.source_high_water = self.source_high_water.max(sequence);
+        }
     }
 
     /// Advances the target applied-through mark monotonically.
     pub fn note_target_applied(&mut self, sequence: u64) {
-        self.target_applied_through = self.target_applied_through.max(sequence);
+        if matches!(self.phase, SplitPhase::Backfilling | SplitPhase::CatchingUp) {
+            self.target_applied_through = self.target_applied_through.max(sequence);
+        }
     }
 
     /// Advances the acknowledged-write frontier monotonically.
     pub fn note_acked(&mut self, sequence: u64) {
-        self.acked_through = self.acked_through.max(sequence);
+        if matches!(
+            self.phase,
+            SplitPhase::Planned | SplitPhase::Backfilling | SplitPhase::CatchingUp
+        ) {
+            self.acked_through = self.acked_through.max(sequence);
+        }
     }
 
     /// Reports whether source and acknowledged writes are fully applied.
@@ -161,6 +194,9 @@ impl ShardSplit {
 
     /// Moves routing to the target, only after the zero-loss gate passes.
     pub fn cut_over(&mut self) -> Result<(), SplitCutoverError> {
+        if self.phase == SplitPhase::CutOver {
+            return Ok(());
+        }
         self.require_phase(SplitPhase::CatchingUp)?;
         let required = self.source_high_water.max(self.acked_through);
         if self.target_applied_through < required {
@@ -173,11 +209,38 @@ impl ShardSplit {
         Ok(())
     }
 
+    /// Moves the lifecycle to cut-over using a writer-fence permit.
+    ///
+    /// The permit is checked before changing any state.  The plain
+    /// [`Self::cut_over`] method remains available for owners that perform
+    /// the equivalent fence and route replacement in one storage transaction;
+    /// this method is the explicit, easy-to-audit form for that path.
+    pub fn cut_over_with_permit(&mut self, permit: CutoverPermit) -> Result<(), SplitCutoverError> {
+        if !permit.is_valid() {
+            return Err(SplitCutoverError::InvalidFencePermit);
+        }
+        let required = self.source_high_water.max(self.acked_through);
+        if permit.required() < required {
+            return Err(SplitCutoverError::NotCaughtUp {
+                target_applied: self.target_applied_through,
+                required,
+            });
+        }
+        self.cut_over()
+    }
+
     /// Marks the moved range verified and eligible for source cleanup.
     pub fn note_verified(&mut self) -> Result<(), SplitCutoverError> {
-        self.require_phase(SplitPhase::CutOver)?;
-        self.phase = SplitPhase::Complete;
-        Ok(())
+        match self.phase {
+            SplitPhase::CutOver => {
+                self.phase = SplitPhase::Complete;
+                Ok(())
+            }
+            // Verification and source cleanup are commonly retried after a
+            // process restart.  Completion is terminal and idempotent.
+            SplitPhase::Complete => Ok(()),
+            _ => Err(SplitCutoverError::WrongPhase(self.phase)),
+        }
     }
 
     /// Aborts a split before cutover; no route was moved.
@@ -187,6 +250,7 @@ impl ShardSplit {
                 self.phase = SplitPhase::Aborted;
                 Ok(())
             }
+            SplitPhase::Aborted => Ok(()),
             phase => Err(SplitCutoverError::WrongPhase(phase)),
         }
     }

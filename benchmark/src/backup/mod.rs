@@ -337,6 +337,7 @@ impl BackupPlan {
     /// documentation, and must never appear in production code: no
     /// production path uses it.
     #[doc(hidden)]
+    #[must_use]
     pub fn for_integration_tests_full() -> Self {
         Self {
             kind: BackupKind::Full,
@@ -382,6 +383,7 @@ impl BackupPlan {
     /// [`BackupPlan::for_integration_tests_full`]; hidden from
     /// documentation and never used by production code.
     #[doc(hidden)]
+    #[must_use]
     pub fn for_integration_tests_incremental_since(base: StorageSequence) -> Self {
         Self { kind: BackupKind::Incremental { base }, ..Self::for_integration_tests_full() }
     }

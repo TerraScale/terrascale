@@ -228,8 +228,8 @@ fn build_production_transport(
     config: &crate::config::ProductionConfig,
 ) -> Result<terrabase_cluster::production::ProductionQuicEndpoint, String> {
     use terrabase_cluster::production::{
-        MemberWorkloadIdentity, ProductionPeerAdmission, ProductionTlsMaterial,
-        ProductionTransportConfig, ProductionTransportLimits,
+        MemberWorkloadIdentity, ProductionPeerAdmission, ProductionQuicEndpoint,
+        ProductionTlsMaterial, ProductionTransportConfig, ProductionTransportLimits,
     };
 
     let local = MemberWorkloadIdentity::try_new(
@@ -263,22 +263,22 @@ fn build_production_transport(
                 .map_err(|error| format!("peer transport: {error:?}"))?,
         );
     }
-    let max_inflight = config.transport.max_inflight.min(1024);
-    let max_queued_bytes = config
-        .transport
-        .max_message_bytes
-        .saturating_mul(max_inflight)
-        .min(1024 * 1024 * 1024)
-        .max(config.transport.max_message_bytes);
+    // Production transport limits are fixed policy, not customer-provided
+    // request settings. Keep the member boundary bounded and fail closed in
+    // the transport constructor if these constants ever violate its caps.
+    let max_frame_bytes: usize = 16 * 1024 * 1024;
+    let max_inflight: usize = 1024;
+    let max_queued_bytes =
+        max_frame_bytes.saturating_mul(max_inflight).min(1024 * 1024 * 1024).max(max_frame_bytes);
     let limits = ProductionTransportLimits::try_new(
-        config.transport.max_message_bytes,
+        max_frame_bytes,
         max_inflight,
         256,
         max_queued_bytes,
-        config.shutdown_grace.min(std::time::Duration::from_mins(60)),
-        config.request_timeout.min(std::time::Duration::from_mins(2)),
+        std::time::Duration::from_secs(30),
+        std::time::Duration::from_secs(30),
         std::time::Duration::from_mins(1),
-        config.shutdown_grace.min(std::time::Duration::from_mins(5)),
+        std::time::Duration::from_mins(5),
     )
     .map_err(|error| format!("transport limits: {error:?}"))?;
     let transport = ProductionTransportConfig::try_new(

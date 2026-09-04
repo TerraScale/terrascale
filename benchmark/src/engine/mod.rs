@@ -68,8 +68,8 @@ use crate::{
     streaming::StreamStore,
     types::{
         CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, IndexGenerationSet,
-        LocalDurability, OperationId, ReadSnapshot, ReplicationClockStamp, RetryDisposition,
-        StorageSequence, TenantId, TenantScope,
+        LocalDurability, OperationId, ReadSnapshot, RegionId, ReplicationClockStamp,
+        RetryDisposition, StorageSequence, TenantId, TenantScope,
     },
     usage::{
         MAX_USAGE_PAGE_SIZE, MeasurementWindow, MintingRule, UsageAdmissionContext,
@@ -1428,6 +1428,43 @@ impl Engine {
             IndexGenerationSet::default(),
         );
         Ok(snapshot)
+    }
+
+    /// Returns the incarnation bound to this durable database for session
+    /// tokens. A restored database receives a new durable database identity,
+    /// so tokens from the previous incarnation cannot be replayed against it.
+    pub(crate) fn session_epoch(&self) -> crate::session::SessionEpoch {
+        let bytes = self.database_id().as_bytes();
+        let value = u64::from_be_bytes(bytes[..8].try_into().expect("ULID has 16 bytes"));
+        crate::session::SessionEpoch::new(value.max(1)).expect("non-zero database epoch")
+    }
+
+    /// Returns the durable applied frontier used by session read guarantees.
+    ///
+    /// This is queried from the provenance history, rather than inferred from
+    /// the global storage sequence: replicated writes can advance different
+    /// origins independently, and a client token names those origins.
+    pub(crate) fn session_frontier(
+        &self,
+        scope: &TenantScope,
+    ) -> Result<crate::session::SessionFrontier, EngineError> {
+        self.validate_scope(scope)?;
+        let epoch = self.session_epoch();
+        let mut frontier = crate::session::SessionFrontier::new(epoch);
+        let storage = self.lock_storage()?;
+        for entry in storage.port.applied_frontier(scope.tenant()) {
+            let origin =
+                RegionId::try_new(&entry.origin).map_err(|_| EngineError::InvalidDocument)?;
+            if entry.origin_sequence == 0 {
+                continue;
+            }
+            frontier
+                .advance(origin, entry.origin_sequence)
+                .map_err(|_| EngineError::InvalidDocument)?;
+            let (ticks, counter) = unfold_stamp(entry.hlc);
+            frontier.observe_write(ReplicationClockStamp::new(ticks, counter));
+        }
+        Ok(frontier)
     }
 
     /// Durably records one trusted, tenant-bound usage event.
@@ -3126,6 +3163,16 @@ impl Engine {
     ///
     fn lock_storage(&self) -> Result<std::sync::MutexGuard<'_, StorageState>, EngineError> {
         self.storage.lock().map_err(|_| EngineError::StorageFailure)
+    }
+
+    /// Opens the backend's bounded `SQLite` read handle for SQL execution.
+    ///
+    /// The physical location and backend selection remain Engine-owned; this
+    /// capability is deliberately crate-private so callers cannot reopen an
+    /// arbitrary path or bypass ownership validation.
+    pub(crate) fn open_sqlite_read_connection(&self) -> Result<rusqlite::Connection, EngineError> {
+        let storage = self.lock_storage()?;
+        storage.port.open_sqlite_read_connection().map_err(|()| EngineError::StorageFailure)
     }
 
     /// Registers one publication-event sink and returns its guard.

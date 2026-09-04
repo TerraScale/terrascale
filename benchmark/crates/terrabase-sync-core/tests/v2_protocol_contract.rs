@@ -270,6 +270,15 @@ fn frame_budgets_are_written_definitions_with_exact_envelope_overhead() {
     ] {
         assert!(class.budget_bytes() > 0);
     }
+
+    // Class budgets are a decode/encode invariant, not only an advisory
+    // diagnostic.  A valid body can still be refused when it does not fit
+    // the budget allocated to its frame class.
+    let oversized = SyncV2Body::SessionSetup { collections: vec!["orders".repeat(32); 256] };
+    assert!(matches!(
+        SyncV2Frame::seal(oversized, FrameId::new(1), FrameId::new(0), None),
+        Err(ProtocolError::MalformedFrame("frame exceeds its class budget"))
+    ));
 }
 
 /// Every kind in the registry, in code order.

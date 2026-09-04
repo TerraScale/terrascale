@@ -6,6 +6,13 @@ P-3 journey (`ts-typescript/test/journey.test.ts`) run against. The binary
 never leaves our infrastructure (D-50): everything here is loopback-only
 development scaffolding, never shipped.
 
+Members run as local processes with distinct ports and data dirs: the
+script builds `target/debug/terrabase-server` once via
+`cargo build --locked -p terrabase-server` (the same artifact
+`cargo run -p terrabase-server` would exec) and then supervises the
+binary directly, so signals reach the member instead of a cargo wrapper.
+No containers are used anywhere in this harness.
+
 ## What boots
 
 | Piece | How | Endpoint |
@@ -14,16 +21,16 @@ development scaffolding, never shipped.
 | SFO member | `terrabase-server --config .terrascale/stack/sfo.toml` | api 7102 · tbep 8422 · obs 9462 |
 | FRA member | `terrabase-server --config .terrascale/stack/fra.toml` | api 7103 · tbep 8423 · obs 9463 |
 | Webhook receiver | `scripts/stack-webhook-receiver.py` (stdlib only) | 7090 (`GET /health`, `POST /hooks`) |
-| X-4 stub origin | `go run .` in `../ts-proxy/stub` (opportunistic) | 7080 |
-| REST Worker | `npm run dev` (`wrangler dev --env dev`) in `../ts-proxy` (opportunistic) | 7000 |
-| Dashboard | `npm run dev` (`vinext dev` on workerd) in `../ts-dashboard` (opportunistic) | 7100 |
+| REST Worker | `npm run dev` (`wrangler dev --env dev`) in `../ts-proxy` | 7000 |
+| Dashboard | `npm run dev` (`vinext dev` on workerd) in `../ts-dashboard` | 7100 |
 
 Members and the webhook receiver are the gate: `up` and `check` fail closed
-unless all three members answer both probes below. The edge pieces never
-fail the stack — when a sibling checkout, `node_modules`, or tool is
-absent, the script prints a `SKIP` line naming the exact command that
-would enable it. `STACK_MEMBERS_ONLY=1` skips the edge on purpose (this
-is what terrabase CI runs: it has no Node toolchain).
+unless all three members answer both probes below. The full `up` target
+requires every G1 piece (members, REST Worker, dashboard, webhook
+receiver, X-6 against the real member); a missing checkout, tool, or
+health signal is an error, not a skip. The X-4 stub stays available only
+through the separately named `pre-engine` target for engine work before
+E-5/E-6 land, and is never a substitute for a member.
 
 The proxy's `DEV_ORIGINS` (`../ts-proxy/wrangler.toml`) already points at
 this stack's 7101/7102/7103, and the stub shares the local-edge harness's
@@ -35,12 +42,13 @@ no extra configuration.
 ```sh
 make stack          # boot everything, wait for health, verify
 make stack-check    # probe a running stack (non-zero on any failure)
+make stack-test     # run the real P-3 journey and X-6 qualification
 make stack-down     # stop everything `up` started (state is kept)
 
 ./scripts/stack.sh logs            # tail every log
 ./scripts/stack.sh logs gru        # one service: gru|sfo|fra|proxy|dashboard|webhooks|stub
 STACK_FRESH=1 make stack           # wipe .terrascale/stack (data, certs, configs) first
-STACK_EDGE_QUALIFY=1 make stack    # also run one 32-reader local-edge pass
+STACK_DRY_RUN=1 make stack         # print the plan without creating files or processes
 ```
 
 State lives in `.terrascale/stack/`: per-region config + `engine/` +
@@ -94,6 +102,10 @@ gate to accept padded PEM, the retry loop in `ensure_tls` can go away.
 - Dashboard exits with `TERRASCALE_API_BASE_URL is required` — fixed in
   the script (it exports the local proxy/public URLs); a bare
   `npm run dev` in `ts-dashboard` still needs them by hand.
+- Dashboard refuses with "another vinext dev server is already running"
+  — one `vinext dev` per checkout (lock at
+  `ts-dashboard/.vinext/dev/lock.json`). Stop the other server first;
+  the stack never kills a server it did not start.
 - Dashboard worker env: the workerd runtime does **not** inherit the
   shell — the Cloudflare Vite plugin builds it from `wrangler.jsonc`
   vars plus `.dev.vars`. The script therefore writes a loopback-only

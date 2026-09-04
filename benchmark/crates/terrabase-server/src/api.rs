@@ -34,6 +34,12 @@ use terrabase::CommitOutcome;
 use terrabase::observability::MetricsRegistry;
 use terrabase::observability::ServiceState;
 use terrabase::regions::RegionCode;
+use terrabase::regions::RegionCatalog;
+use terrabase::Session;
+use terrabase::SessionError;
+use terrabase::SessionOptions;
+use terrabase::SessionToken;
+use terrabase::SessionTokenError;
 use terrabase::types::CollectionName;
 use terrabase::types::Document;
 use terrabase::types::DocumentId;
@@ -41,6 +47,7 @@ use terrabase::types::DocumentValue;
 use terrabase::types::ExpectedVersion;
 use terrabase::types::LocalDurability;
 use terrabase::types::OperationId;
+use terrabase::types::RegionId;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use utoipa_scalar::Scalar;
@@ -58,6 +65,10 @@ pub const PLACEMENT_HEADER: HeaderName = HeaderName::from_static("x-terrascale-p
 pub const RESIDENCY_HEADER: HeaderName = HeaderName::from_static("x-terrascale-residency");
 /// `X-TerraScale-Region` — the serving member's own region.
 pub const REGION_HEADER: HeaderName = HeaderName::from_static("x-terrascale-region");
+/// `X-TerraScale-Session` carries a strict opaque base64url session token.
+pub const SESSION_HEADER: HeaderName = HeaderName::from_static("x-terrascale-session");
+/// Maximum header spelling accepted by the public session contract.
+pub const MAX_SESSION_HEADER_BYTES: usize = 16 * 1024;
 
 /// The routes that never require a credential: the machine-readable
 /// contract itself and nothing else.
@@ -956,6 +967,7 @@ fn request_schema(operation_id: &str) -> Option<(&'static str, bool)> {
         "create_index" => ("CreateIndexRequest", true),
         "batch_documents" => ("BatchRequest", true),
         "put_document" | "patch_document" => ("JsonValue", true),
+        "put_schema" => ("JsonValue", true),
         "execute_sql" => ("SqlRequest", true),
         "create_webhook" => ("WebhookRequest", true),
         "attach_view" => ("AttachViewRequest", true),
@@ -1162,8 +1174,45 @@ pub fn router(state: Arc<ApiState>) -> Router {
         .merge(Scalar::with_url("/scalar", openapi_document))
         .fallback(not_routed)
         .layer(Extension(openapi_json))
+        .layer(from_fn_with_state(Arc::clone(&state), placement_headers))
         .layer(from_fn_with_state(Arc::clone(&state), authenticate))
         .with_state(state)
+}
+
+/// Adds the database's placement contract to every database-scoped response.
+///
+/// Handlers resolve the registry before touching a database, but many of them
+/// return hand-rendered success or typed error responses from several branches.
+/// Keeping this at the HTTP boundary makes the D-58 requirement uniform for
+/// documents, queries, indexes, backups, and pending surfaces alike. A
+/// deleted record still has a placement record, so it remains publishable;
+/// only a missing record (or unavailable control plane) leaves the response
+/// unchanged.
+async fn placement_headers(
+    State(state): State<Arc<ApiState>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let database = database_of(request.uri().path()).map(str::to_owned);
+    let mut response = next.run(request).await;
+    let Some(database) = database else {
+        return response;
+    };
+    let Some(control) = state.control.as_ref() else {
+        return response;
+    };
+    let Ok(Some(record)) = control.get(&database) else {
+        return response;
+    };
+    if let (Ok(placement), Ok(residency)) = (
+        HeaderValue::from_str(&record.placement_header()),
+        HeaderValue::from_str(record.residency_header()),
+    ) {
+        let headers = response.headers_mut();
+        headers.entry(PLACEMENT_HEADER).or_insert(placement);
+        headers.entry(RESIDENCY_HEADER).or_insert(residency);
+    }
+    response
 }
 
 /// Deny-all credential gate: no configured key material admits nothing.
@@ -2021,48 +2070,136 @@ fn batch_refusal(index: usize, code: &str, message: &str) -> Response {
     .into_response()
 }
 
-/// Attaches the read-your-writes session token (`S-03`: the write's
-/// storage sequence; the SDK echoes it back, and a member's snapshots are
-/// monotonic, so the token is a routing hint for the proxy and replica
-/// lanes — `S-05` — not a local gate).
-fn with_session(response: &mut Response, sequence: u64) {
-    if let Ok(token) = HeaderValue::from_str(&sequence.to_string()) {
-        response.headers_mut().insert("x-terrascale-session", token);
+/// Maps an engine session failure to a secret-free HTTP refusal.
+fn session_error(error: SessionError) -> ApiError {
+    match error {
+        SessionError::SessionToken(_) => invalid_session_token(),
+        SessionError::StaleReplica(region) => ApiError {
+            status: StatusCode::CONFLICT,
+            code: "stale_replica",
+            message: "this member has not applied the session frontier".into(),
+            fix: format!("retry through the session's safe Region ({})", region.region()),
+            placement: None,
+        },
+        SessionError::ScopeMismatch | SessionError::Engine(_) => ApiError::storage_failure(),
+        _ => ApiError::storage_failure(),
     }
 }
 
-/// Waits a bounded window for the engine's published sequence to cover
-/// the client's session sequence (D-37's read-your-writes across
-/// regions — the receiving region's replicated applies advance the
-/// journal). `Ok` serves; the typed timeout names its remedy.
-async fn await_session_sequence(
-    engine: &terrabase::Engine,
-    scope: &terrabase::types::TenantScope,
-    session: u64,
-) -> Result<(), ApiError> {
-    const WINDOW: std::time::Duration = std::time::Duration::from_secs(2);
-    const TICK: std::time::Duration = std::time::Duration::from_millis(5);
-    let started = std::time::Instant::now();
-    loop {
-        let covered =
-            engine.read_snapshot(scope).is_ok_and(|snapshot| snapshot.sequence().get() >= session);
-        if covered {
-            return Ok(());
-        }
-        if started.elapsed() >= WINDOW {
-            return Err(ApiError {
-                status: StatusCode::CONFLICT,
-                code: "session_not_covered",
-                message: format!(
-                    "the session's sequence ({session}) is not covered here yet"
-                ),
-                fix: "retry shortly (replication is catching up), or read without                       the session token for this-region state"
-                    .into(),
-                placement: None,
-            });
-        }
-        tokio::time::sleep(TICK).await;
+fn invalid_session_token() -> ApiError {
+    ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "invalid_session_token",
+        message: "X-TerraScale-Session is not a valid opaque session token".into(),
+        fix: "send the exact base64url token returned by a successful request".into(),
+        placement: None,
     }
+}
+
+/// Decodes the unpadded base64url spelling used by the REST session header.
+/// Canonical re-encoding is checked by [`decode_session_header`], so alternate
+/// spellings and padding never become equivalent credentials.
+fn decode_base64url(value: &str) -> Option<Vec<u8>> {
+    let bytes = value.as_bytes();
+    if bytes.is_empty() || bytes.len() % 4 == 1 || bytes.contains(&b'=') {
+        return None;
+    }
+    let mut output = Vec::with_capacity(bytes.len().saturating_mul(3) / 4);
+    let mut index = 0;
+    while index < bytes.len() {
+        let remaining = bytes.len() - index;
+        let a = base64url_value(bytes[index])?;
+        let b = base64url_value(bytes[index + 1])?;
+        output.push((a << 2) | (b >> 4));
+        if remaining > 2 {
+            let c = base64url_value(bytes[index + 2])?;
+            output.push((b << 4) | (c >> 2));
+            if remaining > 3 {
+                let d = base64url_value(bytes[index + 3])?;
+                output.push((c << 6) | d);
+            }
+        }
+        index += remaining.min(4);
+    }
+    Some(output)
+}
+
+fn base64url_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'A'..=b'Z' => Some(byte - b'A'),
+        b'a'..=b'z' => Some(byte - b'a' + 26),
+        b'0'..=b'9' => Some(byte - b'0' + 52),
+        b'-' => Some(62),
+        b'_' => Some(63),
+        _ => None,
+    }
+}
+
+fn encode_base64url(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut output = String::with_capacity(bytes.len().saturating_mul(4).div_ceil(3));
+    for chunk in bytes.chunks(3) {
+        let a = chunk[0];
+        output.push(ALPHABET[usize::from(a >> 2)] as char);
+        let b = chunk.get(1).copied().unwrap_or(0);
+        output.push(ALPHABET[usize::from((a << 4 | b >> 4) & 0x3f)] as char);
+        if chunk.len() > 1 {
+            output.push(ALPHABET[usize::from((b << 2 | chunk[2] >> 6) & 0x3f)] as char);
+        }
+        if chunk.len() > 2 {
+            output.push(ALPHABET[usize::from(chunk[2] & 0x3f)] as char);
+        }
+    }
+    output
+}
+
+fn decode_session_header(
+    headers: &axum::http::HeaderMap,
+) -> Result<Option<SessionToken>, ApiError> {
+    let Some(value) = headers.get(&SESSION_HEADER) else { return Ok(None) };
+    let value = value.to_str().map_err(|_| invalid_session_token())?;
+    if value.len() > MAX_SESSION_HEADER_BYTES {
+        return Err(invalid_session_token());
+    }
+    let bytes = decode_base64url(value).ok_or_else(invalid_session_token)?;
+    let token = SessionToken::decode(&bytes).map_err(|_| invalid_session_token())?;
+    if encode_base64url(&token.encode()) != value {
+        return Err(invalid_session_token());
+    }
+    Ok(Some(token))
+}
+
+fn open_session<'engine>(
+    engine: &'engine terrabase::Engine,
+    scope: &terrabase::types::TenantScope,
+    headers: &axum::http::HeaderMap,
+) -> Result<Session<'engine>, ApiError> {
+    let token = decode_session_header(headers)?;
+    Session::open(
+        engine,
+        scope,
+        token.map_or_else(SessionOptions::new, |token| SessionOptions::new().with_session_token(token)),
+    )
+    .map_err(session_error)
+}
+
+/// Emits the session frontier after a successful request. The session API
+/// observes the durable multi-origin frontier, so this never substitutes the
+/// global storage sequence for an origin sequence.
+fn with_session(response: &mut Response, token: &SessionToken) {
+    let encoded = encode_base64url(&token.encode());
+    if let Ok(value) = HeaderValue::from_str(&encoded) {
+        response.headers_mut().insert(SESSION_HEADER.clone(), value);
+    }
+}
+
+fn refresh_session(
+    session: &mut Session<'_>,
+    collection: &CollectionName,
+    id: &DocumentId,
+) -> Result<SessionToken, ApiError> {
+    session.refresh(collection, id).map_err(session_error)?;
+    Ok(session.session_token().clone())
 }
 
 /// One document's route context: the host engine for the named database.
@@ -2236,20 +2373,16 @@ async fn get_document(
     if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
         return error.into_response();
     }
+    let mut session = if headers.contains_key(&SESSION_HEADER) {
+        match open_session(engine, &scope, &headers) {
+            Ok(session) => Some(session),
+            Err(error) => return error.into_response(),
+        }
+    } else {
+        None
+    };
     if let Some(at_millis) = at.at {
         return time_travel_document(&state, &name, &collection, &id, at_millis, &headers);
-    }
-    // Read-your-writes across regions (D-37): a session token names the
-    // sequence the client has seen; the read waits a bounded window for
-    // this member's journal to cover it (a replicated apply advances it)
-    // before serving.
-    if let Some(session) = headers
-        .get("x-terrascale-session")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<u64>().ok())
-        && let Err(error) = await_session_sequence(engine, &scope, session).await
-    {
-        return error.into_response();
     }
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
         return ApiError::storage_failure().into_response();
@@ -2279,12 +2412,23 @@ async fn get_document(
         if let Ok(etag) = HeaderValue::from_str(&etag) {
             response.headers_mut().insert(axum::http::header::ETAG, etag);
         }
+        if let Some(session) = &session {
+            with_session(&mut response, session.session_token());
+        }
         return response;
     }
-    let document = match transaction.read_in_collection(&collection, &id) {
-        Ok(Some(document)) => document,
-        Ok(None) => return document_not_found(collection.as_str(), id.as_str()).into_response(),
-        Err(_) => return ApiError::storage_failure().into_response(),
+    let document = if let Some(session) = &mut session {
+        match session.load(&collection, &id) {
+            Ok(Some(document)) => document,
+            Ok(None) => return document_not_found(collection.as_str(), id.as_str()).into_response(),
+            Err(error) => return session_error(error).into_response(),
+        }
+    } else {
+        match transaction.read_in_collection(&collection, &id) {
+            Ok(Some(document)) => document,
+            Ok(None) => return document_not_found(collection.as_str(), id.as_str()).into_response(),
+            Err(_) => return ApiError::storage_failure().into_response(),
+        }
     };
     drop(transaction);
     let mut body = String::with_capacity(256);
@@ -2295,6 +2439,9 @@ async fn get_document(
     let mut response = json_response(StatusCode::OK, body);
     if let Ok(etag) = HeaderValue::from_str(&etag) {
         response.headers_mut().insert(axum::http::header::ETAG, etag);
+    }
+    if let Some(session) = &session {
+        with_session(&mut response, session.session_token());
     }
     response
 }
@@ -2437,6 +2584,13 @@ async fn put_document(
         }
     };
     let document = Document::new(id, collection, json_value(&value));
+    let mut session = match open_session(engine, &scope, &headers) {
+        Ok(session) => session,
+        Err(error) => return error.into_response(),
+    };
+    if let Err(error) = session.load(document.collection(), document.id()) {
+        return session_error(error).into_response();
+    }
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
         return ApiError::storage_failure().into_response();
     };
@@ -2495,7 +2649,11 @@ async fn put_document(
             if let Ok(etag) = HeaderValue::from_str(&format!("\"{revision}\"")) {
                 response.headers_mut().insert(axum::http::header::ETAG, etag);
             }
-            with_session(&mut response, receipt.sequence().get());
+            let token = match refresh_session(&mut session, &probe.0, &probe.1) {
+                Ok(token) => token,
+                Err(error) => return error.into_response(),
+            };
+            with_session(&mut response, &token);
             response
         }
         CommitOutcome::Rejected(reason) => ApiError {
@@ -2554,6 +2712,17 @@ async fn patch_document(
             .into_response();
         }
     };
+    let mut session = match open_session(engine, &scope, &headers) {
+        Ok(session) => session,
+        Err(error) => return error.into_response(),
+    };
+    let existing_for_session = match session.load(&collection, &id) {
+        Ok(existing) => existing,
+        Err(error) => return session_error(error).into_response(),
+    };
+    if existing_for_session.is_none() {
+        return document_not_found(collection.as_str(), id.as_str()).into_response();
+    }
     let operation = match write_operation(&headers, "api-patch") {
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
@@ -2616,7 +2785,11 @@ async fn patch_document(
             if let Ok(etag) = HeaderValue::from_str(&format!("\"{revision}\"")) {
                 response.headers_mut().insert(axum::http::header::ETAG, etag);
             }
-            with_session(&mut response, receipt.sequence().get());
+            let token = match refresh_session(&mut session, &collection, &id) {
+                Ok(token) => token,
+                Err(error) => return error.into_response(),
+            };
+            with_session(&mut response, &token);
             response
         }
         _ => ApiError {
@@ -2703,6 +2876,15 @@ async fn delete_document(
     let Ok(id) = DocumentId::try_new(&id) else {
         return invalid_identifier("document identifier", &id).into_response();
     };
+    let mut session = match open_session(engine, &scope, &headers) {
+        Ok(session) => session,
+        Err(error) => return error.into_response(),
+    };
+    match session.load(&collection, &id) {
+        Ok(Some(_)) => {}
+        Ok(None) => return document_not_found(collection.as_str(), id.as_str()).into_response(),
+        Err(error) => return session_error(error).into_response(),
+    }
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
         return ApiError::storage_failure().into_response();
     };
@@ -2741,7 +2923,15 @@ async fn delete_document(
     // conflict rejection is the version check.
     transaction.delete_in_collection(&collection, id, expected);
     match transaction.commit(durability) {
-        CommitOutcome::Committed(_) => json_response(StatusCode::NO_CONTENT, String::new()),
+        CommitOutcome::Committed(_) => {
+            let token = match refresh_session(&mut session, &collection, &id) {
+                Ok(token) => token,
+                Err(error) => return error.into_response(),
+            };
+            let mut response = json_response(StatusCode::NO_CONTENT, String::new());
+            with_session(&mut response, &token);
+            response
+        }
         _ => ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             code: "commit_failed",

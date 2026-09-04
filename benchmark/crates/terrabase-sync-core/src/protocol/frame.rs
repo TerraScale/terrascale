@@ -132,6 +132,13 @@ impl SyncV2Frame {
         };
         pairing?;
         let body_bytes = body.to_body_bytes().map_err(ProtocolError::MalformedFrame)?;
+        let frame_bytes = body_bytes
+            .len()
+            .checked_add(super::FIXED_ENVELOPE_BYTES)
+            .ok_or(ProtocolError::MalformedFrame("frame size overflows its bound"))?;
+        if frame_bytes > body.frame_class().budget_bytes() {
+            return Err(ProtocolError::MalformedFrame("frame exceeds its class budget"));
+        }
         let digest = FrameDigest::of(&body_bytes);
         Ok(Self { correlation, causation, idempotency, digest, body })
     }
@@ -294,6 +301,12 @@ impl SyncV2Frame {
         let body = SyncV2Body::from_body_bytes(body_bytes)?;
         if body.kind() != decoded_kind {
             return Err(malformed("the body kind disagrees with the envelope kind"));
+        }
+        let frame_bytes = body_len
+            .checked_add(super::FIXED_ENVELOPE_BYTES)
+            .ok_or_else(|| malformed("frame size overflows its bound"))?;
+        if frame_bytes > body.frame_class().budget_bytes() {
+            return Err(malformed("frame exceeds its class budget"));
         }
         match (body.is_mutation(), idempotency.is_some()) {
             (true, false) => {

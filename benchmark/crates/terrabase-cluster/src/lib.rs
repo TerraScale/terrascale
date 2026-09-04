@@ -7,3 +7,5 @@
 //! placement, routing, and admission over the real member catalog.
 
 pub mod production;
+/// Physical SQLite WAL-frame replication for an in-Region RF=2 follower.
+pub mod wal_follower;

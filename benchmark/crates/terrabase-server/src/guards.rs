@@ -60,6 +60,18 @@ pub struct AbuseLimits {
     pub webhook_endpoints: u64,
 }
 
+impl AbuseLimits {
+    /// A fail-closed set of cells used until a Scale owner supplies its
+    /// negotiated limits.
+    pub const ZERO: Self = Self {
+        read_query_rps: 0,
+        direct_read_bandwidth_bytes_per_month: 0,
+        distinct_views: 0,
+        ws_connections: 0,
+        webhook_endpoints: 0,
+    };
+}
+
 /// The billed plan selecting one row of the D-64 table.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Plan {
@@ -69,8 +81,9 @@ pub enum Plan {
     Starter,
     /// `5_000 req/s, 2 TiB, 100k views, 10_000 WS, 50 webhooks`.
     Pro,
-    /// Owner-tunable starting points for negotiated databases; every cell
-    /// is raised through [`Plan::Custom`] instead of code changes.
+    /// Owner-tunable limits for negotiated databases. A Scale database must
+    /// receive an explicit override through [`AbuseGuards::set_limits`]; an
+    /// unconfigured Scale database fails closed (all five limits are zero).
     Scale,
     /// Fully owner-tunable budgets; a zero cell denies that dimension.
     Custom(AbuseLimits),
@@ -114,13 +127,7 @@ impl Plan {
                 ws_connections: 10_000,
                 webhook_endpoints: 50,
             },
-            Self::Scale => AbuseLimits {
-                read_query_rps: 25_000,
-                direct_read_bandwidth_bytes_per_month: 10 * TIB,
-                distinct_views: 1_000_000,
-                ws_connections: 100_000,
-                webhook_endpoints: 500,
-            },
+            Self::Scale => AbuseLimits::ZERO,
             Self::Custom(limits) => limits,
         }
     }
@@ -298,6 +305,14 @@ impl GuardRejection {
     }
 }
 
+impl std::fmt::Display for GuardRejection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message())
+    }
+}
+
+impl std::error::Error for GuardRejection {}
+
 /// One tenant's governance budget: the cgroup v2 shares the orchestrator's
 /// host agent enforces around the shared member process (D-69), plus the
 /// in-process admission this module enforces. Weights follow the cgroup v2
@@ -441,6 +456,10 @@ struct DatabaseGuardState {
 /// its own.
 pub struct AbuseGuards {
     plans: Mutex<HashMap<String, Plan>>,
+    /// Explicit owner-tuned limits win over the plan's built-in row. Keeping
+    /// overrides separate means a plan change never silently discards an
+    /// operator's negotiated guard values.
+    limit_overrides: Mutex<HashMap<String, AbuseLimits>>,
     states: Mutex<HashMap<String, Arc<Mutex<DatabaseGuardState>>>>,
     budgets: Mutex<HashMap<String, TenantBudget>>,
 }
@@ -452,6 +471,7 @@ impl AbuseGuards {
     pub fn new() -> Self {
         Self {
             plans: Mutex::new(HashMap::new()),
+            limit_overrides: Mutex::new(HashMap::new()),
             states: Mutex::new(HashMap::new()),
             budgets: Mutex::new(HashMap::new()),
         }
@@ -459,6 +479,9 @@ impl AbuseGuards {
 
     /// Names one database's plan (the billing lane's input).
     pub fn set_plan(&self, database: &str, plan: Plan) {
+        if database.is_empty() {
+            return;
+        }
         self.plans.lock().unwrap_or_else(PoisonError::into_inner).insert(database.to_owned(), plan);
     }
 
@@ -471,6 +494,48 @@ impl AbuseGuards {
             .get(database)
             .copied()
             .unwrap_or(Plan::Free)
+    }
+
+    /// Sets the five owner-tunable D-64 cells for one database. Overrides
+    /// apply to Free, Starter, Pro, and Scale alike and remain in force until
+    /// [`Self::clear_limits`] is called. Zero is a deliberate fail-closed
+    /// deny-all value, useful while a database is being provisioned.
+    pub fn set_limits(&self, database: &str, limits: AbuseLimits) {
+        if database.is_empty() {
+            return;
+        }
+        self.limit_overrides
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(database.to_owned(), limits);
+    }
+
+    /// Alias for callers that receive a limits update from the control plane.
+    pub fn set_limits_override(&self, database: &str, limits: AbuseLimits) {
+        self.set_limits(database, limits);
+    }
+
+    /// Removes the owner-tuned cells and resumes the selected plan row.
+    pub fn clear_limits(&self, database: &str) {
+        self.limit_overrides.lock().unwrap_or_else(PoisonError::into_inner).remove(database);
+    }
+
+    /// Returns the effective D-64 cells for one database. Unknown databases
+    /// use Free; Scale without an override is zero and therefore fails closed.
+    #[must_use]
+    pub fn limits_of(&self, database: &str) -> AbuseLimits {
+        self.limit_overrides
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(database)
+            .copied()
+            .unwrap_or_else(|| self.plan_of(database).limits())
+    }
+
+    /// Alias used by admission callers that prefer the plan terminology.
+    #[must_use]
+    pub fn effective_limits(&self, database: &str) -> AbuseLimits {
+        self.limits_of(database)
     }
 
     /// Returns (cloning) one database's counter shard, creating it on first
@@ -507,7 +572,7 @@ impl AbuseGuards {
                 "empty database scope",
             ));
         }
-        let limit = self.plan_of(database).limits().read_query_rps;
+        let limit = self.limits_of(database).read_query_rps;
         if limit == 0 {
             return Err(GuardRejection::new(
                 GuardKind::ReadQueryRate,
@@ -559,19 +624,30 @@ impl AbuseGuards {
                 "empty database scope",
             ));
         }
-        let limit = self.plan_of(database).limits().direct_read_bandwidth_bytes_per_month;
+        let limit = self.limits_of(database).direct_read_bandwidth_bytes_per_month;
+        if limit == 0 {
+            return Err(GuardRejection::new(
+                GuardKind::DirectReadBandwidth,
+                0,
+                bytes,
+                "the custom guard is zero: deny-all",
+            ));
+        }
         let slot = self.state_for(database);
         let mut state = slot.lock().unwrap_or_else(PoisonError::into_inner);
-        let next = state.bandwidth_bytes.saturating_add(bytes);
-        if next > limit {
+        // Check the subtraction first. Saturating addition alone would make
+        // a `u64::MAX` limit admit bytes after the counter had overflowed.
+        let remaining = limit.saturating_sub(state.bandwidth_bytes);
+        if bytes > remaining {
+            let observed = state.bandwidth_bytes.checked_add(bytes).unwrap_or(u64::MAX);
             return Err(GuardRejection::new(
                 GuardKind::DirectReadBandwidth,
                 limit,
-                next,
+                observed,
                 "monthly direct-read budget is spent",
             ));
         }
-        state.bandwidth_bytes = next;
+        state.bandwidth_bytes += bytes;
         Ok(())
     }
 
@@ -611,7 +687,7 @@ impl AbuseGuards {
                 "empty database or view scope",
             ));
         }
-        let limit = self.plan_of(database).limits().distinct_views;
+        let limit = self.limits_of(database).distinct_views;
         if view.len() > MAX_GUARD_ID_BYTES {
             return Err(GuardRejection::new(
                 GuardKind::DistinctViews,
@@ -670,7 +746,7 @@ impl AbuseGuards {
                 "empty database scope",
             ));
         }
-        let limit = self.plan_of(database).limits().ws_connections;
+        let limit = self.limits_of(database).ws_connections;
         let slot = self.state_for(database);
         let mut state = slot.lock().unwrap_or_else(PoisonError::into_inner);
         if state.ws_current >= limit {
@@ -721,7 +797,7 @@ impl AbuseGuards {
                 "empty database or endpoint scope",
             ));
         }
-        let limit = self.plan_of(database).limits().webhook_endpoints;
+        let limit = self.limits_of(database).webhook_endpoints;
         if endpoint.len() > MAX_GUARD_ID_BYTES {
             return Err(GuardRejection::new(
                 GuardKind::WebhookEndpoints,
@@ -894,6 +970,28 @@ mod tests {
         );
         assert!(guards.check_read_query("deny-db").is_err(), "zero custom denies reads");
         assert!(guards.acquire_ws("deny-db").is_err(), "zero custom denies sockets");
+        assert!(guards.record_direct_read_bytes("deny-db", 0).is_err(), "zero denies bytes too");
+    }
+
+    #[test]
+    fn scale_limits_are_explicitly_owner_tuned() {
+        let guards = AbuseGuards::new();
+        guards.set_plan("scale-db", Plan::Scale);
+        assert_eq!(guards.limits_of("scale-db"), AbuseLimits::ZERO);
+        assert!(guards.check_read_query("scale-db").is_err());
+
+        let limits = AbuseLimits {
+            read_query_rps: 2,
+            direct_read_bandwidth_bytes_per_month: 3,
+            distinct_views: 4,
+            ws_connections: 5,
+            webhook_endpoints: 6,
+        };
+        guards.set_limits_override("scale-db", limits);
+        assert_eq!(guards.effective_limits("scale-db"), limits);
+        assert!(guards.check_read_query("scale-db").is_ok());
+        guards.clear_limits("scale-db");
+        assert_eq!(guards.limits_of("scale-db"), AbuseLimits::ZERO);
     }
 
     #[test]
@@ -932,6 +1030,27 @@ mod tests {
         guards.reset_bandwidth("bytes");
         assert_eq!(guards.bandwidth_used("bytes"), 0);
         assert!(guards.record_direct_read_bytes("bytes", 1_000).is_ok(), "rotation reopens");
+    }
+
+    #[test]
+    fn bandwidth_counter_never_wraps_past_a_maximum_ceiling() {
+        let guards = AbuseGuards::new();
+        guards.set_plan(
+            "max-bytes",
+            Plan::Custom(AbuseLimits {
+                read_query_rps: 1,
+                direct_read_bandwidth_bytes_per_month: u64::MAX,
+                distinct_views: 1,
+                ws_connections: 1,
+                webhook_endpoints: 1,
+            }),
+        );
+        assert!(guards.record_direct_read_bytes("max-bytes", u64::MAX).is_ok());
+        let rejection = guards
+            .record_direct_read_bytes("max-bytes", 1)
+            .expect_err("bytes after u64::MAX must refuse");
+        assert_eq!(rejection.limit(), u64::MAX);
+        assert_eq!(guards.bandwidth_used("max-bytes"), u64::MAX);
     }
 
     #[test]

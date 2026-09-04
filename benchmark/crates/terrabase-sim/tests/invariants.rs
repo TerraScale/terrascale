@@ -1,30 +1,32 @@
-//! One test per simulation invariant (ADR 0044 §4) plus the fast CI seed batch.
+//! One executable qualification per simulation invariant (ADR 0044 §4),
+//! plus the bounded CI seed batch.
 //!
-//! The eight invariant tests are `#[ignore]`d: they run in full against the
-//! [`StubWorld`] mechanics today and, once E-5/E-6 land, run unchanged
-//! against the real-engine adapters in the nightly sweep (`cargo test -p
-//! terrabase-sim -- --ignored`). Each carries the adapter TODO at the exact
-//! plug point. The non-ignored `seed_batch_*` tests are the CI gate: small,
-//! fast, and deterministic.
+//! The eight invariant tests execute against the durable production adapter.
+//! Scenarios remain seeded and bounded so failures reproduce from the printed
+//! seed while CI can run the small matrix without an unbounded sweep.
 
 use terrabase_sim::{
-    Fault, FaultPlan, Frontier, Invariant, JournalRow, RegionId, SessionToken, SimConfig, SimRng,
-    StubWorld, SyncEngine as _, ViewCut, Workload, capability_for, run_scenario, seed_batch,
+    Fault, FaultPlan, Frontier, Invariant, JournalRow, ProductionWorld, RegionId, SessionToken,
+    SimConfig, SimRng, SyncEngine as _, ViewCut, Workload, capability_for, run_scenario,
+    seed_batch,
 };
 use terrabase_sim::{ReplicationEngine as _, VIEW_ALL, VIEW_EVEN_KEYS};
 
 /// Builds a three-region world under a seeded fault plan.
-fn seeded_world(seed: u64, steps: u64, max_faults: usize) -> (StubWorld, Vec<RegionId>) {
+fn seeded_world(seed: u64, steps: u64, max_faults: usize) -> (ProductionWorld, Vec<RegionId>) {
     let regions = vec![RegionId::new(0), RegionId::new(1), RegionId::new(2)];
     let mut rng = SimRng::new(seed);
     let faults = FaultPlan::generate(&mut rng, &regions, steps, max_faults);
-    (StubWorld::with_faults(regions.len(), faults), regions)
+    (
+        ProductionWorld::with_faults(regions.len(), faults).expect("durable production world"),
+        regions,
+    )
 }
 
 /// Plays a seeded workload, then drains past the fault horizon.
 /// Returns every acknowledged row, so invariant 1 can prove none was lost.
 fn drive(
-    world: &mut StubWorld,
+    world: &mut ProductionWorld,
     regions: &[RegionId],
     seed: u64,
     ops: usize,
@@ -63,11 +65,7 @@ fn assert_invariant_header(invariant: Invariant, number: u8) {
     assert!(!invariant.title().is_empty());
 }
 
-// E-5/E-6 adapter TODO: run this scenario against the real replication
-// engine by implementing `ReplicationEngine` for the engine handle and
-// swapping `seeded_world` for the adapter constructor. No test changes.
 #[test]
-#[ignore = "E-12 nightly: invariant 1 vs stub; E-5/E-6 re-run vs engine adapters"]
 fn invariant_1_no_acknowledged_write_lost() {
     assert_invariant_header(Invariant::NoAcknowledgedWriteLost, 1);
     let (mut world, regions) = seeded_world(101, 64, 6);
@@ -85,10 +83,7 @@ fn invariant_1_no_acknowledged_write_lost() {
     }
 }
 
-// E-5/E-6 adapter TODO: same as invariant 1; assert byte-identical
-// canonical bodies via the engine's document store, not just fingerprints.
 #[test]
-#[ignore = "E-12 nightly: invariant 2 vs stub; E-5/E-6 re-run vs engine adapters"]
 fn invariant_2_regions_converge_to_equal_fingerprints() {
     assert_invariant_header(Invariant::ConvergentFingerprints, 2);
     for seed in seed_batch(202, 4) {
@@ -102,15 +97,12 @@ fn invariant_2_regions_converge_to_equal_fingerprints() {
     }
 }
 
-// E-5/E-6 adapter TODO: feed permutations through the engine apply path
-// (including merge-schema collections) and compare history explanations.
 #[test]
-#[ignore = "E-12 nightly: invariant 3 vs stub; E-5/E-6 re-run vs engine adapters"]
 fn invariant_3_merge_is_order_independent() {
     assert_invariant_header(Invariant::OrderIndependentMerge, 3);
     let mut rng = SimRng::new(303);
     let regions = vec![RegionId::new(0), RegionId::new(1), RegionId::new(2)];
-    let mut world = StubWorld::new(regions.len());
+    let mut world = ProductionWorld::new(regions.len()).expect("durable production world");
     let mut rows: Vec<JournalRow> = Vec::new();
     for _ in 0..48 {
         let region = rng.pick(&regions).copied().unwrap_or(RegionId::new(0));
@@ -137,10 +129,7 @@ fn invariant_3_merge_is_order_independent() {
     }
 }
 
-// E-5/E-6 adapter TODO: ack `GlobalDurable` through the real durability
-// path (UNISTORE uniformity wait) and assert presence per selected region.
 #[test]
-#[ignore = "E-12 nightly: invariant 4 vs stub; E-5/E-6 re-run vs engine adapters"]
 fn invariant_4_global_durable_implies_uniform_presence() {
     assert_invariant_header(Invariant::GlobalDurableUniform, 4);
     let (mut world, regions) = seeded_world(404, 64, 6);
@@ -174,15 +163,12 @@ fn invariant_4_global_durable_implies_uniform_presence() {
     }
 }
 
-// E-5/E-6 adapter TODO: drive reads through real members with failover
-// (kill the pinned region mid-session) and assert `StaleReplica` routing.
 #[test]
-#[ignore = "E-12 nightly: invariant 5 vs stub; E-5/E-6 re-run vs engine adapters"]
 fn invariant_5_read_your_writes_across_failover() {
     assert_invariant_header(Invariant::ReadYourWrites, 5);
     let mut faults = FaultPlan::new();
     faults.push(Fault::kill(RegionId::new(0), 20, 40));
-    let mut world = StubWorld::with_faults(3, faults);
+    let mut world = ProductionWorld::with_faults(3, faults).expect("durable production world");
     let writer = RegionId::new(1);
     let row = world.submit(writer, 7, 77).expect("writer is up");
     let mut token = SessionToken::observing(Frontier::new());
@@ -211,10 +197,7 @@ fn invariant_5_read_your_writes_across_failover() {
     assert_eq!(world.read(RegionId::new(2), &token, 7), Some(Some(77)));
 }
 
-// E-5/E-6 adapter TODO: assert against historical cuts with joins deferred
-// per the launch live subset (filter/projection/FTS/top-k only).
 #[test]
-#[ignore = "E-12 nightly: invariant 6 vs stub; E-5/E-6 re-run vs engine adapters"]
 fn invariant_6_view_revision_equals_query_at_cut() {
     assert_invariant_header(Invariant::ViewRevisionMatchesCut, 6);
     let (mut world, regions) = seeded_world(606, 64, 6);
@@ -227,12 +210,14 @@ fn invariant_6_view_revision_equals_query_at_cut() {
             );
         }
     }
+    // Retain one revision, then advance the database. Verification must use
+    // the revision's frontier cut rather than silently checking a fresh view.
+    let revision = world.view_revision(VIEW_ALL, regions[0]).expect("view revision");
+    world.submit(regions[0], 0, 9_999).expect("later write");
+    assert!(world.verify_revision_at(&revision, regions[0]));
 }
 
-// E-5/E-6 adapter TODO: assert byte equality across the real encode-once
-// log, CDN edge bytes, and WebSocket frames under one capability.
 #[test]
-#[ignore = "E-12 nightly: invariant 7 vs stub; E-5/E-6 re-run vs engine adapters"]
 fn invariant_7_cached_bytes_equal_origin_bytes_within_capability() {
     assert_invariant_header(Invariant::CacheIntegrity, 7);
     let (mut world, regions) = seeded_world(707, 32, 2);
@@ -257,14 +242,11 @@ fn invariant_7_cached_bytes_equal_origin_bytes_within_capability() {
     }
 }
 
-// E-5/E-6 adapter TODO: run after real partitions against the
-// `RangeSummaryTable` reconciler and assert round/message bounds there.
 #[test]
-#[ignore = "E-12 nightly: invariant 8 vs stub; E-5/E-6 re-run vs engine adapters"]
 fn invariant_8_reconciliation_is_logarithmic_and_ships_only_diffs() {
     assert_invariant_header(Invariant::ReconciliationComplexity, 8);
     let regions = [RegionId::new(0), RegionId::new(1)];
-    let mut world = StubWorld::new(regions.len());
+    let mut world = ProductionWorld::new(regions.len()).expect("durable production world");
     let mut rng = SimRng::new(808);
     // Skew the two sides: disjoint writers, then a hard partition worth
     // of independent commits with no delivery in between.

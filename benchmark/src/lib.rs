@@ -95,8 +95,10 @@ pub use regions::{
 };
 pub use session::{
     AfterSaveEvent, BeforeDeleteEvent, BeforeDeleteHook, BeforeStoreEvent, BeforeStoreHook,
-    DocumentChanges, FieldChange, FieldChangeKind, Session, SessionCommand, SessionError,
-    SessionHookVeto, SessionOptions, SessionStream, SessionTracking, SessionTransactionMode,
+    DocumentChanges, FieldChange, FieldChangeKind, ReadConsistency, ReadGuarantee, Session,
+    SessionCommand, SessionConsistency, SessionEpoch, SessionError, SessionFrontier,
+    SessionHookVeto, SessionOptions, SessionReadError, SessionReadPolicy, SessionStream,
+    SessionToken, SessionTokenError, SessionTracking, SessionTransactionMode, StaleReplica,
 };
 pub use streaming::{
     ChangeEvent, ChangeFilter, ChangeKind, ConflictRecord, DocumentStreamSelector, StreamBatch,

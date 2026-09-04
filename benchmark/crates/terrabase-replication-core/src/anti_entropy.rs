@@ -272,6 +272,7 @@ impl RangeSummaryTable {
     /// # Errors
     ///
     /// Returns a layout mismatch or a difference-budget failure.
+    #[allow(clippy::too_many_lines)]
     pub fn reconcile(
         &self,
         peer: &Self,
@@ -342,21 +343,48 @@ impl RangeSummaryTable {
                 let Some(first_bucket) = range.bucket.checked_mul(self.fanout) else {
                     return Err(RepairError::InvalidRange);
                 };
-                for offset in 0..self.fanout {
-                    let Some(bucket) = first_bucket.checked_add(offset) else {
-                        break;
+                let last_bucket = first_bucket.saturating_add(self.fanout.saturating_sub(1));
+                // A range may have a very large configured fanout.  Walking
+                // every possible child would make a sparse reconciliation
+                // proportional to that bound (and permits an accidental
+                // `u64::MAX` loop).  Every non-empty child has a maintained
+                // summary, so enumerate the union of those summaries in
+                // canonical bucket order instead.  Empty children cannot
+                // differ and need no wire message.
+                let mut child_buckets = BTreeSet::new();
+                for table in [self, peer] {
+                    let start = SummaryKey {
+                        origin: range.origin.clone(),
+                        level: child_level,
+                        bucket: first_bucket,
                     };
+                    let end = SummaryKey {
+                        origin: range.origin.clone(),
+                        level: child_level,
+                        bucket: last_bucket,
+                    };
+                    child_buckets.extend(
+                        table
+                            .summaries
+                            .range((Bound::Included(start), Bound::Included(end)))
+                            .filter_map(|(key, fingerprint)| {
+                                (fingerprint.count != 0).then_some(key.bucket)
+                            }),
+                    );
+                }
+                for bucket in child_buckets {
+                    // The bucket interval above already clips to the parent;
+                    // this check also documents the inclusive sequence bound
+                    // when the final child range saturates at `u64::MAX`.
                     let Some(zero_based_first) = bucket.checked_mul(child_span) else {
-                        break;
+                        continue;
                     };
                     if zero_based_first >= range.last {
-                        break;
+                        continue;
                     }
                     let child =
                         JournalRange::new(range.origin.clone(), child_level, bucket, child_span);
-                    if self.fingerprint(&child).count != 0 || peer.fingerprint(&child).count != 0 {
-                        next.push(child);
-                    }
+                    next.push(child);
                 }
             }
             pending = next;

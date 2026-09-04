@@ -24,7 +24,8 @@ use crate::families::{
 };
 use crate::session::{
     BeforeDeleteEvent, BeforeStoreEvent, FieldChange, FieldChangeKind, Session, SessionCommand,
-    SessionError, SessionHookVeto, SessionOptions, SessionTracking, SessionTransactionMode,
+    SessionError, SessionHookVeto, SessionOptions, SessionToken, SessionTracking,
+    SessionTransactionMode,
 };
 use crate::streaming::{DocumentStreamSelector, StreamCompletion, StreamItem};
 use crate::types::{
@@ -624,6 +625,48 @@ fn read_your_writes_and_pending_puts_report_document_added() {
     drop(dir);
 }
 
+#[test]
+fn session_reads_update_the_token_and_enforce_supplied_frontiers() {
+    let (dir, engine) = open_engine("causal-session-read");
+    let scope = scope(&engine, "tenant-a");
+    let mut writer = Session::open(&engine, &scope, SessionOptions::new()).expect("opens");
+    writer.store(collection("users"), doc_id("u1"), text("v1")).expect("stages");
+    committed(writer.save_changes().expect("saves"));
+    let token = writer.session_token().clone();
+    assert!(
+        token.frontier().entries().any(|(_, sequence)| sequence > 0),
+        "a committed write is reflected in the session frontier"
+    );
+
+    let mut continued =
+        Session::open(&engine, &scope, SessionOptions::new().with_session_token(token.clone()))
+            .expect("continues the token");
+    assert_eq!(
+        continued
+            .load(&collection("users"), &doc_id("u1"))
+            .expect("loads")
+            .map(|document| document.value().clone()),
+        Some(text("v1"))
+    );
+    assert!(continued.session_token().frontier().covers(token.frontier()));
+
+    let mut impossible = SessionToken::new(token.epoch());
+    impossible
+        .advance(crate::types::RegionId::try_new("unavailable").expect("region"), 1)
+        .expect("frontier entry");
+    let mut behind = Session::open(
+        &engine,
+        &scope,
+        SessionOptions::new().with_session_token(impossible).wait_timeout(Duration::ZERO),
+    )
+    .expect("opens with a valid token");
+    assert!(matches!(
+        behind.load(&collection("users"), &doc_id("other")),
+        Err(SessionError::StaleReplica(_))
+    ));
+    drop(dir);
+}
+
 // ---------------------------------------------------------------------------
 // R2/R3 interaction — a delete and a pending put for the same key.
 // ---------------------------------------------------------------------------
@@ -1109,6 +1152,10 @@ fn stream_documents_serves_canonical_batches_with_terminal_completion() {
     }
     assert_eq!(ids, vec!["010", "020", "030"], "canonical key order across batches");
     assert_eq!(completion, Some(StreamCompletion::EndOfStream));
+    assert!(
+        stream.session_token().frontier().entries().any(|(_, sequence)| sequence > 0),
+        "consuming a stream advances its causal token"
+    );
 
     // A second collection in the same tenant stays outside the selector,
     // and a batch limit that covers the page serves it in one batch.

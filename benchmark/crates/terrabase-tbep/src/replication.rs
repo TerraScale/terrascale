@@ -14,7 +14,7 @@
 
 use terrabase::engine::ReplicatedRecord;
 use terrabase::streaming::{ChangeCheckpoint, JournalKind};
-use terrabase::types::DocumentValue;
+use terrabase::types::{Cancellation, DocumentValue};
 
 use crate::engine_host::EngineHost;
 use crate::host::HostingError;
@@ -37,7 +37,29 @@ pub fn pull_origin_records(
     scope: &BoundScope,
     after: Option<ChangeCheckpoint>,
 ) -> Result<(Vec<ReplicatedRecord>, Option<ChangeCheckpoint>), HostingError> {
+    pull_origin_records_with_cancellation(host, scope, after, &Cancellation::default())
+}
+
+/// Pulls one bounded page while observing a caller-owned cancellation signal.
+///
+/// Cancellation is checked at the page boundary and again after the durable
+/// read.  The journal cursor is returned only on success, so a cancelled
+/// tailer never accidentally commits progress it did not hand to its peer.
+/// This is the synchronous counterpart of the async member pump: callers can
+/// use the same signal to stop a retry loop without losing idempotent replay.
+pub fn pull_origin_records_with_cancellation(
+    host: &EngineHost,
+    scope: &BoundScope,
+    after: Option<ChangeCheckpoint>,
+    cancellation: &Cancellation,
+) -> Result<(Vec<ReplicatedRecord>, Option<ChangeCheckpoint>), HostingError> {
+    if cancellation.is_cancelled() {
+        return Err(HostingError::Refused("replication pull cancelled".into()));
+    }
     let batch = host.replay_sync_journal(scope, after)?;
+    if cancellation.is_cancelled() {
+        return Err(HostingError::Refused("replication pull cancelled".into()));
+    }
     let mut records = Vec::with_capacity(batch.records().len());
     for record in batch.records() {
         let provenance = record.provenance();
@@ -74,9 +96,24 @@ pub fn apply_records(
     scope: &BoundScope,
     records: &[ReplicatedRecord],
 ) -> Result<usize, HostingError> {
+    apply_records_with_cancellation(host, scope, records, &Cancellation::default())
+}
+
+/// Applies a bounded batch while observing cancellation between records.
+/// Already committed records remain safe to replay on a later retry because
+/// the engine binds the source operation identity durably.
+pub fn apply_records_with_cancellation(
+    host: &EngineHost,
+    scope: &BoundScope,
+    records: &[ReplicatedRecord],
+    cancellation: &Cancellation,
+) -> Result<usize, HostingError> {
     let engine_scope = host.engine_scope_of(scope)?;
     let mut applied = 0;
     for record in records {
+        if cancellation.is_cancelled() {
+            return Err(HostingError::Refused("replication apply cancelled".into()));
+        }
         let outcome = host.engine().apply_replicated(&engine_scope, record).map_err(|error| {
             HostingError::EngineFailure(format!(
                 "the replicated record could not be applied: {error:?}"
@@ -103,11 +140,28 @@ pub fn replicate_once(
     scope: &BoundScope,
     cursor: &mut Option<ChangeCheckpoint>,
 ) -> Result<usize, HostingError> {
+    replicate_once_with_cancellation(source, target, scope, cursor, &Cancellation::default())
+}
+
+/// Ships every origin row past `cursor`, stopping at a cancellation boundary.
+/// The cursor is advanced only after a complete page has been handed to the
+/// target, so cancellation and transient transport failures are retry-safe.
+pub fn replicate_once_with_cancellation(
+    source: &EngineHost,
+    target: &EngineHost,
+    scope: &BoundScope,
+    cursor: &mut Option<ChangeCheckpoint>,
+    cancellation: &Cancellation,
+) -> Result<usize, HostingError> {
     let mut applied = 0;
     loop {
-        let (records, next) = pull_origin_records(source, scope, *cursor)?;
+        if cancellation.is_cancelled() {
+            return Err(HostingError::Refused("replication cancelled".into()));
+        }
+        let (records, next) =
+            pull_origin_records_with_cancellation(source, scope, *cursor, cancellation)?;
         if !records.is_empty() {
-            applied += apply_records(target, scope, &records)?;
+            applied += apply_records_with_cancellation(target, scope, &records, cancellation)?;
         }
         match next {
             Some(next) => *cursor = Some(next),

@@ -271,7 +271,7 @@ impl ProductionCatalogBootstrap {
             return close_with(&member, ProductionCatalogError::DatabaseRegionNotPlaced);
         }
 
-        let member_databases = member.database_ids().cloned().collect::<BTreeSet<_>>();
+        let member_databases = member.database_ids().into_iter().collect::<BTreeSet<_>>();
         let route_databases =
             routes.routes().map(|(_, database)| database.clone()).collect::<BTreeSet<_>>();
         if member_databases != route_databases || member.status().databases != routes.len() {

@@ -377,7 +377,7 @@ impl StubWorld {
                     } else if region.frontier().covers(&row.context) {
                         region.accept(&row);
                         progressed = true;
-                    } else if !still.iter().any(|pending| pending.id() == row.id()) {
+                    } else if !still.iter().any(|pending: &JournalRow| pending.id() == row.id()) {
                         still.push(row);
                     }
                 }
@@ -647,30 +647,6 @@ impl ReplicationEngine for StubWorld {
         })
     }
 
-    /// Reads the opaque canonical bytes for a key. This is the D-30 seam used
-    /// by adapters and tests; the legacy trait read decodes the stub's numeric
-    /// workload values on top of it.
-    #[must_use]
-    pub fn read_bytes(
-        &self,
-        region: RegionId,
-        token: &SessionToken,
-        key: u64,
-    ) -> Option<Option<Vec<u8>>> {
-        let peer = self.regions.iter().find(|item| item.id == region)?;
-        if self.faults.region_down(region, self.step) {
-            return None;
-        }
-        if !peer.frontier().covers(&token.frontier) {
-            return None; // StaleReplica: the SDK follows the named region.
-        }
-        Some(
-            peer.docs
-                .get(&key)
-                .and_then(|version| (!version.tombstone).then(|| version.value.clone())),
-        )
-    }
-
     fn digest_after_permutation(&mut self, rows: &[JournalRow]) -> u64 {
         let mut docs = BTreeMap::new();
         for row in rows {
@@ -755,6 +731,30 @@ impl SyncEngine for StubWorld {
 }
 
 impl StubWorld {
+    /// Reads the opaque canonical bytes for a key. This is the D-30 seam used
+    /// by adapters and tests; the legacy trait read decodes the stub's numeric
+    /// workload values on top of it.
+    #[must_use]
+    pub fn read_bytes(
+        &self,
+        region: RegionId,
+        token: &SessionToken,
+        key: u64,
+    ) -> Option<Option<Vec<u8>>> {
+        let peer = self.regions.iter().find(|item| item.id == region)?;
+        if self.faults.region_down(region, self.step) {
+            return None;
+        }
+        if !peer.frontier().covers(&token.frontier) {
+            return None; // StaleReplica: the SDK follows the named region.
+        }
+        Some(
+            peer.docs
+                .get(&key)
+                .and_then(|version| (!version.tombstone).then(|| version.value.clone())),
+        )
+    }
+
     /// Verifies either a supplied historical revision or, for compatibility,
     /// obtains the current revision for `view` before checking its cut.
     #[must_use]

@@ -9,6 +9,7 @@
 //! overflow a `u32` length on supported targets, so the narrowing casts below
 //! are bounded by construction rather than by a runtime check.
 #![allow(clippy::cast_possible_truncation)]
+#![allow(dead_code, reason = "codec decode helpers are reserved for restore paths")]
 
 use crate::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability, TenantId,

@@ -128,20 +128,77 @@ ids = [item.get("operationId") for item in operations if isinstance(item, dict)]
 if len(ids) != len(operations) or len(set(ids)) != len(ids):
     raise SystemExit("HTTP conformance operation IDs are not unique")
 openapi = load("openapi.json")
-published = {
-    operation.get("operationId")
-    for item in openapi.get("paths", {}).values()
-    if isinstance(item, dict)
-    for operation in item.values()
-    if isinstance(operation, dict) and operation.get("operationId")
-}
-if set(ids) != published:
+openapi_bytes = (root / "openapi.json").read_bytes()
+openapi_blake3 = next((entry.get("blake3") for entry in manifest.get("artifacts", []) if entry.get("path") == "openapi.json"), None)
+if not isinstance(openapi_blake3, str) or not re.fullmatch(r"[0-9a-f]{64}", openapi_blake3):
+    raise SystemExit("manifest has no valid OpenAPI artifact digest")
+if http.get("openapiSha256") != hashlib.sha256(openapi_bytes).hexdigest():
+    raise SystemExit("HTTP conformance is not tied to the current OpenAPI digest")
+if http.get("openapiBlake3") != openapi_blake3:
+    raise SystemExit("HTTP conformance has the wrong OpenAPI digest")
+methods = {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
+published = {}
+for path, item in openapi.get("paths", {}).items():
+    if not isinstance(item, dict):
+        continue
+    for method, operation in item.items():
+        if method not in methods or not isinstance(operation, dict):
+            continue
+        operation_id = operation.get("operationId")
+        if isinstance(operation_id, str) and operation_id:
+            published[operation_id] = (path, method, operation)
+if set(ids) != set(published):
     raise SystemExit("HTTP conformance corpus does not cover exactly the published operations")
+
+def matches_route(template, rendered):
+    expression = re.escape(template)
+    expression = re.sub(r"\\\{[^}]+\\\}", r"[^/]+", expression)
+    return re.fullmatch(expression, rendered) is not None
+
 for item in operations:
-    if not isinstance(item.get("request"), dict) or not item["request"].get("method"):
+    operation_id = item.get("operationId")
+    if operation_id not in published:
+        raise SystemExit(f"HTTP fixture names unpublished operation {operation_id!r}")
+    path, method, operation_spec = published[operation_id]
+    request = item.get("request")
+    if not isinstance(request, dict) or not request.get("method"):
         raise SystemExit(f"HTTP fixture {item.get('operationId')} has no request")
-    if not isinstance(item.get("responses"), list) or not item["responses"]:
+    if request.get("method") != method.upper() or not matches_route(path, request.get("path", "")):
+        raise SystemExit(f"HTTP fixture {operation_id} does not target its OpenAPI route")
+    request_body = operation_spec.get("requestBody")
+    fixture_body = request.get("body")
+    if request_body is None:
+        if fixture_body is not None:
+            raise SystemExit(f"HTTP fixture {operation_id} has an unexpected request body")
+    else:
+        if not isinstance(fixture_body, dict):
+            raise SystemExit(f"HTTP fixture {operation_id} has no request body details")
+        media_type = fixture_body.get("mediaType")
+        content = request_body.get("content", {}) if isinstance(request_body, dict) else {}
+        if media_type not in content or "value" not in fixture_body:
+            raise SystemExit(f"HTTP fixture {operation_id} has an invalid request body media type")
+    response_spec = operation_spec.get("responses")
+    if not isinstance(response_spec, dict) or not response_spec:
+        raise SystemExit(f"OpenAPI operation {operation_id} has no responses")
+    fixture_responses = item.get("responses")
+    if not isinstance(fixture_responses, list) or not fixture_responses:
         raise SystemExit(f"HTTP fixture {item.get('operationId')} has no response")
+    response_by_status = {response.get("status"): response for response in fixture_responses if isinstance(response, dict)}
+    expected_successes = [int(status) for status in response_spec if status.isdigit() and 200 <= int(status) < 300]
+    if expected_successes:
+        for status in expected_successes:
+            response = response_by_status.get(status)
+            if not isinstance(response, dict) or "mediaType" not in response or "body" not in response:
+                raise SystemExit(f"HTTP fixture {operation_id} is missing 2xx JSON details for {status}")
+            spec = response_spec[str(status)]
+            content = spec.get("content", {}) if isinstance(spec, dict) else {}
+            if content and response["mediaType"] not in content:
+                raise SystemExit(f"HTTP fixture {operation_id} has the wrong response media type for {status}")
+    else:
+        # Pending routes have no success status yet; their executable fixture
+        # must still name one producer-described refusal response.
+        if not any(status in response_spec for status in map(str, response_by_status)):
+            raise SystemExit(f"HTTP fixture {operation_id} has no OpenAPI response")
     if not isinstance(item.get("errors"), list):
         raise SystemExit(f"HTTP fixture {item.get('operationId')} has no error corpus")
 
@@ -149,6 +206,15 @@ for relative in ("conformance/reactive.json",):
     reactive = load(relative)
     if reactive.get("schemaVersion") != 1 or reactive.get("contractVersion") != version:
         raise SystemExit("reactive conformance identity does not match the contract")
+    if reactive.get("openapiSha256") != hashlib.sha256(openapi_bytes).hexdigest():
+        raise SystemExit("reactive conformance is not tied to the current OpenAPI digest")
+    if reactive.get("openapiBlake3") != openapi_blake3:
+        raise SystemExit("reactive conformance has the wrong OpenAPI digest")
+    msgpack_entry = next((entry for entry in manifest.get("artifacts", []) if entry.get("path") == "msgpack/terrascale.sync.v2.msgpack.json"), None)
+    if reactive.get("manifestBlake3") != (msgpack_entry or {}).get("blake3"):
+        raise SystemExit("reactive conformance has the wrong MessagePack manifest digest")
+    if reactive.get("manifestSha256") != hashlib.sha256((root / "msgpack/terrascale.sync.v2.msgpack.json").read_bytes()).hexdigest():
+        raise SystemExit("reactive conformance is not tied to the current MessagePack manifest")
     for key in ("attach", "snapshot", "log", "reset"):
         if key not in reactive:
             raise SystemExit(f"reactive conformance is missing {key}")
@@ -158,15 +224,19 @@ for relative in ("conformance/reactive.json",):
 
 msgpack_manifest = root / "msgpack" / "terrascale.sync.v2.msgpack.json"
 manifest_bytes = msgpack_manifest.read_bytes()
+manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+manifest_blake3 = next((entry.get("blake3") for entry in manifest.get("artifacts", []) if entry.get("path") == "msgpack/terrascale.sync.v2.msgpack.json"), None)
+if not isinstance(manifest_blake3, str) or not re.fullmatch(r"[0-9a-f]{64}", manifest_blake3):
+    raise SystemExit("manifest has no valid MessagePack artifact digest")
 for relative in ("conformance/msgpack/message-vectors.json", "conformance/msgpack/hostile-vectors.json"):
     corpus = load(relative)
     if corpus.get("protocol") != "terrascale.sync.v2.msgpack" or corpus.get("version") != "2.1":
         raise SystemExit(f"{relative} has the wrong protocol identity")
     if corpus.get("contractVersion") != version:
         raise SystemExit(f"{relative} has the wrong contract version")
-    if corpus.get("manifestSha256") != hashlib.sha256(manifest_bytes).hexdigest():
+    if corpus.get("manifestSha256") != manifest_sha256:
         raise SystemExit(f"{relative} is not tied to the MessagePack manifest")
-    if corpus.get("manifestBlake3") != next((entry.get("blake3") for entry in manifest.get("artifacts", []) if entry.get("path") == "msgpack/terrascale.sync.v2.msgpack.json"), None):
+    if corpus.get("manifestBlake3") != manifest_blake3:
         raise SystemExit(f"{relative} has the wrong MessagePack manifest digest")
     vectors = corpus.get("vectors")
     if not isinstance(vectors, list) or not vectors:
@@ -223,7 +293,7 @@ def version_number(value, path):
     return int(value[1:])
 
 
-def validate_manifest(manifest, path, expected_version=None):
+def validate_manifest(manifest, path, root, expected_version=None):
     if not isinstance(manifest, dict):
         fail(f"{path} is not an object")
     if manifest.get("schemaVersion") != 1:
@@ -234,6 +304,30 @@ def validate_manifest(manifest, path, expected_version=None):
             f"{path}.contractVersion is {manifest['contractVersion']!r}, "
             f"expected {expected_version!r}"
         )
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, list):
+        fail(f"{path}.artifacts is not an array")
+    seen = set()
+    for index, artifact in enumerate(artifacts):
+        if not isinstance(artifact, dict):
+            fail(f"{path}.artifacts[{index}] is not an object")
+        relative = artifact.get("path")
+        if (
+            not isinstance(relative, str)
+            or not relative
+            or "\\" in relative
+            or Path(relative).is_absolute()
+            or ".." in Path(relative).parts
+            or relative in seen
+        ):
+            fail(f"{path}.artifacts[{index}] has an invalid or repeated path")
+        if not isinstance(artifact.get("mediaType"), str) or not artifact["mediaType"]:
+            fail(f"{path}.artifacts[{index}] has no media type")
+        if not isinstance(artifact.get("blake3"), str) or re.fullmatch(r"[0-9a-f]{64}", artifact["blake3"]) is None:
+            fail(f"{path}.artifacts[{index}] has no valid BLAKE3 digest")
+        if not (root / relative).is_file():
+            fail(f"{path}.artifacts[{index}] points to a missing file")
+        seen.add(relative)
     return number
 
 
@@ -271,12 +365,20 @@ def compare_fields(old, new, path):
     new_fields = by_name(new, path)
     old_order = [field["name"] for field in old]
     new_order = [field["name"] for field in new]
-    if new_order != old_order:
-        fail(f"{path} added, removed, or reordered a field")
+    if new_order[: len(old_order)] != old_order:
+        fail(f"{path} removed or reordered a field")
     for name, field in old_fields.items():
         if name not in new_fields:
             fail(f"{path}.{name} was removed")
         same(field, new_fields[name], f"{path}.{name}")
+    # Indexed MessagePack records may only grow by appending fields whose
+    # absence is explicitly representable.  A required suffix would make an
+    # older decoder unable to consume a newer record, while an inserted or
+    # reordered field changes every following positional value.
+    for field in new[len(old_order) :]:
+        field_type = field.get("type") if isinstance(field, dict) else None
+        if not isinstance(field_type, dict) or field_type.get("kind") != "option":
+            fail(f"{path}.{field.get('name', '<unnamed>')} is a required added field")
 
 
 def compare_message(old, new, path):
@@ -564,6 +666,14 @@ def compare_operation(old, new, path):
             if key not in new:
                 fail(f"{path}.responses was removed")
             compare_responses(old_value, new[key], f"{path}.responses")
+        elif key == "security":
+            if key not in new:
+                fail(f"{path}.security was removed")
+            same(old_value, new[key], f"{path}.security")
+        elif key == "servers":
+            if key not in new:
+                fail(f"{path}.servers was removed")
+            same(old_value, new[key], f"{path}.servers")
         elif key not in new:
             fail(f"{path}.{key} was removed")
         else:
@@ -578,9 +688,56 @@ def compare_operation(old, new, path):
             fail(f"{path}.requestBody was added as required")
 
 
+def inherited_value(path_item, operation, key, root, default):
+    """Resolve an OpenAPI operation value through its inheritance rules."""
+    if key in operation:
+        return operation[key]
+    if key in path_item:
+        return path_item[key]
+    return root.get(key, default)
+
+
+def compare_security(old_path_item, new_path_item, old_operation, new_operation, old_root, new_root, path):
+    # An omitted security key inherits the document default.  Comparing only
+    # keys present in the old operation would miss adding `security: []` to an
+    # inherited operation, which silently makes a previously protected route
+    # anonymous.  Security requirements are deliberately exact: both adding
+    # an alternative and removing one changes the authorization contract.
+    old_security = inherited_value(old_path_item, old_operation, "security", old_root, [])
+    new_security = inherited_value(new_path_item, new_operation, "security", new_root, [])
+    same(old_security, new_security, f"{path}.security")
+
+
+def compare_binding(old_path_item, new_path_item, old_operation, new_operation, path):
+    # `servers` changes the URL binding without changing the operation ID.
+    # Treat an omitted value as the same inherited/default binding, but reject
+    # any explicit change or newly introduced binding on an existing route.
+    old_servers = old_operation.get("servers", old_path_item.get("servers"))
+    new_servers = new_operation.get("servers", new_path_item.get("servers"))
+    if old_servers is None and new_servers is not None:
+        fail(f"{path}.servers was added")
+    if old_servers is not None and new_servers is None:
+        fail(f"{path}.servers was removed")
+    if old_servers is not None:
+        same(old_servers, new_servers, f"{path}.servers")
+
+
 def compare_openapi(previous, current):
+    for key in ("security", "servers"):
+        old_has = key in previous
+        new_has = key in current
+        old_value = previous.get(key, [])
+        new_value = current.get(key, [])
+        if old_has and not new_has:
+            fail(f"openapi.{key} was removed")
+        if old_has:
+            same(old_value, new_value, f"openapi.{key}")
+        elif new_has and new_value:
+            # Both keys are inherited by operations.  Introducing a non-empty
+            # default changes the authorization or URL binding of old routes.
+            fail(f"openapi.{key} was added")
     for key, old_value in previous.items():
-        if key == "paths":
+        if key in ("paths", "security", "servers"):
             continue
         if key not in current:
             fail(f"openapi.{key} was removed")
@@ -601,6 +758,22 @@ def compare_openapi(previous, current):
                 if key not in new_item:
                     fail(f"openapi operation {key.upper()} {path} was removed")
                 compare_operation(old_value, new_item[key], f"openapi {key.upper()} {path}")
+                compare_security(
+                    old_item,
+                    new_item,
+                    old_value,
+                    new_item[key],
+                    previous,
+                    current,
+                    f"openapi {key.upper()} {path}",
+                )
+                compare_binding(
+                    old_item,
+                    new_item,
+                    old_value,
+                    new_item[key],
+                    f"openapi {key.upper()} {path}",
+                )
             elif key == "parameters":
                 compare_parameters(old_value, new_item.get(key), f"openapi {path}.parameters")
             elif key not in new_item:
@@ -610,11 +783,27 @@ def compare_openapi(previous, current):
         if "parameters" in new_item and "parameters" not in old_item:
             compare_parameters([], new_item["parameters"], f"openapi {path}.parameters")
 
+    # A newly published route must not accidentally opt out of the document's
+    # authentication policy.  Existing routes were checked above for exact
+    # effective security and URL binding.
+    for path, path_item in new_paths.items():
+        if not isinstance(path_item, dict):
+            continue
+        for method in methods:
+            operation = path_item.get(method)
+            if not isinstance(operation, dict):
+                continue
+            if path in old_paths and isinstance(old_paths[path], dict) and method in old_paths[path]:
+                continue
+            security = inherited_value(path_item, operation, "security", current, [])
+            if not security:
+                fail(f"openapi {method.upper()} {path} added without security")
+
 
 previous_manifest = load_json(previous_root / "manifest.json")
 current_manifest = load_json(current_root / "manifest.json")
-previous_version = validate_manifest(previous_manifest, "previous.manifest")
-current_version = validate_manifest(current_manifest, "current.manifest", requested_version)
+previous_version = validate_manifest(previous_manifest, "previous.manifest", previous_root)
+current_version = validate_manifest(current_manifest, "current.manifest", current_root, requested_version)
 if previous_version >= current_version:
     fail("previous.manifest.contractVersion must be older than current --version")
 

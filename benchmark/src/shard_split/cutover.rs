@@ -1,5 +1,13 @@
 //! Writer-drain fence and cutover permit contracts.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+// A permit is intentionally tied to one fence instance.  This prevents a
+// permit copied from an unrelated split from passing `WriterFence::permits`.
+// The value is an opaque capability; it is not a routing generation or a
+// persisted sequence number.
+static NEXT_FENCE_ID: AtomicU64 = AtomicU64::new(1);
+
 /// State of the source writer fence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WriterFenceState {
@@ -33,6 +41,7 @@ pub enum FenceError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CutoverPermit {
     required: u64,
+    fence_id: u64,
 }
 
 impl CutoverPermit {
@@ -40,6 +49,12 @@ impl CutoverPermit {
     #[must_use]
     pub const fn required(&self) -> u64 {
         self.required
+    }
+
+    /// Returns whether this value was issued by a writer fence.
+    #[must_use]
+    pub(crate) const fn is_valid(self) -> bool {
+        self.fence_id != 0
     }
 }
 
@@ -49,13 +64,23 @@ pub struct WriterFence {
     state: WriterFenceState,
     required: u64,
     acked_through: u64,
+    fence_id: u64,
 }
 
 impl WriterFence {
     /// Creates an open writer fence.
     #[must_use]
-    pub const fn new() -> Self {
-        Self { state: WriterFenceState::Open, required: 0, acked_through: 0 }
+    pub fn new() -> Self {
+        // Zero is reserved for an invalid permit.  The wrapping fallback is
+        // practically unreachable, but keeps construction total even after
+        // an exceptionally long-lived process exhausts the counter.
+        let id = NEXT_FENCE_ID.fetch_add(1, Ordering::Relaxed);
+        Self {
+            state: WriterFenceState::Open,
+            required: 0,
+            acked_through: 0,
+            fence_id: if id == 0 { 1 } else { id },
+        }
     }
 
     /// Returns the current fence state.
@@ -105,13 +130,14 @@ impl WriterFence {
             return Err(FenceError::NotDrained { target_applied, required });
         }
         self.state = WriterFenceState::Fenced;
-        Ok(CutoverPermit { required })
+        Ok(CutoverPermit { required, fence_id: self.fence_id })
     }
 
     /// Checks that a cutover permit still matches this fence.
     #[must_use]
     pub fn permits(&self, permit: CutoverPermit) -> bool {
         self.state == WriterFenceState::Fenced
+            && permit.fence_id == self.fence_id
             && permit.required <= self.acked_through.max(self.required)
     }
 }

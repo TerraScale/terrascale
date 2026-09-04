@@ -38,7 +38,7 @@
 //! feeding it the `[replication] peers` list the server configuration
 //! enumerates is the member-composition step that lands with S-09.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use terrabase::engine::ReplicatedRecord;
 use terrabase::streaming::ChangeCheckpoint;
@@ -80,6 +80,11 @@ pub const MAX_FILTERED_PAGE_SCANS: usize = 8;
 /// (the apply replays them idempotently).
 pub const FRAME_EXPIRY_TICKS: u64 = 64;
 
+/// Maximum number of complete replication frames a receiver may retain while
+/// waiting for an earlier per-origin sequence.  Overflow is explicit: the
+/// caller must run anti-entropy rather than silently skipping a dependency.
+pub const MAX_PENDING_FRAMES: usize = MAX_INFLIGHT_FRAMES * 8;
+
 /// The bounded history used to distinguish a delayed duplicate report from a
 /// report fabricated for a message identity this link never issued.
 const MAX_RETIRED_MESSAGE_IDS: usize = MAX_INFLIGHT_FRAMES * 8;
@@ -99,6 +104,14 @@ struct InFlightFrame {
     /// is meaningful only when it repeats this list byte-for-byte: the
     /// correlation id alone does not prove which operations were durable.
     expected_operations: Vec<OperationId>,
+}
+
+/// The result of attempting one inbound frame.  A deferred frame remains
+/// encoded so its authenticated envelope and exact operation set are what we
+/// eventually acknowledge.
+enum ReceiveFrame {
+    Applied(usize),
+    Deferred(EncodedFrame),
 }
 
 /// The outcome of one outbound shipping tick.
@@ -127,6 +140,14 @@ pub struct RegionLink {
     cursor: Option<ChangeCheckpoint>,
     in_flight: BTreeMap<u64, InFlightFrame>,
     retired_message_ids: BTreeSet<u64>,
+    /// Frames that arrived ahead of an earlier sequence for one of their
+    /// origins.  Keeping complete frames preserves the sender's exact ack
+    /// contract and makes duplicate delivery harmless.
+    pending_frames: VecDeque<EncodedFrame>,
+    /// Highest contiguous origin sequence applied on this receive lane.
+    /// Equal sequence values are valid because one commit may contain more
+    /// than one write; a jump is held until the missing sequence arrives.
+    received_origin_sequences: BTreeMap<String, u64>,
     next_message_id: u64,
 }
 
@@ -144,6 +165,8 @@ impl RegionLink {
             cursor: None,
             in_flight: BTreeMap::new(),
             retired_message_ids: BTreeSet::new(),
+            pending_frames: VecDeque::new(),
+            received_origin_sequences: BTreeMap::new(),
             next_message_id: 1,
         })
     }
@@ -175,6 +198,8 @@ impl RegionLink {
         self.cursor = cursor;
         self.in_flight.clear();
         self.retired_message_ids.clear();
+        self.pending_frames.clear();
+        self.received_origin_sequences.clear();
     }
 
     /// The frames this link currently holds in flight.
@@ -272,7 +297,7 @@ impl RegionLink {
             message_id,
             InFlightFrame {
                 checkpoint,
-                expiry: now + FRAME_EXPIRY_TICKS,
+                expiry: now.saturating_add(FRAME_EXPIRY_TICKS),
                 acknowledged: false,
                 tenant,
                 expected_operations,
@@ -297,71 +322,148 @@ impl RegionLink {
         scope: &BoundScope,
         lane: &mut dyn MemberTransport,
     ) -> Result<usize, HostingError> {
-        let frames = lane.receive(&self.local, FrameSelector::Deliveries);
+        // Include frames held from a previous pass before newly delivered
+        // frames.  A scan may still bypass a blocked frame so an earlier
+        // sequence that arrived later can unblock the queue.
+        let mut frames = self.pending_frames.drain(..).collect::<VecDeque<_>>();
+        frames.extend(lane.receive(&self.local, FrameSelector::Deliveries));
         let mut applied = 0;
-        for frame in frames {
-            let (envelope, _) = decode(&frame.bytes).map_err(lane_error)?;
-            if envelope.target != self.local {
+        let mut deferred = VecDeque::new();
+        let mut made_progress = true;
+        while made_progress && !frames.is_empty() {
+            made_progress = false;
+            let pass = frames.len();
+            for _ in 0..pass {
+                let frame = frames.pop_front().expect("the pass length came from the queue");
+                match self.receive_frame(host, scope, lane, frame)? {
+                    ReceiveFrame::Applied(count) => {
+                        applied += count;
+                        made_progress = true;
+                    }
+                    ReceiveFrame::Deferred(frame) => deferred.push_back(frame),
+                }
+            }
+            // A frame deferred in this pass may become ready after a later
+            // frame in the same pass applied its predecessor.
+            frames.append(&mut deferred);
+        }
+        // No frame can currently make progress: retain the bounded suffix for
+        // a later pump.  Anti-entropy is the recovery path once this bound is
+        // exceeded; refusing here is safer than acknowledging a causal skip.
+        if !frames.is_empty() {
+            if frames.len() > MAX_PENDING_FRAMES {
                 return Err(HostingError::Refused(
-                    "the frame is addressed to another member".into(),
+                    "replication dependency queue is full; reconciliation required".into(),
                 ));
             }
-            if envelope.source != self.peer {
-                return Err(HostingError::Refused("the frame is sourced by another member".into()));
-            }
-            if envelope.expires_at.is_some_and(|at| at <= lane.now()) {
-                // Lost in transit by the lane's own clock: never applied,
-                // never answered — the sender expires it and re-pulls.
-                continue;
-            }
-            let Payload::ReplicationBatch { tenant, records } = envelope.payload else {
-                return Err(HostingError::Refused(
-                    "the deliveries selector drained a non-replication frame".into(),
-                ));
-            };
-            if tenant.as_str() != scope.tenant {
-                return Err(HostingError::Refused(
-                    "the replication batch names another tenant".into(),
-                ));
-            }
-            let batch = records
-                .iter()
-                .map(replicated_record)
-                .collect::<Result<Vec<ReplicatedRecord>, HostingError>>()?;
-            applied += crate::replication::apply_records(host, scope, &batch)?;
-            let reports = batch
-                .iter()
-                .map(|record| {
-                    Ok((
-                        OperationId::try_new(&record.commit_ulid).map_err(|_| {
-                            HostingError::Invalid(
-                                "the commit identity breaks the lane rules".into(),
-                            )
-                        })?,
-                        true,
-                    ))
-                })
-                .collect::<Result<Vec<_>, HostingError>>()?;
-            let ack = Envelope {
-                kind: FrameKind::AckBatch,
-                message_id: self.next_message_id,
-                correlation_id: Some(envelope.message_id),
-                causation_id: None,
-                idempotency_key: None,
-                source: self.local.clone(),
-                target: envelope.source.clone(),
-                issued_at: lane.now(),
-                expires_at: None,
-                range: None,
-                epoch: None,
-                payload: Payload::AckBatch { tenant, reports },
-            };
-            self.next_message_id += 1;
-            // A lane at capacity defers the report rather than dropping
-            // the applied batch: the sender re-pulls and the apply replays.
-            let _ = lane.send(&self.local, &envelope.source, encode(&ack).map_err(lane_error)?);
+            self.pending_frames = frames;
         }
         Ok(applied)
+    }
+
+    /// Validates and applies one frame.  A frame with a missing per-origin
+    /// predecessor is returned intact to the bounded receive queue.
+    fn receive_frame(
+        &mut self,
+        host: &EngineHost,
+        scope: &BoundScope,
+        lane: &mut dyn MemberTransport,
+        frame: EncodedFrame,
+    ) -> Result<ReceiveFrame, HostingError> {
+        let (envelope, _) = decode(&frame.bytes).map_err(lane_error)?;
+        if envelope.target != self.local {
+            return Err(HostingError::Refused("the frame is addressed to another member".into()));
+        }
+        if envelope.source != self.peer {
+            return Err(HostingError::Refused("the frame is sourced by another member".into()));
+        }
+        if envelope.expires_at.is_some_and(|at| at <= lane.now()) {
+            // Lost in transit by the lane's own clock: never applied,
+            // never answered — the sender expires it and re-pulls.
+            return Ok(ReceiveFrame::Applied(0));
+        }
+        let Payload::ReplicationBatch { tenant, records } = envelope.payload else {
+            return Err(HostingError::Refused(
+                "the deliveries selector drained a non-replication frame".into(),
+            ));
+        };
+        if tenant.as_str() != scope.tenant {
+            return Err(HostingError::Refused("the replication batch names another tenant".into()));
+        }
+        let batch = records
+            .iter()
+            .map(replicated_record)
+            .collect::<Result<Vec<ReplicatedRecord>, HostingError>>()?;
+        if batch.iter().any(|record| record.origin.is_empty() || record.origin_sequence == 0) {
+            return Err(HostingError::Invalid(
+                "the replicated record has no valid origin sequence".into(),
+            ));
+        }
+        if !self.origin_sequences_ready(&batch) {
+            return Ok(ReceiveFrame::Deferred(frame));
+        }
+        let applied = crate::replication::apply_records(host, scope, &batch)?;
+        self.record_origin_sequences(&batch);
+        let reports = batch
+            .iter()
+            .map(|record| {
+                Ok((
+                    OperationId::try_new(&record.commit_ulid).map_err(|_| {
+                        HostingError::Invalid("the commit identity breaks the lane rules".into())
+                    })?,
+                    true,
+                ))
+            })
+            .collect::<Result<Vec<_>, HostingError>>()?;
+        let ack = Envelope {
+            kind: FrameKind::AckBatch,
+            message_id: self.next_message_id,
+            correlation_id: Some(envelope.message_id),
+            causation_id: None,
+            idempotency_key: None,
+            source: self.local.clone(),
+            target: envelope.source.clone(),
+            issued_at: lane.now(),
+            expires_at: None,
+            range: None,
+            epoch: None,
+            payload: Payload::AckBatch { tenant, reports },
+        };
+        self.next_message_id += 1;
+        // A lane at capacity defers the report rather than dropping
+        // the applied batch: the sender re-pulls and the apply replays.
+        let _ = lane.send(&self.local, &envelope.source, encode(&ack).map_err(lane_error)?);
+        Ok(ReceiveFrame::Applied(applied))
+    }
+
+    /// Returns whether every origin in `batch` is either already applied or
+    /// starts exactly at its next sequence.  A commit can contribute multiple
+    /// rows with one sequence, hence the non-decreasing comparison.
+    fn origin_sequences_ready(&self, batch: &[ReplicatedRecord]) -> bool {
+        let mut temporary = self.received_origin_sequences.clone();
+        for record in batch {
+            if record.origin.is_empty() || record.origin_sequence == 0 {
+                return false;
+            }
+            let current = temporary.get(&record.origin).copied().unwrap_or(0);
+            if record.origin_sequence > current.saturating_add(1) {
+                return false;
+            }
+            if record.origin_sequence > current {
+                temporary.insert(record.origin.clone(), record.origin_sequence);
+            }
+        }
+        true
+    }
+
+    fn record_origin_sequences(&mut self, batch: &[ReplicatedRecord]) {
+        for record in batch {
+            let current = self.received_origin_sequences.get(&record.origin).copied().unwrap_or(0);
+            if record.origin_sequence > current {
+                self.received_origin_sequences
+                    .insert(record.origin.clone(), record.origin_sequence);
+            }
+        }
     }
 
     /// Drains the batched reports addressed to this member and advances

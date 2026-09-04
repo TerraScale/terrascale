@@ -17,7 +17,7 @@ use std::sync::Mutex;
 use terrabase::engine::{CommitOutcome, Engine, EngineConfig};
 use terrabase::observability::MetricsRegistry;
 use terrabase::regions::RegionCode;
-use terrabase::types::{CollectionName, DocumentValue, OperationId, TenantId};
+use terrabase::types::{CollectionName, DocumentValue, OperationId, TenantId, TenantScope};
 use terrabase::usage::{
     MeasurementWindow, MeterKind, MintingRule as EngineMintingRule, UsageCommandError,
     UsageContinuation, UsageFactId, UsagePageRequest, UsageRecordMeter as EngineUsageRecordMeter,
@@ -209,6 +209,14 @@ impl EngineHost {
     #[must_use]
     pub fn engine(&self) -> &Engine {
         &self.engine
+    }
+
+    /// Takes a read snapshot for a validated engine scope.
+    pub(crate) fn read_snapshot(
+        &self,
+        scope: &TenantScope,
+    ) -> Result<terrabase::types::ReadSnapshot, terrabase::engine::EngineError> {
+        self.engine.read_snapshot(scope)
     }
 
     /// Returns the engine-owned metrics registry shared by storage and every

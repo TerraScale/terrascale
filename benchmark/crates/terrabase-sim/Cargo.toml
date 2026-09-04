@@ -18,7 +18,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97.1"
 license = "MIT"
-description = "TerraBase deterministic simulation harness skeleton: seeded faults and the eight ADR 0044 §4 invariants (E-12)"
+description = "TerraBase deterministic production-engine simulation qualification for ADR 0044 §4 (E-12)"
 publish = false
 
 [lints.rust]
