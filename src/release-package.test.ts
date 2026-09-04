@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { test } from "vitest";
+import { resolveContractBundle } from "../scripts/openapi-contract-paths.ts";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const run = promisify(execFile);
@@ -69,10 +70,19 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
       filter: (source) => ![".git", "node_modules", "dist"].includes(path.basename(source)),
     });
     await mkdir(path.dirname(producerContracts), { recursive: true });
-    await cp(path.resolve(repositoryRoot, "../terrabase/contracts"), producerContracts, { recursive: true });
+    const bundle = await resolveContractBundle();
+    try {
+      await cp(bundle.root, producerContracts, { recursive: true });
+    } finally {
+      await bundle.cleanup();
+    }
     await mkdir(packages);
     await mkdir(consumer);
-    const checkoutEnvironment = { ...process.env, CONTRACT_SOURCE: "../terrabase/contracts" };
+    const checkoutEnvironment = { ...process.env };
+    for (const key of Object.keys(checkoutEnvironment)) {
+      if (/^(?:TERRASCALE_)?CONTRACT_(?:SOURCE|URL|REGISTRY(?:_URL)?)$/u.test(key)) delete checkoutEnvironment[key];
+    }
+    checkoutEnvironment.CONTRACT_SOURCE = producerContracts;
     await run("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: checkout });
     await run("npm", ["run", "build"], { cwd: checkout });
     await run("npx", ["vitest", "run", "src/public-schema-parity.test.ts"], { cwd: checkout, env: checkoutEnvironment });
