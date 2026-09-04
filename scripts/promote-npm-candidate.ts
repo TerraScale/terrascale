@@ -209,8 +209,6 @@ async function verifyBuildReceiptSource(receipt, source) {
   if (!source.clean || receipt.source.commit !== source.revision || receipt.source.tree !== source.tree) {
     throw new Error("Candidate build receipt does not match the clean checked-out source.");
   }
-  // The configuration digest bound .terrascale/deploy.json (deleted per D-68);
-  // ts-deploy's build receipt replaces this evidence.
   const treeDigest = await gitTreeDigest(repositoryRoot, source.revision);
   if (receipt.source.treeDigest !== treeDigest) {
     throw new Error("Candidate build receipt tree evidence is stale.");
