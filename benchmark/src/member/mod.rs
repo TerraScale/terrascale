@@ -983,7 +983,16 @@ impl Member {
     #[must_use]
     pub fn status(&self) -> MemberStatus {
         let lifecycle = *lock_unpoisoned(&self.inner.lifecycle);
-        let catalog = lock_unpoisoned(&self.inner.catalog);
+        let (databases, open_databases, resident_rss_bytes, metrics, active_operations) = {
+            let catalog = lock_unpoisoned(&self.inner.catalog);
+            (
+                catalog.databases.len(),
+                catalog.open_databases,
+                catalog.resident_rss_bytes,
+                (catalog.metrics.opens, catalog.metrics.evictions, catalog.metrics.closes),
+                self.inner.global_admissions.active(),
+            )
+        };
         let membership_health = lock_unpoisoned(&self.inner.membership_authority)
             .as_ref()
             .map(|authority| authority.health());
@@ -1002,15 +1011,15 @@ impl Member {
         MemberStatus {
             lifecycle,
             storage,
-            databases: catalog.databases.len(),
-            open_databases: catalog.open_databases,
-            resident_rss_bytes: catalog.resident_rss_bytes,
+            databases,
+            open_databases,
+            resident_rss_bytes,
             rss_budget_bytes: self.inner.rss_budget_bytes,
             sqlite_connection_budget: self.sqlite_connection_budget(),
-            database_opens: catalog.metrics.opens,
-            database_evictions: catalog.metrics.evictions,
-            database_closes: catalog.metrics.closes,
-            active_operations: self.inner.global_admissions.active(),
+            database_opens: metrics.0,
+            database_evictions: metrics.1,
+            database_closes: metrics.2,
+            active_operations,
             production_ready: lifecycle == LifecycleState::Serving
                 && storage == StorageHealth::Healthy
                 && writes_allowed
@@ -1602,19 +1611,25 @@ fn close_database_engine(
     database: &DatabaseId,
     kind: CloseKind,
 ) -> Result<(), MemberError> {
-    let mut catalog = lock_unpoisoned(&inner.catalog);
-    let entry = catalog
-        .databases
-        .get(database)
-        .ok_or_else(|| MemberError::UnknownDatabase(database.clone()))?;
-    if entry.admissions.active() != 0 {
-        return Err(MemberError::DatabaseBusy(database.clone()));
+    loop {
+        let mut catalog = lock_unpoisoned(&inner.catalog);
+        let entry = catalog
+            .databases
+            .get(database)
+            .ok_or_else(|| MemberError::UnknownDatabase(database.clone()))?;
+        if entry.admissions.active() != 0 {
+            return Err(MemberError::DatabaseBusy(database.clone()));
+        }
+        if matches!(entry.engine, ResidentEngine::Opening | ResidentEngine::Closing) {
+            drop(wait_catalog(inner, catalog));
+            continue;
+        }
+        let Some(close) = take_close_work(&mut catalog, database, kind) else {
+            return Ok(());
+        };
+        drop(catalog);
+        return perform_close(inner, close);
     }
-    let Some(close) = take_close_work(&mut catalog, database, kind) else {
-        return Ok(());
-    };
-    drop(catalog);
-    perform_close(inner, close)
 }
 
 fn open_database_engine(
@@ -2052,12 +2067,11 @@ mod tests {
 
     #[test]
     fn routing_never_forwards_non_hosted_databases() {
-        let placement =
-            DatabasePlacement::try_new(
-                [RegionCode::GRU, RegionCode::FRA],
-                Some("br-only".to_owned()),
-            )
-                .expect("placement");
+        let placement = DatabasePlacement::try_new(
+            [RegionCode::GRU, RegionCode::FRA],
+            Some("br-only".to_owned()),
+        )
+        .expect("placement");
         assert_eq!(
             decide_routing(
                 RegionCode::SFO,

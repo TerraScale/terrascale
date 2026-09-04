@@ -354,3 +354,61 @@ fn valid_name(value: &str) -> bool {
 fn escape(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn claims() -> PrincipalClaims {
+        PrincipalClaims::try_new([("tenant", AttributeValue::String("acme".to_owned()))])
+            .expect("claims")
+    }
+
+    #[test]
+    fn row_rule_is_bounded_indexed_and_deterministic() {
+        let indexes = BTreeSet::from(["owner".to_owned(), "active".to_owned()]);
+        let rule = AccessRule::try_compile(
+            " resource.data.owner == request.auth.claims.tenant && doc.active == true ",
+            &indexes,
+        )
+        .expect("rule");
+        assert_eq!(rule.fields(), &BTreeSet::from(["owner".to_owned(), "active".to_owned()]));
+        assert_eq!(rule.expression(), "((resource.active==true)&&(resource.owner==request.auth.claims.tenant))");
+        let row = BTreeMap::from([
+            ("owner".to_owned(), AttributeValue::String("acme".to_owned())),
+            ("active".to_owned(), AttributeValue::Boolean(true)),
+        ]);
+        assert!(rule.evaluate(&row, &claims()));
+    }
+
+    #[test]
+    fn missing_or_cross_tenant_values_deny() {
+        let rule = AccessRule::try_compile(
+            "resource.owner == claims.tenant",
+            &BTreeSet::from(["owner".to_owned()]),
+        )
+        .expect("rule");
+        let row = BTreeMap::from([(
+            "owner".to_owned(),
+            AttributeValue::String("other".to_owned()),
+        )]);
+        assert!(!rule.evaluate(&row, &claims()));
+        assert!(!rule.evaluate(&BTreeMap::new(), &claims()));
+    }
+
+    #[test]
+    fn hostile_cel_is_rejected_or_requires_an_index() {
+        assert_eq!(
+            AccessRule::try_compile("resource.owner == claims.tenant", &BTreeSet::new()),
+            Err(AuthorizationError::UnindexedAccessRuleField("owner".to_owned()))
+        );
+        assert_eq!(
+            AccessRule::try_compile("resource.owner.matches('.*')", &BTreeSet::from(["owner".to_owned()])),
+            Err(AuthorizationError::InvalidAccessRule)
+        );
+        assert_eq!(
+            AccessRule::try_compile("true", &BTreeSet::new()),
+            Err(AuthorizationError::InvalidAccessRule)
+        );
+    }
+}

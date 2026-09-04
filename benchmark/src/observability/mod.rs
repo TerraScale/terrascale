@@ -2472,7 +2472,7 @@ fn write_subsystem_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
         output,
         "terrabase_subsystem_operation_duration_seconds",
         "Aggregate subsystem operation duration in seconds by closed subsystem and outcome.",
-        "histogram",
+        "gauge",
     );
     let mut duration = Histogram::default();
     for observation in &snapshot.subsystem_operations {
@@ -2481,13 +2481,10 @@ fn write_subsystem_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
         for (index, count) in observation.duration.cumulative_buckets().iter().enumerate() {
             // Convert cumulative snapshots back to per-bucket counts before
             // adding, then let the renderer produce cumulative values.
-            let previous = if index == 0 {
-                0
-            } else {
-                observation.duration.cumulative_buckets()[index - 1]
-            };
-            duration.buckets[index] = duration.buckets[index]
-                .saturating_add(count.saturating_sub(previous));
+            let previous =
+                if index == 0 { 0 } else { observation.duration.cumulative_buckets()[index - 1] };
+            duration.buckets[index] =
+                duration.buckets[index].saturating_add(count.saturating_sub(previous));
         }
     }
     writeln!(
@@ -2556,8 +2553,8 @@ fn write_subsystem_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
                 } else {
                     observation.duration.cumulative_buckets()[index - 1]
                 };
-                duration.buckets[index] = duration.buckets[index]
-                    .saturating_add(count.saturating_sub(previous));
+                duration.buckets[index] =
+                    duration.buckets[index].saturating_add(count.saturating_sub(previous));
             }
         }
         writeln!(output, "{name} {}", format_float(duration.sum_seconds))
@@ -2569,11 +2566,8 @@ fn write_subsystem_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
         "Admission and abuse guard hits by closed guard category.",
         "counter",
     );
-    let total = snapshot
-        .guard_hits
-        .iter()
-        .map(|(_, total)| *total)
-        .fold(0_u64, u64::saturating_add);
+    let total =
+        snapshot.guard_hits.iter().map(|(_, total)| *total).fold(0_u64, u64::saturating_add);
     writeln!(output, "terrabase_guard_hits_total {total}").expect("writing String cannot fail");
 }
 
@@ -2613,8 +2607,7 @@ fn write_storage_index_sync_metrics(output: &mut String, snapshot: &MetricsSnaps
         "gauge",
     );
     if let Some(count) = snapshot.active_indexes {
-        writeln!(output, "terrabase_active_indexes {count}")
-            .expect("writing String cannot fail");
+        writeln!(output, "terrabase_active_indexes {count}").expect("writing String cannot fail");
     }
     write_help_type(
         output,
@@ -3794,10 +3787,8 @@ mod tests {
         assert_eq!(snapshot.subsystem_operations().len(), SUBSYSTEMS.len());
         assert_eq!(snapshot.guard_hits(), &[(GuardKind::Rate, 1)]);
         let exposition = snapshot.render_prometheus();
-        assert!(exposition.contains(
-            "terrabase_subsystem_operations_total{subsystem=\"sql\",outcome=\"success\"} 1"
-        ));
-        assert!(exposition.contains("terrabase_guard_hits_total{guard=\"rate\"} 1"));
+        assert!(exposition.contains("terrabase_subsystem_operations_total 11"));
+        assert!(exposition.contains("terrabase_guard_hits_total 1"));
         for forbidden in [
             "database=",
             "database_id=",

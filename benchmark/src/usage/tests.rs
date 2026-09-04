@@ -167,8 +167,7 @@ fn durable_fact_ledger_is_idempotent_and_fences_reuse() {
 
 #[test]
 fn durable_fact_identities_are_scoped_and_do_not_collide_across_tenants() {
-    let identity =
-        MintingIdentity::DocumentWrite(UsageFactId::try_new("request-1").expect("id"));
+    let identity = MintingIdentity::DocumentWrite(UsageFactId::try_new("request-1").expect("id"));
     let fact_for = |tenant: &str| {
         UsageFact::try_new(
             definition(MeterKind::DocumentWriteUnits),
@@ -191,13 +190,11 @@ fn durable_fact_identities_are_scoped_and_do_not_collide_across_tenants() {
 
 #[test]
 fn standalone_usage_record_is_closed_bounded_and_tenant_bound() {
-    for (meter, expected_kind, expected_rule) in [
-        (
-            UsageRecordMeter::DocumentWriteUnits,
-            MeterKind::DocumentWriteUnits,
-            MintingRule::DocumentWrite,
-        ),
-    ] {
+    for (meter, expected_kind, expected_rule) in [(
+        UsageRecordMeter::DocumentWriteUnits,
+        MeterKind::DocumentWriteUnits,
+        MintingRule::DocumentWrite,
+    )] {
         let request = UsageRecordRequest::try_new(
             meter,
             "project-a",
@@ -385,13 +382,9 @@ fn storage_byte_seconds_include_current_and_history_and_are_ttl_bounded() {
 
 #[test]
 fn storage_rollup_applies_ttl_history_and_regions_once_and_reconciles_retries() {
-    let current = StorageRevision::current(
-        UsageFactId::try_new("current").expect("id"),
-        10,
-        1,
-        Some(5_001),
-    )
-    .expect("current");
+    let current =
+        StorageRevision::current(UsageFactId::try_new("current").expect("id"), 10, 1, Some(5_001))
+            .expect("current");
     let history = StorageRevision::history(
         UsageFactId::try_new("history").expect("id"),
         5,
@@ -482,5 +475,8 @@ fn legacy_request_and_egress_meters_cannot_mint_charges() {
     );
     assert_eq!(request, Err(UsageError::NonBillableMeter));
     assert_eq!(MeterKind::from_key("request_units"), Err(UsageError::UnknownMeterDefinition));
-    assert_eq!(MeterCatalog::initial().get_key("egress_bytes", 1), Err(UsageError::UnknownMeterDefinition));
+    assert_eq!(
+        MeterCatalog::initial().get_key("egress_bytes", 1),
+        Err(UsageError::UnknownMeterDefinition)
+    );
 }

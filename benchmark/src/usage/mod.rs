@@ -335,13 +335,17 @@ pub enum MeterKind {
 }
 
 impl MeterKind {
+    /// Short compatibility spelling for the published write meter.
+    #[allow(non_upper_case_globals)]
+    pub const WriteUnits: Self = Self::DocumentWriteUnits;
+    /// Explicit spelling for the logical storage meter.
+    #[allow(non_upper_case_globals)]
+    pub const LogicalStorageByteSeconds: Self = Self::StorageByteSeconds;
+
     /// Returns every initial meter in canonical order.
     #[must_use]
     pub const fn all() -> [Self; 2] {
-        [
-            Self::DocumentWriteUnits,
-            Self::StorageByteSeconds,
-        ]
+        [Self::DocumentWriteUnits, Self::StorageByteSeconds]
     }
 
     /// Returns whether this kind can create a chargeable usage fact.
@@ -1058,6 +1062,10 @@ pub enum UsageRecordMeter {
 }
 
 impl UsageRecordMeter {
+    /// Short compatibility spelling for document write units.
+    #[allow(non_upper_case_globals)]
+    pub const WriteUnits: Self = Self::DocumentWriteUnits;
+
     const fn meter_kind(self) -> MeterKind {
         match self {
             Self::DocumentWriteUnits => MeterKind::DocumentWriteUnits,
@@ -2181,12 +2189,7 @@ impl StorageRollupFact {
         if selected_regions == 0 {
             return Err(UsageError::InvalidRegionCount);
         }
-        Ok(Self {
-            db: UsageScopeId::try_new(db)?,
-            seq_hi,
-            selected_regions,
-            byte_seconds,
-        })
+        Ok(Self { db: UsageScopeId::try_new(db)?, seq_hi, selected_regions, byte_seconds })
     }
 
     /// Database identity.
@@ -2212,6 +2215,11 @@ impl StorageRollupFact {
     pub const fn byte_seconds(&self) -> u128 {
         self.byte_seconds
     }
+
+    /// Returns the durable export cursor associated with this rollup.
+    pub fn cursor(&self) -> Result<UsageExportCursor, UsageError> {
+        UsageExportCursor::try_new(self.seq_hi, self.db.as_str())
+    }
 }
 
 /// Restart-safe storage rollup builder. Replaying one revision identity is a
@@ -2229,11 +2237,7 @@ impl StorageRollup {
         if selected_regions == 0 {
             return Err(UsageError::InvalidRegionCount);
         }
-        Ok(Self {
-            db: UsageScopeId::try_new(db)?,
-            selected_regions,
-            revisions: BTreeMap::new(),
-        })
+        Ok(Self { db: UsageScopeId::try_new(db)?, selected_regions, revisions: BTreeMap::new() })
     }
 
     /// Adds one current or retained-history revision observation.
@@ -2254,12 +2258,7 @@ impl StorageRollup {
         let revisions: Vec<_> = self.revisions.into_values().collect();
         let byte_seconds =
             storage_byte_seconds_for_revisions(&revisions, self.selected_regions, as_of_millis)?;
-        StorageRollupFact::try_new(
-            self.db.as_str(),
-            seq_hi,
-            self.selected_regions,
-            byte_seconds,
-        )
+        StorageRollupFact::try_new(self.db.as_str(), seq_hi, self.selected_regions, byte_seconds)
     }
 }
 
@@ -2286,12 +2285,7 @@ impl JournalStorageFact {
         if selected_regions == 0 {
             return Err(UsageError::InvalidRegionCount);
         }
-        Ok(Self {
-            db: UsageScopeId::try_new(db)?,
-            sequence,
-            revision,
-            selected_regions,
-        })
+        Ok(Self { db: UsageScopeId::try_new(db)?, sequence, revision, selected_regions })
     }
 
     /// Database identity.
@@ -2339,9 +2333,8 @@ pub fn reconcile_storage_journal(
     }
     let mut rollups: BTreeMap<UsageScopeId, (u64, u32, Vec<StorageRevision>)> = BTreeMap::new();
     for row in unique.values() {
-        let entry = rollups
-            .entry(row.db.clone())
-            .or_insert_with(|| (0, row.selected_regions, Vec::new()));
+        let entry =
+            rollups.entry(row.db.clone()).or_insert_with(|| (0, row.selected_regions, Vec::new()));
         if entry.1 != row.selected_regions {
             return Err(UsageError::InvalidRegionCount);
         }
@@ -2355,6 +2348,19 @@ pub fn reconcile_storage_journal(
             StorageRollupFact::try_new(db.as_str(), seq_hi, regions, bytes)
         })
         .collect()
+}
+
+/// Restart variant of [`reconcile_storage_journal`]. Rows at or before the
+/// acknowledged cursor are skipped; callers can persist the returned rollup
+/// cursor only after exporting the corresponding fact.
+pub fn reconcile_storage_journal_after(
+    journal: &[JournalStorageFact],
+    cursor: &UsageExportCursor,
+    as_of_millis: u64,
+) -> Result<Vec<StorageRollupFact>, UsageError> {
+    let pending: Vec<_> =
+        journal.iter().filter(|row| row.sequence() > cursor.sequence()).cloned().collect();
+    reconcile_storage_journal(&pending, as_of_millis)
 }
 
 /// A group-commit metering fact: `(db, seq_hi, writes, logical bytes)`.
