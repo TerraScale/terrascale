@@ -94,6 +94,117 @@ test("failed Database API results become Better Auth adapter errors", async () =
   );
 });
 
+test("pagination defaults and bounds page and join limits", async () => {
+  let pageInput:
+    | { readonly limit: number; readonly offset?: number; readonly join?: unknown }
+    | undefined;
+  const operations: BetterAuthDatabaseOperations = {
+    ...operationsForTest([], []),
+    findPage: async ({ limit, offset, join }) => {
+      pageInput = {
+        limit,
+        ...(offset === undefined ? {} : { offset }),
+        ...(join === undefined ? {} : { join }),
+      };
+      return ok("database.auth.test", 200, headers, []);
+    },
+  };
+  const adapter = createTerraScaleBetterAuthAdapter(operations, { defaultPageSize: 25 });
+
+  await adapter.findMany({
+    model: "user",
+    offset: 4,
+    join: { organization: { limit: 50 } },
+  });
+  assert.deepEqual(pageInput, {
+    limit: 25,
+    offset: 4,
+    join: { organization: { limit: 50 } },
+  });
+  await adapter.findMany({ model: "user", limit: 10_000 });
+  assert.equal(pageInput?.limit, 1_000);
+  await assert.rejects(
+    adapter.findMany({ model: "user", offset: 1_000_001 }),
+    /pagination offsets/u,
+  );
+});
+
+test("transaction operation count is bounded and rolls back through the port", async () => {
+  const calls: string[] = [];
+  const adapter = createTerraScaleBetterAuthAdapter(operationsForTest(calls, []), {
+    maxTransactionOperations: 1,
+  });
+
+  await assert.rejects(
+    adapter.transaction(async transaction => {
+      await transaction.delete({ model: "session", where: [] });
+      await transaction.delete({ model: "session", where: [] });
+    }),
+    (error: unknown) =>
+      error instanceof BetterAuthAdapterError && error.code === "transaction_bound_exceeded",
+  );
+  assert.deepEqual(calls, ["transaction", "delete:session"]);
+});
+
+test("missing named operations fail closed with a contract-gap error", () => {
+  assert.throws(
+    () => createTerraScaleBetterAuthAdapter({} as BetterAuthDatabaseOperations),
+    (error: unknown) =>
+      error instanceof BetterAuthAdapterError &&
+      error.code === "contract_gap" &&
+      error.message.includes("insertUnique"),
+  );
+});
+
+test("region denial is surfaced without a fallback or in-process shortcut", async () => {
+  const operations: BetterAuthDatabaseOperations = {
+    ...operationsForTest([], []),
+    findOne: async () => ({
+      ok: false,
+      routeName: "database.auth.findOne",
+      status: 403,
+      headers,
+      error: { kind: "authorization", code: "region_denied", message: "access denied" },
+    }),
+  };
+  const adapter = createTerraScaleBetterAuthAdapter(operations);
+
+  await assert.rejects(
+    adapter.findOne({ model: "user", where: [] }),
+    (error: unknown) =>
+      error instanceof BetterAuthAdapterError &&
+      error.code === "region_denied" &&
+      error.message === "access denied",
+  );
+});
+
+test("schema migration remains a named bounded contract operation", async () => {
+  const migrations: unknown[] = [];
+  const operations: BetterAuthDatabaseOperations = {
+    ...operationsForTest([], []),
+    migrate: async input => {
+      migrations.push(input);
+      return { code: "CREATE TABLE user (...)", path: "auth-schema.sql" };
+    },
+  };
+  const adapter = createTerraScaleBetterAuthAdapter(operations);
+  assert.deepEqual(
+    await adapter.createSchema!({ tables: { user: {} }, file: "requested.sql" }),
+    { code: "CREATE TABLE user (...)", path: "auth-schema.sql" },
+  );
+  assert.deepEqual(migrations, [{ tables: { user: {} }, file: "requested.sql" }]);
+
+  const malformed = createTerraScaleBetterAuthAdapter({
+    ...operationsForTest([], []),
+    migrate: async () => ({ code: "", path: "\u0000" }),
+  });
+  await assert.rejects(
+    malformed.createSchema!({ tables: {} }),
+    (error: unknown) =>
+      error instanceof BetterAuthAdapterError && error.code === "contract_invalid_response",
+  );
+});
+
 function operationsForTest(calls: string[], keys: string[]): BetterAuthDatabaseOperations {
   const result = <T>(value: T): TerraScaleResult<T> => ok("database.auth.test", 200, headers, value);
   return {

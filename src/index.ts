@@ -4,7 +4,7 @@ export * from "./models.js";
 export * from "./regions.js";
 export * from "./result.js";
 export type { Brand, Ulid } from "./ids.js";
-export { toUlid, tryUlid } from "./ids.js";
+export { isUlid, toUlid, tryUlid } from "./ids.js";
 export * from "./sync/v2/client.js";
 export * from "./sync/v2/result-view.js";
 export { sdkRouteManifest } from "./client.js";

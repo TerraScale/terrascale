@@ -14,6 +14,7 @@ import type {
   Timestamp,
   UpdateProjectSavedQueryRequest,
 } from "./models.js";
+import type { DatabaseId, ProjectId, UserId } from "./ids.js";
 import type {
   BackupsClient,
   DatabaseBranchesClient,
@@ -36,7 +37,7 @@ type PublicSdk = typeof import("./index.js");
 
 type ExpectedSavedQueryResponse = {
   readonly savedQueryId: string;
-  readonly projectId: string;
+  readonly projectId: ProjectId;
   readonly name: string;
   readonly query: string;
   readonly createdAt: Timestamp;
@@ -51,7 +52,7 @@ type ExpectedSavedQueryPage = {
 };
 
 type ExpectedDatabaseBranchCapability = {
-  readonly projectId: string;
+  readonly projectId: ProjectId;
   readonly admissionState: string;
   readonly physicalCloneAvailable: boolean;
   readonly promotionAvailable: boolean;
@@ -60,7 +61,7 @@ type ExpectedDatabaseBranchCapability = {
 };
 
 type ExpectedProjectTeamMember = {
-  readonly userId: string;
+  readonly userId: UserId;
   readonly email: string;
   readonly displayName: string;
   readonly role: AccessRole;
@@ -68,7 +69,7 @@ type ExpectedProjectTeamMember = {
 };
 
 type ExpectedCreateDatabaseBranchRequest = {
-  readonly sourceDatabaseId?: string;
+  readonly sourceDatabaseId?: DatabaseId;
 };
 
 const staticSdkParity: readonly [

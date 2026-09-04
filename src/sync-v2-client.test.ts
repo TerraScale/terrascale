@@ -194,4 +194,107 @@ describe("current reactive client", () => {
     );
     assert.equal(client.getSnapshot().online, false);
   });
+
+  test("uses CDN HTTP by default with canonical URLs, capability headers, and byte-safe frames", async () => {
+    const requests: Request[] = [];
+    const initial = wireSnapshot([item("one", "raw-\u0000-\u00ff")], 7n, 3n, 2n);
+    const nextItems = [item("one", "changed")];
+    const next = {
+      kind: "delta" as const,
+      subscription: "orders",
+      view_generation: 3n,
+      from_revision: 7n,
+      to_revision: 8n,
+      operations: [{ kind: "update" as const, identity: "one", fields: [{ path: "value", value: encoder.encode("changed") }] }],
+      digest: syncV2ResultDigest(nextItems),
+      checkpoint: new Uint8Array([0, 255, 1]),
+    };
+    const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const request = new Request(input, init);
+      requests.push(request);
+      if (request.method === "POST") {
+        return Response.json({
+          viewId: "orders",
+          generation: 3,
+          checkpoint: "Y3AtNw==",
+          snapshotUrls: ["https://attacker.invalid/wrong-path"],
+          logUrl: "https://attacker.invalid/wrong-log",
+          capability: "cap-equivalent",
+        });
+      }
+      if (request.url.endsWith("/snapshot/0")) {
+        return new Response(serverFrame({ kind: "snapshot", subscription: "orders", snapshot: initial }).buffer as ArrayBuffer, {
+          headers: { "content-type": "application/msgpack" },
+        });
+      }
+      assert.equal(new URL(request.url).pathname, "/api/v1/reactive/views/orders/3/log");
+      assert.equal(new URL(request.url).searchParams.get("offset"), "7");
+      assert.equal(request.headers.get("x-terrascale-view-capability"), "cap-equivalent");
+      return new Response(serverFrame(next).buffer as ArrayBuffer, { headers: { "content-type": "application/msgpack" } });
+    };
+
+    const client = new TerraScaleSyncV2Client({
+      apiBaseUrl: "https://member.example",
+      syncBaseUrl: "https://sync.api.terrascale.tech",
+      accessToken: "session-token",
+      fetch,
+    });
+    const live = await client.subscribe({
+      subscription: "orders",
+      databaseId: "db-1",
+      query: "select * from orders",
+      parameters: new Uint8Array([0, 255, 1]),
+      autoStart: false,
+    });
+    assert.equal(live.transport, "http");
+    assert.equal(live.logUrl, "https://sync.api.terrascale.tech/api/v1/reactive/views/orders/3/log");
+    assert.equal(live.snapshotUrls[0], "https://sync.api.terrascale.tech/api/v1/reactive/views/orders/3/snapshot/0");
+    assert.equal(requests[0]!.headers.get("authorization"), "Bearer session-token");
+    const attach = JSON.parse(await requests[0]!.clone().text()) as { parameters: string; checkpoint: string | null };
+    assert.equal(attach.parameters, "AP8B");
+    assert.equal(attach.checkpoint, null);
+    assert.deepEqual(live.view.getItems()[0]!.value.value, encoder.encode("raw-\u0000-\u00ff"));
+
+    await live.poll();
+    assert.equal(live.view.getRevision(), 8n);
+    assert.deepEqual(live.view.getItems()[0]!.value.value, encoder.encode("changed"));
+  });
+
+  test("resumes with an opaque checkpoint and reports typed retention expiry", async () => {
+    const requests: Request[] = [];
+    const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const request = new Request(input, init);
+      requests.push(request);
+      if (request.method === "POST") {
+        return Response.json({
+          viewId: "resume-view",
+          generation: 4,
+          checkpoint: "AAE=",
+          capability: "cap-resume",
+          snapshotUrls: [],
+        });
+      }
+      return Response.json({ error: { reason: "retention_advanced", message: "history has expired" } }, { status: 410 });
+    };
+    const client = new TerraScaleSyncV2Client({
+      apiBaseUrl: "https://member.example",
+      syncBaseUrl: "https://sync.api.terrascale.tech",
+      fetch,
+    });
+    const live = await client.subscribe({
+      subscription: "resume",
+      databaseId: "db-2",
+      query: "select * from docs",
+      parameters: new Uint8Array([255]),
+      checkpoint: new Uint8Array([0xff, 0x00]),
+      autoStart: false,
+    });
+    const attach = JSON.parse(await requests[0]!.clone().text()) as { checkpoint: string };
+    assert.equal(attach.checkpoint, "/wA=");
+    await assert.rejects(
+      () => live.poll(),
+      (error: unknown) => error instanceof TerraScaleSyncV2ClientError &&
+        error.code === "reset_required" && error.reset?.reason === "retention-advanced",
+    );
+  });
 });

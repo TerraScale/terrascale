@@ -23,6 +23,11 @@ export type RestoreId = Ulid;
 
 const ulidPattern = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
 
+/** Return true when the value is a well-formed ULID literal. */
+export function isUlid(value: string): value is Ulid {
+  return ulidPattern.test(value);
+}
+
 /** Return the value branded as a Ulid when it is a well-formed ULID literal. */
 export function tryUlid(value: string): Ulid | undefined {
   return ulidPattern.test(value) ? (value as Ulid) : undefined;
