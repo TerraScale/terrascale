@@ -122,10 +122,11 @@ use crate::usage::{
 #[cfg(test)]
 use super::faults::FaultPlan;
 use super::{
-    BackfillProgress, DescriptorListing, DescriptorRegistration, ExpiredTtlKey,
-    IndexDescriptorError, JournalKind, JournalProvenance, PublishedCommit, PublishedWrite,
-    ScanFilter, ScanOp, SnapshotReadError, StorageOpenError, StoragePort, StorageRootId,
-    UsageFactPosition, UsageStorageError,
+    BackfillProgress, DescriptorListing, DescriptorRegistration, DocumentMergeState,
+    DocumentRevisionEntry, ExpiredTtlKey, IndexDescriptorError, JournalKind, JournalProvenance,
+    MergeConflictEntry, MergeKernelEntry, MergePolicy, MergeSchema, MergeSchemaError,
+    PublishedCommit, PublishedWrite, ScanFilter, ScanOp, SnapshotReadError, StorageOpenError,
+    StoragePort, StorageRootId, UsageFactPosition, UsageStorageError,
 };
 use super::{
     codec,
@@ -516,6 +517,50 @@ CREATE TABLE IF NOT EXISTS usage_counters (
     seq_hi INTEGER NOT NULL,
     ops    INTEGER NOT NULL
 ) WITHOUT ROWID;
+
+-- Declared merge schemas (S-05 D-36): one row per collection naming the
+-- typed CRDT fields. Schema-free collections have no row and merge with
+-- the remove-wins map default, storing no per-field kernels.
+CREATE TABLE IF NOT EXISTS merge_schemas (
+    collection TEXT PRIMARY KEY,
+    schema     TEXT NOT NULL
+) WITHOUT ROWID;
+
+-- Per-field causal kernels (S-05 D-36): the newest stamp that contributed
+-- to one field of one document. Only declared collections write rows
+-- here; schema-free collections store none.
+CREATE TABLE IF NOT EXISTS merge_kernels (
+    tenant     TEXT    NOT NULL,
+    collection TEXT    NOT NULL,
+    id         TEXT    NOT NULL,
+    field      TEXT    NOT NULL,
+    hlc        INTEGER NOT NULL,
+    origin     TEXT    NOT NULL DEFAULT '',
+    PRIMARY KEY (tenant, collection, id, field)
+) WITHOUT ROWID;
+
+-- Deterministic conflict losers (S-05 D-36): every merge that superseded
+-- one side records the loser with the winner, policy, and explanation.
+-- Both regions reaching the same merge compute the same row, so history
+-- explanations are stable across regions.
+CREATE TABLE IF NOT EXISTS merge_conflicts (
+    tenant             TEXT    NOT NULL,
+    collection         TEXT    NOT NULL,
+    id                 TEXT    NOT NULL,
+    loser_commit_ulid  TEXT    NOT NULL,
+    loser_hlc          INTEGER NOT NULL,
+    loser_origin       TEXT    NOT NULL DEFAULT '',
+    loser_deleted      INTEGER NOT NULL,
+    winner_commit_ulid TEXT    NOT NULL,
+    winner_hlc         INTEGER NOT NULL,
+    winner_origin      TEXT    NOT NULL DEFAULT '',
+    policy             TEXT    NOT NULL,
+    explanation        TEXT    NOT NULL,
+    PRIMARY KEY (tenant, collection, id, loser_commit_ulid)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS merge_conflicts_key
+    ON merge_conflicts (tenant, collection, id);
 ";
 
 /// The zero root head a fresh location records, before any commit chains it.
@@ -2146,17 +2191,232 @@ impl StoragePort for SqliteStorage {
             .ok()
     }
 
+    fn declare_merge_schema(
+        &mut self,
+        collection: &CollectionName,
+        schema: &MergeSchema,
+    ) -> Result<(), MergeSchemaError> {
+        let writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        writer
+            .prepare_cached(
+                "INSERT INTO merge_schemas (collection, schema) VALUES (?1, ?2)
+                 ON CONFLICT(collection) DO UPDATE SET schema = excluded.schema",
+            )
+            .and_then(|mut statement| {
+                statement
+                    .execute(rusqlite::params![collection.as_str(), schema.to_canonical_string()])
+            })
+            .map(|_| ())
+            .map_err(|_| MergeSchemaError::Storage)
+    }
+
+    fn merge_schema(&self, collection: &CollectionName) -> Option<MergeSchema> {
+        let reader = self.reader();
+        let connection = reader.connection();
+        connection
+            .query_row(
+                "SELECT schema FROM merge_schemas WHERE collection = ?1",
+                rusqlite::params![collection.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|text| MergeSchema::parse_canonical(&text).ok())
+    }
+
+    fn document_merge_state(
+        &self,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        id: &DocumentId,
+    ) -> Option<DocumentMergeState> {
+        let reader = self.reader();
+        let connection = reader.connection();
+        let (body, deleted, hlc, origin, commit_ulid) = connection
+            .query_row(
+                "SELECT body, deleted, hlc, origin, commit_ulid FROM documents
+                 WHERE tenant = ?1 AND collection = ?2 AND id = ?3
+                 ORDER BY commit_seq DESC LIMIT 1",
+                rusqlite::params![tenant.as_str(), collection.as_str(), id.as_str()],
+                |row| {
+                    Ok((
+                        row.get::<_, Vec<u8>>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
+                },
+            )
+            .ok()?;
+        let deleted = deleted != 0;
+        let hlc = u64::try_from(hlc).unwrap_or(0);
+        let body =
+            if deleted { None } else { decode_document_body(&body).map(|doc| doc.value().clone()) };
+        Some(DocumentMergeState { body, deleted, hlc, origin, commit_ulid })
+    }
+
+    fn record_merge_conflict(
+        &mut self,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        id: &DocumentId,
+        conflict: &MergeConflictEntry,
+    ) -> Result<(), ()> {
+        let writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        writer
+            .prepare_cached(
+                "INSERT INTO merge_conflicts
+                 (tenant, collection, id, loser_commit_ulid, loser_hlc, loser_origin,
+                  loser_deleted, winner_commit_ulid, winner_hlc, winner_origin,
+                  policy, explanation)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                 ON CONFLICT(tenant, collection, id, loser_commit_ulid) DO UPDATE SET
+                  loser_hlc = excluded.loser_hlc, loser_origin = excluded.loser_origin,
+                  loser_deleted = excluded.loser_deleted,
+                  winner_commit_ulid = excluded.winner_commit_ulid,
+                  winner_hlc = excluded.winner_hlc, winner_origin = excluded.winner_origin,
+                  policy = excluded.policy, explanation = excluded.explanation",
+            )
+            .and_then(|mut statement| {
+                statement.execute(rusqlite::params![
+                    tenant.as_str(),
+                    collection.as_str(),
+                    id.as_str(),
+                    conflict.loser_commit_ulid,
+                    conflict.loser_hlc as i64,
+                    conflict.loser_origin,
+                    i64::from(conflict.loser_deleted),
+                    conflict.winner_commit_ulid,
+                    conflict.winner_hlc as i64,
+                    conflict.winner_origin,
+                    conflict.policy,
+                    conflict.explanation,
+                ])
+            })
+            .map(|_| ())
+            .map_err(|_| ())
+    }
+
+    fn merge_conflicts_for(
+        &self,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        id: &DocumentId,
+        limit: u32,
+    ) -> Vec<MergeConflictEntry> {
+        let reader = self.reader();
+        let connection = reader.connection();
+        let Ok(mut statement) = connection.prepare(
+            "SELECT loser_commit_ulid, loser_hlc, loser_origin, loser_deleted,
+                    winner_commit_ulid, winner_hlc, winner_origin, policy, explanation
+             FROM merge_conflicts
+             WHERE tenant = ?1 AND collection = ?2 AND id = ?3
+             ORDER BY loser_commit_ulid DESC LIMIT ?4",
+        ) else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map(
+            rusqlite::params![tenant.as_str(), collection.as_str(), id.as_str(), i64::from(limit)],
+            |row| {
+                Ok(MergeConflictEntry {
+                    loser_commit_ulid: row.get::<_, String>(0)?,
+                    loser_hlc: u64::try_from(row.get::<_, i64>(1)?).unwrap_or(0),
+                    loser_origin: row.get::<_, String>(2)?,
+                    loser_deleted: row.get::<_, i64>(3)? != 0,
+                    winner_commit_ulid: row.get::<_, String>(4)?,
+                    winner_hlc: u64::try_from(row.get::<_, i64>(5)?).unwrap_or(0),
+                    winner_origin: row.get::<_, String>(6)?,
+                    policy: row.get::<_, String>(7)?,
+                    explanation: row.get::<_, String>(8)?,
+                })
+            },
+        ) else {
+            return Vec::new();
+        };
+        rows.filter_map(Result::ok).collect()
+    }
+
+    fn upsert_merge_kernel(
+        &mut self,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        id: &DocumentId,
+        field: &str,
+        hlc: u64,
+        origin: &str,
+    ) -> Result<(), ()> {
+        let writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        writer
+            .prepare_cached(
+                "INSERT INTO merge_kernels (tenant, collection, id, field, hlc, origin)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(tenant, collection, id, field) DO UPDATE SET
+                  hlc = excluded.hlc, origin = excluded.origin",
+            )
+            .and_then(|mut statement| {
+                statement.execute(rusqlite::params![
+                    tenant.as_str(),
+                    collection.as_str(),
+                    id.as_str(),
+                    field,
+                    hlc as i64,
+                    origin,
+                ])
+            })
+            .map(|_| ())
+            .map_err(|_| ())
+    }
+
+    fn merge_kernels_for(
+        &self,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        id: &DocumentId,
+    ) -> Vec<MergeKernelEntry> {
+        let reader = self.reader();
+        let connection = reader.connection();
+        let Ok(mut statement) = connection.prepare(
+            "SELECT field, hlc, origin FROM merge_kernels
+             WHERE tenant = ?1 AND collection = ?2 AND id = ?3 ORDER BY field",
+        ) else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map(
+            rusqlite::params![tenant.as_str(), collection.as_str(), id.as_str()],
+            |row| {
+                Ok(MergeKernelEntry {
+                    field: row.get::<_, String>(0)?,
+                    hlc: u64::try_from(row.get::<_, i64>(1)?).unwrap_or(0),
+                    origin: row.get::<_, String>(2)?,
+                })
+            },
+        ) else {
+            return Vec::new();
+        };
+        rows.filter_map(Result::ok).collect()
+    }
+
+    #[allow(clippy::too_many_lines, reason = "the history union of live rows plus recorded losers")]
     fn document_history_in_collection(
         &self,
         tenant: &TenantId,
         collection: &CollectionName,
         id: &DocumentId,
         limit: u32,
-    ) -> Vec<crate::storage::DocumentRevisionEntry> {
+    ) -> Vec<DocumentRevisionEntry> {
+        if limit == 0 {
+            return Vec::new();
+        }
         let reader = self.reader();
         let connection = reader.connection();
+        // Live journal rows, newest first, with the conflict-viewer facts
+        // the dashboard reads directly: dot, HLC, and the policy that
+        // produced the row. Origin rows state `origin`; replicated rows
+        // look up their merge record by winner dot when one exists and
+        // report `clean-apply` otherwise.
+        let mut entries: Vec<DocumentRevisionEntry> = Vec::new();
         let Ok(mut statement) = connection.prepare(
-            "SELECT revision, deleted FROM documents
+            "SELECT revision, deleted, commit_ulid, hlc, origin, kind FROM documents
              WHERE tenant = ?1 AND collection = ?2 AND id = ?3
              ORDER BY commit_seq DESC LIMIT ?4",
         ) else {
@@ -2165,15 +2425,126 @@ impl StoragePort for SqliteStorage {
         let Ok(rows) = statement.query_map(
             rusqlite::params![tenant.as_str(), collection.as_str(), id.as_str(), i64::from(limit)],
             |row| {
-                Ok(crate::storage::DocumentRevisionEntry {
-                    revision: row.get::<_, String>(0)?,
-                    deleted: row.get::<_, i64>(1)? != 0,
-                })
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
             },
         ) else {
             return Vec::new();
         };
-        rows.filter_map(Result::ok).collect()
+        let mut winner_lookups: Vec<(String, bool, String, i64, String, String)> = Vec::new();
+        for row in rows.filter_map(Result::ok) {
+            let (revision, deleted, commit_ulid, hlc, origin, kind) = row;
+            winner_lookups.push((revision, deleted != 0, commit_ulid, hlc, origin, kind));
+        }
+        drop(statement);
+        for (revision, deleted, commit_ulid, hlc_row, origin, kind) in winner_lookups {
+            if entries.len() >= usize::try_from(limit).unwrap_or(usize::MAX) {
+                break;
+            }
+            let hlc = u64::try_from(hlc_row).unwrap_or(0);
+            let (policy, explanation) = if kind == ROW_KIND_REPLICATED {
+                connection
+                    .query_row(
+                        "SELECT policy, explanation FROM merge_conflicts
+                         WHERE tenant = ?1 AND collection = ?2 AND id = ?3
+                           AND winner_commit_ulid = ?4 LIMIT 1",
+                        rusqlite::params![
+                            tenant.as_str(),
+                            collection.as_str(),
+                            id.as_str(),
+                            commit_ulid
+                        ],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                    )
+                    .unwrap_or_else(|_| {
+                        (
+                            MergePolicy::CleanApply.as_str().to_owned(),
+                            format!(
+                                "clean apply of {commit_ulid} at hlc {hlc} from '{origin}': no prior row"
+                            ),
+                        )
+                    })
+            } else {
+                (
+                    MergePolicy::Origin.as_str().to_owned(),
+                    format!("origin write {commit_ulid} at hlc {hlc}"),
+                )
+            };
+            entries.push(DocumentRevisionEntry {
+                revision,
+                deleted,
+                commit_ulid,
+                hlc,
+                origin,
+                policy,
+                explanation,
+            });
+        }
+        // Recorded losers follow the live rows, newest conflict first, so
+        // `db.history(id)` surfaces why each superseded version lost with
+        // the same dot/HLC/policy shape.
+        let remaining =
+            u32::try_from(entries.len()).ok().and_then(|used| limit.checked_sub(used)).unwrap_or(0);
+        if remaining == 0 {
+            return entries;
+        }
+        let Ok(mut conflicts) = connection.prepare(
+            "SELECT loser_commit_ulid, loser_hlc, loser_origin, loser_deleted,
+                    winner_commit_ulid, policy, explanation
+             FROM merge_conflicts
+             WHERE tenant = ?1 AND collection = ?2 AND id = ?3
+             ORDER BY loser_commit_ulid DESC LIMIT ?4",
+        ) else {
+            return entries;
+        };
+        let Ok(conflict_rows) = conflicts.query_map(
+            rusqlite::params![
+                tenant.as_str(),
+                collection.as_str(),
+                id.as_str(),
+                i64::from(remaining)
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            },
+        ) else {
+            return entries;
+        };
+        for row in conflict_rows.filter_map(Result::ok) {
+            let (
+                loser_commit_ulid,
+                loser_hlc,
+                loser_origin,
+                loser_deleted,
+                _winner_commit_ulid,
+                policy,
+                explanation,
+            ) = row;
+            entries.push(DocumentRevisionEntry {
+                revision: format!("conflict-{loser_commit_ulid}"),
+                deleted: loser_deleted != 0,
+                commit_ulid: loser_commit_ulid,
+                hlc: u64::try_from(loser_hlc).unwrap_or(0),
+                origin: loser_origin,
+                policy,
+                explanation,
+            });
+        }
+        entries
     }
 
     fn document_revision_in_collection_at(

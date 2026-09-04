@@ -192,12 +192,286 @@ pub struct DescriptorListing {
 /// One retained revision of a document: the history view of the folded
 /// journal (D-42 — superseded rows stay reachable until the pruner passes
 /// every consumer frontier and the 30-day floor).
+///
+/// D-36/D-48: every entry carries the conflict-viewer facts — the writing
+/// dot (`commit_ulid`), the hybrid stamp, and the deterministic policy plus
+/// its explanation — so the dashboard's `db.history(id)` can state why one
+/// version won without a second lookup.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentRevisionEntry {
-    /// The revision string (`seq-version`).
+    /// The revision string (`seq-version` for live rows,
+    /// `conflict-<commit_ulid>` for a recorded merge loser).
     pub revision: String,
     /// Whether this revision is the tombstone.
     pub deleted: bool,
+    /// The writing dot: the row's `commit_ulid` (the source commit for a
+    /// replicated row, the local operation for an origin row, the loser's
+    /// commit for a conflict entry).
+    pub commit_ulid: String,
+    /// The hybrid logical stamp the deterministic merge compares.
+    pub hlc: u64,
+    /// The writing region's identity (empty for a local row in-process).
+    pub origin: String,
+    /// The deterministic policy that produced this revision
+    /// ([`MergePolicy::as_str`]).
+    pub policy: String,
+    /// The deterministic, human-readable explanation of the policy
+    /// outcome (field-level for merges, stable across regions).
+    pub explanation: String,
+}
+
+/// One typed merge field kind a collection may declare (D-36, ADR 0022).
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum MergeFieldKind {
+    /// A monotonic integer counter converging to the highest observed
+    /// value (the idempotent full-state form; per-actor PN components
+    /// follow when per-field dots land).
+    PnCounter,
+    /// An array set converging by union: a concurrent add on either side
+    /// survives.
+    AddWinsSet,
+    /// An array set converging by intersection: a concurrent remove on
+    /// either side wins.
+    RemoveWinsSet,
+    /// A register keeping every distinct concurrent value as a sorted
+    /// array.
+    MvRegister,
+}
+
+impl MergeFieldKind {
+    /// Returns the stable schema-text name of this kind.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PnCounter => "pn-counter",
+            Self::AddWinsSet => "add-wins-set",
+            Self::RemoveWinsSet => "remove-wins-set",
+            Self::MvRegister => "mv-register",
+        }
+    }
+
+    /// Parses one schema-text kind name.
+    #[must_use]
+    pub fn try_from_str(value: &str) -> Option<Self> {
+        match value {
+            "pn-counter" => Some(Self::PnCounter),
+            "add-wins-set" => Some(Self::AddWinsSet),
+            "remove-wins-set" => Some(Self::RemoveWinsSet),
+            "mv-register" => Some(Self::MvRegister),
+            _ => None,
+        }
+    }
+}
+
+/// Why one merge-schema declaration was refused.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MergeSchemaError {
+    /// The schema names no fields.
+    Empty,
+    /// One field name is invalid (empty, over 255 bytes, control
+    /// characters, or leading/trailing whitespace).
+    InvalidField,
+    /// One field kind name is unknown.
+    UnknownKind,
+    /// The schema names more than [`MAX_MERGE_SCHEMA_FIELDS`] fields.
+    TooManyFields,
+    /// Durable registration failed.
+    Storage,
+}
+
+/// The maximum number of typed fields one merge schema may declare.
+pub const MAX_MERGE_SCHEMA_FIELDS: usize = 64;
+
+/// One collection's declared merge schema (D-36): the typed CRDT fields
+/// whose merges use per-field kernels. Collections without a schema merge
+/// with the remove-wins map default plus the HLC tiebreak and store no
+/// per-field kernels.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MergeSchema {
+    fields: std::collections::BTreeMap<String, MergeFieldKind>,
+}
+
+impl MergeSchema {
+    /// Creates one schema from its field map, validating every name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MergeSchemaError`] when the map is empty, oversized, or
+    /// names an invalid field.
+    pub fn try_new(
+        fields: std::collections::BTreeMap<String, MergeFieldKind>,
+    ) -> Result<Self, MergeSchemaError> {
+        if fields.is_empty() {
+            return Err(MergeSchemaError::Empty);
+        }
+        if fields.len() > MAX_MERGE_SCHEMA_FIELDS {
+            return Err(MergeSchemaError::TooManyFields);
+        }
+        for field in fields.keys() {
+            if !is_valid_merge_field(field) {
+                return Err(MergeSchemaError::InvalidField);
+            }
+        }
+        Ok(Self { fields })
+    }
+
+    /// Returns one field's declared kind, if any.
+    #[must_use]
+    pub fn get(&self, field: &str) -> Option<MergeFieldKind> {
+        self.fields.get(field).copied()
+    }
+
+    /// Returns the declared fields in canonical order.
+    #[must_use]
+    pub fn fields(&self) -> &std::collections::BTreeMap<String, MergeFieldKind> {
+        &self.fields
+    }
+
+    /// Reports whether the schema declares no fields.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty()
+    }
+
+    /// Renders the canonical schema text (`field=kind;…`, sorted).
+    #[must_use]
+    pub fn to_canonical_string(&self) -> String {
+        self.fields
+            .iter()
+            .map(|(field, kind)| format!("{field}={}", kind.as_str()))
+            .collect::<Vec<_>>()
+            .join(";")
+    }
+
+    /// Parses the canonical schema text.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MergeSchemaError`] when the text is empty, oversized,
+    /// names an invalid field, or names an unknown kind.
+    pub fn parse_canonical(text: &str) -> Result<Self, MergeSchemaError> {
+        if text.is_empty() {
+            return Err(MergeSchemaError::Empty);
+        }
+        let mut fields = std::collections::BTreeMap::new();
+        for part in text.split(';') {
+            let (field, kind) = part.split_once('=').ok_or(MergeSchemaError::UnknownKind)?;
+            if !is_valid_merge_field(field) {
+                return Err(MergeSchemaError::InvalidField);
+            }
+            let kind = MergeFieldKind::try_from_str(kind).ok_or(MergeSchemaError::UnknownKind)?;
+            fields.insert(field.to_owned(), kind);
+        }
+        Self::try_new(fields)
+    }
+}
+
+/// Validates one merge-schema field name: non-empty, at most 255 bytes,
+/// no control characters, no leading or trailing whitespace.
+fn is_valid_merge_field(value: &str) -> bool {
+    if value.is_empty() || value.len() > 255 {
+        return false;
+    }
+    if value.chars().any(char::is_control) {
+        return false;
+    }
+    value == value.trim()
+}
+
+/// The deterministic policy that produced one history revision (D-36/D-48).
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum MergePolicy {
+    /// A local origin write (no merge).
+    Origin,
+    /// A replicated apply with no prior row.
+    CleanApply,
+    /// Concurrent values ordered by the `(hlc, origin)` total order.
+    HlcTiebreak,
+    /// A concurrent removal beat a concurrent assignment.
+    RemoveWins,
+    /// A declared PN-counter field converged to the highest observed value.
+    PnCounterMax,
+    /// A declared add-wins set field converged by union.
+    AddWinsUnion,
+    /// A declared remove-wins set field converged by intersection.
+    RemoveWinsIntersection,
+    /// A declared MV-register field kept every distinct concurrent value.
+    MvUnion,
+    /// A field-level merge combining more than one per-field policy.
+    Mixed,
+}
+
+impl MergePolicy {
+    /// Returns the stable history-viewer name of this policy.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Origin => "origin",
+            Self::CleanApply => "clean-apply",
+            Self::HlcTiebreak => "hlc-tiebreak",
+            Self::RemoveWins => "remove-wins",
+            Self::PnCounterMax => "pn-counter-max",
+            Self::AddWinsUnion => "add-wins-union",
+            Self::RemoveWinsIntersection => "remove-wins-intersection",
+            Self::MvUnion => "mv-union",
+            Self::Mixed => "mixed",
+        }
+    }
+}
+
+/// One deterministic conflict record (D-36): the loser a merge superseded,
+/// the winner it kept, and the policy plus its explanation. Both regions
+/// reaching the same merge compute the same record, so history explanations
+/// are stable across regions.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MergeConflictEntry {
+    /// The loser's writing dot.
+    pub loser_commit_ulid: String,
+    /// The loser's hybrid stamp.
+    pub loser_hlc: u64,
+    /// The loser's writing region.
+    pub loser_origin: String,
+    /// Whether the loser was a tombstone.
+    pub loser_deleted: bool,
+    /// The winner's writing dot.
+    pub winner_commit_ulid: String,
+    /// The winner's hybrid stamp.
+    pub winner_hlc: u64,
+    /// The winner's writing region.
+    pub winner_origin: String,
+    /// The deterministic policy ([`MergePolicy::as_str`]).
+    pub policy: String,
+    /// The deterministic explanation of the outcome.
+    pub explanation: String,
+}
+
+/// One per-field causal kernel of a declared collection (D-36): the newest
+/// stamp that contributed to the field. Only collections with a declared
+/// merge schema store kernels; schema-free collections store none.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MergeKernelEntry {
+    /// The field the kernel covers.
+    pub field: String,
+    /// The newest contributing hybrid stamp.
+    pub hlc: u64,
+    /// The newest contributing region.
+    pub origin: String,
+}
+
+/// One document's current merge input: the live body (if any) plus the
+/// provenance the deterministic merge compares.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DocumentMergeState {
+    /// The live body's value, or `None` for a tombstone.
+    pub body: Option<crate::types::DocumentValue>,
+    /// Whether the current row is a tombstone.
+    pub deleted: bool,
+    /// The current row's hybrid stamp.
+    pub hlc: u64,
+    /// The current row's writing region.
+    pub origin: String,
+    /// The current row's writing dot.
+    pub commit_ulid: String,
 }
 
 /// One live key whose TTL expiry has passed (S-02 slice D): the sweep's
@@ -631,6 +905,83 @@ pub(crate) trait StoragePort: Send {
 
     /// Returns the currently published sequence and root identity.
     fn published_state(&self) -> (StorageSequence, StorageRootId);
+
+    /// Declares one collection's typed merge schema (D-36): the fields
+    /// whose merges use per-field kernels. The default stores no schema.
+    fn declare_merge_schema(
+        &mut self,
+        _collection: &CollectionName,
+        _schema: &MergeSchema,
+    ) -> Result<(), MergeSchemaError> {
+        Err(MergeSchemaError::Storage)
+    }
+
+    /// Returns one collection's declared merge schema, if any.
+    fn merge_schema(&self, _collection: &CollectionName) -> Option<MergeSchema> {
+        None
+    }
+
+    /// Returns one document's current merge input: the live body (if any)
+    /// plus the provenance and dot the deterministic merge compares.
+    /// `None` when the key has no row at all.
+    fn document_merge_state(
+        &self,
+        _tenant: &TenantId,
+        _collection: &CollectionName,
+        _id: &DocumentId,
+    ) -> Option<DocumentMergeState> {
+        None
+    }
+
+    /// Records one deterministic conflict loser (D-36): the side a merge
+    /// superseded, with the winner, policy, and explanation. The default
+    /// keeps no conflicts.
+    fn record_merge_conflict(
+        &mut self,
+        _tenant: &TenantId,
+        _collection: &CollectionName,
+        _id: &DocumentId,
+        _conflict: &MergeConflictEntry,
+    ) -> Result<(), ()> {
+        Ok(())
+    }
+
+    /// Returns one document's recorded conflict losers, newest first,
+    /// bounded by `limit`. The default serves none.
+    fn merge_conflicts_for(
+        &self,
+        _tenant: &TenantId,
+        _collection: &CollectionName,
+        _id: &DocumentId,
+        _limit: u32,
+    ) -> Vec<MergeConflictEntry> {
+        Vec::new()
+    }
+
+    /// Stores one per-field causal kernel of a declared collection
+    /// (D-36). Schema-free collections never call this seam.
+    fn upsert_merge_kernel(
+        &mut self,
+        _tenant: &TenantId,
+        _collection: &CollectionName,
+        _id: &DocumentId,
+        _field: &str,
+        _hlc: u64,
+        _origin: &str,
+    ) -> Result<(), ()> {
+        Ok(())
+    }
+
+    /// Returns one document's stored per-field kernels in field order.
+    /// Schema-free collections serve none.
+    fn merge_kernels_for(
+        &self,
+        _tenant: &TenantId,
+        _collection: &CollectionName,
+        _id: &DocumentId,
+    ) -> Vec<MergeKernelEntry> {
+        Vec::new()
+    }
 
     /// Runs one retention sweep: prune publication history below every
     /// consumer frontier, then checkpoint the WAL.

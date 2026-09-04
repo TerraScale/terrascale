@@ -18,6 +18,7 @@ use std::{
 
 mod authorized;
 mod ingest;
+pub(crate) mod merge;
 mod metadata;
 mod patch;
 
@@ -35,6 +36,10 @@ mod tests;
 
 pub use crate::storage::DatabaseOwner;
 pub use crate::storage::database_file;
+pub use crate::storage::{
+    DocumentMergeState, DocumentRevisionEntry, MergeConflictEntry, MergeFieldKind,
+    MergeKernelEntry, MergePolicy, MergeSchema, MergeSchemaError,
+};
 pub use authorized::{AuthorizedEngine, AuthorizedEngineError, AuthorizedSession};
 pub use ingest::{
     BulkIngestRequest, IngestBatchReceipt, IngestConflictMode, IngestReceipt, IngestRefusal,
@@ -727,16 +732,6 @@ impl AppliedReplication {
     pub const fn superseded(&self) -> bool {
         self.superseded
     }
-}
-
-/// The deterministic merge's verdict (D-36): which side of a replicated
-/// apply the `(hlc, origin)` total order keeps.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum MergeVerdict {
-    /// The incoming record wins and publishes.
-    IncomingWins,
-    /// The current row wins; the incoming record publishes nothing.
-    CurrentWins,
 }
 
 /// A rejected local commit.
@@ -1653,41 +1648,146 @@ impl Engine {
         }
     }
 
-    /// The deterministic merge's verdict for one incoming record.
-    fn merge_verdict(&self, scope: &TenantScope, record: &ReplicatedRecord) -> MergeVerdict {
-        let storage = self.lock_storage().expect("the storage lock is live");
-        let Some((current_hlc, current_origin, current_deleted)) =
-            storage.port.document_provenance_at(scope.tenant(), &record.collection, &record.id)
-        else {
-            return MergeVerdict::IncomingWins;
+    /// Declares one collection's typed merge schema (D-36): the fields
+    /// whose merges use per-field kernels. Schema-free collections keep
+    /// the remove-wins map default and store no kernels.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::InvalidDocument`] when the schema is invalid,
+    /// [`EngineError::ScopeMismatch`] for a foreign scope, and
+    /// [`EngineError::StorageFailure`] when durable registration fails.
+    pub fn declare_merge_schema(
+        &self,
+        scope: &TenantScope,
+        collection: &CollectionName,
+        schema: &crate::storage::MergeSchema,
+    ) -> Result<(), EngineError> {
+        self.validate_scope(scope)?;
+        let mut storage = self.lock_storage()?;
+        storage.port.declare_merge_schema(collection, schema).map_err(|error| match error {
+            crate::storage::MergeSchemaError::Storage => EngineError::StorageFailure,
+            _ => EngineError::InvalidDocument,
+        })
+    }
+
+    /// Returns one collection's declared merge schema, if any.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::ScopeMismatch`] for a foreign scope.
+    pub fn merge_schema(
+        &self,
+        scope: &TenantScope,
+        collection: &CollectionName,
+    ) -> Result<Option<crate::storage::MergeSchema>, EngineError> {
+        self.validate_scope(scope)?;
+        let storage = self.lock_storage().map_err(|_| EngineError::StorageFailure)?;
+        Ok(storage.port.merge_schema(collection))
+    }
+
+    /// Returns one document's recorded conflict losers, newest first
+    /// (D-36): the deterministic history the conflict viewer reads.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::ScopeMismatch`] for a foreign scope.
+    pub fn merge_conflicts_for(
+        &self,
+        scope: &TenantScope,
+        collection: &CollectionName,
+        id: &DocumentId,
+        limit: u32,
+    ) -> Result<Vec<crate::storage::MergeConflictEntry>, EngineError> {
+        self.validate_scope(scope)?;
+        let storage = self.lock_storage().map_err(|_| EngineError::StorageFailure)?;
+        Ok(storage.port.merge_conflicts_for(scope.tenant(), collection, id, limit))
+    }
+
+    /// Returns one document's stored per-field kernels in field order
+    /// (D-36). Schema-free collections serve none.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::ScopeMismatch`] for a foreign scope.
+    pub fn merge_kernels_for(
+        &self,
+        scope: &TenantScope,
+        collection: &CollectionName,
+        id: &DocumentId,
+    ) -> Result<Vec<crate::storage::MergeKernelEntry>, EngineError> {
+        self.validate_scope(scope)?;
+        let storage = self.lock_storage().map_err(|_| EngineError::StorageFailure)?;
+        Ok(storage.port.merge_kernels_for(scope.tenant(), collection, id))
+    }
+
+    /// Records one deterministic conflict loser plus the per-field kernels
+    /// of a declared collection. Schema-free collections record the
+    /// conflict but store no kernels.
+    #[allow(clippy::too_many_arguments, reason = "the conflict record's fixed dimensions")]
+    fn record_conflict_and_kernels(
+        &self,
+        scope: &TenantScope,
+        record: &ReplicatedRecord,
+        winner_hlc: u64,
+        winner_origin: &str,
+        loser_commit: &str,
+        loser_hlc: u64,
+        loser_origin: &str,
+        loser_deleted: bool,
+        winner_commit: &str,
+        policy: crate::storage::MergePolicy,
+        explanation: &str,
+        kernel_fields: &[String],
+    ) {
+        let Ok(mut storage) = self.lock_storage() else { return };
+        let conflict = crate::storage::MergeConflictEntry {
+            loser_commit_ulid: loser_commit.to_owned(),
+            loser_hlc,
+            loser_origin: loser_origin.to_owned(),
+            loser_deleted,
+            winner_commit_ulid: winner_commit.to_owned(),
+            winner_hlc,
+            winner_origin: winner_origin.to_owned(),
+            policy: policy.as_str().to_owned(),
+            explanation: explanation.to_owned(),
         };
-        let incoming = (record.hlc, record.origin.as_str());
-        let current = (current_hlc, current_origin.as_str());
-        match incoming.cmp(&current) {
-            std::cmp::Ordering::Greater => MergeVerdict::IncomingWins,
-            std::cmp::Ordering::Less => MergeVerdict::CurrentWins,
-            // An exact tie resolves remove-wins (D-36): a tombstone
-            // beats a live value, and two tombstones agree.
-            std::cmp::Ordering::Equal => {
-                if record.deleted || !current_deleted {
-                    MergeVerdict::IncomingWins
-                } else {
-                    MergeVerdict::CurrentWins
-                }
+        let _ = storage.port.record_merge_conflict(
+            scope.tenant(),
+            &record.collection,
+            &record.id,
+            &conflict,
+        );
+        let has_schema = storage.port.merge_schema(&record.collection).is_some();
+        if has_schema {
+            for field in kernel_fields {
+                let _ = storage.port.upsert_merge_kernel(
+                    scope.tenant(),
+                    &record.collection,
+                    &record.id,
+                    field,
+                    winner_hlc,
+                    winner_origin,
+                );
             }
         }
     }
 
     /// Applies one replicated record with the deterministic merge
-    /// (D-36): the incoming `(hlc, origin)` total order decides against
-    /// the current row's stamp — remove-wins on ties — and the clock
-    /// witnesses the remote stamp either way. A superseded record (the
-    /// current row wins) publishes nothing; the source region's history
-    /// keeps the loser and every region picks the same winner.
+    /// (D-36): a clean apply writes bytes; a true concurrent conflict of
+    /// two live objects merges per field — the remove-wins map default
+    /// plus the `(hlc, origin)` tiebreak, or the collection's declared
+    /// typed kernels — and records the loser with its deterministic
+    /// explanation. Tombstones fall back to the document-level
+    /// `(hlc, origin)` order with remove-wins on ties. The clock witnesses
+    /// the remote stamp either way. A superseded record (the current row
+    /// wins) publishes nothing; every region reaches the same verdict, so
+    /// convergence needs no coordination.
     ///
     /// # Errors
     ///
     /// Returns the engine's typed failure when the apply cannot run.
+    #[allow(clippy::too_many_lines, reason = "the merge's read/compute/publish/record stages")]
     pub fn apply_replicated(
         &self,
         scope: &TenantScope,
@@ -1695,39 +1795,286 @@ impl Engine {
     ) -> Result<AppliedReplication, EngineError> {
         let operation = OperationId::try_new(&format!("repl-{}", record.commit_ulid))
             .map_err(|_| EngineError::InvalidDocument)?;
-        // The deterministic merge (D-36): the clock always witnesses the
-        // remote stamp, then the `(hlc, origin)` total order decides —
-        // remove-wins on equal stamps. A superseded record publishes
-        // nothing: every region reaches the same verdict, so convergence
-        // needs no coordination.
+        // The clock always witnesses the remote stamp first.
         self.witness_replication_clock(record.hlc);
-        if self.merge_verdict(scope, record) == MergeVerdict::CurrentWins {
+        // Idempotency first (D-35): a re-applied dot replays its recorded
+        // publication instead of re-merging. Replicated rows store the
+        // SOURCE commit identity, so the lookup uses it — not the `repl-`
+        // binding — exactly like the commit path's row-identity view.
+        {
+            let storage = self.lock_storage().map_err(|_| EngineError::StorageFailure)?;
+            let source = OperationId::try_new(&record.commit_ulid)
+                .map_err(|_| EngineError::InvalidDocument)?;
+            if let Some(resolution) = storage.port.resolve_operation(scope.tenant(), &source) {
+                match resolution {
+                    storage::OperationResolution::Committed { sequence, durability } => {
+                        let receipt = CommitReceipt::new(operation, sequence, durability);
+                        return Ok(AppliedReplication::new(receipt, true));
+                    }
+                    storage::OperationResolution::Rejected(reason) => {
+                        return Err(match reason.to_commit_error() {
+                            CommitError::Conflict => EngineError::Conflict,
+                            CommitError::OperationIdReuse => {
+                                EngineError::OperationIdReuse { operation_id: operation }
+                            }
+                            _ => EngineError::StorageFailure,
+                        });
+                    }
+                }
+            }
+        }
+        // The current merge input, read under one short lock.
+        let (current_state, schema) = {
+            let storage = self.lock_storage().map_err(|_| EngineError::StorageFailure)?;
+            let state =
+                storage.port.document_merge_state(scope.tenant(), &record.collection, &record.id);
+            let schema = storage.port.merge_schema(&record.collection);
+            (state, schema)
+        };
+        let Some(current) = current_state else {
+            // A clean apply writes bytes (D-36): no conflict, no loser.
+            let outcome = self.apply_replicated_clean(scope, record, &operation)?;
+            // Declared collections open their per-field kernels on the
+            // clean apply; schema-free collections store none.
+            if schema.is_some()
+                && !record.deleted
+                && let DocumentValue::Object(fields) = &record.body
+            {
+                let field_names: Vec<String> = fields.keys().cloned().collect();
+                if let Ok(mut storage) = self.lock_storage() {
+                    for field in &field_names {
+                        let _ = storage.port.upsert_merge_kernel(
+                            scope.tenant(),
+                            &record.collection,
+                            &record.id,
+                            field,
+                            record.hlc,
+                            &record.origin,
+                        );
+                    }
+                }
+            }
+            return Ok(outcome);
+        };
+        // Tombstones merge at document level (D-36): remove-wins on ties.
+        if record.deleted || current.deleted {
+            return self.apply_replicated_tombstone(scope, record, &operation, &current);
+        }
+        // Both live: field-level merge when both bodies are objects.
+        let (Some(DocumentValue::Object(current_fields)), DocumentValue::Object(incoming_fields)) =
+            (current.body.as_ref(), &record.body)
+        else {
+            // Non-object bodies fall back to the document-level order.
+            return self.apply_replicated_tombstone(scope, record, &operation, &current);
+        };
+        // Identical bytes need no new row, unless this is a duplicate
+        // delivery of the same dot: then the operation ledger must replay
+        // the original receipt so the tailer counts it as a skip.
+        if current.body.as_ref() == Some(&record.body) {
+            if current.commit_ulid == record.commit_ulid {
+                return self.apply_replicated_clean(scope, record, &operation);
+            }
             return Ok(AppliedReplication::lost_merge());
         }
+        let (merged, policy, explanation) = merge::merge_object_fields(
+            current_fields,
+            current.hlc,
+            &current.origin,
+            &current.commit_ulid,
+            incoming_fields,
+            record.hlc,
+            &record.origin,
+            &record.commit_ulid,
+            schema.as_ref(),
+        );
+        let merged_value = DocumentValue::Object(merged.clone());
+        let current_value = DocumentValue::Object(current_fields.clone());
+        if merged_value == current_value {
+            // The current row wins every field: publish nothing, but the
+            // loser joins history with its deterministic explanation.
+            let kernel_fields: Vec<String> = merged.keys().cloned().collect();
+            let (winner_hlc, winner_origin) =
+                if merge::compare_stamps(current.hlc, &current.origin, record.hlc, &record.origin)
+                    == std::cmp::Ordering::Greater
+                {
+                    (current.hlc, current.origin.clone())
+                } else {
+                    (record.hlc, record.origin.clone())
+                };
+            // The kernels cover the surviving fields at the covering stamp.
+            self.record_conflict_and_kernels(
+                scope,
+                record,
+                winner_hlc,
+                &winner_origin,
+                &record.commit_ulid,
+                record.hlc,
+                &record.origin,
+                record.deleted,
+                &current.commit_ulid,
+                policy,
+                &explanation,
+                &kernel_fields,
+            );
+            return Ok(AppliedReplication::lost_merge());
+        }
+        // The merge produced new bytes: publish them under the incoming
+        // identity at the covering stamp, so both regions compute the same
+        // row without shipping merged bytes (replicated rows never re-ship).
+        let (cover_hlc, cover_origin) =
+            if merge::compare_stamps(current.hlc, &current.origin, record.hlc, &record.origin)
+                == std::cmp::Ordering::Greater
+            {
+                (current.hlc, current.origin.clone())
+            } else {
+                (record.hlc, record.origin.clone())
+            };
+        let merged_record = ReplicatedRecord {
+            collection: record.collection.clone(),
+            id: record.id.clone(),
+            body: merged_value,
+            deleted: false,
+            commit_ulid: record.commit_ulid.clone(),
+            hlc: cover_hlc,
+            origin: cover_origin.clone(),
+        };
+        let kernel_fields: Vec<String> = merged.keys().cloned().collect();
+        let outcome = self.apply_replicated_clean(scope, &merged_record, &operation)?;
+        // The replaced row is the loser; the merged row is the winner.
+        self.record_conflict_and_kernels(
+            scope,
+            record,
+            cover_hlc,
+            &cover_origin,
+            &current.commit_ulid,
+            current.hlc,
+            &current.origin,
+            current.deleted,
+            &record.commit_ulid,
+            policy,
+            &explanation,
+            &kernel_fields,
+        );
+        Ok(outcome)
+    }
+
+    /// Applies one replicated record with no prior row, or one merged row
+    /// whose bytes must publish: the unconditional put or tombstone stamped
+    /// `kind='replicated'` and bound to `repl-{commit_ulid}`.
+    fn apply_replicated_clean(
+        &self,
+        scope: &TenantScope,
+        record: &ReplicatedRecord,
+        operation: &OperationId,
+    ) -> Result<AppliedReplication, EngineError> {
         let snapshot = self.read_snapshot(scope)?;
         let snapshot_sequence = snapshot.sequence();
         let mut transaction = self.begin(scope, snapshot, operation.clone())?;
         transaction.stage_replicated(record)?;
         match transaction.commit(LocalDurability::Written) {
             CommitOutcome::Committed(receipt) => {
-                // A replayed identity resolves to the original publication's
-                // sequence — at or below the snapshot taken this call —
-                // while a fresh apply allocates one past it.
                 let replayed = receipt.sequence() <= snapshot_sequence;
                 Ok(AppliedReplication::new(receipt, replayed))
             }
             CommitOutcome::Rejected(error) => Err(match error {
                 CommitError::Conflict => EngineError::Conflict,
                 CommitError::OperationIdReuse => {
-                    EngineError::OperationIdReuse { operation_id: operation }
+                    EngineError::OperationIdReuse { operation_id: operation.clone() }
                 }
                 _ => EngineError::StorageFailure,
             }),
-            // `synchronous=NORMAL` under WAL cannot report an uncertain
-            // outcome on this path; treating one as a storage failure
-            // keeps the tailer retrying the same deterministic identity.
             CommitOutcome::Unknown(_) => Err(EngineError::StorageFailure),
         }
+    }
+
+    /// Applies one replicated record against a tombstone, or any
+    /// non-object bodies, with the document-level `(hlc, origin)` order
+    /// and remove-wins on ties. Losers join history with a deterministic
+    /// explanation.
+    fn apply_replicated_tombstone(
+        &self,
+        scope: &TenantScope,
+        record: &ReplicatedRecord,
+        operation: &OperationId,
+        current: &crate::storage::DocumentMergeState,
+    ) -> Result<AppliedReplication, EngineError> {
+        let incoming = (record.hlc, record.origin.as_str());
+        let current_stamp = (current.hlc, current.origin.as_str());
+        let current_wins = match incoming.cmp(&current_stamp) {
+            std::cmp::Ordering::Greater => false,
+            std::cmp::Ordering::Less => true,
+            std::cmp::Ordering::Equal => {
+                // Remove-wins on ties: a tombstone beats a live value.
+                !record.deleted && current.deleted
+            }
+        };
+        if current_wins {
+            let policy = if incoming == current_stamp {
+                crate::storage::MergePolicy::RemoveWins
+            } else {
+                crate::storage::MergePolicy::HlcTiebreak
+            };
+            let explanation = format!(
+                "merge {} (hlc {}, origin '{}') vs {} (hlc {}, origin '{}'): policy {}; winner (hlc {}, origin '{}')",
+                current.commit_ulid,
+                current.hlc,
+                current.origin,
+                record.commit_ulid,
+                record.hlc,
+                record.origin,
+                policy.as_str(),
+                current.hlc,
+                current.origin,
+            );
+            self.record_conflict_and_kernels(
+                scope,
+                record,
+                current.hlc,
+                &current.origin.clone(),
+                &record.commit_ulid,
+                record.hlc,
+                &record.origin,
+                record.deleted,
+                &current.commit_ulid.clone(),
+                policy,
+                &explanation,
+                &[],
+            );
+            return Ok(AppliedReplication::lost_merge());
+        }
+        let outcome = self.apply_replicated_clean(scope, record, operation)?;
+        let policy = if incoming == current_stamp {
+            crate::storage::MergePolicy::RemoveWins
+        } else {
+            crate::storage::MergePolicy::HlcTiebreak
+        };
+        let explanation = format!(
+            "merge {} (hlc {}, origin '{}') vs {} (hlc {}, origin '{}'): policy {}; winner (hlc {}, origin '{}')",
+            current.commit_ulid,
+            current.hlc,
+            current.origin,
+            record.commit_ulid,
+            record.hlc,
+            record.origin,
+            policy.as_str(),
+            record.hlc,
+            record.origin,
+        );
+        self.record_conflict_and_kernels(
+            scope,
+            record,
+            record.hlc,
+            &record.origin.clone(),
+            &current.commit_ulid.clone(),
+            current.hlc,
+            &current.origin.clone(),
+            current.deleted,
+            &record.commit_ulid.clone(),
+            policy,
+            &explanation,
+            &[],
+        );
+        Ok(outcome)
     }
 
     /// Returns one document's current replication stamp: the newest row's
