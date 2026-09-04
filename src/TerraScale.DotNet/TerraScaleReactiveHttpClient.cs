@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Net.WebSockets;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -70,10 +71,12 @@ public sealed class TerraScaleReactiveHttpClient
         ValidateText(subscription, nameof(subscription), 128);
         ValidateText(statement, nameof(statement), MaxStringBytes);
         if (parameters.Length > MaxBinaryBytes) throw new ArgumentOutOfRangeException(nameof(parameters));
-        if (transport != TerraScaleReactiveTransport.Http) throw new TerraScaleReactiveProtocolException("WebSocket transport is opt-in and is not available from this HTTP client.");
+        if (!Enum.IsDefined(transport)) throw new ArgumentOutOfRangeException(nameof(transport));
         if (checkpoint is not null) ValidateCheckpointToken(checkpoint.Token);
 
-        var requestBody = new ReactiveAttachRequest(databaseId, subscription, statement, Convert.ToBase64String(parameters.ToArray()), checkpoint?.Token, "http");
+        // Transport is a local delivery choice; it is not part of the
+        // owner-published attach request and must never be serialized.
+        var requestBody = new ReactiveAttachRequest(databaseId, statement, Convert.ToBase64String(parameters.ToArray()), checkpoint?.Token, subscription, 0);
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(AttachOrigin(), "/api/v1/reactive/views"))
         {
             Content = JsonContent.Create(requestBody, ReactiveJsonContext.Default.ReactiveAttachRequest),
@@ -81,8 +84,8 @@ public sealed class TerraScaleReactiveHttpClient
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         if (!string.IsNullOrWhiteSpace(options.RegionHint)) request.Headers.TryAddWithoutValidation("X-TerraScale-Region-Hint", options.RegionHint);
         await ApplyAuthenticationAsync(request, cancellationToken).ConfigureAwait(false);
-        using var response = await SendWithRetryAsync(request, retryPost: false, cancellationToken).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode) throw await TerraScaleReactiveHttpException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+        using var response = await SendWithRetryAsync(request, cancellationToken).ConfigureAwait(false);
+        if (response.StatusCode != HttpStatusCode.Created) throw await TerraScaleReactiveHttpException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
         var attach = await response.Content.ReadFromJsonAsync(ReactiveJsonContext.Default.ReactiveAttachResponse, cancellationToken).ConfigureAwait(false)
             ?? throw new TerraScaleReactiveProtocolException("The reactive attach response was empty.");
         var attachment = CreateAttachment(attach, databaseId, subscription, statement, parameters, transport);
@@ -94,17 +97,19 @@ public sealed class TerraScaleReactiveHttpClient
     {
         ObjectDisposedException.ThrowIf(subscription.IsDisposed, subscription);
         if (subscription.NeedsResume) return await ReattachAsync(subscription, TerraScaleReactiveResetReason.RegionMoved, cancellationToken).ConfigureAwait(false);
+        if (subscription.Attachment.Transport == TerraScaleReactiveTransport.WebSocket)
+            return await PollWebSocketAsync(subscription, cancellationToken).ConfigureAwait(false);
         var request = new HttpRequestMessage(HttpMethod.Get, AppendOffset(subscription.Attachment.Log, subscription.Offset));
         using (request)
         {
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/msgpack"));
-            request.Headers.TryAddWithoutValidation(CapabilityHeaderName, subscription.Attachment.Capability);
+            request.Headers.TryAddWithoutValidation(subscription.Attachment.CapabilityHeader, subscription.Attachment.Capability);
             if (subscription.LastETag is not null) request.Headers.TryAddWithoutValidation("If-None-Match", subscription.LastETag);
             await ApplyAuthenticationAsync(request, cancellationToken).ConfigureAwait(false);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(options.PollWindow);
             HttpResponseMessage response;
-            try { response = await SendWithRetryAsync(request, false, timeout.Token).ConfigureAwait(false); }
+            try { response = await SendWithRetryAsync(request, timeout.Token).ConfigureAwait(false); }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return null; }
             using (response)
             {
@@ -117,11 +122,60 @@ public sealed class TerraScaleReactiveHttpClient
                 var etag = response.Headers.ETag?.Tag;
                 var frame = DecodeFrame(bytes, subscription.Attachment);
                 if (frame is null) return null;
-                if (frame is (TerraScaleReactiveDelta or TerraScaleReactiveSnapshotFrame or TerraScaleReactiveReset) && etag is null)
+                if (frame is (TerraScaleReactiveDelta or TerraScaleReactiveSnapshotFrame or TerraScaleReactiveReset) && !IsStrongEtag(etag))
                     throw new TerraScaleReactiveProtocolException("A data-bearing reactive response must carry an ETag.");
-                if (etag is not null) subscription.RememberEtag(subscription.Offset, etag);
+                if (etag is not null) subscription.RememberEtag(FrameRevision(frame, subscription.Offset), etag);
                 return subscription.Accept(frame, etag);
             }
+        }
+    }
+
+    private async Task<TerraScaleReactivePollResult?> PollWebSocketAsync(TerraScaleReactiveSubscription subscription, CancellationToken cancellationToken)
+    {
+        var log = AppendOffset(subscription.Attachment.Log, subscription.Offset);
+        var socket = await subscription.EnsureWebSocketAsync(CreateWebSocketUri(log), subscription.Attachment.Capability, cancellationToken).ConfigureAwait(false);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(options.PollWindow);
+        byte[]? bytes;
+        try
+        {
+            bytes = await ReceiveWebSocketMessageAsync(socket, timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+        if (bytes is null)
+        {
+            subscription.MarkNeedsResume();
+            return null;
+        }
+
+        var frame = DecodeFrame(bytes, subscription.Attachment);
+        if (frame is null) return null;
+        return subscription.Accept(frame, etag: null);
+    }
+
+    private static async Task<byte[]?> ReceiveWebSocketMessageAsync(ClientWebSocket socket, CancellationToken cancellationToken)
+    {
+        var result = new MemoryStream();
+        var buffer = new byte[16 * 1024];
+        while (true)
+        {
+            var received = await socket.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
+            if (received.MessageType == WebSocketMessageType.Close)
+            {
+                if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+                    await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "closed", CancellationToken.None).ConfigureAwait(false);
+                return null;
+            }
+
+            if (received.MessageType != WebSocketMessageType.Binary)
+                throw new TerraScaleReactiveProtocolException("The reactive WebSocket delivered a non-binary frame.");
+            if (result.Length + received.Count > MaxMessageBytes)
+                throw new TerraScaleReactiveProtocolException("The reactive WebSocket message exceeds the maximum size.");
+            result.Write(buffer, 0, received.Count);
+            if (received.EndOfMessage) return result.ToArray();
         }
     }
 
@@ -141,12 +195,12 @@ public sealed class TerraScaleReactiveHttpClient
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, chunk);
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/msgpack"));
-            request.Headers.TryAddWithoutValidation(CapabilityHeaderName, attachment.Capability);
+            request.Headers.TryAddWithoutValidation(attachment.CapabilityHeader, attachment.Capability);
             await ApplyAuthenticationAsync(request, cancellationToken).ConfigureAwait(false);
-            using var response = await SendWithRetryAsync(request, false, cancellationToken).ConfigureAwait(false);
+            using var response = await SendWithRetryAsync(request, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode) throw await TerraScaleReactiveHttpException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
             var bytes = await ReadBoundedBytesAsync(response.Content, options.MaxResponseBytes, cancellationToken).ConfigureAwait(false);
-            if (response.Headers.ETag is null) throw new TerraScaleReactiveProtocolException("An immutable snapshot response must carry an ETag.");
+            if (!IsStrongEtag(response.Headers.ETag?.Tag)) throw new TerraScaleReactiveProtocolException("An immutable snapshot response must carry a strong ETag.");
             var snapshot = DecodeSnapshot(bytes, attachment) ?? throw new TerraScaleReactiveProtocolException("A snapshot chunk was empty.");
             if (first is not null && (snapshot.ViewGeneration != first.ViewGeneration || snapshot.AuthorizationGeneration != first.AuthorizationGeneration || snapshot.Revision != first.Revision || !string.Equals(snapshot.Digest, first.Digest, StringComparison.Ordinal) || !string.Equals(snapshot.Checkpoint.Token, first.Checkpoint.Token, StringComparison.Ordinal)))
                 throw new TerraScaleReactiveProtocolException("Snapshot chunks do not describe one immutable cut.");
@@ -161,20 +215,51 @@ public sealed class TerraScaleReactiveHttpClient
 
     private TerraScaleReactiveAttachment CreateAttachment(ReactiveAttachResponse response, string databaseId, string subscription, string statement, ReadOnlyMemory<byte> parameters, TerraScaleReactiveTransport transport)
     {
-        ValidateText(response.ViewId, nameof(response.ViewId), 256);
+        ValidateText(response.View, nameof(response.View), 256);
         if (response.Generation < 1) throw new TerraScaleReactiveProtocolException("The attach response has an invalid view generation.");
         ValidateText(response.Capability, nameof(response.Capability), 4096);
         ValidateCheckpointToken(response.Checkpoint);
+        if (string.IsNullOrWhiteSpace(response.Log)) throw new TerraScaleReactiveProtocolException("The attach response must carry a log URL.");
         if (response.SnapshotUrls is null || response.SnapshotUrls.Length == 0) throw new TerraScaleReactiveProtocolException("The attach response must carry snapshot chunk URLs.");
         if (response.SnapshotUrls.Length > options.MaxSnapshotChunks) throw new TerraScaleReactiveProtocolException("The attach response exceeds the snapshot chunk bound.");
-        var view = Uri.EscapeDataString(response.ViewId!);
-        var prefix = $"/api/v1/reactive/views/{view}/{response.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
-        var chunks = Enumerable.Range(0, response.SnapshotUrls.Length).Select(index => new Uri(options.BaseAddress, $"{prefix}/snapshot/{index}")).ToArray();
-        var log = new Uri(options.BaseAddress, $"{prefix}/log");
-        return new TerraScaleReactiveAttachment(databaseId, response.ViewId!, subscription, statement, parameters, transport, response.Generation, chunks, log, new TerraScaleViewCheckpoint(response.Checkpoint!), response.Capability!);
+        if (!string.Equals(response.CapabilityHeader, CapabilityHeaderName, StringComparison.OrdinalIgnoreCase))
+            throw new TerraScaleReactiveProtocolException("The attach response declared an unsupported capability header.");
+        var chunks = response.SnapshotUrls.Select(value => ResolveResourceUri(value, "snapshot chunk")).ToArray();
+        var log = ResolveResourceUri(response.Log!, "log");
+        return new TerraScaleReactiveAttachment(databaseId, response.View!, subscription, statement, parameters, transport, response.Generation, response.Offset, chunks, log, new TerraScaleViewCheckpoint(response.Checkpoint!), response.Capability!, CapabilityHeaderName);
     }
 
+    private Uri ResolveResourceUri(string value, string resourceName)
+    {
+        if (string.IsNullOrWhiteSpace(value) || !Uri.TryCreate(value, UriKind.RelativeOrAbsolute, out var parsed))
+            throw new TerraScaleReactiveProtocolException($"The attach response carried an invalid {resourceName} URL.");
+        var resolved = parsed.IsAbsoluteUri ? parsed : new Uri(options.BaseAddress, parsed);
+        if (resolved.Scheme is not (Uri.UriSchemeHttp or Uri.UriSchemeHttps) || resolved.UserInfo.Length != 0 || !SameOrigin(resolved, options.BaseAddress))
+            throw new TerraScaleReactiveProtocolException($"The attach response carried an unsafe {resourceName} URL.");
+        return resolved;
+    }
+
+    private static bool SameOrigin(Uri left, Uri right) =>
+        string.Equals(left.Scheme, right.Scheme, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(left.Host, right.Host, StringComparison.OrdinalIgnoreCase) && left.Port == right.Port;
+
     private Uri AttachOrigin() => options.ApiBaseAddress ?? options.BaseAddress;
+
+    private static Uri CreateWebSocketUri(Uri log)
+    {
+        var builder = new UriBuilder(log) { Scheme = log.Scheme == Uri.UriSchemeHttps ? "wss" : "ws" };
+        return builder.Uri;
+    }
+
+    private static bool IsStrongEtag(string? value) => !string.IsNullOrWhiteSpace(value) && !value.StartsWith("W/", StringComparison.OrdinalIgnoreCase);
+
+    private static ulong FrameRevision(TerraScaleReactiveFrame frame, ulong fallback) => frame switch
+    {
+        TerraScaleReactiveDelta delta => delta.ToRevision,
+        TerraScaleReactiveSnapshotFrame snapshot => snapshot.Snapshot.Revision,
+        TerraScaleReactiveReset reset => reset.Snapshot.Revision,
+        _ => fallback,
+    };
 
     private async Task ApplyAuthenticationAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -184,7 +269,32 @@ public sealed class TerraScaleReactiveHttpClient
         if (!string.IsNullOrWhiteSpace(bearer)) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer.Trim());
     }
 
-    private async Task<HttpResponseMessage> SendWithRetryAsync(HttpRequestMessage request, bool retryPost, CancellationToken cancellationToken)
+    internal async Task<ClientWebSocket> ConnectWebSocketAsync(Uri uri, string capability, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(uri);
+        ValidateText(capability, nameof(capability), MaxStringBytes);
+        var socket = new ClientWebSocket();
+        try
+        {
+            var bearer = !string.IsNullOrWhiteSpace(options.ApiKey) ? options.ApiKey : options.BearerToken;
+            if (string.IsNullOrWhiteSpace(bearer) && options.BearerTokenProvider is { } provider)
+                bearer = await provider(cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(bearer))
+                socket.Options.SetRequestHeader("Authorization", $"Bearer {bearer.Trim()}");
+            socket.Options.SetRequestHeader(CapabilityHeaderName, capability);
+            if (!string.IsNullOrWhiteSpace(options.RegionHint))
+                socket.Options.SetRequestHeader("X-TerraScale-Region-Hint", options.RegionHint);
+            await socket.ConnectAsync(uri, cancellationToken).ConfigureAwait(false);
+            return socket;
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    }
+
+    private async Task<HttpResponseMessage> SendWithRetryAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var attempt = 0;
         while (true)
@@ -192,8 +302,10 @@ public sealed class TerraScaleReactiveHttpClient
             using var copy = await CloneRequestAsync(request, cancellationToken).ConfigureAwait(false);
             HttpResponseMessage response;
             try { response = await httpClient.SendAsync(copy, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false); }
-            catch (HttpRequestException) when (attempt < options.MaxRetryAttempts && (!request.Method.Equals(HttpMethod.Post) || retryPost)) { await DelayAsync(null, attempt++, cancellationToken).ConfigureAwait(false); continue; }
-            if (!IsTransient(response.StatusCode) || attempt >= options.MaxRetryAttempts || (request.Method == HttpMethod.Post && !retryPost)) return response;
+            // POST attach and SQL-like mutations are never retried: a network
+            // failure does not prove that the server did not commit them.
+            catch (HttpRequestException) when (attempt < options.MaxRetryAttempts && request.Method != HttpMethod.Post) { await DelayAsync(null, attempt++, cancellationToken).ConfigureAwait(false); continue; }
+            if (!IsTransient(response.StatusCode) || attempt >= options.MaxRetryAttempts || request.Method == HttpMethod.Post) return response;
             var delay = RetryAfter(response); response.Dispose(); await DelayAsync(delay, attempt++, cancellationToken).ConfigureAwait(false);
         }
     }
@@ -329,9 +441,10 @@ public sealed class TerraScaleReactiveHttpClient
     internal static void ValidateIdentity(string? value) => ValidateText(value, nameof(value), 256);
     internal static void ValidateFieldPath(string? value) => ValidateText(value, nameof(value), 256);
     internal static void ValidateRegionHint(string value) => ValidateText(value, nameof(value), 64);
-    private static TerraScaleReactiveTransport ParseTransport(string? value) => string.Equals(value, "http", StringComparison.OrdinalIgnoreCase)
-        ? TerraScaleReactiveTransport.Http
-        : throw new TerraScaleReactiveProtocolException("The reactive transport must be 'http'.");
+    private static TerraScaleReactiveTransport ParseTransport(string? value) =>
+        string.Equals(value, "http", StringComparison.OrdinalIgnoreCase) ? TerraScaleReactiveTransport.Http :
+        string.Equals(value, "websocket", StringComparison.OrdinalIgnoreCase) ? TerraScaleReactiveTransport.WebSocket :
+        throw new TerraScaleReactiveProtocolException("The reactive transport must be 'http' or 'websocket'.");
     internal static string StrictDecode(ReadOnlySpan<byte> bytes) => StrictUtf8.GetString(bytes);
     internal static string? BoundText(string? value, int maxBytes)
     {
@@ -394,7 +507,7 @@ public sealed record TerraScaleReactiveHttpClientOptions
 /// <summary>Immutable metadata returned when a view is attached.</summary>
 public sealed record TerraScaleReactiveAttachment
 {
-    internal TerraScaleReactiveAttachment(string databaseId, string view, string subscription, string statement, ReadOnlyMemory<byte> parameters, TerraScaleReactiveTransport transport, ulong generation, IReadOnlyList<Uri> chunks, Uri log, TerraScaleViewCheckpoint checkpoint, string capability) { DatabaseId = databaseId; View = view; Subscription = subscription; Statement = statement; Parameters = parameters.ToArray(); Transport = transport; Generation = generation; SnapshotChunks = new ReadOnlyCollection<Uri>(chunks.ToArray()); Log = log; Checkpoint = checkpoint; Capability = capability; }
+    internal TerraScaleReactiveAttachment(string databaseId, string view, string subscription, string statement, ReadOnlyMemory<byte> parameters, TerraScaleReactiveTransport transport, ulong generation, ulong offset, IReadOnlyList<Uri> chunks, Uri log, TerraScaleViewCheckpoint checkpoint, string capability, string capabilityHeader) { DatabaseId = databaseId; View = view; Subscription = subscription; Statement = statement; Parameters = parameters.ToArray(); Transport = transport; Generation = generation; Offset = offset; SnapshotChunks = new ReadOnlyCollection<Uri>(chunks.ToArray()); Log = log; Checkpoint = checkpoint; Capability = capability; CapabilityHeader = capabilityHeader; }
     public string DatabaseId { get; }
     public string View { get; }
     public string Subscription { get; }
@@ -402,10 +515,12 @@ public sealed record TerraScaleReactiveAttachment
     public ReadOnlyMemory<byte> Parameters { get; }
     public TerraScaleReactiveTransport Transport { get; }
     public ulong Generation { get; }
+    public ulong Offset { get; }
     public IReadOnlyList<Uri> SnapshotChunks { get; }
     public Uri Log { get; }
     public TerraScaleViewCheckpoint Checkpoint { get; }
     public string Capability { get; }
+    public string CapabilityHeader { get; }
     internal void ValidateCheckpoint(TerraScaleViewCheckpoint checkpoint) { TerraScaleReactiveHttpClient.ValidateCheckpointToken(checkpoint.Token); }
 }
 
@@ -474,8 +589,9 @@ public sealed class TerraScaleReactiveSubscription : IAsyncDisposable
     private readonly TerraScaleReactiveHttpClient client;
     private readonly Dictionary<ulong, string> etags = [];
     private readonly SemaphoreSlim gate = new(1, 1);
+    private ClientWebSocket? webSocket;
     private bool disposed;
-    internal TerraScaleReactiveSubscription(TerraScaleReactiveHttpClient client, TerraScaleReactiveAttachment attachment, TerraScaleReactiveSnapshot snapshot) { this.client = client; Attachment = attachment; CurrentSnapshot = snapshot; Offset = snapshot.Revision; SessionState = TerraScaleViewSessionState.Live; }
+    internal TerraScaleReactiveSubscription(TerraScaleReactiveHttpClient client, TerraScaleReactiveAttachment attachment, TerraScaleReactiveSnapshot snapshot) { this.client = client; Attachment = attachment; CurrentSnapshot = snapshot; if (snapshot.Revision != attachment.Offset) throw new TerraScaleReactiveProtocolException("The attach offset does not match the immutable snapshot revision."); Offset = attachment.Offset; SessionState = TerraScaleViewSessionState.Live; }
     public TerraScaleReactiveAttachment Attachment { get; private set; }
     public TerraScaleReactiveSnapshot CurrentSnapshot { get; private set; }
     public ulong Offset { get; private set; }
@@ -484,14 +600,51 @@ public sealed class TerraScaleReactiveSubscription : IAsyncDisposable
     public TerraScaleViewSessionState SessionState { get; private set; }
     internal bool NeedsResume { get; private set; }
     internal bool IsDisposed => disposed;
+    internal async Task<ClientWebSocket> EnsureWebSocketAsync(Uri uri, string capability, CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (webSocket is { State: WebSocketState.Open } current)
+            return current;
+
+        DropWebSocket();
+        var connected = await client.ConnectWebSocketAsync(uri, capability, cancellationToken).ConfigureAwait(false);
+        if (disposed)
+        {
+            connected.Dispose();
+            throw new ObjectDisposedException(nameof(TerraScaleReactiveSubscription));
+        }
+
+        webSocket = connected;
+        return connected;
+    }
+    internal void MarkNeedsResume()
+    {
+        NeedsResume = true;
+        SessionState = TerraScaleViewSessionState.Resuming;
+        DropWebSocket();
+    }
+    private void DropWebSocket()
+    {
+        var socket = Interlocked.Exchange(ref webSocket, null);
+        socket?.Dispose();
+    }
     public async Task<TerraScaleReactivePollResult?> ReadNextAsync(CancellationToken cancellationToken = default) { ObjectDisposedException.ThrowIf(disposed, this); await gate.WaitAsync(cancellationToken).ConfigureAwait(false); try { return await client.PollAsync(this, cancellationToken).ConfigureAwait(false); } finally { gate.Release(); } }
     public async IAsyncEnumerable<TerraScaleReactivePollResult> ReadAllAsync([EnumeratorCancellation] CancellationToken cancellationToken = default) { while (true) { var result = await ReadNextAsync(cancellationToken).ConfigureAwait(false); if (result is not null) yield return result; } }
     internal TerraScaleReactivePollResult Accept(TerraScaleReactiveFrame frame, string? etag)
     {
         switch (frame)
         {
-            case TerraScaleReactiveDelta delta when delta.FromRevision == Offset && delta.ToRevision > Offset: Attachment.ValidateCheckpoint(delta.Checkpoint); Offset = delta.ToRevision; CurrentSnapshot = new TerraScaleReactiveSnapshot(CurrentSnapshot.ViewGeneration, CurrentSnapshot.AuthorizationGeneration, Offset, CurrentSnapshot.Items, delta.Digest, delta.Checkpoint); break;
-            case TerraScaleReactiveDelta delta when delta.ToRevision <= Offset: return new TerraScaleReactivePollResult(new TerraScaleReactiveHeartbeat(), etag);
+            case TerraScaleReactiveDelta delta when delta.FromRevision == Offset && delta.ToRevision > Offset:
+                Attachment.ValidateCheckpoint(delta.Checkpoint);
+                var items = ApplyOperations(CurrentSnapshot.Items, delta.Operations);
+                Offset = delta.ToRevision;
+                CurrentSnapshot = new TerraScaleReactiveSnapshot(CurrentSnapshot.ViewGeneration, CurrentSnapshot.AuthorizationGeneration, Offset, items, delta.Digest, delta.Checkpoint);
+                break;
+            case TerraScaleReactiveDelta delta when delta.ToRevision == Offset:
+                if (!string.Equals(delta.Digest, CurrentSnapshot.Digest, StringComparison.Ordinal))
+                    throw new TerraScaleReactiveProtocolException("A same-revision reactive delta has a different result digest.");
+                return new TerraScaleReactivePollResult(new TerraScaleReactiveHeartbeat(), etag);
+            case TerraScaleReactiveDelta delta when delta.ToRevision < Offset: return new TerraScaleReactivePollResult(new TerraScaleReactiveHeartbeat(), etag);
             case TerraScaleReactiveDelta: throw new TerraScaleReactiveProtocolException("The reactive delta has a revision gap and requires a reset.");
             case TerraScaleReactiveSnapshotFrame snapshot: Attachment.ValidateCheckpoint(snapshot.Snapshot.Checkpoint); CurrentSnapshot = snapshot.Snapshot; Offset = snapshot.Snapshot.Revision; break;
             case TerraScaleReactiveReset reset: CurrentSnapshot = reset.Snapshot; Offset = reset.Snapshot.Revision; SessionState = TerraScaleViewSessionState.Resetting; break;
@@ -502,10 +655,72 @@ public sealed class TerraScaleReactiveSubscription : IAsyncDisposable
         }
         LastETag = etag; return new TerraScaleReactivePollResult(frame, etag);
     }
+    private static IReadOnlyList<TerraScaleReactiveItem> ApplyOperations(IReadOnlyList<TerraScaleReactiveItem> source, IReadOnlyList<TerraScaleReactiveOperation> operations)
+    {
+        var items = source.ToList();
+        foreach (var operation in operations)
+        {
+            switch (operation)
+            {
+                case TerraScaleReactiveInsert insert:
+                    if (items.Any(item => item.Identity == insert.Identity) || insert.Position < 0 || insert.Position > items.Count)
+                        throw new TerraScaleReactiveProtocolException("The reactive insert does not describe a valid result position or identity.");
+                    items.Insert(insert.Position, insert.Item);
+                    break;
+                case TerraScaleReactiveUpdate update:
+                    ReplaceExisting(items, update.Identity, update.Item);
+                    break;
+                case TerraScaleReactivePatch patch:
+                    var index = FindExisting(items, patch.Identity);
+                    if (patch.Changes.Select(change => change.Path).Distinct(StringComparer.Ordinal).Count() != patch.Changes.Count)
+                        throw new TerraScaleReactiveProtocolException("The reactive patch contains duplicate field paths.");
+                    var fields = items[index].Fields.ToDictionary(field => field.Path, StringComparer.Ordinal);
+                    foreach (var change in patch.Changes)
+                    {
+                        if (change.Value is { } value) fields[change.Path] = new TerraScaleReactiveField(change.Path, value);
+                        else fields.Remove(change.Path);
+                    }
+                    items[index] = new TerraScaleReactiveItem(items[index].Identity, fields.Values.ToArray());
+                    break;
+                case TerraScaleReactiveRemove remove:
+                    items.RemoveAt(FindExisting(items, remove.ItemIdentity));
+                    break;
+                case TerraScaleReactiveMove move:
+                    var oldIndex = FindExisting(items, move.ItemIdentity);
+                    var item = items[oldIndex];
+                    items.RemoveAt(oldIndex);
+                    if (move.Position < 0 || move.Position > items.Count) throw new TerraScaleReactiveProtocolException("The reactive move has an invalid result position.");
+                    items.Insert(move.Position, item);
+                    break;
+                default:
+                    throw new TerraScaleReactiveProtocolException("The reactive operation is not recognized.");
+            }
+        }
+        if (items.Count > TerraScaleReactiveHttpClient.MaxArrayItems) throw new TerraScaleReactiveProtocolException("The reactive snapshot exceeds the item bound.");
+        return items;
+    }
+    private static int FindExisting(IReadOnlyList<TerraScaleReactiveItem> items, string identity)
+    {
+        var index = items.ToList().FindIndex(item => item.Identity == identity);
+        if (index < 0) throw new TerraScaleReactiveProtocolException("The reactive operation names an unknown identity.");
+        return index;
+    }
+    private static void ReplaceExisting(List<TerraScaleReactiveItem> items, string identity, TerraScaleReactiveItem replacement) => items[FindExisting(items, identity)] = replacement;
     internal void RememberEtag(ulong offset, string etag) { if (etags.TryGetValue(offset, out var previous) && !string.Equals(previous, etag, StringComparison.Ordinal)) throw new TerraScaleReactiveProtocolException("An immutable reactive offset changed its ETag."); etags[offset] = etag; }
     internal void Replace(TerraScaleReactiveAttachment attachment, TerraScaleReactiveSnapshot snapshot) { Attachment = attachment; CurrentSnapshot = snapshot; Offset = snapshot.Revision; etags.Clear(); LastETag = null; NeedsResume = false; SessionState = TerraScaleViewSessionState.Live; }
     internal void SetSessionState(TerraScaleViewSessionState state) => SessionState = state;
-    public ValueTask DisposeAsync() { if (!disposed) { disposed = true; SessionState = TerraScaleViewSessionState.Closed; gate.Dispose(); } return ValueTask.CompletedTask; }
+    public ValueTask DisposeAsync()
+    {
+        if (!disposed)
+        {
+            disposed = true;
+            SessionState = TerraScaleViewSessionState.Closed;
+            DropWebSocket();
+            gate.Dispose();
+        }
+
+        return ValueTask.CompletedTask;
+    }
 }
 
 public sealed class TerraScaleReactiveProtocolException(string message) : Exception(message);
@@ -528,8 +743,22 @@ public sealed class TerraScaleReactiveHttpException(HttpStatusCode statusCode, s
     }
 }
 
-internal sealed record ReactiveAttachRequest(string DatabaseId, string Subscription, string Statement, string Parameters, string? Checkpoint, string Transport);
-internal sealed record ReactiveAttachResponse(string? ViewId, ulong Generation, string? Checkpoint, string? Capability, string[]? SnapshotUrls, string? LogUrl);
+internal sealed record ReactiveAttachRequest(
+    [property: JsonPropertyName("databaseId")] string DatabaseId,
+    [property: JsonPropertyName("statement")] string Statement,
+    [property: JsonPropertyName("parameters")] string Parameters,
+    [property: JsonPropertyName("checkpoint")] string? Checkpoint,
+    [property: JsonPropertyName("subscription")] string? Subscription,
+    [property: JsonPropertyName("entitlement_epoch")] ulong EntitlementEpoch);
+internal sealed record ReactiveAttachResponse(
+    [property: JsonPropertyName("view")] string? View,
+    [property: JsonPropertyName("generation")] ulong Generation,
+    [property: JsonPropertyName("snapshot_chunks")] string[]? SnapshotUrls,
+    [property: JsonPropertyName("log")] string? Log,
+    [property: JsonPropertyName("checkpoint")] string? Checkpoint,
+    [property: JsonPropertyName("capability")] string? Capability,
+    [property: JsonPropertyName("capability_header")] string? CapabilityHeader,
+    [property: JsonPropertyName("offset")] ulong Offset);
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, PropertyNameCaseInsensitive = false)]
 [JsonSerializable(typeof(ReactiveAttachRequest))]
 [JsonSerializable(typeof(ReactiveAttachResponse))]

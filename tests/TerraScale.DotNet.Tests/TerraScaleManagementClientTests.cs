@@ -15,7 +15,6 @@ public sealed class TerraScaleManagementClientTests
         await Assert.That(ReferenceEquals(management.Collections, client.Collections)).IsTrue();
         await Assert.That(ReferenceEquals(management.Backups, client.Backups)).IsTrue();
         await Assert.That(typeof(TerraScaleManagementClient).GetProperty("Branches")).IsNull();
-        await Assert.That(typeof(TerraScaleManagementClient).GetProperty("Schemas")).IsNull();
         var usage = await Assert.ThrowsAsync<TerraScaleContractGapException>(() => management.Usage.GetAsync("db"));
         var export = await Assert.ThrowsAsync<TerraScaleContractGapException>(() => management.Exports.CreateAsync("db"));
         await Assert.That(usage!.Operation).IsEqualTo("usage.database.get");

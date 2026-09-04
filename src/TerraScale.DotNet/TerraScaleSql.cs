@@ -492,13 +492,25 @@ public sealed class TerraScaleSqlClient
             executeOptions.Explain ? true : null,
             executeOptions.Cancelled ? true : null,
             executeOptions.TimeoutMs);
-        return client.SendJsonAsync(
+        // SqlResultResponse is a published oneOf (rows or explain plan), so
+        // decode the envelope first and project either branch into the one
+        // immutable SDK result type.
+        return ExecuteResponseAsync(databaseName, request, cancellationToken);
+    }
+
+    private async Task<TerraScaleSqlResult> ExecuteResponseAsync(
+        string databaseName,
+        TerraScaleSqlRequest request,
+        CancellationToken cancellationToken)
+    {
+        var payload = await client.SendJsonAsync<TerraScaleSqlRequest, JsonElement>(
             HttpMethod.Post,
             $"/api/v1/databases/{Uri.EscapeDataString(databaseName.Trim())}/sql",
             request,
             TerraScaleSqlJsonContext.Default.TerraScaleSqlRequest,
-            TerraScaleSqlJsonContext.Default.TerraScaleSqlResult,
+            TerraScaleSqlJsonContext.Default.JsonElement,
             cancellationToken);
+        return ParseResponse(payload);
     }
 
     /// <summary>Executes SQL with named bindings.</summary>
@@ -518,6 +530,29 @@ public sealed class TerraScaleSqlClient
         TerraScaleSqlExecuteOptions? options = null,
         CancellationToken cancellationToken = default) =>
         ExecuteAsync(databaseName, TerraScaleSqlQuery.Raw(sql, parameters), options, cancellationToken);
+
+    private static TerraScaleSqlResult ParseResponse(JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object)
+            throw new JsonException("TerraScale SQL responses must be JSON objects.");
+
+        if (payload.TryGetProperty("matched", out _))
+        {
+            return payload.Deserialize(TerraScaleSqlJsonContext.Default.TerraScaleSqlResult)
+                ?? throw new JsonException("TerraScale SQL result was empty.");
+        }
+
+        var explain = payload.Deserialize(TerraScaleSqlJsonContext.Default.TerraScaleSqlExplainResponse)
+            ?? throw new JsonException("TerraScale SQL explain response was empty.");
+        if (!string.Equals(explain.Dialect, "sql/sqlite-readonly", StringComparison.Ordinal) ||
+            !string.Equals(explain.Access, "scan", StringComparison.Ordinal))
+            throw new JsonException("TerraScale SQL explain response has an invalid contract marker.");
+        return new TerraScaleSqlResult(
+            dialect: explain.Dialect,
+            collection: explain.Collection,
+            order: explain.Order,
+            access: explain.Access);
+    }
 }
 
 /// <summary>Wire request for the SQL endpoint.</summary>
@@ -528,6 +563,12 @@ public sealed record TerraScaleSqlRequest(
     [property: JsonPropertyName("explain"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Explain = null,
     [property: JsonPropertyName("cancelled"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Cancelled = null,
     [property: JsonPropertyName("timeout_ms"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? TimeoutMs = null);
+
+internal sealed record TerraScaleSqlExplainResponse(
+    [property: JsonPropertyName("access")] string Access,
+    [property: JsonPropertyName("collection")] string? Collection,
+    [property: JsonPropertyName("dialect")] string Dialect,
+    [property: JsonPropertyName("order")] IReadOnlyList<TerraScaleSqlOrderKey> Order);
 
 /// <summary>Entry points for schema-bound SQL and raw SQL.</summary>
 public static class TerraScaleSql
@@ -1271,9 +1312,11 @@ internal static class TerraScaleSqlValidation
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(TerraScaleSqlRequest))]
+[JsonSerializable(typeof(JsonElement))]
 [JsonSerializable(typeof(TerraScaleSqlResult))]
 [JsonSerializable(typeof(TerraScaleSqlRow))]
 [JsonSerializable(typeof(TerraScaleSqlOrderKey))]
+[JsonSerializable(typeof(TerraScaleSqlExplainResponse))]
 internal partial class TerraScaleSqlJsonContext : JsonSerializerContext;
 
 internal static class TerraScaleSqlJson

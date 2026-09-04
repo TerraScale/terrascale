@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 #pragma warning disable CS1591
@@ -42,11 +43,18 @@ public sealed class TerraScaleDatabasesClient
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(placement);
-        if (placement.Count is < 1 or > 20 || placement.Any(static region => region is not (TerraScaleRegions.Gru or TerraScaleRegions.Sfo or TerraScaleRegions.Fra)))
+        var normalizedPlacement = placement.Select(region => TerraScaleRegionCodes.Validate(region, nameof(placement))).ToArray();
+        if (normalizedPlacement.Length is < 1 or > 20)
         {
             throw new ArgumentException("Placement must contain between 1 and 20 canonical TerraScale regions.", nameof(placement));
         }
-        return client.SendAsync<TerraScaleDatabaseRecord>(HttpMethod.Post, "/api/v1/databases", new TerraScaleDirectCreateDatabaseRequest(name.Trim(), placement, residency), cancellationToken);
+        if (residency is not (null or "eu-only" or "br-only"))
+            throw new ArgumentException("Residency must be eu-only or br-only.", nameof(residency));
+        if (residency == "eu-only" && normalizedPlacement.Any(region => region != TerraScaleRegions.Fra))
+            throw new ArgumentException("eu-only residency requires FRA placement.", nameof(placement));
+        if (residency == "br-only" && normalizedPlacement.Any(region => region != TerraScaleRegions.Gru))
+            throw new ArgumentException("br-only residency requires GRU placement.", nameof(placement));
+        return client.SendAsync<TerraScaleDatabaseRecord>(HttpMethod.Post, "/api/v1/databases", new TerraScaleDirectCreateDatabaseRequest(name.Trim(), normalizedPlacement, residency), cancellationToken);
     }
 
     /// <summary>

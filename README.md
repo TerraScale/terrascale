@@ -14,7 +14,7 @@ before that regeneration.
   retries, idempotency and request IDs, typed `TerraScaleApiException`
   errors, and dependency-injection registration.
 - Named clients for document CRUD, collections, databases, database branches,
-  schemas, regions, API keys, backups, and saved queries.
+  regions, backups, tenant lifecycle, SQL, and reactive HTTP views.
 - `TerraScaleSyncV2ViewEngine`: the transport-independent result-view state
   machine (bounded snapshots, atomic deltas, opaque checkpoints, typed resets,
   reversible optimistic presentation) that awaits the pinned reactive contract

@@ -10,7 +10,7 @@ using Cysharp.Text;
 namespace TerraScale.DotNet;
 
 /// <summary>
-/// Entry point for TerraScale database and repository API operations.
+/// Entry point for TerraScale database API operations.
 /// </summary>
 public sealed class TerraScaleClient
 {
@@ -55,11 +55,8 @@ public sealed class TerraScaleClient
         Databases = new TerraScaleDatabasesClient(this);
         Collections = new TerraScaleCollectionsClient(this);
         Documents = new TerraScaleDocumentsClient(this);
-        Schemas = new TerraScaleSchemasClient(this);
         Regions = new TerraScaleRegionsClient(this);
         DatabaseBranches = new TerraScaleDatabaseBranchesClient(this);
-        SavedQueries = new TerraScaleSavedQueriesClient(this);
-        ApiKeys = new TerraScaleApiKeysClient(this);
         Backups = new TerraScaleBackupsClient(this);
         Management = new TerraScaleManagementClient(this);
         Tenants = new TerraScaleTenantsClient(this);
@@ -94,14 +91,9 @@ public sealed class TerraScaleClient
     public TerraScaleCollectionsClient Collections { get; }
 
     /// <summary>
-    /// Repository document operations.
+    /// Database document operations.
     /// </summary>
     public TerraScaleDocumentsClient Documents { get; }
-
-    /// <summary>
-    /// Repository schema operations.
-    /// </summary>
-    public TerraScaleSchemasClient Schemas { get; }
 
     /// <summary>
     /// TerraScale region catalog operations.
@@ -112,16 +104,6 @@ public sealed class TerraScaleClient
     /// Physical database branch capability and clone-request operations.
     /// </summary>
     public TerraScaleDatabaseBranchesClient DatabaseBranches { get; }
-
-    /// <summary>
-    /// Project saved-query operations.
-    /// </summary>
-    public TerraScaleSavedQueriesClient SavedQueries { get; }
-
-    /// <summary>
-    /// Project auth API key management operations.
-    /// </summary>
-    public TerraScaleApiKeysClient ApiKeys { get; }
 
     /// <summary>
     /// Project database backup, restore point, and restore operations.
@@ -1060,7 +1042,7 @@ public sealed class TerraScaleClient
 
     internal void ApplyDocumentReadHeaders(
         HttpRequestMessage request,
-        string repository,
+        string database,
         string? documentId,
         TerraScaleDocumentReadOptions? readOptions)
     {
@@ -1074,7 +1056,7 @@ public sealed class TerraScaleClient
             return;
         }
 
-        var scope = DocumentConsistencyScope(repository, documentId);
+        var scope = DocumentConsistencyScope(database, documentId);
         if (sessionConsistencyTokens.TryGetValue(scope, out var token))
         {
             request.Headers.TryAddWithoutValidation("X-TerraScale-Session-Consistency-Token", token);
@@ -1104,15 +1086,15 @@ public sealed class TerraScaleClient
     internal TerraScaleDocument ObserveDocumentWrite(
         TerraScaleDocument document,
         HttpResponseMessage response,
-        string requestRepository)
+        string requestDatabase)
     {
         RememberSessionConsistencyToken(
             document.SessionConsistencyToken,
-            document.RepositoryId,
+            document.DatabaseId,
             document.Id);
         RememberSessionConsistencyToken(
             document.SessionConsistencyToken,
-            requestRepository,
+            requestDatabase,
             document.Id);
         return document with { Routing = TerraScaleRoutingObservation.From(response) };
     }
@@ -1120,23 +1102,29 @@ public sealed class TerraScaleClient
     internal TerraScaleDeletedDocument ObserveDocumentDelete(
         TerraScaleDeletedDocument document,
         HttpResponseMessage response,
-        string requestRepository)
+        string requestDatabase)
     {
         RememberSessionConsistencyToken(
             document.SessionConsistencyToken,
-            document.RepositoryId,
+            document.DatabaseId,
             document.Id);
         RememberSessionConsistencyToken(
             document.SessionConsistencyToken,
-            requestRepository,
+            requestDatabase,
             document.Id);
         return document with { Routing = TerraScaleRoutingObservation.From(response) };
     }
 
     internal TerraScaleDocument ObserveDocumentRead(
         TerraScaleDocument document,
-        HttpResponseMessage response) =>
-        document with { Routing = TerraScaleRoutingObservation.From(response) };
+        HttpResponseMessage response)
+    {
+        RememberSessionConsistencyToken(
+            document.SessionConsistencyToken,
+            document.DatabaseId,
+            document.Id);
+        return document with { Routing = TerraScaleRoutingObservation.From(response) };
+    }
 
     internal TerraScaleDocumentPage ObserveDocumentPage(
         TerraScaleDocumentPage page,
@@ -1146,7 +1134,7 @@ public sealed class TerraScaleClient
     internal TerraScaleDocumentBatch ObserveDocumentBatch(
         TerraScaleDocumentBatch batch,
         HttpResponseMessage response,
-        string requestRepository)
+        string requestDatabase)
     {
         foreach (var result in batch.Results)
         {
@@ -1154,11 +1142,11 @@ public sealed class TerraScaleClient
             {
                 RememberSessionConsistencyToken(
                     document.SessionConsistencyToken,
-                    batch.RepositoryId,
+                    batch.DatabaseId,
                     document.Id);
                 RememberSessionConsistencyToken(
                     document.SessionConsistencyToken,
-                    requestRepository,
+                    requestDatabase,
                     document.Id);
             }
 
@@ -1166,11 +1154,11 @@ public sealed class TerraScaleClient
             {
                 RememberSessionConsistencyToken(
                     deleted.SessionConsistencyToken,
-                    batch.RepositoryId,
+                    batch.DatabaseId,
                     deleted.Id);
                 RememberSessionConsistencyToken(
                     deleted.SessionConsistencyToken,
-                    requestRepository,
+                    requestDatabase,
                     deleted.Id);
             }
         }
@@ -1180,19 +1168,19 @@ public sealed class TerraScaleClient
 
     private void RememberSessionConsistencyToken(
         string? token,
-        string repository,
+        string database,
         string? documentId)
     {
         if (documentId is not null &&
             options.SessionConsistency == TerraScaleSessionConsistency.Automatic &&
             token is { Length: > 0 and <= 4096 })
         {
-            sessionConsistencyTokens[DocumentConsistencyScope(repository, documentId)] = token;
+            sessionConsistencyTokens[DocumentConsistencyScope(database, documentId)] = token;
         }
     }
 
-    private static string DocumentConsistencyScope(string repository, string documentId) =>
-        $"{repository.Trim()}\n{documentId.Trim()}";
+    private static string DocumentConsistencyScope(string database, string documentId) =>
+        $"{database.Trim()}\n{documentId.Trim()}";
 
     private static void ApplyRequestHeaders(
         HttpRequestMessage request,
