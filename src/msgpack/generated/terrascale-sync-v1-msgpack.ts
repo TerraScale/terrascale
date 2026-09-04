@@ -1,13 +1,13 @@
 // GENERATED FILE - DO NOT EDIT.
 //
-// Source of authority: src/msgpack/manifest/terrascale.sync.v2.msgpack.json
+// Source of authority: src/msgpack/manifest/terrascale.sync.v1.msgpack.json
 // Generator: scripts/generate-msgpack-protocol.ts (ADR 0025: the public
-// terrascale.sync.v2.msgpack WebSocket protocol is generated from one
+// terrascale.sync.v1.msgpack WebSocket protocol is generated from one
 // checked-in versioned manifest; this TypeScript half provides codecs,
 // exact-shape validators, and public types for @terrascale/sdk).
 //
-// manifest sha256:   90baa4a1f566fd3270ce29d11d103017e343ccfc68235c3f7f5ec29b0cce05ab
-// generator sha256:  5f9616af597a127442b7885278721d32d1184f2901010727e031f953ae803e25
+// manifest sha256:   aa9fdf77f1f67e9271d3ca0a0ee8ef1d2423e8934f22d125fd85a3f62cf568db
+// generator sha256:  61cde6c260dcbc8d5209aef50696622c76224ea5cc8147c5c29a70be1bfc3667
 //
 // Regenerate: node scripts/generate-msgpack-protocol.ts
 // Drift gate:  node scripts/generate-msgpack-protocol.ts --check
@@ -49,28 +49,28 @@ function msgpackIsBinary(value: unknown, minBytes: number, maxBytes: number): va
 }
 
 /** The wire identity of the generated protocol. */
-export const terrascaleSyncV2MsgpackProtocol = "terrascale.sync.v2.msgpack" as const;
+export const terrascaleSyncV1MsgpackProtocol = "terrascale.sync.v1.msgpack" as const;
 
 /** The manifest revision this file was generated from. */
-export const terrascaleSyncV2MsgpackManifestVersion = 1 as const;
+export const terrascaleSyncV1MsgpackManifestVersion = 1 as const;
 
 /** The SHA-256 of the manifest file this file was generated from. */
-export const terrascaleSyncV2MsgpackManifestSha256 = "90baa4a1f566fd3270ce29d11d103017e343ccfc68235c3f7f5ec29b0cce05ab" as const;
+export const terrascaleSyncV1MsgpackManifestSha256 = "aa9fdf77f1f67e9271d3ca0a0ee8ef1d2423e8934f22d125fd85a3f62cf568db" as const;
 
 /** The protocol major this build speaks; anything else fails closed. */
-export const terrascaleSyncV2MsgpackMajorVersion = 2 as const;
+export const terrascaleSyncV1MsgpackMajorVersion = 1 as const;
 
 /** The protocol minor this build speaks; anything else fails closed. */
-export const terrascaleSyncV2MsgpackMinorVersion = 1 as const;
+export const terrascaleSyncV1MsgpackMinorVersion = 0 as const;
 
 /** The required feature bits this build understands; unknown bits fail closed. */
-export const terrascaleSyncV2MsgpackSupportedFeatures = 0 as const;
+export const terrascaleSyncV1MsgpackSupportedFeatures = 0 as const;
 
 /** The whole-message ceiling (bytes), enforced before any byte parses. */
-export const terrascaleSyncV2MsgpackMaxMessageBytes = 8388608 as const;
+export const terrascaleSyncV1MsgpackMaxMessageBytes = 8388608 as const;
 
 /** The allocation-bounded structural scan limits, generated from the manifest. */
-export const terrascaleSyncV2MsgpackScanLimits: Readonly<TerrascaleMsgpackScanLimits> = Object.freeze({
+export const terrascaleSyncV1MsgpackScanLimits: Readonly<TerrascaleMsgpackScanLimits> = Object.freeze({
   maxMessageBytes: 8388608,
   maxDepth: 64,
   maxStringBytes: 262144,
@@ -82,10 +82,10 @@ export const terrascaleSyncV2MsgpackScanLimits: Readonly<TerrascaleMsgpackScanLi
 });
 
 /** The direction one message may travel. */
-export type TerrascaleSyncV2MsgpackMessageDirection = "client_to_server" | "server_to_client" | "bidirectional";
+export type TerrascaleSyncV1MsgpackMessageDirection = "client_to_server" | "server_to_client" | "bidirectional";
 
 /** The message kind names, in manifest order. */
-export type TerrascaleSyncV2MsgpackMessageKindName =
+export type TerrascaleSyncV1MsgpackMessageKindName =
   | "subscribe"
   | "unsubscribe"
   | "snapshot"
@@ -99,7 +99,7 @@ export type TerrascaleSyncV2MsgpackMessageKindName =
   | "backpressure";
 
 /** The manifest message tags; tags are stable and never reused. */
-export const terrascaleSyncV2MsgpackMessageTags: Readonly<Record<TerrascaleSyncV2MsgpackMessageKindName, number>> = Object.freeze({
+export const terrascaleSyncV1MsgpackMessageTags: Readonly<Record<TerrascaleSyncV1MsgpackMessageKindName, number>> = Object.freeze({
   subscribe: 1,
   unsubscribe: 2,
   snapshot: 3,
@@ -114,7 +114,7 @@ export const terrascaleSyncV2MsgpackMessageTags: Readonly<Record<TerrascaleSyncV
 });
 
 /** The reverse tag table; unknown tags fail closed on decode. */
-export const terrascaleSyncV2MsgpackMessageNames: Readonly<Record<number, TerrascaleSyncV2MsgpackMessageKindName>> = Object.freeze({
+export const terrascaleSyncV1MsgpackMessageNames: Readonly<Record<number, TerrascaleSyncV1MsgpackMessageKindName>> = Object.freeze({
   1: "subscribe",
   2: "unsubscribe",
   3: "snapshot",
@@ -129,7 +129,7 @@ export const terrascaleSyncV2MsgpackMessageNames: Readonly<Record<number, Terras
 });
 
 /** The manifest-recorded travel direction of each message. */
-export const terrascaleSyncV2MsgpackMessageDirections: Readonly<Record<TerrascaleSyncV2MsgpackMessageKindName, TerrascaleSyncV2MsgpackMessageDirection>> = Object.freeze({
+export const terrascaleSyncV1MsgpackMessageDirections: Readonly<Record<TerrascaleSyncV1MsgpackMessageKindName, TerrascaleSyncV1MsgpackMessageDirection>> = Object.freeze({
   subscribe: "client_to_server",
   unsubscribe: "client_to_server",
   snapshot: "server_to_client",
@@ -144,44 +144,44 @@ export const terrascaleSyncV2MsgpackMessageDirections: Readonly<Record<Terrascal
 });
 
 /** One projected field in an authorized result item. Its value is an opaque canonical JSON byte string produced by the engine and parsed at most once by the browser client. (indexed array of 2 fields) */
-export type TerrascaleSyncV2MsgpackProjectedField = {
+export type TerrascaleSyncV1MsgpackProjectedField = {
   readonly path: string;
   readonly value: Uint8Array;
 };
 
 /** One authorized result item in canonical query order. The sum of its projected canonical JSON value bytes must not exceed the 1 MiB document limit. (indexed array of 2 fields) */
-export type TerrascaleSyncV2MsgpackResultItem = {
+export type TerrascaleSyncV1MsgpackResultItem = {
   readonly identity: string;
-  readonly fields: ReadonlyArray<TerrascaleSyncV2MsgpackProjectedField>;
+  readonly fields: ReadonlyArray<TerrascaleSyncV1MsgpackProjectedField>;
 };
 
 /** A complete authorized result view at one opaque checkpoint. (indexed array of 6 fields) */
-export type TerrascaleSyncV2MsgpackSnapshot = {
+export type TerrascaleSyncV1MsgpackSnapshot = {
   readonly view_generation: bigint;
   readonly authorization_generation: bigint;
   readonly revision: bigint;
-  readonly items: ReadonlyArray<TerrascaleSyncV2MsgpackResultItem>;
+  readonly items: ReadonlyArray<TerrascaleSyncV1MsgpackResultItem>;
   readonly digest: string;
   readonly checkpoint: Uint8Array;
 };
 
 /** One projected field replacement or removal. A replacement is an opaque canonical JSON byte string, not a nested MessagePack document value. (indexed array of 2 fields) */
-export type TerrascaleSyncV2MsgpackFieldChange = {
+export type TerrascaleSyncV1MsgpackFieldChange = {
   readonly path: string;
   readonly value: Uint8Array | null;
 };
 
 /** One ordered mutation of an authorized result view. (tagged indexed array: [discriminant, fields...]) */
-export type TerrascaleSyncV2MsgpackResultOperation =
-  | { readonly kind: "insert"; readonly identity: string; readonly position: number; readonly fields: ReadonlyArray<TerrascaleSyncV2MsgpackProjectedField>; }
-  | { readonly kind: "update"; readonly identity: string; readonly fields: ReadonlyArray<TerrascaleSyncV2MsgpackProjectedField>; }
-  | { readonly kind: "patch"; readonly identity: string; readonly changes: ReadonlyArray<TerrascaleSyncV2MsgpackFieldChange>; }
+export type TerrascaleSyncV1MsgpackResultOperation =
+  | { readonly kind: "insert"; readonly identity: string; readonly position: number; readonly fields: ReadonlyArray<TerrascaleSyncV1MsgpackProjectedField>; }
+  | { readonly kind: "update"; readonly identity: string; readonly fields: ReadonlyArray<TerrascaleSyncV1MsgpackProjectedField>; }
+  | { readonly kind: "patch"; readonly identity: string; readonly changes: ReadonlyArray<TerrascaleSyncV1MsgpackFieldChange>; }
   | { readonly kind: "remove"; readonly identity: string; }
   | { readonly kind: "move"; readonly identity: string; readonly position: number; }
 ;
 
 /** Why the server replaced an incremental view with a snapshot. */
-export type TerrascaleSyncV2MsgpackResetReasonName =
+export type TerrascaleSyncV1MsgpackResetReasonName =
   | "checkpoint_expired"
   | "retention_advanced"
   | "generation_changed"
@@ -193,7 +193,7 @@ export type TerrascaleSyncV2MsgpackResetReasonName =
   | "backpressure";
 
 /** The closed public reactive error vocabulary. */
-export type TerrascaleSyncV2MsgpackErrorCodeName =
+export type TerrascaleSyncV1MsgpackErrorCodeName =
   | "unsupported_version"
   | "malformed_frame"
   | "authentication_expired"
@@ -204,34 +204,34 @@ export type TerrascaleSyncV2MsgpackErrorCodeName =
   | "unavailable";
 
 /** The server's bounded-consumer instruction. */
-export type TerrascaleSyncV2MsgpackBackpressureModeName =
+export type TerrascaleSyncV1MsgpackBackpressureModeName =
   | "pause"
   | "resume";
 
-/** One public terrascale.sync.v2.msgpack message body (the tagged member of the envelope). */
-export type TerrascaleSyncV2MsgpackMessage =
+/** One public terrascale.sync.v1.msgpack message body (the tagged member of the envelope). */
+export type TerrascaleSyncV1MsgpackMessage =
   | { readonly kind: "subscribe"; readonly subscription: string; readonly query: string; readonly parameters: Uint8Array; readonly checkpoint: Uint8Array | null; }
   | { readonly kind: "unsubscribe"; readonly subscription: string; }
-  | { readonly kind: "snapshot"; readonly subscription: string; readonly snapshot: TerrascaleSyncV2MsgpackSnapshot; }
-  | { readonly kind: "delta"; readonly subscription: string; readonly view_generation: bigint; readonly from_revision: bigint; readonly to_revision: bigint; readonly operations: ReadonlyArray<TerrascaleSyncV2MsgpackResultOperation>; readonly digest: string; readonly checkpoint: Uint8Array; }
-  | { readonly kind: "reset"; readonly subscription: string; readonly reason: TerrascaleSyncV2MsgpackResetReasonName; readonly snapshot: TerrascaleSyncV2MsgpackSnapshot; }
+  | { readonly kind: "snapshot"; readonly subscription: string; readonly snapshot: TerrascaleSyncV1MsgpackSnapshot; }
+  | { readonly kind: "delta"; readonly subscription: string; readonly view_generation: bigint; readonly from_revision: bigint; readonly to_revision: bigint; readonly operations: ReadonlyArray<TerrascaleSyncV1MsgpackResultOperation>; readonly digest: string; readonly checkpoint: Uint8Array; }
+  | { readonly kind: "reset"; readonly subscription: string; readonly reason: TerrascaleSyncV1MsgpackResetReasonName; readonly snapshot: TerrascaleSyncV1MsgpackSnapshot; }
   | { readonly kind: "heartbeat"; }
   | { readonly kind: "checkpoint_ack"; readonly subscription: string; readonly checkpoint: Uint8Array; }
-  | { readonly kind: "authorization_changed"; readonly subscription: string; readonly authorization_generation: bigint; readonly removed: ReadonlyArray<string>; readonly snapshot: TerrascaleSyncV2MsgpackSnapshot; }
+  | { readonly kind: "authorization_changed"; readonly subscription: string; readonly authorization_generation: bigint; readonly removed: ReadonlyArray<string>; readonly snapshot: TerrascaleSyncV1MsgpackSnapshot; }
   | { readonly kind: "region_route_change"; readonly region: string; }
-  | { readonly kind: "error"; readonly code: TerrascaleSyncV2MsgpackErrorCodeName; readonly detail: string | null; }
-  | { readonly kind: "backpressure"; readonly mode: TerrascaleSyncV2MsgpackBackpressureModeName; }
+  | { readonly kind: "error"; readonly code: TerrascaleSyncV1MsgpackErrorCodeName; readonly detail: string | null; }
+  | { readonly kind: "backpressure"; readonly mode: TerrascaleSyncV1MsgpackBackpressureModeName; }
 ;
 
 /** One sealed protocol message: the envelope identities plus the tagged body. */
-export type TerrascaleSyncV2MsgpackEnvelope = {
+export type TerrascaleSyncV1MsgpackEnvelope = {
   readonly features: number;
   readonly correlation: bigint;
   readonly causation: bigint;
-  readonly message: TerrascaleSyncV2MsgpackMessage;
+  readonly message: TerrascaleSyncV1MsgpackMessage;
 };
 
-const terrascaleSyncV2MsgpackResetReasonCodes: Readonly<Record<TerrascaleSyncV2MsgpackResetReasonName, number>> = Object.freeze({
+const terrascaleSyncV1MsgpackResetReasonCodes: Readonly<Record<TerrascaleSyncV1MsgpackResetReasonName, number>> = Object.freeze({
   checkpoint_expired: 1,
   retention_advanced: 2,
   generation_changed: 3,
@@ -243,7 +243,7 @@ const terrascaleSyncV2MsgpackResetReasonCodes: Readonly<Record<TerrascaleSyncV2M
   backpressure: 9,
 });
 
-const terrascaleSyncV2MsgpackResetReasonNames: Readonly<Record<number, TerrascaleSyncV2MsgpackResetReasonName>> = Object.freeze({
+const terrascaleSyncV1MsgpackResetReasonNames: Readonly<Record<number, TerrascaleSyncV1MsgpackResetReasonName>> = Object.freeze({
   1: "checkpoint_expired",
   2: "retention_advanced",
   3: "generation_changed",
@@ -255,7 +255,7 @@ const terrascaleSyncV2MsgpackResetReasonNames: Readonly<Record<number, Terrascal
   9: "backpressure",
 });
 
-function msgpackIsResetReason(value: unknown): value is TerrascaleSyncV2MsgpackResetReasonName {
+function msgpackIsResetReason(value: unknown): value is TerrascaleSyncV1MsgpackResetReasonName {
   if (value === "checkpoint_expired") { return true; }
   if (value === "retention_advanced") { return true; }
   if (value === "generation_changed") { return true; }
@@ -268,7 +268,7 @@ function msgpackIsResetReason(value: unknown): value is TerrascaleSyncV2MsgpackR
   return false;
 }
 
-const terrascaleSyncV2MsgpackErrorCodeCodes: Readonly<Record<TerrascaleSyncV2MsgpackErrorCodeName, number>> = Object.freeze({
+const terrascaleSyncV1MsgpackErrorCodeCodes: Readonly<Record<TerrascaleSyncV1MsgpackErrorCodeName, number>> = Object.freeze({
   unsupported_version: 1,
   malformed_frame: 2,
   authentication_expired: 3,
@@ -279,7 +279,7 @@ const terrascaleSyncV2MsgpackErrorCodeCodes: Readonly<Record<TerrascaleSyncV2Msg
   unavailable: 8,
 });
 
-const terrascaleSyncV2MsgpackErrorCodeNames: Readonly<Record<number, TerrascaleSyncV2MsgpackErrorCodeName>> = Object.freeze({
+const terrascaleSyncV1MsgpackErrorCodeNames: Readonly<Record<number, TerrascaleSyncV1MsgpackErrorCodeName>> = Object.freeze({
   1: "unsupported_version",
   2: "malformed_frame",
   3: "authentication_expired",
@@ -290,7 +290,7 @@ const terrascaleSyncV2MsgpackErrorCodeNames: Readonly<Record<number, TerrascaleS
   8: "unavailable",
 });
 
-function msgpackIsErrorCode(value: unknown): value is TerrascaleSyncV2MsgpackErrorCodeName {
+function msgpackIsErrorCode(value: unknown): value is TerrascaleSyncV1MsgpackErrorCodeName {
   if (value === "unsupported_version") { return true; }
   if (value === "malformed_frame") { return true; }
   if (value === "authentication_expired") { return true; }
@@ -302,24 +302,24 @@ function msgpackIsErrorCode(value: unknown): value is TerrascaleSyncV2MsgpackErr
   return false;
 }
 
-const terrascaleSyncV2MsgpackBackpressureModeCodes: Readonly<Record<TerrascaleSyncV2MsgpackBackpressureModeName, number>> = Object.freeze({
+const terrascaleSyncV1MsgpackBackpressureModeCodes: Readonly<Record<TerrascaleSyncV1MsgpackBackpressureModeName, number>> = Object.freeze({
   pause: 1,
   resume: 2,
 });
 
-const terrascaleSyncV2MsgpackBackpressureModeNames: Readonly<Record<number, TerrascaleSyncV2MsgpackBackpressureModeName>> = Object.freeze({
+const terrascaleSyncV1MsgpackBackpressureModeNames: Readonly<Record<number, TerrascaleSyncV1MsgpackBackpressureModeName>> = Object.freeze({
   1: "pause",
   2: "resume",
 });
 
-function msgpackIsBackpressureMode(value: unknown): value is TerrascaleSyncV2MsgpackBackpressureModeName {
+function msgpackIsBackpressureMode(value: unknown): value is TerrascaleSyncV1MsgpackBackpressureModeName {
   if (value === "pause") { return true; }
   if (value === "resume") { return true; }
   return false;
 }
 
 /** The exact-shape validator for the projected_field structured type. */
-export function validateTerrascaleSyncV2MsgpackProjectedField(candidate: unknown): void {
+export function validateTerrascaleSyncV1MsgpackProjectedField(candidate: unknown): void {
   if (typeof candidate !== "object" || candidate === null
     || !("path" in candidate)
     || !("value" in candidate)
@@ -340,7 +340,7 @@ export function validateTerrascaleSyncV2MsgpackProjectedField(candidate: unknown
 }
 
 /** The exact-shape validator for the result_item structured type. */
-export function validateTerrascaleSyncV2MsgpackResultItem(candidate: unknown): void {
+export function validateTerrascaleSyncV1MsgpackResultItem(candidate: unknown): void {
   if (typeof candidate !== "object" || candidate === null
     || !("identity" in candidate)
     || !("fields" in candidate)
@@ -359,7 +359,7 @@ export function validateTerrascaleSyncV2MsgpackResultItem(candidate: unknown): v
     throw msgpackInvalid("result_item.fields");
   }
   for (const element of fields) {
-    validateTerrascaleSyncV2MsgpackProjectedField(element);
+    validateTerrascaleSyncV1MsgpackProjectedField(element);
   }
   let aggregateResultItemFieldsBytes = 0;
   for (const aggregateResultItemFieldsBytesItem of fields) {
@@ -372,7 +372,7 @@ export function validateTerrascaleSyncV2MsgpackResultItem(candidate: unknown): v
 }
 
 /** The exact-shape validator for the snapshot structured type. */
-export function validateTerrascaleSyncV2MsgpackSnapshot(candidate: unknown): void {
+export function validateTerrascaleSyncV1MsgpackSnapshot(candidate: unknown): void {
   if (typeof candidate !== "object" || candidate === null
     || !("view_generation" in candidate)
     || !("authorization_generation" in candidate)
@@ -403,7 +403,7 @@ export function validateTerrascaleSyncV2MsgpackSnapshot(candidate: unknown): voi
     throw msgpackInvalid("snapshot.items");
   }
   for (const element of items) {
-    validateTerrascaleSyncV2MsgpackResultItem(element);
+    validateTerrascaleSyncV1MsgpackResultItem(element);
   }
   const digest = (candidate as { digest: unknown }).digest;
   if (!msgpackIsText(digest, 0, 64)) {
@@ -416,7 +416,7 @@ export function validateTerrascaleSyncV2MsgpackSnapshot(candidate: unknown): voi
 }
 
 /** The exact-shape validator for the field_change structured type. */
-export function validateTerrascaleSyncV2MsgpackFieldChange(candidate: unknown): void {
+export function validateTerrascaleSyncV1MsgpackFieldChange(candidate: unknown): void {
   if (typeof candidate !== "object" || candidate === null
     || !("path" in candidate)
     || !("value" in candidate)
@@ -439,7 +439,7 @@ export function validateTerrascaleSyncV2MsgpackFieldChange(candidate: unknown): 
 }
 
 /** The exact-shape validator for the result_operation union. */
-export function validateTerrascaleSyncV2MsgpackResultOperation(candidate: unknown): void {
+export function validateTerrascaleSyncV1MsgpackResultOperation(candidate: unknown): void {
   if (typeof candidate !== "object" || candidate === null || !("kind" in candidate)) {
     throw msgpackInvalid("result_operation");
   }
@@ -470,7 +470,7 @@ export function validateTerrascaleSyncV2MsgpackResultOperation(candidate: unknow
       throw msgpackInvalid("result_operation.insert.fields");
     }
     for (const element of fields) {
-      validateTerrascaleSyncV2MsgpackProjectedField(element);
+      validateTerrascaleSyncV1MsgpackProjectedField(element);
     }
     let aggregateResultOperationInsertFieldsBytes = 0;
     for (const aggregateResultOperationInsertFieldsBytesItem of fields) {
@@ -501,7 +501,7 @@ export function validateTerrascaleSyncV2MsgpackResultOperation(candidate: unknow
       throw msgpackInvalid("result_operation.update.fields");
     }
     for (const element of fields) {
-      validateTerrascaleSyncV2MsgpackProjectedField(element);
+      validateTerrascaleSyncV1MsgpackProjectedField(element);
     }
     let aggregateResultOperationUpdateFieldsBytes = 0;
     for (const aggregateResultOperationUpdateFieldsBytesItem of fields) {
@@ -532,7 +532,7 @@ export function validateTerrascaleSyncV2MsgpackResultOperation(candidate: unknow
       throw msgpackInvalid("result_operation.patch.changes");
     }
     for (const element of changes) {
-      validateTerrascaleSyncV2MsgpackFieldChange(element);
+      validateTerrascaleSyncV1MsgpackFieldChange(element);
     }
     let aggregateResultOperationPatchChangesBytes = 0;
     for (const aggregateResultOperationPatchChangesBytesItem of changes) {
@@ -581,7 +581,7 @@ export function validateTerrascaleSyncV2MsgpackResultOperation(candidate: unknow
 }
 
 /** The exact-shape validator for one public message body (untrusted in-memory values too). */
-export function validateTerrascaleSyncV2MsgpackMessage(candidate: unknown): void {
+export function validateTerrascaleSyncV1MsgpackMessage(candidate: unknown): void {
   if (typeof candidate !== "object" || candidate === null || !("kind" in candidate)) {
     throw msgpackInvalid("message");
   }
@@ -650,7 +650,7 @@ export function validateTerrascaleSyncV2MsgpackMessage(candidate: unknown): void
       throw msgpackInvalid("snapshot");
     }
     const snapshot = (candidate as { snapshot: unknown }).snapshot;
-    validateTerrascaleSyncV2MsgpackSnapshot(snapshot);
+    validateTerrascaleSyncV1MsgpackSnapshot(snapshot);
     return;
   }
   if (kind === "delta") {
@@ -693,7 +693,7 @@ export function validateTerrascaleSyncV2MsgpackMessage(candidate: unknown): void
       throw msgpackInvalid("delta.operations");
     }
     for (const element of operations) {
-      validateTerrascaleSyncV2MsgpackResultOperation(element);
+      validateTerrascaleSyncV1MsgpackResultOperation(element);
     }
     if (!("digest" in candidate)) {
       throw msgpackInvalid("delta");
@@ -733,7 +733,7 @@ export function validateTerrascaleSyncV2MsgpackMessage(candidate: unknown): void
       throw msgpackInvalid("reset");
     }
     const snapshot = (candidate as { snapshot: unknown }).snapshot;
-    validateTerrascaleSyncV2MsgpackSnapshot(snapshot);
+    validateTerrascaleSyncV1MsgpackSnapshot(snapshot);
     return;
   }
   if (kind === "heartbeat") {
@@ -796,7 +796,7 @@ export function validateTerrascaleSyncV2MsgpackMessage(candidate: unknown): void
       throw msgpackInvalid("authorization_changed");
     }
     const snapshot = (candidate as { snapshot: unknown }).snapshot;
-    validateTerrascaleSyncV2MsgpackSnapshot(snapshot);
+    validateTerrascaleSyncV1MsgpackSnapshot(snapshot);
     return;
   }
   if (kind === "region_route_change") {
@@ -851,7 +851,7 @@ export function validateTerrascaleSyncV2MsgpackMessage(candidate: unknown): void
 }
 
 /** The exact-shape validator for one sealed protocol message. */
-export function validateTerrascaleSyncV2MsgpackEnvelope(envelope: unknown): void {
+export function validateTerrascaleSyncV1MsgpackEnvelope(envelope: unknown): void {
   if (typeof envelope !== "object" || envelope === null
     || !("features" in envelope) || !("correlation" in envelope)
     || !("causation" in envelope) || !("message" in envelope)) {
@@ -870,19 +870,19 @@ export function validateTerrascaleSyncV2MsgpackEnvelope(envelope: unknown): void
   if (!msgpackIsU64(candidate.causation)) {
     throw msgpackInvalid("envelope.causation");
   }
-  if ((candidate.features & ~terrascaleSyncV2MsgpackSupportedFeatures) !== 0) {
+  if ((candidate.features & ~terrascaleSyncV1MsgpackSupportedFeatures) !== 0) {
     throw new TerrascaleMsgpackError("unknown_feature", "the envelope requires feature bits this build does not speak");
   }
-  validateTerrascaleSyncV2MsgpackMessage(candidate.message);
+  validateTerrascaleSyncV1MsgpackMessage(candidate.message);
 }
 
-function msgpackEncodeProjectedField(writer: MsgpackWriter, value: TerrascaleSyncV2MsgpackProjectedField): void {
+function msgpackEncodeProjectedField(writer: MsgpackWriter, value: TerrascaleSyncV1MsgpackProjectedField): void {
   writer.arrayHeader(2);
   writer.text(value.path, 256);
   writer.binary(value.value, 0, 1048576);
 }
 
-function msgpackEncodeResultItem(writer: MsgpackWriter, value: TerrascaleSyncV2MsgpackResultItem): void {
+function msgpackEncodeResultItem(writer: MsgpackWriter, value: TerrascaleSyncV1MsgpackResultItem): void {
   writer.arrayHeader(2);
   writer.text(value.identity, 256);
   writer.arrayHeader(value.fields.length);
@@ -891,7 +891,7 @@ function msgpackEncodeResultItem(writer: MsgpackWriter, value: TerrascaleSyncV2M
   }
 }
 
-function msgpackEncodeSnapshot(writer: MsgpackWriter, value: TerrascaleSyncV2MsgpackSnapshot): void {
+function msgpackEncodeSnapshot(writer: MsgpackWriter, value: TerrascaleSyncV1MsgpackSnapshot): void {
   writer.arrayHeader(6);
   writer.u64(value.view_generation);
   writer.u64(value.authorization_generation);
@@ -904,7 +904,7 @@ function msgpackEncodeSnapshot(writer: MsgpackWriter, value: TerrascaleSyncV2Msg
   writer.binary(value.checkpoint, 1, 4096);
 }
 
-function msgpackEncodeFieldChange(writer: MsgpackWriter, value: TerrascaleSyncV2MsgpackFieldChange): void {
+function msgpackEncodeFieldChange(writer: MsgpackWriter, value: TerrascaleSyncV1MsgpackFieldChange): void {
   writer.arrayHeader(2);
   writer.text(value.path, 256);
   if (value.value === null) {
@@ -914,7 +914,7 @@ function msgpackEncodeFieldChange(writer: MsgpackWriter, value: TerrascaleSyncV2
   }
 }
 
-function msgpackEncodeResultOperation(writer: MsgpackWriter, value: TerrascaleSyncV2MsgpackResultOperation): void {
+function msgpackEncodeResultOperation(writer: MsgpackWriter, value: TerrascaleSyncV1MsgpackResultOperation): void {
   switch (value.kind) {
     case "insert": {
       writer.arrayHeader(4);
@@ -963,19 +963,19 @@ function msgpackEncodeResultOperation(writer: MsgpackWriter, value: TerrascaleSy
   }
 }
 
-function msgpackEncodeResetReason(writer: MsgpackWriter, value: TerrascaleSyncV2MsgpackResetReasonName): void {
-  writer.u32(terrascaleSyncV2MsgpackResetReasonCodes[value]);
+function msgpackEncodeResetReason(writer: MsgpackWriter, value: TerrascaleSyncV1MsgpackResetReasonName): void {
+  writer.u32(terrascaleSyncV1MsgpackResetReasonCodes[value]);
 }
 
-function msgpackEncodeErrorCode(writer: MsgpackWriter, value: TerrascaleSyncV2MsgpackErrorCodeName): void {
-  writer.u32(terrascaleSyncV2MsgpackErrorCodeCodes[value]);
+function msgpackEncodeErrorCode(writer: MsgpackWriter, value: TerrascaleSyncV1MsgpackErrorCodeName): void {
+  writer.u32(terrascaleSyncV1MsgpackErrorCodeCodes[value]);
 }
 
-function msgpackEncodeBackpressureMode(writer: MsgpackWriter, value: TerrascaleSyncV2MsgpackBackpressureModeName): void {
-  writer.u32(terrascaleSyncV2MsgpackBackpressureModeCodes[value]);
+function msgpackEncodeBackpressureMode(writer: MsgpackWriter, value: TerrascaleSyncV1MsgpackBackpressureModeName): void {
+  writer.u32(terrascaleSyncV1MsgpackBackpressureModeCodes[value]);
 }
 
-function msgpackEncodeMessageBody(writer: MsgpackWriter, message: TerrascaleSyncV2MsgpackMessage): void {
+function msgpackEncodeMessageBody(writer: MsgpackWriter, message: TerrascaleSyncV1MsgpackMessage): void {
   switch (message.kind) {
     case "subscribe": {
       writer.arrayHeader(4);
@@ -1066,29 +1066,29 @@ function msgpackEncodeMessageBody(writer: MsgpackWriter, message: TerrascaleSync
 }
 
 /** Encodes one message body as its indexed array (the envelope body element). */
-export function encodeTerrascaleSyncV2MsgpackMessage(message: TerrascaleSyncV2MsgpackMessage): Uint8Array {
-  validateTerrascaleSyncV2MsgpackMessage(message);
+export function encodeTerrascaleSyncV1MsgpackMessage(message: TerrascaleSyncV1MsgpackMessage): Uint8Array {
+  validateTerrascaleSyncV1MsgpackMessage(message);
   const writer = new MsgpackWriter();
   msgpackEncodeMessageBody(writer, message);
-  return writer.finish(terrascaleSyncV2MsgpackMaxMessageBytes);
+  return writer.finish(terrascaleSyncV1MsgpackMaxMessageBytes);
 }
 
 /** Encodes one complete protocol message (envelope plus body). */
-export function encodeTerrascaleSyncV2MsgpackEnvelope(envelope: TerrascaleSyncV2MsgpackEnvelope): Uint8Array {
-  validateTerrascaleSyncV2MsgpackEnvelope(envelope);
+export function encodeTerrascaleSyncV1MsgpackEnvelope(envelope: TerrascaleSyncV1MsgpackEnvelope): Uint8Array {
+  validateTerrascaleSyncV1MsgpackEnvelope(envelope);
   const writer = new MsgpackWriter();
   writer.arrayHeader(7);
-  writer.u32(terrascaleSyncV2MsgpackMajorVersion);
-  writer.u32(terrascaleSyncV2MsgpackMinorVersion);
+  writer.u32(terrascaleSyncV1MsgpackMajorVersion);
+  writer.u32(terrascaleSyncV1MsgpackMinorVersion);
   writer.u32(envelope.features);
-  writer.u32(terrascaleSyncV2MsgpackMessageTags[envelope.message.kind]);
+  writer.u32(terrascaleSyncV1MsgpackMessageTags[envelope.message.kind]);
   writer.u64(envelope.correlation);
   writer.u64(envelope.causation);
   msgpackEncodeMessageBody(writer, envelope.message);
-  return writer.finish(terrascaleSyncV2MsgpackMaxMessageBytes);
+  return writer.finish(terrascaleSyncV1MsgpackMaxMessageBytes);
 }
 
-function msgpackDecodeProjectedField(reader: MsgpackReader): TerrascaleSyncV2MsgpackProjectedField {
+function msgpackDecodeProjectedField(reader: MsgpackReader): TerrascaleSyncV1MsgpackProjectedField {
   reader.arrayHeader(2);
   const path = reader.text(256);
   if (msgpackUtf8ByteLength(path) < 1) {
@@ -1098,11 +1098,11 @@ function msgpackDecodeProjectedField(reader: MsgpackReader): TerrascaleSyncV2Msg
   return { path, value };
 }
 
-function msgpackDecodeResultItem(reader: MsgpackReader): TerrascaleSyncV2MsgpackResultItem {
+function msgpackDecodeResultItem(reader: MsgpackReader): TerrascaleSyncV1MsgpackResultItem {
   reader.arrayHeader(2);
   const identity = reader.text(256);
   const fieldsCount = reader.arrayCount(1024);
-  const fields: Array<TerrascaleSyncV2MsgpackProjectedField> = [];
+  const fields: Array<TerrascaleSyncV1MsgpackProjectedField> = [];
   for (let index = 0; index < fieldsCount; index++) {
     fields.push(msgpackDecodeProjectedField(reader));
   }
@@ -1117,13 +1117,13 @@ function msgpackDecodeResultItem(reader: MsgpackReader): TerrascaleSyncV2Msgpack
   return { identity, fields };
 }
 
-function msgpackDecodeSnapshot(reader: MsgpackReader): TerrascaleSyncV2MsgpackSnapshot {
+function msgpackDecodeSnapshot(reader: MsgpackReader): TerrascaleSyncV1MsgpackSnapshot {
   reader.arrayHeader(6);
   const view_generation = reader.u64();
   const authorization_generation = reader.u64();
   const revision = reader.u64();
   const itemsCount = reader.arrayCount(10000);
-  const items: Array<TerrascaleSyncV2MsgpackResultItem> = [];
+  const items: Array<TerrascaleSyncV1MsgpackResultItem> = [];
   for (let index = 0; index < itemsCount; index++) {
     items.push(msgpackDecodeResultItem(reader));
   }
@@ -1132,7 +1132,7 @@ function msgpackDecodeSnapshot(reader: MsgpackReader): TerrascaleSyncV2MsgpackSn
   return { view_generation, authorization_generation, revision, items, digest, checkpoint };
 }
 
-function msgpackDecodeFieldChange(reader: MsgpackReader): TerrascaleSyncV2MsgpackFieldChange {
+function msgpackDecodeFieldChange(reader: MsgpackReader): TerrascaleSyncV1MsgpackFieldChange {
   reader.arrayHeader(2);
   const path = reader.text(256);
   if (msgpackUtf8ByteLength(path) < 1) {
@@ -1142,7 +1142,7 @@ function msgpackDecodeFieldChange(reader: MsgpackReader): TerrascaleSyncV2Msgpac
   return { path, value };
 }
 
-function msgpackDecodeResultOperation(reader: MsgpackReader): TerrascaleSyncV2MsgpackResultOperation {
+function msgpackDecodeResultOperation(reader: MsgpackReader): TerrascaleSyncV1MsgpackResultOperation {
   const count = reader.arrayCount(4);
   const discriminant = reader.u32();
   if (discriminant === 1) {
@@ -1152,7 +1152,7 @@ function msgpackDecodeResultOperation(reader: MsgpackReader): TerrascaleSyncV2Ms
       const identity = reader.text(256);
       const position = reader.u32();
       const fieldsCount = reader.arrayCount(1024);
-      const fields: Array<TerrascaleSyncV2MsgpackProjectedField> = [];
+      const fields: Array<TerrascaleSyncV1MsgpackProjectedField> = [];
       for (let index = 0; index < fieldsCount; index++) {
         fields.push(msgpackDecodeProjectedField(reader));
       }
@@ -1172,7 +1172,7 @@ function msgpackDecodeResultOperation(reader: MsgpackReader): TerrascaleSyncV2Ms
     }
       const identity = reader.text(256);
       const fieldsCount = reader.arrayCount(1024);
-      const fields: Array<TerrascaleSyncV2MsgpackProjectedField> = [];
+      const fields: Array<TerrascaleSyncV1MsgpackProjectedField> = [];
       for (let index = 0; index < fieldsCount; index++) {
         fields.push(msgpackDecodeProjectedField(reader));
       }
@@ -1192,7 +1192,7 @@ function msgpackDecodeResultOperation(reader: MsgpackReader): TerrascaleSyncV2Ms
     }
       const identity = reader.text(256);
       const changesCount = reader.arrayCount(1024);
-      const changes: Array<TerrascaleSyncV2MsgpackFieldChange> = [];
+      const changes: Array<TerrascaleSyncV1MsgpackFieldChange> = [];
       for (let index = 0; index < changesCount; index++) {
         changes.push(msgpackDecodeFieldChange(reader));
       }
@@ -1224,34 +1224,34 @@ function msgpackDecodeResultOperation(reader: MsgpackReader): TerrascaleSyncV2Ms
   throw new TerrascaleMsgpackError("unknown_variant", `result_operation discriminant ${discriminant} is not defined by the manifest`);
 }
 
-function msgpackDecodeResetReason(reader: MsgpackReader): TerrascaleSyncV2MsgpackResetReasonName {
+function msgpackDecodeResetReason(reader: MsgpackReader): TerrascaleSyncV1MsgpackResetReasonName {
   const code = reader.u32();
-  const name = terrascaleSyncV2MsgpackResetReasonNames[code];
+  const name = terrascaleSyncV1MsgpackResetReasonNames[code];
   if (name === undefined) {
     throw new TerrascaleMsgpackError("unknown_enum", `reset_reason value ${code} is not defined by the manifest`);
   }
   return name;
 }
 
-function msgpackDecodeErrorCode(reader: MsgpackReader): TerrascaleSyncV2MsgpackErrorCodeName {
+function msgpackDecodeErrorCode(reader: MsgpackReader): TerrascaleSyncV1MsgpackErrorCodeName {
   const code = reader.u32();
-  const name = terrascaleSyncV2MsgpackErrorCodeNames[code];
+  const name = terrascaleSyncV1MsgpackErrorCodeNames[code];
   if (name === undefined) {
     throw new TerrascaleMsgpackError("unknown_enum", `error_code value ${code} is not defined by the manifest`);
   }
   return name;
 }
 
-function msgpackDecodeBackpressureMode(reader: MsgpackReader): TerrascaleSyncV2MsgpackBackpressureModeName {
+function msgpackDecodeBackpressureMode(reader: MsgpackReader): TerrascaleSyncV1MsgpackBackpressureModeName {
   const code = reader.u32();
-  const name = terrascaleSyncV2MsgpackBackpressureModeNames[code];
+  const name = terrascaleSyncV1MsgpackBackpressureModeNames[code];
   if (name === undefined) {
     throw new TerrascaleMsgpackError("unknown_enum", `backpressure_mode value ${code} is not defined by the manifest`);
   }
   return name;
 }
 
-function msgpackDecodeMessageBody(reader: MsgpackReader, tag: number): TerrascaleSyncV2MsgpackMessage {
+function msgpackDecodeMessageBody(reader: MsgpackReader, tag: number): TerrascaleSyncV1MsgpackMessage {
   switch (tag) {
     case 1: {
       reader.arrayHeader(4);
@@ -1279,7 +1279,7 @@ function msgpackDecodeMessageBody(reader: MsgpackReader, tag: number): Terrascal
       const from_revision = reader.u64();
       const to_revision = reader.u64();
       const operationsCount = reader.arrayCount(1024);
-      const operations: Array<TerrascaleSyncV2MsgpackResultOperation> = [];
+      const operations: Array<TerrascaleSyncV1MsgpackResultOperation> = [];
       for (let index = 0; index < operationsCount; index++) {
         operations.push(msgpackDecodeResultOperation(reader));
       }
@@ -1344,20 +1344,20 @@ function msgpackDecodeMessageBody(reader: MsgpackReader, tag: number): Terrascal
  * decode assembles the public value only after every field validated, so
  * a hostile message never yields a partially constructed value.
  */
-export function decodeTerrascaleSyncV2MsgpackEnvelope(bytes: Uint8Array): TerrascaleSyncV2MsgpackEnvelope {
-  scanMessagePack(bytes, terrascaleSyncV2MsgpackScanLimits);
+export function decodeTerrascaleSyncV1MsgpackEnvelope(bytes: Uint8Array): TerrascaleSyncV1MsgpackEnvelope {
+  scanMessagePack(bytes, terrascaleSyncV1MsgpackScanLimits);
   const reader = new MsgpackReader(bytes);
   reader.arrayHeader(7);
   const major = reader.u32();
-  if (major !== terrascaleSyncV2MsgpackMajorVersion) {
-    throw new TerrascaleMsgpackError("unsupported_version", `protocol major ${major} is not spoken; this build speaks 2`);
+  if (major !== terrascaleSyncV1MsgpackMajorVersion) {
+    throw new TerrascaleMsgpackError("unsupported_version", `protocol major ${major} is not spoken; this build speaks 1`);
   }
   const minor = reader.u32();
-  if (minor !== terrascaleSyncV2MsgpackMinorVersion) {
-    throw new TerrascaleMsgpackError("unsupported_version", `protocol minor ${minor} is not spoken; this build speaks 1`);
+  if (minor !== terrascaleSyncV1MsgpackMinorVersion) {
+    throw new TerrascaleMsgpackError("unsupported_version", `protocol minor ${minor} is not spoken; this build speaks 0`);
   }
   const features = reader.u32();
-  if ((features & ~terrascaleSyncV2MsgpackSupportedFeatures) !== 0) {
+  if ((features & ~terrascaleSyncV1MsgpackSupportedFeatures) !== 0) {
     throw new TerrascaleMsgpackError("unknown_feature", "the message requires feature bits this build does not speak");
   }
   const tag = reader.u32();

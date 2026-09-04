@@ -2,33 +2,33 @@ import assert from "node:assert/strict";
 import { describe, test } from "vitest";
 
 import {
-  decodeTerrascaleSyncV2MsgpackEnvelope,
-  encodeTerrascaleSyncV2MsgpackEnvelope,
-  type TerrascaleSyncV2MsgpackMessage,
-  type TerrascaleSyncV2MsgpackSnapshot,
-} from "./msgpack/generated/terrascale-sync-v2-msgpack.js";
+  decodeTerrascaleSyncV1MsgpackEnvelope,
+  encodeTerrascaleSyncV1MsgpackEnvelope,
+  type TerrascaleSyncV1MsgpackMessage,
+  type TerrascaleSyncV1MsgpackSnapshot,
+} from "./msgpack/generated/terrascale-sync-v1-msgpack.js";
 import {
-  TerraScaleSyncV2Client,
-  TerraScaleSyncV2ClientError,
-  SyncV2ViewError,
-  syncV2ResultDigest,
-  type SyncV2ResultItem,
+  TerraScaleSyncV1Client,
+  TerraScaleSyncV1ClientError,
+  SyncV1ViewError,
+  syncV1ResultDigest,
+  type SyncV1ResultItem,
 } from "./index.js";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-const item = (identity: string, value: string): SyncV2ResultItem => ({
+const item = (identity: string, value: string): SyncV1ResultItem => ({
   identity,
   value: { value: encoder.encode(value) },
 });
 
 function wireSnapshot(
-  items: readonly SyncV2ResultItem[],
+  items: readonly SyncV1ResultItem[],
   revision = 1n,
   viewGeneration = 1n,
   authorizationGeneration = 1n,
-): TerrascaleSyncV2MsgpackSnapshot {
+): TerrascaleSyncV1MsgpackSnapshot {
   return {
     view_generation: viewGeneration,
     authorization_generation: authorizationGeneration,
@@ -37,13 +37,13 @@ function wireSnapshot(
       identity: entry.identity,
       fields: Object.entries(entry.value).map(([path, value]) => ({ path, value })),
     })),
-    digest: syncV2ResultDigest(items),
+    digest: syncV1ResultDigest(items),
     checkpoint: encoder.encode(`checkpoint-${viewGeneration}-${revision}`),
   };
 }
 
-function serverFrame(message: TerrascaleSyncV2MsgpackMessage): Uint8Array {
-  return encodeTerrascaleSyncV2MsgpackEnvelope({
+function serverFrame(message: TerrascaleSyncV1MsgpackMessage): Uint8Array {
+  return encodeTerrascaleSyncV1MsgpackEnvelope({
     features: 0,
     correlation: 1n,
     causation: 0n,
@@ -53,14 +53,14 @@ function serverFrame(message: TerrascaleSyncV2MsgpackMessage): Uint8Array {
 
 describe("current reactive client", () => {
   test("uses generated frames for subscriptions, snapshots, and deltas", () => {
-    const client = new TerraScaleSyncV2Client();
+    const client = new TerraScaleSyncV1Client();
     client.setOnline(true);
     const opened = client.openSubscription({
       subscription: "orders-by-status",
       query: "from orders where status = $status",
       parameters: encoder.encode("open"),
     });
-    const subscribe = decodeTerrascaleSyncV2MsgpackEnvelope(
+    const subscribe = decodeTerrascaleSyncV1MsgpackEnvelope(
       client.encode(opened.message, 1n),
     );
     assert.equal(subscribe.message.kind, "subscribe");
@@ -83,7 +83,7 @@ describe("current reactive client", () => {
         { kind: "update", identity: "order-1", fields: [{ path: "value", value: encoder.encode("paid") }] },
         { kind: "insert", identity: "order-2", position: 1, fields: [{ path: "value", value: encoder.encode("open") }] },
       ],
-      digest: syncV2ResultDigest(changed),
+      digest: syncV1ResultDigest(changed),
       checkpoint: encoder.encode("checkpoint-1-2"),
     }));
     assert.deepEqual(opened.subscription.view.getItems().map(entry => entry.identity), ["order-1", "order-2"]);
@@ -93,7 +93,7 @@ describe("current reactive client", () => {
   });
 
   test("applies authorization replacement, routing, and backpressure frames", () => {
-    const client = new TerraScaleSyncV2Client();
+    const client = new TerraScaleSyncV1Client();
     const opened = client.openSubscription({ subscription: "visible", query: "from docs", parameters: new Uint8Array() });
     client.receive(serverFrame({ kind: "snapshot", subscription: "visible", snapshot: wireSnapshot([item("a", "visible")]) }));
     client.receive(serverFrame({
@@ -110,7 +110,7 @@ describe("current reactive client", () => {
   });
 
   test("rejects stale and replayed snapshots and resets across every monotonic counter", () => {
-    const client = new TerraScaleSyncV2Client();
+    const client = new TerraScaleSyncV1Client();
     client.openSubscription({ subscription: "monotonic", query: "from docs", parameters: new Uint8Array() });
     const installed = wireSnapshot([item("current", "visible")], 11n, 5n, 7n);
     client.receive(serverFrame({ kind: "snapshot", subscription: "monotonic", snapshot: installed }));
@@ -126,7 +126,7 @@ describe("current reactive client", () => {
     for (const message of rejected) {
       assert.throws(
         () => client.receive(serverFrame(message)),
-        (error: unknown) => error instanceof SyncV2ViewError && error.code === "reset-required",
+        (error: unknown) => error instanceof SyncV1ViewError && error.code === "reset-required",
       );
     }
 
@@ -139,7 +139,7 @@ describe("current reactive client", () => {
   });
 
   test("validates a complete subscribe before publishing client state", () => {
-    const client = new TerraScaleSyncV2Client();
+    const client = new TerraScaleSyncV1Client();
     assert.throws(() => client.openSubscription({
       subscription: "bounded",
       query: "from docs",
@@ -155,7 +155,7 @@ describe("current reactive client", () => {
   });
 
   test("rejects authorization replacements that restore removed identities atomically", () => {
-    const client = new TerraScaleSyncV2Client();
+    const client = new TerraScaleSyncV1Client();
     const opened = client.openSubscription({ subscription: "authorized", query: "from docs", parameters: new Uint8Array() });
     client.receive(serverFrame({
       kind: "snapshot",
@@ -170,7 +170,7 @@ describe("current reactive client", () => {
         removed: ["secret"],
         snapshot: wireSnapshot([item("secret", "restored")], 5n, 4n, 6n),
       })),
-      (error: unknown) => error instanceof SyncV2ViewError && error.code === "reset-required",
+      (error: unknown) => error instanceof SyncV1ViewError && error.code === "reset-required",
     );
     assert.deepEqual(opened.subscription.view.getItems().map(entry => entry.identity), ["secret"]);
     assert.equal(opened.subscription.view.getRevision(), 4n);
@@ -178,25 +178,25 @@ describe("current reactive client", () => {
   });
 
   test("rejects wrong-direction, unknown-subscription, and remote error frames", () => {
-    const client = new TerraScaleSyncV2Client();
+    const client = new TerraScaleSyncV1Client();
     assert.throws(
       () => client.receive(serverFrame({ kind: "unsubscribe", subscription: "missing" })),
-      (error: unknown) => error instanceof TerraScaleSyncV2ClientError && error.code === "protocol_error",
+      (error: unknown) => error instanceof TerraScaleSyncV1ClientError && error.code === "protocol_error",
     );
     assert.throws(
       () => client.receive(serverFrame({ kind: "snapshot", subscription: "missing", snapshot: wireSnapshot([]) })),
-      (error: unknown) => error instanceof TerraScaleSyncV2ClientError && error.code === "unknown_subscription",
+      (error: unknown) => error instanceof TerraScaleSyncV1ClientError && error.code === "unknown_subscription",
     );
     client.setOnline(true);
     assert.throws(
       () => client.receive(serverFrame({ kind: "error", code: "authentication_expired", detail: null })),
-      (error: unknown) => error instanceof TerraScaleSyncV2ClientError && error.code === "authentication_expired",
+      (error: unknown) => error instanceof TerraScaleSyncV1ClientError && error.code === "authentication_expired",
     );
     assert.equal(client.getSnapshot().online, false);
   });
 
   test("close removes the live subscription without taking unrelated views offline", async () => {
-    const client = new TerraScaleSyncV2Client({
+    const client = new TerraScaleSyncV1Client({
       fetch: async (input, init) => {
         const request = new Request(input, init);
         if (request.method === "POST") {
@@ -218,12 +218,12 @@ describe("current reactive client", () => {
     assert.equal(b.view.isOnline(), true);
     assert.throws(
       () => client.receive(serverFrame({ kind: "snapshot", subscription: "a", snapshot: wireSnapshot([]) })),
-      (error: unknown) => error instanceof TerraScaleSyncV2ClientError && error.code === "unknown_subscription",
+      (error: unknown) => error instanceof TerraScaleSyncV1ClientError && error.code === "unknown_subscription",
     );
   });
 
   test("installs a checkpoint-only attach as a resume state", async () => {
-    const client = new TerraScaleSyncV2Client({
+    const client = new TerraScaleSyncV1Client({
       fetch: async () => Response.json({
         viewId: "resume-only",
         generation: 9,
@@ -250,13 +250,13 @@ describe("current reactive client", () => {
       { viewId: "safe", generation: 1, capability: "cap", snapshotUrls: ["https://sync.api.terrascale.test/api/v1/reactive/views/safe/1/snapshot/0"] },
       { viewId: "safe", generation: 1, capability: "cap", logUrl: "https://sync.api.terrascale.test/api/v1/reactive/views/safe/2/log?offset=0", snapshotUrls: [] },
     ]) {
-      const client = new TerraScaleSyncV2Client({
+      const client = new TerraScaleSyncV1Client({
         syncBaseUrl: "https://sync.api.terrascale.test",
         fetch: async () => Response.json(body),
       });
       await assert.rejects(
         () => client.subscribe({ subscription: "safe", databaseId: "db", query: "select * from docs", parameters: new Uint8Array(), autoStart: false }),
-        (error: unknown) => error instanceof TerraScaleSyncV2ClientError && error.code === "protocol_error",
+        (error: unknown) => error instanceof TerraScaleSyncV1ClientError && error.code === "protocol_error",
       );
       assert.equal(client.getSnapshot().subscriptions, 0);
     }
@@ -268,7 +268,7 @@ describe("current reactive client", () => {
       authorization_generation: 1,
       revision: 1,
       items: [],
-      digest: syncV2ResultDigest([]),
+      digest: syncV1ResultDigest([]),
       checkpoint: "YQ==",
     };
     const bodies = [
@@ -278,13 +278,13 @@ describe("current reactive client", () => {
       { viewId: "mismatch", generation: 1, capability: "cap", checkpoint: "Yg==", snapshot: validSnapshot },
     ];
     for (const body of bodies) {
-      const client = new TerraScaleSyncV2Client({
+      const client = new TerraScaleSyncV1Client({
         syncBaseUrl: "https://sync.api.terrascale.test",
         fetch: async () => Response.json(body),
       });
       await assert.rejects(
         () => client.subscribe({ subscription: body.viewId, databaseId: "db", query: "select * from docs", parameters: new Uint8Array(), autoStart: false }),
-        (error: unknown) => error instanceof TerraScaleSyncV2ClientError && error.code === "protocol_error",
+        (error: unknown) => error instanceof TerraScaleSyncV1ClientError && error.code === "protocol_error",
       );
       assert.equal(client.getSnapshot().subscriptions, 0);
     }
@@ -292,7 +292,7 @@ describe("current reactive client", () => {
 
   test("restores the prior global online state after snapshot installation fails", async () => {
     let attaches = 0;
-    const client = new TerraScaleSyncV2Client({
+    const client = new TerraScaleSyncV1Client({
       fetch: async (input, init) => {
         const request = new Request(input, init);
         if (request.method !== "POST") return new Response(null, { status: 204 });
@@ -327,7 +327,7 @@ describe("current reactive client", () => {
       from_revision: 7n,
       to_revision: 8n,
       operations: [{ kind: "update" as const, identity: "one", fields: [{ path: "value", value: encoder.encode("changed") }] }],
-      digest: syncV2ResultDigest(nextItems),
+      digest: syncV1ResultDigest(nextItems),
       checkpoint: new Uint8Array([0, 255, 1]),
     };
     const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -354,7 +354,7 @@ describe("current reactive client", () => {
       return new Response(serverFrame(next).buffer as ArrayBuffer, { headers: { "content-type": "application/msgpack" } });
     };
 
-    const client = new TerraScaleSyncV2Client({
+    const client = new TerraScaleSyncV1Client({
       apiBaseUrl: "https://member.example",
       syncBaseUrl: "https://sync.api.terrascale.tech",
       accessToken: "session-token",
@@ -401,7 +401,7 @@ describe("current reactive client", () => {
               authorization_generation: 1,
               revision: 12,
               items: [{ identity: "fresh", fields: [{ path: "value", value: "YXV0aG9yaXplZA==" }] }],
-              digest: syncV2ResultDigest([item("fresh", "authorized")]),
+              digest: syncV1ResultDigest([item("fresh", "authorized")]),
               checkpoint: "Y3AtNS0xMg==",
             },
           });
@@ -416,7 +416,7 @@ describe("current reactive client", () => {
       }
       return Response.json({ error: { reason: "retention_advanced", message: "history has expired" } }, { status: 410 });
     };
-    const client = new TerraScaleSyncV2Client({
+    const client = new TerraScaleSyncV1Client({
       apiBaseUrl: "https://member.example",
       syncBaseUrl: "https://sync.api.terrascale.tech",
       fetch,

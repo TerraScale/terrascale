@@ -2,7 +2,7 @@
 //
 // This worker owns three chapters:
 //   1. CRUD/SQL (databases + saved-queries + typed SQL builder)
-//   2. live+sync (reactive sync/v2 state machine + HTTP attach/poll)
+//   2. live+sync (reactive sync/v1 state machine + HTTP attach/poll)
 //   3. tenants+usage (database-per-tenant + usage surfaces)
 //
 // Keep new producer-backed flows in this journey; do not replace the
@@ -29,20 +29,20 @@ import {
 } from "../src/sql.js";
 import { FIELD_TYPES, defineField } from "../src/schema.js";
 import {
-  TerraScaleSyncV2Client,
-  TerraScaleSyncV2ClientError,
-} from "../src/sync/v2/client.js";
+  TerraScaleSyncV1Client,
+  TerraScaleSyncV1ClientError,
+} from "../src/sync/v1/client.js";
 import {
-  SyncV2ViewCheckpoint,
-  syncV2ResultDigest,
-  type SyncV2ResultItem,
-} from "../src/sync/v2/result-view.js";
+  SyncV1ViewCheckpoint,
+  syncV1ResultDigest,
+  type SyncV1ResultItem,
+} from "../src/sync/v1/result-view.js";
 import {
-  decodeTerrascaleSyncV2MsgpackEnvelope,
-  encodeTerrascaleSyncV2MsgpackEnvelope,
-  type TerrascaleSyncV2MsgpackMessage,
-  type TerrascaleSyncV2MsgpackSnapshot,
-} from "../src/msgpack/generated/terrascale-sync-v2-msgpack.js";
+  decodeTerrascaleSyncV1MsgpackEnvelope,
+  encodeTerrascaleSyncV1MsgpackEnvelope,
+  type TerrascaleSyncV1MsgpackMessage,
+  type TerrascaleSyncV1MsgpackSnapshot,
+} from "../src/msgpack/generated/terrascale-sync-v1-msgpack.js";
 
 const projectId = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const organizationId = "01ERZ3NDEKTSV4RRFFQ69G5FAV";
@@ -100,16 +100,16 @@ function base64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64");
 }
 
-function row(identity: string, value: string): SyncV2ResultItem {
+function row(identity: string, value: string): SyncV1ResultItem {
   return { identity, value: { value: encoder.encode(value) } };
 }
 
 function wireSnapshot(
-  items: readonly SyncV2ResultItem[],
+  items: readonly SyncV1ResultItem[],
   revision = 1n,
   viewGeneration = 1n,
   authorizationGeneration = 1n,
-): TerrascaleSyncV2MsgpackSnapshot {
+): TerrascaleSyncV1MsgpackSnapshot {
   return {
     view_generation: viewGeneration,
     authorization_generation: authorizationGeneration,
@@ -118,13 +118,13 @@ function wireSnapshot(
       identity: entry.identity,
       fields: Object.entries(entry.value).map(([path, value]) => ({ path, value })),
     })),
-    digest: syncV2ResultDigest(items),
+    digest: syncV1ResultDigest(items),
     checkpoint: encoder.encode(`checkpoint-${viewGeneration}-${revision}`),
   };
 }
 
-function serverFrame(message: TerrascaleSyncV2MsgpackMessage): Uint8Array {
-  return encodeTerrascaleSyncV2MsgpackEnvelope({
+function serverFrame(message: TerrascaleSyncV1MsgpackMessage): Uint8Array {
+  return encodeTerrascaleSyncV1MsgpackEnvelope({
     features: 0,
     correlation: 1n,
     causation: 0n,
@@ -133,7 +133,7 @@ function serverFrame(message: TerrascaleSyncV2MsgpackMessage): Uint8Array {
 }
 
 function inlineSnapshotBody(
-  items: readonly SyncV2ResultItem[],
+  items: readonly SyncV1ResultItem[],
   revision: bigint,
   generation: bigint,
 ): Record<string, unknown> {
@@ -155,7 +155,7 @@ function inlineSnapshotBody(
           value: base64(value),
         })),
       })),
-      digest: syncV2ResultDigest(items),
+      digest: syncV1ResultDigest(items),
       checkpoint: base64(checkpoint),
     },
   };
@@ -402,7 +402,7 @@ describe("P-3 journey chapter 1: CRUD/SQL (mock)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Chapter 2: live+sync (mock). Does not touch sync/v2/client.ts logic.
+// Chapter 2: live+sync (mock). Does not touch sync/v1/client.ts logic.
 // ---------------------------------------------------------------------------
 
 describe("P-3 journey chapter 2: live+sync (mock)", () => {
@@ -416,7 +416,7 @@ describe("P-3 journey chapter 2: live+sync (mock)", () => {
     };
     const descriptor = select(schema).whereEq(status, "open").limit(25).build().subscribe();
 
-    const client = new TerraScaleSyncV2Client();
+    const client = new TerraScaleSyncV1Client();
     client.setOnline(true);
     const opened = client.openSubscription({
       subscription: "orders-by-status",
@@ -424,12 +424,12 @@ describe("P-3 journey chapter 2: live+sync (mock)", () => {
       parameters: encoder.encode(JSON.stringify(descriptor.parameters)),
     });
     assert.match(opened.message.query, /FROM orders/u);
-    const wire = decodeTerrascaleSyncV2MsgpackEnvelope(client.encode(opened.message, 1n));
+    const wire = decodeTerrascaleSyncV1MsgpackEnvelope(client.encode(opened.message, 1n));
     assert.equal(wire.message.kind, "subscribe");
   });
 
   test("pure state machine applies snapshot, delta, and checkpoint ack", () => {
-    const client = new TerraScaleSyncV2Client();
+    const client = new TerraScaleSyncV1Client();
     client.setOnline(true);
     const opened = client.openSubscription({
       subscription: "orders-by-status",
@@ -467,7 +467,7 @@ describe("P-3 journey chapter 2: live+sync (mock)", () => {
             fields: [{ path: "value", value: encoder.encode("open") }],
           },
         ],
-        digest: syncV2ResultDigest(changed),
+        digest: syncV1ResultDigest(changed),
         checkpoint: encoder.encode("checkpoint-1-2"),
       }),
     );
@@ -495,7 +495,7 @@ describe("P-3 journey chapter 2: live+sync (mock)", () => {
       "backpressure",
     ] as const;
     for (const [index, reason] of reasons.entries()) {
-      const client = new TerraScaleSyncV2Client();
+      const client = new TerraScaleSyncV1Client();
       const opened = client.openSubscription({
         subscription: `reset-${index}`,
         query: "select * from docs",
@@ -541,14 +541,14 @@ describe("P-3 journey chapter 2: live+sync (mock)", () => {
               fields: [{ path: "value", value: encoder.encode("changed") }],
             },
           ],
-          digest: syncV2ResultDigest(next),
+          digest: syncV1ResultDigest(next),
           checkpoint: encoder.encode("checkpoint-3-8"),
         }).buffer as ArrayBuffer,
         { headers: { "content-type": "application/msgpack" } },
       );
     };
 
-    const client = new TerraScaleSyncV2Client({
+    const client = new TerraScaleSyncV1Client({
       apiBaseUrl: "https://api.terrascale.test",
       syncBaseUrl: "https://sync.api.terrascale.test",
       accessToken: "session-token",
@@ -603,12 +603,12 @@ describe("P-3 journey chapter 2: live+sync (mock)", () => {
         { status: 410 },
       );
     };
-    const client = new TerraScaleSyncV2Client({
+    const client = new TerraScaleSyncV1Client({
       apiBaseUrl: "https://api.terrascale.test",
       syncBaseUrl: "https://sync.api.terrascale.test",
       fetch,
     });
-    const resume = new SyncV2ViewCheckpoint(new Uint8Array([0xff, 0x00]));
+    const resume = new SyncV1ViewCheckpoint(new Uint8Array([0xff, 0x00]));
     const live = await client.subscribe({
       subscription: "resume",
       databaseId: "db-2",
@@ -633,7 +633,7 @@ describe("P-3 journey chapter 2: live+sync (mock)", () => {
   });
 
   test("authorization, routing, and backpressure drive the required cases", () => {
-    const client = new TerraScaleSyncV2Client();
+    const client = new TerraScaleSyncV1Client();
     const opened = client.openSubscription({
       subscription: "visible",
       query: "from docs",
@@ -676,7 +676,7 @@ describe("P-3 journey chapter 2: live+sync (mock)", () => {
           serverFrame({ kind: "error", code: "authentication_expired", detail: null }),
         ),
       (error: unknown) =>
-        error instanceof TerraScaleSyncV2ClientError && error.code === "authentication_expired",
+        error instanceof TerraScaleSyncV1ClientError && error.code === "authentication_expired",
     );
     assert.equal(client.getSnapshot().online, false);
   });
@@ -1142,7 +1142,7 @@ describe.skipIf(!liveEnabled)("P-3 journey live stack (E-15)", () => {
       const snapshot = await liveRequest(snapshotPath[0]!, { headers: { [String(view.capability_header)]: String(view.capability) } });
       expectLiveStatus(snapshot, 200, "reactive snapshot");
       assert.match(snapshot.response.headers.get("content-type") ?? "", /application\/msgpack/u);
-      const decoded = decodeTerrascaleSyncV2MsgpackEnvelope(new Uint8Array(await (await fetch(new URL(snapshotPath[0]!, `${liveApiBaseUrl!.replace(/\/$/u, "")}/`), { headers: { authorization: `Bearer ${liveAccessToken!}`, [String(view.capability_header)]: String(view.capability) } })).arrayBuffer()));
+      const decoded = decodeTerrascaleSyncV1MsgpackEnvelope(new Uint8Array(await (await fetch(new URL(snapshotPath[0]!, `${liveApiBaseUrl!.replace(/\/$/u, "")}/`), { headers: { authorization: `Bearer ${liveAccessToken!}`, [String(view.capability_header)]: String(view.capability) } })).arrayBuffer()));
       assert.equal(decoded.message.kind, "snapshot");
 
       const resumed = await liveRequest("/api/v1/reactive/views", {
@@ -1168,7 +1168,7 @@ describe.skipIf(!liveEnabled)("P-3 journey live stack (E-15)", () => {
         new URL(logPath, `${liveApiBaseUrl!.replace(/\/$/u, "")}/`),
         { headers: { authorization: `Bearer ${liveAccessToken!}`, [String(view.capability_header)]: String(view.capability) } },
       )).arrayBuffer());
-      const deltaEnvelope = decodeTerrascaleSyncV2MsgpackEnvelope(deltaBytes);
+      const deltaEnvelope = decodeTerrascaleSyncV1MsgpackEnvelope(deltaBytes);
       assert.equal(deltaEnvelope.message.kind, "delta");
 
       const backupPath = `/api/v1/databases/${db}/backups`;

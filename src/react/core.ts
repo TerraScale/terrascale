@@ -1,9 +1,9 @@
 import type { TerraScaleError, TerraScaleResult } from "../result.js";
 import type {
-  SyncV2ResultItem,
-  SyncV2SubscribeOptions,
-  TerraScaleSyncV2Client,
-} from "../sync/v2/client.js";
+  SyncV1ResultItem,
+  SyncV1SubscribeOptions,
+  TerraScaleSyncV1Client,
+} from "../sync/v1/client.js";
 
 /** A subscription cleanup returned by a typed reactive transport. */
 export type ReactiveDisposer = (() => void) | { readonly dispose: () => void } | { readonly unsubscribe: () => void };
@@ -275,17 +275,17 @@ export function createReactiveHttpQuery<TRequest, TValue>(
 }
 
 /**
- * Adapts the public Sync v2 client to useQuery. The client owns attach,
+ * Adapts the public Sync v1 client to useQuery. The client owns attach,
  * checkpoint resume, HTTP polling, and capability headers; this adapter only
  * observes the authorized result view and closes it with React disposal.
  */
-export function createSyncV2Query(
-  client: Pick<TerraScaleSyncV2Client, "subscribe">,
-  options: Omit<SyncV2SubscribeOptions, "signal" | "autoStart">,
-): ReactiveQuerySource<readonly SyncV2ResultItem[]> {
+export function createSyncV1Query(
+  client: Pick<TerraScaleSyncV1Client, "subscribe">,
+  options: Omit<SyncV1SubscribeOptions, "signal" | "autoStart">,
+): ReactiveQuerySource<readonly SyncV1ResultItem[]> {
   return Object.freeze({
-    key: ["sync-v2", options.databaseId ?? options.database, options.subscription, options.query, options.parameters],
-    subscribe: async (observer: ReactiveQueryCallbacks<readonly SyncV2ResultItem[]>, context: ReactiveSubscriptionContext) => {
+    key: ["sync-v1", options.databaseId ?? options.database, options.subscription, options.query, options.parameters],
+    subscribe: async (observer: ReactiveQueryCallbacks<readonly SyncV1ResultItem[]>, context: ReactiveSubscriptionContext) => {
       const live = await client.subscribe({ ...options, signal: context.signal, autoStart: true });
       const publish = () => observer.next(live.view.getVisibleItems());
       const unsubscribe = live.view.subscribe(publish);

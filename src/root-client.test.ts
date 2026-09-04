@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "vitest";
 
 import { createTerraScaleClient } from "./factory.js";
-import { TerraScaleSyncV2Client } from "./sync/v2/client.js";
+import { TerraScaleSyncV1Client } from "./sync/v1/client.js";
 
 function response(value: unknown, status = 200): Response {
   return new Response(value === undefined ? "" : JSON.stringify(value), {
@@ -137,7 +137,7 @@ describe("root database clients", () => {
     if (!result.ok) assert.equal(result.error.code, "request_cancelled");
   });
 
-  test("wires the root reactive surface to the canonical sync v2 attach", async () => {
+  test("wires the root reactive surface to the canonical sync v1 attach", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleClient({
       fetch: async (input, init) => {
@@ -156,7 +156,7 @@ describe("root database clients", () => {
       },
     });
 
-    assert.ok(client.reactive instanceof TerraScaleSyncV2Client);
+    assert.ok(client.reactive instanceof TerraScaleSyncV1Client);
     const live = await client.reactive.subscribe({
       subscription: "orders",
       databaseId: "prod",

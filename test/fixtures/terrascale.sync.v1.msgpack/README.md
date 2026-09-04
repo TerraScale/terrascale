@@ -1,7 +1,7 @@
-# TerraScale sync v2 MessagePack golden vectors
+# TerraScale sync v1 MessagePack golden vectors
 
-These fixtures pin the first publishable `terrascale.sync.v2.msgpack` wire
-contract at version 2.1. They were hand-audited against the MessagePack byte
+These fixtures pin the first publishable `terrascale.sync.v1.msgpack` wire
+contract at version 1.0. They were hand-audited against the MessagePack byte
 format and are not generated during tests by the SDK codec. Each fixture pins
 the exact manifest SHA-256, so a stale corpus fails instead of silently testing
 an older contract.

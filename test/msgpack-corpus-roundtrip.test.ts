@@ -4,14 +4,14 @@ import { describe, test } from "vitest";
 
 import { TerrascaleMsgpackError } from "../src/msgpack/runtime/bounded-msgpack.js";
 import {
-  decodeTerrascaleSyncV2MsgpackEnvelope,
-  encodeTerrascaleSyncV2MsgpackEnvelope,
-  terrascaleSyncV2MsgpackManifestSha256,
-  terrascaleSyncV2MsgpackMessageTags,
-  validateTerrascaleSyncV2MsgpackMessage,
-  validateTerrascaleSyncV2MsgpackProjectedField,
-  validateTerrascaleSyncV2MsgpackResultItem,
-} from "../src/msgpack/generated/terrascale-sync-v2-msgpack.js";
+  decodeTerrascaleSyncV1MsgpackEnvelope,
+  encodeTerrascaleSyncV1MsgpackEnvelope,
+  terrascaleSyncV1MsgpackManifestSha256,
+  terrascaleSyncV1MsgpackMessageTags,
+  validateTerrascaleSyncV1MsgpackMessage,
+  validateTerrascaleSyncV1MsgpackProjectedField,
+  validateTerrascaleSyncV1MsgpackResultItem,
+} from "../src/msgpack/generated/terrascale-sync-v1-msgpack.js";
 import { encodeReferenceMessagePack } from "./support/reference-msgpack.ts";
 
 const encoder = new TextEncoder();
@@ -174,10 +174,10 @@ const snapshotWire = (view, authorization, revision, checkpoint, items = [["d", 
   binary(checkpoint),
 ];
 const goldenWireValues = [
-  [2, 1, 0, 1, 1, 0, ["s", "q", binary(1, 2), null]],
-  [2, 1, 0, 2, 2, 1, ["s"]],
-  [2, 1, 0, 3, 3, 2, ["s", snapshotWire(1, 2, 3, 0x63)]],
-  [2, 1, 0, 4, 4, 3, [
+  [1, 0, 0, 1, 1, 0, ["s", "q", binary(1, 2), null]],
+  [1, 0, 0, 2, 2, 1, ["s"]],
+  [1, 0, 0, 3, 3, 2, ["s", snapshotWire(1, 2, 3, 0x63)]],
+  [1, 0, 0, 4, 4, 3, [
     "s",
     1,
     3,
@@ -192,17 +192,17 @@ const goldenWireValues = [
     "b".repeat(64),
     binary(0x64),
   ]],
-  [2, 1, 0, 5, 5, 4, ["s", 3, snapshotWire(2, 2, 5, 0x65)]],
-  [2, 1, 0, 6, 6, 5, []],
-  [2, 1, 0, 7, 7, 6, ["s", binary(0x66)]],
-  [2, 1, 0, 8, 8, 7, ["s", 3, ["d"], snapshotWire(2, 3, 5, 0x67, [])]],
-  [2, 1, 0, 9, 9, 8, ["FRA"]],
-  [2, 1, 0, 10, 10, 9, [7, "retry"]],
-  [2, 1, 0, 11, 11, 10, [1]],
+  [1, 0, 0, 5, 5, 4, ["s", 3, snapshotWire(2, 2, 5, 0x65)]],
+  [1, 0, 0, 6, 6, 5, []],
+  [1, 0, 0, 7, 7, 6, ["s", binary(0x66)]],
+  [1, 0, 0, 8, 8, 7, ["s", 3, ["d"], snapshotWire(2, 3, 5, 0x67, [])]],
+  [1, 0, 0, 9, 9, 8, ["FRA"]],
+  [1, 0, 0, 10, 10, 9, [7, "retry"]],
+  [1, 0, 0, 11, 11, 10, [1]],
 ];
 
 const goldenFixture = JSON.parse(await readFile(
-  new URL("./fixtures/terrascale.sync.v2.msgpack/message-vectors.json", import.meta.url),
+  new URL("./fixtures/terrascale.sync.v1.msgpack/message-vectors.json", import.meta.url),
   "utf8",
 ));
 
@@ -213,19 +213,19 @@ function roundTrip(message, index) {
     causation: BigInt(index),
     message,
   };
-  const wire = encodeTerrascaleSyncV2MsgpackEnvelope(envelope);
-  assert.deepStrictEqual(decodeTerrascaleSyncV2MsgpackEnvelope(wire), envelope);
+  const wire = encodeTerrascaleSyncV1MsgpackEnvelope(envelope);
+  assert.deepStrictEqual(decodeTerrascaleSyncV1MsgpackEnvelope(wire), envelope);
   return wire;
 }
 
 describe("msgpack corpus round-trip", () => {
   test("committed independent bytes pin every current message", () => {
-    assert.equal(goldenFixture.protocol, "terrascale.sync.v2.msgpack");
-    assert.equal(goldenFixture.version, "2.1");
-    assert.equal(goldenFixture.manifestSha256, terrascaleSyncV2MsgpackManifestSha256);
+    assert.equal(goldenFixture.protocol, "terrascale.sync.v1.msgpack");
+    assert.equal(goldenFixture.version, "1.0");
+    assert.equal(goldenFixture.manifestSha256, terrascaleSyncV1MsgpackManifestSha256);
     assert.deepEqual(
       goldenFixture.vectors.map(vector => vector.name).sort(),
-      Object.keys(terrascaleSyncV2MsgpackMessageTags).sort(),
+      Object.keys(terrascaleSyncV1MsgpackMessageTags).sort(),
     );
     assert.equal(goldenFixture.vectors.length, goldenMessages.length);
 
@@ -244,9 +244,9 @@ describe("msgpack corpus round-trip", () => {
         vector.hex,
         `${vector.name} differs from the independent MessagePack oracle`,
       );
-      assert.deepStrictEqual(decodeTerrascaleSyncV2MsgpackEnvelope(wire), envelope);
+      assert.deepStrictEqual(decodeTerrascaleSyncV1MsgpackEnvelope(wire), envelope);
       assert.equal(
-        Buffer.from(encodeTerrascaleSyncV2MsgpackEnvelope(envelope)).toString("hex"),
+        Buffer.from(encodeTerrascaleSyncV1MsgpackEnvelope(envelope)).toString("hex"),
         vector.hex,
       );
     });
@@ -259,7 +259,7 @@ describe("msgpack corpus round-trip", () => {
       bytes += roundTrip(message, index).length;
       covered.add(message.kind);
     });
-    assert.deepEqual([...covered].sort(), Object.keys(terrascaleSyncV2MsgpackMessageTags).sort());
+    assert.deepEqual([...covered].sort(), Object.keys(terrascaleSyncV1MsgpackMessageTags).sort());
     assert.ok(bytes > 500);
   });
 
@@ -302,14 +302,14 @@ describe("msgpack corpus round-trip", () => {
       { kind: "backpressure", mode: "wait" },
     ];
     for (const value of bad) {
-      assert.throws(() => validateTerrascaleSyncV2MsgpackMessage(value), TerrascaleMsgpackError);
+      assert.throws(() => validateTerrascaleSyncV1MsgpackMessage(value), TerrascaleMsgpackError);
     }
   });
 
   test("write-side bounds reject oversized query, checkpoint, and projected value fields", () => {
     const envelope = (message) => ({ features: 0, correlation: 1n, causation: 0n, message });
     assert.throws(
-      () => encodeTerrascaleSyncV2MsgpackEnvelope(envelope({
+      () => encodeTerrascaleSyncV1MsgpackEnvelope(envelope({
         kind: "subscribe",
         subscription: "view",
         query: "x".repeat(262_145),
@@ -319,7 +319,7 @@ describe("msgpack corpus round-trip", () => {
       TerrascaleMsgpackError,
     );
     assert.throws(
-      () => encodeTerrascaleSyncV2MsgpackEnvelope(envelope({
+      () => encodeTerrascaleSyncV1MsgpackEnvelope(envelope({
         kind: "checkpoint_ack",
         subscription: "view",
         checkpoint: new Uint8Array(4097),
@@ -327,7 +327,7 @@ describe("msgpack corpus round-trip", () => {
       TerrascaleMsgpackError,
     );
     assert.throws(
-      () => encodeTerrascaleSyncV2MsgpackEnvelope(envelope({
+      () => encodeTerrascaleSyncV1MsgpackEnvelope(envelope({
         kind: "snapshot",
         subscription: "view",
         snapshot: {
@@ -342,7 +342,7 @@ describe("msgpack corpus round-trip", () => {
   test("projected paths must be nonempty and item values must stay below the aggregate bound", () => {
     const envelope = (message) => ({ features: 0, correlation: 1n, causation: 0n, message });
     assert.throws(
-      () => validateTerrascaleSyncV2MsgpackProjectedField({ path: "", value: new Uint8Array() }),
+      () => validateTerrascaleSyncV1MsgpackProjectedField({ path: "", value: new Uint8Array() }),
       (error) => error instanceof TerrascaleMsgpackError && error.code === "invalid_shape",
     );
 
@@ -351,11 +351,11 @@ describe("msgpack corpus round-trip", () => {
       field("second", "b".repeat(524_289)),
     ];
     assert.throws(
-      () => validateTerrascaleSyncV2MsgpackResultItem({ identity: "document-1", fields: oversizedFields }),
+      () => validateTerrascaleSyncV1MsgpackResultItem({ identity: "document-1", fields: oversizedFields }),
       (error) => error instanceof TerrascaleMsgpackError && error.code === "invalid_shape",
     );
     assert.throws(
-      () => encodeTerrascaleSyncV2MsgpackEnvelope(envelope({
+      () => encodeTerrascaleSyncV1MsgpackEnvelope(envelope({
         kind: "snapshot",
         subscription: "view",
         snapshot: {

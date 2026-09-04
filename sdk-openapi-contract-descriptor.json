@@ -3514,7 +3514,7 @@
                   "$ref": "#/components/schemas/ReactiveEnvelope",
                   "siblings": {
                     "resolved": {
-                      "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
+                      "description": "One indexed sync-v1 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
                       "items": false,
                       "maxItems": 7,
                       "minItems": 7,
@@ -3558,7 +3558,7 @@
                     },
                     "siblings": {
                       "resolved": {
-                        "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
+                        "description": "One indexed sync-v1 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
                         "items": false,
                         "maxItems": 7,
                         "minItems": 7,
@@ -3603,7 +3603,7 @@
                     }
                   },
                   "resolved": {
-                    "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
+                    "description": "One indexed sync-v1 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
                     "items": false,
                     "maxItems": 7,
                     "minItems": 7,
@@ -3748,7 +3748,7 @@
                   "$ref": "#/components/schemas/ReactiveEnvelope",
                   "siblings": {
                     "resolved": {
-                      "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
+                      "description": "One indexed sync-v1 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
                       "items": false,
                       "maxItems": 7,
                       "minItems": 7,
@@ -3792,7 +3792,7 @@
                     },
                     "siblings": {
                       "resolved": {
-                        "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
+                        "description": "One indexed sync-v1 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
                         "items": false,
                         "maxItems": 7,
                         "minItems": 7,
@@ -3837,7 +3837,7 @@
                     }
                   },
                   "resolved": {
-                    "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
+                    "description": "One indexed sync-v1 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
                     "items": false,
                     "maxItems": 7,
                     "minItems": 7,
@@ -14226,7 +14226,7 @@
     }
   ],
   "sources": {
-    "openApiSha256": "8c8d52d92403a7fd64b06e85f314d072151d39f6a5df8b643965722a350d9a66",
+    "openApiSha256": "e28d87f5121e94bfe67006da0e7cbefdd18f84e5952762fae0c33f6a5ec82601",
     "routeManifestSha256": "4ef2a163b4dd3218be567d3c84bb787a0b3a1bd6912296eb70561cc1475fdb8e"
   }
 }

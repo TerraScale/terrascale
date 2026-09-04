@@ -1,7 +1,7 @@
 {
-  "protocol": "terrascale.sync.v2.msgpack",
-  "version": "2.1",
-  "manifestSha256": "90baa4a1f566fd3270ce29d11d103017e343ccfc68235c3f7f5ec29b0cce05ab",
+  "protocol": "terrascale.sync.v1.msgpack",
+  "version": "1.0",
+  "manifestSha256": "aa9fdf77f1f67e9271d3ca0a0ee8ef1d2423e8934f22d125fd85a3f62cf568db",
   "vectors": [
     {
       "name": "whole message above 8 MiB",
@@ -11,47 +11,47 @@
     {
       "name": "region above 64 bytes",
       "code": "limit_string",
-      "hex": "9702010009010091d9417272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272"
+      "hex": "9701000009010091d9417272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272727272"
     },
     {
       "name": "binary declaration above 1 MiB",
       "code": "limit_binary",
-      "hex": "9702010001010094a173a171c600100001"
+      "hex": "9701000001010094a173a171c600100001"
     },
     {
       "name": "array declaration above 10000 items",
       "code": "limit_array",
-      "hex": "97020100060100dc2711"
+      "hex": "97010000060100dc2711"
     },
     {
       "name": "map in body",
       "code": "map_forbidden",
-      "hex": "97020100060100810102"
+      "hex": "97010000060100810102"
     },
     {
       "name": "extension in body",
       "code": "extension_forbidden",
-      "hex": "97020100060100d40000"
+      "hex": "97010000060100d40000"
     },
     {
       "name": "float32 in body",
       "code": "float32_forbidden",
-      "hex": "9702010006010091ca3fc00000"
+      "hex": "9701000006010091ca3fc00000"
     },
     {
       "name": "array nesting above depth 64",
       "code": "depth_exceeded",
-      "hex": "9702010006010091919191919191919191919191919191919191919191919191919191919191919191919191919191919191919191919191919191919191919191919191919191c0"
+      "hex": "9701000006010091919191919191919191919191919191919191919191919191919191919191919191919191919191919191919191919191919191919191919191919191919191c0"
     },
     {
       "name": "missing message body",
       "code": "truncated",
-      "hex": "97020100060100"
+      "hex": "97010000060100"
     },
     {
       "name": "trailing nil",
       "code": "trailing_bytes",
-      "hex": "9702010006010090c0"
+      "hex": "9701000006010090c0"
     },
     {
       "name": "reserved MessagePack tag",
@@ -66,7 +66,7 @@
     {
       "name": "invalid UTF-8 region",
       "code": "invalid_utf8",
-      "hex": "9702010009010091a1ff"
+      "hex": "9701000009010091a1ff"
     },
     {
       "name": "float64 protocol major",
@@ -74,29 +74,29 @@
       "hex": "97cb4000000000000000010006010090"
     },
     {
-      "name": "withdrawn protocol 2.0",
+      "name": "unsupported protocol minor",
       "code": "unsupported_version",
-      "hex": "9702000006010090"
+      "hex": "9701010006010090"
     },
     {
       "name": "unknown required feature",
       "code": "unknown_feature",
-      "hex": "9702010106010090"
+      "hex": "9701000106010090"
     },
     {
       "name": "unknown message tag 12",
       "code": "unknown_message_tag",
-      "hex": "970201000c010090"
+      "hex": "970100000c010090"
     },
     {
       "name": "unknown error enum 99",
       "code": "unknown_enum",
-      "hex": "970201000a01009263c0"
+      "hex": "970100000a01009263c0"
     },
     {
       "name": "unknown result-operation variant 7",
       "code": "unknown_variant",
-      "hex": "9702010004010097a173010102919107a0c40101"
+      "hex": "9701000004010097a173010102919107a0c40101"
     }
   ]
 }

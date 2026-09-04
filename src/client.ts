@@ -9,7 +9,7 @@ import {
 } from "./regions.js";
 import { err, type TerraScaleFailure, type TerraScaleResult, type TerraScaleSuccess } from "./result.js";
 import { TenantsClient } from "./tenants.js";
-import { TerraScaleSyncV2Client } from "./sync/v2/client.js";
+import { TerraScaleSyncV1Client } from "./sync/v1/client.js";
 
 const apiRoot = "/api/v1";
 
@@ -43,8 +43,8 @@ export class TerraScaleClient {
   readonly documents: DocumentsClient;
   /** Read-only parameterized SQL against a named database. */
   readonly sql: SqlClient;
-  /** The canonical reactive view client backed by the sync v2 state machine. */
-  readonly reactive: TerraScaleSyncV2Client;
+  /** The canonical reactive view client backed by the sync v1 state machine. */
+  readonly reactive: TerraScaleSyncV1Client;
 
   constructor(config: TerraScaleRuntimeConfig) {
     this.#http = new TerraScaleHttp(config);
@@ -61,7 +61,7 @@ export class TerraScaleClient {
     this.notifications = new NotificationsClient(this.#http);
     this.documents = new DocumentsClient(this.#http);
     this.sql = new SqlClient(this.#http);
-    this.reactive = new TerraScaleSyncV2Client({
+    this.reactive = new TerraScaleSyncV1Client({
       ...(config.apiBaseUrl === undefined ? {} : { apiBaseUrl: config.apiBaseUrl }),
       ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
       ...(config.accessToken === undefined ? {} : { accessToken: config.accessToken }),

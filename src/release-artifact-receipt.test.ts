@@ -12,7 +12,7 @@ const run = promisify(execFile);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const buildOutputDomain = "terrascale.deploy/candidate-build-output/v1";
 const buildMediaType = "application/vnd.terrascale.candidate-build-receipt.v1+json";
-const qualificationMediaType = "application/vnd.terrascale.npm-qualification.v2+json";
+const qualificationMediaType = "application/vnd.terrascale.npm-qualification.v1+json";
 const npmArchiveIntegrity = "sha512-T67M4L5wNm0cZ7EBLErcEkY1SmzEW/WJ+SADBzsFUY1UdAPfFHXFQtZ6SEXiK0+vzXysCvAsepbMaBTwnrAD+w==";
 const npmTreeDigestDomain = "terrascale/npm-cli-tree/v1";
 const nodeVersions = { 22: "v22.23.2", 24: "v24.20.0" } as const;
@@ -321,7 +321,7 @@ async function createCandidateFixture(checkout: string, workspace: string): Prom
   ]);
   const now = Date.now();
   const qualification = {
-    schemaVersion: 2,
+    schemaVersion: 1,
     mediaType: qualificationMediaType,
     status: "passed",
     startedAt: new Date(now - 2_000).toISOString(),

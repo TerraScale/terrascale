@@ -1,4 +1,4 @@
-// Drift gate for the generated public `terrascale.sync.v2.msgpack` protocol
+// Drift gate for the generated public `terrascale.sync.v1.msgpack` protocol
 // The committed generated module
 // must be byte-identical to what the pinned generator emits from the
 // checked-in manifest, the manifest digest embedded in the generated header
@@ -25,14 +25,14 @@ const manifestPath = path.join(
   "src",
   "msgpack",
   "manifest",
-  "terrascale.sync.v2.msgpack.json",
+  "terrascale.sync.v1.msgpack.json",
 );
 const generatedPath = path.join(
   repositoryRoot,
   "src",
   "msgpack",
   "generated",
-  "terrascale-sync-v2-msgpack.ts",
+  "terrascale-sync-v1-msgpack.ts",
 );
 
 function runGenerator(...args) {
@@ -45,7 +45,7 @@ describe("msgpack manifest drift", () => {
     const result = runGenerator("--out", outDirectory);
     assert.equal(result.status, 0, `generator failed: ${result.stderr}`);
     const [regenerated, committed] = await Promise.all([
-      readFile(path.join(outDirectory, "terrascale-sync-v2-msgpack.ts"), "utf8"),
+      readFile(path.join(outDirectory, "terrascale-sync-v1-msgpack.ts"), "utf8"),
       readFile(generatedPath, "utf8"),
     ]);
     assert.equal(
@@ -86,8 +86,8 @@ describe("msgpack manifest drift", () => {
     assert.equal(runGenerator("--out", first).status, 0);
     assert.equal(runGenerator("--out", second).status, 0);
     const [left, right] = await Promise.all([
-      readFile(path.join(first, "terrascale-sync-v2-msgpack.ts"), "utf8"),
-      readFile(path.join(second, "terrascale-sync-v2-msgpack.ts"), "utf8"),
+      readFile(path.join(first, "terrascale-sync-v1-msgpack.ts"), "utf8"),
+      readFile(path.join(second, "terrascale-sync-v1-msgpack.ts"), "utf8"),
     ]);
     assert.equal(left, right);
   });
@@ -96,7 +96,7 @@ describe("msgpack manifest drift", () => {
     const outDirectory = await mkdtemp(path.join(tmpdir(), "terrascale-msgpack-drift-"));
     assert.equal(runGenerator("--out", outDirectory).status, 0);
     const entries = await readdir(outDirectory);
-    assert.deepEqual(entries, ["terrascale-sync-v2-msgpack.ts"]);
+    assert.deepEqual(entries, ["terrascale-sync-v1-msgpack.ts"]);
   });
 
   const malformedManifests = {

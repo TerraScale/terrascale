@@ -1,16 +1,16 @@
 import {
-  TerraScaleSyncV2Client,
-  type SyncV2Message,
-  type SyncV2Envelope,
-} from "../sync/v2/client.js";
-import { decodeTerrascaleSyncV2MsgpackEnvelope } from "../msgpack/generated/terrascale-sync-v2-msgpack.js";
+  TerraScaleSyncV1Client,
+  type SyncV1Message,
+  type SyncV1Envelope,
+} from "../sync/v1/client.js";
+import { decodeTerrascaleSyncV1MsgpackEnvelope } from "../msgpack/generated/terrascale-sync-v1-msgpack.js";
 import {
-  SyncV2ResultViewStore,
-  SyncV2ViewCheckpoint,
-  type SyncV2ResultDelta,
-  type SyncV2ResultItem,
-  type SyncV2ResultOperation,
-} from "../sync/v2/result-view.js";
+  SyncV1ResultViewStore,
+  SyncV1ViewCheckpoint,
+  type SyncV1ResultDelta,
+  type SyncV1ResultItem,
+  type SyncV1ResultOperation,
+} from "../sync/v1/result-view.js";
 
 /** A TanStack DB change message, kept structural so the optional adapter does not
  * make `@tanstack/db` a runtime or package dependency. */
@@ -64,13 +64,13 @@ export type TerraScaleTanStackMutationRequest<T extends object, TKey extends str
 };
 
 export type TerraScaleTanStackMutationResponse =
-  | SyncV2ResultDelta
-  | { readonly delta: SyncV2ResultDelta }
-  | { readonly status: "accepted"; readonly delta?: SyncV2ResultDelta }
+  | SyncV1ResultDelta
+  | { readonly delta: SyncV1ResultDelta }
+  | { readonly status: "accepted"; readonly delta?: SyncV1ResultDelta }
   | { readonly status: "rejected"; readonly error?: unknown };
 
 export type TerraScaleTanStackTransport = {
-  /** Sends an already encoded public sync-v2 frame. */
+  /** Sends an already encoded public sync-v1 frame. */
   readonly send: (frame: Uint8Array, signal: AbortSignal) => void | Promise<void>;
 };
 
@@ -87,11 +87,11 @@ export type TerraScaleTanStackCollectionOptions<T extends object, TKey extends s
 };
 
 export type TerraScaleTanStackAdapterOptions<T extends object, TKey extends string | number = string> = {
-  readonly client: TerraScaleSyncV2Client;
+  readonly client: TerraScaleSyncV1Client;
   readonly subscription: string;
   readonly query: string;
   readonly parameters?: Uint8Array;
-  readonly checkpoint?: SyncV2ViewCheckpoint | Uint8Array;
+  readonly checkpoint?: SyncV1ViewCheckpoint | Uint8Array;
   readonly getKey: (item: T) => TKey;
   readonly keyFromIdentity?: (identity: string) => TKey;
   readonly id?: string;
@@ -114,12 +114,12 @@ type TerraScaleTanStackPublication<T extends object> = {
   readonly values: Map<string, T>;
   readonly order: string[];
   readonly generation: bigint;
-  readonly checkpoint: SyncV2ViewCheckpoint;
+  readonly checkpoint: SyncV1ViewCheckpoint;
   readonly forceReset: boolean;
 };
 
 /**
- * An official TanStack DB collection-sync adapter over the public sync-v2
+ * An official TanStack DB collection-sync adapter over the public sync-v1
  * client. It owns no local durable writes. Incoming snapshots and deltas are
  * the only source of collection state; optimistic rows live in the reactive
  * view store until their idempotent server write is accepted or rejected.
@@ -132,7 +132,7 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
   readonly #mutationIdentities = new Map<string, string>();
   /** Authoritative writes are sent and acknowledged in transaction order. */
   #mutationTail: Promise<void> = Promise.resolve();
-  #session: { readonly id: string; readonly view: SyncV2ResultViewStore } | undefined;
+  #session: { readonly id: string; readonly view: SyncV1ResultViewStore } | undefined;
   #removeViewListener: (() => void) | undefined;
   #syncParams: TerraScaleTanStackSyncParams<T, TKey> | undefined;
   #published = new Map<string, T>();
@@ -140,7 +140,7 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
   #ready = false;
   #disposed = false;
   #correlation = 1n;
-  #checkpoint: SyncV2ViewCheckpoint | undefined;
+  #checkpoint: SyncV1ViewCheckpoint | undefined;
   #forceReset = false;
   #externalAbortCleanup: (() => void) | undefined;
   /** Latest view cut waiting for the TanStack commit currently in flight. */
@@ -151,7 +151,7 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
     validateOptions(options);
     this.#options = options;
     this.#checkpoint = options.checkpoint instanceof Uint8Array
-      ? new SyncV2ViewCheckpoint(options.checkpoint)
+      ? new SyncV1ViewCheckpoint(options.checkpoint)
       : options.checkpoint;
     if (options.signal !== undefined) {
       if (options.signal.aborted) this.dispose();
@@ -181,11 +181,11 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
   }
 
   /** Feeds one encoded server frame into the existing public reactive client. */
-  public receive(frame: Uint8Array): SyncV2Envelope {
+  public receive(frame: Uint8Array): SyncV1Envelope {
     this.#assertActive();
-    let messageKind: SyncV2Message["kind"] | undefined;
+    let messageKind: SyncV1Message["kind"] | undefined;
     try {
-      messageKind = decodeTerrascaleSyncV2MsgpackEnvelope(frame).message.kind;
+      messageKind = decodeTerrascaleSyncV1MsgpackEnvelope(frame).message.kind;
     } catch {
       // The reactive client performs the authoritative protocol validation and
       // reports its typed protocol error below.
@@ -231,7 +231,7 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
   }
 
   /** Encodes a checkpoint acknowledgement for the active view. */
-  public checkpointAcknowledgement(): Extract<SyncV2Message, { readonly kind: "checkpoint_ack" }> {
+  public checkpointAcknowledgement(): Extract<SyncV1Message, { readonly kind: "checkpoint_ack" }> {
     this.#assertActive();
     if (this.#session === undefined) throw new Error("TerraScale TanStack sync: no active subscription");
     return this.#options.client.checkpointAcknowledgement(this.#session.id);
@@ -268,7 +268,7 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
     if (!isRecord(meta) || meta.subscription !== this.#options.subscription) return;
     if (meta.checkpoint !== undefined) {
       if (!(meta.checkpoint instanceof Uint8Array)) throw new TypeError("TerraScale TanStack sync metadata checkpoint must be bytes");
-      this.#checkpoint = new SyncV2ViewCheckpoint(meta.checkpoint);
+      this.#checkpoint = new SyncV1ViewCheckpoint(meta.checkpoint);
     }
   }
 
@@ -320,7 +320,7 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
   async #openSession(): Promise<void> {
     if (this.#session !== undefined || this.#disposed) return;
     this.#options.client.setOnline(true);
-    let opened: ReturnType<TerraScaleSyncV2Client["openSubscription"]>;
+    let opened: ReturnType<TerraScaleSyncV1Client["openSubscription"]>;
     try {
       opened = this.#options.client.openSubscription({
         subscription: this.#options.subscription,
@@ -392,7 +392,7 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
 
   #publishedGeneration = 0n;
 
-  #decodeItem(item: SyncV2ResultItem): T {
+  #decodeItem(item: SyncV1ResultItem): T {
     const value: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
     for (const [path, bytes] of Object.entries(item.value)) {
       let decoded: unknown;
@@ -461,9 +461,9 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
   #optimisticOperations(
     operation: "insert" | "update" | "delete",
     mutations: readonly TerraScaleTanStackMutation[],
-  ): readonly SyncV2ResultOperation[] {
+  ): readonly SyncV1ResultOperation[] {
     const items = this.#session?.view.getVisibleItems() ?? [];
-    const operations: SyncV2ResultOperation[] = [];
+    const operations: SyncV1ResultOperation[] = [];
     let length = items.length;
     for (const mutation of mutations) {
       const identity = String(mutation.key);
@@ -593,7 +593,7 @@ function isRecord(value: unknown): value is Record<string, any> {
   return typeof value === "object" && value !== null;
 }
 
-function isDelta(value: TerraScaleTanStackMutationResponse): value is SyncV2ResultDelta {
+function isDelta(value: TerraScaleTanStackMutationResponse): value is SyncV1ResultDelta {
   return isRecord(value) && "from_revision" in value && "to_revision" in value
     && typeof value.from_revision === "bigint" && typeof value.to_revision === "bigint";
 }

@@ -94,7 +94,7 @@ async function validateContractBundle(root: string, cleanup: () => Promise<void>
     if (actual !== artifact.blake3.toLowerCase()) throw new Error(`contracts: BLAKE3 mismatch for ${artifact.path}.`);
     digests.set(artifact.path, artifact.blake3.toLowerCase());
   }
-  for (const required of ["openapi.json", "msgpack/terrascale.sync.v2.msgpack.json"]) if (!digests.has(required)) throw new Error(`contracts: manifest does not pin ${required}.`);
+  for (const required of ["openapi.json", "msgpack/terrascale.sync.v1.msgpack.json"]) if (!digests.has(required)) throw new Error(`contracts: manifest does not pin ${required}.`);
   return { root, manifest, artifactDigests: digests, cleanup };
 }
 

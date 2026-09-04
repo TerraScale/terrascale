@@ -40,8 +40,8 @@ There is no Dashboard-named or generic request entrypoint.
 
 ## Reactive protocol
 
-The SDK has one reactive implementation: `TerraScaleSyncV2Client`. It decodes
-the generated `terrascale.sync.v2.msgpack` frames and applies authorized
+The SDK has one reactive implementation: `TerraScaleSyncV1Client`. It decodes
+the generated `terrascale.sync.v1.msgpack` frames and applies authorized
 snapshots and result operations to bounded result views. The checked-in JSON
 manifest owns every tag, field position, direction, and bound. The generated
 TypeScript module consumes that file. INT-3's Go codec must check the same
@@ -54,10 +54,9 @@ projected bytes in an item, does not transcode them into nested MessagePack,
 and leaves the single native `JSON.parse` per delivered value to SDK-2's
 browser boundary.
 
-Protocol 2.1 is the first publishable wire contract. The pre-launch 2.0
-artifacts reassigned tags during development and are withdrawn. The decoder
-rejects 2.0 before reading a message body, and 2.0 decoders reject 2.1. Tags
-in 2.1 are stable and future compatible changes must append new tags.
+Protocol 1.0 is the first public wire contract. The decoder rejects unknown
+versions before reading a message body. Compatible changes append tags;
+existing tags retain their meanings.
 
 The current client:
 

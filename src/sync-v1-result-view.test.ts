@@ -2,20 +2,20 @@ import assert from "node:assert/strict";
 import { describe, test } from "vitest";
 
 import {
-  SyncV2ResultViewStore,
-  SyncV2ViewError,
-  SyncV2ViewCheckpoint,
-  syncV2ResultDigest,
-  type SyncV2ResultItem,
+  SyncV1ResultViewStore,
+  SyncV1ViewError,
+  SyncV1ViewCheckpoint,
+  syncV1ResultDigest,
+  type SyncV1ResultItem,
 } from "./index.js";
 
-const row = (identity: string, value: string): SyncV2ResultItem => ({
+const row = (identity: string, value: string): SyncV1ResultItem => ({
   identity,
   value: { value: new TextEncoder().encode(value) },
 });
 
 const snapshot = (
-  items: readonly SyncV2ResultItem[],
+  items: readonly SyncV1ResultItem[],
   revision = 1n,
   generation = 1n,
   authorizationGeneration = 1n,
@@ -24,13 +24,13 @@ const snapshot = (
   authorization_generation: authorizationGeneration,
   revision,
   items,
-  digest: syncV2ResultDigest(items),
-  checkpoint: new SyncV2ViewCheckpoint(`checkpoint-${generation}-${revision}`),
+  digest: syncV1ResultDigest(items),
+  checkpoint: new SyncV1ViewCheckpoint(`checkpoint-${generation}-${revision}`),
 });
 
-describe("current v2 authorized result view", () => {
+describe("current v1 authorized result view", () => {
   test("applies atomic insert/update/patch/remove/move revisions and ignores duplicates", () => {
-    const store = new SyncV2ResultViewStore();
+    const store = new SyncV1ResultViewStore();
     store.bootstrap(snapshot([row("a", "a"), row("b", "b")]));
     const items = [row("b", "changed"), row("c", "c")];
     const delta = {
@@ -44,8 +44,8 @@ describe("current v2 authorized result view", () => {
         { kind: "Insert" as const, identity: "c", position: 0, value: row("c", "c").value },
         { kind: "Update" as const, identity: "c", value: row("c", "c").value },
       ],
-      digest: syncV2ResultDigest([row("c", "c"), row("a", "patched")]),
-      checkpoint: new SyncV2ViewCheckpoint("checkpoint-1-2"),
+      digest: syncV1ResultDigest([row("c", "c"), row("a", "patched")]),
+      checkpoint: new SyncV1ViewCheckpoint("checkpoint-1-2"),
     };
     assert.equal(store.applyDelta(delta), "applied");
     assert.equal(store.applyDelta(delta), "duplicate");
@@ -55,7 +55,7 @@ describe("current v2 authorized result view", () => {
   });
 
   test("refuses disconnected durable mutations and rolls back rejected presentation", () => {
-    const store = new SyncV2ResultViewStore();
+    const store = new SyncV1ResultViewStore();
     store.bootstrap(snapshot([row("a", "old")]));
     store.setOnline(false);
     assert.throws(
@@ -71,7 +71,7 @@ describe("current v2 authorized result view", () => {
   });
 
   test("authorization transitions require a newer view and policy generation", () => {
-    const store = new SyncV2ResultViewStore();
+    const store = new SyncV1ResultViewStore();
     store.bootstrap(snapshot([row("a", "visible")], 1n, 1n));
     store.transitionAuthorization(2n, ["a"], {
       ...snapshot([row("b", "expanded")], 2n, 2n),
@@ -82,7 +82,7 @@ describe("current v2 authorized result view", () => {
   });
 
   test("accepts a lower revision when the view generation advances", () => {
-    const store = new SyncV2ResultViewStore();
+    const store = new SyncV1ResultViewStore();
     store.bootstrap(snapshot([row("a", "old")], 9n, 1n));
 
     store.reset(snapshot([row("b", "new")], 2n, 2n));
@@ -93,12 +93,12 @@ describe("current v2 authorized result view", () => {
   });
 
   test("rejects a lower revision in the same view generation atomically", () => {
-    const store = new SyncV2ResultViewStore();
+    const store = new SyncV1ResultViewStore();
     store.bootstrap(snapshot([row("a", "old")], 9n, 1n));
 
     assert.throws(
       () => store.reset(snapshot([row("b", "stale")], 8n, 1n)),
-      (error: unknown) => error instanceof SyncV2ViewError && error.code === "reset-required",
+      (error: unknown) => error instanceof SyncV1ViewError && error.code === "reset-required",
     );
     assert.equal(store.getViewGeneration(), 1n);
     assert.equal(store.getRevision(), 9n);

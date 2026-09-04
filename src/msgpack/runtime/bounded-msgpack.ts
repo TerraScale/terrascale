@@ -1,4 +1,4 @@
-// The bounded MessagePack core for the generated public `terrascale.sync.v2`
+// The bounded MessagePack core for the generated public `terrascale.sync.v1`
 // protocol (ADR 0025). This module is the support library the generated
 // codecs in `src/msgpack/generated/` build on; it is deliberately minimal and
 // dependency-free. The public protocol manifest is the sole authority for

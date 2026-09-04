@@ -1,5 +1,5 @@
 // Hostile-decode conformance for the generated public
-// `terrascale.sync.v2.msgpack` protocol (ADR 0025, qualification-gap-sweep
+// `terrascale.sync.v1.msgpack` protocol (ADR 0025, qualification-gap-sweep
 // row 28): truncated, trailing, oversized, deeply nested, unknown-tag,
 // unsafe-integer, version-skew, unknown-feature, extra-field, map,
 // extension, float32, invalid-UTF-8, unknown-enum, unknown-variant, and
@@ -20,15 +20,15 @@ import { describe, test } from "vitest";
 
 import { TerrascaleMsgpackError } from "../src/msgpack/runtime/bounded-msgpack.js";
 import {
-  decodeTerrascaleSyncV2MsgpackEnvelope,
-  encodeTerrascaleSyncV2MsgpackEnvelope,
-  terrascaleSyncV2MsgpackManifestSha256,
-  terrascaleSyncV2MsgpackMaxMessageBytes,
-} from "../src/msgpack/generated/terrascale-sync-v2-msgpack.js";
+  decodeTerrascaleSyncV1MsgpackEnvelope,
+  encodeTerrascaleSyncV1MsgpackEnvelope,
+  terrascaleSyncV1MsgpackManifestSha256,
+  terrascaleSyncV1MsgpackMaxMessageBytes,
+} from "../src/msgpack/generated/terrascale-sync-v1-msgpack.js";
 
 const encoder = new TextEncoder();
 const goldenHostileFixture = JSON.parse(await readFile(
-  new URL("./fixtures/terrascale.sync.v2.msgpack/hostile-vectors.json", import.meta.url),
+  new URL("./fixtures/terrascale.sync.v1.msgpack/hostile-vectors.json", import.meta.url),
   "utf8",
 ));
 
@@ -121,8 +121,8 @@ const bin32Header = (length) => [
 
 /** A hand-built heartbeat envelope: [major, minor, features, tag, corr, caus, []]. */
 const heartbeatEnvelope = (overrides = {}) => {
-  const major = overrides.major ?? [0x02];
-  const minor = overrides.minor ?? [0x01];
+  const major = overrides.major ?? [0x01];
+  const minor = overrides.minor ?? [0x00];
   const features = overrides.features ?? [0x00];
   const tag = overrides.tag ?? [0x06];
   const correlation = overrides.correlation ?? u64(1n);
@@ -134,7 +134,7 @@ const heartbeatEnvelope = (overrides = {}) => {
 const expectRejection = (code, wire, note) => {
   let captured;
   try {
-    captured = decodeTerrascaleSyncV2MsgpackEnvelope(wire);
+    captured = decodeTerrascaleSyncV1MsgpackEnvelope(wire);
   } catch (error) {
     assert.ok(error instanceof TerrascaleMsgpackError, `${note}: expected TerrascaleMsgpackError, got ${error}`);
     assert.equal(error.code, code, `${note}: expected code ${code}, got ${error.code} (${error.message})`);
@@ -166,9 +166,9 @@ describe("msgpack hostile decode", () => {
       "unknown_enum",
       "unknown_variant",
     ];
-    assert.equal(goldenHostileFixture.protocol, "terrascale.sync.v2.msgpack");
-    assert.equal(goldenHostileFixture.version, "2.1");
-    assert.equal(goldenHostileFixture.manifestSha256, terrascaleSyncV2MsgpackManifestSha256);
+    assert.equal(goldenHostileFixture.protocol, "terrascale.sync.v1.msgpack");
+    assert.equal(goldenHostileFixture.version, "1.0");
+    assert.equal(goldenHostileFixture.manifestSha256, terrascaleSyncV1MsgpackManifestSha256);
     assert.deepEqual(
       goldenHostileFixture.vectors.map(vector => vector.code).sort(),
       [...expectedCodes].sort(),
@@ -182,7 +182,7 @@ describe("msgpack hostile decode", () => {
   });
 
   test("a hand-built canonical heartbeat decodes (positive control)", () => {
-    const decoded = decodeTerrascaleSyncV2MsgpackEnvelope(heartbeatEnvelope());
+    const decoded = decodeTerrascaleSyncV1MsgpackEnvelope(heartbeatEnvelope());
     assert.equal(decoded.message.kind, "heartbeat");
     assert.equal(decoded.correlation, 1n);
     assert.equal(decoded.causation, 0n);
@@ -192,10 +192,10 @@ describe("msgpack hostile decode", () => {
   test("non-canonical integer encodings still decode (cross-producer tolerance)", () => {
     // major/minor/features/tag as uint16, correlation as uint8-padded value:
     // semantic readers must agree on the value regardless of encoding width.
-    const decoded = decodeTerrascaleSyncV2MsgpackEnvelope(
+    const decoded = decodeTerrascaleSyncV1MsgpackEnvelope(
       heartbeatEnvelope({
-        major: [0xcd, 0x00, 0x02],
-        minor: [0xcc, 0x01],
+        major: [0xcd, 0x00, 0x01],
+        minor: [0xcc, 0x00],
         features: [0xce, 0x00, 0x00, 0x00, 0x00],
         tag: [0xcd, 0x00, 0x06],
         correlation: [0xcc, 0x2a],
@@ -208,7 +208,7 @@ describe("msgpack hostile decode", () => {
   // --- truncation -------------------------------------------------------------
 
   test("every strict prefix of a valid message is rejected", () => {
-    const envelope = encodeTerrascaleSyncV2MsgpackEnvelope({
+    const envelope = encodeTerrascaleSyncV1MsgpackEnvelope({
       features: 0,
       correlation: 7n,
       causation: 3n,
@@ -225,7 +225,7 @@ describe("msgpack hostile decode", () => {
       const prefix = envelope.subarray(0, length);
       let threw = null;
       try {
-        decodeTerrascaleSyncV2MsgpackEnvelope(prefix);
+        decodeTerrascaleSyncV1MsgpackEnvelope(prefix);
       } catch (error) {
         threw = error;
       }
@@ -248,7 +248,7 @@ describe("msgpack hostile decode", () => {
   // --- oversized ----------------------------------------------------------------
 
   test("a whole message above the 8 MiB ceiling is rejected before any parse", () => {
-    const stringBytes = terrascaleSyncV2MsgpackMaxMessageBytes + 1 - 24;
+    const stringBytes = terrascaleSyncV1MsgpackMaxMessageBytes + 1 - 24;
     const giant = bytes(
       [0x97, 0x02, 0x00, 0x00, 0x06],
       u64(1n),
@@ -257,7 +257,7 @@ describe("msgpack hostile decode", () => {
       [0xdb, (stringBytes >>> 24) & 0xff, (stringBytes >>> 16) & 0xff, (stringBytes >>> 8) & 0xff, stringBytes & 0xff],
       new Uint8Array(stringBytes),
     );
-    assert.ok(giant.length > terrascaleSyncV2MsgpackMaxMessageBytes);
+    assert.ok(giant.length > terrascaleSyncV1MsgpackMaxMessageBytes);
     expectRejection("limit_message", giant, "whole message above the ceiling");
   });
 
@@ -396,13 +396,13 @@ describe("msgpack hostile decode", () => {
   // --- version skew ---------------------------------------------------------------------
 
   test("version skew is rejected before any body field is read", () => {
-    for (const major of [0, 1, 3]) {
+    for (const major of [0, 2, 3]) {
       expectRejection("unsupported_version", heartbeatEnvelope({ major: [major] }), `major ${major}`);
     }
     // 0xff is the negative fixint -1: not a u32 at all, so it fails as an
     // unsafe integer — still fail-closed before any body field is read.
     expectRejection("unsafe_integer", heartbeatEnvelope({ major: [0xff] }), "major -1 (0xff)");
-    expectRejection("unsupported_version", heartbeatEnvelope({ minor: [0x00] }), "withdrawn pre-launch minor 0");
+    expectRejection("unsupported_version", heartbeatEnvelope({ minor: [0x01] }), "unsupported minor 1");
     expectRejection("unsupported_version", heartbeatEnvelope({ minor: [0x02] }), "future minor 2");
     expectRejection("unsafe_integer", heartbeatEnvelope({ major: f64(3) }), "skewed major as a float");
   });
