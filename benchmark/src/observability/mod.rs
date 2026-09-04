@@ -204,6 +204,9 @@ pub const SUBSYSTEMS: [Subsystem; 11] = [
     Subsystem::Guard,
 ];
 
+/// The maximum number of aggregate subsystem/outcome series.
+pub const MAX_SUBSYSTEM_SERIES: usize = SUBSYSTEMS.len() * MAX_OUTCOME_LABEL_VALUES;
+
 /// A closed guard category. Guard hits are aggregate facts, never customer
 /// identifiers or request parameters.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -237,6 +240,9 @@ impl GuardKind {
 /// Every admitted guard category in stable order.
 pub const GUARD_KINDS: [GuardKind; 5] =
     [GuardKind::Rate, GuardKind::Egress, GuardKind::Storage, GuardKind::Capacity, GuardKind::Clock];
+
+/// The maximum number of guard series.
+pub const MAX_GUARD_SERIES: usize = GUARD_KINDS.len();
 
 /// A typed, bounded label accepted by adapter integrations.
 ///
