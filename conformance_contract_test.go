@@ -79,6 +79,34 @@ func TestGeneratedContractProvenance(t *testing.T) {
 	if seen["msgpack/terrascale.sync.v2.msgpack.json"] != pinnedMessagePackBLAKE3 {
 		t.Fatal("generated MessagePack provenance does not match the pinned manifest")
 	}
+	if ContractVersion != pinnedContractVersion {
+		t.Fatalf("generated metadata version = %q, want %q", ContractVersion, pinnedContractVersion)
+	}
+}
+
+func TestGeneratedContractMetadata(t *testing.T) {
+	if len(ContractOperations) == 0 || len(ContractRoutes) == 0 {
+		t.Fatal("generated contract operation and route metadata is empty")
+	}
+	if len(ContractOperations) != len(ContractRoutes) {
+		t.Fatalf("generated operation count = %d, route count = %d", len(ContractOperations), len(ContractRoutes))
+	}
+	if len(ContractModels) == 0 {
+		t.Fatal("generated OpenAPI model metadata is empty")
+	}
+	if len(ContractFrames) < 11 {
+		t.Fatalf("generated MessagePack frame metadata has %d messages", len(ContractFrames))
+	}
+	for _, operation := range ContractOperations {
+		if operation.OperationID == "" || operation.Method == "" || operation.Path == "" {
+			t.Fatalf("generated operation is incomplete: %+v", operation)
+		}
+	}
+	for _, frame := range ContractFrames {
+		if frame.Name == "" || frame.Tag == 0 {
+			t.Fatalf("generated frame is not tagged: %+v", frame)
+		}
+	}
 }
 
 func TestP2BConformancePinnedOpenAPI(t *testing.T) {

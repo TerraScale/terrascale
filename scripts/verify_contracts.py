@@ -2,14 +2,22 @@
 """Verify the committed contract bundle without contacting the registry."""
 
 import hashlib
+import re
 from pathlib import Path
 
 from contracts import load_json, validate_bundle
 
 
 root = Path(__file__).resolve().parent.parent
-bundle = root / "contracts" / "v1"
-manifest, _ = validate_bundle(bundle, "v1")
+version_path = root / "CONTRACT_VERSION"
+try:
+    pinned_version = version_path.read_text(encoding="utf-8").strip()
+except OSError as error:
+    raise SystemExit(f"contracts: committed CONTRACT_VERSION is unavailable: {error}") from error
+if re.fullmatch(r"v[1-9][0-9]*", pinned_version) is None:
+    raise SystemExit(f"contracts: committed CONTRACT_VERSION is invalid: {pinned_version!r}")
+bundle = root / "contracts" / pinned_version
+manifest, _ = validate_bundle(bundle, pinned_version)
 vectors_path = bundle / "msgpack" / "message-vectors.json"
 hostile_path = bundle / "msgpack" / "hostile-vectors.json"
 vectors = load_json(vectors_path)

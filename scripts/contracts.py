@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Fetch the pinned TerraBase contract and produce Go provenance constants.
+"""Fetch the pinned TerraBase contract and generate Go contract metadata.
 
-The producer bundle is authoritative.  A sibling terrabase checkout is an
-explicit local producer for CI until the v1 package is published; a consumer
-checkout with neither that producer nor an explicit registry URL fails closed.
+The producer bundle is authoritative.  A local producer checkout is accepted
+only when explicitly supplied for pre-publication development.  Normal and CI
+invocations require an immutable package URL.  No consumer (and especially no
+other SDK) is ever used as a contract source.
 """
 
 from __future__ import annotations
@@ -28,9 +29,11 @@ REQUIRED = (
     "openapi.json",
     "msgpack/terrascale.sync.v2.msgpack.json",
 )
-CORPUS = (
-    "message-vectors.json",
-    "hostile-vectors.json",
+CONFORMANCE = (
+    "conformance/http.json",
+    "conformance/reactive.json",
+    "conformance/msgpack/message-vectors.json",
+    "conformance/msgpack/hostile-vectors.json",
 )
 MAX_ARCHIVE_MEMBERS = 256
 MAX_ARCHIVE_ENTRY_BYTES = 16 * 1024 * 1024
@@ -293,13 +296,181 @@ def unpack_url(url: str, destination: Path) -> Path:
     die("downloaded contract archive has no manifest.json")
 
 
-def copy_corpus(source: Path, destination: Path) -> None:
-    for name in CORPUS:
-        candidate = source / name
-        if not candidate.is_file():
-            candidate = source / "msgpack" / name
-        regular_file(candidate, f"MessagePack corpus {name}")
-        shutil.copyfile(candidate, destination / "msgpack" / name)
+def copy_conformance(source: Path, destination: Path) -> None:
+    """Copy only the producer's published conformance corpus.
+
+    E-1 owns this corpus.  A consumer must never silently retain a fixture
+    from an older checkout or copy one from another SDK.
+    """
+    missing = [relative for relative in CONFORMANCE if not (source / relative).is_file()]
+    if missing:
+        names = ", ".join(missing)
+        die(
+            "producer conformance corpus is unavailable (missing "
+            f"{names}); E-1 must publish these versioned conformance artifacts "
+            "before ts-go can regenerate contract v1"
+        )
+    for relative in CONFORMANCE:
+        source_file = source / relative
+        regular_file(source_file, f"producer conformance artifact {relative}")
+        destination_file = destination / relative
+        destination_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source_file, destination_file)
+        # Keep the established Go MessagePack test paths as a generated
+        # compatibility mirror; both copies come from this producer artifact.
+        if relative.startswith("conformance/msgpack/"):
+            mirror = destination / "msgpack" / Path(relative).name
+            mirror.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source_file, mirror)
+
+
+def ref_name(schema: object) -> str:
+    if isinstance(schema, dict):
+        reference = schema.get("$ref")
+        if isinstance(reference, str) and reference.startswith("#/components/schemas/"):
+            return reference.rsplit("/", 1)[-1]
+    return ""
+
+
+def openapi_metadata(openapi: dict) -> tuple[list[dict], list[dict], list[dict]]:
+    paths = openapi.get("paths")
+    components = openapi.get("components")
+    schemas = components.get("schemas") if isinstance(components, dict) else None
+    if not isinstance(paths, dict) or not isinstance(schemas, dict):
+        die("OpenAPI artifact has no usable paths/components.schemas metadata")
+    operations = []
+    routes = []
+    methods = ("get", "post", "put", "patch", "delete", "options", "head", "trace")
+    for path in sorted(paths):
+        path_item = paths[path]
+        if not isinstance(path_item, dict):
+            continue
+        for method in methods:
+            operation = path_item.get(method)
+            if not isinstance(operation, dict):
+                continue
+            operation_id = operation.get("operationId")
+            if not isinstance(operation_id, str) or not operation_id:
+                die(f"OpenAPI {method} {path} has no operationId")
+            request = operation.get("requestBody")
+            request_model = ""
+            if isinstance(request, dict) and isinstance(request.get("content"), dict):
+                for content in request["content"].values():
+                    if isinstance(content, dict):
+                        request_model = ref_name(content.get("schema"))
+                        if request_model:
+                            break
+            response_model = ""
+            responses = operation.get("responses")
+            if isinstance(responses, dict):
+                for status in sorted(responses, key=lambda value: (not str(value).startswith("2"), str(value))):
+                    if not str(status).startswith("2"):
+                        continue
+                    response = responses[status]
+                    if isinstance(response, dict) and isinstance(response.get("content"), dict):
+                        for content in response["content"].values():
+                            if isinstance(content, dict):
+                                response_model = ref_name(content.get("schema"))
+                                if response_model:
+                                    break
+                    if response_model:
+                        break
+            item = {
+                "operationID": operation_id,
+                "method": method.upper(),
+                "path": path,
+                "requestModel": request_model,
+                "responseModel": response_model,
+            }
+            operations.append(item)
+            routes.append({"method": method.upper(), "path": path, "operationID": operation_id})
+    models = []
+    for name in sorted(schemas):
+        schema = schemas[name]
+        properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+        models.append({
+            "name": name,
+            "properties": sorted(properties) if isinstance(properties, dict) else [],
+        })
+    operations.sort(key=lambda item: (item["operationID"], item["method"], item["path"]))
+    routes.sort(key=lambda item: (item["path"], item["method"], item["operationID"]))
+    return operations, routes, models
+
+
+def msgpack_metadata(manifest: dict) -> list[dict]:
+    messages = manifest.get("messages")
+    if not isinstance(messages, list) or not messages:
+        die("MessagePack artifact has no messages metadata")
+    result = []
+    for message in messages:
+        if not isinstance(message, dict) or not isinstance(message.get("name"), str):
+            die("MessagePack message has no stable name")
+        fields = message.get("fields")
+        if not isinstance(fields, list):
+            die(f"MessagePack message {message['name']} has no fields")
+        field_names = []
+        for field in fields:
+            if not isinstance(field, dict) or not isinstance(field.get("name"), str):
+                die(f"MessagePack message {message['name']} has an invalid field")
+            field_names.append(field["name"])
+        tag = message.get("tag")
+        if not isinstance(tag, int) or tag < 1:
+            die(f"MessagePack message {message['name']} has an invalid tag")
+        direction = message.get("direction", "")
+        if not isinstance(direction, str):
+            die(f"MessagePack message {message['name']} has an invalid direction")
+        result.append({
+            "name": message["name"],
+            "tag": tag,
+            "direction": direction,
+            "fields": field_names,
+        })
+    return sorted(result, key=lambda item: (item["tag"], item["name"]))
+
+
+def go_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=True)
+
+
+def go_strings(values: list[str]) -> str:
+    return "[]string{" + ", ".join(go_string(value) for value in values) + "}"
+
+
+def render_contract_go(openapi: dict, msgpack: dict, version: str, digests: dict[str, str]) -> str:
+    operations, routes, models = openapi_metadata(openapi)
+    frames = msgpack_metadata(msgpack)
+    lines = [
+        "// Code generated by scripts/contracts.py; DO NOT EDIT.",
+        "// Contract metadata is derived only from the pinned TerraBase bundle.",
+        "package sdk", "",
+        "// ContractMetadata describes one generated OpenAPI operation.",
+        "type ContractMetadata struct {", "\tOperationID string", "\tMethod string", "\tPath string", "\tRequestModel string", "\tResponseModel string", "}",
+        "", "// ContractRoute describes one generated route template.",
+        "type ContractRoute struct {", "\tMethod string", "\tPath string", "\tOperationID string", "}",
+        "", "// ContractModel describes one generated OpenAPI schema model.",
+        "type ContractModel struct {", "\tName string", "\tProperties []string", "}",
+        "", "// ContractFrame describes one generated MessagePack message.",
+        "type ContractFrame struct {", "\tName string", "\tTag uint32", "\tDirection string", "\tFields []string", "}",
+        "", "const (",
+        f"\tContractVersion = {go_string(version)}",
+        f"\tContractOpenAPIBLAKE3 = {go_string(digests['openapi.json'])}",
+        f"\tContractMessagePackBLAKE3 = {go_string(digests['msgpack/terrascale.sync.v2.msgpack.json'])}",
+        ")", "",
+        "var ContractOperations = []ContractMetadata{",
+    ]
+    for item in operations:
+        lines.append("\t{" + ", ".join(go_string(item[key]) for key in ("operationID", "method", "path", "requestModel", "responseModel")) + "},")
+    lines += ["}", "", "var ContractRoutes = []ContractRoute{"]
+    for item in routes:
+        lines.append("\t{" + ", ".join(go_string(item[key]) for key in ("method", "path", "operationID")) + "},")
+    lines += ["}", "", "var ContractModels = []ContractModel{"]
+    for item in models:
+        lines.append("\t{" + go_string(item["name"]) + ", " + go_strings(item["properties"]) + "},")
+    lines += ["}", "", "var ContractFrames = []ContractFrame{"]
+    for item in frames:
+        lines.append("\t{" + go_string(item["name"]) + f", {item['tag']}, " + go_string(item["direction"]) + ", " + go_strings(item["fields"]) + "},")
+    lines += ["}", ""]
+    return "\n".join(lines)
 
 
 def render_generated(destination: Path, manifest: dict, digests: dict[str, str]) -> str:
@@ -333,27 +504,39 @@ def main() -> None:
     parser.add_argument("--version", default=os.environ.get("CONTRACT_VERSION", "v1"))
     parser.add_argument("--source", default=os.environ.get("CONTRACT_SOURCE", ""))
     parser.add_argument("--url", default=os.environ.get("CONTRACT_URL", ""))
-    parser.add_argument("--corpus", default=os.environ.get("CONTRACT_CORPUS_SOURCE", ""))
     parser.add_argument("--destination", default="contracts/v1")
     args = parser.parse_args()
     if re.fullmatch(r"v[1-9][0-9]*", args.version) is None:
         die(f"invalid contract version {args.version!r}")
     repo = Path(__file__).resolve().parent.parent
-    source = Path(args.source).expanduser() if args.source else repo.parent / "terrabase" / "contracts"
-    corpus = Path(args.corpus).expanduser() if args.corpus else repo.parent / "ts-typescript" / "test" / "fixtures" / "terrascale.sync.v2.msgpack"
-    with tempfile.TemporaryDirectory(prefix="terrascale-contract-") as temporary:
-        temporary_root = Path(temporary)
+    source = Path(args.source).expanduser() if args.source else None
+    if source is not None and args.url:
+        die("CONTRACT_SOURCE and CONTRACT_URL are mutually exclusive")
+    if source is not None:
         if source.is_symlink():
             die(f"local producer artifact is a symlink: {source}")
-        if source.is_dir():
+        allowed_source = (repo.parent / "terrabase" / "contracts").resolve()
+        try:
+            source_resolved = source.resolve(strict=False)
+        except OSError as error:
+            die(f"cannot resolve CONTRACT_SOURCE {source}: {error}")
+        if source_resolved != allowed_source:
+            die(
+                "CONTRACT_SOURCE is development-only and must point to "
+                f"../terrabase/contracts ({allowed_source})"
+            )
+    if os.environ.get("CI") and source is not None:
+        die("CI requires CONTRACT_URL for an immutable published package; local CONTRACT_SOURCE is development-only")
+    with tempfile.TemporaryDirectory(prefix="terrascale-contract-") as temporary:
+        temporary_root = Path(temporary)
+        if source is not None and source.is_symlink():
+            die(f"local producer artifact is a symlink: {source}")
+        if source is not None and source.is_dir():
             producer = source
         elif args.url:
             producer = unpack_url(args.url, temporary_root)
         else:
-            die(
-                f"local producer artifact {source} is unavailable and no CONTRACT_URL was supplied; "
-                "contract v1 registry publication is blocked"
-            )
+            die("no immutable CONTRACT_URL supplied; local ../terrabase/contracts is available only via explicit CONTRACT_SOURCE (E-1 registry publication)")
         manifest, _ = validate_bundle(producer, args.version)
         contracts_parent = repo / "contracts"
         if contracts_parent.exists() and contracts_parent.is_symlink():
@@ -361,6 +544,7 @@ def main() -> None:
         contracts_parent.mkdir(exist_ok=True)
         destination = contracts_parent / args.version
         generated_target = repo / "generated_contract_test.go"
+        contract_target = repo / "contract.go"
         if destination.exists() and destination.is_symlink():
             die(f"refusing to replace symlink destination {destination}")
         if destination.exists() and not destination.is_dir():
@@ -369,17 +553,28 @@ def main() -> None:
             reject_links(destination)
         if generated_target.is_symlink():
             die(f"refusing to replace symlink generated artifact {generated_target}")
+        if contract_target.is_symlink():
+            die(f"refusing to replace symlink contract artifact {contract_target}")
         # Stage beside the exact version directory. Nothing is installed until
         # this copy, corpus check, and a second full digest pass succeed.
         staging = Path(tempfile.mkdtemp(prefix=f".{args.version}.staging-", dir=contracts_parent))
         backup = None
         generated_staging = contracts_parent / f".{args.version}.generated-{secrets.token_hex(8)}"
         generated_backup = None
+        contract_staging = contracts_parent / f".{args.version}.contract-{secrets.token_hex(8)}"
+        contract_backup = None
         installed = False
         try:
-            shutil.copytree(producer, staging, symlinks=False, dirs_exist_ok=True)
-            (staging / "msgpack").mkdir(exist_ok=True)
-            copy_corpus(corpus if corpus.is_dir() else producer, staging)
+            # Install only files named by the producer manifest. This prevents
+            # an old consumer fixture or an unpinned producer extra entering
+            # the committed bundle.
+            for relative in [entry["path"] for entry in manifest["artifacts"]]:
+                source_file = producer / relative
+                destination_file = staging / relative
+                destination_file.parent.mkdir(parents=True, exist_ok=True)
+                regular_file(source_file, f"producer artifact {relative}")
+                shutil.copyfile(source_file, destination_file)
+            copy_conformance(producer, staging)
             # The corpus is tied to the exact MessagePack manifest, not merely
             # its protocol name. This catches a stale fixture from another v1.
             vectors = load_json(staging / "msgpack" / "message-vectors.json")
@@ -387,26 +582,39 @@ def main() -> None:
             if vectors.get("manifestSha256") != expected_sha:
                 die("MessagePack corpus pins a different manifest SHA-256")
             manifest, digests = validate_bundle(staging, args.version)
+            openapi = load_json(staging / "openapi.json")
+            msgpack = load_json(staging / "msgpack/terrascale.sync.v2.msgpack.json")
             generated_staging.write_text(render_generated(staging, manifest, digests), encoding="utf-8")
+            contract_staging.write_text(render_contract_go(openapi, msgpack, args.version, digests), encoding="utf-8")
             if generated_target.exists():
                 regular_file(generated_target, str(generated_target))
                 generated_backup = contracts_parent / f".{args.version}.generated-backup-{secrets.token_hex(8)}"
                 os.replace(generated_target, generated_backup)
+            if contract_target.exists():
+                regular_file(contract_target, str(contract_target))
+                contract_backup = contracts_parent / f".{args.version}.contract-backup-{secrets.token_hex(8)}"
+                os.replace(contract_target, contract_backup)
             if destination.exists():
                 backup = contracts_parent / f".{args.version}.backup-{secrets.token_hex(8)}"
                 os.replace(destination, backup)
             os.replace(staging, destination)
             installed = True
             os.replace(generated_staging, generated_target)
+            os.replace(contract_staging, contract_target)
             if backup is not None:
                 safe_remove_tree(backup, contracts_parent, f".{args.version}.backup-")
             if generated_backup is not None:
                 regular_file(generated_backup, str(generated_backup))
                 generated_backup.unlink()
+            if contract_backup is not None:
+                regular_file(contract_backup, str(contract_backup))
+                contract_backup.unlink()
             print(f"contracts: pinned {args.version} from {producer}")
         except BaseException:
             if generated_staging.exists():
                 generated_staging.unlink()
+            if contract_staging.exists():
+                contract_staging.unlink()
             if staging.exists():
                 safe_remove_tree(staging, contracts_parent, f".{args.version}.staging-")
             if installed:
@@ -422,6 +630,10 @@ def main() -> None:
                 if generated_target.exists():
                     generated_target.unlink()
                 os.replace(generated_backup, generated_target)
+            if contract_backup is not None and contract_backup.exists():
+                if contract_target.exists():
+                    contract_target.unlink()
+                os.replace(contract_backup, contract_target)
             raise
 
 

@@ -1,8 +1,8 @@
 .PHONY: check contracts
 
-CONTRACT_VERSION ?= v1
-# CONTRACT_SOURCE may point at a local terrabase/contracts producer artifact.
-# CONTRACT_URL is an immutable registry package URL when v1 is published.
+CONTRACT_VERSION ?= $(shell sed -e 's/[[:space:]]//g' CONTRACT_VERSION)
+# CONTRACT_URL is an immutable terrabase package URL and is required by
+# default/CI. CONTRACT_SOURCE is an explicit pre-publication escape hatch.
 
 check:
 	test -z "$$(gofmt -l .)"
@@ -12,4 +12,4 @@ check:
 	go test -race ./...
 
 contracts:
-	@CONTRACT_VERSION="$(CONTRACT_VERSION)" python3 scripts/contracts.py --version "$(CONTRACT_VERSION)"
+	@CONTRACT_VERSION="$(CONTRACT_VERSION)" CONTRACT_URL="$(CONTRACT_URL)" CONTRACT_SOURCE="$(CONTRACT_SOURCE)" python3 scripts/contracts.py --version "$(CONTRACT_VERSION)"

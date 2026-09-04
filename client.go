@@ -560,6 +560,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	followed421 := false
 	for {
 		base := c.currentBase()
+		globalFirstContact := c.isGlobalFirstContact(base)
 		status, headers, respBody, transportErr := c.roundTrip(requestCtx, method, base, path, query, payload, rc, idem)
 		if transportErr != nil {
 			if idem != "" && attempt < c.cfg.MaxRetryAttempts {
@@ -584,6 +585,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		if status >= 200 && status < 300 {
 			// A successful response advances the causal frontier even when the
 			// caller requested no response body (for example DELETE/204).
+			if globalFirstContact {
+				c.observeServingRegion(headers)
+			}
 			c.observeSession(headers)
 			return decodeSuccess(out, respBody, headers.Get("Content-Type"))
 		}
@@ -597,6 +601,34 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		}
 		return apiErr
 	}
+}
+
+// isGlobalFirstContact reports whether base was selected without a learned or
+// explicit pin. The check is repeated when the response arrives in
+// observeServingRegion, so concurrent first contacts cannot overwrite the
+// first trusted observation.
+func (c *Client) isGlobalFirstContact(base string) bool {
+	c.mu.RLock()
+	affinity := c.cfg.Affinity
+	pinned := c.pinned
+	configuredBase := c.cfg.APIBaseURL
+	c.mu.RUnlock()
+	return affinity == AffinityFailover && pinned == "" && base == configuredBase
+}
+
+// observeServingRegion learns the serving region only from a successful
+// global first-contact response. A direct regional response cannot move an
+// existing pin, and malformed or untrusted header values are ignored.
+func (c *Client) observeServingRegion(headers http.Header) {
+	region, ok := servingRegion(headers)
+	if !ok {
+		return
+	}
+	c.mu.Lock()
+	if c.cfg.Affinity == AffinityFailover && c.pinned == "" {
+		c.pinned = region
+	}
+	c.mu.Unlock()
 }
 
 func (c *Client) roundTrip(ctx context.Context, method, base, path string, query url.Values, payload []byte, rc requestConfig, idem string) (int, http.Header, []byte, error) {
@@ -818,6 +850,55 @@ func defaultErrorCode(status int) string {
 	}
 }
 
+// servingRegionHeaders are the member/proxy response names for the region
+// that actually served a request. The legacy region spelling remains accepted
+// for compatibility with the v1 contract.
+var servingRegionHeaders = []string{
+	"X-TerraScale-Serving-Region",
+	"X-TerraScale-Region",
+}
+
+// servingRegion accepts one canonical region value from a serving-region
+// response header. Header names are compared case-insensitively because
+// callers and test transports may construct http.Header maps directly rather
+// than through Header.Set. Multiple aliases must agree; otherwise an
+// ambiguous response is not trusted for pinning.
+func servingRegion(h http.Header) (RegionCode, bool) {
+	var selected RegionCode
+	seen := false
+	for _, name := range servingRegionHeaders {
+		for _, value := range headerValuesFold(h, name) {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			region, err := ParseRegionCode(value)
+			if err != nil {
+				return "", false
+			}
+			if seen && region != selected {
+				return "", false
+			}
+			selected = region
+			seen = true
+		}
+	}
+	return selected, seen
+}
+
+func headerValuesFold(h http.Header, name string) []string {
+	if h == nil {
+		return nil
+	}
+	var values []string
+	for key, entries := range h {
+		if strings.EqualFold(key, name) {
+			values = append(values, entries...)
+		}
+	}
+	return values
+}
+
 func placementOf(h http.Header) string {
 	region, ok := placementRegion(h)
 	if !ok {
@@ -835,14 +916,16 @@ func placementRegion(h http.Header) (RegionCode, bool) {
 
 func placementRegionExcluding(h http.Header, excluded RegionCode) (RegionCode, bool) {
 	for _, key := range []string{"X-TerraScale-Placement", "X-TerraScale-Region"} {
-		value := strings.TrimSpace(h.Get(key))
-		if value == "" {
-			continue
-		}
-		for _, candidate := range strings.Split(value, ",") {
-			region, err := ParseRegionCode(candidate)
-			if err == nil && region != excluded {
-				return region, true
+		for _, value := range headerValuesFold(h, key) {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			for _, candidate := range strings.Split(value, ",") {
+				region, err := ParseRegionCode(candidate)
+				if err == nil && region != excluded {
+					return region, true
+				}
 			}
 		}
 	}
