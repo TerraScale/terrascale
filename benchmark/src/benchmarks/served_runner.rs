@@ -75,6 +75,13 @@ pub(super) struct ServedRunnerConfig {
     pub transport_identity: String,
     /// Executable used to create temporary mTLS material.
     pub openssl_executable: PathBuf,
+    /// Explicit topology family. Single-node and RF=2 evidence never share
+    /// a comparison group.
+    pub topology: String,
+    /// Immutable digest of the served runtime artifact.
+    pub runtime_digest: String,
+    /// Immutable digest of the comparator/client artifact.
+    pub comparator_digest: String,
 }
 
 impl ServedRunnerConfig {
@@ -120,8 +127,25 @@ impl ServedRunnerConfig {
             ("database", &self.database),
             ("source identity", &self.source_identity),
             ("transport identity", &self.transport_identity),
+            ("topology", &self.topology),
+            ("runtime digest", &self.runtime_digest),
+            ("comparator digest", &self.comparator_digest),
         ] {
             validate_text(name, value)?;
+        }
+        if !matches!(self.topology.as_str(), "single-node" | "rf2") {
+            return Err("topology must be exactly single-node or rf2".to_owned());
+        }
+        for (name, digest) in [
+            ("runtime digest", &self.runtime_digest),
+            ("comparator digest", &self.comparator_digest),
+        ] {
+            if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(format!("{name} must be an immutable 64-hex digest"));
+            }
+            if digest.eq_ignore_ascii_case("unassigned") {
+                return Err(format!("{name} cannot be unassigned"));
+            }
         }
         Ok(())
     }
@@ -159,6 +183,9 @@ impl ServedRunnerConfig {
                 .unwrap_or_else(|| QUALIFICATION_TRANSPORT_IDENTITY.to_owned()),
             openssl_executable: env_path("TERRABASE_BENCH_OPENSSL")
                 .unwrap_or_else(|| PathBuf::from("openssl")),
+            topology: required_string("TERRABASE_BENCH_TOPOLOGY")?,
+            runtime_digest: required_digest("TERRABASE_BENCH_RUNTIME_DIGEST")?,
+            comparator_digest: required_digest("TERRABASE_BENCH_COMPARATOR_DIGEST")?,
         })
     }
 }
@@ -232,6 +259,11 @@ pub(super) fn run_served_runner(
             retained_path: Some(result.output_path),
         }),
         Err(reason) => {
+            // The adapter writes into this unique path, but it is not
+            // publishable until every admission check succeeds. Never leave
+            // a complete-looking loopback/partial document for the history
+            // renderer to discover.
+            let _ = fs::remove_file(&output_path);
             let mut error = retain_failure(config, reason).unwrap_err();
             if let Err(cleanup_error) = cleanup {
                 error.reason.push_str(&format!("; temporary cleanup failed: {cleanup_error}"));
@@ -260,8 +292,11 @@ fn run_inner(
     };
     let endpoint = format!("127.0.0.1:{port}");
     let adapter = run_adapter(config, &pki, output_path, &endpoint, deadline);
+    let evidence = capture_resource_evidence(harness.pid);
     stop_harness(&mut harness, deadline);
     adapter?;
+    let evidence = evidence?;
+    augment_output(output_path, &evidence, config)?;
     validate_output(output_path, started, config, &endpoint)
 }
 
@@ -418,6 +453,7 @@ fn openssl(config: &ServedRunnerConfig, deadline: Instant, args: &[&str]) -> Res
 
 struct Harness {
     child: Child,
+    pid: u32,
     stdin: Option<ChildStdin>,
     events: mpsc::Receiver<ReadEvent>,
 }
@@ -428,21 +464,48 @@ enum ReadEvent {
     Error(String),
 }
 
-/// The fixed benchmark resource envelope (owner decision 2026-08-31): the
-/// measured subject (the harness) runs capped at 8 CPUs / 8 GiB RAM so the
-/// served numbers describe that envelope, not this host's full width.
-/// `TERRABASE_BENCH_ENVELOPE=0` disables it (diagnosis runs).
-fn envelope_command(harness: &Path) -> Command {
-    let mut command = Command::new(harness);
-    // An unfenced run must not stamp the envelope into its own metadata:
-    // the spec env marks the command ONLY when a fence was applied.
-    // `TERRABASE_BENCH_ENVELOPE=0` opts out entirely (diagnosis runs).
-    if std::env::var_os("TERRABASE_BENCH_ENVELOPE").as_deref() == Some(std::ffi::OsStr::new("0")) {
-        return command;
+#[derive(Clone, Debug)]
+struct ResourceEvidence {
+    cgroup: String,
+    cpu_max: String,
+    cpu_stat: String,
+    cpuset: String,
+    memory_max: String,
+    memory_peak: String,
+    rss_kib: String,
+    io_stat: String,
+}
+
+impl ResourceEvidence {
+    fn json(&self, config: &ServedRunnerConfig) -> String {
+        format!(
+            "{{\"envelope_spec\":\"2ocpu/12GiB\",\"topology\":{},\"cgroup\":{},\"cpu\":{{\"max\":{},\"stat\":{},\"cpuset\":{}}},\"rss\":{{\"kib\":{},\"memory_max\":{},\"memory_peak\":{}}},\"io\":{},\"runtime_digest\":{},\"comparator_digest\":{}}}",
+            json_string(&config.topology),
+            json_string(&self.cgroup),
+            json_string(&self.cpu_max),
+            json_string(&self.cpu_stat),
+            json_string(&self.cpuset),
+            json_string(&self.rss_kib),
+            json_string(&self.memory_max),
+            json_string(&self.memory_peak),
+            json_string(&self.io_stat),
+            json_string(&config.runtime_digest),
+            json_string(&config.comparator_digest),
+        )
     }
-    // The fleet-recorded method (GOAL.md decision log, 2026-08-31): a
-    // scope holds the 8-GiB memory ceiling; taskset -c 0-7 inside it
-    // pins CPU affinity, which children inherit and
+}
+
+/// The fixed benchmark resource envelope (GOAL.md D-65): one launch member,
+/// exactly 2 OCPU / 12 GiB. A gating run cannot opt out or run unconstrained.
+fn envelope_command(harness: &Path) -> Result<Command, String> {
+    let mut command = Command::new(harness);
+    if std::env::var_os("TERRABASE_BENCH_ENVELOPE")
+        .is_some_and(|value| value == std::ffi::OsStr::new("0"))
+    {
+        return Err("TERRABASE_BENCH_ENVELOPE=0 is forbidden for gating runs".to_owned());
+    }
+    // The scope holds the 12-GiB memory ceiling; taskset inside it
+    // pins exactly two CPUs, which children inherit and
     // available_parallelism follows, so the harness runtime sees
     // exactly the envelope. Host-outage fallback (2026-08-31): the user
     // manager can be down machine-wide (dev-vm-storage refused after a
@@ -451,7 +514,7 @@ fn envelope_command(harness: &Path) -> Command {
     // cgroup limits without the user bus, and -E preserves the
     // subject's environment through sudo.
     let Ok(systemd_run) = which_host_bin("systemd-run") else {
-        return command;
+        return Err("systemd-run is required to enforce the benchmark cgroup".to_owned());
     };
     let mut wrapped = if user_manager_reachable() {
         let mut scope = Command::new(systemd_run);
@@ -472,21 +535,56 @@ fn envelope_command(harness: &Path) -> Command {
             .arg(gid.to_string());
         scope
     } else {
-        return command;
+        return Err(
+            "user systemd manager unavailable and sudo -n cannot create a system scope".to_owned()
+        );
     };
+    let cpus = current_two_cpu_set()?;
     wrapped
         .arg("-p")
-        .arg("MemoryMax=8G")
+        .arg("MemoryMax=12G")
+        .arg("-p")
+        .arg("CPUQuota=200%")
+        .arg("-p")
+        .arg(format!("AllowedCPUs={cpus}"))
         .arg("-p")
         .arg("TasksMax=4096")
         .arg("--")
         .arg("taskset")
         .arg("-c")
-        .arg("0-7")
+        .arg(&cpus)
         .arg(harness);
     command = wrapped;
-    command.env("TERRABASE_BENCH_ENVELOPE_SPEC", "8cpu/8G");
-    command
+    command.env("TERRABASE_BENCH_ENVELOPE_SPEC", "2ocpu/12GiB");
+    Ok(command)
+}
+
+fn current_two_cpu_set() -> Result<String, String> {
+    let taskset = which_host_bin("taskset")?;
+    let output = Command::new(taskset)
+        .arg("-pc")
+        .arg(std::process::id().to_string())
+        .output()
+        .map_err(|error| format!("inspect current CPU affinity: {error}"))?;
+    if !output.status.success() {
+        return Err("taskset could not inspect current CPU affinity".to_owned());
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let list = text.rsplit_once(':').map(|(_, value)| value.trim()).unwrap_or_default();
+    let mut cpus = Vec::new();
+    for item in list.split(',') {
+        if let Some((first, last)) = item.split_once('-') {
+            let first: u32 = first.trim().parse().map_err(|_| "invalid CPU affinity")?;
+            let last: u32 = last.trim().parse().map_err(|_| "invalid CPU affinity")?;
+            cpus.extend(first..=last);
+        } else if !item.trim().is_empty() {
+            cpus.push(item.trim().parse().map_err(|_| "invalid CPU affinity")?);
+        }
+    }
+    if cpus.len() < 2 {
+        return Err("fewer than two CPUs are available for the launch envelope".to_owned());
+    }
+    Ok(format!("{}-{}", cpus[0], cpus[1]))
 }
 
 /// Whether `systemctl --user` answers — false when the user manager is
@@ -560,7 +658,7 @@ fn which_host_bin(name: &str) -> Result<PathBuf, String> {
 fn start_harness(config: &ServedRunnerConfig, pki: &Pki, dir: &Path) -> Result<Harness, String> {
     let storage = dir.join("storage");
     fs::create_dir(&storage).map_err(|e| format!("create fresh harness storage: {e}"))?;
-    let mut child = envelope_command(&config.qualification_harness_executable)
+    let mut child = envelope_command(&config.qualification_harness_executable)?
         .arg(&pki.server)
         .arg(&pki.server_key)
         .arg(&pki.ca)
@@ -598,7 +696,8 @@ fn start_harness(config: &ServedRunnerConfig, pki: &Pki, dir: &Path) -> Result<H
         }
     });
     let stdin = child.stdin.take();
-    Ok(Harness { child, stdin, events })
+    let pid = child.id();
+    Ok(Harness { child, pid, stdin, events })
 }
 
 fn wait_ready(harness: &mut Harness, deadline: Instant) -> Result<u16, String> {
@@ -641,6 +740,11 @@ fn run_adapter(
         config.adapter_executable.as_ref().ok_or("a prebuilt Go adapter executable is required")?;
     let mut command = Command::new(executable);
     command.current_dir(&config.go_workdir);
+    command
+        .env("TERRABASE_BENCH_TOPOLOGY", &config.topology)
+        .env("TERRABASE_BENCH_RUNTIME_DIGEST", &config.runtime_digest)
+        .env("TERRABASE_BENCH_COMPARATOR_DIGEST", &config.comparator_digest)
+        .env("TERRABASE_BENCH_ENVELOPE_SPEC", "2ocpu/12GiB");
     let timeout = duration_argument(
         deadline.checked_duration_since(Instant::now()).ok_or("adapter deadline expired")?,
     );
@@ -677,6 +781,76 @@ fn run_adapter(
         .spawn()
         .map_err(|e| format!("start Go benchmark adapter: {e}"))?;
     wait_child(&mut child, deadline, "Go benchmark adapter")
+}
+
+fn capture_resource_evidence(pid: u32) -> Result<ResourceEvidence, String> {
+    let proc = PathBuf::from(format!("/proc/{pid}"));
+    let cgroup_text = fs::read_to_string(proc.join("cgroup"))
+        .map_err(|error| format!("read member cgroup: {error}"))?;
+    let cgroup = cgroup_text
+        .lines()
+        .find_map(|line| line.strip_prefix("0::"))
+        .ok_or("member is not running in a cgroup-v2 scope")?;
+    let root = PathBuf::from("/sys/fs/cgroup").join(cgroup.trim_start_matches('/'));
+    let read = |name: &str| {
+        fs::read_to_string(root.join(name)).map(|value| value.trim().replace('\n', ";"))
+    };
+    let cpu_max = read("cpu.max").map_err(|error| format!("read cgroup cpu.max: {error}"))?;
+    let cpu_stat = read("cpu.stat").map_err(|error| format!("read cgroup cpu.stat: {error}"))?;
+    let cpuset =
+        read("cpuset.cpus.effective").map_err(|error| format!("read cgroup cpuset: {error}"))?;
+    let memory_max =
+        read("memory.max").map_err(|error| format!("read cgroup memory.max: {error}"))?;
+    let memory_peak =
+        read("memory.peak").map_err(|error| format!("read cgroup memory.peak: {error}"))?;
+    let io_stat = read("io.stat").map_err(|error| format!("read cgroup io.stat: {error}"))?;
+    let status = fs::read_to_string(proc.join("status"))
+        .map_err(|error| format!("read member RSS: {error}"))?;
+    let rss_kib = status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmHWM:").map(str::trim).map(str::to_owned))
+        .ok_or("member RSS peak is missing from /proc status")?;
+    if memory_max != "12884901888" {
+        return Err(format!("member cgroup memory.max is {memory_max}, expected 12884901888"));
+    }
+    if !cpu_max.starts_with("200000 ") {
+        return Err(format!("member cgroup cpu.max is {cpu_max}, expected 200000 quota"));
+    }
+    if cpuset.split(',').flat_map(|part| part.split('-')).count() < 2 {
+        return Err(format!("member cgroup cpuset is not a two-CPU set: {cpuset}"));
+    }
+    Ok(ResourceEvidence {
+        cgroup: cgroup.to_owned(),
+        cpu_max,
+        cpu_stat,
+        cpuset,
+        memory_max,
+        memory_peak,
+        rss_kib,
+        io_stat,
+    })
+}
+
+fn augment_output(
+    output: &Path,
+    evidence: &ResourceEvidence,
+    config: &ServedRunnerConfig,
+) -> Result<(), String> {
+    let text =
+        fs::read_to_string(output).map_err(|error| format!("read adapter result: {error}"))?;
+    let trimmed = text.trim_end();
+    let Some(prefix) = trimmed.strip_suffix('}') else {
+        return Err("adapter result is not a JSON object".to_owned());
+    };
+    let augmented = format!("{prefix},\"evidence\":{} }}\n", evidence.json(config));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(output)
+        .map_err(|error| format!("open adapter result for evidence: {error}"))?;
+    file.write_all(augmented.as_bytes())
+        .and_then(|_| file.sync_all())
+        .map_err(|error| format!("persist benchmark evidence: {error}"))
 }
 
 fn validate_output(
@@ -732,7 +906,61 @@ fn validate_output(
     if !has_source_identity(&value, &config.source_identity) {
         return Err("adapter result does not retain the requested source identity".to_owned());
     }
+    validate_evidence(&value, config)?;
+    if endpoint.starts_with("127.") || endpoint.starts_with("[::1]") || endpoint == "::1" {
+        return Err(
+            "loopback diagnostic result cannot be labelled complete; use a production Member boundary"
+                .to_owned(),
+        );
+    }
     Ok(ServedRunnerResult { facts, output_path: output.to_owned(), endpoint: endpoint.to_owned() })
+}
+
+fn validate_evidence(
+    value: &lane_run::json::Value,
+    config: &ServedRunnerConfig,
+) -> Result<(), String> {
+    let lane_run::json::Value::Obj(fields) = value else {
+        return Err("complete adapter result is not an object".to_owned());
+    };
+    let lane_run::json::Value::Obj(evidence) =
+        fields.get("evidence").ok_or("complete adapter result is missing resource evidence")?
+    else {
+        return Err("complete adapter result evidence is not an object".to_owned());
+    };
+    let string = |name: &str| -> Result<&str, String> {
+        match evidence.get(name) {
+            Some(lane_run::json::Value::Str(value)) if !value.is_empty() => Ok(value),
+            _ => Err(format!("complete adapter result evidence.{name} is missing")),
+        }
+    };
+    if string("envelope_spec")? != "2ocpu/12GiB" {
+        return Err("complete adapter result does not carry the 2 OCPU/12 GiB envelope".to_owned());
+    }
+    if string("topology")? != config.topology {
+        return Err(
+            "complete adapter result topology does not match the requested family".to_owned()
+        );
+    }
+    if string("cgroup")? == "unknown" || string("io")? == "unknown" {
+        return Err("complete adapter result is missing cgroup or I/O evidence".to_owned());
+    }
+    for name in ["cpu", "rss"] {
+        if !matches!(evidence.get(name), Some(lane_run::json::Value::Obj(_))) {
+            return Err(format!("complete adapter result evidence.{name} is missing"));
+        }
+    }
+    if string("runtime_digest")? != config.runtime_digest {
+        return Err("complete adapter runtime digest does not match the admitted immutable digest"
+            .to_owned());
+    }
+    if string("comparator_digest")? != config.comparator_digest {
+        return Err(
+            "complete adapter comparator digest does not match the admitted immutable digest"
+                .to_owned(),
+        );
+    }
+    Ok(())
 }
 
 fn has_source_identity(value: &lane_run::json::Value, source: &str) -> bool {
@@ -843,8 +1071,11 @@ fn failure_document(config: &ServedRunnerConfig, reason: &str) -> String {
     let _ = writeln!(text, "  \"samples\": [],");
     let _ = writeln!(
         text,
-        "  \"limits\": [{}]",
-        json_string(&format!("source identity: {}", config.source_identity))
+        "  \"limits\": [{}, {}, {}, {}]",
+        json_string(&format!("source identity: {}", config.source_identity)),
+        json_string(&format!("topology family: {}", config.topology)),
+        json_string(&format!("runtime digest: {}", config.runtime_digest)),
+        json_string(&format!("comparator digest: {}", config.comparator_digest))
     );
     let _ = writeln!(text, "}}");
     text
@@ -872,6 +1103,17 @@ fn validate_text(name: &str, value: &str) -> Result<(), String> {
 
 fn required_string(name: &str) -> Result<String, String> {
     optional_env(name).ok_or_else(|| format!("{name} is required"))
+}
+
+fn required_digest(name: &str) -> Result<String, String> {
+    let digest = required_string(name)?;
+    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("{name} must be an immutable 64-hex digest"));
+    }
+    if digest.eq_ignore_ascii_case("unassigned") {
+        return Err(format!("{name} cannot be unassigned"));
+    }
+    Ok(digest)
 }
 
 fn required_path(name: &str) -> Result<PathBuf, String> {
@@ -963,6 +1205,9 @@ mod tests {
             source_identity: QUALIFICATION_SOURCE_IDENTITY.to_owned(),
             transport_identity: QUALIFICATION_TRANSPORT_IDENTITY.to_owned(),
             openssl_executable: PathBuf::from("openssl"),
+            topology: "single-node".to_owned(),
+            runtime_digest: "a".repeat(64),
+            comparator_digest: "b".repeat(64),
         }
     }
 
@@ -1000,7 +1245,10 @@ mod tests {
         )
         .expect("probe script");
         fs::set_permissions(&probe, fs::Permissions::from_mode(0o755)).expect("probe executable");
-        let output = envelope_command(&probe).output().expect("probe under the envelope");
+        let output = envelope_command(&probe)
+            .expect("a cgroup-capable test host is required")
+            .output()
+            .expect("probe under the envelope");
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut spec = "";
         let mut memory = "";
@@ -1016,16 +1264,12 @@ mod tests {
                 nproc = value;
             }
         }
-        if spec.is_empty() {
-            // Unfenced host: the only honest behavior is no spec stamp.
-            return;
-        }
-        assert_eq!(spec, "8cpu/8G", "the stamp must name the envelope");
-        assert_eq!(nproc, "8", "the CPU pin must shrink the visible width");
+        assert_eq!(spec, "2ocpu/12GiB", "the stamp must name the envelope");
+        assert_eq!(nproc, "2", "the CPU pin must shrink the visible width");
         let ceiling = memory.parse::<u64>().unwrap_or(u64::MAX);
         assert_eq!(
             ceiling,
-            8 * 1024 * 1024 * 1024,
+            12 * 1024 * 1024 * 1024,
             "the memory ceiling must be enforced (reported {memory})"
         );
     }
@@ -1037,6 +1281,18 @@ mod tests {
         let error = config.validate().expect_err("go run cannot be reaped safely");
         assert!(error.contains("prebuilt Go adapter executable"));
         assert!(error.contains("go run"));
+    }
+
+    #[test]
+    fn runner_rejects_unassigned_or_wrong_digest_values() {
+        let mut digest_config = config(Workload::DocumentRead);
+        digest_config.runtime_digest = "unassigned".to_owned();
+        let error = digest_config.validate().expect_err("runtime identity must be immutable");
+        assert!(error.contains("runtime digest"));
+        let mut topology_config = config(Workload::DocumentRead);
+        topology_config.topology = "rf3".to_owned();
+        let error = topology_config.validate().expect_err("topology family is closed");
+        assert!(error.contains("single-node or rf2"));
     }
 
     #[test]
@@ -1077,13 +1333,25 @@ mod tests {
                 config.lane.samples
             ],
         };
-        lane_run::render_facts_json(
+        let rendered = lane_run::render_facts_json(
             &side,
             1,
             "test-kernel",
             1,
             &[format!("source identity: {}", config.source_identity)],
-        )
+        );
+        let evidence = ResourceEvidence {
+            cgroup: "/test.scope".to_owned(),
+            cpu_max: "200000 100000".to_owned(),
+            cpu_stat: "usage_usec 1".to_owned(),
+            cpuset: "0-1".to_owned(),
+            memory_max: "12884901888".to_owned(),
+            memory_peak: "1".to_owned(),
+            rss_kib: "1 kB".to_owned(),
+            io_stat: "8:0 rbytes=1".to_owned(),
+        };
+        let prefix = rendered.trim_end().strip_suffix('}').expect("object");
+        format!("{prefix},\"evidence\":{} }}\n", evidence.json(config))
     }
 
     fn temporary_result(config: &ServedRunnerConfig, text: &str) -> PathBuf {
