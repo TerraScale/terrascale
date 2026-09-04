@@ -748,6 +748,32 @@ fn query_input_normalizes_typed_and_sql_text_through_one_compile_seam() {
 }
 
 #[test]
+fn sql_projection_keeps_durable_source_identity_when_id_is_not_selected() {
+    let (dir, engine) = open_engine("sql-source-identity");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![object_document("durable-doc", "users", &[("age", DocumentValue::Integer(42))])],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let plan = engine
+        .queries()
+        .compile(QueryInput::sql(
+            SqlQueryText::try_new("SELECT age AS years FROM users WHERE age = 42")
+                .expect("valid SQL"),
+        ))
+        .expect("SQL compiles");
+    let result = engine.queries().execute(&plan, &snapshot).expect("SQL executes");
+    assert_eq!(result.rows().len(), 1);
+    assert_eq!(result.rows()[0].document().id().as_str(), "durable-doc");
+    assert_eq!(result.rows()[0].projected(), &[("years".into(), DocumentValue::Integer(42))]);
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn query_input_rejects_unsupported_or_generic_query_text() {
     let (dir, engine) = open_engine("reject-text");
     let store = engine.queries();

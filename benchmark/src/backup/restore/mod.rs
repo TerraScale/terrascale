@@ -111,6 +111,7 @@ use crate::backup::{
 };
 use crate::encryption::ArtifactCipher;
 use crate::engine::{Engine, EngineConfig};
+use crate::regions::RegionCode;
 use crate::storage::{
     CommitIntent, CommitResult, SqliteStorage, StagedWrite, StoragePort, write_set_digest,
 };
@@ -118,7 +119,6 @@ use crate::types::{
     CollectionName, Document, DocumentId, ExpectedVersion, LocalDurability, OperationId,
     StorageSequence, TenantId,
 };
-use crate::regions::RegionCode;
 
 /// The reserved family collection, mirrored from the family contract (the
 /// canonical constant stays private to the family state module; the query

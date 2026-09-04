@@ -85,8 +85,6 @@ mod lane_run;
 mod optimizer;
 mod record;
 mod reference;
-mod served_boundary;
-mod served_runner;
 mod vocabulary;
 
 /// Runs one served-boundary benchmark selected by the benchmark CLI.
@@ -96,22 +94,9 @@ mod vocabulary;
 /// to remain a separate executable.
 #[doc(hidden)]
 pub fn run_served_boundary_cli(workload: &str) -> Result<std::path::PathBuf, String> {
-    let workload = match workload {
-        "read" => lane::Workload::DocumentRead,
-        "write" => lane::Workload::DocumentWrite,
-        "query" => lane::Workload::IndexedQuery,
-        "mixed" => lane::Workload::Mixed,
-        other => return Err(format!("unknown served benchmark workload {other:?}")),
-    };
-    let config = served_boundary::ServedBoundaryConfig::from_env(workload)?;
-    let result = served_boundary::run_served_boundary(&config).map_err(|error| {
-        if let Some(path) = error.retained_path() {
-            format!("{} (retained {})", error.reason(), path.display())
-        } else {
-            error.reason().to_owned()
-        }
-    })?;
-    Ok(result.output_path)
+    Err(format!(
+        "served benchmark workload {workload:?} was retired with the obsolete Go gateway; use a direct public-boundary family adapter"
+    ))
 }
 
 #[cfg(test)]

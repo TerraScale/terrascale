@@ -142,9 +142,7 @@ impl PlacementLock {
     ///
     /// Returns [`BackupError::PlacementMismatch`] for an empty set or a
     /// Region that is not in the active production catalog.
-    pub fn explicit(
-        regions: impl IntoIterator<Item = RegionCode>,
-    ) -> Result<Self, BackupError> {
+    pub fn explicit(regions: impl IntoIterator<Item = RegionCode>) -> Result<Self, BackupError> {
         let regions: std::collections::BTreeSet<_> = regions.into_iter().collect();
         if regions.is_empty()
             || regions.iter().any(|region| !RegionCatalog::production().is_registered(region))

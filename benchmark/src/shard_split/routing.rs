@@ -150,25 +150,26 @@ impl RouteTable {
         if target == source {
             return Err(RouteError::TargetExists);
         }
+        // A crash after the route transaction commits but before the worker
+        // records its response is a normal retry.  Recognise the exact
+        // already-installed pair as success; a target with any other bounds
+        // remains a conflict and fails closed below.
+        if let Some(existing_target) = self.routes.iter().find(|route| route.shard_id == target) {
+            let source_route = self.routes.iter().find(|route| route.shard_id == source);
+            let target_matches = existing_target.upper() == Some(upper.as_slice());
+            let source_matches =
+                source_route.is_some_and(|route| route.lower() == Some(upper.as_slice()));
+            if target_matches && source_matches {
+                return Ok(());
+            }
+            return Err(RouteError::TargetExists);
+        }
         let index = self
             .routes
             .iter()
             .position(|route| route.shard_id == source && route.contains(&upper))
             .ok_or(RouteError::SourceMissing)?;
         let old = self.routes[index].clone();
-        // A crash after the route transaction commits but before the worker
-        // records its response is a normal retry.  Recognise the exact
-        // already-installed pair as success; a target with any other bounds
-        // remains a conflict and fails closed below.
-        if let Some(existing_target) = self.routes.iter().find(|route| route.shard_id == target) {
-            let expected_target = ShardRoute::new(target, old.lower.clone(), Some(upper.clone()))?;
-            let expected_source = ShardRoute::new(source, Some(upper.clone()), old.upper.clone())?;
-            let source_matches = self.routes.iter().any(|route| *route == expected_source);
-            if *existing_target == expected_target && source_matches {
-                return Ok(());
-            }
-            return Err(RouteError::TargetExists);
-        }
         let target_route = ShardRoute::new(target, old.lower.clone(), Some(upper.clone()))?;
         let source_route = ShardRoute::new(source, Some(upper), old.upper.clone())?;
         // Build first, then swap the vector, so readers see either complete

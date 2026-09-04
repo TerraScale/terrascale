@@ -8,8 +8,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{AttributeValue, AuthorizationError, PrincipalClaims, MAX_ACCESS_RULE_BYTES,
-    MAX_ACCESS_RULE_NODES};
+use super::{
+    AttributeValue, AuthorizationError, MAX_ACCESS_RULE_BYTES, MAX_ACCESS_RULE_NODES,
+    PrincipalClaims,
+};
 
 const MAX_TOKENS: usize = MAX_ACCESS_RULE_NODES * 2;
 
@@ -166,7 +168,9 @@ impl Expr {
             }
             Self::Not(value) => !value.evaluate(row, claims, budget),
             Self::Compare(left, op, right) => {
-                let (Some(left), Some(right)) = (left.resolve(row, claims), right.resolve(row, claims)) else {
+                let (Some(left), Some(right)) =
+                    (left.resolve(row, claims), right.resolve(row, claims))
+                else {
                     return false;
                 };
                 compare(left, right, *op)
@@ -237,17 +241,50 @@ fn lex(input: &str) -> Result<Vec<Token>, AuthorizationError> {
         }
         let byte = bytes[offset];
         let token = match byte {
-            b'(' => { offset += 1; Token::Left }
-            b')' => { offset += 1; Token::Right }
-            b'!' if bytes.get(offset + 1) == Some(&b'=') => { offset += 2; Token::Ne }
-            b'!' => { offset += 1; Token::Not }
-            b'=' if bytes.get(offset + 1) == Some(&b'=') => { offset += 2; Token::Eq }
-            b'<' if bytes.get(offset + 1) == Some(&b'=') => { offset += 2; Token::Le }
-            b'>' if bytes.get(offset + 1) == Some(&b'=') => { offset += 2; Token::Ge }
-            b'<' => { offset += 1; Token::Lt }
-            b'>' => { offset += 1; Token::Gt }
-            b'&' if bytes.get(offset + 1) == Some(&b'&') => { offset += 2; Token::And }
-            b'|' if bytes.get(offset + 1) == Some(&b'|') => { offset += 2; Token::Or }
+            b'(' => {
+                offset += 1;
+                Token::Left
+            }
+            b')' => {
+                offset += 1;
+                Token::Right
+            }
+            b'!' if bytes.get(offset + 1) == Some(&b'=') => {
+                offset += 2;
+                Token::Ne
+            }
+            b'!' => {
+                offset += 1;
+                Token::Not
+            }
+            b'=' if bytes.get(offset + 1) == Some(&b'=') => {
+                offset += 2;
+                Token::Eq
+            }
+            b'<' if bytes.get(offset + 1) == Some(&b'=') => {
+                offset += 2;
+                Token::Le
+            }
+            b'>' if bytes.get(offset + 1) == Some(&b'=') => {
+                offset += 2;
+                Token::Ge
+            }
+            b'<' => {
+                offset += 1;
+                Token::Lt
+            }
+            b'>' => {
+                offset += 1;
+                Token::Gt
+            }
+            b'&' if bytes.get(offset + 1) == Some(&b'&') => {
+                offset += 2;
+                Token::And
+            }
+            b'|' if bytes.get(offset + 1) == Some(&b'|') => {
+                offset += 2;
+                Token::Or
+            }
             b'"' | b'\'' => {
                 let quote = byte;
                 offset += 1;
@@ -256,36 +293,67 @@ fn lex(input: &str) -> Result<Vec<Token>, AuthorizationError> {
                 while offset < bytes.len() {
                     let current = bytes[offset];
                     offset += 1;
-                    if current == quote { closed = true; break; }
+                    if current == quote {
+                        closed = true;
+                        break;
+                    }
                     if current == b'\\' {
-                        let escaped = *bytes.get(offset).ok_or(AuthorizationError::InvalidAccessRule)?;
+                        let escaped =
+                            *bytes.get(offset).ok_or(AuthorizationError::InvalidAccessRule)?;
                         offset += 1;
-                        value.push(match escaped { b'\\' => '\\', b'"' => '"', b'\'' => '\'', b'n' => '\n', b'r' => '\r', b't' => '\t', _ => return Err(AuthorizationError::InvalidAccessRule) });
+                        value.push(match escaped {
+                            b'\\' => '\\',
+                            b'"' => '"',
+                            b'\'' => '\'',
+                            b'n' => '\n',
+                            b'r' => '\r',
+                            b't' => '\t',
+                            _ => return Err(AuthorizationError::InvalidAccessRule),
+                        });
                     } else {
                         value.push(char::from(current));
                     }
                 }
-                if !closed || value.is_empty() { return Err(AuthorizationError::InvalidAccessRule); }
+                if !closed || value.is_empty() {
+                    return Err(AuthorizationError::InvalidAccessRule);
+                }
                 Token::String(value)
             }
             b'-' | b'0'..=b'9' => {
                 let start = offset;
                 offset += usize::from(byte == b'-');
-                while bytes.get(offset).is_some_and(u8::is_ascii_digit) { offset += 1; }
-                let value = input.get(start..offset).ok_or(AuthorizationError::InvalidAccessRule)?.parse().map_err(|_| AuthorizationError::InvalidAccessRule)?;
+                while bytes.get(offset).is_some_and(u8::is_ascii_digit) {
+                    offset += 1;
+                }
+                let value = input
+                    .get(start..offset)
+                    .ok_or(AuthorizationError::InvalidAccessRule)?
+                    .parse()
+                    .map_err(|_| AuthorizationError::InvalidAccessRule)?;
                 Token::Integer(value)
             }
             _ if byte.is_ascii_alphabetic() || byte == b'_' => {
                 let start = offset;
                 offset += 1;
-                while bytes.get(offset).is_some_and(|value| value.is_ascii_alphanumeric() || *value == b'_' || *value == b'.') { offset += 1; }
-                let value = input.get(start..offset).ok_or(AuthorizationError::InvalidAccessRule)?;
-                match value { "true" => Token::Bool(true), "false" => Token::Bool(false), _ => Token::Ident(value.to_owned()) }
+                while bytes.get(offset).is_some_and(|value| {
+                    value.is_ascii_alphanumeric() || *value == b'_' || *value == b'.'
+                }) {
+                    offset += 1;
+                }
+                let value =
+                    input.get(start..offset).ok_or(AuthorizationError::InvalidAccessRule)?;
+                match value {
+                    "true" => Token::Bool(true),
+                    "false" => Token::Bool(false),
+                    _ => Token::Ident(value.to_owned()),
+                }
             }
             _ => return Err(AuthorizationError::InvalidAccessRule),
         };
         tokens.push(token);
-        if tokens.len() > MAX_TOKENS { return Err(AuthorizationError::AccessRuleTooLarge); }
+        if tokens.len() > MAX_TOKENS {
+            return Err(AuthorizationError::AccessRuleTooLarge);
+        }
     }
     tokens.push(Token::End);
     Ok(tokens)
@@ -299,28 +367,71 @@ struct Parser<'a> {
 }
 
 impl Parser<'_> {
-    fn peek(&self) -> &Token { &self.tokens[self.position] }
-    fn take(&mut self) -> Token { let token = self.tokens[self.position].clone(); self.position += 1; token }
-    fn node(&mut self) -> Result<(), AuthorizationError> { self.nodes += 1; if self.nodes > MAX_ACCESS_RULE_NODES { Err(AuthorizationError::AccessRuleTooLarge) } else { Ok(()) } }
-    fn parse_expression(&mut self) -> Result<Expr, AuthorizationError> { self.parse_or() }
+    fn peek(&self) -> &Token {
+        &self.tokens[self.position]
+    }
+    fn take(&mut self) -> Token {
+        let token = self.tokens[self.position].clone();
+        self.position += 1;
+        token
+    }
+    fn node(&mut self) -> Result<(), AuthorizationError> {
+        self.nodes += 1;
+        if self.nodes > MAX_ACCESS_RULE_NODES {
+            Err(AuthorizationError::AccessRuleTooLarge)
+        } else {
+            Ok(())
+        }
+    }
+    fn parse_expression(&mut self) -> Result<Expr, AuthorizationError> {
+        self.parse_or()
+    }
     fn parse_or(&mut self) -> Result<Expr, AuthorizationError> {
         let mut value = self.parse_and()?;
-        while matches!(self.peek(), Token::Or) { self.take(); value = Expr::Or(Box::new(value), Box::new(self.parse_and()?)); self.node()?; }
+        while matches!(self.peek(), Token::Or) {
+            self.take();
+            value = Expr::Or(Box::new(value), Box::new(self.parse_and()?));
+            self.node()?;
+        }
         Ok(value)
     }
     fn parse_and(&mut self) -> Result<Expr, AuthorizationError> {
         let mut value = self.parse_unary()?;
-        while matches!(self.peek(), Token::And) { self.take(); value = Expr::And(Box::new(value), Box::new(self.parse_unary()?)); self.node()?; }
+        while matches!(self.peek(), Token::And) {
+            self.take();
+            value = Expr::And(Box::new(value), Box::new(self.parse_unary()?));
+            self.node()?;
+        }
         Ok(value)
     }
     fn parse_unary(&mut self) -> Result<Expr, AuthorizationError> {
-        if matches!(self.peek(), Token::Not) { self.take(); let value = Expr::Not(Box::new(self.parse_unary()?)); self.node()?; return Ok(value); }
-        if matches!(self.peek(), Token::Left) { self.take(); let value = self.parse_expression()?; if !matches!(self.take(), Token::Right) { return Err(AuthorizationError::InvalidAccessRule); } return Ok(value); }
+        if matches!(self.peek(), Token::Not) {
+            self.take();
+            let value = Expr::Not(Box::new(self.parse_unary()?));
+            self.node()?;
+            return Ok(value);
+        }
+        if matches!(self.peek(), Token::Left) {
+            self.take();
+            let value = self.parse_expression()?;
+            if !matches!(self.take(), Token::Right) {
+                return Err(AuthorizationError::InvalidAccessRule);
+            }
+            return Ok(value);
+        }
         self.parse_comparison()
     }
     fn parse_comparison(&mut self) -> Result<Expr, AuthorizationError> {
         let left = self.parse_operand()?;
-        let op = match self.take() { Token::Eq => Compare::Eq, Token::Ne => Compare::Ne, Token::Lt => Compare::Lt, Token::Le => Compare::Le, Token::Gt => Compare::Gt, Token::Ge => Compare::Ge, _ => return Err(AuthorizationError::InvalidAccessRule) };
+        let op = match self.take() {
+            Token::Eq => Compare::Eq,
+            Token::Ne => Compare::Ne,
+            Token::Lt => Compare::Lt,
+            Token::Le => Compare::Le,
+            Token::Gt => Compare::Gt,
+            Token::Ge => Compare::Ge,
+            _ => return Err(AuthorizationError::InvalidAccessRule),
+        };
         let right = self.parse_operand()?;
         self.node()?;
         Ok(Expr::Compare(Box::new(left), op, Box::new(right)))
@@ -333,12 +444,25 @@ impl Parser<'_> {
             Token::String(value) => Ok(Expr::Literal(AttributeValue::String(value))),
             Token::Bool(value) => Ok(Expr::Literal(AttributeValue::Boolean(value))),
             Token::Ident(value) => {
-                let Some(field) = value.strip_prefix("resource.data.").or_else(|| value.strip_prefix("resource.")).or_else(|| value.strip_prefix("doc.")) else {
-                    let claim = value.strip_prefix("request.auth.claims.").or_else(|| value.strip_prefix("request.auth.token.")).or_else(|| value.strip_prefix("claims.")).or_else(|| value.strip_prefix("auth.")).ok_or(AuthorizationError::InvalidAccessRule)?;
-                    if !valid_name(claim) { return Err(AuthorizationError::InvalidAccessRule); }
+                let Some(field) = value
+                    .strip_prefix("resource.data.")
+                    .or_else(|| value.strip_prefix("resource."))
+                    .or_else(|| value.strip_prefix("doc."))
+                else {
+                    let claim = value
+                        .strip_prefix("request.auth.claims.")
+                        .or_else(|| value.strip_prefix("request.auth.token."))
+                        .or_else(|| value.strip_prefix("claims."))
+                        .or_else(|| value.strip_prefix("auth."))
+                        .ok_or(AuthorizationError::InvalidAccessRule)?;
+                    if !valid_name(claim) {
+                        return Err(AuthorizationError::InvalidAccessRule);
+                    }
                     return Ok(Expr::Claim(claim.to_owned()));
                 };
-                if !valid_name(field) { return Err(AuthorizationError::InvalidAccessRule); }
+                if !valid_name(field) {
+                    return Err(AuthorizationError::InvalidAccessRule);
+                }
                 self.fields.insert(field.to_owned());
                 Ok(Expr::Row(field.to_owned()))
             }
@@ -352,13 +476,21 @@ fn valid_name(value: &str) -> bool {
         && value.len() <= 255
         && value.split('.').all(|part| {
             !part.is_empty()
-                && !matches!(part, "matches" | "startsWith" | "endsWith" | "contains" | "size" | "exists")
+                && !matches!(
+                    part,
+                    "matches" | "startsWith" | "endsWith" | "contains" | "size" | "exists"
+                )
                 && part.chars().all(|char| char.is_ascii_alphanumeric() || char == '_')
         })
 }
 
 fn escape(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t")
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
 }
 
 #[cfg(test)]
@@ -379,7 +511,10 @@ mod tests {
         )
         .expect("rule");
         assert_eq!(rule.fields(), &BTreeSet::from(["owner".to_owned(), "active".to_owned()]));
-        assert_eq!(rule.expression(), "((resource.owner==request.auth.claims.tenant)&&(resource.active==true))");
+        assert_eq!(
+            rule.expression(),
+            "((resource.owner==request.auth.claims.tenant)&&(resource.active==true))"
+        );
         let row = BTreeMap::from([
             ("owner".to_owned(), AttributeValue::String("acme".to_owned())),
             ("active".to_owned(), AttributeValue::Boolean(true)),
@@ -394,10 +529,8 @@ mod tests {
             &BTreeSet::from(["owner".to_owned()]),
         )
         .expect("rule");
-        let row = BTreeMap::from([(
-            "owner".to_owned(),
-            AttributeValue::String("other".to_owned()),
-        )]);
+        let row =
+            BTreeMap::from([("owner".to_owned(), AttributeValue::String("other".to_owned()))]);
         assert!(!rule.evaluate(&row, &claims()));
         assert!(!rule.evaluate(&BTreeMap::new(), &claims()));
     }
@@ -409,7 +542,10 @@ mod tests {
             Err(AuthorizationError::UnindexedAccessRuleField("owner".to_owned()))
         );
         assert_eq!(
-            AccessRule::try_compile("resource.owner.matches('.*')", &BTreeSet::from(["owner".to_owned()])),
+            AccessRule::try_compile(
+                "resource.owner.matches('.*')",
+                &BTreeSet::from(["owner".to_owned()])
+            ),
             Err(AuthorizationError::InvalidAccessRule)
         );
         assert_eq!(

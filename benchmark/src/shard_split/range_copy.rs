@@ -35,6 +35,50 @@ pub struct CopyBatch {
     done: bool,
 }
 
+/// Durable cursor for restarting a range copy without rescanning applied
+/// rows. The target apply operation remains idempotent if a crash happens
+/// between its commit and persistence of this cursor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CopyCheckpoint {
+    upper: Vec<u8>,
+    after_key: Option<Vec<u8>>,
+    through: u64,
+    copied: u64,
+    done: bool,
+}
+
+impl CopyCheckpoint {
+    /// Returns the upper-exclusive bound.
+    #[must_use]
+    pub fn upper(&self) -> &[u8] {
+        &self.upper
+    }
+
+    /// Returns the last copied key, if any.
+    #[must_use]
+    pub fn after_key(&self) -> Option<&[u8]> {
+        self.after_key.as_deref()
+    }
+
+    /// Returns the source sequence represented by the copy.
+    #[must_use]
+    pub const fn through(&self) -> u64 {
+        self.through
+    }
+
+    /// Returns the number of entries applied.
+    #[must_use]
+    pub const fn copied(&self) -> u64 {
+        self.copied
+    }
+
+    /// Returns whether the source declared the range complete.
+    #[must_use]
+    pub const fn done(&self) -> bool {
+        self.done
+    }
+}
+
 impl CopyBatch {
     /// Creates a response for a range-copy page.
     #[must_use]
@@ -137,6 +181,25 @@ impl RangeCopier {
         Ok(Self { upper, after_key: None, through: 0, copied: 0, done: false })
     }
 
+    /// Resumes from a previously durable cursor.
+    pub fn resume(checkpoint: CopyCheckpoint) -> Result<Self, CopyError> {
+        if checkpoint.upper.is_empty()
+            || checkpoint
+                .after_key
+                .as_deref()
+                .is_some_and(|key| key.is_empty() || key >= checkpoint.upper.as_slice())
+        {
+            return Err(CopyError::EmptyKey);
+        }
+        Ok(Self {
+            upper: checkpoint.upper,
+            after_key: checkpoint.after_key,
+            through: checkpoint.through,
+            copied: checkpoint.copied,
+            done: checkpoint.done,
+        })
+    }
+
     /// Returns the upper-exclusive range bound.
     #[must_use]
     pub fn upper(&self) -> &[u8] {
@@ -159,6 +222,18 @@ impl RangeCopier {
     #[must_use]
     pub const fn is_done(&self) -> bool {
         self.done
+    }
+
+    /// Returns the cursor that should be persisted after a successful step.
+    #[must_use]
+    pub fn checkpoint(&self) -> CopyCheckpoint {
+        CopyCheckpoint {
+            upper: self.upper.clone(),
+            after_key: self.after_key.clone(),
+            through: self.through,
+            copied: self.copied,
+            done: self.done,
+        }
     }
 
     /// Copies and applies one bounded page, preserving its checkpoint.

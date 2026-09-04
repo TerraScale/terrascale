@@ -450,9 +450,9 @@ impl DatabaseKeyHierarchy {
     ) -> Result<Self, EncryptionError> {
         let regions: std::collections::BTreeSet<_> = selected_regions.into_iter().collect();
         if regions.is_empty()
-            || regions.iter().any(|region| {
-                !crate::regions::RegionCatalog::production().is_registered(region)
-            })
+            || regions
+                .iter()
+                .any(|region| !crate::regions::RegionCatalog::production().is_registered(region))
         {
             return Err(EncryptionError::InvalidWrappedKey);
         }
@@ -486,9 +486,9 @@ impl DatabaseKeyHierarchy {
     ) -> Result<Self, EncryptionError> {
         let regions: Vec<_> = selected_regions.into_iter().collect();
         if regions.is_empty()
-            || regions.iter().any(|region| {
-                !crate::regions::RegionCatalog::production().is_registered(region)
-            })
+            || regions
+                .iter()
+                .any(|region| !crate::regions::RegionCatalog::production().is_registered(region))
         {
             return Err(EncryptionError::InvalidWrappedKey);
         }

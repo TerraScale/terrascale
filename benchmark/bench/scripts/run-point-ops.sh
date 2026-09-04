@@ -38,7 +38,8 @@ for arg in "$@"; do
   esac
 done
 
-# The fixed 8vCPU/8GiB ceiling every measured subject runs under.
+# The fixed 2 OCPU / 12 GiB launch-member envelope every measured subject
+# runs under. The live path refuses to proceed when cgroup tooling is absent.
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/resource-envelope.sh"
 
@@ -65,8 +66,8 @@ mkdir -p "$RESULTS_DIR"
   echo "  \"family\": \"point-ops\","
   echo "  \"workloads\": [\"read\", \"write\"],"
   echo "  \"envelope_spec\": \"$TERRABASE_BENCH_ENVELOPE_SPEC\","
-  echo "  \"envelope_cpus\": \"${TERRABASE_BENCH_ENVELOPE_CPUS:-8}\","
-  echo "  \"envelope_memory\": \"${TERRABASE_BENCH_ENVELOPE_MEMORY:-8G}\","
+  echo '  "envelope_cpus": "'"${TERRABASE_BENCH_ENVELOPE_CPUS:-2}"'",'
+  echo '  "envelope_memory": "'"${TERRABASE_BENCH_ENVELOPE_MEMORY:-12G}"'",'
   echo "  \"kernel\": \"$(uname -sr)\","
   echo "  \"loadavg\": \"$(cat /proc/loadavg 2>/dev/null || echo unknown)\","
   echo "  \"live\": $LIVE"

@@ -1071,7 +1071,13 @@ fn validate_offset_value(
     parameters: &SqlParameters,
 ) -> Result<(), SqlError> {
     let Some(expression) = expression else { return Ok(()) };
-    parse_u64(&bound_literal(expression, parameters)?)?;
+    let offset = parse_u64(&bound_literal(expression, parameters)?)?;
+    // Every SQL response is either a bounded typed page or an execute-only
+    // stream consumed through the same retained-window contract.  Refuse a
+    // cursor that cannot fit that window before SQLite starts scanning.
+    if offset > super::execute::MAX_RETAINED_CANDIDATES as u64 {
+        return Err(SqlError::plain(SqlErrorClass::InvalidBound));
+    }
     Ok(())
 }
 
@@ -1272,6 +1278,32 @@ fn lower_condition(
             lower_condition(left, parameters, used, out)?;
             return lower_condition(right, parameters, used, out);
         }
+        // `sqlparser`'s SQLite precedence currently places `->`/`->>` below
+        // comparisons, so `body ->> '$.status' = :status` arrives as
+        // `body ->> ('$.status' = :status)`.  Recover the SQLite meaning here,
+        // while still requiring the path and RHS to be closed scalar forms.
+        Expr::BinaryOp { left, op: BinaryOperator::Arrow | BinaryOperator::LongArrow, right }
+            if let Expr::BinaryOp { left: path, op, right: value } = right.as_ref() =>
+        {
+            let field = json_field_name(left, path)?;
+            let value = literal(value, parameters, used)?;
+            let condition = match op {
+                BinaryOperator::Eq => crate::query::QueryCondition::Equals { field, value },
+                BinaryOperator::NotEq => {
+                    out.push(crate::query::QueryCondition::Exists { field: field.clone() });
+                    crate::query::QueryCondition::NotEquals { field, value }
+                }
+                BinaryOperator::Gt => crate::query::QueryCondition::GreaterThan { field, value },
+                BinaryOperator::GtEq => {
+                    crate::query::QueryCondition::GreaterOrEqual { field, value }
+                }
+                BinaryOperator::Lt => crate::query::QueryCondition::LessThan { field, value },
+                BinaryOperator::LtEq => crate::query::QueryCondition::LessOrEqual { field, value },
+                _ => return Err(unsupported("predicate operator")),
+            };
+            out.push(condition);
+            return Ok(());
+        }
         Expr::BinaryOp { left, op, right } => {
             let field = field_name(left)?;
             let value = literal(right, parameters, used)?;
@@ -1354,21 +1386,7 @@ fn field_name(expression: &Expr) -> Result<String, SqlError> {
     let field = match expression {
         Expr::Identifier(identifier) => identifier.value.clone(),
         Expr::BinaryOp { left, op: BinaryOperator::Arrow | BinaryOperator::LongArrow, right } => {
-            let root = field_name(left)?;
-            let Expr::Value(value) = right.as_ref() else {
-                return Err(unsupported("JSON path"));
-            };
-            let Value::SingleQuotedString(path) = &value.value else {
-                return Err(unsupported("JSON path"));
-            };
-            let path = path
-                .strip_prefix('$')
-                .and_then(|path| path.strip_prefix('.'))
-                .ok_or_else(|| unsupported("JSON path"))?;
-            if path.is_empty() || path.split('.').any(|part| !valid_identifier(part)) {
-                return Err(SqlError::binding(SqlErrorClass::InvalidIdentifier, path));
-            }
-            format!("{root}.{path}")
+            json_field_name(left, right)?
         }
         _ => return Err(unsupported("field expression")),
     };
@@ -1376,6 +1394,27 @@ fn field_name(expression: &Expr) -> Result<String, SqlError> {
         return Err(SqlError::binding(SqlErrorClass::InvalidIdentifier, &field));
     }
     Ok(field)
+}
+
+/// Lowers a SQLite JSON arrow's scalar path to the dotted field identity used
+/// by the typed planner.  Paths are intentionally restricted to identifiers;
+/// array subscripts and wildcard paths remain execute-only.
+fn json_field_name(root: &Expr, path_expression: &Expr) -> Result<String, SqlError> {
+    let root = field_name(root)?;
+    let Expr::Value(value) = path_expression else {
+        return Err(unsupported("JSON path"));
+    };
+    let Value::SingleQuotedString(path) = &value.value else {
+        return Err(unsupported("JSON path"));
+    };
+    let path = path
+        .strip_prefix('$')
+        .and_then(|path| path.strip_prefix('.'))
+        .ok_or_else(|| unsupported("JSON path"))?;
+    if path.is_empty() || path.split('.').any(|part| !valid_identifier(part)) {
+        return Err(SqlError::binding(SqlErrorClass::InvalidIdentifier, path));
+    }
+    Ok(format!("{root}.{path}"))
 }
 
 fn literal(

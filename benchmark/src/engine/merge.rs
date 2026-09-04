@@ -103,6 +103,73 @@ impl DocumentContext {
     pub(crate) fn frontier(&self) -> &BTreeMap<String, u64> {
         &self.0
     }
+
+    /// Decodes the storage seam's versioned frontier bytes. Empty bytes are
+    /// the pre-context legacy form and represent an empty frontier.
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.is_empty() {
+            return Some(Self::empty());
+        }
+        if bytes.len() < 5 || bytes[0] != 1 {
+            return None;
+        }
+        if bytes.len() > (1 << 20) {
+            return None;
+        }
+        let count = usize::try_from(u32::from_le_bytes(bytes[1..5].try_into().ok()?)).ok()?;
+        if count > 65_536 || count.saturating_mul(13) > bytes.len().saturating_sub(5) {
+            return None;
+        }
+        let mut position: usize = 5;
+        let mut entries = Vec::with_capacity(count);
+        for _ in 0..count {
+            let end = position.checked_add(4)?;
+            let length =
+                usize::try_from(u32::from_le_bytes(bytes.get(position..end)?.try_into().ok()?))
+                    .ok()?;
+            position = end;
+            let end = position.checked_add(length)?;
+            let origin = String::from_utf8(bytes.get(position..end)?.to_vec()).ok()?;
+            position = end;
+            let end = position.checked_add(8)?;
+            let sequence = u64::from_le_bytes(bytes.get(position..end)?.try_into().ok()?);
+            position = end;
+            if origin.is_empty() || sequence == 0 {
+                return None;
+            }
+            entries.push((origin, sequence));
+        }
+        if position != bytes.len() {
+            return None;
+        }
+        // Context bytes are part of the journal's canonical identity. Do not
+        // silently normalize a valid-but-different ordering or duplicate
+        // origin: that would make two wire rows carry different digests for
+        // the same logical frontier.
+        let context = Self::from_frontier(entries);
+        (context.to_bytes() == bytes).then_some(context)
+    }
+
+    /// Encodes a frontier in the storage seam's stable versioned format.
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(5 + self.0.len() * 20);
+        bytes.push(1);
+        bytes.extend_from_slice(&(self.0.len() as u32).to_le_bytes());
+        for (origin, sequence) in &self.0 {
+            bytes.extend_from_slice(&(origin.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(origin.as_bytes());
+            bytes.extend_from_slice(&sequence.to_le_bytes());
+        }
+        bytes
+    }
+}
+
+pub(crate) fn decode_context(bytes: &[u8]) -> Option<DocumentContext> {
+    DocumentContext::from_bytes(bytes)
+}
+
+pub(crate) fn encode_context(context: &DocumentContext) -> Vec<u8> {
+    context.to_bytes()
 }
 
 /// The causal metadata attached to one document mutation.
@@ -662,11 +729,20 @@ pub(crate) fn merge_object_fields(
 
 #[cfg(test)]
 mod tests {
-    use super::{compare_stamps, merge_object_fields};
+    use super::{compare_stamps, decode_context, merge_object_fields};
     use crate::storage::{MergeFieldKind, MergeSchema};
     use crate::types::DocumentValue;
     use std::cmp::Ordering;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn causal_context_encoding_round_trips_in_canonical_order() {
+        let context =
+            super::DocumentContext::from_frontier([("sfo".to_owned(), 4), ("gru".to_owned(), 9)]);
+        let bytes = context.to_bytes();
+        assert_eq!(decode_context(&bytes).expect("context decodes").frontier(), context.frontier());
+        assert!(decode_context(&bytes[..bytes.len() - 1]).is_none());
+    }
 
     fn fields(pairs: &[(&str, DocumentValue)]) -> BTreeMap<String, DocumentValue> {
         pairs.iter().map(|(key, value)| ((*key).to_owned(), value.clone())).collect()

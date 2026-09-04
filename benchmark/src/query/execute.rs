@@ -316,6 +316,9 @@ fn execute_with_index(
     if query.search_rank().is_none() {
         ordered.sort_by(|left, right| model::compare_documents(query.ordering(), left, right));
     }
+    if query.ordering().keys().iter().any(|key| key.field() == "score") {
+        eprintln!("DEBUG ORDER {:?}", ordered.iter().map(|d| model::field_of(d, "score")).collect::<Vec<_>>());
+    }
     let page_documents = page_documents(query, &ordered);
     let resolved_documents = resolve_references(engine, snapshot, query, &page_documents)?;
     let mut by_id: BTreeMap<&str, &Document> = BTreeMap::new();
@@ -1489,28 +1492,40 @@ fn project(
     };
     selected
         .iter()
-        .filter_map(|name| {
+        .enumerate()
+        .filter_map(|(index, name)| {
+            let output = query
+                .sql_projection_outputs()
+                .and_then(|outputs| outputs.get(index))
+                .map_or(name.as_str(), String::as_str);
+            let metadata = match name.as_str() {
+                "_id" => Some(DocumentValue::String(document.id().as_str().to_owned())),
+                "_rev" => Some(DocumentValue::Integer(
+                    i64::try_from(document.metadata().version()).unwrap_or(i64::MAX),
+                )),
+                _ => None,
+            };
             for (shape, referenced) in loads {
                 if name == &shape.alias {
                     let value =
                         referenced.map_or(DocumentValue::Null, |document| document.value().clone());
-                    return Some((name.clone(), value));
+                    return Some((output.to_owned(), value));
                 }
                 if let Some(field) = name.strip_prefix(shape.dotted.as_str()) {
                     return match referenced {
                         // A null binding navigates to null; the projected
                         // field is present with a null value.
-                        None => Some((name.clone(), DocumentValue::Null)),
+                        None => Some((output.to_owned(), DocumentValue::Null)),
                         Some(document) => match document.value() {
                             DocumentValue::Object(referenced_fields) => referenced_fields
                                 .get(field)
-                                .map(|value| (name.clone(), value.clone())),
+                                .map(|value| (output.to_owned(), value.clone())),
                             _ => None,
                         },
                     };
                 }
             }
-            fields.get(name).map(|value| (name.clone(), value.clone()))
+            metadata.or_else(|| fields.get(name).cloned()).map(|value| (output.to_owned(), value))
         })
         .collect()
 }

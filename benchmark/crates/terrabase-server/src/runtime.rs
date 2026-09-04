@@ -393,6 +393,39 @@ async fn serve_public_api(
         Arc::clone(&backups),
         &backup_root.join("timetravel"),
     ));
+    let origin_proof_keys = match public.origin_proof_key_file.as_deref() {
+        Some(current) => {
+            let current = read_secret_key(current)?;
+            let previous = public
+                .origin_proof_previous_key_file
+                .as_deref()
+                .map(read_secret_key)
+                .transpose()?;
+            crate::reactive_api::OriginProofKeyRing::new(current, previous)
+                .ok_or_else(|| DaemonError::Engine("invalid origin-proof key ring".into()))?
+        }
+        None if public.origin_proof_previous_key_file.is_some() => {
+            return Err(Box::new(DaemonError::Engine(
+                "origin-proof previous key requires a current key".into(),
+            )));
+        }
+        None => crate::reactive_api::OriginProofKeyRing::default(),
+    };
+    let capability_keys = match public.capability_key_file.as_deref() {
+        Some(current) => {
+            let current = read_secret_key(current)?;
+            let previous =
+                public.capability_previous_key_file.as_deref().map(read_secret_key).transpose()?;
+            crate::reactive_api::CapabilityKeyRing::new(current, previous)
+                .ok_or_else(|| DaemonError::Engine("invalid capability key ring".into()))?
+        }
+        None if public.capability_previous_key_file.is_some() => {
+            return Err(Box::new(DaemonError::Engine(
+                "capability previous key requires a current key".into(),
+            )));
+        }
+        None => crate::reactive_api::CapabilityKeyRing::default(),
+    };
     let state = Arc::new(crate::api::ApiState {
         region,
         metrics,
@@ -406,6 +439,8 @@ async fn serve_public_api(
         timetravel,
         active_regions: public.active_regions,
         guards: Arc::new(crate::guards::AbuseGuards::default()),
+        origin_proof_keys: Arc::new(origin_proof_keys),
+        capability_keys: Arc::new(capability_keys),
     });
     let listener = tokio::net::TcpListener::bind(public.listen).await?;
     let router = crate::api::router(state);
@@ -471,6 +506,37 @@ fn open_readonly(path: &Path) -> Result<File, DaemonError> {
         options.custom_flags(0x100); // O_NOFOLLOW
     }
     options.open(path).map_err(|_| DaemonError::SecretFile)
+}
+
+/// Reads bounded raw HMAC key material from a private, no-follow file. Keys
+/// are delivered as UTF-8 bytes so operators can rotate them through the
+/// same secret-file mechanism as the rest of the daemon configuration.
+fn read_secret_key(path: &Path) -> Result<Vec<u8>, DaemonError> {
+    let mut file = open_readonly(path)?;
+    let metadata = file.metadata().map_err(|_| DaemonError::SecretFile)?;
+    if !metadata.is_file() || metadata.len() < 16 || metadata.len() > 4096 {
+        return Err(DaemonError::SecretFile);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(DaemonError::PrivateKeyPermissions);
+        }
+    }
+    let mut bytes =
+        Vec::with_capacity(usize::try_from(metadata.len()).map_err(|_| DaemonError::SecretFile)?);
+    file.read_to_end(&mut bytes).map_err(|_| DaemonError::SecretFile)?;
+    if bytes.len() != usize::try_from(metadata.len()).map_err(|_| DaemonError::SecretFile)? {
+        return Err(DaemonError::SecretFile);
+    }
+    while bytes.last().is_some_and(u8::is_ascii_whitespace) {
+        bytes.pop();
+    }
+    if bytes.len() < 16 || bytes.iter().any(|byte| byte.is_ascii_control() || *byte > 0x7f) {
+        return Err(DaemonError::SecretFile);
+    }
+    Ok(bytes)
 }
 
 /// Checks PEM framing and base64 syntax before the TLS parser sees the bytes.

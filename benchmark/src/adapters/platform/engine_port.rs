@@ -111,21 +111,35 @@ fn execute_schema_operation(
             ))
         }
         SchemaOperation::MigrationStatus(request) => {
-            let status = crate::families::migrations::status(engine, scope, request.collection())
-                .map_err(map_migration_error)?;
+            let status = crate::families::migrations::MigrationCoordinator::migration_status(
+                engine,
+                scope,
+                request.collection(),
+            )
+            .map_err(map_migration_error)?;
             crate::operations::SchemaResponse::MigrationStatus(status)
         }
         SchemaOperation::MigrationDryRun(request) => {
-            let plan = crate::families::migrations::dry_run(engine, scope, request.contract())
-                .map_err(map_migration_error)?;
-            crate::operations::SchemaResponse::Plan(plan)
-        }
-        SchemaOperation::MigrationApply(request) => {
-            let receipt = crate::families::migrations::apply(
+            let plan = crate::families::migrations::MigrationCoordinator::migration_dry_run(
                 engine,
                 scope,
                 request.contract(),
-                &dry_run(engine, scope, request.contract())?,
+            )
+            .map_err(map_migration_error)?;
+            crate::operations::SchemaResponse::Plan(plan)
+        }
+        SchemaOperation::MigrationApply(request) => {
+            let plan = crate::families::migrations::MigrationCoordinator::migration_dry_run(
+                engine,
+                scope,
+                request.contract(),
+            )
+            .map_err(map_migration_error)?;
+            let receipt = crate::families::migrations::MigrationCoordinator::migration_apply(
+                engine,
+                scope,
+                request.contract(),
+                &plan,
                 request.options(),
             )
             .map_err(map_migration_error)?;
@@ -185,20 +199,6 @@ fn validation_of(
         FamilyReadResult::Validation(result) => Ok(result),
         _ => Err(EngineError::StorageFailure),
     }
-}
-
-/// Recomputes the plan an apply must reproduce.
-///
-/// The migration model's apply requires the plan the caller derived from the
-/// same contract; the operation surface derives it here under the same
-/// authorized scope, so a caller cannot hand in a plan addressed to another
-/// collection or version.
-fn dry_run(
-    engine: &Engine,
-    scope: &TenantScope,
-    contract: &crate::families::migrations::SchemaMigration,
-) -> Result<crate::families::migrations::MigrationPlan, EngineError> {
-    crate::families::migrations::dry_run(engine, scope, contract).map_err(map_migration_error)
 }
 
 /// Maps one typed Schema Migration failure onto the Engine error vocabulary.

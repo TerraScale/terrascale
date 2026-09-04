@@ -27,6 +27,7 @@
 #![allow(clippy::pedantic, reason = "query contract integration is still being assembled")]
 
 mod analyzer;
+pub(crate) mod auto_index_adapter;
 mod execute;
 pub mod includes;
 mod model;
@@ -397,6 +398,7 @@ impl<'engine> QueryStore<'engine> {
                     QueryPredicate::all(Vec::new()).map_err(|_| QueryError::InvalidSpec)?,
                     QueryOrdering::default(),
                     QueryProjection::whole_document(),
+                    None,
                     // The SQL text owns paging. This model copy is only for
                     // live dependency planning and must not invent a limit
                     // for joins, CTEs, EXPLAIN, or other execute-only forms.
@@ -425,9 +427,13 @@ impl<'engine> QueryStore<'engine> {
             QueryPredicate::all(lowered.conditions).map_err(|_| QueryError::InvalidSpec)?;
         let ordering =
             QueryOrdering::try_new(lowered.ordering).map_err(|_| QueryError::InvalidSpec)?;
-        let projection = match lowered.projection {
+        let projection_outputs = lowered
+            .projection
+            .as_ref()
+            .map(|fields| fields.iter().map(|field| field.output.clone()).collect());
+        let projection = match lowered.projection.as_ref() {
             Some(fields) => {
-                let refs: Vec<&str> = fields.iter().map(String::as_str).collect();
+                let refs: Vec<&str> = fields.iter().map(|field| field.field.as_str()).collect();
                 QueryProjection::fields(&refs).map_err(|_| QueryError::InvalidSpec)?
             }
             None => QueryProjection::whole_document(),
@@ -439,6 +445,7 @@ impl<'engine> QueryStore<'engine> {
             predicate,
             ordering,
             projection,
+            projection_outputs,
             paging,
             deadline,
             cancellation.clone(),

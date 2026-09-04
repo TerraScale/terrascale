@@ -6,6 +6,7 @@
 //! in-memory durable constructor: [`Engine::open`] with an
 //! [`EngineConfig::durable`] location is the only production path.
 
+use rusqlite::OptionalExtension as _;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
@@ -687,6 +688,11 @@ pub struct ReplicatedRecord {
     pub origin: String,
     /// The source region's durable per-origin journal sequence.
     pub origin_sequence: u64,
+    /// Opaque versioned dotted causal context from the source journal row.
+    ///
+    /// The engine validates and joins this context, but never interprets
+    /// document body bytes on the clean-apply path.
+    pub context: Vec<u8>,
 }
 
 /// One retained publication-journal row for anti-entropy. The canonical
@@ -2013,6 +2019,8 @@ impl Engine {
         {
             return Err(EngineError::InvalidDocument);
         }
+        let incoming_context =
+            merge::decode_context(&record.context).ok_or(EngineError::InvalidDocument)?;
         let operation = OperationId::try_new(&format!("repl-{}", record.commit_ulid))
             .map_err(|_| EngineError::InvalidDocument)?;
         // The clock always witnesses the remote stamp first.
@@ -2044,12 +2052,14 @@ impl Engine {
             }
         }
         // The current merge input, read under one short lock.
-        let (current_state, schema) = {
+        let (current_state, schema, current_context) = {
             let storage = self.lock_storage().map_err(|_| EngineError::StorageFailure)?;
             let state =
                 storage.port.document_merge_state(scope.tenant(), &record.collection, &record.id);
             let schema = storage.port.merge_schema(&record.collection);
-            (state, schema)
+            let context =
+                storage.port.document_context(scope.tenant(), &record.collection, &record.id);
+            (state, schema, context)
         };
         let Some(current) = current_state else {
             // A clean apply writes bytes (D-36): no conflict, no loser.
@@ -2076,16 +2086,54 @@ impl Engine {
             }
             return Ok(outcome);
         };
+        let current_context = merge::decode_context(current_context.as_deref().unwrap_or_default())
+            .ok_or(EngineError::StorageFailure)?;
+        let incoming_version = merge::DocumentVersion::new(
+            incoming_context.clone(),
+            merge::DocumentDot::new(record.origin.clone(), record.origin_sequence),
+        );
+        if !incoming_version.is_well_formed() {
+            return Err(EngineError::InvalidDocument);
+        }
+        let current_version = merge::DocumentVersion::new(
+            current_context.clone(),
+            merge::DocumentDot::new(current.origin.clone(), current.origin_sequence),
+        );
+        if !current_version.is_well_formed() {
+            return Err(EngineError::StorageFailure);
+        }
+        // Causal precedence is decided from durable contexts before HLC
+        // conflict ordering. A later event may cleanly overwrite an older
+        // body without parsing either side; a dominated delivery is an
+        // idempotent no-op.
+        if incoming_version.context().contains(current_version.dot()) {
+            return self.apply_replicated_clean(scope, record, &operation);
+        }
+        if current_version.context().contains(incoming_version.dot()) {
+            return Ok(AppliedReplication::lost_merge());
+        }
         // Tombstones merge at document level (D-36): remove-wins on ties.
         if record.deleted || current.deleted {
-            return self.apply_replicated_tombstone(scope, record, &operation, &current);
+            return self.apply_replicated_tombstone(
+                scope,
+                record,
+                &operation,
+                &current,
+                &current_context,
+            );
         }
         // Both live: field-level merge when both bodies are objects.
         let (Some(DocumentValue::Object(current_fields)), DocumentValue::Object(incoming_fields)) =
             (current.body.as_ref(), &record.body)
         else {
             // Non-object bodies fall back to the document-level order.
-            return self.apply_replicated_tombstone(scope, record, &operation, &current);
+            return self.apply_replicated_tombstone(
+                scope,
+                record,
+                &operation,
+                &current,
+                &current_context,
+            );
         };
         // Identical bytes need no new row, unless this is a duplicate
         // delivery of the same dot: then the operation ledger must replay
@@ -2158,6 +2206,7 @@ impl Engine {
             hlc: cover_hlc,
             origin: cover_origin.clone(),
             origin_sequence: cover_origin_sequence,
+            context: merge::encode_context(&current_version.joined_context(&incoming_version)),
         };
         let kernel_fields: Vec<String> = merged.keys().cloned().collect();
         let outcome = self.apply_replicated_clean(scope, &merged_record, &operation)?;
@@ -2218,6 +2267,7 @@ impl Engine {
         record: &ReplicatedRecord,
         operation: &OperationId,
         current: &crate::storage::DocumentMergeState,
+        _current_context: &merge::DocumentContext,
     ) -> Result<AppliedReplication, EngineError> {
         let incoming = (record.hlc, record.origin.as_str());
         let current_stamp = (current.hlc, current.origin.as_str());
@@ -2421,6 +2471,57 @@ impl Engine {
             storage.port.documents_at(snapshot.sequence(), scope.tenant())
         };
         Ok(documents)
+    }
+
+    /// Returns the exact canonical body blob for one document at a pinned
+    /// snapshot. The bytes are opaque to the Engine; callers that already
+    /// speak the canonical response format can splice them directly without
+    /// constructing a Document or decoding a JSON value.
+    ///
+    /// # Errors
+    ///
+    /// Returns ScopeMismatch for a foreign scope or StorageFailure when the
+    /// raw read cannot be served.
+    pub fn raw_document_body_in_collection_at(
+        &self,
+        scope: &TenantScope,
+        snapshot: StorageSequence,
+        collection: &CollectionName,
+        id: &DocumentId,
+    ) -> Result<Option<Vec<u8>>, EngineError> {
+        self.validate_scope(scope)?;
+        let storage = self.lock_storage()?;
+        let connection =
+            storage.port.open_sqlite_read_connection().map_err(|_| EngineError::StorageFailure)?;
+        storage.port.record_read(scope.tenant().as_str());
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(i64::MAX, |elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX));
+        let row = connection
+            .query_row(
+                "SELECT deleted, expires_at, body FROM documents
+                 WHERE tenant = ?1 AND collection = ?2 AND id = ?3 AND commit_seq <= ?4
+                 ORDER BY commit_seq DESC LIMIT 1",
+                rusqlite::params![
+                    scope.tenant().as_str(),
+                    collection.as_str(),
+                    id.as_str(),
+                    snapshot.get() as i64
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Option<i64>>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|_| EngineError::StorageFailure)?;
+        Ok(row.and_then(|(deleted, expires_at, body)| {
+            let family = collection.as_str() == "terrabase.families";
+            (deleted == 0 && (family || expires_at.is_none_or(|at| at > now))).then_some(body)
+        }))
     }
 
     /// Lists the distinct collection names a tenant's documents occupy at
@@ -3518,6 +3619,7 @@ impl Transaction<'_> {
                 hlc: record.hlc,
                 origin: record.origin.clone(),
                 origin_sequence: record.origin_sequence,
+                context: record.context.clone(),
             }
         } else {
             let document =
@@ -3531,6 +3633,7 @@ impl Transaction<'_> {
                 hlc: record.hlc,
                 origin: record.origin.clone(),
                 origin_sequence: record.origin_sequence,
+                context: record.context.clone(),
             }
         };
         self.writes.push(write);

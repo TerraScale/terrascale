@@ -32,14 +32,17 @@
 //!   --render-history --results bench/results --output bench/RESULTS.md
 //! ```
 
+mod auto_index;
 mod config;
 mod history;
+mod indexed_query;
+mod ingest;
 mod lane;
 mod metrics;
 mod pg;
 mod pg_fullstack;
 mod raven;
-mod served;
+mod sync;
 
 use std::path::PathBuf;
 
@@ -55,11 +58,62 @@ fn main() {
         }
         return;
     }
+    // The four E-13 families share this binary's operator entry point. Their
+    // adapters remain family-owned and fail closed; this dispatcher only
+    // makes the registration explicit and keeps `--render-history` as the
+    // single publication command.
+    let all_arguments: Vec<String> = std::env::args().skip(1).collect();
+    if all_arguments.first().is_some_and(|argument| argument == "--family") {
+        let Some(family) = all_arguments.get(1) else {
+            eprintln!("--family requires indexed-query, ingest, auto-index, or sync");
+            usage();
+            std::process::exit(2);
+        };
+        let family_arguments = all_arguments.iter().skip(2).cloned().collect::<Vec<_>>();
+        let result = match family.as_str() {
+            "indexed-query" => indexed_query::run_cli(family_arguments),
+            "ingest" => ingest::run_cli(family_arguments),
+            "auto-index" => {
+                Err("auto-index is a served-boundary shell family; run bench/scripts/auto-index.sh"
+                    .to_owned())
+            }
+            "sync" => sync::run_cli(family_arguments).and_then(|status| {
+                if status == 0 {
+                    Ok(std::path::PathBuf::from("sync report emitted on stdout"))
+                } else {
+                    Err(format!("sync family returned status {status}"))
+                }
+            }),
+            other => Err(format!("unknown benchmark family {other:?}")),
+        };
+        match result {
+            Ok(path) => {
+                println!("benchmark family {family} complete: {}", path.display());
+                return;
+            }
+            Err(error) => {
+                eprintln!("benchmark family {family} unavailable or failed: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+    // Keep the family-specific ingest spelling convenient for scripts and
+    // operators while retaining the original point-lane flags unchanged.
+    if all_arguments.first().is_some_and(|argument| argument == "--ingest-target") {
+        match ingest::run_cli(all_arguments) {
+            Ok(path) => println!("ingest family complete: {}", path.display()),
+            Err(error) => {
+                eprintln!("ingest family unavailable or failed: {error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     let mut target = None;
     let mut workload = None;
     let mut out = PathBuf::from("bench/results");
     let mut lane_config = LaneConfig::RECORD_MINIMUM;
-    let mut boundary = served::DIAGNOSTIC_BOUNDARY.to_owned();
+    let mut boundary = "production-member".to_owned();
 
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
@@ -157,7 +211,10 @@ fn main() {
     }
     std::fs::create_dir_all(&out).expect("results directory");
     if target == Target::TerraBase {
-        match served::run(workload, lane_config, &out, &boundary) {
+        match Err::<(), String>(
+            "legacy Go served benchmark adapter is retired; use a direct public-boundary family"
+                .to_owned(),
+        ) {
             Ok(()) => println!("served TerraBase runner completed"),
             Err(error) => {
                 eprintln!("the served TerraBase run failed: {error}");
@@ -343,6 +400,7 @@ fn usage() {
     eprintln!(
         "usage: terrabase-bench-lane --target <terrabase|pg|pg-fullstack|raven> --workload <read|write|query|mixed> \
          [--boundary-class diagnostic-qualification|production-candidate] [--out DIR] [--seed N] \
-         [--ops N] [--samples N] [--concurrency N] [--warmup N] [--noise-percent N]"
+         [--ops N] [--samples N] [--concurrency N] [--warmup N] [--noise-percent N]\n\
+         or: --family <indexed-query|ingest|auto-index|sync> [family options]"
     );
 }

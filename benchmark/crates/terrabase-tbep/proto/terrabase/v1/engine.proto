@@ -47,36 +47,6 @@ enum ClusterMode {
   CLUSTER_MODE_BACKUP = 3;
 }
 
-// The cause of a tier move decision.
-message TierMoveReason {
-  string fact = 1;     // <= 64 bytes.
-  string observed = 2; // <= 128 bytes.
-}
-
-// The tier administration decision vocabulary.
-enum TierDecision {
-  TIER_DECISION_UNSPECIFIED = 0;
-  TIER_DECISION_PROMOTE = 1;
-  TIER_DECISION_DEMOTE = 2;
-  TIER_DECISION_SPLIT = 3;
-  TIER_DECISION_NONE = 4;
-  TIER_DECISION_REFUSED = 5;
-}
-
-// The receipt of one tier policy evaluation or move.
-message TierMoveReceipt {
-  string policy_id = 1;       // <= 128 bytes.
-  uint32 policy_version = 2;
-  TierDecision decision = 3;
-  repeated TierMoveReason reasons = 4; // <= 16 items.
-  uint64 segment_id = 5;
-  uint64 bytes = 6;
-  uint64 manifest_before = 7;
-  uint64 manifest_after = 8;
-  bool dry_run = 9;
-  bool manifest_accepted = 10;
-}
-
 // The kind of one backbone change event.
 enum ChangeKind {
   CHANGE_KIND_UNSPECIFIED = 0;
@@ -598,7 +568,9 @@ enum UsageMeter {
   USAGE_METER_UNSPECIFIED = 0;
   USAGE_METER_ADMITTED_REQUEST_UNITS = 2;
   USAGE_METER_PUBLIC_EGRESS_BYTES = 3;
-  reserved 1, 4 to 6;
+  USAGE_METER_DOCUMENT_WRITE_UNITS = 4;
+  USAGE_METER_STORAGE_BYTE_SECONDS = 5;
+  reserved 1, 6 to 10;
   reserved "USAGE_METER_STORED_BYTE_HOURS", "USAGE_METER_ACTIVE_REGION_SEATS",
       "USAGE_METER_BACKUP_BYTE_HOURS", "USAGE_METER_RESTORE_WORK";
 }
@@ -608,7 +580,9 @@ enum UsageUnit {
   USAGE_UNIT_UNSPECIFIED = 0;
   USAGE_UNIT_REQUEST_UNIT = 2;
   USAGE_UNIT_BYTE = 3;
-  reserved 1, 4, 5;
+  USAGE_UNIT_WRITE_UNIT = 4;
+  USAGE_UNIT_BYTE_SECOND = 5;
+  reserved 1, 6 to 10;
   reserved "USAGE_UNIT_BYTE_HOUR", "USAGE_UNIT_SEAT_HOUR",
       "USAGE_UNIT_RESTORE_WORK";
 }
@@ -618,7 +592,9 @@ enum UsageChargeScope {
   USAGE_CHARGE_SCOPE_UNSPECIFIED = 0;
   USAGE_CHARGE_SCOPE_ADMITTED_REQUEST = 2;
   USAGE_CHARGE_SCOPE_PUBLIC_EGRESS = 3;
-  reserved 1, 4 to 6;
+  USAGE_CHARGE_SCOPE_DOCUMENT_WRITE = 4;
+  USAGE_CHARGE_SCOPE_LOGICAL_STORAGE = 5;
+  reserved 1, 6 to 10;
   reserved "USAGE_CHARGE_SCOPE_ACTIVE_REGION_COPY",
       "USAGE_CHARGE_SCOPE_ACTIVE_REGION_SEAT", "USAGE_CHARGE_SCOPE_BACKUP_COPY",
       "USAGE_CHARGE_SCOPE_EXPLICIT_RESTORE";
@@ -630,9 +606,10 @@ enum UsageMintingRule {
   USAGE_MINTING_RULE_UNSPECIFIED = 0;
   USAGE_MINTING_RULE_STABLE_ADMITTED_REQUEST = 2;
   USAGE_MINTING_RULE_PUBLIC_RESPONSE = 3;
-  reserved 1, 4 to 6;
-  reserved "USAGE_MINTING_RULE_ACCEPTED_ORIGIN_COMMIT",
-      "USAGE_MINTING_RULE_ACTIVE_REGION_HOUR",
+  USAGE_MINTING_RULE_ACCEPTED_ORIGIN_COMMIT = 4;
+  USAGE_MINTING_RULE_LOGICAL_STORAGE = 5;
+  reserved 1, 6 to 10;
+  reserved "USAGE_MINTING_RULE_ACTIVE_REGION_HOUR",
       "USAGE_MINTING_RULE_BACKUP_BYTE_HOUR",
       "USAGE_MINTING_RULE_EXPLICIT_RESTORE";
 }
@@ -653,6 +630,8 @@ enum UsageRecordMeter {
   USAGE_RECORD_METER_UNSPECIFIED = 0;
   USAGE_RECORD_METER_ADMITTED_REQUEST_UNITS = 1;
   USAGE_RECORD_METER_PUBLIC_EGRESS_BYTES = 2;
+  USAGE_RECORD_METER_DOCUMENT_WRITE_UNITS = 3;
+  USAGE_RECORD_METER_STORAGE_BYTE_SECONDS = 4;
 }
 
 message UsageServiceRecordRequest {
@@ -718,65 +697,6 @@ message UsageServiceExportResponse {
   repeated UsageFact facts = 1; // <= 256 facts.
   bytes continuation = 2;       // <= 1024 bytes.
   uint64 snapshot_sequence = 3;
-}
-
-// ---------------------------------------------------------------------------
-// Tier administration
-// ---------------------------------------------------------------------------
-
-message TierServiceConfigureRequest {
-  string policy_id = 1; // <= 128 bytes.
-  uint32 version = 2;
-  uint64 nvme_budget_bytes = 3;
-  uint32 min_residence_moves = 4;
-  uint32 promotion_threshold = 5;
-  repeated uint64 pinned_segment_ids = 6; // <= 4096 items.
-}
-
-message TierServiceConfigureResponse {
-  string policy_id = 1;
-  uint32 version = 2;
-  bool paused = 3;
-}
-
-message TierServiceInspectRequest {}
-
-message TierServiceInspectResponse {
-  bool configured = 1;
-  bool paused = 2;
-  uint64 manifest_epoch = 3;
-  uint32 object_count = 4;
-  uint64 nvme_bytes = 5;
-}
-
-message TierServiceDryRunRequest {}
-
-message TierServiceDryRunResponse {
-  TierMoveReceipt receipt = 1;
-}
-
-message TierServiceExplainRequest {}
-
-message TierServiceExplainResponse {
-  TierMoveReceipt receipt = 1;
-}
-
-message TierServiceRunRequest {}
-
-message TierServiceRunResponse {
-  TierMoveReceipt receipt = 1;
-}
-
-message TierServicePauseRequest {}
-
-message TierServicePauseResponse {
-  bool paused = 1;
-}
-
-message TierServiceResumeRequest {}
-
-message TierServiceResumeResponse {
-  bool paused = 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -884,15 +804,4 @@ service MaintenanceService {
 service UsageService {
   rpc Record(UsageServiceRecordRequest) returns (UsageServiceRecordResponse);
   rpc Export(UsageServiceExportRequest) returns (UsageServiceExportResponse);
-}
-
-// Tier administration.
-service TierService {
-  rpc Configure(TierServiceConfigureRequest) returns (TierServiceConfigureResponse);
-  rpc Inspect(TierServiceInspectRequest) returns (TierServiceInspectResponse);
-  rpc DryRun(TierServiceDryRunRequest) returns (TierServiceDryRunResponse);
-  rpc Explain(TierServiceExplainRequest) returns (TierServiceExplainResponse);
-  rpc Run(TierServiceRunRequest) returns (TierServiceRunResponse);
-  rpc Pause(TierServicePauseRequest) returns (TierServicePauseResponse);
-  rpc Resume(TierServiceResumeRequest) returns (TierServiceResumeResponse);
 }

@@ -58,6 +58,16 @@ impl Scope {
         Self { database: Some(name.to_owned()), collections: None, verbs }
     }
 
+    /// A scope admitting only the named collection in one database.
+    #[must_use]
+    pub fn database_collection(name: &str, collection: &str, verbs: Verbs) -> Self {
+        Self {
+            database: Some(name.to_owned()),
+            collections: Some(vec![collection.to_owned()]),
+            verbs,
+        }
+    }
+
     /// A scope admitting every database (bootstrap tooling only).
     #[must_use]
     pub fn every_database(verbs: Verbs) -> Self {
@@ -68,6 +78,18 @@ impl Scope {
     #[must_use]
     pub fn admits(&self, verb: Verbs, database: &str) -> bool {
         self.verbs.admits(verb) && self.database.as_ref().is_none_or(|name| name == database)
+    }
+
+    /// Whether this scope admits `verb` on one named collection. A database
+    /// scope with no collection list admits every collection; a narrowed
+    /// scope never widens to a sibling collection.
+    #[must_use]
+    pub fn admits_collection(&self, verb: Verbs, database: &str, collection: &str) -> bool {
+        self.admits(verb, database)
+            && self
+                .collections
+                .as_ref()
+                .is_none_or(|allowed| allowed.iter().any(|name| name == collection))
     }
 
     /// Whether this scope admits `verb` outside any one database (database

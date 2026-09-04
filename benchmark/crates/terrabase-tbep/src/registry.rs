@@ -203,51 +203,6 @@ impl ClusterMode {
     }
 }
 
-/// The generated `tier_decision` closed vocabulary.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum TierDecision {
-    /// The `promote` row (code 1).
-    Promote,
-    /// The `demote` row (code 2).
-    Demote,
-    /// The `split` row (code 3).
-    Split,
-    /// The `none` row (code 4).
-    None,
-    /// The `refused` row (code 5).
-    Refused,
-}
-
-impl TierDecision {
-    /// The variant's wire code; unknown codes fail closed on decode.
-    #[must_use]
-    pub const fn code(self) -> u8 {
-        match self {
-            Self::Promote => 1,
-            Self::Demote => 2,
-            Self::Split => 3,
-            Self::None => 4,
-            Self::Refused => 5,
-        }
-    }
-
-    /// Decodes a payload-less variant from its wire code.
-    ///
-    /// Payload-carrying variants decode through the serde codec
-    /// (`from_wire`); they answer `None` here by construction.
-    #[must_use]
-    pub const fn from_code(code: u8) -> Option<Self> {
-        match code {
-            1 => Some(Self::Promote),
-            2 => Some(Self::Demote),
-            3 => Some(Self::Split),
-            4 => Some(Self::None),
-            5 => Some(Self::Refused),
-            _ => None,
-        }
-    }
-}
-
 /// The generated `change_kind` closed vocabulary.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ChangeKind {
@@ -866,40 +821,6 @@ impl FieldTransform {
     }
 }
 
-/// The `tier_move_reason` frame body.
-#[derive(Clone, Debug, PartialEq)]
-pub struct TierMoveReason {
-    /// The `fact` field.
-    pub fact: String,
-    /// The `observed` field.
-    pub observed: String,
-}
-
-/// The `tier_move_receipt` frame body.
-#[derive(Clone, Debug, PartialEq)]
-pub struct TierMoveReceipt {
-    /// The `policy_id` field.
-    pub policy_id: String,
-    /// The `policy_version` field.
-    pub policy_version: u32,
-    /// The `decision` field.
-    pub decision: TierDecision,
-    /// The `reasons` field.
-    pub reasons: Vec<TierMoveReason>,
-    /// The `segment_id` field.
-    pub segment_id: u64,
-    /// The `bytes` field.
-    pub bytes: u64,
-    /// The `manifest_before` field.
-    pub manifest_before: u64,
-    /// The `manifest_after` field.
-    pub manifest_after: u64,
-    /// The `dry_run` field.
-    pub dry_run: bool,
-    /// The `manifest_accepted` field.
-    pub manifest_accepted: bool,
-}
-
 /// The `change_event` frame body.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChangeEvent {
@@ -1410,15 +1331,51 @@ impl AdminStatusResponse {
 /// The closed usage meter vocabulary.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum UsageMeter {
-    /// Units assigned by the admitted-request cost table.
+    /// One accepted document mutation, rounded in 4 KiB write units.
+    DocumentWriteUnits,
+    /// Logical current and retained-history bytes measured in byte-seconds.
+    StorageByteSeconds,
+    /// Legacy admitted-request attribution. This is not billable under the
+    /// pricing contract and is rejected by [`UsageFact::validate`].
     AdmittedRequestUnits,
-    /// Public response and change-stream bytes.
+    /// Legacy public-response attribution. This is not billable under the
+    /// pricing contract and is rejected by [`UsageFact::validate`].
     PublicEgressBytes,
+    /// Retired stored-byte-hour attribution.
+    #[deprecated(note = "stored byte-hours are unbilled")]
+    StoredByteHours,
+    /// Retired active-region seat attribution.
+    #[deprecated(note = "region seats are unbilled")]
+    ActiveRegionSeats,
+    /// Retired backup-byte-hour attribution.
+    #[deprecated(note = "backups are unbilled")]
+    BackupByteHours,
+    /// Retired restore-work attribution.
+    #[deprecated(note = "restore is unbilled")]
+    RestoreWork,
+}
+
+/// The only meter keys that may appear in a chargeable usage export.  The
+/// canonical root usage catalog owns their definitions; TBEP keeps this list
+/// closed so an old request/egress/seat/backup/restore label cannot become a
+/// charge by being forwarded as an opaque string.
+pub const BILLABLE_USAGE_METER_KEYS: &[&str] = &["document_write_units", "storage_byte_seconds"];
+
+/// Returns whether a wire meter key belongs to the chargeable root catalog.
+/// Unknown and retired request/egress/seat/backup/restore keys are rejected;
+/// callers must not infer billing from a display label or enum ordinal.
+#[must_use]
+pub fn is_billable_usage_meter_key(key: &str) -> bool {
+    BILLABLE_USAGE_METER_KEYS.contains(&key)
 }
 
 /// The integer unit of one usage fact.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UsageUnit {
+    /// One document operation per 4 KiB of canonical bytes.
+    WriteUnit,
+    /// One logical byte retained for one second.
+    ByteSecond,
     /// One admitted request cost unit.
     RequestUnit,
     /// One public byte.
@@ -1428,6 +1385,10 @@ pub enum UsageUnit {
 /// The scope at which one usage meter charges.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UsageChargeScope {
+    /// One accepted document mutation.
+    DocumentWrite,
+    /// Logical current and history bytes retained by a database.
+    LogicalStorage,
     /// One admitted request.
     AdmittedRequest,
     /// One public response or change-stream delivery.
@@ -1437,6 +1398,10 @@ pub enum UsageChargeScope {
 /// The stable event identity that controls usage minting.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum UsageMintingRule {
+    /// Mint once for an accepted origin document mutation.
+    AcceptedOriginCommit,
+    /// Mint one logical-storage interval observation.
+    LogicalStorage,
     /// Mint once for a stable admitted request identity.
     StableAdmittedRequest,
     /// Mint once for one public response or change-stream delivery.
@@ -1457,6 +1422,9 @@ pub enum UsageRegion {
 /// Maximum admitted-request units carried by one fact.
 pub const MAX_ADMITTED_REQUEST_UNITS_PER_FACT: i128 = 1_000_000;
 
+/// Maximum document write units carried by one fact.
+pub const MAX_DOCUMENT_WRITE_UNITS_PER_FACT: i128 = 1_000_000;
+
 /// Maximum public-egress bytes carried by one fact.
 pub const MAX_PUBLIC_EGRESS_BYTES_PER_FACT: i128 = 1_099_511_627_776;
 
@@ -1465,6 +1433,8 @@ impl UsageMintingRule {
     #[must_use]
     pub const fn code(self) -> u8 {
         match self {
+            Self::AcceptedOriginCommit => 4,
+            Self::LogicalStorage => 5,
             Self::StableAdmittedRequest => 2,
             Self::PublicResponse => 3,
         }
@@ -1472,10 +1442,35 @@ impl UsageMintingRule {
 }
 
 impl UsageMeter {
+    /// Legacy TBEP usage facts are attribution-only.  Document-write units
+    /// and storage byte-seconds are minted by the Engine's authoritative
+    /// usage journal, not by this old standalone frame vocabulary.
+    #[must_use]
+    pub const fn is_billable(self) -> bool {
+        matches!(self, Self::DocumentWriteUnits | Self::StorageByteSeconds)
+    }
+
+    /// Returns whether this meter is retained only as non-billable
+    /// attribution metadata.
+    #[must_use]
+    pub const fn is_attribution(self) -> bool {
+        !self.is_billable()
+    }
+
     /// Returns the fixed unit, charge scope, and minting rule of this meter.
     #[must_use]
     pub const fn contract(self) -> (UsageUnit, UsageChargeScope, UsageMintingRule) {
         match self {
+            Self::DocumentWriteUnits => (
+                UsageUnit::WriteUnit,
+                UsageChargeScope::DocumentWrite,
+                UsageMintingRule::AcceptedOriginCommit,
+            ),
+            Self::StorageByteSeconds => (
+                UsageUnit::ByteSecond,
+                UsageChargeScope::LogicalStorage,
+                UsageMintingRule::LogicalStorage,
+            ),
             Self::AdmittedRequestUnits => (
                 UsageUnit::RequestUnit,
                 UsageChargeScope::AdmittedRequest,
@@ -1484,6 +1479,26 @@ impl UsageMeter {
             Self::PublicEgressBytes => {
                 (UsageUnit::Byte, UsageChargeScope::PublicEgress, UsageMintingRule::PublicResponse)
             }
+            #[allow(deprecated)]
+            Self::StoredByteHours => {
+                (UsageUnit::Byte, UsageChargeScope::PublicEgress, UsageMintingRule::PublicResponse)
+            }
+            #[allow(deprecated)]
+            Self::ActiveRegionSeats => (
+                UsageUnit::RequestUnit,
+                UsageChargeScope::AdmittedRequest,
+                UsageMintingRule::StableAdmittedRequest,
+            ),
+            #[allow(deprecated)]
+            Self::BackupByteHours => {
+                (UsageUnit::Byte, UsageChargeScope::PublicEgress, UsageMintingRule::PublicResponse)
+            }
+            #[allow(deprecated)]
+            Self::RestoreWork => (
+                UsageUnit::RequestUnit,
+                UsageChargeScope::AdmittedRequest,
+                UsageMintingRule::StableAdmittedRequest,
+            ),
         }
     }
 }
@@ -1491,17 +1506,41 @@ impl UsageMeter {
 /// The closed meter set accepted by standalone usage recording.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UsageRecordMeter {
+    /// One document mutation billed in 4 KiB write units.
+    DocumentWriteUnits,
+    /// Logical storage byte-seconds emitted by the authoritative rollup.
+    StorageByteSeconds,
     /// Admitted request units for a read or query.
     AdmittedRequestUnits,
     /// Public response or change-stream bytes.
     PublicEgressBytes,
+    /// Retired region-seat attribution.
+    #[deprecated(note = "region seats are unbilled")]
+    ActiveRegionSeats,
+    /// Retired backup attribution.
+    #[deprecated(note = "backups are unbilled")]
+    BackupByteHours,
+    /// Retired restore attribution.
+    #[deprecated(note = "restore is unbilled")]
+    RestoreWork,
 }
 
 impl UsageRecordMeter {
+    /// Standalone request/egress records are retained for compatibility as
+    /// attribution, but can never mint a chargeable fact.
+    #[must_use]
+    pub const fn is_billable(self) -> bool {
+        matches!(self, Self::DocumentWriteUnits | Self::StorageByteSeconds)
+    }
+
     const fn unit_limit(self) -> i128 {
         match self {
+            Self::DocumentWriteUnits => MAX_DOCUMENT_WRITE_UNITS_PER_FACT,
+            Self::StorageByteSeconds => i128::MAX,
             Self::AdmittedRequestUnits => MAX_ADMITTED_REQUEST_UNITS_PER_FACT,
             Self::PublicEgressBytes => MAX_PUBLIC_EGRESS_BYTES_PER_FACT,
+            #[allow(deprecated)]
+            Self::ActiveRegionSeats | Self::BackupByteHours | Self::RestoreWork => 0,
         }
     }
 }
@@ -1545,6 +1584,12 @@ impl UsageRecordRequest {
             || self.meter_version == 0
         {
             return Err(invalid_usage("usage_record"));
+        }
+        // Pricing is deliberately write-and-storage only.  Request and
+        // egress labels remain decodable attribution vocabulary, but this
+        // boundary must refuse to mint them into the durable charge ledger.
+        if !self.meter.is_billable() {
+            return Err(invalid_usage("non_billable_meter"));
         }
         let units = positive_i128(&self.integer_units, "integer_units")?;
         if units > self.meter.unit_limit() {
@@ -1623,6 +1668,14 @@ pub struct UsageFact {
 }
 
 impl UsageFact {
+    /// Returns whether this fact can be included in a charge export.  The
+    /// legacy TBEP fact shape is attribution-only until the adapter emits the
+    /// root Engine's write/storage fact shape.
+    #[must_use]
+    pub const fn is_billable(&self) -> bool {
+        self.meter.is_billable()
+    }
+
     /// Validates the usage vocabulary, bounds, and canonical envelope shape.
     ///
     /// # Errors
@@ -1634,6 +1687,9 @@ impl UsageFact {
         usage_identifier(&self.project, 255, "project")?;
         usage_identifier(&self.database, 255, "database")?;
         usage_identifier(&self.partition, 255, "partition")?;
+        if !self.meter.is_billable() {
+            return Err(invalid_usage("non_billable_meter"));
+        }
         if self.meter_version == 0
             || self.sequence == 0
             || self.replica_epoch == 0
@@ -3044,5 +3100,83 @@ mod tests {
         assert_eq!(budget_for_class("control"), Some(256));
         assert_eq!(budget_for_class("operation_large"), Some(65_536));
         assert!(families().contains(&"schemas"));
+    }
+
+    fn legacy_usage_request(meter: UsageRecordMeter) -> UsageRecordRequest {
+        UsageRecordRequest {
+            meter,
+            project: "project".into(),
+            database: "database".into(),
+            partition: "partition".into(),
+            origin_region: UsageRegion::Gru,
+            fact_id: "fact-1".into(),
+            recorded_at_millis: 1,
+            meter_version: 1,
+            integer_units: "1".into(),
+        }
+    }
+
+    #[test]
+    fn pricing_vocabulary_has_only_write_and_storage_meters() {
+        assert_eq!(BILLABLE_USAGE_METER_KEYS, &["document_write_units", "storage_byte_seconds"]);
+        assert!(!UsageMeter::AdmittedRequestUnits.is_billable());
+        assert!(!UsageMeter::PublicEgressBytes.is_billable());
+        assert!(UsageMeter::AdmittedRequestUnits.is_attribution());
+        assert!(UsageMeter::PublicEgressBytes.is_attribution());
+        assert!(is_billable_usage_meter_key("document_write_units"));
+        assert!(is_billable_usage_meter_key("storage_byte_seconds"));
+        for retired in [
+            "admitted_request_units",
+            "public_egress_bytes",
+            "active_region_seats",
+            "backup_byte_hours",
+            "restore_work",
+            "stored_byte_hours",
+        ] {
+            assert!(!is_billable_usage_meter_key(retired));
+        }
+    }
+
+    #[test]
+    fn legacy_request_and_egress_records_cannot_mint_usage() {
+        for meter in [UsageRecordMeter::AdmittedRequestUnits, UsageRecordMeter::PublicEgressBytes] {
+            assert!(
+                legacy_usage_request(meter).validate_for_key("fact-1").is_err(),
+                "legacy meter must be rejected before it reaches the charge ledger"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_facts_cannot_appear_in_charge_export() {
+        let fact = UsageFact {
+            fact_id: "fact-1".into(),
+            meter: UsageMeter::PublicEgressBytes,
+            meter_version: 1,
+            unit: UsageUnit::Byte,
+            charge_scope: UsageChargeScope::PublicEgress,
+            minting_rule: UsageMintingRule::PublicResponse,
+            tenant: "tenant".into(),
+            project: "project".into(),
+            database: "database".into(),
+            partition: "partition".into(),
+            region: UsageRegion::Gru,
+            measurement_start_millis: 1,
+            measurement_end_millis: 2,
+            integer_delta: "1".into(),
+            sequence: 1,
+            replica_epoch: 1,
+            format_version: 1,
+            canonical: vec![0; 32],
+            checksum: vec![0; 32],
+        };
+        assert!(!fact.is_billable());
+        assert!(fact.validate().is_err());
+        let export = UsageExportResponse {
+            facts: vec![fact],
+            continuation: Vec::new(),
+            snapshot_sequence: 1,
+        };
+        assert!(export.validate().is_err());
     }
 }

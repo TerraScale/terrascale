@@ -93,6 +93,66 @@ use record::{
 /// bound of the replication plane.
 pub const MAX_MIGRATION_PAGE: usize = 1024;
 
+/// The host-facing migration coordinator contract.
+///
+/// A coordinator owns no schema bytes and has no alternate in-memory state:
+/// all three methods below are backed by the collection's durable migration
+/// record.  This keeps the EnginePort, the member host, and SDK/CLI adapters
+/// on one status/dry-run/apply vocabulary while allowing a host to drive
+/// pages through [`apply`] without knowing the record layout.
+pub trait MigrationCoordinator {
+    /// Return the durable state of one collection's migration.
+    fn migration_status(
+        &self,
+        scope: &TenantScope,
+        collection: &CollectionName,
+    ) -> Result<MigrationStatus, MigrationError>;
+
+    /// Compute a non-mutating, evidence-bearing migration plan.
+    fn migration_dry_run(
+        &self,
+        scope: &TenantScope,
+        contract: &SchemaMigration,
+    ) -> Result<MigrationPlan, MigrationError>;
+
+    /// Apply a ready plan, resuming from the durable cursor after restart.
+    fn migration_apply(
+        &self,
+        scope: &TenantScope,
+        contract: &SchemaMigration,
+        plan: &MigrationPlan,
+        options: MigrationOptions,
+    ) -> Result<MigrationReceipt, MigrationError>;
+}
+
+impl MigrationCoordinator for Engine {
+    fn migration_status(
+        &self,
+        scope: &TenantScope,
+        collection: &CollectionName,
+    ) -> Result<MigrationStatus, MigrationError> {
+        status(self, scope, collection)
+    }
+
+    fn migration_dry_run(
+        &self,
+        scope: &TenantScope,
+        contract: &SchemaMigration,
+    ) -> Result<MigrationPlan, MigrationError> {
+        dry_run(self, scope, contract)
+    }
+
+    fn migration_apply(
+        &self,
+        scope: &TenantScope,
+        contract: &SchemaMigration,
+        plan: &MigrationPlan,
+        options: MigrationOptions,
+    ) -> Result<MigrationReceipt, MigrationError> {
+        apply(self, scope, contract, plan, options)
+    }
+}
+
 /// The bounded storage window one scan fetch reads.
 const SCAN_WINDOW: u32 = 1024;
 

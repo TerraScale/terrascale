@@ -14,17 +14,17 @@ use crate::identity::{
     ProjectUlid, TenantUlid,
 };
 
+mod access_rule;
 mod policy_store;
 mod signed;
-mod access_rule;
 
+pub use access_rule::{AccessRule, CompiledAccessRule};
 pub use policy_store::{AuthorizationPolicyStore, PolicyStoreKey, PolicyStoreSnapshot};
 pub use signed::{
     AuthorizationCryptoMode, PrincipalContextEnvelope, PrincipalContextKey, PrincipalContextKeySet,
     PrincipalContextPayload, PrincipalContextReplayGuard, PrincipalContextSigner,
     PrincipalContextVerifier, SigningKeyProvenance,
 };
-pub use access_rule::{AccessRule, CompiledAccessRule};
 
 /// The canonical version of the engine authorization policy language.
 pub const AUTHORIZATION_FORMAT_VERSION: u16 = 1;
@@ -313,6 +313,20 @@ impl PrincipalClaims {
         if map.len() > MAX_PRINCIPAL_CLAIMS {
             return Err(AuthorizationError::ExceedsBound("principal claims"));
         }
+        let encoded_bytes: usize = map
+            .iter()
+            .map(|(key, value)| {
+                key.len()
+                    + match value {
+                        AttributeValue::Boolean(_) => 2,
+                        AttributeValue::Integer(_) => 9,
+                        AttributeValue::String(value) => value.len() + 3,
+                    }
+            })
+            .sum();
+        if encoded_bytes > MAX_CLAIMS_BYTES {
+            return Err(AuthorizationError::ExceedsBound("principal claim bytes"));
+        }
         if map.keys().any(|key| !valid_identifier(key)) {
             return Err(AuthorizationError::InvalidIdentifier);
         }
@@ -337,11 +351,17 @@ impl PrincipalClaims {
         self.0.get(name)
     }
 
+    /// Iterates claims in canonical name order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &AttributeValue)> {
+        self.0.iter().map(|(name, value)| (name.as_str(), value))
+    }
+
     fn validate(&self) -> Result<(), AuthorizationError> {
         if self.0.len() > MAX_PRINCIPAL_CLAIMS
-            || self.0.iter().any(|(name, value)| {
-                !valid_identifier(name) || !valid_claim_value(value)
-            })
+            || self
+                .0
+                .iter()
+                .any(|(name, value)| !valid_identifier(name) || !valid_claim_value(value))
         {
             return Err(AuthorizationError::InvalidContextPayload);
         }
@@ -350,6 +370,7 @@ impl PrincipalClaims {
 }
 
 const MAX_CLAIM_VALUE_BYTES: usize = 4 * 1024;
+const MAX_CLAIMS_BYTES: usize = 16 * 1024;
 
 fn valid_claim_value(value: &AttributeValue) -> bool {
     match value {
@@ -516,6 +537,24 @@ impl PrincipalContext {
     #[must_use]
     pub const fn principal_id(&self) -> PrincipalUlid {
         self.principal_id
+    }
+
+    /// Returns the complete scope binding used for tenant isolation.
+    #[must_use]
+    pub const fn scope(&self) -> &ResourceScope {
+        &self.scope
+    }
+
+    /// Returns the actions admitted by the signed grant.
+    #[must_use]
+    pub fn actions(&self) -> &BTreeSet<Action> {
+        &self.actions
+    }
+
+    /// Returns the verified claims for an authorization evaluator.
+    #[must_use]
+    pub const fn claims(&self) -> &PrincipalClaims {
+        &self.claims
     }
 
     /// Returns the environment binding.
@@ -879,6 +918,15 @@ impl PolicyRule {
         self
     }
 
+    /// Compiles and attaches a CEL row predicate to this grant.
+    pub fn try_with_access_rule(
+        self,
+        expression: &str,
+        indexed_fields: &BTreeSet<String>,
+    ) -> Result<Self, AuthorizationError> {
+        Ok(self.with_access_rule(AccessRule::try_compile(expression, indexed_fields)?))
+    }
+
     /// Returns the operation.
     #[must_use]
     pub const fn operation(&self) -> Operation {
@@ -927,7 +975,8 @@ impl PolicyRule {
         let predicates = predicates.join(",");
         let relation =
             self.relationship.as_ref().map_or_else(String::new, RelationshipPredicate::key);
-        let access = self.access_rule.as_ref().map_or_else(String::new, CompiledAccessRule::canonical);
+        let access =
+            self.access_rule.as_ref().map_or_else(String::new, CompiledAccessRule::canonical);
         format!(
             "{}|{}|{}|{}|{}|{}",
             self.operation.tag(),
@@ -1032,10 +1081,8 @@ impl Policy {
                 if access_rule.nodes() > MAX_ACCESS_RULE_NODES {
                     return Err(AuthorizationError::AccessRuleTooLarge);
                 }
-                if let Some(field) = access_rule
-                    .fields()
-                    .iter()
-                    .find(|field| !indexed_fields.contains(*field))
+                if let Some(field) =
+                    access_rule.fields().iter().find(|field| !indexed_fields.contains(*field))
                 {
                     return Err(AuthorizationError::UnindexedAccessRuleField(field.clone()));
                 }
@@ -1084,8 +1131,12 @@ impl Policy {
     pub fn required_indexed_fields(&self) -> BTreeSet<String> {
         self.rules
             .iter()
-            .flat_map(|rule| rule.access_rule.iter().flat_map(|access| access.fields().iter().cloned()))
-            .chain(self.rules.iter().flat_map(|rule| rule.claim_predicates.iter().map(|predicate| predicate.field.clone())))
+            .flat_map(|rule| {
+                rule.access_rule.iter().flat_map(|access| access.fields().iter().cloned())
+            })
+            .chain(self.rules.iter().flat_map(|rule| {
+                rule.claim_predicates.iter().map(|predicate| predicate.field.clone())
+            }))
             .collect()
     }
 
@@ -1097,7 +1148,9 @@ impl Policy {
         rules: impl IntoIterator<Item = PolicyRule>,
     ) -> Result<Self, AuthorizationError> {
         Self::try_new_with_id_and_derived_indexes(
-            AuthorizationPolicyUlid::generate(), generation, rules,
+            AuthorizationPolicyUlid::generate(),
+            generation,
+            rules,
         )
     }
 
@@ -1111,8 +1164,12 @@ impl Policy {
         let rules: Vec<PolicyRule> = rules.into_iter().collect();
         let indexed = rules
             .iter()
-            .flat_map(|rule| rule.access_rule.iter().flat_map(|access| access.fields().iter().cloned()))
-            .chain(rules.iter().flat_map(|rule| rule.claim_predicates.iter().map(|predicate| predicate.field.clone())))
+            .flat_map(|rule| {
+                rule.access_rule.iter().flat_map(|access| access.fields().iter().cloned())
+            })
+            .chain(rules.iter().flat_map(|rule| {
+                rule.claim_predicates.iter().map(|predicate| predicate.field.clone())
+            }))
             .collect::<BTreeSet<_>>();
         Self::try_new_with_id(policy_id, generation, indexed, rules)
     }
@@ -1355,10 +1412,25 @@ pub fn evaluate_optional(
     policy: &Policy,
     request: &AuthorizationRequest,
 ) -> AuthorizationDecision {
-    context.map_or(
-        AuthorizationDecision::Deny(DenialReason::MissingContext),
-        |context| evaluate(context, policy, request),
-    )
+    context.map_or(AuthorizationDecision::Deny(DenialReason::MissingContext), |context| {
+        evaluate(context, policy, request)
+    })
+}
+
+/// Evaluates a policy only when the caller's database binding is the exact
+/// scope being authorized. This is the public integration seam for runtimes
+/// that keep policies outside [`AuthorizationPolicyStore`].
+#[must_use]
+pub fn evaluate_scoped(
+    context: Option<&PrincipalContext>,
+    policy_scope: &ResourceScope,
+    policy: &Policy,
+    request: &AuthorizationRequest,
+) -> AuthorizationDecision {
+    if request.scope != *policy_scope {
+        return AuthorizationDecision::Deny(DenialReason::ScopeMismatch);
+    }
+    evaluate_optional(context, policy, request)
 }
 
 fn compare(left: &AttributeValue, right: &AttributeValue, comparison: ClaimComparison) -> bool {

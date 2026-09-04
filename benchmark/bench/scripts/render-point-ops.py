@@ -163,15 +163,15 @@ moment that produced it, per the limits each results document carries.
 
 ## Resource ceiling (all families, owner decision 2026-08-31)
 
-Every MEASURED subject — the TerraBase member harness, PostgreSQL /
-pgbouncer / pgrest, RavenDB — runs capped at **8 vCPU / 8 GiB RAM**
-(`bench/scripts/resource-envelope.sh`, spec `8cpu/8GiB`: `taskset -c 0-7`
-CPU affinity inside a `systemd-run` scope holding the memory ceiling).
+Every MEASURED launch member — the TerraBase member, PostgreSQL /
+pgbouncer / pgrest, RavenDB — runs capped at **2 OCPU / 12 GiB RAM**
+(`bench/scripts/resource-envelope.sh`, spec `2ocpu/12GiB`: two-CPU
+affinity inside a `systemd-run` scope holding the memory ceiling).
 Load generators (the bench lane process) are NOT capped: they are the
 instrument, not the subject. Disk is unfenced; write-family numbers must
 be read next to the ambient `io-pressure` snapshot the runner records.
-`TERRABASE_BENCH_ENVELOPE=0` opts a run out of the envelope for diagnosis;
-such runs are stamped unfenced and never join a comparison.
+Runs without verified cgroup evidence are unavailable and never join a
+comparison. There is no unfenced gating mode.
 
 ## Families
 

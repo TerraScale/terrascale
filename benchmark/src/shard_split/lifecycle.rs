@@ -108,7 +108,10 @@ impl ShardSplit {
             self.acked_through,
             self.phase,
         );
-        self.context.map_or(state, |context| state.with_context(context))
+        match self.context {
+            Some(context) => state.with_context(context),
+            None => state,
+        }
     }
 
     /// Returns the moved range's upper-exclusive bound.

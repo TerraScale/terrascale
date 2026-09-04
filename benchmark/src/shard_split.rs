@@ -23,7 +23,7 @@ pub use journal::{
 };
 pub use lifecycle::{ShardSplit, SplitCutoverError, SplitPhase, SplitPlanError};
 pub use range_copy::{
-    CopyBatch, CopyEntry, CopyError, RangeCopier, RangeCopySource, RangeCopyTarget,
+    CopyBatch, CopyCheckpoint, CopyEntry, CopyError, RangeCopier, RangeCopySource, RangeCopyTarget,
 };
 pub use recovery::{RecoveryAction, RecoveryDecision, RecoveryError, RecoveryPlan};
 pub use routing::{RouteError, RouteTable, ShardRoute, ShardRouter};
@@ -43,6 +43,44 @@ pub use verification::{
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct RecordingJournal {
+        rows: Vec<JournalEntry>,
+        checkpoint: u64,
+        calls: usize,
+    }
+
+    impl JournalWriter for RecordingJournal {
+        type Error = ();
+
+        fn apply_journal(&mut self, entries: &[JournalEntry]) -> Result<(), Self::Error> {
+            self.rows.extend_from_slice(entries);
+            Ok(())
+        }
+
+        fn advance_checkpoint(&mut self, through: u64) -> Result<(), Self::Error> {
+            self.checkpoint = self.checkpoint.max(through);
+            self.calls += 1;
+            Ok(())
+        }
+    }
+
+    struct OnePageJournal {
+        entries: Vec<JournalEntry>,
+    }
+
+    impl JournalReader for OnePageJournal {
+        type Error = ();
+
+        fn read_after(
+            &mut self,
+            _after: u64,
+            _limit: usize,
+        ) -> Result<Vec<JournalEntry>, Self::Error> {
+            Ok(std::mem::take(&mut self.entries))
+        }
+    }
 
     /// Five minutes of just-over-threshold writes fire the rate trigger.
     #[test]
@@ -228,5 +266,65 @@ mod tests {
         router.cut_over(1, 2, b"m".to_vec(), permit).expect("route cutover");
         assert_eq!(router.route(b"a"), Some(2));
         assert_eq!(router.route(b"z"), Some(1));
+    }
+
+    /// A checkpoint is advanced even when a page contains only rows outside
+    /// the moved range; otherwise catch-up loops forever on that page.
+    #[test]
+    fn catch_up_advances_checkpoint_and_copies_tombstones() {
+        let mut reader = OnePageJournal {
+            entries: vec![
+                JournalEntry::new(4, b"z".to_vec(), b"outside".to_vec()),
+                JournalEntry::delete(5, b"a".to_vec()),
+            ],
+        };
+        let mut writer = RecordingJournal::default();
+        let mut catch_up = JournalCatchUp::for_range(3, b"m".to_vec()).expect("bound");
+        assert_eq!(catch_up.step(&mut reader, &mut writer, 100), Ok(2));
+        assert_eq!(catch_up.applied_through(), 5);
+        assert_eq!(writer.checkpoint, 5);
+        assert_eq!(writer.calls, 1);
+        assert_eq!(writer.rows[0].operation(), JournalOperation::Delete);
+    }
+
+    /// A stale generation cannot install a second split, while an exact
+    /// replay of the committed route remains idempotent.
+    #[test]
+    fn route_generation_is_compare_and_swap_and_retry_safe() {
+        let mut fence = WriterFence::new();
+        fence.begin_drain(1).expect("drain");
+        fence.note_acked(1).expect("ack");
+        let permit = fence.try_fence(1).expect("fence");
+        let mut router = ShardRouter::single(1);
+        assert_eq!(router.table().generation(), 0);
+        assert_eq!(router.cut_over_at(0, 1, 2, b"m".to_vec(), &fence, permit), Ok(1));
+        assert_eq!(router.cut_over_at(0, 1, 2, b"m".to_vec(), &fence, permit), Ok(1));
+        assert!(matches!(
+            router.cut_over_at(0, 1, 3, b"g".to_vec(), &fence, permit),
+            Err(RouteError::GenerationMismatch { .. })
+        ));
+    }
+
+    /// Context survives a process restart and carries placement/frontier
+    /// facts needed by an orchestrator before route installation.
+    #[test]
+    fn split_context_round_trips_durably() {
+        let context = SplitContext::new(7, 9, 1, 2, 11, 13);
+        let split = ShardSplit::plan_with_context(b"m".to_vec(), context).expect("plan");
+        let restored = ShardSplit::from_durable_state(
+            DurableSplitState::decode(&split.durable_state().encode()).expect("decode"),
+        )
+        .expect("restore");
+        assert_eq!(restored.context(), Some(context));
+    }
+
+    #[test]
+    fn copy_cursor_restarts_without_losing_the_range_position() {
+        let copier = RangeCopier::new(b"m".to_vec()).expect("bound");
+        let checkpoint = copier.checkpoint();
+        let resumed = RangeCopier::resume(checkpoint).expect("resume");
+        assert_eq!(resumed.upper(), b"m");
+        assert_eq!(resumed.through(), 0);
+        assert_eq!(resumed.copied(), 0);
     }
 }

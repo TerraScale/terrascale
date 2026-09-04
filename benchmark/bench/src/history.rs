@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use serde_json::Value;
 
@@ -262,6 +262,7 @@ pub fn run(arguments: impl Iterator<Item = String>) -> Result<PathBuf, String> {
         output.push('\n');
     }
     let path = write_results(&output_path, &output)?;
+    render_family_sections(&path, &results)?;
     println!("wrote {} with {} rows", path.display(), WORKLOADS.len() * TARGETS.len());
     Ok(path)
 }
@@ -770,10 +771,194 @@ fn replace_history_section(existing: &str, replacement: &str) -> String {
     output
 }
 
+/// Publishes the four family reports beside the existing point-operation
+/// section. Each family owns a marker, so a later render cannot overwrite a
+/// sibling table. Missing live adapters remain explicitly unavailable.
+fn render_family_sections(path: &Path, results: &Path) -> Result<(), String> {
+    let mut document = fs::read_to_string(path)
+        .map_err(|error| format!("read family benchmark results: {error}"))?;
+    let root = results.parent().unwrap_or_else(|| Path::new("bench"));
+    let indexed = root.join("indexed-query.md");
+    let sections = [
+        ("indexed-query", render_indexed_query(&indexed)),
+        ("ingest", render_ingest(results)),
+        ("auto-indexing", render_auto_index(results)),
+        ("sync", render_sync(results)),
+    ];
+    for (family, section) in sections {
+        let begin = format!("<!-- E-13 {family} BEGIN -->");
+        let end = format!("<!-- E-13 {family} END -->");
+        document = splice_marker(&document, &begin, &end, &section);
+        let status = if section.contains("| complete") {
+            "complete"
+        } else if section.contains("| failed") {
+            "failed"
+        } else {
+            "unavailable"
+        };
+        let status_begin = format!("<!-- E-13 {family} STATUS -->");
+        let status_end = format!("<!-- E-13 {family} STATUS-END -->");
+        document = replace_status(&document, &status_begin, &status_end, status);
+    }
+    fs::write(path, document).map_err(|error| format!("write family benchmark results: {error}"))
+}
+
+fn splice_marker(existing: &str, begin: &str, end: &str, section: &str) -> String {
+    let replacement = format!("{begin}\n\n{section}{end}\n");
+    let Some(start) = existing.find(begin) else {
+        return format!("{}\n\n{replacement}", existing.trim_end_matches('\n'));
+    };
+    let content_start = start + begin.len();
+    let Some(end_offset) = existing[content_start..].find(end) else {
+        return format!("{}\n\n{replacement}", existing.trim_end_matches('\n'));
+    };
+    let end_offset = content_start + end_offset + end.len();
+    format!("{}{}{}", &existing[..start], replacement, &existing[end_offset..])
+}
+
+fn replace_status(existing: &str, begin: &str, end: &str, status: &str) -> String {
+    let Some(start) = existing.find(begin) else { return existing.to_owned() };
+    let value_start = start + begin.len();
+    let Some(end_offset) = existing[value_start..].find(end) else { return existing.to_owned() };
+    let end_start = value_start + end_offset;
+    format!("{}{}{}{}", &existing[..value_start], status, end, &existing[end_start + end.len()..])
+}
+
+fn render_indexed_query(path: &Path) -> String {
+    match fs::read_to_string(path) {
+        Ok(report) => format!("{report}\n"),
+        Err(_) => "### Indexed query\n\nStatus: **unavailable** — no served-boundary report was retained.\n\n| side | status | p50 us | p95 us | p99 us | rows returned | rows examined | pages read | logical work |\n| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n| terrabase | unavailable | - | - | - | - | - | - | - |\n| postgresql-jsonb | unavailable | - | - | - | - | - | - | - |\n| ravendb | unavailable | - | - | - | - | - | - | - |\n\n".to_owned(),
+    }
+}
+
+fn latest_json(results: &Path, prefix: &str) -> Option<(PathBuf, Value)> {
+    let mut paths = fs::read_dir(results)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(prefix) && name.ends_with(".json"))
+        })
+        .collect::<Vec<_>>();
+    paths.sort_by_key(|path| path.file_name().map(|name| name.to_string_lossy().into_owned()));
+    let path = paths.pop()?;
+    let value = serde_json::from_str(&fs::read_to_string(&path).ok()?).ok()?;
+    Some((path, value))
+}
+
+fn render_ingest(results: &Path) -> String {
+    let mut output = String::from(
+        "### Bulk ingest\n\n| target | topology | status | documents/sample | docs/s | p50 batch us | p95 batch us | p99 batch us |\n| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |\n",
+    );
+    for target in ["terrabase", "postgresql-jsonb", "ravendb"] {
+        for topology in ["single-node", "rf2"] {
+            let prefix = format!("ingest-{target}-{topology}-");
+            let Some((_, value)) = latest_json(results, &prefix) else {
+                output.push_str(&format!(
+                    "| {target} | {topology} | unavailable | - | - | - | - | - |\n"
+                ));
+                continue;
+            };
+            if value.get("status").and_then(Value::as_str) != Some("complete") {
+                output
+                    .push_str(&format!("| {target} | {topology} | failed | - | - | - | - | - |\n"));
+                continue;
+            }
+            let samples =
+                value.get("samples").and_then(Value::as_array).cloned().unwrap_or_default();
+            let median_field = |name: &str| -> Option<f64> {
+                let mut values = samples
+                    .iter()
+                    .filter_map(|sample| sample.get(name).and_then(Value::as_f64))
+                    .collect::<Vec<_>>();
+                values.sort_by(f64::total_cmp);
+                values.get(values.len() / 2).copied()
+            };
+            let fmt = |value: Option<f64>| {
+                value.map_or_else(|| "-".to_owned(), |value| format!("{value:.2}"))
+            };
+            output.push_str(&format!(
+                "| {target} | {topology} | complete | {} | {} | {} | {} | {} |\n",
+                fmt(median_field("documents")),
+                fmt(median_field("throughput_documents_per_s")),
+                fmt(median_field("p50_batch_us")),
+                fmt(median_field("p95_batch_us")),
+                fmt(median_field("p99_batch_us"))
+            ));
+        }
+    }
+    output.push_str("\nThe launch-member contract is exactly 2 OCPU / 12 GiB; single-node and RF=2 rows never share a comparison group.\n\n");
+    output
+}
+
+fn render_auto_index(results: &Path) -> String {
+    let Some((path, value)) = latest_json(results, "auto-index-") else {
+        return "### Auto-indexing\n\nStatus: **unavailable** — no served-boundary receipt was retained.\n\n| phase | subject | value |\n| --- | --- | --- |\n| all | all | unavailable |\n\n".to_owned();
+    };
+    let status = value.get("status").and_then(Value::as_str).unwrap_or("failed");
+    let topology = value.get("topology").and_then(Value::as_str).unwrap_or("unknown");
+    let documents = value
+        .get("documents")
+        .and_then(Value::as_u64)
+        .map_or_else(|| "-".to_owned(), |value| value.to_string());
+    let mut output = format!(
+        "### Auto-indexing\n\nStatus: **{status}** · topology: **{topology}** · documents: **{documents}** · receipt: `{}`\n\n| phase | subject | value |\n| --- | --- | --- |\n",
+        path.display()
+    );
+    if let Some(facts) = value.get("facts").and_then(Value::as_array) {
+        for fact in facts {
+            output.push_str(&format!(
+                "| {} | {} | {} |\n",
+                fact.get("phase").and_then(Value::as_str).unwrap_or("-"),
+                fact.get("subject").and_then(Value::as_str).unwrap_or("-"),
+                fact.get("value").and_then(Value::as_str).unwrap_or("-")
+            ));
+        }
+    } else {
+        output.push_str("| all | all | no endpoint facts retained |\n");
+    }
+    output.push_str("\nRequired gates: 5% regression rollback, fixed-point replay, 12 visible-index cap, and no more than 2× no-index write maintenance cost.\n\n");
+    output
+}
+
+fn render_sync(results: &Path) -> String {
+    let Some((path, value)) = latest_json(results, "sync-") else {
+        return "### Sync\n\nStatus: **unavailable** — no served-boundary receipt was retained.\n\n| topology | lane | status | p50 ms | p99 ms | samples |\n| --- | --- | --- | ---: | ---: | ---: |\n| unknown | local_websocket | unavailable | - | - | - |\n| unknown | cdn_http | unavailable | - | - | - |\n| unknown | cross_region | unavailable | - | - | - |\n\n".to_owned();
+    };
+    let topology = value.get("topology").and_then(Value::as_str).unwrap_or("unknown");
+    let mut output = format!(
+        "### Sync\n\nReceipt: `{}` · topology: **{topology}** · launch member: **2 OCPU / 12 GiB**\n\n| lane | status | p50 ms | p99 ms | samples |\n| --- | --- | ---: | ---: | ---: |\n",
+        path.display()
+    );
+    if let Some(verdicts) = value.get("verdicts").and_then(Value::as_array) {
+        for verdict in verdicts {
+            let p50 = verdict
+                .get("p50_ms")
+                .and_then(Value::as_f64)
+                .map_or_else(|| "-".to_owned(), |value| format!("{value:.3}"));
+            let p99 = verdict
+                .get("p99_ms")
+                .and_then(Value::as_f64)
+                .map_or_else(|| "-".to_owned(), |value| format!("{value:.3}"));
+            let samples = verdict.get("samples_ms").and_then(Value::as_array).map_or(0, Vec::len);
+            output.push_str(&format!(
+                "| {} | {} | {p50} | {p99} | {samples} |\n",
+                verdict.get("lane").and_then(Value::as_str).unwrap_or("-"),
+                verdict.get("status").and_then(Value::as_str).unwrap_or("failed")
+            ));
+        }
+    }
+    output.push_str("\nMissing services are unavailable; threshold breaches are failures and never synthetic passes.\n\n");
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    use std::time::SystemTime;
 
     fn temporary_results() -> PathBuf {
         let path = std::env::temp_dir().join(format!(

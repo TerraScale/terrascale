@@ -19,11 +19,10 @@ mod provider;
 pub use local_file::LocalFileKeyProvider;
 pub use oci_vault::UnconfiguredOciVaultProvider;
 pub use provider::{
-    ArtifactKind, DatabaseKeyHierarchy, DatabaseKeyLease, DatabaseKeyVersion,
-    KeyProviderIdentity, KeyPurpose, KeyRotation, KeyScope, KeyVersionMetadata,
-    KeyWrappingProvider, MAX_DATABASE_KEY_LEASE, MAX_WRAPPED_KEY_BYTES,
-    ProductionCapabilityStatus, ProviderCapability, WrappedDatabaseKey,
-    production_capability_status,
+    ArtifactKind, DatabaseKeyHierarchy, DatabaseKeyLease, DatabaseKeyVersion, KeyProviderIdentity,
+    KeyPurpose, KeyRotation, KeyScope, KeyVersionMetadata, KeyWrappingProvider,
+    MAX_DATABASE_KEY_LEASE, MAX_WRAPPED_KEY_BYTES, ProductionCapabilityStatus, ProviderCapability,
+    WrappedDatabaseKey, production_capability_status,
 };
 
 const AES_TAG_LEN: usize = 16;

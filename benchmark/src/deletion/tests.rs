@@ -667,3 +667,31 @@ fn retained_fields_union_across_concurrent_holds() {
     // After the longer hold lapses, nothing is retained.
     assert!(workflow.retained_fields(T0 + 31 * DAY).is_empty());
 }
+
+#[test]
+fn future_hold_does_not_block_access_before_recording() {
+    let mut workflow = admitted();
+    workflow.record_hold(legal_hold(HoldKind::Legal, T0 + 10, T0 + DAY)).expect("hold");
+    assert!(!workflow.ordinary_access_blocked(T0 + 9));
+    assert!(workflow.retained_fields(T0 + 9).is_empty());
+    assert!(workflow.ordinary_access_blocked(T0 + 10));
+}
+
+#[test]
+fn future_receipt_cannot_verify_before_it_happens() {
+    let mut workflow = admitted();
+    record_all(&mut workflow, T0 + 10);
+    assert_eq!(workflow.verify(T0 + 9), Err(DeletionError::ReceiptInFuture));
+    assert_eq!(workflow.state(), DeletionState::Executing);
+    workflow.verify(T0 + 10).expect("receipt is now observable");
+}
+
+#[test]
+fn admission_replay_with_identical_facts_is_idempotent() {
+    let mut workflow = new_workflow();
+    let admission = GlobalDurableAdmission::new(selected(), T0 + 1);
+    let plan = full_plan();
+    workflow.admit(admission.clone(), plan.clone()).expect("first admission");
+    workflow.admit(admission, plan).expect("replayed admission");
+    assert_eq!(workflow.state(), DeletionState::Admitted);
+}

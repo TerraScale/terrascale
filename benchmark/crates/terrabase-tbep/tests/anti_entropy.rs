@@ -88,13 +88,14 @@ fn mutation(
     let id = JournalRowId::new(origin, sequence).unwrap();
     let record = ReplicatedRecord {
         collection: CollectionName::try_new("orders").unwrap(),
-        id: DocumentId::try_new(format!("doc-{sequence}")).unwrap(),
+        id: DocumentId::try_new(&format!("doc-{sequence}")).unwrap(),
         body,
         deleted: false,
         commit_ulid: format!("commit-{sequence}"),
         hlc: sequence,
         origin: origin.into(),
         origin_sequence: sequence,
+        context: Vec::new(),
     };
     AuthenticatedMutation::new(tenant, DurableJournalRow::new(id, [sequence as u8; 32]), record)
 }

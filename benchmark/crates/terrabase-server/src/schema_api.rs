@@ -1,0 +1,1550 @@
+//! Typed schema management for the public API.
+//!
+//! This module owns the contract represented by `terrascale.schema.json` and
+//! the small control-plane state needed to apply it.  It deliberately does
+//! not open a database, issue SQL, or mutate documents.  A member supplies a
+//! [`SchemaDurablePort`] backed by its durable control store; if that port is
+//! absent, every operation fails closed with an actionable unavailable error.
+//!
+//! The HTTP router is intentionally independent of `crate::api::ApiState`.
+//! [`SchemaHttpState`] is the parent-wiring seam: the parent supplies the
+//! durable service and a database identity resolver, then merges
+//! [`router`] into its authenticated route table.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::sync::Arc;
+
+use axum::Router;
+use axum::body::Body;
+use axum::extract::{Path, State};
+use axum::http::header::{CONTENT_TYPE, HeaderValue};
+use axum::http::header::{ETAG, IF_MATCH};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+/// The largest accepted schema document in bytes.
+pub const MAX_SCHEMA_BYTES: usize = 512 * 1024;
+/// The largest accepted collection name, field name, or index name.
+pub const MAX_IDENTIFIER_BYTES: usize = 255;
+/// The largest number of fields in one collection.
+pub const MAX_FIELDS: usize = 512;
+/// The largest number of collections in one schema document.
+pub const MAX_COLLECTIONS: usize = 512;
+/// The largest number of explicit indexes in one collection.
+pub const MAX_INDEXES: usize = 256;
+/// The largest number of rename operations in one apply.
+pub const MAX_RENAMES: usize = 256;
+/// The largest number of remembered idempotency keys per target.
+pub const MAX_IDEMPOTENCY_KEYS: usize = 128;
+/// The largest number of migration steps retained in one status record.
+pub const MAX_MIGRATION_STEPS: usize = 512;
+/// The largest idempotency key accepted by the service.
+pub const MAX_IDEMPOTENCY_KEY_BYTES: usize = 256;
+/// JavaScript's `Number.MAX_SAFE_INTEGER`, used by the schema contract.
+pub const MAX_SCHEMA_VERSION: u64 = 9_007_199_254_740_991;
+
+/// A durable target.  `branch` is part of the identity, not a mutable field
+/// in a schema record, so a schema can never accidentally cross a branch.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct SchemaTarget {
+    /// The immutable database identifier.
+    pub database: String,
+    /// The immutable branch pin (`main`, or a cloud development branch).
+    pub branch: String,
+    /// The collection whose schema is managed.
+    pub collection: String,
+}
+
+/// Database identity supplied by the control plane.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DatabaseIdentity {
+    /// Immutable database identifier/incarnation.
+    pub database_id: String,
+    /// Immutable placement lock and selected regions, in control-plane order.
+    pub placement: Vec<String>,
+}
+
+/// The supported scalar and CRDT field types in `terrascale.schema.json`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FieldType {
+    /// UTF-8 string.
+    String,
+    /// Signed integer.  The wire alias `integer` is canonicalized to `int`.
+    #[serde(rename = "int", alias = "integer")]
+    Int,
+    /// IEEE floating-point number.
+    Float,
+    /// Boolean.  The wire alias `boolean` is canonicalized to `bool`.
+    #[serde(rename = "bool", alias = "boolean")]
+    Bool,
+    /// Opaque bytes.
+    Bytes,
+    /// Arbitrary JSON value.
+    Json,
+    /// RFC3339 timestamp.
+    Timestamp,
+    /// Full-text string.
+    Text,
+    /// PN counter CRDT.
+    #[serde(rename = "counter-pn", alias = "pn-counter")]
+    CounterPn,
+    /// Add-wins set CRDT.
+    #[serde(rename = "set-add-wins", alias = "add-wins-set")]
+    SetAddWins,
+    /// Remove-wins set CRDT.
+    #[serde(rename = "set-remove-wins", alias = "remove-wins-set")]
+    SetRemoveWins,
+    /// Multi-value register CRDT.
+    #[serde(rename = "register-mv", alias = "mv-register")]
+    RegisterMv,
+}
+
+impl FieldType {
+    fn is_crdt(self) -> bool {
+        matches!(self, Self::CounterPn | Self::SetAddWins | Self::SetRemoveWins | Self::RegisterMv)
+    }
+
+    fn is_fts(self) -> bool {
+        matches!(self, Self::String | Self::Text)
+    }
+}
+
+/// Collection-level merge policy.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MergePolicy {
+    /// Remove wins when concurrent changes touch one field.
+    #[default]
+    RemoveWins,
+    /// HLC is used as the deterministic tiebreaker.
+    HlcTiebreak,
+    /// Last write wins.
+    LastWriteWins,
+}
+
+/// A typed field descriptor.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FieldDescriptor {
+    /// Field identifier.
+    pub name: String,
+    /// Field value type.
+    #[serde(alias = "field_type")]
+    pub r#type: FieldType,
+    /// Whether writes must contain this field.
+    #[serde(default = "default_true")]
+    pub required: bool,
+    /// Whether the extracted value is indexed.
+    #[serde(default)]
+    pub indexed: bool,
+    /// Whether the extracted value has a uniqueness constraint.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub unique: bool,
+    /// Optional field-level CRDT merge kernel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "mergePolicy", alias = "merge_policy", alias = "merge")]
+    pub merge_policy: Option<FieldType>,
+    /// Marks this field as an FTS field; normalization turns it into an FTS
+    /// index descriptor and omits this builder-only flag from canonical JSON.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub fts: bool,
+}
+
+/// An ordinary or FTS index descriptor.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IndexDescriptor {
+    /// Stable index identifier.
+    pub name: String,
+    /// Ordered extracted fields in the index key.
+    pub fields: Vec<String>,
+    /// Whether duplicate values are refused within a region.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub unique: bool,
+    /// Index implementation kind; omitted means the canonical B-tree kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<IndexKind>,
+}
+
+/// Index implementation kind.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum IndexKind {
+    /// Extracted-value B-tree index.
+    Btree,
+    /// Full-text search index.
+    Fts,
+}
+
+impl<'de> Deserialize<'de> for IndexKind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        match value.as_str() {
+            "btree" | "value" => Ok(Self::Btree),
+            "fts" | "text" | "full-text" => Ok(Self::Fts),
+            _ => Err(serde::de::Error::custom(format!("unknown index kind {value:?}"))),
+        }
+    }
+}
+
+/// Explicit full-text descriptor.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FtsDescriptor {
+    /// Fields indexed for full-text search.
+    pub fields: Vec<String>,
+}
+
+impl<'de> Deserialize<'de> for FtsDescriptor {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        match value {
+            Value::String(field) => Ok(Self { fields: vec![field] }),
+            Value::Array(fields) => fields
+                .into_iter()
+                .map(|field| {
+                    field
+                        .as_str()
+                        .map(ToOwned::to_owned)
+                        .ok_or_else(|| serde::de::Error::custom("FTS fields must be strings"))
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(|fields| Self { fields }),
+            Value::Object(mut object) => {
+                let fields = object
+                    .remove("fields")
+                    .ok_or_else(|| serde::de::Error::custom("FTS object must contain fields"))?;
+                if !object.is_empty() {
+                    return Err(serde::de::Error::custom("unknown FTS property"));
+                }
+                let fields = fields
+                    .as_array()
+                    .ok_or_else(|| serde::de::Error::custom("FTS fields must be an array"))?;
+                fields
+                    .iter()
+                    .map(|field| {
+                        field
+                            .as_str()
+                            .map(ToOwned::to_owned)
+                            .ok_or_else(|| serde::de::Error::custom("FTS fields must be strings"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(|fields| Self { fields })
+            }
+            _ => Err(serde::de::Error::custom("FTS must be a field, array, or object")),
+        }
+    }
+}
+
+/// Explicit TTL descriptor.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TtlDescriptor {
+    /// Timestamp field used as the expiry deadline.
+    pub field: String,
+}
+
+/// A first-class field rename migration.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FieldRename {
+    /// Existing field name in stored documents.
+    pub from: String,
+    /// New field name in the target schema.
+    pub to: String,
+}
+
+/// Canonical collection schema, matching the SDK's `CollectionSchema`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CollectionSchema {
+    /// Collection identifier.
+    pub name: String,
+    /// Typed extracted field descriptors.
+    #[serde(default)]
+    pub fields: Vec<FieldDescriptor>,
+    /// Explicit B-tree and FTS index descriptors.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub indexes: Vec<IndexDescriptor>,
+    /// Optional full-text descriptor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fts: Option<FtsDescriptor>,
+    /// Optional TTL descriptor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<TtlDescriptor>,
+    /// Rename operations from the immediately previous schema.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub renames: Vec<FieldRename>,
+    /// Schema version pinned by the branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u64>,
+    /// Retained history window, in days.
+    #[serde(default = "default_history_days")]
+    #[serde(rename = "historyRetentionDays", alias = "historyWindowDays", alias = "history")]
+    pub history_retention_days: u32,
+    /// Collection-level CRDT merge policy.
+    #[serde(default)]
+    #[serde(rename = "mergePolicy", alias = "merge")]
+    pub merge_policy: MergePolicy,
+}
+
+/// The complete `terrascale.schema.json` document used by codegen and push.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchemaJson {
+    /// Collection declarations in canonical name order.
+    pub collections: Vec<CollectionSchema>,
+    /// Optional document format version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u64>,
+}
+
+/// Normalize and validate a complete schema document using the SDK contract.
+pub fn normalize_schema_json(mut schema: SchemaJson) -> Result<SchemaJson, SchemaError> {
+    if let Some(version) = schema.version {
+        validate_version(version)?;
+    }
+    if schema.collections.len() > MAX_COLLECTIONS {
+        return Err(SchemaError::invalid("schema declares too many collections"));
+    }
+    let mut names = BTreeSet::new();
+    for collection in &mut schema.collections {
+        *collection = normalize_schema(collection.clone())?;
+        if !names.insert(collection.name.clone()) {
+            return Err(SchemaError::invalid(format!(
+                "duplicate collection '{}'",
+                collection.name
+            )));
+        }
+    }
+    schema.collections.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(schema)
+}
+
+/// The durable response to an apply operation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SchemaDocument {
+    /// Target identity.
+    pub target: SchemaTarget,
+    /// Immutable database identity observed when this record was created.
+    pub identity: DatabaseIdentity,
+    /// Canonical schema JSON.
+    pub schema: CollectionSchema,
+    /// Monotonic HTTP/API generation used by `If-Match`.
+    pub generation: u64,
+    /// Durable branch-pinned schema version.
+    pub schema_version: u64,
+    /// Current resumable migration, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub migration: Option<MigrationStatus>,
+}
+
+/// Resumable migration state.  The worker that processes documents reports
+/// progress through [`SchemaService::record_backfill_progress`].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MigrationStatus {
+    /// Stable migration operation identifier.
+    pub operation_id: String,
+    /// Migration lifecycle state.
+    pub state: MigrationState,
+    /// Ordered rename/backfill steps.
+    pub steps: Vec<MigrationStep>,
+    /// Number of documents known to the worker at operation creation.
+    pub total: u64,
+    /// Number of documents durably acknowledged by the worker.
+    pub completed: u64,
+    /// Opaque resume cursor.  It is never interpreted as SQL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    /// Actionable status text for dashboard/CLI consumers.
+    pub message: String,
+}
+
+/// Migration lifecycle state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MigrationState {
+    /// Waiting for a backfill worker.
+    Pending,
+    /// Worker has reported progress.
+    Running,
+    /// All steps completed.
+    Complete,
+    /// Worker stopped and supplied an error.
+    Failed,
+}
+
+/// One bounded migration step.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MigrationStep {
+    /// Step kind (`field_rename`, `index_backfill`, or `ttl_backfill`).
+    pub kind: String,
+    /// Source field for a rename, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// Destination field for a rename, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
+    /// Index name for an index backfill, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<String>,
+}
+
+/// A successful schema apply result.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ApplySchemaResponse {
+    /// The resulting canonical schema document.
+    pub document: SchemaDocument,
+    /// `true` when this request replayed an existing idempotency result.
+    pub idempotent_replay: bool,
+}
+
+/// Durable storage error from the parent member.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DurablePortError {
+    /// Stable internal error detail, suitable for logs but not secrets.
+    pub detail: String,
+}
+
+impl fmt::Display for DurablePortError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.detail.fmt(formatter)
+    }
+}
+
+impl std::error::Error for DurablePortError {}
+
+/// Result of a compare-and-set commit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DurableCommit {
+    /// The record was committed.
+    Committed,
+    /// Another writer changed the generation first.
+    GenerationConflict,
+}
+
+/// Explicit durable storage seam.  Implementations must use the member's
+/// already-approved durable store; SQL DDL and DML are intentionally outside
+/// this interface and are never generated by this module.
+pub trait SchemaDurablePort: Send + Sync {
+    /// Load one complete record, including idempotency and migration state.
+    fn load(&self, target: &SchemaTarget) -> Result<Option<DurableSchemaRecord>, DurablePortError>;
+    /// Atomically replace one record if its generation still equals
+    /// `expected_generation`.  `None` means the record must not yet exist.
+    fn commit(
+        &self,
+        target: &SchemaTarget,
+        expected_generation: Option<u64>,
+        record: DurableSchemaRecord,
+    ) -> Result<DurableCommit, DurablePortError>;
+}
+
+/// Durable envelope persisted by [`SchemaDurablePort`].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DurableSchemaRecord {
+    /// Public schema document.
+    pub document: SchemaDocument,
+    /// Idempotency key → canonical request digest and response document.
+    #[serde(default)]
+    pub idempotency: BTreeMap<String, IdempotencyRecord>,
+}
+
+/// A remembered idempotent response.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct IdempotencyRecord {
+    /// BLAKE3 digest of target, identity, expected generation, and schema.
+    pub digest: String,
+    /// Applied document returned to the original caller.
+    pub response: SchemaDocument,
+}
+
+/// Service-level error with a stable code and actionable fix.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SchemaError {
+    /// HTTP-compatible status.
+    pub status: u16,
+    /// Machine-readable error code.
+    pub code: String,
+    /// Bounded human-readable detail.
+    pub message: String,
+    /// One-line remediation.
+    pub fix: String,
+}
+
+impl SchemaError {
+    fn new(status: u16, code: &str, message: impl Into<String>, fix: impl Into<String>) -> Self {
+        Self {
+            status,
+            code: code.to_owned(),
+            message: bounded(message.into(), 512),
+            fix: bounded(fix.into(), 512),
+        }
+    }
+
+    fn invalid(message: impl Into<String>) -> Self {
+        Self::new(
+            422,
+            "invalid_schema",
+            message,
+            "run terrascale diff and fix the schema before terrascale push",
+        )
+    }
+}
+
+/// Database identity resolver supplied by the parent HTTP layer.
+pub trait SchemaIdentityPort: Send + Sync {
+    /// Resolve the immutable database identity and placement for a request.
+    fn resolve(&self, database: &str, branch: &str) -> Result<DatabaseIdentity, SchemaError>;
+}
+
+/// Schema service state suitable for `axum::State`.
+#[derive(Clone)]
+pub struct SchemaHttpState {
+    /// Durable schema service.
+    pub service: Arc<SchemaService>,
+    /// Parent-owned database identity resolver.
+    pub identity: Option<Arc<dyn SchemaIdentityPort>>,
+}
+
+impl SchemaHttpState {
+    /// Construct state.  `None` identity is deliberate fail-closed mode.
+    #[must_use]
+    pub fn new(service: Arc<SchemaService>, identity: Option<Arc<dyn SchemaIdentityPort>>) -> Self {
+        Self { service, identity }
+    }
+}
+
+/// Durable schema service.
+pub struct SchemaService {
+    store: Option<Arc<dyn SchemaDurablePort>>,
+}
+
+impl SchemaService {
+    /// Construct a service.  A missing port is retained as unavailable rather
+    /// than replaced with process-local state.
+    #[must_use]
+    pub fn new(store: Option<Arc<dyn SchemaDurablePort>>) -> Self {
+        Self { store }
+    }
+
+    /// Read a schema after checking the immutable database identity.
+    pub fn get(
+        &self,
+        target: &SchemaTarget,
+        identity: &DatabaseIdentity,
+    ) -> Result<SchemaDocument, SchemaError> {
+        validate_target(target)?;
+        validate_identity(identity)?;
+        let record = self.load(target)?;
+        let Some(record) = record else {
+            return Err(SchemaError::new(
+                404,
+                "schema_not_found",
+                "no schema is pinned for this collection",
+                "apply terrascale.schema.json with terrascale push",
+            ));
+        };
+        ensure_identity(&record.document.identity, identity)?;
+        Ok(record.document)
+    }
+
+    /// Apply a canonicalizable collection schema with idempotency and an
+    /// optimistic generation precondition.  All validation, normalization,
+    /// and migration planning happen before the durable compare-and-set.
+    pub fn apply(&self, request: ApplySchemaRequest) -> Result<ApplySchemaResponse, SchemaError> {
+        validate_target(&request.target)?;
+        validate_identity(&request.identity)?;
+        validate_idempotency_key(&request.idempotency_key)?;
+        let schema = normalize_schema(request.schema)?;
+        if schema.name != request.target.collection {
+            return Err(SchemaError::invalid(format!(
+                "schema collection '{}' does not match target '{}'",
+                schema.name, request.target.collection
+            )));
+        }
+        let digest = request_digest(
+            &request.target,
+            &request.identity,
+            request.expected_generation,
+            &schema,
+        )?;
+        let current = self.load(&request.target)?;
+        if let Some(record) = current.as_ref() {
+            ensure_identity(&record.document.identity, &request.identity)?;
+            if let Some(previous) = record.idempotency.get(&request.idempotency_key) {
+                if previous.digest == digest {
+                    return Ok(ApplySchemaResponse {
+                        document: previous.response.clone(),
+                        idempotent_replay: true,
+                    });
+                }
+                return Err(SchemaError::new(
+                    409,
+                    "idempotency_conflict",
+                    "idempotency key was already used for a different schema request",
+                    "retry with a new Idempotency-Key or replay the original request",
+                ));
+            }
+        }
+        let current_generation = current.as_ref().map_or(0, |record| record.document.generation);
+        if request.expected_generation.is_some_and(|expected| expected != current_generation) {
+            return Err(SchemaError::new(
+                412,
+                "generation_mismatch",
+                format!(
+                    "schema generation is {current_generation}, not the requested precondition"
+                ),
+                "GET the schema, then retry with its ETag in If-Match",
+            ));
+        }
+        let next_version = next_schema_version(current.as_ref(), schema.version)?;
+        let migration = plan_migration(
+            current.as_ref().map(|record| &record.document.schema),
+            &schema,
+            &request.target,
+        )?;
+        let document = SchemaDocument {
+            target: request.target.clone(),
+            identity: request.identity.clone(),
+            schema,
+            generation: current_generation.saturating_add(1),
+            schema_version: next_version,
+            migration,
+        };
+        let mut idempotency = current.map_or_else(BTreeMap::new, |record| record.idempotency);
+        idempotency.insert(
+            request.idempotency_key,
+            IdempotencyRecord { digest, response: document.clone() },
+        );
+        while idempotency.len() > MAX_IDEMPOTENCY_KEYS {
+            let Some(key) = idempotency.keys().next().cloned() else { break };
+            idempotency.remove(&key);
+        }
+        let expected = if document.generation == 1 { None } else { Some(current_generation) };
+        let outcome = self
+            .store()?
+            .commit(
+                &request.target,
+                expected,
+                DurableSchemaRecord { document: document.clone(), idempotency },
+            )
+            .map_err(|error| durable_error(&error))?;
+        if outcome == DurableCommit::GenerationConflict {
+            return Err(SchemaError::new(
+                409,
+                "generation_conflict",
+                "another schema writer committed first",
+                "GET the schema and retry with a fresh If-Match and Idempotency-Key",
+            ));
+        }
+        Ok(ApplySchemaResponse { document, idempotent_replay: false })
+    }
+
+    /// Record bounded worker progress for a rename/index/TTL backfill.  The
+    /// worker supplies only counters and an opaque cursor; this service never
+    /// executes a document update or SQL statement.
+    pub fn record_backfill_progress(
+        &self,
+        progress: BackfillProgress,
+    ) -> Result<SchemaDocument, SchemaError> {
+        validate_target(&progress.target)?;
+        validate_idempotency_key(&progress.idempotency_key)?;
+        if progress.total > 10_000_000_000_000 || progress.completed > progress.total {
+            return Err(SchemaError::invalid("backfill counters exceed their safe bounds"));
+        }
+        if progress.next_cursor.as_ref().is_some_and(|cursor| cursor.len() > MAX_SCHEMA_BYTES) {
+            return Err(SchemaError::invalid("backfill cursor is too large"));
+        }
+        let digest = progress_digest(&progress)?;
+        let current = self.load(&progress.target)?.ok_or_else(|| {
+            SchemaError::new(
+                404,
+                "schema_not_found",
+                "cannot update backfill status without a schema",
+                "apply a schema before starting its backfill",
+            )
+        })?;
+        if current.document.generation != progress.generation {
+            return Err(SchemaError::new(
+                412,
+                "generation_mismatch",
+                "backfill reports an obsolete schema generation",
+                "restart the worker from the latest schema migration status",
+            ));
+        }
+        let Some(mut migration) = current.document.migration.clone() else {
+            return Err(SchemaError::new(
+                409,
+                "no_backfill",
+                "the schema has no resumable backfill",
+                "refresh migration status and apply a schema change that requires backfill",
+            ));
+        };
+        if migration.operation_id != progress.operation_id {
+            return Err(SchemaError::new(
+                409,
+                "backfill_mismatch",
+                "backfill operation does not match the pinned migration",
+                "use the operation_id returned by GET schema",
+            ));
+        }
+        if let Some(previous) = current.idempotency.get(&progress.idempotency_key) {
+            if previous.digest == digest {
+                return Ok(previous.response.clone());
+            }
+            return Err(SchemaError::new(
+                409,
+                "idempotency_conflict",
+                "backfill idempotency key was already used for a different progress update",
+                "retry the original progress update or use a new worker key",
+            ));
+        }
+        if progress.completed < migration.completed
+            || (migration.total != 0 && progress.total < migration.total)
+        {
+            return Err(SchemaError::new(
+                409,
+                "backfill_regression",
+                "backfill progress cannot move backwards",
+                "resume from the latest durable cursor and report monotonic counters",
+            ));
+        }
+        migration.total = progress.total;
+        migration.completed = progress.completed;
+        migration.next_cursor = progress.next_cursor;
+        migration.state = if progress.failed {
+            MigrationState::Failed
+        } else if progress.completed == progress.total {
+            MigrationState::Complete
+        } else {
+            MigrationState::Running
+        };
+        migration.message = if progress.failed {
+            "backfill stopped; inspect the worker error and retry".into()
+        } else if migration.state == MigrationState::Complete {
+            "backfill complete; schema generation is ready".into()
+        } else {
+            "backfill is resumable from next_cursor".into()
+        };
+        let mut document = current.document;
+        document.migration = Some(migration);
+        let mut idempotency = current.idempotency;
+        idempotency.insert(
+            progress.idempotency_key,
+            IdempotencyRecord { digest, response: document.clone() },
+        );
+        while idempotency.len() > MAX_IDEMPOTENCY_KEYS {
+            let Some(key) = idempotency.keys().next().cloned() else { break };
+            idempotency.remove(&key);
+        }
+        let outcome = self
+            .store()?
+            .commit(
+                &progress.target,
+                Some(document.generation),
+                DurableSchemaRecord { document: document.clone(), idempotency },
+            )
+            .map_err(|error| durable_error(&error))?;
+        if outcome == DurableCommit::GenerationConflict {
+            return Err(SchemaError::new(
+                409,
+                "generation_conflict",
+                "schema changed while recording backfill progress",
+                "reload migration status and report progress against the current generation",
+            ));
+        }
+        Ok(document)
+    }
+
+    fn store(&self) -> Result<&Arc<dyn SchemaDurablePort>, SchemaError> {
+        self.store.as_ref().ok_or_else(|| {
+            SchemaError::new(
+                503,
+                "durable_store_unavailable",
+                "schema storage is not configured on this member",
+                "start terrabase with its durable control store before applying schemas",
+            )
+        })
+    }
+
+    fn load(&self, target: &SchemaTarget) -> Result<Option<DurableSchemaRecord>, SchemaError> {
+        self.store()?.load(target).map_err(|error| durable_error(&error))
+    }
+}
+
+/// Schema apply input for library callers.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApplySchemaRequest {
+    /// Target database, branch, and collection.
+    pub target: SchemaTarget,
+    /// Immutable database identity observed by the parent.
+    pub identity: DatabaseIdentity,
+    /// Incoming SDK schema JSON.
+    pub schema: CollectionSchema,
+    /// Optional optimistic generation (`If-Match`).
+    pub expected_generation: Option<u64>,
+    /// Required replay key.
+    pub idempotency_key: String,
+}
+
+/// Worker progress update for a resumable backfill.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BackfillProgress {
+    /// Schema target.
+    pub target: SchemaTarget,
+    /// Schema generation being processed.
+    pub generation: u64,
+    /// Migration operation identifier.
+    pub operation_id: String,
+    /// Stable worker idempotency key (bounded for audit storage).
+    pub idempotency_key: String,
+    /// Total rows to process.
+    pub total: u64,
+    /// Rows completed.
+    pub completed: u64,
+    /// Opaque cursor for restart.
+    pub next_cursor: Option<String>,
+    /// Whether the worker failed this attempt.
+    pub failed: bool,
+}
+
+/// Build the parent-wiring HTTP router for schema GET/PUT routes.
+pub fn router(state: Arc<SchemaHttpState>) -> Router {
+    Router::new()
+        .route(
+            "/api/v1/databases/{database}/collections/{collection}/schema",
+            get(get_schema).put(put_schema),
+        )
+        .with_state(state)
+}
+
+/// GET handler exposed for parent route tables that use their own router.
+pub async fn get_schema(
+    State(state): State<Arc<SchemaHttpState>>,
+    Path((database, collection)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let branch = header_text(&headers, "x-terrascale-branch").unwrap_or_else(|| "main".into());
+    let target = SchemaTarget { database: database.clone(), branch: branch.clone(), collection };
+    let identity = match resolve_identity(&state, &database, &branch) {
+        Ok(identity) => identity,
+        Err(error) => return error.into_response(),
+    };
+    match state.service.get(&target, &identity) {
+        Ok(document) => schema_response(StatusCode::OK, &document, true),
+        Err(error) => error.into_response(),
+    }
+}
+
+/// PUT handler exposed for parent route tables that use their own router.
+pub async fn put_schema(
+    State(state): State<Arc<SchemaHttpState>>,
+    Path((database, collection)): Path<(String, String)>,
+    headers: HeaderMap,
+    body: String,
+) -> Response {
+    if body.len() > MAX_SCHEMA_BYTES {
+        return SchemaError::new(
+            413,
+            "schema_too_large",
+            "schema JSON exceeds the member limit",
+            "split the schema into bounded collection applies",
+        )
+        .into_response();
+    }
+    let schema: CollectionSchema = match serde_json::from_str(&body) {
+        Ok(schema) => schema,
+        Err(error) => {
+            return SchemaError::invalid(format!("schema JSON is invalid: {error}"))
+                .into_response();
+        }
+    };
+    let branch = header_text(&headers, "x-terrascale-branch").unwrap_or_else(|| "main".into());
+    let identity = match resolve_identity(&state, &database, &branch) {
+        Ok(identity) => identity,
+        Err(error) => return error.into_response(),
+    };
+    let idempotency_key = match header_text(&headers, "idempotency-key") {
+        Some(key) if !key.is_empty() => key,
+        _ => {
+            return SchemaError::new(
+                400,
+                "missing_idempotency_key",
+                "PUT schema requires Idempotency-Key",
+                "send a fresh Idempotency-Key on every new schema apply",
+            )
+            .into_response();
+        }
+    };
+    let expected_generation = match parse_if_match(&headers) {
+        Ok(value) => value,
+        Err(error) => return error.into_response(),
+    };
+    let target = SchemaTarget { database, branch, collection };
+    let request =
+        ApplySchemaRequest { target, identity, schema, expected_generation, idempotency_key };
+    match state.service.apply(request) {
+        Ok(result) => {
+            let mut response = schema_response(StatusCode::OK, &result.document, true);
+            if let Ok(value) = result.document.generation.to_string().parse() {
+                response.headers_mut().insert(ETAG, value);
+            }
+            response
+        }
+        Err(error) => error.into_response(),
+    }
+}
+
+fn resolve_identity(
+    state: &SchemaHttpState,
+    database: &str,
+    branch: &str,
+) -> Result<DatabaseIdentity, SchemaError> {
+    state
+        .identity
+        .as_ref()
+        .ok_or_else(|| {
+            SchemaError::new(
+                503,
+                "durable_identity_unavailable",
+                "database placement identity is not configured on this member",
+                "start the member with its durable control-plane registry",
+            )
+        })?
+        .resolve(database, branch)
+}
+
+fn schema_response(status: StatusCode, document: &SchemaDocument, include_etag: bool) -> Response {
+    let mut response = json_response(status, document);
+    if include_etag && let Ok(value) = document.generation.to_string().parse() {
+        response.headers_mut().insert(ETAG, value);
+    }
+    response
+}
+
+impl IntoResponse for SchemaError {
+    fn into_response(self) -> Response {
+        let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        json_response(status, &serde_json::json!({ "error": self }))
+    }
+}
+
+fn json_response<T: Serialize>(status: StatusCode, value: &T) -> Response {
+    let body = serde_json::to_vec(value).unwrap_or_else(|_| b"{\"error\":{}}".to_vec());
+    Response::builder()
+        .status(status)
+        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+        .body(Body::from(body))
+        .expect("schema response is valid")
+}
+
+fn parse_if_match(headers: &HeaderMap) -> Result<Option<u64>, SchemaError> {
+    let Some(value) = headers.get(IF_MATCH) else { return Ok(None) };
+    let text = value.to_str().map_err(|_| {
+        SchemaError::new(
+            400,
+            "invalid_if_match",
+            "If-Match is not valid ASCII",
+            "send the numeric ETag returned by GET schema",
+        )
+    })?;
+    let text = text.strip_prefix("W/").unwrap_or(text).trim_matches('"');
+    text.parse::<u64>().map(Some).map_err(|_| {
+        SchemaError::new(
+            400,
+            "invalid_if_match",
+            "If-Match must contain the schema generation",
+            "send the numeric ETag returned by GET schema",
+        )
+    })
+}
+
+fn header_text(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers.get(name).and_then(|value| value.to_str().ok()).map(ToOwned::to_owned)
+}
+
+fn normalize_schema(mut schema: CollectionSchema) -> Result<CollectionSchema, SchemaError> {
+    schema.name = schema.name.trim().into();
+    validate_identifier(&schema.name, "collection")?;
+    if schema.fields.len() > MAX_FIELDS {
+        return Err(SchemaError::invalid("schema declares too many fields"));
+    }
+    if schema.indexes.len() > MAX_INDEXES {
+        return Err(SchemaError::invalid("schema declares too many indexes"));
+    }
+    if schema.renames.len() > MAX_RENAMES {
+        return Err(SchemaError::invalid("schema declares too many renames"));
+    }
+    if !(1..=30).contains(&schema.history_retention_days) {
+        return Err(SchemaError::invalid(format!(
+            "history retention for '{}' must be between 1 and 30 days",
+            schema.name
+        )));
+    }
+    if let Some(version) = schema.version {
+        validate_version(version)?;
+    }
+    let mut fields = BTreeSet::new();
+    for field in &mut schema.fields {
+        field.name = field.name.trim().into();
+        validate_identifier(&field.name, "field")?;
+        if !fields.insert(field.name.clone()) {
+            return Err(SchemaError::invalid(format!("duplicate field '{}'", field.name)));
+        }
+        if let Some(policy) = field.merge_policy {
+            if !policy.is_crdt() {
+                return Err(SchemaError::invalid(format!(
+                    "field '{}' has a non-CRDT merge policy",
+                    field.name
+                )));
+            }
+        }
+        field.indexed |= field.unique;
+    }
+    let mut index_names = BTreeSet::new();
+    for index in &mut schema.indexes {
+        index.name = index.name.trim().into();
+        validate_identifier(&index.name, "index")?;
+        if !index_names.insert(index.name.clone()) {
+            return Err(SchemaError::invalid(format!("duplicate index '{}'", index.name)));
+        }
+        if index.fields.is_empty() {
+            return Err(SchemaError::invalid(format!(
+                "index '{}' must contain a field",
+                index.name
+            )));
+        }
+        let kind = index.kind.unwrap_or(IndexKind::Btree);
+        index.kind = Some(kind);
+        if kind == IndexKind::Fts && index.fields.len() != 1 {
+            return Err(SchemaError::invalid(format!(
+                "FTS index '{}' must contain exactly one field",
+                index.name
+            )));
+        }
+        for field in &mut index.fields {
+            *field = field.trim().into();
+            validate_identifier(field, "index field")?;
+            let descriptor =
+                schema.fields.iter().find(|candidate| candidate.name == *field).ok_or_else(
+                    || {
+                        SchemaError::invalid(format!(
+                            "index '{}' references unknown field '{}'",
+                            index.name, field
+                        ))
+                    },
+                )?;
+            if kind == IndexKind::Fts && !descriptor.r#type.is_fts() {
+                return Err(SchemaError::invalid(format!(
+                    "FTS field '{}' must have type text or string",
+                    field
+                )));
+            }
+        }
+    }
+    let marked_fts: Vec<String> =
+        schema.fields.iter().filter(|field| field.fts).map(|field| field.name.clone()).collect();
+    for field in &mut schema.fields {
+        field.fts = false;
+    }
+    let had_fts_descriptor = schema.fts.is_some();
+    let mut fts_fields =
+        schema.fts.as_mut().map(|fts| std::mem::take(&mut fts.fields)).unwrap_or_default();
+    fts_fields.extend(marked_fts);
+    fts_fields.sort();
+    fts_fields.dedup();
+    if had_fts_descriptor && fts_fields.is_empty() {
+        return Err(SchemaError::invalid("FTS must contain a field"));
+    }
+    if !fts_fields.is_empty() {
+        for field in &fts_fields {
+            validate_identifier(field, "FTS field")?;
+            let descriptor =
+                schema.fields.iter().find(|candidate| candidate.name == *field).ok_or_else(
+                    || SchemaError::invalid(format!("FTS references unknown field '{}'", field)),
+                )?;
+            if !descriptor.r#type.is_fts() {
+                return Err(SchemaError::invalid(format!(
+                    "FTS field '{}' must have type text or string",
+                    field
+                )));
+            }
+            let name = format!("{field}_fts");
+            if index_names.contains(&name) {
+                return Err(SchemaError::invalid(format!("duplicate index '{}'", name)));
+            }
+            index_names.insert(name.clone());
+            schema.indexes.push(IndexDescriptor {
+                name,
+                fields: vec![field.clone()],
+                unique: false,
+                kind: Some(IndexKind::Fts),
+            });
+        }
+    }
+    // The SDK canonicalizer represents FTS shorthand exclusively as named
+    // index descriptors; it never emits the builder-only `fts` property.
+    schema.fts = None;
+    if let Some(ttl) = schema.ttl.as_mut() {
+        ttl.field = ttl.field.trim().into();
+        validate_identifier(&ttl.field, "TTL field")?;
+        let descriptor =
+            schema.fields.iter().find(|field| field.name == ttl.field).ok_or_else(|| {
+                SchemaError::invalid(format!("TTL references unknown field '{}'", ttl.field))
+            })?;
+        if descriptor.r#type != FieldType::Timestamp {
+            return Err(SchemaError::invalid(format!(
+                "TTL field '{}' must have type timestamp",
+                ttl.field
+            )));
+        }
+    }
+    let mut rename_sources = BTreeSet::new();
+    let mut rename_targets = BTreeSet::new();
+    for rename in &mut schema.renames {
+        rename.from = rename.from.trim().into();
+        rename.to = rename.to.trim().into();
+        validate_identifier(&rename.from, "rename source")?;
+        validate_identifier(&rename.to, "rename target")?;
+        if rename.from == rename.to {
+            return Err(SchemaError::invalid(format!(
+                "rename '{}' -> '{}' must change the field name",
+                rename.from, rename.to
+            )));
+        }
+        if !rename_sources.insert(rename.from.clone()) {
+            return Err(SchemaError::invalid(format!("duplicate rename source '{}'", rename.from)));
+        }
+        if !rename_targets.insert(rename.to.clone()) {
+            return Err(SchemaError::invalid(format!("duplicate rename target '{}'", rename.to)));
+        }
+        if fields.contains(&rename.from) {
+            return Err(SchemaError::invalid(format!(
+                "rename source '{}' is still declared as a field",
+                rename.from
+            )));
+        }
+        if !fields.contains(&rename.to) {
+            return Err(SchemaError::invalid(format!(
+                "rename target '{}' is not declared as a field",
+                rename.to
+            )));
+        }
+    }
+    schema.renames.sort();
+    Ok(schema)
+}
+
+fn plan_migration(
+    previous: Option<&CollectionSchema>,
+    next: &CollectionSchema,
+    target: &SchemaTarget,
+) -> Result<Option<MigrationStatus>, SchemaError> {
+    let Some(previous) = previous else { return Ok(None) };
+    let mut steps = Vec::new();
+    for rename in &next.renames {
+        steps.push(MigrationStep {
+            kind: "field_rename".into(),
+            from: Some(rename.from.clone()),
+            to: Some(rename.to.clone()),
+            index: None,
+        });
+    }
+    let old_indexes: BTreeSet<&str> =
+        previous.indexes.iter().map(|index| index.name.as_str()).collect();
+    for index in &next.indexes {
+        if !old_indexes.contains(index.name.as_str()) {
+            steps.push(MigrationStep {
+                kind: "index_backfill".into(),
+                from: None,
+                to: None,
+                index: Some(index.name.clone()),
+            });
+        }
+    }
+    if previous.ttl != next.ttl && next.ttl.is_some() {
+        steps.push(MigrationStep {
+            kind: "ttl_backfill".into(),
+            from: None,
+            to: None,
+            index: None,
+        });
+    }
+    if steps.is_empty() {
+        return Ok(None);
+    }
+    if steps.len() > MAX_MIGRATION_STEPS {
+        return Err(SchemaError::invalid("schema migration contains too many steps"));
+    }
+    let operation_id = migration_id(target, next).map_err(|_| {
+        SchemaError::new(
+            500,
+            "digest_failure",
+            "could not derive migration operation id",
+            "retry the schema apply",
+        )
+    })?;
+    Ok(Some(MigrationStatus {
+        operation_id,
+        state: MigrationState::Pending,
+        steps,
+        total: 0,
+        completed: 0,
+        next_cursor: None,
+        message: "backfill pending; start a worker and resume with next_cursor".into(),
+    }))
+}
+
+fn migration_id(
+    target: &SchemaTarget,
+    schema: &CollectionSchema,
+) -> Result<String, serde_json::Error> {
+    let mut bytes = serde_json::to_vec(&(target, schema))?;
+    let digest = blake3::hash(&bytes);
+    bytes.fill(0);
+    Ok(digest.to_hex().to_string())
+}
+
+fn request_digest(
+    target: &SchemaTarget,
+    identity: &DatabaseIdentity,
+    expected: Option<u64>,
+    schema: &CollectionSchema,
+) -> Result<String, SchemaError> {
+    serde_json::to_vec(&(target, identity, expected, schema))
+        .map(|bytes| blake3::hash(&bytes).to_hex().to_string())
+        .map_err(|_| {
+            SchemaError::new(
+                500,
+                "digest_failure",
+                "could not derive request idempotency digest",
+                "retry the schema apply",
+            )
+        })
+}
+
+fn progress_digest(progress: &BackfillProgress) -> Result<String, SchemaError> {
+    serde_json::to_vec(progress).map(|bytes| blake3::hash(&bytes).to_hex().to_string()).map_err(
+        |_| {
+            SchemaError::new(
+                500,
+                "digest_failure",
+                "could not derive backfill idempotency digest",
+                "retry the backfill progress update",
+            )
+        },
+    )
+}
+
+fn next_schema_version(
+    current: Option<&DurableSchemaRecord>,
+    requested: Option<u64>,
+) -> Result<u64, SchemaError> {
+    let previous = current.map_or(0, |record| record.document.schema_version);
+    if let Some(requested) = requested {
+        validate_version(requested)?;
+        if requested <= previous {
+            return Err(SchemaError::new(
+                409,
+                "schema_version_regression",
+                format!("schema version {requested} is not newer than durable version {previous}"),
+                "increment the schema version and retry",
+            ));
+        }
+        Ok(requested)
+    } else {
+        Ok(previous.saturating_add(1).max(1))
+    }
+}
+
+fn validate_target(target: &SchemaTarget) -> Result<(), SchemaError> {
+    validate_identifier(&target.database, "database")?;
+    validate_identifier(&target.branch, "branch")?;
+    validate_identifier(&target.collection, "collection")
+}
+
+fn validate_identity(identity: &DatabaseIdentity) -> Result<(), SchemaError> {
+    if identity.database_id.is_empty() || identity.database_id.len() > MAX_IDENTIFIER_BYTES {
+        return Err(SchemaError::invalid("database identity is missing or too long"));
+    }
+    if identity.placement.is_empty() || identity.placement.len() > 32 {
+        return Err(SchemaError::invalid(
+            "database placement must contain between 1 and 32 regions",
+        ));
+    }
+    if identity.placement.iter().any(|region| region.is_empty() || region.len() > 64) {
+        return Err(SchemaError::invalid("database placement contains an invalid region"));
+    }
+    Ok(())
+}
+
+fn ensure_identity(
+    stored: &DatabaseIdentity,
+    current: &DatabaseIdentity,
+) -> Result<(), SchemaError> {
+    if stored != current {
+        return Err(SchemaError::new(
+            409,
+            "database_identity_changed",
+            "database id or placement changed while the schema was pinned",
+            "route the request to the database's current hosting member and preserve its placement lock",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_idempotency_key(key: &str) -> Result<(), SchemaError> {
+    if key.is_empty() || key.len() > MAX_IDEMPOTENCY_KEY_BYTES || !key.is_ascii() {
+        return Err(SchemaError::new(
+            400,
+            "invalid_idempotency_key",
+            "Idempotency-Key must be 1-256 ASCII bytes",
+            "send a unique opaque Idempotency-Key header",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_version(version: u64) -> Result<(), SchemaError> {
+    if version == 0 || version > MAX_SCHEMA_VERSION {
+        return Err(SchemaError::invalid("schema version must be a positive safe integer"));
+    }
+    Ok(())
+}
+
+fn validate_identifier(value: &str, kind: &str) -> Result<(), SchemaError> {
+    if value.is_empty() || value.len() > MAX_IDENTIFIER_BYTES {
+        return Err(SchemaError::invalid(format!(
+            "{kind} name must be 1-255 bytes and match [A-Za-z_][A-Za-z0-9_]*"
+        )));
+    }
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return Err(SchemaError::invalid(format!("{kind} name is empty")));
+    };
+    if !(first.is_ascii_alphabetic() || first == '_')
+        || !chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        return Err(SchemaError::invalid(format!(
+            "{kind} name '{value}' must match [A-Za-z_][A-Za-z0-9_]*"
+        )));
+    }
+    Ok(())
+}
+
+fn durable_error(error: &DurablePortError) -> SchemaError {
+    SchemaError::new(
+        503,
+        "durable_store_error",
+        format!(
+            "durable schema storage refused the operation: {}",
+            bounded(error.detail.clone(), 256)
+        ),
+        "retry after the member's durable control store is healthy",
+    )
+}
+
+fn bounded(value: String, max: usize) -> String {
+    if value.len() <= max {
+        return value;
+    }
+    value.chars().take(max.saturating_sub(3)).collect::<String>() + "..."
+}
+
+const fn default_true() -> bool {
+    true
+}
+const fn default_history_days() -> u32 {
+    7
+}
+const fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct FakeStore(Mutex<BTreeMap<SchemaTarget, DurableSchemaRecord>>);
+
+    impl SchemaDurablePort for FakeStore {
+        fn load(
+            &self,
+            target: &SchemaTarget,
+        ) -> Result<Option<DurableSchemaRecord>, DurablePortError> {
+            Ok(self.0.lock().expect("lock").get(target).cloned())
+        }
+        fn commit(
+            &self,
+            target: &SchemaTarget,
+            expected: Option<u64>,
+            record: DurableSchemaRecord,
+        ) -> Result<DurableCommit, DurablePortError> {
+            let mut records = self.0.lock().expect("lock");
+            let current = records.get(target).map(|record| record.document.generation);
+            if current != expected {
+                return Ok(DurableCommit::GenerationConflict);
+            }
+            records.insert(target.clone(), record);
+            Ok(DurableCommit::Committed)
+        }
+    }
+
+    fn identity() -> DatabaseIdentity {
+        DatabaseIdentity { database_id: "db-1".into(), placement: vec!["GRU".into(), "FRA".into()] }
+    }
+    fn target() -> SchemaTarget {
+        SchemaTarget { database: "demo".into(), branch: "main".into(), collection: "orders".into() }
+    }
+    fn schema(version: Option<u64>) -> CollectionSchema {
+        CollectionSchema {
+            name: "orders".into(),
+            fields: vec![
+                FieldDescriptor {
+                    name: "expiresAt".into(),
+                    r#type: FieldType::Timestamp,
+                    required: true,
+                    indexed: false,
+                    unique: false,
+                    merge_policy: None,
+                    fts: false,
+                },
+                FieldDescriptor {
+                    name: "title".into(),
+                    r#type: FieldType::String,
+                    required: true,
+                    indexed: false,
+                    unique: false,
+                    merge_policy: None,
+                    fts: true,
+                },
+            ],
+            indexes: vec![],
+            fts: None,
+            ttl: Some(TtlDescriptor { field: "expiresAt".into() }),
+            renames: vec![],
+            version,
+            history_retention_days: 7,
+            merge_policy: MergePolicy::RemoveWins,
+        }
+    }
+    fn apply_request(
+        service: &SchemaService,
+        version: Option<u64>,
+        generation: Option<u64>,
+        key: &str,
+    ) -> Result<ApplySchemaResponse, SchemaError> {
+        service.apply(ApplySchemaRequest {
+            target: target(),
+            identity: identity(),
+            schema: schema(version),
+            expected_generation: generation,
+            idempotency_key: key.into(),
+        })
+    }
+
+    #[test]
+    fn absent_durable_port_fails_closed() {
+        let service = SchemaService::new(None);
+        let error = apply_request(&service, Some(1), None, "first")
+            .expect_err("missing store must fail closed");
+        assert_eq!(error.code, "durable_store_unavailable");
+        assert_eq!(error.status, 503);
+    }
+
+    #[test]
+    fn canonicalizes_fts_and_defaults_and_rejects_bad_ttl_before_commit() {
+        let store = Arc::new(FakeStore::default());
+        let service = SchemaService::new(Some(store));
+        let result = apply_request(&service, Some(1), None, "first").expect("valid schema");
+        assert_eq!(result.document.schema.indexes[0].name, "title_fts");
+        assert!(!result.document.schema.fields[1].fts);
+        let mut bad = schema(Some(2));
+        bad.ttl = Some(TtlDescriptor { field: "title".into() });
+        let error = service
+            .apply(ApplySchemaRequest {
+                target: target(),
+                identity: identity(),
+                schema: bad,
+                expected_generation: Some(1),
+                idempotency_key: "bad".into(),
+            })
+            .expect_err("bad TTL");
+        assert_eq!(error.code, "invalid_schema");
+        assert_eq!(service.get(&target(), &identity()).expect("original remains").generation, 1);
+    }
+
+    #[test]
+    fn idempotency_and_generation_are_durable() {
+        let store = Arc::new(FakeStore::default());
+        let service = SchemaService::new(Some(store));
+        let first = apply_request(&service, Some(1), None, "same").expect("first");
+        let replay = apply_request(&service, Some(1), None, "same").expect("replay");
+        assert!(replay.idempotent_replay);
+        assert_eq!(replay.document.generation, first.document.generation);
+        let stale =
+            apply_request(&service, Some(2), Some(0), "stale").expect_err("stale generation");
+        assert_eq!(stale.code, "generation_mismatch");
+        let conflict = apply_request(&service, Some(2), Some(1), "same")
+            .expect_err("same key changed payload");
+        assert_eq!(conflict.code, "idempotency_conflict");
+    }
+
+    #[test]
+    fn rename_plans_resumable_backfill_and_progress_is_cas_protected() {
+        let store = Arc::new(FakeStore::default());
+        let service = SchemaService::new(Some(store));
+        apply_request(&service, Some(1), None, "first").expect("first");
+        let mut changed = schema(Some(2));
+        changed.fields[1].name = "headline".into();
+        changed.renames = vec![FieldRename { from: "title".into(), to: "headline".into() }];
+        let applied = service
+            .apply(ApplySchemaRequest {
+                target: target(),
+                identity: identity(),
+                schema: changed,
+                expected_generation: Some(1),
+                idempotency_key: "rename".into(),
+            })
+            .expect("rename");
+        let migration = applied.document.migration.expect("migration");
+        assert_eq!(migration.state, MigrationState::Pending);
+        let progress = service
+            .record_backfill_progress(BackfillProgress {
+                target: target(),
+                generation: 2,
+                operation_id: migration.operation_id,
+                idempotency_key: "worker-1".into(),
+                total: 10,
+                completed: 10,
+                next_cursor: None,
+                failed: false,
+            })
+            .expect("progress");
+        assert_eq!(progress.migration.expect("migration").state, MigrationState::Complete);
+    }
+
+    #[test]
+    fn identity_is_immutable() {
+        let store = Arc::new(FakeStore::default());
+        let service = SchemaService::new(Some(store));
+        apply_request(&service, Some(1), None, "first").expect("first");
+        let mut changed = identity();
+        changed.placement = vec!["SFO".into()];
+        let error = service.get(&target(), &changed).expect_err("placement changed");
+        assert_eq!(error.code, "database_identity_changed");
+    }
+}

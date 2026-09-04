@@ -139,15 +139,6 @@ impl ApiError {
         }
     }
 
-    /// A JWT-shaped bearer with no verifier lane yet (E-3 BYO-JWT): fails
-    /// closed with the tracking lane instead of the generic denial, so SDK
-    /// authors can tell "not built yet" from "wrong key". Never parsed —
-    /// only its three-part shape is observed, never its claims.
-    #[must_use]
-    pub fn byo_jwt_pending() -> Self {
-        Self::pending_surface("BYO-JWT verification", "E-3 (BYO-JWT over JWKS)")
-    }
-
     /// An `If-Match` precondition that no longer holds (D-20 optimistic
     /// concurrency): the client wrote against a stale revision.
     #[must_use]
@@ -418,19 +409,6 @@ impl ApiError {
         }
     }
 
-    /// A designed-but-not-yet-built surface fails closed with the issue that
-    /// replaces it, never with a half-built code path (GOAL's stub rule).
-    #[must_use]
-    pub fn pending_surface(surface: &str, issue: &str) -> Self {
-        Self {
-            status: StatusCode::NOT_IMPLEMENTED,
-            code: "surface_pending",
-            message: format!("{surface} is not implemented on this member yet"),
-            fix: format!("tracked by {issue}; nothing here silently degrades"),
-            placement: None,
-        }
-    }
-
     /// A backup/restore refusal (S-06): the Litestream side failed or was
     /// never attached; nothing is silently degraded (D-29).
     #[must_use]
@@ -561,6 +539,12 @@ pub struct ApiState {
     /// first, and every served direct-read byte accounts against them.
     /// Unknown databases run the Free row (fail-closed).
     pub guards: Arc<crate::guards::AbuseGuards>,
+    /// HMAC key ring used to authenticate requests forwarded by the sync
+    /// edge after customer credentials have been stripped.
+    pub origin_proof_keys: Arc<crate::reactive_api::OriginProofKeyRing>,
+    /// HMAC key ring used for view capability issuance and direct regional
+    /// capability verification.
+    pub capability_keys: Arc<crate::reactive_api::CapabilityKeyRing>,
 }
 
 /// The served route table as an `OpenAPI` router: the single source of both
@@ -575,9 +559,6 @@ fn openapi_router() -> OpenApiRouter<Arc<ApiState>> {
         .routes(routes!(restore_database))
         .routes(routes!(list_collections))
         .routes(routes!(list_indexes, create_index))
-        .routes(routes!(index_recommendations))
-        .routes(routes!(delete_index))
-        .routes(routes!(get_schema, put_schema))
         .routes(routes!(list_documents))
         .routes(routes!(batch_documents))
         .routes(routes!(get_document, put_document, patch_document, delete_document))
@@ -585,12 +566,8 @@ fn openapi_router() -> OpenApiRouter<Arc<ApiState>> {
         .routes(routes!(execute_sql))
         .routes(routes!(crate::reactive_api::poll))
         .routes(routes!(crate::reactive_api::websocket))
-        .routes(routes!(database_usage))
-        .routes(routes!(list_webhooks, create_webhook))
-        .routes(routes!(delete_webhook))
         .routes(routes!(list_backups))
         .routes(routes!(restore_backup))
-        .routes(routes!(create_export))
         .routes(routes!(list_branches, create_branch))
         .routes(routes!(crate::reactive_api::attach_view))
         .routes(routes!(crate::reactive_api::snapshot))
@@ -641,20 +618,7 @@ fn enrich_openapi(raw: String) -> String {
                 set_request_body(operation, schema, required);
             }
 
-            if pending_operation(&operation_id) {
-                operation.insert("responses".to_owned(), serde_json::json!({}));
-                set_json_response(
-                    operation,
-                    "501",
-                    "This route is not implemented",
-                    "ErrorResponse",
-                );
-                for status in
-                    ["400", "401", "403", "404", "409", "421", "422", "429", "500", "503", "504"]
-                {
-                    set_json_response(operation, status, "Typed API error", "ErrorResponse");
-                }
-            } else {
+            {
                 if operation_id == "delete_document"
                     && let Some(responses) =
                         operation.get_mut("responses").and_then(serde_json::Value::as_object_mut)
@@ -1028,9 +992,7 @@ fn request_schema(operation_id: &str) -> Option<(&'static str, bool)> {
         "create_index" => ("CreateIndexRequest", true),
         "batch_documents" => ("BatchRequest", true),
         "put_document" | "patch_document" => ("JsonValue", true),
-        "put_schema" => ("JsonValue", true),
         "execute_sql" => ("SqlRequest", true),
-        "create_webhook" => ("WebhookRequest", true),
         "attach_view" => ("AttachViewRequest", true),
         "restore_backup" | "create_branch" => ("RestoreRequest", true),
         "poll" => ("ReactivePollRequest", true),
@@ -1059,21 +1021,6 @@ fn success_schema(operation_id: &str) -> Option<&'static str> {
         "attach_view" => Some("AttachViewResponse"),
         _ => None,
     }
-}
-
-fn pending_operation(operation_id: &str) -> bool {
-    matches!(
-        operation_id,
-        "delete_index"
-            | "index_recommendations"
-            | "get_schema"
-            | "put_schema"
-            | "database_usage"
-            | "list_webhooks"
-            | "create_webhook"
-            | "delete_webhook"
-            | "create_export"
-    )
 }
 
 fn openapi_schemas() -> serde_json::Value {
@@ -1245,7 +1192,8 @@ pub fn router(state: Arc<ApiState>) -> Router {
 /// Handlers resolve the registry before touching a database, but many of them
 /// return hand-rendered success or typed error responses from several branches.
 /// Keeping this at the HTTP boundary makes the D-58 requirement uniform for
-/// documents, queries, indexes, backups, and pending surfaces alike. A
+/// documents, queries, indexes, and backups alike. Optional feature routes
+/// are mounted only when their durable adapter is composed.
 /// deleted record still has a placement record, so it remains publishable;
 /// only a missing record (or unavailable control plane) leaves the response
 /// unchanged.
@@ -1284,14 +1232,29 @@ async fn placement_headers(
 /// Past admission, the principal's scope is enforced per request (D-44):
 /// routes naming a database need the matching verb on that database, and
 /// deployment-level mutations need an every-database admin scope. A
-/// JWT-shaped bearer names the pending BYO-JWT lane instead of the generic
-/// denial.
+/// JWT-shaped bearer is denied unless a parent-composed BYO-JWT verifier
+/// admits it; this member never parses JWT claims in its API-key gate.
 async fn authenticate(
     State(state): State<Arc<ApiState>>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
     if PUBLIC_PATHS.contains(&request.uri().path()) {
+        return next.run(request).await;
+    }
+    // Only the immutable reactive delivery paths may use the edge proof.
+    // Attach, REST, WebSocket, and every unknown path remain bearer-only.
+    if request.method() == Method::GET
+        && is_reactive_delivery_path(request.uri().path())
+        && crate::reactive_api::verify_origin_proof(
+            request.headers(),
+            request.method(),
+            request.uri(),
+            &state.origin_proof_keys,
+            unix_seconds(),
+        )
+    {
+        request.extensions_mut().insert(crate::reactive_api::OriginProofVerified);
         return next.run(request).await;
     }
     let Some(keys) = state.keys.clone() else {
@@ -1305,9 +1268,6 @@ async fn authenticate(
     let Some(token) = token else {
         return ApiError::malformed_credential().into_response();
     };
-    if is_jwt_shaped(token) {
-        return ApiError::byo_jwt_pending().into_response();
-    }
     let admitted = keys.admit(token);
     match admitted {
         Ok(principal) => {
@@ -1320,7 +1280,19 @@ async fn authenticate(
                     ))
                     .into_response();
                 }
-            } else if verb == Verbs::ADMIN && !principal.scope().admits_global(verb) {
+                if let Some(collection) = collection_of(request.uri().path())
+                    && !principal.scope().admits_collection(verb, database, collection)
+                {
+                    return ApiError::forbidden(&format!(
+                        "{} on collection '{collection}'",
+                        verb_name(verb)
+                    ))
+                    .into_response();
+                }
+            } else if (verb == Verbs::ADMIN
+                || (request.method() == Method::GET && request.uri().path() == "/api/v1/databases"))
+                && !principal.scope().admits_global(Verbs::ADMIN)
+            {
                 return ApiError::forbidden("deployment administration").into_response();
             }
             request.extensions_mut().insert(principal.clone());
@@ -1334,19 +1306,40 @@ async fn authenticate(
     }
 }
 
-/// Whether a bearer token is shaped like a JWT (three non-empty base64url
-/// parts, `eyJ` header): API keys never contain `.`, so this distinguishes
-/// a customer's own JWT from key material without parsing any claims.
-fn is_jwt_shaped(token: &str) -> bool {
-    if !token
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b'='))
-    {
-        return false;
+/// The two immutable delivery routes are the only routes on which the sync
+/// edge may substitute an origin proof for a bearer API key.
+fn is_reactive_delivery_path(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix("/api/v1/reactive/views/") else { return false };
+    let fields = rest.split('/').collect::<Vec<_>>();
+    match fields.as_slice() {
+        [view, generation, kind] => {
+            !view.is_empty() && generation.parse::<u64>().is_ok() && *kind == "log"
+        }
+        [view, generation, kind, chunk] => {
+            !view.is_empty()
+                && generation.parse::<u64>().is_ok()
+                && *kind == "snapshot"
+                && *chunk == "0"
+        }
+        _ => false,
     }
-    let mut parts = token.split('.');
-    matches!((parts.next(), parts.next(), parts.next(), parts.next()), (Some(header), Some(body), Some(signature), None)
-        if !header.is_empty() && !body.is_empty() && !signature.is_empty() && header.starts_with("eyJ"))
+}
+
+fn collection_of(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("/api/v1/databases/")?;
+    let mut fields = rest.split('/');
+    let _database = fields.next()?;
+    if fields.next()? != "collections" {
+        return None;
+    }
+    let collection = fields.next()?;
+    (!collection.is_empty()).then_some(collection)
+}
+
+fn unix_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
 }
 
 /// The verb one request needs: reads ride `READ`, document writes ride
@@ -1741,76 +1734,6 @@ async fn create_index(
         .into_response(),
         Err(_) => ApiError::storage_failure().into_response(),
     }
-}
-
-/// Index retirement (drop) fails closed until the D-31 lifecycle (usage
-/// tracking, merge, retire) lands with the auto-index audit.
-#[utoipa::path(delete, path = "/api/v1/databases/{name}/collections/{collection}/indexes/{field}", responses((status = 200, description = "Index retired")))]
-async fn delete_index(
-    State(state): State<Arc<ApiState>>,
-    Path((name, collection, field)): Path<(String, String, String)>,
-) -> Response {
-    if let Err(error) = document_host(&state, &name) {
-        return error.into_response();
-    }
-    ApiError::pending_surface(
-        &format!("dropping the index on {collection}.{field}"),
-        "the D-31 index lifecycle (#127 slice C)",
-    )
-    .into_response()
-}
-
-/// Index recommendations read the auto-index audit, which the S-02 lane
-/// has not landed; the route fails closed rather than inventing advice.
-#[utoipa::path(get, path = "/api/v1/databases/{name}/collections/{collection}/indexes/recommendations", responses((status = 200, description = "Index recommendations")))]
-async fn index_recommendations(
-    State(state): State<Arc<ApiState>>,
-    Path((name, collection)): Path<(String, String)>,
-) -> Response {
-    if let Err(error) = document_host(&state, &name) {
-        return error.into_response();
-    }
-    if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
-        return error.into_response();
-    }
-    ApiError::pending_surface(
-        &format!("index recommendations for {collection}"),
-        "the auto-index audit (#127 slice C)",
-    )
-    .into_response()
-}
-
-/// Collection schemas are authored in TypeScript and applied by
-/// `terrascale push` (D-48); the route fails closed until that lane lands.
-#[utoipa::path(get, path = "/api/v1/databases/{name}/collections/{collection}/schema", responses((status = 200, description = "Collection schema")))]
-async fn get_schema(
-    State(state): State<Arc<ApiState>>,
-    Path((name, collection)): Path<(String, String)>,
-) -> Response {
-    if let Err(error) = document_host(&state, &name) {
-        return error.into_response();
-    }
-    ApiError::pending_surface(
-        &format!("the {collection} collection schema"),
-        "terrascale push / schema-first SDK (S-09/S-10)",
-    )
-    .into_response()
-}
-
-/// See [`get_schema`]: schemas arrive with `terrascale push` (D-48).
-#[utoipa::path(put, path = "/api/v1/databases/{name}/collections/{collection}/schema", responses((status = 200, description = "Collection schema updated")))]
-async fn put_schema(
-    State(state): State<Arc<ApiState>>,
-    Path((name, collection)): Path<(String, String)>,
-) -> Response {
-    if let Err(error) = document_host(&state, &name) {
-        return error.into_response();
-    }
-    ApiError::pending_surface(
-        &format!("the {collection} collection schema"),
-        "terrascale push / schema-first SDK (S-09/S-10)",
-    )
-    .into_response()
 }
 
 /// Lists one collection's documents in canonical key order, with bounded
@@ -2510,7 +2433,20 @@ async fn get_document(
         None
     };
     if let Some(at_millis) = at.at {
-        return time_travel_document(&state, &name, &collection, &id, at_millis, &headers);
+        if let Some(session) = &mut session {
+            if let Err(error) = session.load(&collection, &id) {
+                return session_error(error).into_response();
+            }
+        }
+        return time_travel_document(
+            &state,
+            &name,
+            &collection,
+            &id,
+            at_millis,
+            &headers,
+            session.as_ref().map(|session| session.session_token()),
+        );
     }
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
         return ApiError::storage_failure().into_response();
@@ -2545,6 +2481,9 @@ async fn get_document(
         }
         return response;
     }
+    if session.is_some() {
+        drop(transaction);
+    }
     let document = if let Some(session) = &mut session {
         match session.load(&collection, &id) {
             Ok(Some(document)) => document,
@@ -2562,7 +2501,6 @@ async fn get_document(
             Err(_) => return ApiError::storage_failure().into_response(),
         }
     };
-    drop(transaction);
     let mut body = String::with_capacity(256);
     push_value(&mut body, document.value());
     if let Err(error) = account_direct_read(&state, &name, response_bytes(body.len())) {
@@ -2597,6 +2535,7 @@ fn time_travel_document(
     id: &DocumentId,
     at_millis: i64,
     headers: &axum::http::HeaderMap,
+    session: Option<&SessionToken>,
 ) -> Response {
     if at_millis < 0 {
         return invalid_at("it is negative");
@@ -2643,6 +2582,9 @@ fn time_travel_document(
                 if let Ok(etag) = HeaderValue::from_str(&etag) {
                     response.headers_mut().insert(axum::http::header::ETAG, etag);
                 }
+                if let Some(session) = session {
+                    with_session(&mut response, session);
+                }
                 return response;
             }
             let mut body = String::with_capacity(256);
@@ -2653,6 +2595,9 @@ fn time_travel_document(
             let mut response = json_response(StatusCode::OK, body);
             if let Ok(etag) = HeaderValue::from_str(&etag) {
                 response.headers_mut().insert(axum::http::header::ETAG, etag);
+            }
+            if let Some(session) = session {
+                with_session(&mut response, session);
             }
             response
         }
@@ -3326,115 +3271,6 @@ fn render_explained_plan(plan: &terrabase::query::QueryPlan) -> String {
     explained
 }
 
-/// Usage export fails closed until op metering lands (S-08).
-#[utoipa::path(get, path = "/api/v1/databases/{name}/usage", responses((status = 200, description = "Database usage")))]
-async fn database_usage(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
-    if let Err(error) = document_host(&state, &name) {
-        return error.into_response();
-    }
-    if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
-        return error.into_response();
-    }
-    ApiError::pending_surface("the usage export", "op metering (S-08)").into_response()
-}
-
-/// Webhooks are a subscription whose consumer is an HTTP POST (S-07).
-#[utoipa::path(get, path = "/api/v1/databases/{name}/webhooks", responses((status = 200, description = "Webhooks")))]
-async fn list_webhooks(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
-    if let Err(error) = document_host(&state, &name) {
-        return error.into_response();
-    }
-    if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
-        return error.into_response();
-    }
-    ApiError::pending_surface("webhooks", "change streams → webhooks (S-07)").into_response()
-}
-
-/// See [`list_webhooks`].
-#[utoipa::path(post, path = "/api/v1/databases/{name}/webhooks", responses((status = 201, description = "Webhook created")))]
-async fn create_webhook(
-    State(state): State<Arc<ApiState>>,
-    Path(name): Path<String>,
-    body: String,
-) -> Response {
-    if let Err(error) = document_host(&state, &name) {
-        return error.into_response();
-    }
-    let endpoint = webhook_endpoint_of(&body).unwrap_or_default();
-    if endpoint.is_empty() {
-        return ApiError {
-            status: StatusCode::BAD_REQUEST,
-            code: "missing_endpoint",
-            message: "the webhook request names no endpoint".into(),
-            fix: "add \"endpoint\": \"<https url>\" to the request body".into(),
-            placement: None,
-        }
-        .into_response();
-    }
-    if let Err(rejection) = state.guards.register_webhook(&name, &endpoint) {
-        state.metrics.record_admission_rejection(
-            terrabase::observability::Operation::Other,
-            terrabase::observability::AdmissionReason::Capacity,
-        );
-        return ApiError::abuse_guard(&rejection).into_response();
-    }
-    ApiError::pending_surface("webhooks", "change streams → webhooks (S-07)").into_response()
-}
-
-/// Parses one webhook endpoint identity out of a create body: the
-/// `endpoint` (or legacy `url`/`id`) string, trimmed. `None` when the body
-/// names none.
-fn webhook_endpoint_of(body: &str) -> Option<String> {
-    let request: serde_json::Value = serde_json::from_str(body).ok()?;
-    let endpoint = request
-        .get("endpoint")
-        .or_else(|| request.get("url"))
-        .or_else(|| request.get("id"))
-        .and_then(serde_json::Value::as_str)?;
-    let endpoint = endpoint.trim();
-    if endpoint.is_empty() { None } else { Some(endpoint.to_owned()) }
-}
-
-/// See [`list_webhooks`].
-#[utoipa::path(delete, path = "/api/v1/databases/{name}/webhooks/{id}", responses((status = 200, description = "Webhook deleted")))]
-async fn delete_webhook(
-    State(state): State<Arc<ApiState>>,
-    Path((name, id)): Path<(String, String)>,
-) -> Response {
-    if let Err(error) = document_host(&state, &name) {
-        return error.into_response();
-    }
-    // Unregistering frees the endpoint's D-64 slot.
-    state.guards.unregister_webhook(&name, id.trim());
-    ApiError::pending_surface("webhooks", "change streams → webhooks (S-07)").into_response()
-}
-
-/// Exports one database's logical contents as a versioned bundle (D-60):
-/// schemas, index definitions, current documents, retained history, branch
-/// metadata, a manifest, and checksums, plus the current-data JSONL form.
-/// Fail-closed stub: E-8 replaces it with the real bundle writer. Exports
-/// are bytes at rest, so the writer must refuse any destination outside the
-/// record's placement lock (D-52); until it exists nothing here invents
-/// bytes.
-#[utoipa::path(post, path = "/api/v1/databases/{name}/exports", responses((status = 202, description = "Export accepted")))]
-async fn create_export(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
-    // The bundle writer will need the registry record for the placement
-    // lock (D-52), so the stub already resolves it: unknown or
-    // soft-deleted databases 404 here, never inside the writer.
-    if let Some(control) = state.control.clone() {
-        match control.get(&name) {
-            Ok(Some(record)) if !record.deleted => {}
-            Ok(_) => return ApiError::database_not_found(&name).into_response(),
-            Err(error) => return ApiError::control(error).into_response(),
-        }
-    }
-    if let Err(error) = document_host(&state, &name) {
-        return error.into_response();
-    }
-    ApiError::pending_surface("logical database exports (lossless bundle and JSONL)", "E-8")
-        .into_response()
-}
-
 /// Backups ride Litestream per file (S-06): readiness is an artifact
 /// fact, never "the child process is alive".
 #[utoipa::path(get, path = "/api/v1/databases/{name}/backups", responses((status = 200, description = "Backup readiness")))]
@@ -3782,6 +3618,8 @@ mod tests {
             timetravel,
             active_regions: 1,
             guards: Arc::new(crate::guards::AbuseGuards::default()),
+            origin_proof_keys: Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
+            capability_keys: Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),
         })
     }
 
@@ -3827,6 +3665,8 @@ mod tests {
             timetravel,
             active_regions: 3,
             guards: Arc::new(crate::guards::AbuseGuards::default()),
+            origin_proof_keys: Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
+            capability_keys: Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),
         })
     }
 
@@ -3854,7 +3694,7 @@ mod tests {
 
     #[test]
     fn session_epoch_mismatch_stays_fail_closed() {
-        let first = SessionToken::for_epoch(7).expect("epoch");
+        let mut first = SessionToken::for_epoch(7).expect("epoch");
         let second = SessionToken::for_epoch(8).expect("epoch");
         assert!(first.merge(&second).is_err());
         let error = super::session_error(terrabase::SessionError::SessionToken(
@@ -3895,11 +3735,8 @@ mod tests {
         let paths = document.get("paths").and_then(serde_json::Value::as_object).expect("paths");
         for (path, route) in [
             ("/api/v1/databases/{name}/sql", "post"),
-            ("/api/v1/databases/{name}/usage", "get"),
-            ("/api/v1/databases/{name}/webhooks", "get"),
             ("/api/v1/databases/{name}/backups", "get"),
             ("/api/v1/databases/{name}/branches", "get"),
-            ("/api/v1/databases/{name}/exports", "post"),
             ("/api/v1/databases/{name}/reactive", "get"),
             ("/api/v1/databases/{name}/reactive/poll", "post"),
             ("/api/v1/reactive/views", "post"),
@@ -3910,6 +3747,16 @@ mod tests {
                 paths.get(path).is_some_and(|entry| entry.get(route).is_some()),
                 "the contract lists {route} {path}"
             );
+        }
+        for path in [
+            "/api/v1/databases/{name}/usage",
+            "/api/v1/databases/{name}/webhooks",
+            "/api/v1/databases/{name}/exports",
+            "/api/v1/databases/{name}/collections/{collection}/schema",
+            "/api/v1/databases/{name}/collections/{collection}/indexes/recommendations",
+            "/api/v1/databases/{name}/collections/{collection}/indexes/{field}",
+        ] {
+            assert!(!paths.contains_key(path), "unavailable route {path} is not published");
         }
         let response = router(state())
             .oneshot(Request::get("/scalar").body(Body::empty()).expect("request"))
@@ -3930,7 +3777,7 @@ mod tests {
 
     #[test]
     #[allow(clippy::too_many_lines, reason = "one route contract, one test")]
-    fn openapi_describes_runtime_bodies_errors_security_and_pending_routes() {
+    fn openapi_describes_runtime_bodies_errors_and_security() {
         let document: serde_json::Value =
             serde_json::from_str(&openapi_json()).expect("valid JSON");
         let components =
@@ -3970,22 +3817,10 @@ mod tests {
             "put_document",
             "patch_document",
             "execute_sql",
-            "create_webhook",
             "attach_view",
             "restore_backup",
             "create_branch",
             "poll",
-        ];
-        let pending_operations = [
-            "delete_index",
-            "index_recommendations",
-            "get_schema",
-            "put_schema",
-            "database_usage",
-            "list_webhooks",
-            "create_webhook",
-            "delete_webhook",
-            "create_export",
         ];
         let mut operation_count = 0;
         for item in paths.values() {
@@ -4059,18 +3894,9 @@ mod tests {
                         );
                     }
                 }
-                if pending_operations.contains(&id) {
-                    assert!(responses.contains_key("501"), "pending route {id} advertises 501");
-                    assert!(
-                        responses
-                            .keys()
-                            .all(|status| status.parse::<u16>().is_ok_and(|code| code >= 400)),
-                        "pending route {id} advertises success"
-                    );
-                }
             }
         }
-        assert_eq!(operation_count, 36, "registered route count changed");
+        assert_eq!(operation_count, 27, "registered route count changed");
     }
 
     #[tokio::test]
@@ -4738,7 +4564,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn jwt_shaped_bearers_name_the_pending_lane() {
+    async fn jwt_shaped_bearers_are_denied_without_a_configured_verifier() {
         use axum::body::Body;
         use axum::http::Request;
         let router = router(state_with_keys_and_control());
@@ -4751,11 +4577,7 @@ mod tests {
             )
             .await
             .expect("answers");
-        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
-        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
-        let body = String::from_utf8(body.to_vec()).expect("utf-8");
-        assert!(body.contains("\"code\":\"surface_pending\""), "{body}");
-        assert!(body.contains("BYO-JWT"), "{body}");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -5371,7 +5193,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn indexes_register_list_and_pending_surfaces_fail_closed() {
+    async fn indexes_register_list_and_unavailable_lifecycle_routes_are_absent() {
         use axum::body::Body;
         use axum::http::Request;
         let auth = "authorization";
@@ -5421,7 +5243,9 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
         let body = String::from_utf8(body.to_vec()).expect("utf-8");
         assert!(body.contains("\"field\":\"status\""), "{body}");
-        // The pending surfaces fail closed with the issue that replaces them.
+        // D-31 lifecycle routes are not mounted until a durable coordinator
+        // adapter is composed; an absent route must not advertise a 501
+        // launch operation or mutate any guard state.
         for (method, path) in [
             ("DELETE", "/api/v1/databases/prod/collections/orders/indexes/status"),
             ("GET", "/api/v1/databases/prod/collections/orders/indexes/recommendations"),
@@ -5436,11 +5260,7 @@ mod tests {
                 .oneshot(request.header(auth, key).body(Body::empty()).expect("request"))
                 .await
                 .expect("answers");
-            assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED, "{method} {path}");
-            let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
-            let body = String::from_utf8(body.to_vec()).expect("utf-8");
-            assert!(body.contains("surface_pending"), "{method} {path}: {body}");
-            assert!(body.contains("\"fix\":"), "{method} {path}: {body}");
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
         }
     }
 
@@ -5451,7 +5271,8 @@ mod tests {
         let auth = "authorization";
         let key = "Bearer tskey_test_abcdefghijklmnop";
         let router = router(state_with_keys_and_control());
-        // An unlocked source for the export stub's 501 path.
+        // An unlocked source used to prove the unavailable export route is
+        // absent rather than a published 501 placeholder.
         let response = router
             .clone()
             .oneshot(
@@ -5463,7 +5284,8 @@ mod tests {
             .await
             .expect("answers");
         assert_eq!(response.status(), StatusCode::CREATED);
-        // The E-8 export stub fails closed and names its replacing item.
+        // E-8 has no durable export adapter in this member, so no route is
+        // mounted and no launch operation is published.
         let response = router
             .clone()
             .oneshot(
@@ -5474,11 +5296,7 @@ mod tests {
             )
             .await
             .expect("answers");
-        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
-        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
-        let body = String::from_utf8(body.to_vec()).expect("utf-8");
-        assert!(body.contains("surface_pending"), "the stub fails closed: {body}");
-        assert!(body.contains("E-8"), "the stub names its replacing item: {body}");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
         // Unknown databases 404 before the stub answers.
         let response = router
             .clone()

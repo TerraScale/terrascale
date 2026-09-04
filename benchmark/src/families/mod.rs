@@ -63,6 +63,7 @@ pub mod migrations;
 pub mod modes;
 mod payloads;
 pub mod revisions;
+pub mod schema_catalog;
 pub(crate) mod schemas;
 mod state;
 mod store;
@@ -85,7 +86,17 @@ pub use payloads::{
     TombstoneEntry, TombstoneRead, TombstoneResult, TombstoneWrite, ValidationRead,
     ValidationResult, ValidationWrite, ViolationKind,
 };
-pub use schemas::{SchemaFormatError, violations};
+pub use schema_catalog::{
+    BranchPin, SCHEMA_CATALOG_FORMAT, SQLITE_SCHEMA_CATALOG_DDL, SQLITE_SCHEMA_CATALOG_TABLE,
+    SchemaBranchPin, SchemaCatalogAdapter, SchemaCatalogCasOutcome, SchemaCatalogCasRequest,
+    SchemaCatalogError, SchemaCatalogExpectation, SchemaCatalogRecord, SchemaChecksum,
+    SchemaMigrationStatus,
+};
+pub use schemas::{
+    CanonicalCollectionSchema, CanonicalField, CanonicalFieldType, CanonicalIndex,
+    CanonicalIndexKind, CanonicalSchemaDocument, CollectionSchema, FieldDef, FieldRename,
+    FieldType, IndexDef, IndexKind, MergePolicy, SchemaDocument, SchemaFieldRename,
+};
 
 // The counter merge seam of the GAP-F07 decision record
 // (`docs/families/counter-merge-encoding.md`): counter records replicate as

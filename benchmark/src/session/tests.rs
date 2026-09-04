@@ -23,14 +23,14 @@ use crate::families::{
     FamilyWriteRequest, IdentityEntry,
 };
 use crate::session::{
-    BeforeDeleteEvent, BeforeStoreEvent, FieldChange, FieldChangeKind, Session, SessionCommand,
-    SessionError, SessionHookVeto, SessionOptions, SessionToken, SessionTracking,
-    SessionTransactionMode,
+    BeforeDeleteEvent, BeforeStoreEvent, FieldChange, FieldChangeKind, MAX_SESSION_TOKEN_BYTES,
+    Session, SessionCommand, SessionEpoch, SessionError, SessionHookVeto, SessionOptions,
+    SessionToken, SessionTokenError, SessionTracking, SessionTransactionMode,
 };
 use crate::streaming::{DocumentStreamSelector, StreamCompletion, StreamItem};
 use crate::types::{
     Cancellation, CollectionName, Deadline, Document, DocumentId, DocumentValue, ExpectedVersion,
-    LocalDurability, OperationId, TenantId, TenantScope,
+    LocalDurability, OperationId, RegionId, TenantId, TenantScope,
 };
 
 fn location(tag: &str) -> PathBuf {
@@ -665,6 +665,108 @@ fn session_reads_update_the_token_and_enforce_supplied_frontiers() {
         Err(SessionError::StaleReplica(_))
     ));
     drop(dir);
+}
+
+#[test]
+fn session_frontier_rejects_an_unbounded_multi_origin_token() {
+    let epoch = SessionEpoch::new(1).expect("non-zero epoch");
+    let mut token = SessionToken::new(epoch);
+    let mut rejected = None;
+    for index in 0..100 {
+        let origin = format!("{}-{index:03}", "region".repeat(35));
+        let region = crate::types::RegionId::try_new(&origin).expect("valid region");
+        if let Err(error) = token.advance(region, 1) {
+            rejected = Some(error);
+            break;
+        }
+    }
+    assert_eq!(rejected, Some(SessionTokenError::OriginLimitExceeded));
+    assert!(token.encode().len() <= MAX_SESSION_TOKEN_BYTES);
+    assert!(SessionToken::decode(&token.encode()).is_ok());
+}
+
+#[test]
+fn session_token_survives_engine_restart_and_preserves_read_your_writes() {
+    let dir = location("restart-token");
+    let engine =
+        Engine::open(EngineConfig::durable(&dir).expect("durable location")).expect("opens");
+    let initial_scope = scope(&engine, "tenant-a");
+    let mut writer = Session::open(&engine, &initial_scope, SessionOptions::new()).expect("opens");
+    writer.store(collection("users"), doc_id("restart"), text("durable")).expect("stages");
+    committed(writer.save_changes().expect("saves"));
+    let token = writer.session_token().clone();
+    drop(writer);
+    drop(engine);
+
+    let reopened =
+        Engine::open(EngineConfig::durable(&dir).expect("durable location")).expect("reopens");
+    let reopened_scope = scope(&reopened, "tenant-a");
+    let mut continued = Session::open(
+        &reopened,
+        &reopened_scope,
+        SessionOptions::new().with_session_token(token.clone()),
+    )
+    .expect("token remains valid for the same database incarnation");
+    assert_eq!(
+        continued
+            .load(&collection("users"), &doc_id("restart"))
+            .expect("loads")
+            .map(|document| document.value().clone()),
+        Some(text("durable"))
+    );
+    assert!(continued.session_token().frontier().covers(token.frontier()));
+    drop(reopened);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn concurrent_sessions_capture_distinct_write_frontier_progress() {
+    let (dir, engine) = open_engine("concurrent-frontier");
+    let engine = Arc::new(engine);
+    let mut workers = Vec::new();
+    for index in 0..2 {
+        let worker_engine = Arc::clone(&engine);
+        workers.push(std::thread::spawn(move || {
+            let scope = worker_engine.scope_for(&TenantId::try_new("tenant-a").expect("tenant"));
+            let mut session =
+                Session::open(&worker_engine, &scope, SessionOptions::new()).expect("opens");
+            session
+                .store(collection("users"), doc_id(&format!("concurrent-{index}")), text("value"))
+                .expect("stages");
+            matches!(session.save_changes().expect("saves"), Some(CommitOutcome::Committed(_)))
+        }));
+    }
+    assert!(workers.into_iter().all(|worker| worker.join().expect("worker")));
+    let scope = engine.scope_for(&TenantId::try_new("tenant-a").expect("tenant"));
+    let mut reader = Session::open(&engine, &scope, SessionOptions::new()).expect("opens");
+    assert!(reader.load(&collection("users"), &doc_id("concurrent-0")).expect("loads").is_some());
+    assert!(reader.load(&collection("users"), &doc_id("concurrent-1")).expect("loads").is_some());
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn stale_multi_origin_reads_return_a_safe_retry_region_without_spinning() {
+    let (dir, engine) = open_engine("stale-multi-origin");
+    let epoch = engine.session_epoch();
+    let mut token = SessionToken::new(epoch);
+    token.advance(RegionId::try_new("region-a").expect("region"), 1).expect("frontier");
+    token.advance(RegionId::try_new("region-b").expect("region"), 1).expect("frontier");
+    let scope = scope(&engine, "tenant-a");
+    let mut session = Session::open(
+        &engine,
+        &scope,
+        SessionOptions::new().with_session_token(token).wait_timeout(Duration::from_millis(5)),
+    )
+    .expect("opens");
+    let started = std::time::Instant::now();
+    let error = session.load(&collection("users"), &doc_id("missing")).expect_err("stale");
+    assert!(
+        matches!(error, SessionError::StaleReplica(stale) if stale.region() == &RegionId::try_new("region-a").expect("region"))
+    );
+    assert!(started.elapsed() >= Duration::from_millis(4), "bounded wait must yield, not spin");
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 // ---------------------------------------------------------------------------

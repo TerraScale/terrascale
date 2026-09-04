@@ -12,6 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Path, Query, State, WebSocketUpgrade};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::{Method, Uri};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -32,8 +33,164 @@ pub const LONG_POLL_WINDOW: Duration = Duration::from_secs(25);
 const RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const CAPABILITY_BUCKET: u64 = 600;
 const CAPABILITY_OVERLAP: u64 = 1_200;
-const CAPABILITY_KEY: &[u8] = b"terrascale-reactive-capability-v1";
+const CONFORMANCE_CAPABILITY_KEY: &[u8] = b"terrascale-reactive-capability-v1";
 const MATERIALIZATION_WINDOW: Duration = Duration::from_millis(100);
+
+/// Header emitted by the sync edge after it has authenticated and removed
+/// customer credentials.  It is deliberately bound to the complete request
+/// target, so a proof for a cached log response cannot be replayed on a
+/// different view, method, or offset.
+pub const ORIGIN_PROOF_HEADER: &str = "x-terrascale-origin-proof";
+
+/// Marker inserted by the authentication middleware after an origin proof
+/// has been verified.  Snapshot and log handlers may use this marker as the
+/// edge-authenticated path; direct regional requests still use the bearer
+/// credential and view capability path.
+#[derive(Clone, Copy, Debug)]
+pub struct OriginProofVerified;
+
+/// Current and previous HMAC keys accepted from the sync edge during a key
+/// rotation.  Empty keys are the explicit disabled state used by local test
+/// routers; production composition must inject real key material.
+#[derive(Clone, Debug)]
+pub struct OriginProofKeyRing {
+    current: Vec<u8>,
+    previous: Option<Vec<u8>>,
+}
+
+/// Current and previous keys used to mint and verify view capabilities.
+/// Production composition injects this ring; the conformance constructor is
+/// retained solely for deterministic contract fixtures.
+#[derive(Clone, Debug)]
+pub struct CapabilityKeyRing {
+    current: Vec<u8>,
+    previous: Option<Vec<u8>>,
+}
+
+impl CapabilityKeyRing {
+    /// Builds a validated capability key ring.
+    pub fn new(current: impl AsRef<[u8]>, previous: Option<impl AsRef<[u8]>>) -> Option<Self> {
+        let current = current.as_ref();
+        if current.len() < 16 || current.len() > 4096 {
+            return None;
+        }
+        let previous = previous.map(|key| key.as_ref().to_vec());
+        if previous
+            .as_ref()
+            .is_some_and(|key| key.len() < 16 || key.len() > 4096 || key.as_slice() == current)
+        {
+            return None;
+        }
+        Some(Self { current: current.to_vec(), previous })
+    }
+
+    /// Deterministic ring used by old conformance fixture generation.
+    #[must_use]
+    pub fn conformance() -> Self {
+        Self::new(CONFORMANCE_CAPABILITY_KEY, None::<&[u8]>).expect("conformance key is valid")
+    }
+
+    /// Explicit disabled ring used until production key material is loaded.
+    #[must_use]
+    pub const fn disabled() -> Self {
+        Self { current: Vec::new(), previous: None }
+    }
+
+    fn issuer(&self) -> Option<ViewCapabilityIssuer> {
+        ViewCapabilityIssuer::new(&self.current).ok()
+    }
+
+    fn verifier(&self) -> Option<ViewCapabilityVerifier> {
+        match self.previous.as_deref() {
+            Some(previous) => ViewCapabilityVerifier::with_previous(&self.current, previous).ok(),
+            None => ViewCapabilityVerifier::new(&self.current).ok(),
+        }
+    }
+}
+
+impl Default for CapabilityKeyRing {
+    fn default() -> Self {
+        Self::disabled()
+    }
+}
+
+impl OriginProofKeyRing {
+    /// Builds a key ring. Keys must have at least 16 bytes of entropy.
+    pub fn new(current: impl AsRef<[u8]>, previous: Option<impl AsRef<[u8]>>) -> Option<Self> {
+        let current = current.as_ref();
+        if current.len() < 16 || current.len() > 4096 {
+            return None;
+        }
+        let previous = previous.map(|key| key.as_ref().to_vec());
+        if previous
+            .as_ref()
+            .is_some_and(|key| key.len() < 16 || key.len() > 4096 || key.as_slice() == current)
+        {
+            return None;
+        }
+        Some(Self { current: current.to_vec(), previous })
+    }
+
+    /// The disabled ring used by local development and unit-test fixtures.
+    #[must_use]
+    pub const fn disabled() -> Self {
+        Self { current: Vec::new(), previous: None }
+    }
+}
+
+impl Default for OriginProofKeyRing {
+    fn default() -> Self {
+        Self::disabled()
+    }
+}
+
+/// Verifies the edge's origin proof against the current and previous
+/// ten-minute bucket and key.  The canonical target is the URI's exact
+/// path-and-query spelling, including any percent-encoding.
+pub fn verify_origin_proof(
+    headers: &HeaderMap,
+    method: &Method,
+    uri: &Uri,
+    keys: &OriginProofKeyRing,
+    now: u64,
+) -> bool {
+    let Some(raw) = headers.get(ORIGIN_PROOF_HEADER).and_then(|value| value.to_str().ok()) else {
+        return false;
+    };
+    let fields = raw.split('.').collect::<Vec<_>>();
+    if fields.len() != 3 || fields[0] != "v1" || fields[1].len() == 0 || fields[2].len() != 64 {
+        return false;
+    }
+    let Ok(bucket) = fields[1].parse::<u64>() else { return false };
+    // The edge carries the bucket's aligned Unix timestamp. Accept exactly
+    // the current and preceding bucket during one rotation overlap.
+    let current_bucket = now / CAPABILITY_BUCKET * CAPABILITY_BUCKET;
+    if bucket != current_bucket && bucket.saturating_add(CAPABILITY_BUCKET) != current_bucket {
+        return false;
+    }
+    let target = uri
+        .path_and_query()
+        .map_or_else(|| uri.path().to_owned(), |value| value.as_str().to_owned());
+    let message = format!("v1.{}.{}.{}", method.as_str().to_ascii_uppercase(), target, bucket);
+    let presented = fields[2].as_bytes();
+    if !presented.iter().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()) {
+        return false;
+    }
+    let valid = |key: &[u8]| {
+        constant_time_equal(hmac_sha256_hex(key, message.as_bytes()).as_bytes(), presented)
+    };
+    (!keys.current.is_empty() && valid(&keys.current))
+        || keys.previous.as_deref().is_some_and(valid)
+}
+
+/// Mints an origin proof for integration tests and edge conformance tools.
+/// Production callers receive this value from the sync edge, never from the
+/// member API.
+#[must_use]
+pub fn origin_proof_for(method: &Method, target: &str, bucket: u64, key: &[u8]) -> String {
+    let message = format!("v1.{}.{}.{}", method.as_str().to_ascii_uppercase(), target, bucket);
+    format!("v1.{bucket}.{}", hmac_sha256_hex(key, message.as_bytes()))
+}
 
 /// Canonical SQL attach input. Legacy collection-condition fields are absent.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -146,7 +303,8 @@ impl ViewStore {
         request: &AttachRequest,
         scope: &str,
     ) -> Result<(AttachResponse, String), ApiError> {
-        self.attach_materialized(request, scope, terrabase::regions::RegionCode::GRU, None)
+        let keys = CapabilityKeyRing::conformance();
+        self.attach_materialized(request, scope, terrabase::regions::RegionCode::GRU, None, &keys)
     }
 
     /// Attaches one query-backed view. `materialization` is produced from a
@@ -159,6 +317,7 @@ impl ViewStore {
         scope: &str,
         region: terrabase::regions::RegionCode,
         materialization: Option<Materialization>,
+        capability_keys: &CapabilityKeyRing,
     ) -> Result<(AttachResponse, String), ApiError> {
         let parameters =
             decode_base64(&request.parameters).map_err(|_| invalid_attach("parameters"))?;
@@ -298,6 +457,7 @@ impl ViewStore {
             view.entitlement_epoch,
             view.region,
             now_seconds(),
+            capability_keys,
         );
         Ok((
             AttachResponse {
@@ -513,6 +673,12 @@ impl ViewStore {
             .ok_or_else(unknown_view)
     }
 
+    /// Removes a view that was materialized but rejected by an admission
+    /// guard before its attach response became visible to a client.
+    fn detach_view(&self, view_id: &str) {
+        self.views.lock().expect("reactive view lock is not poisoned").remove(view_id);
+    }
+
     fn read_snapshot(&self, view_id: &str, generation: u64, cut: u64) -> Result<Frozen, ApiError> {
         let views = self.views.lock().expect("reactive view lock is not poisoned");
         let view = views.get(view_id).ok_or_else(unknown_view)?;
@@ -597,16 +763,26 @@ pub async fn attach_view(
         return error.into_response();
     }
     let scope = format!("{}:{}:{}", state.scope.0, state.scope.1, request.database_id);
-    let materialization = match materialize_view(&state, &host, &request, &scope) {
+    let materialization = match materialize_view(&state, &host, &request, &scope, Some(&principal))
+    {
         Ok(materialization) => materialization,
         Err(error) => return error.into_response(),
     };
-    let (response, view_id) =
-        match store().attach_materialized(&request, &scope, state.region, Some(materialization)) {
-            Ok(result) => result,
-            Err(error) => return error.into_response(),
-        };
+    let (response, view_id) = match store().attach_materialized(
+        &request,
+        &scope,
+        state.region,
+        Some(materialization),
+        &state.capability_keys,
+    ) {
+        Ok(result) => result,
+        Err(error) => return error.into_response(),
+    };
     if let Err(rejection) = state.guards.attach_view(&request.database_id, &view_id) {
+        // The store insertion is shared and must be rolled back when the
+        // distinct-view budget rejects it; otherwise an attacker can fill
+        // the process-local registry with uncounted, unusable views.
+        store().detach_view(&view_id);
         state.metrics.record_admission_rejection(
             terrabase::observability::Operation::Subscribe,
             terrabase::observability::AdmissionReason::Capacity,
@@ -630,11 +806,14 @@ pub async fn snapshot(
     Path((view, generation, chunk)): Path<(String, u64, String)>,
     Query(query): Query<CutQuery>,
     headers: HeaderMap,
+    proof: Option<axum::extract::Extension<OriginProofVerified>>,
 ) -> Response {
     if chunk != "0" {
         return unknown_view().into_response();
     }
-    if let Err(error) = verify_view_header(&headers, &view, generation) {
+    if let Err(error) =
+        verify_view_header(&headers, &view, generation, proof.is_some(), &_state.capability_keys)
+    {
         return error.into_response();
     }
     match store().read_snapshot(&view, generation, query.cut.unwrap_or(0)) {
@@ -652,11 +831,14 @@ pub async fn view_log(
     Path((view, generation)): Path<(String, u64)>,
     Query(query): Query<OffsetQuery>,
     headers: HeaderMap,
+    proof: Option<axum::extract::Extension<OriginProofVerified>>,
 ) -> Response {
     let Some(offset) = query.offset else {
         return invalid_offset().into_response();
     };
-    if let Err(error) = verify_view_header(&headers, &view, generation) {
+    if let Err(error) =
+        verify_view_header(&headers, &view, generation, proof.is_some(), &_state.capability_keys)
+    {
         return error.into_response();
     }
     let started = tokio::time::Instant::now();
@@ -702,6 +884,7 @@ pub async fn poll(
 #[utoipa::path(get, path = "/api/v1/databases/{name}/reactive", responses((status = 101, description = "Reactive WebSocket connected")))]
 pub async fn websocket(
     State(state): State<Arc<ApiState>>,
+    axum::extract::Extension(principal): axum::extract::Extension<crate::api_keys::Principal>,
     Path(name): Path<String>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
@@ -721,7 +904,7 @@ pub async fn websocket(
         return ApiError::abuse_guard(&rejection).into_response();
     }
     let permit = WsPermit { guards: Arc::clone(&state.guards), database: name.clone() };
-    upgrade.on_upgrade(move |socket| serve_socket(socket, state, name, permit))
+    upgrade.on_upgrade(move |socket| serve_socket(socket, state, name, principal, permit))
 }
 
 struct WsPermit {
@@ -739,70 +922,114 @@ async fn serve_socket(
     mut socket: WebSocket,
     state: Arc<ApiState>,
     database: String,
+    principal: crate::api_keys::Principal,
     _permit: WsPermit,
 ) {
-    let Some(Ok(Message::Binary(bytes))) = socket.recv().await else {
-        return;
+    // A socket may subscribe more than once. Keep every distinct view tied
+    // to the socket lifetime so disconnects release both the connection and
+    // distinct-view budgets, including malformed/failed frame paths.
+    let mut view_permit = WsViewPermit {
+        guards: Arc::clone(&state.guards),
+        database: database.clone(),
+        views: std::collections::BTreeSet::new(),
     };
-    let Ok(envelope) = terrabase_sync_core::wire::decode_envelope(&bytes) else {
-        let _ = socket
-            .send(Message::Binary(
-                error_bytes(terrabase_sync_core::wire::ErrorCode::MalformedFrame).into(),
-            ))
-            .await;
-        return;
-    };
-    let terrabase_sync_core::wire::Message::Subscribe {
-        subscription,
-        query,
-        parameters,
-        checkpoint,
-    } = envelope.message
-    else {
-        let _ = socket
-            .send(Message::Binary(
-                error_bytes(terrabase_sync_core::wire::ErrorCode::MalformedFrame).into(),
-            ))
-            .await;
-        return;
-    };
-    let request = AttachRequest {
-        database_id: database.clone(),
-        statement: query,
-        parameters: encode_base64(&parameters),
-        checkpoint: checkpoint.map(|value| encode_base64(&value)),
-        subscription: Some(subscription),
-        entitlement_epoch: 0,
-    };
-    let scope = format!("{}:{}:{}", state.scope.0, state.scope.1, database);
-    let Ok(host) = crate::api::document_host(&state, &database) else {
-        let _ = socket
-            .send(Message::Binary(
-                error_bytes(terrabase_sync_core::wire::ErrorCode::PermissionDenied).into(),
-            ))
-            .await;
-        return;
-    };
-    let Ok(materialization) = materialize_view(&state, &host, &request, &scope) else {
-        let _ = socket
-            .send(Message::Binary(
-                error_bytes(terrabase_sync_core::wire::ErrorCode::PermissionDenied).into(),
-            ))
-            .await;
-        return;
-    };
-    let Ok((response, view_id)) =
-        store().attach_materialized(&request, &scope, state.region, Some(materialization))
-    else {
-        let _ = socket
-            .send(Message::Binary(
-                error_bytes(terrabase_sync_core::wire::ErrorCode::Unavailable).into(),
-            ))
-            .await;
-        return;
-    };
-    if let Ok(snapshot) = store().read_snapshot(&view_id, 1, response.offset) {
-        let _ = socket.send(Message::Binary(snapshot.bytes.to_vec().into())).await;
+    // Keep the upgraded transport alive for successive subscribe frames. A
+    // WebSocket is a sustained transport; one initial snapshot must not turn
+    // it into an expensive one-shot request.
+    loop {
+        let Some(Ok(Message::Binary(bytes))) = socket.recv().await else {
+            return;
+        };
+        let Ok(envelope) = terrabase_sync_core::wire::decode_envelope(&bytes) else {
+            let _ = socket
+                .send(Message::Binary(
+                    error_bytes(terrabase_sync_core::wire::ErrorCode::MalformedFrame).into(),
+                ))
+                .await;
+            return;
+        };
+        let terrabase_sync_core::wire::Message::Subscribe {
+            subscription,
+            query,
+            parameters,
+            checkpoint,
+        } = envelope.message
+        else {
+            let _ = socket
+                .send(Message::Binary(
+                    error_bytes(terrabase_sync_core::wire::ErrorCode::MalformedFrame).into(),
+                ))
+                .await;
+            return;
+        };
+        let request = AttachRequest {
+            database_id: database.clone(),
+            statement: query,
+            parameters: encode_base64(&parameters),
+            checkpoint: checkpoint.map(|value| encode_base64(&value)),
+            subscription: Some(subscription),
+            entitlement_epoch: 0,
+        };
+        let scope = format!("{}:{}:{}", state.scope.0, state.scope.1, database);
+        let Ok(host) = crate::api::document_host(&state, &database) else {
+            let _ = socket
+                .send(Message::Binary(
+                    error_bytes(terrabase_sync_core::wire::ErrorCode::PermissionDenied).into(),
+                ))
+                .await;
+            return;
+        };
+        let Ok(materialization) =
+            materialize_view(&state, &host, &request, &scope, Some(&principal))
+        else {
+            let _ = socket
+                .send(Message::Binary(
+                    error_bytes(terrabase_sync_core::wire::ErrorCode::PermissionDenied).into(),
+                ))
+                .await;
+            return;
+        };
+        let Ok((response, view_id)) = store().attach_materialized(
+            &request,
+            &scope,
+            state.region,
+            Some(materialization),
+            &state.capability_keys,
+        ) else {
+            let _ = socket
+                .send(Message::Binary(
+                    error_bytes(terrabase_sync_core::wire::ErrorCode::Unavailable).into(),
+                ))
+                .await;
+            return;
+        };
+        if state.guards.attach_view(&database, &view_id).is_err() {
+            store().detach_view(&view_id);
+            let _ = socket
+                .send(Message::Binary(
+                    error_bytes(terrabase_sync_core::wire::ErrorCode::Unavailable).into(),
+                ))
+                .await;
+            return;
+        }
+        view_permit.views.insert(view_id);
+        if let Ok(snapshot) = store().read_snapshot(&view_id, 1, response.offset) {
+            let _ = socket.send(Message::Binary(snapshot.bytes.to_vec().into())).await;
+        }
+    }
+}
+
+struct WsViewPermit {
+    guards: Arc<crate::guards::AbuseGuards>,
+    database: String,
+    views: std::collections::BTreeSet<String>,
+}
+
+impl Drop for WsViewPermit {
+    fn drop(&mut self) {
+        for view in &self.views {
+            self.guards.detach_view(&self.database, view);
+        }
     }
 }
 
@@ -855,6 +1082,7 @@ fn materialize_view(
     host: &std::sync::Arc<terrabase_tbep::member_host::MemberHost>,
     request: &AttachRequest,
     scope: &str,
+    principal: Option<&crate::api_keys::Principal>,
 ) -> Result<Materialization, ApiError> {
     let statement = terrabase::SqlQueryText::try_new(request.statement.trim())
         .map_err(|_| sql_error("the statement is not valid read-only SQL"))?;
@@ -886,6 +1114,16 @@ fn materialize_view(
             parameters,
         ))
         .map_err(ApiError::query)?;
+    if let Some(principal) = principal
+        && let Some(collection) = plan.source().collection()
+        && !principal.scope().admits_collection(
+            crate::api_keys::Verbs::READ,
+            &request.database_id,
+            collection.as_str(),
+        )
+    {
+        return Err(ApiError::forbidden("read on the requested collection"));
+    }
     if plan.sql_execute_only_operator().is_some() {
         return Err(ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
@@ -994,14 +1232,27 @@ fn reset_response(bytes: Vec<u8>) -> Response {
     headers.insert("cloudflare-cdn-cache-control", HeaderValue::from_static("no-store"));
     response
 }
-fn verify_view_header(headers: &HeaderMap, view: &str, generation: u64) -> Result<(), ApiError> {
+fn verify_view_header(
+    headers: &HeaderMap,
+    view: &str,
+    generation: u64,
+    origin_proof: bool,
+    capability_keys: &CapabilityKeyRing,
+) -> Result<(), ApiError> {
+    // A verified edge proof attests that the edge already checked the
+    // capability and strips it before forwarding. Direct regional callers
+    // still need the view capability below.
+    if origin_proof && !headers.contains_key(VIEW_CAPABILITY_HEADER) {
+        return Ok(());
+    }
     let Some(raw) = headers.get(VIEW_CAPABILITY_HEADER).and_then(|value| value.to_str().ok())
     else {
         return Err(capability_error());
     };
     let expected = store().capability_claims(view, generation)?;
-    ViewCapabilityVerifier::new(CAPABILITY_KEY)
-        .map_err(|_| capability_error())?
+    capability_keys
+        .verifier()
+        .ok_or_else(capability_error)?
         .verify_claims(raw, &expected, now_seconds())
         .map(|_| ())
         .map_err(|_| capability_error())
@@ -1019,7 +1270,7 @@ pub fn capability_for(
     let expiry = (now / CAPABILITY_BUCKET + 2) * CAPABILITY_BUCKET;
     let body =
         format!("v1.{view}.{generation}.{}.{}.{}", encode_scope(scope), entitlement_epoch, expiry);
-    format!("{body}.{}", hmac_sha256_hex(CAPABILITY_KEY, body.as_bytes()))
+    format!("{body}.{}", hmac_sha256_hex(CONFORMANCE_CAPABILITY_KEY, body.as_bytes()))
 }
 
 /// Mints the production capability, binding the serving Region into the
@@ -1032,8 +1283,9 @@ fn capability_for_region(
     entitlement_epoch: u64,
     region: terrabase::regions::RegionCode,
     now: u64,
+    capability_keys: &CapabilityKeyRing,
 ) -> String {
-    let Ok(issuer) = ViewCapabilityIssuer::new(CAPABILITY_KEY) else { return String::new() };
+    let Some(issuer) = capability_keys.issuer() else { return String::new() };
     issuer.issue(view, generation, scope, entitlement_epoch, region, now).unwrap_or_default()
 }
 fn encode_scope(scope: &str) -> String {
@@ -1341,6 +1593,13 @@ fn hmac_sha256_hex(key: &[u8], message: &[u8]) -> String {
     output.extend_from_slice(&hash);
     sha256(&output).iter().map(|byte| format!("{byte:02x}")).collect()
 }
+
+fn constant_time_equal(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter().zip(right).fold(0u8, |difference, (left, right)| difference | (left ^ right)) == 0
+}
 fn sha256(input: &[u8]) -> [u8; 32] {
     const K: [u32; 64] = [
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
@@ -1428,3 +1687,65 @@ fn sha256(input: &[u8]) -> [u8; 32] {
 /// Compatibility holder retained until the owner removes the legacy field.
 #[derive(Default)]
 pub struct ReactiveSessions;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{HeaderValue, Uri};
+
+    #[test]
+    fn origin_proof_binds_log_target_and_rotation_overlap() {
+        let current = b"origin-current-key-material";
+        let previous = b"origin-previous-key-material";
+        let keys = OriginProofKeyRing::new(current, Some(previous)).expect("valid key ring");
+        let now = 1_800;
+        let bucket = now / CAPABILITY_BUCKET * CAPABILITY_BUCKET;
+        let target = "/api/v1/reactive/views/view-1/1/log?offset=0";
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            ORIGIN_PROOF_HEADER,
+            HeaderValue::from_str(&origin_proof_for(&Method::GET, target, bucket, current))
+                .expect("proof header"),
+        );
+        assert!(verify_origin_proof(
+            &headers,
+            &Method::GET,
+            &target.parse::<Uri>().expect("target"),
+            &keys,
+            now,
+        ));
+
+        headers.insert(
+            ORIGIN_PROOF_HEADER,
+            HeaderValue::from_str(&origin_proof_for(
+                &Method::GET,
+                target,
+                bucket.saturating_sub(CAPABILITY_BUCKET),
+                previous,
+            ))
+            .expect("previous proof header"),
+        );
+        assert!(verify_origin_proof(
+            &headers,
+            &Method::GET,
+            &target.parse::<Uri>().expect("target"),
+            &keys,
+            now,
+        ));
+    }
+
+    #[test]
+    fn websocket_view_guard_is_released_on_task_drop() {
+        let guards = Arc::new(crate::guards::AbuseGuards::new());
+        guards.attach_view("db", "view").expect("view admission");
+        {
+            let _permit = WsViewPermit {
+                guards: Arc::clone(&guards),
+                database: "db".into(),
+                views: std::collections::BTreeSet::from(["view".into()]),
+            };
+            assert_eq!(guards.view_count("db"), 1);
+        }
+        assert_eq!(guards.view_count("db"), 0);
+    }
+}

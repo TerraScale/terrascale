@@ -174,6 +174,14 @@ pub struct PublicApiConfig {
     /// one. Absent means deny-all: the surface answers, nothing is
     /// admitted.
     pub bootstrap_key_file: Option<PathBuf>,
+    /// Current HMAC key file used by the sync edge's origin proof.
+    pub origin_proof_key_file: Option<PathBuf>,
+    /// Previous origin-proof HMAC key retained for one rotation overlap.
+    pub origin_proof_previous_key_file: Option<PathBuf>,
+    /// Current HMAC key file used to issue view capabilities.
+    pub capability_key_file: Option<PathBuf>,
+    /// Previous view-capability HMAC key retained for one overlap.
+    pub capability_previous_key_file: Option<PathBuf>,
     /// The regions this deployment believes active for `GlobalDurable`
     /// (D-37: the class fails closed under two). Absent means a
     /// single-region deployment and every global write is refused with
@@ -337,6 +345,18 @@ struct FilePublicApi {
     /// wrote it).
     #[serde(default)]
     bootstrap_key_file: Option<PathBuf>,
+    /// Current HMAC key file used by the sync edge's origin proof.
+    #[serde(default, alias = "origin_proof_current_key_file")]
+    origin_proof_key_file: Option<PathBuf>,
+    /// Previous origin-proof HMAC key retained for one rotation overlap.
+    #[serde(default)]
+    origin_proof_previous_key_file: Option<PathBuf>,
+    /// Current HMAC key file used to issue view capabilities.
+    #[serde(default)]
+    capability_key_file: Option<PathBuf>,
+    /// Previous view-capability HMAC key retained for one overlap.
+    #[serde(default)]
+    capability_previous_key_file: Option<PathBuf>,
     /// The region codes this deployment considers active (D-37).
     #[serde(default)]
     regions: Vec<String>,
@@ -1137,6 +1157,18 @@ fn parse_public_api(
     if let Some(key_file) = &section.bootstrap_key_file {
         absolute(key_file)?;
     }
+    if let Some(key_file) = &section.origin_proof_key_file {
+        absolute(key_file)?;
+    }
+    if let Some(key_file) = &section.origin_proof_previous_key_file {
+        absolute(key_file)?;
+    }
+    if let Some(key_file) = &section.capability_key_file {
+        absolute(key_file)?;
+    }
+    if let Some(key_file) = &section.capability_previous_key_file {
+        absolute(key_file)?;
+    }
     // Every named region must parse; duplicates collapse (the count is
     // the durability class's input, not a placement).
     let named: std::collections::BTreeSet<String> = section.regions.iter().cloned().collect();
@@ -1148,6 +1180,10 @@ fn parse_public_api(
         listen,
         data_root: section.data_root.clone(),
         bootstrap_key_file: section.bootstrap_key_file.clone(),
+        origin_proof_key_file: section.origin_proof_key_file.clone(),
+        origin_proof_previous_key_file: section.origin_proof_previous_key_file.clone(),
+        capability_key_file: section.capability_key_file.clone(),
+        capability_previous_key_file: section.capability_previous_key_file.clone(),
         active_regions: named.len(),
     }))
 }

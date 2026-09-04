@@ -1684,23 +1684,42 @@ fn usage_fact_pb(value: &registry::UsageFact) -> pb::UsageFact {
     pb::UsageFact {
         fact_id: value.fact_id.clone(),
         meter: match value.meter {
+            registry::UsageMeter::DocumentWriteUnits => pb::UsageMeter::DocumentWriteUnits as i32,
+            registry::UsageMeter::StorageByteSeconds => pb::UsageMeter::StorageByteSeconds as i32,
             registry::UsageMeter::AdmittedRequestUnits => {
                 pb::UsageMeter::AdmittedRequestUnits as i32
             }
             registry::UsageMeter::PublicEgressBytes => pb::UsageMeter::PublicEgressBytes as i32,
+            #[allow(deprecated)]
+            registry::UsageMeter::StoredByteHours
+            | registry::UsageMeter::ActiveRegionSeats
+            | registry::UsageMeter::BackupByteHours
+            | registry::UsageMeter::RestoreWork => pb::UsageMeter::Unspecified as i32,
         },
         meter_version: value.meter_version,
         unit: match value.unit {
+            registry::UsageUnit::WriteUnit => pb::UsageUnit::WriteUnit as i32,
+            registry::UsageUnit::ByteSecond => pb::UsageUnit::ByteSecond as i32,
             registry::UsageUnit::RequestUnit => pb::UsageUnit::RequestUnit as i32,
             registry::UsageUnit::Byte => pb::UsageUnit::Byte as i32,
         },
         charge_scope: match value.charge_scope {
+            registry::UsageChargeScope::DocumentWrite => pb::UsageChargeScope::DocumentWrite as i32,
+            registry::UsageChargeScope::LogicalStorage => {
+                pb::UsageChargeScope::LogicalStorage as i32
+            }
             registry::UsageChargeScope::AdmittedRequest => {
                 pb::UsageChargeScope::AdmittedRequest as i32
             }
             registry::UsageChargeScope::PublicEgress => pb::UsageChargeScope::PublicEgress as i32,
         },
         minting_rule: match value.minting_rule {
+            registry::UsageMintingRule::AcceptedOriginCommit => {
+                pb::UsageMintingRule::AcceptedOriginCommit as i32
+            }
+            registry::UsageMintingRule::LogicalStorage => {
+                pb::UsageMintingRule::LogicalStorage as i32
+            }
             registry::UsageMintingRule::StableAdmittedRequest => {
                 pb::UsageMintingRule::StableAdmittedRequest as i32
             }
@@ -2383,6 +2402,12 @@ impl UsageService for Arc<TbepGrpcServer> {
         let key = idempotency_key(&request)?;
         let message = request.into_inner();
         let meter = match pb::UsageRecordMeter::try_from(message.meter) {
+            Ok(pb::UsageRecordMeter::DocumentWriteUnits) => {
+                registry::UsageRecordMeter::DocumentWriteUnits
+            }
+            Ok(pb::UsageRecordMeter::StorageByteSeconds) => {
+                registry::UsageRecordMeter::StorageByteSeconds
+            }
             Ok(pb::UsageRecordMeter::AdmittedRequestUnits) => {
                 registry::UsageRecordMeter::AdmittedRequestUnits
             }

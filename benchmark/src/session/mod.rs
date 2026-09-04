@@ -2051,6 +2051,23 @@ impl<'engine> Session<'engine> {
         start: u32,
         page_size: u32,
     ) -> Result<Vec<Document>, SessionError> {
+        self.load_starting_with_token(collection, prefix, matches, start, page_size)
+            .map(|(documents, _)| documents)
+    }
+
+    /// Loads one prefix page and returns the stream's causal continuation
+    /// token alongside the documents. The owning session is deliberately
+    /// borrowed immutably while the page stream is live, so callers that
+    /// continue work in another request can carry this explicit token into
+    /// [`SessionOptions::with_session_token`].
+    pub fn load_starting_with_token(
+        &self,
+        collection: CollectionName,
+        prefix: &str,
+        matches: Option<&str>,
+        start: u32,
+        page_size: u32,
+    ) -> Result<(Vec<Document>, SessionToken), SessionError> {
         let mut selector =
             DocumentStreamSelector::try_new(collection, fresh_deadline(), Cancellation::new())
                 .map_err(|_| SessionError::Stream(StreamError::InvalidSource))?
@@ -2064,7 +2081,7 @@ impl<'engine> Session<'engine> {
         let mut stream = self.stream_documents(selector)?;
         let mut documents = Vec::new();
         if page_size == 0 {
-            return Ok(documents);
+            return Ok((documents, stream.session_token().clone()));
         }
         let wanted = usize::try_from(page_size).expect("page sizes fit usize");
         let mut skipped: u32 = 0;
@@ -2088,7 +2105,7 @@ impl<'engine> Session<'engine> {
                 break;
             }
         }
-        Ok(documents)
+        Ok((documents, stream.session_token().clone()))
     }
 
     // -- helpers ------------------------------------------------------------------

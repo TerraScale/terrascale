@@ -44,6 +44,8 @@ pub(crate) enum StagedWrite {
         origin: String,
         /// The source region's durable per-origin journal sequence.
         origin_sequence: u64,
+        /// The source row's opaque versioned causal context.
+        context: Vec<u8>,
     },
     /// Delete one document replicated from a peer region (D-35/D-36): the
     /// tombstone form of [`StagedWrite::ReplicatedPut`], stamped the same
@@ -61,6 +63,8 @@ pub(crate) enum StagedWrite {
         origin: String,
         /// The source region's durable per-origin journal sequence.
         origin_sequence: u64,
+        /// The source row's opaque versioned causal context.
+        context: Vec<u8>,
     },
 }
 

@@ -30,7 +30,7 @@ if [[ "${TERRABASE_PG_FULLSTACK_NIXED:-}" != "1" ]]; then
 fi
 
 # The measured subjects (postgres, pgbouncer, pgrest) run inside the
-# fixed 8-CPU / 8-GiB benchmark envelope.
+# fixed 2 OCPU / 12 GiB launch-member envelope.
 source "$(dirname "$0")/resource-envelope.sh"
 
 ROOT=/tmp/terrabase-bench-pgfullstack-lane

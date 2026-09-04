@@ -265,24 +265,35 @@ pub enum BoundedLabel {
 /// boundaries that receive external metadata before converting it to enums.
 #[must_use]
 pub fn is_high_cardinality_label_name(name: &str) -> bool {
+    let normalized = name.to_ascii_lowercase().replace('-', "_");
     matches!(
-        name.to_ascii_lowercase().as_str(),
-        "db" | "database"
+        normalized.as_str(),
+        "db" | "db_id"
+            | "dbid"
+            | "database"
             | "database_id"
+            | "databaseid"
             | "tenant"
             | "tenant_id"
+            | "tenantid"
             | "view"
             | "view_id"
+            | "viewid"
             | "document"
             | "document_id"
+            | "documentid"
             | "doc"
             | "doc_id"
+            | "docid"
             | "query"
             | "query_id"
+            | "queryid"
             | "request"
             | "request_id"
+            | "requestid"
             | "collection"
             | "collection_id"
+            | "collectionid"
     )
 }
 
@@ -2930,7 +2941,7 @@ impl LogSampler {
         }
         let second = timestamp_millis / 1_000;
         let mut state = lock(&self.state);
-        if state.second != Some(second) {
+        if state.second.is_none_or(|current| second > current) {
             state.second = Some(second);
             state.info_seen = 0;
         }
@@ -3068,7 +3079,10 @@ pub fn redact_diagnostic(input: &str) -> String {
         output.push_str(&input[start..key_end]);
         scan = key_end;
     }
-    output
+    // Redaction markers can be longer than the value they replace. Bound the
+    // final result as well as the inspected input, so this function itself is
+    // safe to use at a sink boundary (not only through `LogRecord`).
+    bounded_diagnostic(&output).to_owned()
 }
 
 const SECRET_KEY_ALIASES: &[&str] = &[
