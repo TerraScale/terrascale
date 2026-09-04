@@ -62,9 +62,9 @@ export class TerraScaleClient {
     this.documents = new DocumentsClient(this.#http);
     this.sql = new SqlClient(this.#http);
     this.reactive = new TerraScaleSyncV2Client({
-      apiBaseUrl: config.apiBaseUrl,
-      fetch: config.fetch,
-      accessToken: config.accessToken,
+      ...(config.apiBaseUrl === undefined ? {} : { apiBaseUrl: config.apiBaseUrl }),
+      ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
+      ...(config.accessToken === undefined ? {} : { accessToken: config.accessToken }),
     });
 
     // Keep these additional public surfaces out of the ordinary client route
@@ -127,7 +127,32 @@ export type DocumentReadOptions = {
   /** Conditional read precondition, sent as `If-None-Match`. */
   readonly ifNoneMatch?: string | undefined;
   /** Read-your-writes sequence, sent as `X-TerraScale-Session`. */
-  readonly session?: number | string | undefined;
+  /** Opaque base64url causal session token returned by the API. */
+  readonly session?: string | undefined;
+};
+
+export type DocumentHistoryEntry = {
+  readonly revision: string;
+  readonly deleted: boolean;
+};
+
+export type DocumentHistoryResponse = {
+  readonly history: readonly DocumentHistoryEntry[];
+};
+
+export type DocumentBatchOperation = {
+  readonly op: "put" | "patch" | "delete";
+  readonly id: string;
+  readonly value?: Models.JsonValue;
+};
+
+export type DocumentBatchRequest = {
+  readonly operations: readonly DocumentBatchOperation[];
+};
+
+export type DocumentBatchResponse = {
+  readonly committed: number;
+  readonly count: number;
 };
 
 /**
@@ -149,7 +174,7 @@ export class DocumentsClient {
   ): Promise<TerraScaleResult<DocumentsResponse>> {
     const path = documentsPath(database, collection);
     validateDocumentListOptions(options);
-    return directRequest(this.#http, "documents.list", {
+    return directRequest(this.#http, "databases.listDocuments", {
       method: "GET",
       path,
       query: {
@@ -168,7 +193,7 @@ export class DocumentsClient {
   ): Promise<TerraScaleResult<TValue>> {
     const path = documentPath(database, collection, id);
     validateDocumentReadOptions(options);
-    return directRequest(this.#http, "documents.get", {
+    return directRequest(this.#http, "databases.getDocument", {
       method: "GET",
       path,
       query: options.at === undefined ? undefined : { at: options.at },
@@ -186,7 +211,7 @@ export class DocumentsClient {
     const path = documentPath(database, collection, id);
     validateDocumentOperationOptions(options);
     validateJsonPayload(value, "document value");
-    return directRequest(this.#http, "documents.put", {
+    return directRequest(this.#http, "databases.putDocument", {
       method: "PUT",
       path,
       body: value,
@@ -226,7 +251,7 @@ export class DocumentsClient {
     const path = documentPath(database, collection, id);
     validateDocumentOperationOptions(options);
     validateJsonPayload(patch, "merge patch");
-    return directRequest(this.#http, "documents.patch", {
+    return directRequest(this.#http, "databases.patchDocument", {
       method: "PATCH",
       path,
       body: patch,
@@ -253,9 +278,45 @@ export class DocumentsClient {
   ): Promise<TerraScaleResult<void>> {
     const path = documentPath(database, collection, id);
     validateDocumentOperationOptions(options);
-    return directRequest(this.#http, "documents.delete", {
+    return directRequest(this.#http, "databases.deleteDocument", {
       method: "DELETE",
       path,
+      ...documentRequestOptions(options),
+    });
+  }
+
+  history(
+    database: string,
+    collection: string,
+    id: string,
+    options: DocumentListOptions = {},
+  ): Promise<TerraScaleResult<DocumentHistoryResponse>> {
+    const path = `${documentPath(database, collection, id)}/history`;
+    validateDocumentListOptions(options);
+    return directRequest(this.#http, "databases.documentHistory", {
+      method: "GET",
+      path,
+      query: {
+        ...(options.limit === undefined ? {} : { limit: options.limit }),
+        ...(options.after === undefined ? {} : { after: options.after }),
+      },
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  }
+
+  batch(
+    database: string,
+    collection: string,
+    request: DocumentBatchRequest,
+    options: DocumentOperationOptions = {},
+  ): Promise<TerraScaleResult<DocumentBatchResponse>> {
+    const path = `${documentsPath(database, collection)}/batch`;
+    validateDocumentOperationOptions(options);
+    validateDocumentBatchRequest(request);
+    return directRequest(this.#http, "databases.batchDocuments", {
+      method: "POST",
+      path,
+      body: request,
       ...documentRequestOptions(options),
     });
   }
@@ -1340,6 +1401,30 @@ function validateDocumentListOptions(options: DocumentListOptions): void {
   if (options.after !== undefined) requireDocumentIdentifier(options.after, "after");
 }
 
+function validateDocumentBatchRequest(request: DocumentBatchRequest): void {
+  if (request === null || typeof request !== "object" || !Array.isArray(request.operations) ||
+    request.operations.length < 1 || request.operations.length > 1_000) {
+    throw new TypeError("operations must contain between 1 and 1000 items.");
+  }
+  for (const [index, operation] of request.operations.entries()) {
+    if (operation === null || typeof operation !== "object") {
+      throw new TypeError(`operations[${index}] must be an object.`);
+    }
+    requireDocumentIdentifier(operation.id, `operations[${index}].id`);
+    if (operation.op !== "put" && operation.op !== "patch" && operation.op !== "delete") {
+      throw new TypeError(`operations[${index}].op must be put, patch, or delete.`);
+    }
+    if (operation.op === "delete") {
+      if (operation.value !== undefined) throw new TypeError(`operations[${index}].value is not allowed for delete.`);
+    } else if (operation.op === "put") {
+      if (operation.value === undefined) throw new TypeError(`operations[${index}].value is required for put.`);
+      validateJsonPayload(operation.value, `operations[${index}].value`);
+    } else if (operation.value !== undefined) {
+      validateJsonPayload(operation.value, `operations[${index}].value`);
+    }
+  }
+}
+
 function validateDocumentReadOptions(options: DocumentReadOptions): void {
   if (options === null || typeof options !== "object") throw new TypeError("operation options must be an object.");
   if (options.at !== undefined &&
@@ -1350,11 +1435,16 @@ function validateDocumentReadOptions(options: DocumentReadOptions): void {
     (typeof options.ifNoneMatch !== "string" || options.ifNoneMatch.trim().length === 0 || options.ifNoneMatch.length > 1024)) {
     throw new TypeError("ifNoneMatch must be a nonblank string of at most 1024 characters.");
   }
-  if (options.session !== undefined &&
-    ((typeof options.session === "number" && (!Number.isSafeInteger(options.session) || options.session < 0)) ||
-      (typeof options.session === "string" && !/^\\d+$/u.test(options.session)))) {
-    throw new TypeError("session must be a non-negative integer.");
+  if (options.session !== undefined && !isOpaqueSessionToken(options.session)) {
+    throw new TypeError("session must be a canonical unpadded base64url token of at most 16384 characters.");
   }
+}
+
+function isOpaqueSessionToken(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 16_384 || value.length % 4 === 1) {
+    return false;
+  }
+  return /^[A-Za-z0-9_-]+$/u.test(value);
 }
 
 function validateDocumentOperationOptions(options: DocumentOperationOptions): void {
@@ -1396,7 +1486,7 @@ function documentReadRequestOptions(options: DocumentReadOptions): {
     ...(options.ifNoneMatch === undefined && options.session === undefined ? {} : {
       headers: {
         ...(options.ifNoneMatch === undefined ? {} : { "if-none-match": options.ifNoneMatch }),
-        ...(options.session === undefined ? {} : { "x-terrascale-session": String(options.session) }),
+        ...(options.session === undefined ? {} : { "x-terrascale-session": options.session }),
       },
     }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),

@@ -75,6 +75,7 @@ export class TerraScaleHttp {
 
   constructor(config: TerraScaleRuntimeConfig) {
     this.config = resolveRuntimeConfig(config);
+    validateCredentialEndpoint(this.config.apiBaseUrl, config.fetch !== undefined);
     const fetchHandler = config.fetch ?? globalThis.fetch?.bind(globalThis);
     if (fetchHandler === undefined) {
       throw new TypeError("TerraScaleClient requires a fetch implementation.");
@@ -366,6 +367,30 @@ export class TerraScaleHttp {
   }
 }
 
+function validateCredentialEndpoint(baseUrl: string, explicitTestTransport: boolean): void {
+  let url: URL;
+  try {
+    url = new URL(`${baseUrl}/`);
+  } catch {
+    // Preserve request-time transport errors for malformed URLs. The URL
+    // cannot carry credentials until it parses successfully.
+    return;
+  }
+  if (url.username !== "" || url.password !== "") {
+    throw new TypeError("TerraScale API base URLs cannot contain credentials.");
+  }
+  for (const key of url.searchParams.keys()) {
+    if (/(?:auth|cookie|credential|key|pass(?:word)?|secret|session|token)/iu.test(key)) {
+      throw new TypeError("TerraScale API base URLs cannot contain secret-bearing query parameters.");
+    }
+  }
+  if (url.protocol === "https:") return;
+  const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+  const testHost = url.hostname === "test" || url.hostname.endsWith(".test");
+  if (url.protocol === "http:" && (loopback || (explicitTestTransport && testHost))) return;
+  throw new TypeError("TerraScale API endpoints must use HTTPS, except explicit loopback/test transports.");
+}
+
 const internalHeaderNames = new Set([
   "if-match",
   "if-none-match",
@@ -396,25 +421,18 @@ function isMutation(method: TerraScaleHttpMethod): boolean {
 
 const retryableStatuses = new Set([408, 429, 500, 502, 503, 504]);
 
-const MAX_SESSION_TOKEN = 0xffff_ffff_ffff_ffffn;
-
 function validateSessionToken(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const normalized = value.trim();
-  if (!/^\d+$/u.test(normalized) || normalized.length > 20) return false;
-  try {
-    return BigInt(normalized) <= MAX_SESSION_TOKEN;
-  } catch {
-    return false;
-  }
+  return normalized.length > 0 && normalized.length <= 16_384 && normalized.length % 4 !== 1 &&
+    /^[A-Za-z0-9_-]+$/u.test(normalized);
 }
 
 function sessionTokenAdvances(current: string, candidate: string): boolean {
-  try {
-    return BigInt(candidate) > BigInt(current);
-  } catch {
-    return false;
-  }
+  // SessionToken is intentionally opaque: only the producer can interpret
+  // its causal frontier. Keep the latest valid observation rather than
+  // comparing encodings as if they were numeric revisions.
+  return candidate !== current;
 }
 
 function servingRegion(headers: Headers): TerraScaleRegionCode | undefined {

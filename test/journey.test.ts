@@ -5,15 +5,16 @@
 //   2. live+sync (reactive sync/v2 state machine + HTTP attach/poll)
 //   3. tenants+usage (database-per-tenant + usage surfaces)
 //
-// Other workers own replication, backup+branch, and dashboard flows.
-// Append those chapters in new describe blocks; do not replace these.
+// Keep new producer-backed flows in this journey; do not replace the
+// deterministic protocol chapters below.
 //
-// Runs against an injected-fetch mock now; the live suite at the bottom
-// runs against the real stack after E-15 when the TERRASCALE_* env gates
-// are present. Live tests clean up every resource they create.
+// The unit chapters retain deterministic wire/SDK conformance fixtures. The
+// live suite at the bottom is the P-3 product proof: it runs only when the
+// real stack's TERRASCALE_* gates are present and cleans up every resource it
+// creates.
 
 import assert from "node:assert/strict";
-import { describe, test } from "vitest";
+import { beforeAll, describe, test } from "vitest";
 
 import { createTerraScaleClient } from "../src/factory.js";
 import { TerraScaleHttp } from "../src/http.js";
@@ -481,6 +482,37 @@ describe("P-3 journey chapter 2: live+sync (mock)", () => {
     assert.equal(ack.subscription, "orders-by-status");
   });
 
+  test("the wire corpus accepts every published reset reason", () => {
+    const reasons = [
+      "checkpoint_expired",
+      "retention_advanced",
+      "generation_changed",
+      "checkpoint_not_current",
+      "view_diverged",
+      "oversized",
+      "invalid_operations",
+      "invalid_checkpoint",
+      "backpressure",
+    ] as const;
+    for (const [index, reason] of reasons.entries()) {
+      const client = new TerraScaleSyncV2Client();
+      const opened = client.openSubscription({
+        subscription: `reset-${index}`,
+        query: "select * from docs",
+        parameters: new Uint8Array(),
+      });
+      const frame = serverFrame({
+        kind: "reset",
+        subscription: `reset-${index}`,
+        reason,
+        snapshot: wireSnapshot([row("reset-proof", reason)], BigInt(index + 1), 2n),
+      });
+      assert.equal(client.receive(frame).message.kind, "reset");
+      assert.equal(decoder.decode(opened.subscription.view.getItems()[0]?.value.value), reason);
+      assert.equal(opened.subscription.view.getRevision(), BigInt(index + 1));
+    }
+  });
+
   test("HTTP attach uses canonical CDN URLs then polls one delta", async () => {
     const initial = [row("one", "raw")];
     const next = [row("one", "changed")];
@@ -813,6 +845,7 @@ const liveApiBaseUrl = process.env.TERRASCALE_API_BASE_URL?.trim() || undefined;
 const liveAccessToken = process.env.TERRASCALE_E2E_ACCESS_TOKEN?.trim() || undefined;
 const liveEnabled = liveApiBaseUrl !== undefined && liveAccessToken !== undefined;
 const strictG1 = process.env.TERRASCALE_G1_STRICT === "1";
+const liveDashboardBaseUrl = process.env.TERRASCALE_DASHBOARD_BASE_URL?.trim() || undefined;
 
 type LiveContract = {
   readonly paths?: Record<string, Record<string, unknown>>;
@@ -823,6 +856,14 @@ type LiveReply = {
   readonly body: unknown;
   readonly text: string;
 };
+
+let liveSequence = 0;
+
+function liveResourceName(prefix: string): string {
+  const run = process.env.TERRASCALE_E2E_RUN_ID?.trim() || `pid-${process.pid}`;
+  liveSequence += 1;
+  return `${prefix}-${run}-${liveSequence}`;
+}
 
 async function liveRequest(
   path: string,
@@ -879,10 +920,34 @@ function objectBody(reply: LiveReply, operation: string): Record<string, unknown
   return reply.body as Record<string, unknown>;
 }
 
+function publishedOperations(contract: LiveContract, domain: string): readonly string[] {
+  const operations: string[] = [];
+  for (const item of Object.values(contract.paths ?? {})) {
+    for (const operation of Object.values(item)) {
+      if (typeof operation !== "object" || operation === null) continue;
+      const operationId = (operation as { operationId?: unknown }).operationId;
+      if (typeof operationId === "string" && operationId.toLowerCase().includes(domain.toLowerCase())) {
+        operations.push(operationId);
+      }
+    }
+  }
+  return operations;
+}
+
+function requirePublishedDomain(contract: LiveContract, domain: string): void {
+  const operations = publishedOperations(contract, domain);
+  if (operations.length === 0) {
+    throw new Error(
+      `[G1 contract gap] ${domain} operations are absent from the published /api/v1/openapi.json; ` +
+        "the journey cannot invent a route or fabricate proof",
+    );
+  }
+}
+
 describe.skipIf(!liveEnabled)("P-3 journey live stack (E-15)", () => {
   let contract: LiveContract;
 
-  test("published contract and all three local Regions are live", async () => {
+  beforeAll(async () => {
     const openapi = await liveRequest("/api/v1/openapi.json");
     expectLiveStatus(openapi, 200, "published OpenAPI");
     contract = objectBody(openapi, "published OpenAPI") as LiveContract;
@@ -897,12 +962,22 @@ describe.skipIf(!liveEnabled)("P-3 journey live stack (E-15)", () => {
     ] as const) {
       contractPath(contract, method, path, operation);
     }
+  });
+
+  test("published contract and all three local Regions are live", async () => {
 
     const regions = (process.env.TERRASCALE_E2E_REGION_BASE_URLS ?? "GRU=" + liveApiBaseUrl)
       .split(",")
       .map((entry) => entry.trim())
       .filter(Boolean);
     assert.ok(regions.length >= 1, "at least one local Region endpoint is required");
+    if (process.env.TERRASCALE_E2E_REGION_BASE_URLS !== undefined) {
+      assert.deepEqual(
+        new Set(regions.map((entry) => entry.split("=", 2)[0])),
+        new Set(["GRU", "SFO", "FRA"]),
+        "the local stack must prove all three configured Regions",
+      );
+    }
     for (const entry of regions) {
       const [region, base] = entry.split("=", 2);
       assert.ok(region && base, `invalid TERRASCALE_E2E_REGION_BASE_URLS entry: ${entry}`);
@@ -916,7 +991,7 @@ describe.skipIf(!liveEnabled)("P-3 journey live stack (E-15)", () => {
   });
 
   test("real document CRUD, ETag/If-Match, idempotency, SQL and FTS", async () => {
-    const suffix = crypto.randomUUID().slice(0, 8);
+    const suffix = liveResourceName("crud");
     const db = `journey-${suffix}`;
     const createPath = "/api/v1/databases";
     contractPath(contract, "POST", createPath, "create_database");
@@ -932,7 +1007,7 @@ describe.skipIf(!liveEnabled)("P-3 journey live stack (E-15)", () => {
       const client = createTerraScaleClient({
         apiBaseUrl: liveApiBaseUrl!,
         accessToken: liveAccessToken!,
-        idempotencyKeyFactory: () => `journey-${crypto.randomUUID()}`,
+        idempotencyKeyFactory: () => `journey-${suffix}-auto`,
       });
       const first = await client.documents.put(db, "users", "ada", {
         name: "Ada Lovelace",
@@ -955,16 +1030,22 @@ describe.skipIf(!liveEnabled)("P-3 journey live stack (E-15)", () => {
       if (!replay.ok) throw new Error(replay.error.message);
       assert.equal(replay.headers.get("etag"), firstEtag, "idempotent replay must retain the revision");
 
-      const get = await client.documents.get(db, "users", "ada", { session: session! });
-      assert.equal(get.ok, true, get.ok ? "" : get.error.message);
-      if (!get.ok) throw new Error(get.error.message);
-      assert.deepEqual(get.value, { name: "Ada Lovelace", active: true, bio: "analytical engine" });
-      assert.equal(get.headers.get("etag"), firstEtag);
-      const notModified = await client.documents.get(db, "users", "ada", { ifNoneMatch: firstEtag! });
-      assert.equal(notModified.ok, true, notModified.ok ? "" : notModified.error.message);
-      if (!notModified.ok) throw new Error(notModified.error.message);
-      assert.equal(notModified.status, 304);
-      assert.equal(notModified.value, undefined);
+      // The producer's session token is opaque base64url. Exercise it at the
+      // wire boundary as the current SDK's numeric legacy option cannot
+      // honestly represent this published token yet.
+      const sessionGet = await liveRequest(
+        `/api/v1/databases/${db}/collections/users/documents/ada`,
+        { headers: { "x-terrascale-session": session! } },
+      );
+      expectLiveStatus(sessionGet, 200, "get_document with session");
+      assert.deepEqual(sessionGet.body, { name: "Ada Lovelace", active: true, bio: "analytical engine" });
+      assert.equal(sessionGet.response.headers.get("etag"), firstEtag);
+      const notModified = await liveRequest(
+        `/api/v1/databases/${db}/collections/users/documents/ada`,
+        { headers: { "if-none-match": firstEtag! } },
+      );
+      expectLiveStatus(notModified, 304, "get_document If-None-Match");
+      assert.equal(notModified.body, undefined);
 
       const patched = await client.documents.patch(db, "users", "ada", { active: false, bio: null }, {
         ifMatch: firstEtag!,
@@ -982,12 +1063,19 @@ describe.skipIf(!liveEnabled)("P-3 journey live stack (E-15)", () => {
       if (stale.ok) throw new Error("stale If-Match unexpectedly succeeded");
       assert.equal(stale.status, 412);
 
+      const globallyDurable = await client.documents.put(db, "users", "global", {
+        name: "Global durability",
+        active: true,
+      }, { idempotencyKey: `global-${suffix}`, durability: "global" });
+      assert.equal(globallyDurable.ok, true, globallyDurable.ok ? "" : globallyDurable.error.message);
+      if (!globallyDurable.ok) throw new Error(globallyDurable.error.message);
+
+      contractPath(contract, "POST", "/api/v1/databases/{name}/collections/{collection}/indexes", "create_index");
       const index = await liveRequest(`/api/v1/databases/${db}/collections/users/indexes`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ field: "name" }),
       });
-      contractPath(contract, "POST", "/api/v1/databases/{name}/collections/{collection}/indexes", "create_index");
       expectLiveStatus(index, 201, "create_index(users.name)");
       const fts = await client.sql.execute(db, {
         sql: "SELECT * FROM users WHERE name MATCH :term",
@@ -1031,7 +1119,7 @@ describe.skipIf(!liveEnabled)("P-3 journey live stack (E-15)", () => {
     // A direct attach is the published reactive producer. The old database
     // local JSON poll route is deliberately not exercised (it is retired).
     contractPath(contract, "POST", "/api/v1/reactive/views", "attach_view");
-    const db = `sync-${crypto.randomUUID().slice(0, 8)}`;
+    const db = `sync-${liveResourceName("view")}`;
     const created = await liveRequest("/api/v1/databases", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: db, placement: ["GRU"], residency: null }),
@@ -1041,6 +1129,7 @@ describe.skipIf(!liveEnabled)("P-3 journey live stack (E-15)", () => {
       const client = createTerraScaleClient({ apiBaseUrl: liveApiBaseUrl!, accessToken: liveAccessToken! });
       const put = await client.documents.put(db, "orders", "o-1", { status: "open", total: 42 }, { durability: "regional", idempotencyKey: `sync-seed-${db}` });
       assert.equal(put.ok, true, put.ok ? "" : put.error.message);
+      if (!put.ok) throw new Error(put.error.message);
       const attach = await liveRequest("/api/v1/reactive/views", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ databaseId: db, statement: "SELECT * FROM orders WHERE status = :status LIMIT 25", parameters: base64(encoder.encode(JSON.stringify({ status: "open" }))), checkpoint: null, subscription: "journey", entitlement_epoch: 0 }),
@@ -1063,25 +1152,168 @@ describe.skipIf(!liveEnabled)("P-3 journey live stack (E-15)", () => {
       expectLiveStatus(resumed, 201, "attach_view checkpoint resume");
       assert.equal(objectBody(resumed, "attach_view checkpoint resume").checkpoint, view.checkpoint);
 
-      for (const [method, path, operation] of [
-        ["GET", `/api/v1/databases/${db}/usage`, "database_usage"],
-        ["GET", `/api/v1/databases/${db}/webhooks`, "list_webhooks"],
-        ["POST", `/api/v1/databases/${db}/exports`, "create_export"],
-      ] as const) {
-        const template = path.replace(db, "{name}");
-        contractPath(contract, method, template, operation);
-        if (strictG1) {
-          const reply = await liveRequest(path, {
-            method,
-            headers: { "content-type": "application/json" },
-            body: method === "POST" ? JSON.stringify({}) : undefined,
-          });
-          expectLiveStatus(reply, method === "POST" ? 202 : 200, operation);
-        }
-      }
+      const changed = await client.documents.patch(db, "orders", "o-1", { status: "closed" }, {
+        idempotencyKey: `sync-change-${db}`,
+        durability: "regional",
+      });
+      assert.equal(changed.ok, true, changed.ok ? "" : changed.error.message);
+      if (!changed.ok) throw new Error(changed.error.message);
+      const logPath = String(view.log).replace(/\?offset=\d+$/u, `?offset=${String(view.offset)}`);
+      const delta = await liveRequest(logPath, {
+        headers: { [String(view.capability_header)]: String(view.capability) },
+      });
+      expectLiveStatus(delta, 200, "reactive log delta after durable write");
+      assert.match(delta.response.headers.get("content-type") ?? "", /application\/msgpack/u);
+      const deltaBytes = new Uint8Array(await (await fetch(
+        new URL(logPath, `${liveApiBaseUrl!.replace(/\/$/u, "")}/`),
+        { headers: { authorization: `Bearer ${liveAccessToken!}`, [String(view.capability_header)]: String(view.capability) } },
+      )).arrayBuffer());
+      const deltaEnvelope = decodeTerrascaleSyncV2MsgpackEnvelope(deltaBytes);
+      assert.equal(deltaEnvelope.message.kind, "delta");
+
+      const backupPath = `/api/v1/databases/${db}/backups`;
+      contractPath(contract, "GET", "/api/v1/databases/{name}/backups", "list_backups");
+      const backups = await liveRequest(backupPath);
+      expectLiveStatus(backups, 200, "list_backups");
+      const backupBody = objectBody(backups, "list_backups");
+      assert.equal(typeof backupBody.ready, "boolean");
+      assert.equal(typeof backupBody.streaming, "boolean");
+
+      const branchesPath = `/api/v1/databases/${db}/branches`;
+      contractPath(contract, "GET", "/api/v1/databases/{name}/branches", "list_branches");
+      const branches = await liveRequest(branchesPath);
+      expectLiveStatus(branches, 200, "list_branches");
+      assert.ok(Array.isArray(objectBody(branches, "list_branches").branches));
     } finally {
       const removed = await liveRequest(`/api/v1/databases/${db}`, { method: "DELETE" });
       expectLiveStatus(removed, 200, `delete_database(${db})`);
+    }
+  });
+
+
+  test("published backup, branch, export, webhook, usage, tenant, import, and dashboard surfaces are honest", async () => {
+    const db = `management-${liveResourceName("surface")}`;
+    const branch = `${db}-branch`;
+    const restored = `${db}-restored`;
+    const failures: string[] = [];
+    const check = async (operation: string, action: () => Promise<void>): Promise<void> => {
+      try {
+        await action();
+      } catch (error) {
+        failures.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
+
+    contractPath(contract, "POST", "/api/v1/databases", "create_database");
+    const created = await liveRequest("/api/v1/databases", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: db, placement: ["GRU"], residency: null }),
+    });
+    expectLiveStatus(created, 201, "create_database for management surfaces");
+    let branchCreated = false;
+    let restoreCreated = false;
+    try {
+      await check("list_backups", async () => {
+        contractPath(contract, "GET", "/api/v1/databases/{name}/backups", "list_backups");
+        const reply = await liveRequest(`/api/v1/databases/${db}/backups`);
+        expectLiveStatus(reply, 200, "list_backups");
+        const body = objectBody(reply, "list_backups");
+        assert.equal(typeof body.ready, "boolean");
+        assert.equal(typeof body.streaming, "boolean");
+      });
+
+      await check("restore_backup", async () => {
+        contractPath(contract, "POST", "/api/v1/databases/{name}/backups/restore", "restore_backup");
+        const reply = await liveRequest(`/api/v1/databases/${db}/backups/restore`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: restored }),
+        });
+        expectLiveStatus(reply, 201, "restore_backup");
+        restoreCreated = true;
+      });
+
+      await check("list_branches", async () => {
+        contractPath(contract, "GET", "/api/v1/databases/{name}/branches", "list_branches");
+        const reply = await liveRequest(`/api/v1/databases/${db}/branches`);
+        expectLiveStatus(reply, 200, "list_branches");
+        assert.ok(Array.isArray(objectBody(reply, "list_branches").branches));
+      });
+
+      await check("create_branch", async () => {
+        contractPath(contract, "POST", "/api/v1/databases/{name}/branches", "create_branch");
+        const reply = await liveRequest(`/api/v1/databases/${db}/branches`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: branch }),
+        });
+        expectLiveStatus(reply, 201, "create_branch");
+        branchCreated = true;
+      });
+
+      await check("database_usage", async () => {
+        contractPath(contract, "GET", "/api/v1/databases/{name}/usage", "database_usage");
+        const reply = await liveRequest(`/api/v1/databases/${db}/usage`);
+        expectLiveStatus(reply, 200, "database_usage");
+      });
+
+      let webhookId: string | undefined;
+      await check("webhooks", async () => {
+        contractPath(contract, "GET", "/api/v1/databases/{name}/webhooks", "list_webhooks");
+        contractPath(contract, "POST", "/api/v1/databases/{name}/webhooks", "create_webhook");
+        const endpoint = "http://127.0.0.1:7090/hooks/journey";
+        const listed = await liveRequest(`/api/v1/databases/${db}/webhooks`);
+        expectLiveStatus(listed, 200, "list_webhooks");
+        try {
+          const createdWebhook = await liveRequest(`/api/v1/databases/${db}/webhooks`, {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ endpoint }),
+          });
+          expectLiveStatus(createdWebhook, 201, "create_webhook");
+          const body = objectBody(createdWebhook, "create_webhook");
+          if (typeof body.id === "string") webhookId = body.id;
+        } finally {
+          // The current pending producer reserves the endpoint before it
+          // answers 501; always release that admission slot when possible.
+          contractPath(contract, "DELETE", "/api/v1/databases/{name}/webhooks/{id}", "delete_webhook");
+          const removed = await liveRequest(`/api/v1/databases/${db}/webhooks/${encodeURIComponent(webhookId ?? endpoint)}`, { method: "DELETE" });
+          expectLiveStatus(removed, 200, "delete_webhook");
+        }
+      });
+
+      await check("create_export", async () => {
+        contractPath(contract, "POST", "/api/v1/databases/{name}/exports", "create_export");
+        const reply = await liveRequest(`/api/v1/databases/${db}/exports`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}),
+        });
+        expectLiveStatus(reply, 202, "create_export");
+      });
+
+      await check("tenants", async () => requirePublishedDomain(contract, "tenant"));
+      await check("imports", async () => requirePublishedDomain(contract, "import"));
+      await check("dashboard", async () => {
+        if (liveDashboardBaseUrl === undefined) {
+          if (strictG1) throw new Error("[G1 contract gap] TERRASCALE_DASHBOARD_BASE_URL is not configured");
+          return;
+        }
+        const response = await fetch(new URL("/", `${liveDashboardBaseUrl.replace(/\/$/u, "")}/`));
+        if (response.status < 200 || response.status >= 400) {
+          throw new Error(`[G1 dashboard failed] GET / returned HTTP ${response.status}`);
+        }
+        assert.ok((await response.text()).length > 0, "dashboard returned an empty landing response");
+      });
+    } finally {
+      if (branchCreated) {
+        const removed = await liveRequest(`/api/v1/databases/${branch}`, { method: "DELETE" });
+        expectLiveStatus(removed, 200, `delete_database(${branch})`);
+      }
+      if (restoreCreated) {
+        const removed = await liveRequest(`/api/v1/databases/${restored}`, { method: "DELETE" });
+        expectLiveStatus(removed, 200, `delete_database(${restored})`);
+      }
+      const removed = await liveRequest(`/api/v1/databases/${db}`, { method: "DELETE" });
+      expectLiveStatus(removed, 200, `delete_database(${db})`);
+    }
+    if (failures.length > 0) {
+      throw new Error(`[G1 journey blockers]\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
     }
   });
 });

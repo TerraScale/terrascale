@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "vitest";
 
 import { createTerraScaleClient } from "./factory.js";
-import { ReactiveContractGapError } from "./client.js";
+import { TerraScaleSyncV2Client } from "./sync/v2/client.js";
 
 function response(value: unknown, status = 200): Response {
   return new Response(value === undefined ? "" : JSON.stringify(value), {
@@ -29,7 +29,7 @@ describe("root database clients", () => {
       accessToken: "secret-token",
       fetch: async (input) => {
         const request = new Request(input);
-        requests.push(request);
+        requests.push(request.clone());
         if (request.method === "GET") return response({ name: "Ada" });
         if (request.method === "DELETE") return new Response(null, { status: 204 });
         return response({ revision: "rev-1" });
@@ -86,6 +86,40 @@ describe("root database clients", () => {
     });
   });
 
+  test("uses the published document history and batch routes", async () => {
+    const requests: Request[] = [];
+    const client = createTerraScaleClient({
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request.clone());
+        return request.url.includes("/history")
+          ? response({ history: [{ revision: "r1", deleted: false }] })
+          : response({ committed: 7, count: 2 });
+      },
+    });
+
+    const history = await client.documents.history("prod", "users", "ada", { limit: 10, after: "r0" });
+    const batch = await client.documents.batch("prod", "users", {
+      operations: [
+        { op: "put", id: "ada", value: { active: true } },
+        { op: "delete", id: "old" },
+      ],
+    }, { idempotencyKey: "batch-1", durability: "global" });
+    assert.equal(history.ok, true);
+    assert.equal(batch.ok, true);
+    assert.equal(new URL(requests[0]!.url).pathname, "/api/v1/databases/prod/collections/users/documents/ada/history");
+    assert.equal(new URL(requests[0]!.url).search, "?limit=10&after=r0");
+    assert.equal(new URL(requests[1]!.url).pathname, "/api/v1/databases/prod/collections/users/documents/batch");
+    assert.deepEqual(JSON.parse(await requests[1]!.text()), {
+      operations: [
+        { op: "put", id: "ada", value: { active: true } },
+        { op: "delete", id: "old" },
+      ],
+    });
+    assert.equal(requests[1]!.headers.get("idempotency-key"), "batch-1");
+    assert.equal(requests[1]!.headers.get("x-terrascale-durability"), "global");
+  });
+
   test("returns typed cancellation without starting an already-aborted fetch", async () => {
     let calls = 0;
     const controller = new AbortController();
@@ -103,20 +137,43 @@ describe("root database clients", () => {
     if (!result.ok) assert.equal(result.error.code, "request_cancelled");
   });
 
-  test("fails closed for the unpublished direct reactive producer", async () => {
-    let calls = 0;
+  test("wires the root reactive surface to the canonical sync v2 attach", async () => {
+    const requests: Request[] = [];
     const client = createTerraScaleClient({
-      fetch: async () => {
-        calls++;
-        return response({});
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request.clone());
+        return response({
+          view: "orders",
+          generation: 1,
+          snapshot_chunks: [],
+          log: "/api/v1/reactive/views/orders/1/log",
+          checkpoint: "AAE=",
+          capability: "capability",
+          capability_header: "x-terrascale-view-capability",
+          offset: 0,
+        }, 201);
       },
     });
 
-    await assert.rejects(
-      client.reactive.subscribe({ database: "prod", query: "SELECT * FROM users" }),
-      (error: unknown) => error instanceof ReactiveContractGapError && error.code === "contract_gap",
-    );
-    assert.equal(calls, 0);
+    assert.ok(client.reactive instanceof TerraScaleSyncV2Client);
+    const live = await client.reactive.subscribe({
+      subscription: "orders",
+      databaseId: "prod",
+      query: "SELECT * FROM orders",
+      parameters: new Uint8Array(),
+      autoStart: false,
+    });
+    assert.equal(live.transport, "http");
+    assert.equal(requests.length, 1);
+    assert.equal(new URL(requests[0]!.url).pathname, "/api/v1/reactive/views");
+    assert.deepEqual(JSON.parse(await requests[0]!.text()), {
+      databaseId: "prod",
+      subscription: "orders",
+      statement: "SELECT * FROM orders",
+      parameters: "",
+      checkpoint: null,
+    });
   });
 
   test("rejects invalid direct identifiers and bounds before fetch", async () => {

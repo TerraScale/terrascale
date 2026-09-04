@@ -14,37 +14,55 @@ function fixtureFetch(requests: Request[]): typeof fetch {
 }
 
 describe("management entrypoint", () => {
-  it("fails closed for project-scoped routes absent from the producer contract", async () => {
+  it("uses the producer-published database, branch, and backup routes", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleManagementClient({
       apiBaseUrl: "https://api.example.test",
-      projectId: "project/one",
       fetch: fixtureFetch(requests),
     });
 
-    for (const operation of [
-      () => client.databases.create({ name: "primary" }),
-      () => client.databases.get("database/one"),
-      () => client.databases.delete("database/one", { confirm: true }),
-      () => client.branches.getCapability(),
-      () => client.usage.getProject(),
-    ]) {
-      expect(operation).toThrow(ManagementContractGapError);
+    const listed = await client.databases.list();
+    const created = await client.databases.create({ name: "primary", placement: ["GRU"], residency: null });
+    const fetched = await client.databases.get("primary");
+    const deleted = await client.databases.delete("primary", { confirm: true });
+    const restored = await client.databases.restore("primary");
+    const branches = await client.branches.list("primary");
+    const branch = await client.branches.create("primary", { name: "branch" });
+    const backups = await client.backups.listBackups("primary");
+    const backupRestore = await client.backups.restoreBackup("primary", { name: "restored" });
+
+    for (const result of [listed, created, fetched, deleted, restored, branches, branch, backups, backupRestore]) {
+      expect(result.ok).toBe(true);
     }
-    expect(requests).toHaveLength(0);
+    expect(requests.map(request => `${request.method} ${new URL(request.url).pathname}`)).toEqual([
+      "GET /api/v1/databases",
+      "POST /api/v1/databases",
+      "GET /api/v1/databases/primary",
+      "DELETE /api/v1/databases/primary",
+      "POST /api/v1/databases/primary/restore",
+      "GET /api/v1/databases/primary/branches",
+      "POST /api/v1/databases/primary/branches",
+      "GET /api/v1/databases/primary/backups",
+      "POST /api/v1/databases/primary/backups/restore",
+    ]);
+    expect(JSON.parse(await requests[1]!.text())).toEqual({ name: "primary", placement: ["GRU"], residency: null });
+    expect(JSON.parse(await requests[6]!.text())).toEqual({ name: "branch" });
+    expect(JSON.parse(await requests[8]!.text())).toEqual({ name: "restored" });
   });
 
-  it("fails closed before validating or sending unsupported project routes", async () => {
+  it("fails closed before validating or sending unsupported management routes", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleManagementClient({
       apiBaseUrl: "https://api.example.test",
       fetch: fixtureFetch(requests),
     });
 
-    expect(() => client.databases.list()).toThrow(ManagementContractGapError);
-    expect(() => client.databases.create({ name: "" }, "project")).toThrow(ManagementContractGapError);
-    expect(() => client.databases.list("project", { take: 201 })).toThrow(ManagementContractGapError);
-    expect(() => client.databases.delete("db", { confirm: false as never })).toThrow(ManagementContractGapError);
+    expect(() => client.branches.getCapability()).toThrow(ManagementContractGapError);
+    expect(() => client.branches.requestClone()).toThrow(ManagementContractGapError);
+    expect(() => client.backups.configurePolicy("db", { fullBackupCron: "*" })).toThrow(ManagementContractGapError);
+    expect(() => client.schemas.get("db", "users")).toThrow(ManagementContractGapError);
+    expect(() => client.exports.create("db")).toThrow(ManagementContractGapError);
+    expect(() => client.usage.getProject()).toThrow(ManagementContractGapError);
     expect(requests).toHaveLength(0);
   });
 
@@ -55,7 +73,7 @@ describe("management entrypoint", () => {
     expect(() => validatePlacementLock("unknown" as never)).toThrow("placement");
   });
 
-  it("does not issue requests for operations awaiting a published contract", async () => {
+  it("uses the producer-published collection and index routes", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleManagementClient({
       apiBaseUrl: "https://api.example.test",
@@ -63,9 +81,20 @@ describe("management entrypoint", () => {
       fetch: fixtureFetch(requests),
     });
 
-    expect(() => client.schemas.get("db", "users")).toThrow(ManagementContractGapError);
-    expect(() => client.collections.list("db")).toThrow(ManagementContractGapError);
-    expect(() => client.exports.create("db")).toThrow(ManagementContractGapError);
-    expect(requests).toHaveLength(0);
+    const collections = await client.collections.list("db");
+    const indexes = await client.collections.listIndexes("db", "users");
+    const created = await client.collections.createIndex("db", "users", { field: "email" });
+    const deleted = await client.collections.deleteIndex("db", "users", "email");
+    expect(collections.ok).toBe(true);
+    expect(indexes.ok).toBe(true);
+    expect(created.ok).toBe(true);
+    expect(deleted.ok).toBe(true);
+    expect(requests.map(request => `${request.method} ${new URL(request.url).pathname}`)).toEqual([
+      "GET /api/v1/databases/db/collections",
+      "GET /api/v1/databases/db/collections/users/indexes",
+      "POST /api/v1/databases/db/collections/users/indexes",
+      "DELETE /api/v1/databases/db/collections/users/indexes/email",
+    ]);
+    expect(requests).toHaveLength(4);
   });
 });

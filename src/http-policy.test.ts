@@ -48,6 +48,25 @@ describe("TerraScaleHttp request policy", () => {
     assert.equal(http.config.apiBaseUrl, "https://api.terrascale.test");
   });
 
+  test("protects credentials from insecure or secret-bearing API endpoints", () => {
+    const fetch = async () => Response.json({});
+    assert.throws(
+      () => new TerraScaleHttp({ apiBaseUrl: "http://api.example.com", fetch }),
+      /must use HTTPS/u,
+    );
+    assert.throws(
+      () => new TerraScaleHttp({ apiBaseUrl: "https://user:secret@api.example.com", fetch }),
+      /cannot contain credentials/u,
+    );
+    assert.throws(
+      () => new TerraScaleHttp({ apiBaseUrl: "https://api.example.com/?access_token=secret", fetch }),
+      /secret-bearing query/u,
+    );
+    assert.doesNotThrow(
+      () => new TerraScaleHttp({ apiBaseUrl: "http://127.0.0.1:8787", fetch }),
+    );
+  });
+
   test("attaches bearer and project identity headers to API requests", async () => {
     let captured: Request | undefined;
     const http = new TerraScaleHttp({

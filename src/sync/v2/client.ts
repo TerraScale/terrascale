@@ -163,8 +163,8 @@ export class TerraScaleSyncV2Client {
 
   public constructor(options: SyncV2ClientOptions = {}) {
     this.#fetch = options.fetch ?? globalThis.fetch?.bind(globalThis);
-    this.#apiBaseUrl = normalizeOrigin(options.apiBaseUrl ?? "https://api.terrascale.tech");
-    this.#syncBaseUrl = normalizeOrigin(options.syncBaseUrl ?? "https://sync.api.terrascale.tech");
+    this.#apiBaseUrl = normalizeOrigin(options.apiBaseUrl ?? "https://api.terrascale.tech", options.fetch !== undefined);
+    this.#syncBaseUrl = normalizeOrigin(options.syncBaseUrl ?? "https://sync.api.terrascale.tech", options.fetch !== undefined);
     this.#accessToken = options.accessToken;
     this.#webSocketFactory = options.webSocketFactory;
     this.#pollWindowMs = boundedDuration(options.pollWindowMs ?? 25_000, "pollWindowMs", 25_000);
@@ -254,14 +254,14 @@ export class TerraScaleSyncV2Client {
     let attached: AttachedView;
     let initialReset: SyncV2Reset | undefined;
     try {
-      attached = await this.#attach(databaseId, options, opened.message, options.signal);
+      attached = await this.#attach(databaseId, opened.message, options.signal);
     } catch (error) {
       if (error instanceof TerraScaleSyncV2ClientError && error.code === "reset_required" && options.checkpoint !== undefined) {
         // The supplied checkpoint is stale. Retry attach exactly once without
         // it; the new authorized snapshot becomes the reset cut.
         initialReset = error.reset;
         try {
-          attached = await this.#attach(databaseId, options, { ...opened.message, checkpoint: null }, options.signal);
+          attached = await this.#attach(databaseId, { ...opened.message, checkpoint: null }, options.signal);
         } catch (retryError) {
           this.#subscriptions.delete(options.subscription);
           throw retryError;
@@ -491,7 +491,6 @@ export class TerraScaleSyncV2Client {
 
   async #attach(
     databaseId: string,
-    options: SyncV2SubscribeOptions,
     message: Extract<SyncV2Message, { readonly kind: "subscribe" }>,
     signal?: AbortSignal,
   ): Promise<AttachedView> {
@@ -658,20 +657,11 @@ export class TerraScaleSyncV2Client {
     state.socket = undefined;
     const current = state.freshRequired ? undefined : state.opened.subscription.view.getCheckpoint();
     const message = state.opened.message;
-    const options: SyncV2SubscribeOptions = {
-      subscription: message.subscription,
-      query: message.query,
-      parameters: new Uint8Array(message.parameters),
-      checkpoint: current,
-      databaseId: state.databaseId,
-      transport: state.transport,
-      autoStart: false,
-    };
     const linked = linkAbortSignals(state.abortController.signal, signal);
     let attached: AttachedView;
     try {
       try {
-        attached = await this.#attach(state.databaseId, options, {
+        attached = await this.#attach(state.databaseId, {
           ...message,
           checkpoint: current?.toBytes() ?? null,
         }, linked.signal);
@@ -679,7 +669,7 @@ export class TerraScaleSyncV2Client {
         if (error instanceof TerraScaleSyncV2ClientError && error.code === "reset_required" && !state.freshRequired) {
           state.reset = error.reset;
           state.freshRequired = true;
-          attached = await this.#attach(state.databaseId, options, { ...message, checkpoint: null }, linked.signal);
+          attached = await this.#attach(state.databaseId, { ...message, checkpoint: null }, linked.signal);
         } else {
           throw error;
         }
@@ -1018,7 +1008,7 @@ function projectedValue(
   return value;
 }
 
-function normalizeOrigin(origin: string): string {
+function normalizeOrigin(origin: string, explicitTestTransport = false): string {
   const value = origin.trim();
   if (value.length === 0) throw new TypeError("reactive origins cannot be empty");
   let url: URL;
@@ -1029,6 +1019,16 @@ function normalizeOrigin(origin: string): string {
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new TypeError("reactive origins must use HTTP or HTTPS");
   if (url.username !== "" || url.password !== "") throw new TypeError("reactive origins cannot contain credentials");
+  for (const key of url.searchParams.keys()) {
+    if (/(?:auth|cookie|credential|key|pass(?:word)?|secret|session|token)/iu.test(key)) {
+      throw new TypeError("reactive origins cannot contain secret-bearing query parameters");
+    }
+  }
+  const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+  const testHost = url.hostname === "test" || url.hostname.endsWith(".test");
+  if (url.protocol === "http:" && !loopback && !(explicitTestTransport && testHost)) {
+    throw new TypeError("reactive origins must use HTTPS, except explicit loopback/test transports");
+  }
   if (url.pathname !== "/" || url.search !== "" || url.hash !== "") throw new TypeError("reactive origins must not contain a path or query");
   return url.toString().replace(/\/$/u, "");
 }

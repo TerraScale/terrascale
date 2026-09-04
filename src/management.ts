@@ -6,6 +6,8 @@ import type { TerraScaleResult } from "./result.js";
 
 export type { TerraScaleRuntimeConfig } from "./config.js";
 
+const apiRoot = "/api/v1";
+
 /** The bounded page shape used by still-pending management operations. */
 export type ManagementPageRequest = Models.PageRequest;
 
@@ -42,7 +44,11 @@ export type Database = {
   readonly residency: string;
   readonly parent: string | null;
 };
-export type CreateDatabaseRequest = { readonly name: string };
+export type CreateDatabaseRequest = {
+  readonly name: string;
+  readonly placement: readonly TerraScaleRegionCode[];
+  readonly residency?: string | null;
+};
 export type DatabaseListResponse = { readonly databases: readonly Database[] };
 export type RestoreRequest = { readonly name: string; readonly at?: number };
 export type BranchListResponse = { readonly branches: readonly Database[] };
@@ -68,27 +74,66 @@ export type UsageSummary = Models.UsageSummary;
 export type OrganizationUsage = Models.OrganizationUsage;
 
 export class ManagementDatabasesClient {
-  constructor(_http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) { this.#http = http; }
 
   list(_projectId?: string, _query?: ManagementPageRequest): Promise<TerraScaleResult<DatabaseListResponse>> {
-    return contractGap("management.databases.list");
+    return this.#http.request({
+      method: "GET",
+      path: apiRoot + "/databases",
+      routeName: "databases.listDatabases",
+    });
   }
 
-  create(_request: CreateDatabaseRequest, _projectId?: string): Promise<TerraScaleResult<Database>> {
-    return contractGap("management.databases.create");
+  create(request: CreateDatabaseRequest, _projectId?: string): Promise<TerraScaleResult<Database>> {
+    validateCreateDatabase(request);
+    return this.#http.request({
+      method: "POST",
+      path: apiRoot + "/databases",
+      routeName: "databases.createDatabase",
+      body: request,
+      idempotencyKey: false,
+    });
   }
 
-  get(_databaseId: string, _projectId?: string): Promise<TerraScaleResult<Database>> {
-    return contractGap("management.databases.get");
+  get(databaseId: string, _projectId?: string): Promise<TerraScaleResult<Database>> {
+    return this.#http.request({
+      method: "GET",
+      path: databasePath(databaseId),
+      routeName: "databases.getDatabase",
+    });
   }
 
-  delete(_databaseId: string, _options: DeleteDatabaseOptions): Promise<TerraScaleResult<Models.DeletedProjectDatabaseResponse>> {
-    return contractGap("management.databases.delete");
+  delete(databaseId: string, options: DeleteDatabaseOptions): Promise<TerraScaleResult<Database>> {
+    if (options?.confirm !== true) throw new TypeError("Database deletion requires options.confirm to be true.");
+    return this.#http.request({
+      method: "DELETE",
+      path: databasePath(databaseId),
+      routeName: "databases.deleteDatabase",
+    });
   }
+
+  restore(databaseId: string): Promise<TerraScaleResult<Database>> {
+    return this.#http.request({
+      method: "POST",
+      path: `${databasePath(databaseId)}/restore`,
+      routeName: "databases.restoreDatabase",
+      idempotencyKey: false,
+    });
+  }
+
+  listDatabases(): Promise<TerraScaleResult<DatabaseListResponse>> { return this.list(); }
+  createDatabase(request: CreateDatabaseRequest): Promise<TerraScaleResult<Database>> { return this.create(request); }
+  getDatabase(databaseId: string): Promise<TerraScaleResult<Database>> { return this.get(databaseId); }
+  deleteDatabase(databaseId: string, options: DeleteDatabaseOptions): Promise<TerraScaleResult<Database>> { return this.delete(databaseId, options); }
+  restoreDatabase(databaseId: string): Promise<TerraScaleResult<Database>> { return this.restore(databaseId); }
 }
 
 export class ManagementBranchesClient {
-  constructor(_http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) { this.#http = http; }
 
   getCapability(_projectId?: string): Promise<TerraScaleResult<DatabaseBranchCapabilityResponse>> {
     return contractGap("management.databaseBranches.getCapability");
@@ -97,10 +142,34 @@ export class ManagementBranchesClient {
   requestClone(_request: CreateDatabaseBranchRequest = {}, _projectId?: string): Promise<TerraScaleResult<never>> {
     return contractGap("management.databaseBranches.requestClone");
   }
+
+  list(databaseId: string): Promise<TerraScaleResult<BranchListResponse>> {
+    return this.#http.request({
+      method: "GET",
+      path: `${databasePath(databaseId)}/branches`,
+      routeName: "databases.listBranches",
+    });
+  }
+
+  create(databaseId: string, request: RestoreRequest): Promise<TerraScaleResult<Database>> {
+    validateRestoreRequest(request);
+    return this.#http.request({
+      method: "POST",
+      path: `${databasePath(databaseId)}/branches`,
+      routeName: "databases.createBranch",
+      body: request,
+      idempotencyKey: false,
+    });
+  }
+
+  listBranches(databaseId: string): Promise<TerraScaleResult<BranchListResponse>> { return this.list(databaseId); }
+  createBranch(databaseId: string, request: RestoreRequest): Promise<TerraScaleResult<Database>> { return this.create(databaseId, request); }
 }
 
 export class ManagementBackupsClient {
-  constructor(_http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) { this.#http = http; }
 
   configurePolicy(_databaseId: string, _request: ConfigureBackupPolicyRequest, _projectId?: string): Promise<TerraScaleResult<BackupPolicyResponse>> {
     return contractGap("management.backups.policy.configure");
@@ -114,8 +183,27 @@ export class ManagementBackupsClient {
     return contractGap("management.backups.execute");
   }
 
-  listBackups(_databaseId: string, _query?: ManagementPageRequest, _projectId?: string): Promise<TerraScaleResult<readonly BackupJobResponse[]>> {
-    return contractGap("management.backups.list");
+  listBackups(databaseId: string, _query?: ManagementPageRequest, _projectId?: string): Promise<TerraScaleResult<BackupStatusResponse>> {
+    return this.#http.request({
+      method: "GET",
+      path: `${databasePath(databaseId)}/backups`,
+      routeName: "databases.listBackups",
+    });
+  }
+
+  restoreBackup(databaseId: string, request: RestoreRequest): Promise<TerraScaleResult<Database>> {
+    validateRestoreRequest(request);
+    return this.#http.request({
+      method: "POST",
+      path: `${databasePath(databaseId)}/backups/restore`,
+      routeName: "databases.restoreBackup",
+      body: request,
+      idempotencyKey: false,
+    });
+  }
+
+  restore(databaseId: string, request: RestoreRequest): Promise<TerraScaleResult<Database>> {
+    return this.restoreBackup(databaseId, request);
   }
 
   getBackup(_databaseId: string, _backupId: string, _projectId?: string): Promise<TerraScaleResult<BackupJobResponse>> {
@@ -146,9 +234,47 @@ export class ManagementSchemasClient {
 }
 
 export class ManagementCollectionsClient {
-  list(_databaseId: string): Promise<never> { return contractGap("collections.list"); }
-  listIndexes(_databaseId: string, _collection: string): Promise<never> { return contractGap("collections.indexes.list"); }
-  createIndex(_databaseId: string, _collection: string, _request: unknown, _options?: ManagementOperationOptions): Promise<never> { return contractGap("collections.indexes.create"); }
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) { this.#http = http; }
+
+  list(databaseId: string): Promise<TerraScaleResult<CollectionsResponse>> {
+    return this.#http.request({
+      method: "GET",
+      path: `${databasePath(databaseId)}/collections`,
+      routeName: "databases.listCollections",
+    });
+  }
+
+  listIndexes(databaseId: string, collection: string): Promise<TerraScaleResult<IndexListResponse>> {
+    return this.#http.request({
+      method: "GET",
+      path: `${collectionPath(databaseId, collection)}/indexes`,
+      routeName: "databases.listIndexes",
+    });
+  }
+
+  createIndex(databaseId: string, collection: string, request: CreateIndexRequest, _options?: ManagementOperationOptions): Promise<TerraScaleResult<IndexCreatedResponse>> {
+    validateCreateIndexRequest(request);
+    return this.#http.request({
+      method: "POST",
+      path: `${collectionPath(databaseId, collection)}/indexes`,
+      routeName: "databases.createIndex",
+      body: request,
+      idempotencyKey: false,
+    });
+  }
+
+  deleteIndex(databaseId: string, collection: string, field: string): Promise<TerraScaleResult<void>> {
+    return this.#http.request({
+      method: "DELETE",
+      path: `${collectionPath(databaseId, collection)}/indexes/${idSegment(field, "field")}`,
+      routeName: "databases.deleteIndex",
+      idempotencyKey: false,
+    });
+  }
+
+  listCollections(databaseId: string): Promise<TerraScaleResult<CollectionsResponse>> { return this.list(databaseId); }
 }
 
 export class ManagementExportsClient {
@@ -188,7 +314,7 @@ export class TerraScaleManagementClient {
     this.branches = new ManagementBranchesClient(this.#http);
     this.backups = new ManagementBackupsClient(this.#http);
     this.schemas = new ManagementSchemasClient();
-    this.collections = new ManagementCollectionsClient();
+    this.collections = new ManagementCollectionsClient(this.#http);
     this.exports = new ManagementExportsClient();
     this.imports = new ManagementImportsClient();
     this.usage = new ManagementUsageClient(this.#http);
@@ -213,3 +339,43 @@ export function validatePlacementLock(lock: PlacementLock): PlacementLock {
 }
 
 function contractGap(operation: string): never { throw new ManagementContractGapError(operation); }
+
+function databasePath(databaseId: string): string {
+  return `${apiRoot}/databases/${idSegment(databaseId, "database name")}`;
+}
+
+function collectionPath(databaseId: string, collection: string): string {
+  return `${databasePath(databaseId)}/collections/${idSegment(collection, "collection")}`;
+}
+
+function idSegment(value: string, name: string): string {
+  if (typeof value !== "string" || value.length === 0 || value !== value.trim() ||
+    [...value].some(character => character.charCodeAt(0) < 0x20 || character.charCodeAt(0) === 0x7f) ||
+    new TextEncoder().encode(value).byteLength > 255) {
+    throw new TypeError(`${name} must be a nonblank printable string of at most 255 UTF-8 bytes.`);
+  }
+  return encodeURIComponent(value);
+}
+
+function validateCreateDatabase(request: CreateDatabaseRequest): void {
+  idSegment(request?.name, "database name");
+  const placement = normalizeRegionCodes(request?.placement);
+  if (placement.length !== request.placement.length) {
+    throw new TypeError("placement must not contain duplicate region codes.");
+  }
+  if (request.residency !== undefined && request.residency !== null &&
+    (typeof request.residency !== "string" || request.residency.trim().length === 0)) {
+    throw new TypeError("residency must be null or a nonblank string.");
+  }
+}
+
+function validateRestoreRequest(request: RestoreRequest): void {
+  idSegment(request?.name, "database name");
+  if (request.at !== undefined && (!Number.isSafeInteger(request.at) || request.at < 0)) {
+    throw new TypeError("at must be a non-negative safe integer.");
+  }
+}
+
+function validateCreateIndexRequest(request: CreateIndexRequest): void {
+  idSegment(request?.field, "field");
+}
