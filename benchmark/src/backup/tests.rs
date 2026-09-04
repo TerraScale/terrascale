@@ -20,7 +20,7 @@ use std::thread;
 
 use crate::backup::{
     BackupError, BackupKind, BackupPlan, BackupSkipReason, BackupStep, load_recovery_point,
-    run_backup, verify_latest_chain,
+    RestorePlan, run_backup, verify_latest_chain,
 };
 use crate::encryption::{
     ArtifactCipher, ArtifactKind, Compression, DatabaseKey, DatabaseKeyLease, DatabaseKeyVersion,
@@ -330,6 +330,40 @@ fn full_backup_writes_a_manifest_with_ordered_digests_and_counts() {
     assert_eq!(reloaded, *manifest);
 
     result.archive().verify(&destination).expect("the written archive verifies");
+}
+
+#[test]
+fn restore_latest_reopens_the_engine_and_replays_the_sealed_state() {
+    let (_source_dir, source) = open_engine("restore-round-trip-source");
+    let destination = location("restore-round-trip-archive");
+    committed(put(
+        &source,
+        "alpha",
+        "restore-put-1",
+        "doc-1",
+        "users",
+        text("restored"),
+        LocalDurability::Synced,
+    ));
+    let backup = run_backup(&source, BackupPlan::local_test_full_plaintext(), &destination)
+        .expect("full backup runs");
+
+    let target = location("restore-round-trip-target");
+    let receipt = RestorePlan::restore_latest(&destination, &target).expect("restore runs");
+    assert_eq!(receipt.selected().identity(), backup.manifest().identity());
+    assert_eq!(receipt.restored_documents(), 1);
+    assert_eq!(receipt.documents_read_back(), 1);
+    assert_eq!(receipt.representative_values_matched(), 1);
+
+    let restored = Engine::open(EngineConfig::durable(&target).expect("target config"))
+        .expect("restored engine opens");
+    let restored_scope = scope(&restored, "alpha");
+    let snapshot = restored.read_snapshot(&restored_scope).expect("snapshot");
+    let transaction = restored
+        .begin(&restored_scope, snapshot, operation("restore-read"))
+        .expect("begins");
+    let document = transaction.read(&document_id("doc-1")).expect("reads").expect("document");
+    assert_eq!(document.value(), &text("restored"));
 }
 
 #[test]
