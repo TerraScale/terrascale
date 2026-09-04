@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use terrabase::{
     DocumentValue,
-    families::{SchemaDefinition, SchemaFieldType, SchemaFormatError, SchemaRule, SchemaVersion},
+    families::{SchemaDefinition, SchemaFieldType, SchemaRule, SchemaVersion},
 };
 
 fn version(value: u64) -> SchemaVersion {
@@ -47,6 +47,18 @@ fn object(fields: &[(&str, DocumentValue)]) -> DocumentValue {
             .map(|(key, value)| ((*key).to_owned(), value.clone()))
             .collect::<BTreeMap<_, _>>(),
     )
+}
+
+/// Returns the derived `Debug` name of the schema-format failure produced by
+/// parsing `document`.
+///
+/// The format error type is defined in the crate-private `families::schemas`
+/// module (the canonical path the `schema_catalog` module imports it from),
+/// so this external-seam test cannot name its variants and pins the exact
+/// typed case by derived name instead. No behavior changes; only the
+/// assertion spelling moves.
+fn format_error_name(version: SchemaVersion, document: &DocumentValue) -> String {
+    format!("{:?}", SchemaDefinition::from_json_schema(version, document).unwrap_err())
 }
 
 #[test]
@@ -204,8 +216,8 @@ fn json_schema_parser_rejects_keywords_outside_the_subset() {
     ];
     for (name, document) in cases {
         assert_eq!(
-            SchemaDefinition::from_json_schema(version(1), &document),
-            Err(SchemaFormatError::UnsupportedKeyword),
+            format_error_name(version(1), &document),
+            "UnsupportedKeyword",
             "{name} is outside the documented subset"
         );
     }
@@ -217,30 +229,18 @@ fn json_schema_parser_rejects_wrong_dialect_types_and_values() {
         ("$schema", DocumentValue::String("http://json-schema.org/draft-07/schema#".to_owned())),
         ("type", DocumentValue::String("object".to_owned())),
     ]);
-    assert_eq!(
-        SchemaDefinition::from_json_schema(version(1), &wrong_dialect),
-        Err(SchemaFormatError::UnsupportedDialect)
-    );
+    assert_eq!(format_error_name(version(1), &wrong_dialect), "UnsupportedDialect");
 
     let wrong_type = object(&[("type", DocumentValue::String("array".to_owned()))]);
-    assert_eq!(
-        SchemaDefinition::from_json_schema(version(1), &wrong_type),
-        Err(SchemaFormatError::UnsupportedType)
-    );
+    assert_eq!(format_error_name(version(1), &wrong_type), "UnsupportedType");
 
     let unknown_property_type = object(&[(
         "properties",
         object(&[("name", object(&[("type", DocumentValue::String("null".to_owned()))]))]),
     )]);
-    assert_eq!(
-        SchemaDefinition::from_json_schema(version(1), &unknown_property_type),
-        Err(SchemaFormatError::UnsupportedType)
-    );
+    assert_eq!(format_error_name(version(1), &unknown_property_type), "UnsupportedType");
 
-    assert_eq!(
-        SchemaDefinition::from_json_schema(version(1), &DocumentValue::Array(vec![])),
-        Err(SchemaFormatError::NotAnObject)
-    );
+    assert_eq!(format_error_name(version(1), &DocumentValue::Array(vec![])), "NotAnObject");
 
     let malformed: Vec<(&str, DocumentValue)> = vec![
         (
@@ -286,18 +286,15 @@ fn json_schema_parser_rejects_wrong_dialect_types_and_values() {
     ];
     for (name, document) in malformed {
         assert_eq!(
-            SchemaDefinition::from_json_schema(version(1), &document),
-            Err(SchemaFormatError::MalformedValue),
+            format_error_name(version(1), &document),
+            "MalformedValue",
             "{name} is malformed"
         );
     }
 
     // The embedded version identity must agree with the typed parameter.
     let mismatched = full_schema().to_json_schema();
-    assert_eq!(
-        SchemaDefinition::from_json_schema(version(8), &mismatched),
-        Err(SchemaFormatError::VersionMismatch)
-    );
+    assert_eq!(format_error_name(version(8), &mismatched), "VersionMismatch");
 }
 
 #[test]
@@ -409,8 +406,8 @@ fn json_schema_parser_rejects_duplicated_enum_values() {
         object(&[("state", object(&[("enum", DocumentValue::Array(text(&["on", "off", "on"])))]))]),
     )]);
     assert_eq!(
-        SchemaDefinition::from_json_schema(version(1), &duplicated),
-        Err(SchemaFormatError::MalformedValue),
+        format_error_name(version(1), &duplicated),
+        "MalformedValue",
         "an accepted-value set names distinct values"
     );
 
@@ -526,8 +523,8 @@ fn json_schema_parser_rejects_inert_bound_keywords() {
     ];
     for (name, document) in inert {
         assert_eq!(
-            SchemaDefinition::from_json_schema(version(1), &document),
-            Err(SchemaFormatError::MalformedValue),
+            format_error_name(version(1), &document),
+            "MalformedValue",
             "{name} can never bind"
         );
     }
