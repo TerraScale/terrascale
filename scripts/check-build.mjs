@@ -24,7 +24,7 @@ const llmsGenerated = spawnSync(process.execPath, [join(root, "scripts", "genera
 assert.equal(llmsGenerated.status, 0, llmsGenerated.stdout + llmsGenerated.stderr);
 const results = await runAll(stub ? "stub" : "remote");
 if (stub) console.warn("LOCAL-ONLY: stub snippets are smoke tests; remote launch qualification is not passed.");
-const heartbeat = Uint8Array.from([0x97, 0x02, 0x01, 0x00, 0x06, 0x00, 0x00, 0x90]);
+const heartbeat = Uint8Array.from([0x97, 0x01, 0x00, 0x00, 0x06, 0x00, 0x00, 0x90]);
 assert.equal(canonicalEnvelope(heartbeat).kind, "heartbeat", "canonical indexed heartbeat decodes");
 assert.throws(() => canonicalEnvelope(Uint8Array.from([0x81, 0xa1, 0x74, 0xa5, 0xa5, 0x64, 0x65, 0x6c, 0x74, 0x61])), /indexed envelope|trailing bytes/u, "legacy map frames fail closed");
 assert.ok(results.length >= 3, "expected runnable CRUD, SQL, and subscribe snippets");
@@ -52,7 +52,7 @@ for (const needle of ["npx create-terrascale-app", "terrascale dev", "AGENTS.md"
   assert.ok(starterReadme.includes(needle), `create-app README mentions ${needle}`);
 }
 const starterPage = read("create-terrascale-app/template/app/page.tsx");
-assert.ok(starterPage.includes("TerraScaleSyncV2Client"), "starter uses the current reactive SDK client");
+assert.ok(starterPage.includes("TerraScaleSyncV1Client"), "starter uses the current reactive SDK client");
 assert.ok(starterPage.includes("createTerraScaleClient"), "starter uses the current SDK factory");
 assert.ok(starterPage.includes("databaseId"), "starter scopes reactive attach by databaseId");
 assert.ok(!starterPage.includes("new TerraScale("), "starter does not use removed SDK constructor");

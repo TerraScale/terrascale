@@ -32,7 +32,7 @@ pending; seed execution is also pending its CLI contract.
 ## Files
 
 - `app/page.tsx` — schema-backed SQL builder and first live query via
-  `TerraScaleSyncV2Client.subscribe({ databaseId, ... })` over CDN-backed HTTP.
+  `TerraScaleSyncV1Client.subscribe({ databaseId, ... })` over CDN-backed HTTP.
 - `schema.ts` — the typed `defineSchema` source for the JSON contract.
 - `terrascale.schema.json` — the contract `terrascale push` applies.
 - `seed.ts` — optional cloud seed entry point for the CLI seed contract when

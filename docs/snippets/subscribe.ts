@@ -1,12 +1,12 @@
 // Runnable snippet: live SQL result view with the pinned @terrascale/sdk
-// 0.3.0 Sync v2 client. HTTP long-polling is the default reactive transport.
+// 0.3.0 Sync v1 client. HTTP long-polling is the default reactive transport.
 import { strict as assert } from "node:assert";
-import type { TerraScaleSyncV2Client } from "@terrascale/sdk";
+import type { TerraScaleSyncV1Client } from "@terrascale/sdk";
 
 type Sandbox = {
   readonly databaseId: string;
-  // In an application this is `new TerraScaleSyncV2Client({ accessToken })`.
-  readonly sync: Pick<TerraScaleSyncV2Client, "subscribe">;
+  // In an application this is `new TerraScaleSyncV1Client({ accessToken })`.
+  readonly sync: Pick<TerraScaleSyncV1Client, "subscribe">;
   readonly client: { documents: { put(database: string, collection: string, id: string, value: Record<string, unknown>): Promise<{ ok: boolean }> } };
 };
 

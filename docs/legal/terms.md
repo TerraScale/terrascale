@@ -93,7 +93,7 @@ credits is offered only on the Scale plan and only after launch.
 
 `/api/v1` is additive-only: fields and endpoints are added, never renamed or
 removed. Deprecated APIs are announced in the changelog and kept for at
-least 12 months. Breaking changes, if ever needed, ship as `/api/v2` served
+least 12 months. Breaking changes, if ever needed, ship under a separate versioned endpoint served
 side by side.
 
 ## Your data and account deletion

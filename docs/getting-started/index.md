@@ -86,11 +86,11 @@ read-only `SELECT` SQL; there is no TQL or collection-query facade. The
 reactive client attaches the builder's descriptor and requires `databaseId`:
 
 ```ts
-import { Direction, select, TerraScaleSyncV2Client } from '@terrascale/sdk'
+import { Direction, select, TerraScaleSyncV1Client } from '@terrascale/sdk'
 import { posts, title, publishedAt } from './schema'
 
 const databaseId = process.env.NEXT_PUBLIC_TERRASCALE_DATABASE_ID!
-const sync = new TerraScaleSyncV2Client({
+const sync = new TerraScaleSyncV1Client({
   apiBaseUrl: process.env.NEXT_PUBLIC_TERRASCALE_API_URL,
   accessToken: process.env.NEXT_PUBLIC_TERRASCALE_API_KEY,
 })

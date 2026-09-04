@@ -47,7 +47,7 @@ pending. There is no local engine or fake SDK involved.
 ## What it scaffolds (`template/`)
 
 - Next.js app with `app/page.tsx`: a schema-backed SQL builder and live
-  `TerraScaleSyncV2Client.subscribe` query over CDN-backed HTTP by default
+  `TerraScaleSyncV1Client.subscribe` query over CDN-backed HTTP by default
   (WebSocket opt-in), scoped by `databaseId`.
 - `schema.ts`: the typed `defineSchema` source used by the SQL builder.
 - `terrascale.schema.json`: the contract `terrascale push` applies and
@@ -61,7 +61,7 @@ pending. There is no local engine or fake SDK involved.
 ## Status
 
 The template pins the current SDK surface (`@terrascale/sdk` 0.3.0: schema/SQL
-builders and `TerraScaleSyncV2Client`). Typed document writes and tenant
+builders and `TerraScaleSyncV1Client`). Typed document writes and tenant
 provisioning remain outside the starter until their owning contracts are
 published.
 Full docs:

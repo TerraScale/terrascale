@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { createTerraScaleClient, Direction, select, TerraScaleSyncV2Client } from "@terrascale/sdk";
+import { createTerraScaleClient, Direction, select, TerraScaleSyncV1Client } from "@terrascale/sdk";
 import { authorId, posts, publishedAt, title } from "../schema";
 
 type Post = { id: string; title: string; authorId: string; publishedAt: string };
@@ -54,7 +54,7 @@ export default function Page() {
     if (!configured) return;
     let closed = false;
     let stop: (() => void) | undefined;
-    let live: Awaited<ReturnType<TerraScaleSyncV2Client["subscribe"]>> | undefined;
+    let live: Awaited<ReturnType<TerraScaleSyncV1Client["subscribe"]>> | undefined;
     setError(undefined);
 
     void sync.subscribe({

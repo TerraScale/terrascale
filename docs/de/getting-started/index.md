@@ -76,14 +76,14 @@ cloud service, not in a local database process or customer-run emulator.
 ## 4. Attach a live query
 
 The current SDK exposes typed document operations, schema/SQL builders, named
-management clients, and a reactive `TerraScaleSyncV2Client`. A live query uses
+management clients, and a reactive `TerraScaleSyncV1Client`. A live query uses
 the exact current SDK call below and must include `databaseId`:
 
 ```ts
-import { TerraScaleSyncV2Client } from '@terrascale/sdk'
+import { TerraScaleSyncV1Client } from '@terrascale/sdk'
 
 const databaseId = process.env.TERRASCALE_DATABASE_ID!
-const sync = new TerraScaleSyncV2Client({
+const sync = new TerraScaleSyncV1Client({
   apiBaseUrl: process.env.TERRASCALE_API_URL,
   accessToken: process.env.TERRASCALE_API_KEY,
 })

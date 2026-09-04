@@ -19,7 +19,7 @@ function requestedMode() {
   return requested[0] ?? "remote";
 }
 
-// Decode the indexed `terrascale.sync.v2.msgpack` envelope (protocol 2.1).
+// Decode the indexed `terrascale.sync.v1.msgpack` envelope (protocol 1.0).
 // This intentionally duplicates only the wire boundary needed by the runner;
 // projected values remain canonical JSON bytes and are never treated as the
 // retired `{t,id,body}` JSON frame shape.
@@ -100,8 +100,8 @@ function canonicalEnvelope(bytes) {
   const value = decodeMessagePack(bytes);
   if (!Array.isArray(value) || value.length !== 7) throw new Error("pending canonical reactive contract: envelope must be an indexed array of seven fields");
   const [major, minor, features, tag, correlation, causation, body] = value;
-  if (major !== 2 || minor !== 1 || features !== 0 || !Number.isSafeInteger(tag) || !Number.isSafeInteger(correlation) || !Number.isSafeInteger(causation)) {
-    throw new Error("pending canonical reactive contract: expected protocol 2.1 indexed envelope");
+  if (major !== 1 || minor !== 0 || features !== 0 || !Number.isSafeInteger(tag) || !Number.isSafeInteger(correlation) || !Number.isSafeInteger(causation)) {
+    throw new Error("pending canonical reactive contract: expected protocol 1.0 indexed envelope");
   }
   const messages = { 3: "snapshot", 4: "delta", 5: "reset", 6: "heartbeat", 8: "authorization_changed", 9: "region_route_change", 10: "error", 11: "backpressure" };
   const kind = messages[tag];

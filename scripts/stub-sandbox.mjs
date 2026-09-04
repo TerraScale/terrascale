@@ -59,7 +59,7 @@ export function createStubSandbox() {
       if (requestedDatabaseId !== databaseId) throw new Error("stub databaseId does not match");
       return [...col(collection).values()].filter((doc) => doc[query.field] === query.value);
     },
-    // Mirrors TerraScaleSyncV2Client.subscribe: callers observe a result view,
+    // Mirrors TerraScaleSyncV1Client.subscribe: callers observe a result view,
     // not a callback carrying an invented JSON delta shape.
     async subscribe({ databaseId: requestedDatabaseId, subscription, query }) {
       if (requestedDatabaseId !== databaseId) throw new Error("stub databaseId does not match");

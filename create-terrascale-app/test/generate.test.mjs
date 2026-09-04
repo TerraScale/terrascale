@@ -47,7 +47,7 @@ test("scaffold is deterministic, cloud-only, and complete", async () => {
         assert.equal(firstText, secondText, `${file} should be deterministic`);
       }
       const page = await readFile(join(root, "first", "app/page.tsx"), "utf8");
-      assert.match(page, /TerraScaleSyncV2Client/);
+      assert.match(page, /TerraScaleSyncV1Client/);
       assert.match(page, /select\(posts\)/);
       assert.match(page, /parameters: queryParameters/);
       assert.doesNotMatch(page, /client\.documents|client\.from|new TerraScale\(/iu);
