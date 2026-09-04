@@ -442,6 +442,21 @@ impl SelectBuilder {
         self.where_comparison(field, "<=", serialize_param(value)?)
     }
 
+    /// Add a SQL `LIKE` predicate over a declared field.
+    pub fn where_like<T: Serialize>(self, field: &FieldDef, value: T) -> Result<Self> {
+        self.where_comparison(field, "LIKE", serialize_param(value)?)
+    }
+
+    /// Alias for [`Self::where_gte`].
+    pub fn where_ge<T: Serialize>(self, field: &FieldDef, value: T) -> Result<Self> {
+        self.where_gte(field, value)
+    }
+
+    /// Alias for [`Self::where_lte`].
+    pub fn where_le<T: Serialize>(self, field: &FieldDef, value: T) -> Result<Self> {
+        self.where_lte(field, value)
+    }
+
     fn where_comparison(
         mut self,
         field: &FieldDef,
@@ -929,6 +944,15 @@ pub fn validate_parameters(text: &str, parameters: &SqlParameters) -> Result<()>
                     | "strftime"
                     | "julianday"
                     | "unixepoch"
+                    | "sqlite_version"
+                    | "sqlite_source_id"
+                    | "sqlite_compileoption_get"
+                    | "sqlite_compileoption_used"
+                    | "pragma_table_info"
+                    | "pragma_index_info"
+                    | "pragma_index_list"
+                    | "json_each"
+                    | "json_tree"
             )
         {
             return Err(sql_error(
@@ -1043,6 +1067,12 @@ fn tokenize_sql(text: &str) -> Result<Vec<String>> {
                 index += 1;
                 while index < bytes.len() && bytes[index].is_ascii_digit() {
                     index += 1;
+                }
+                if bytes
+                    .get(index)
+                    .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+                {
+                    return Err(sql_error("Invalid positional SQL parameter."));
                 }
                 tokens.push(text[start..index].to_owned());
             }
@@ -1186,6 +1216,30 @@ pub struct SqlRows {
     pub columns: Vec<String>,
 }
 
+/// One order key returned with an `EXPLAIN` SQL response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SqlExplainOrder {
+    pub field: String,
+    pub direction: String,
+}
+
+/// Query plan returned when [`SqlExecuteOptions::explain`] is set.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SqlExplainResponse {
+    pub access: String,
+    pub collection: Option<String>,
+    pub dialect: String,
+    pub order: Vec<SqlExplainOrder>,
+}
+
+/// The union published as `SqlResultResponse` by the HTTP contract.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SqlResultResponse {
+    Rows(SqlRows),
+    Explain(SqlExplainResponse),
+}
+
 /// Read-only SQL client. Obtain from [`crate::TerraScaleClient::sql`].
 #[derive(Debug, Clone)]
 pub struct SqlClient {
@@ -1199,6 +1253,36 @@ impl SqlClient {
 
     /// Execute a typed-builder or raw query once ("subscribe once").
     pub async fn execute(&self, scope: &DatabaseScope, query: &Query) -> Result<SqlRows> {
+        query.validate()?;
+        query.options.validate()?;
+        let url = format!("{}/sql", self.shared.database_root(scope)?);
+        let mut body = serde_json::json!({
+            "sql": query.sql(),
+            "parameters": query.parameters(),
+        });
+        if query.options.explain {
+            body["explain"] = serde_json::Value::Bool(true);
+        }
+        if let Some(timeout_ms) = query.options.timeout_ms {
+            body["timeout_ms"] = serde_json::json!(timeout_ms);
+        }
+        if query.options.cancelled {
+            body["cancelled"] = serde_json::Value::Bool(true);
+        }
+        let request = Request::json("sql.execute", Method::Post, url, &body)?;
+        self.shared.send_typed(request).await
+    }
+
+    /// Execute a query and retain the full published result union.
+    ///
+    /// [`Self::execute`] remains the convenient rows-only API. Call this
+    /// method when `EXPLAIN` is requested, because the contract returns a
+    /// plan object rather than a rows envelope in that case.
+    pub async fn execute_result(
+        &self,
+        scope: &DatabaseScope,
+        query: &Query,
+    ) -> Result<SqlResultResponse> {
         query.validate()?;
         query.options.validate()?;
         let url = format!("{}/sql", self.shared.database_root(scope)?);

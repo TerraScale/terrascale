@@ -16,6 +16,7 @@ use crate::regions::RegionCode;
 
 const MAX_TENANT_KEY_BYTES: usize = 64;
 const MAX_PLACEMENT_REGIONS: usize = 20;
+const MAX_TENANT_PAGE_SIZE: u32 = 1_000;
 
 /// An immutable residency constraint inherited by a tenant database.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,10 +142,13 @@ impl TenantListOptions {
     }
 
     fn validate(&self) -> Result<()> {
-        if self.limit == Some(0) {
+        if self
+            .limit
+            .is_some_and(|limit| limit == 0 || limit > MAX_TENANT_PAGE_SIZE)
+        {
             return Err(validation(
                 "invalid_page_size",
-                "tenant page limit must be positive.",
+                "tenant page limit must be between 1 and 1000.",
             ));
         }
         if self
@@ -162,7 +166,7 @@ impl TenantListOptions {
 }
 
 /// One cursor page of tenants.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TenantPage {
     /// Tenants in this page.
     #[serde(alias = "items")]
@@ -170,6 +174,40 @@ pub struct TenantPage {
     /// Cursor for the next page, if one remains.
     #[serde(default, alias = "nextCursor", skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for TenantPage {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Early fixtures used a bare array; the draft envelope is the
+        // canonical shape. Keep both forms available at the model boundary.
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Page {
+                #[serde(alias = "items")]
+                tenants: Vec<Tenant>,
+                #[serde(default, rename = "nextCursor", alias = "next_cursor")]
+                next_cursor: Option<String>,
+            },
+            Items(Vec<Tenant>),
+        }
+        match Wire::deserialize(deserializer)? {
+            Wire::Page {
+                tenants,
+                next_cursor,
+            } => Ok(Self {
+                tenants,
+                next_cursor,
+            }),
+            Wire::Items(tenants) => Ok(Self {
+                tenants,
+                next_cursor: None,
+            }),
+        }
+    }
 }
 
 /// Request to provision one tenant (= one database).
@@ -229,6 +267,7 @@ pub struct Tenant {
         default,
         rename = "tenantId",
         alias = "tenant_id",
+        alias = "id",
         skip_serializing_if = "Option::is_none"
     )]
     pub tenant_id: Option<String>,
@@ -475,10 +514,19 @@ where
 fn validate_key(key: &str) -> Result<()> {
     validate_non_blank(key, "tenant key")?;
     let trimmed = key.trim();
-    if trimmed.chars().any(char::is_control) || trimmed.len() > MAX_TENANT_KEY_BYTES {
+    let mut chars = trimmed.chars();
+    let first = chars.next();
+    let valid_first = first.is_some_and(|value| value.is_ascii_alphanumeric());
+    let valid_rest =
+        chars.all(|value| value.is_ascii_alphanumeric() || matches!(value, '.' | '_' | ':' | '-'));
+    if !valid_first
+        || !valid_rest
+        || trimmed.chars().any(char::is_control)
+        || trimmed.len() > MAX_TENANT_KEY_BYTES
+    {
         return Err(validation(
             "invalid_tenant_key",
-            "tenant key must be printable and at most 64 UTF-8 bytes.",
+            "tenant key must start with a letter or digit, use only letters, digits, '.', '_', ':', or '-', and be at most 64 UTF-8 bytes.",
         ));
     }
     Ok(())

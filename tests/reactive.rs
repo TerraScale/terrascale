@@ -250,6 +250,24 @@ async fn poll_decodes_a_deterministic_array_of_envelopes() {
 }
 
 #[tokio::test]
+async fn poll_disambiguates_a_batch_of_seven_envelopes_from_one_envelope() {
+    let envelope = vec![
+        0x97, 2, 1, 0, 4, 0, 0, 0x97, 0xa1, b's', 1, 1, 2, 0x90, 0xa0, 0xc4, 1, b'x',
+    ];
+    let mut frames = vec![0x97];
+    for _ in 0..7 {
+        frames.extend_from_slice(&envelope);
+    }
+    let mock = Mock::new([Ok(msgpack_response(frames))]);
+    let response = client(Arc::clone(&mock))
+        .reactive()
+        .poll_from(&attached(), "r1")
+        .await
+        .expect("seven-envelope MessagePack batch");
+    assert_eq!(response.deltas.len(), 7);
+}
+
+#[tokio::test]
 async fn expired_http_log_is_a_typed_reset() {
     let mock = Mock::new([
         Ok(Response::json(

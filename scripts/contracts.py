@@ -368,6 +368,12 @@ def rust_ident(value: str) -> str:
     return result
 
 
+def rust_field_ident(value: str) -> str:
+    """Convert an OpenAPI property name to an idiomatic Rust field name."""
+    result = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", value)
+    return rust_ident(result.lower())
+
+
 def schema_type(schema: dict, required: bool, models: dict) -> str:
     if "$ref" in schema:
         name = schema["$ref"].split("/")[-1]
@@ -470,7 +476,7 @@ def render_generated(root: Path, manifest: dict, digests: dict[str, str], corpus
             required = set(schema.get("required", []))
             lines += ["    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]", f"    pub struct {ident} {{"]
             for field, field_schema in schema["properties"].items():
-                field_ident = rust_ident(field)
+                field_ident = rust_field_ident(field)
                 field_type = schema_type(field_schema, field in required, models)
                 if field not in required and not field_type.startswith("Option<"):
                     field_type = f"Option<{field_type}>"

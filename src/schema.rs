@@ -174,6 +174,90 @@ impl FieldDef {
         }
     }
 
+    /// Construct a required string field.
+    #[must_use]
+    pub fn string(name: impl Into<String>) -> Self {
+        Self::required(name, FieldType::String)
+    }
+
+    /// Construct a required integer field.
+    #[must_use]
+    pub fn integer(name: impl Into<String>) -> Self {
+        Self::required(name, FieldType::Integer)
+    }
+
+    /// Alias for [`Self::integer`].
+    #[must_use]
+    pub fn int(name: impl Into<String>) -> Self {
+        Self::integer(name)
+    }
+
+    /// Construct a required floating-point field.
+    #[must_use]
+    pub fn float(name: impl Into<String>) -> Self {
+        Self::required(name, FieldType::Float)
+    }
+
+    /// Construct a required boolean field.
+    #[must_use]
+    pub fn boolean(name: impl Into<String>) -> Self {
+        Self::required(name, FieldType::Boolean)
+    }
+
+    /// Alias for [`Self::boolean`].
+    #[must_use]
+    pub fn bool(name: impl Into<String>) -> Self {
+        Self::boolean(name)
+    }
+
+    /// Construct a required JSON field.
+    #[must_use]
+    pub fn json(name: impl Into<String>) -> Self {
+        Self::required(name, FieldType::Json)
+    }
+
+    /// Construct a required byte-string field.
+    #[must_use]
+    pub fn bytes(name: impl Into<String>) -> Self {
+        Self::required(name, FieldType::Bytes)
+    }
+
+    /// Construct a required timestamp field.
+    #[must_use]
+    pub fn timestamp(name: impl Into<String>) -> Self {
+        Self::required(name, FieldType::Timestamp)
+    }
+
+    /// Construct a required full-text field.
+    #[must_use]
+    pub fn text(name: impl Into<String>) -> Self {
+        Self::required(name, FieldType::Text)
+    }
+
+    /// Construct an optional PN-counter field.
+    #[must_use]
+    pub fn counter(name: impl Into<String>) -> Self {
+        Self::optional(name, FieldType::PnCounter)
+    }
+
+    /// Construct an optional add-wins set field.
+    #[must_use]
+    pub fn set_add_wins(name: impl Into<String>) -> Self {
+        Self::optional(name, FieldType::AddWinsSet)
+    }
+
+    /// Construct an optional remove-wins set field.
+    #[must_use]
+    pub fn set_remove_wins(name: impl Into<String>) -> Self {
+        Self::optional(name, FieldType::RemoveWinsSet)
+    }
+
+    /// Construct an optional multi-value register field.
+    #[must_use]
+    pub fn register_mv(name: impl Into<String>) -> Self {
+        Self::optional(name, FieldType::MvRegister)
+    }
+
     /// Mark the field as indexed (maintained in the write transaction).
     #[must_use]
     pub fn indexed(mut self) -> Self {
@@ -777,11 +861,23 @@ impl SchemaBuilder {
         self
     }
 
+    /// Alias for [`Self::collection`] used by the other SDK builders.
+    #[must_use]
+    pub fn add_collection(self, collection: CollectionSchema) -> Self {
+        self.collection(collection)
+    }
+
     /// Add a document type via its [`Document`] implementation.
     #[must_use]
     pub fn document<T: Document>(mut self) -> Self {
         self.collections.push(T::schema());
         self
+    }
+
+    /// Alias for [`Self::document`].
+    #[must_use]
+    pub fn add_document<T: Document>(self) -> Self {
+        self.document::<T>()
     }
 
     /// Validate and return the collection schemas.

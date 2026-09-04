@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 
 pub const CONTRACT_VERSION: &str = "v1";
 pub const MANIFEST_SHA256: &str =
-    "f222646e881893a9084a405f8b19df27ec489ce04cd1fc52d2a835512193c5cf";
-pub const OPENAPI_BLAKE3: &str = "45182d1ebd2ecfe047efcf0938715ae1adb7997ed5ec46dd2e515113ec1540a2";
+    "0cddb435e3b14dc129a5d16e67e40946c085b479c3157f2edd7b96265e8f66f9";
+pub const OPENAPI_BLAKE3: &str = "c2bf884c9522a9f8412e6f237460e5b725d77f5c7f7fdf445057c3492e26d0ef";
 pub const MSGPACK_MANIFEST_BLAKE3: &str =
     "f3ed2d9998698d3ff2587aaf59039ad6557dedb07ffbfe2669194b4ecc213542";
 pub const MSGPACK_PROTOCOL: &str = "terrascale.sync.v2.msgpack";
@@ -23,19 +23,27 @@ pub struct ContractArtifact {
 pub const ARTIFACTS: &[ContractArtifact] = &[
     ContractArtifact {
         path: "conformance/http.json",
-        blake3: "7d2d45556205a7ff51b2c38e7cd58f0388fe1eb3bd8f7f096bf4dc8b02f3f1e7",
+        blake3: "962bf76933f863c32f7a432f71f352d591972621411c90afb49a90c142b9e47e",
     },
     ContractArtifact {
         path: "conformance/msgpack/hostile-vectors.json",
-        blake3: "5f107390b37d882b257360871eb1bb0573d38be64664f31ef7033c3acb4556de",
+        blake3: "56cc57c450fa1c6340f60392c1550a0c6a5dda56b1bfa3c0cec187e1a86cd799",
     },
     ContractArtifact {
         path: "conformance/msgpack/message-vectors.json",
-        blake3: "e1960d9833f04d15363a39d00d25ed77cfa966adc5d8a534a30452a2fce4c639",
+        blake3: "bb6b684d3c828b3338f190332292607c6c42ddc32c91f8f9c713ebe5dee646b4",
     },
     ContractArtifact {
         path: "conformance/reactive.json",
-        blake3: "0d356b00dfc69573ed4f93610e51dd060ed43b22a77a34f9aa825551f84f94ad",
+        blake3: "2aafa58d745ac592c3a7810f51c36123909277e70fac7625509f293a712a1573",
+    },
+    ContractArtifact {
+        path: "msgpack/hostile-vectors.json",
+        blake3: "56cc57c450fa1c6340f60392c1550a0c6a5dda56b1bfa3c0cec187e1a86cd799",
+    },
+    ContractArtifact {
+        path: "msgpack/message-vectors.json",
+        blake3: "bb6b684d3c828b3338f190332292607c6c42ddc32c91f8f9c713ebe5dee646b4",
     },
     ContractArtifact {
         path: "msgpack/terrascale.sync.v2.msgpack.json",
@@ -43,7 +51,7 @@ pub const ARTIFACTS: &[ContractArtifact] = &[
     },
     ContractArtifact {
         path: "openapi.json",
-        blake3: "45182d1ebd2ecfe047efcf0938715ae1adb7997ed5ec46dd2e515113ec1540a2",
+        blake3: "c2bf884c9522a9f8412e6f237460e5b725d77f5c7f7fdf445057c3492e26d0ef",
     },
     ContractArtifact {
         path: "proto/terrabase/v1/engine.proto",
@@ -83,7 +91,7 @@ pub const ROUTES: &[Route] = &[
         method: HttpMethod::Post,
         path: "/api/v1/reactive/views",
         request_model: Some("AttachViewRequest"),
-        response_model: None,
+        response_model: Some("AttachViewResponse"),
     },
     Route {
         operation_id: "batch_documents",
@@ -272,7 +280,7 @@ pub const ROUTES: &[Route] = &[
         method: HttpMethod::Post,
         path: "/api/v1/databases/{name}/reactive/poll",
         request_model: Some("ReactivePollRequest"),
-        response_model: Some("ReactiveFramesResponse"),
+        response_model: None,
     },
     Route {
         operation_id: "put_document",
@@ -285,7 +293,7 @@ pub const ROUTES: &[Route] = &[
         operation_id: "put_schema",
         method: HttpMethod::Put,
         path: "/api/v1/databases/{name}/collections/{collection}/schema",
-        request_model: None,
+        request_model: Some("JsonValue"),
         response_model: None,
     },
     Route {
@@ -310,11 +318,18 @@ pub const ROUTES: &[Route] = &[
         response_model: Some("DatabaseRecord"),
     },
     Route {
+        operation_id: "snapshot",
+        method: HttpMethod::Get,
+        path: "/api/v1/reactive/views/{view}/{generation}/snapshot/{chunk}",
+        request_model: None,
+        response_model: Some("ReactiveEnvelope"),
+    },
+    Route {
         operation_id: "view_log",
         method: HttpMethod::Get,
         path: "/api/v1/reactive/views/{view}/{generation}/log",
         request_model: None,
-        response_model: None,
+        response_model: Some("ReactiveEnvelope"),
     },
     Route {
         operation_id: "websocket",
@@ -331,9 +346,25 @@ pub mod models {
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct AttachViewRequest {
-        pub id: Option<String>,
-        pub name: Option<String>,
-        pub view: Option<String>,
+        pub checkpoint: Option<String>,
+        #[serde(rename = "databaseId")]
+        pub database_id: String,
+        pub entitlement_epoch: Option<i64>,
+        pub parameters: Option<String>,
+        pub statement: String,
+        pub subscription: Option<String>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct AttachViewResponse {
+        pub capability: String,
+        pub capability_header: String,
+        pub checkpoint: String,
+        pub generation: i64,
+        pub log: String,
+        pub offset: i64,
+        pub snapshot_chunks: Vec<String>,
+        pub view: String,
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -664,10 +695,10 @@ pub const MSGPACK_SCAN: MessagePackScan = MessagePackScan {
 };
 
 pub const MESSAGE_VECTOR_SHA256: &str =
-    "34f630d49e9a75b154070baecfef1ec367279c7d2b2b6bd618711992bea10dba";
+    "f315df09c166c4f1a5bcecaca390982bea14a98235a8450c780bc6a1a9e77972";
 pub const HOSTILE_VECTOR_SHA256: &str =
-    "99c23a0e4281c8978f12d9ef077d233027fc172aa4c9e93d4b83424ddca740ef";
+    "25f8ded8d88ae3e5f57c8ad5def1d1f577853b10444d0f37f47c2b4bcd243828";
 pub const HTTP_CONFORMANCE_SHA256: &str =
-    "3806288477adb5a4810625ce19288087be88008ad116cb5a98e9063a447bce94";
+    "0421c104d14676bd9c1bc90877c3ce09ecb18360de94c6cf9a7037c10984f59f";
 pub const REACTIVE_CONFORMANCE_SHA256: &str =
-    "c06ea4f308c7179741b91078fbe400de8e6bab7adc0875569a65ac1a35942ed3";
+    "c5c4eae86bcdf65c39b21b3865c6242e0273942501f56731190c4cdad97902a5";

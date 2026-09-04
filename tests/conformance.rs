@@ -97,7 +97,7 @@ async fn document_crud_request_shapes() {
         .create(&scope(), "users", json!({"name": "Ada"}))
         .await
         .expect_err("unsupported create");
-    assert_eq!(create_error.code, "unsupported_operation");
+    assert_eq!(create_error.code, "contract_gap");
     assert!(mock.recorded.lock().expect("mock mutex").is_empty());
 
     let fetched = sdk
@@ -535,31 +535,25 @@ async fn region_pinning_and_421_repair() {
 
 #[tokio::test]
 async fn tenants_and_management_shapes() {
-    let mock = Mock::new(vec![
-        Response::json(
-            200,
-            &json!({"key": "acme", "database_id": "db_t1", "regions": ["GRU"]}),
-        ),
-        Response::json(
-            200,
-            &json!({
-                "database_id": "db_1",
-                "project_id": "proj_test",
-                "name": "main",
-                "regions": ["GRU"],
-                "version": 1,
-            }),
-        ),
-    ]);
+    let mock = Mock::new(vec![Response::json(
+        200,
+        &json!({
+            "database_id": "db_1",
+            "project_id": "proj_test",
+            "name": "main",
+            "regions": ["GRU"],
+            "version": 1,
+        }),
+    )]);
     let sdk = client(Arc::clone(&mock));
 
-    let tenant = sdk
+    let tenant_error = sdk
         .tenants()
         .create(CreateTenant::new("acme", "default"), None)
         .await
-        .expect("tenant");
-    assert_eq!(tenant.database_id, "db_t1");
-    assert!(mock.last_request().url.contains("/tenants"));
+        .expect_err("tenant route is not in the pinned contract");
+    assert_eq!(tenant_error.code, "contract_gap");
+    assert!(mock.recorded.lock().expect("mock mutex").is_empty());
 
     let database = sdk
         .management()

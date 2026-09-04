@@ -69,6 +69,12 @@ pub struct Document {
     /// Last-write timestamp, if a future contract response supplies one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
+    /// Strong ETag returned by the HTTP response, when available.
+    #[serde(default, skip_serializing, skip_deserializing)]
+    pub etag: Option<String>,
+    /// Causal session frontier observed after this request.
+    #[serde(default, skip_serializing, skip_deserializing)]
+    pub session: Option<String>,
 }
 
 /// The response to a PUT or PATCH document write.
@@ -76,6 +82,13 @@ pub struct Document {
 pub struct DocumentWriteResponse {
     /// New document revision. The strong ETag is carried by the HTTP header.
     pub revision: String,
+    /// Strong ETag associated with the revision, when supplied by the
+    /// transport. The contract carries this value in an HTTP header.
+    #[serde(default, skip_serializing, skip_deserializing)]
+    pub etag: Option<String>,
+    /// Causal session frontier observed after this write.
+    #[serde(default, skip_serializing, skip_deserializing)]
+    pub session: Option<String>,
 }
 
 /// One row returned by the collection list endpoint.
@@ -188,6 +201,9 @@ pub struct BatchResponse {
     pub committed: u64,
     /// Number of operations committed.
     pub count: u32,
+    /// Causal session frontier observed after this batch.
+    #[serde(default, skip_serializing, skip_deserializing)]
+    pub session: Option<String>,
 }
 
 /// Document CRUD client. Obtain from [`crate::TerraScaleClient::documents`].
@@ -218,20 +234,37 @@ impl DocumentsClient {
         ))
     }
 
-    /// Create is not a public operation: documents are created by PUT with a
-    /// caller-owned identifier. The method remains as a source-compatible
-    /// fail-closed seam and never sends an unsupported POST request.
+    /// The public contract has no server-assigned-id document operation.
+    ///
+    /// This compatibility method therefore fails closed. Call
+    /// [`Self::put`] (or [`Self::create_with_id`]) when the application owns
+    /// the document id. In particular, do not silently turn this method into
+    /// a POST to an un-published route.
     pub async fn create(
         &self,
         _scope: &DatabaseScope,
         _collection: &str,
         _body: serde_json::Value,
     ) -> Result<DocumentWriteResponse> {
-        Err(Error::new(
-            ErrorKind::Domain,
-            "unsupported_operation",
-            "The document API has no server-assigned-id create route; use put with a document id.",
+        Err(contract_gap(
+            "documents.create",
+            "the public contract only publishes caller-id PUT; use put with a document id",
         ))
+    }
+
+    /// Create a document at an application-owned id.
+    ///
+    /// TerraBase models create-or-replace as `PUT`; this named helper makes
+    /// that fact explicit while retaining [`Self::create`] for callers of the
+    /// original draft API.
+    pub async fn create_with_id(
+        &self,
+        scope: &DatabaseScope,
+        collection: &str,
+        id: &str,
+        body: serde_json::Value,
+    ) -> Result<DocumentWriteResponse> {
+        self.put(scope, collection, id, body).await
     }
 
     /// Read one document. The response body is the bare canonical JSON value.
@@ -251,6 +284,8 @@ impl DocumentsClient {
             body,
             created_at: None,
             updated_at: None,
+            etag: None,
+            session: self.shared.session_token(),
         })
     }
 
@@ -325,7 +360,10 @@ impl DocumentsClient {
             headers: vec![("content-type".to_owned(), "application/json".to_owned())],
             body: Some(encoded),
         };
-        self.shared.send_typed(request).await
+        let mut response: DocumentWriteResponse = self.shared.send_typed(request).await?;
+        response.etag = Some(format!("\"{}\"", response.revision));
+        response.session = self.shared.session_token();
+        Ok(response)
     }
 
     /// Delete one document (the server writes a tombstone).
@@ -440,7 +478,9 @@ impl DocumentsClient {
             format!("{}/batch", self.collection_root(scope, collection)?),
             &BatchRequest { operations },
         )?;
-        self.shared.send_typed(request).await
+        let mut response: BatchResponse = self.shared.send_typed(request).await?;
+        response.session = self.shared.session_token();
+        Ok(response)
     }
 
     /// Per-document history, newest first. The response is wrapped as
@@ -486,6 +526,16 @@ fn encode_document(value: &serde_json::Value) -> Result<Vec<u8>> {
         ));
     }
     Ok(encoded)
+}
+
+fn contract_gap(operation: &str, fix: &str) -> Error {
+    Error::new(
+        ErrorKind::Domain,
+        "contract_gap",
+        format!(
+            "The TerraBase contract does not publish the {operation} operation; no HTTP request was sent. Fix: {fix}."
+        ),
+    )
 }
 
 /// Percent-encode a URL path/query component over UTF-8 bytes. Encoding

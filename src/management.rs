@@ -390,6 +390,25 @@ impl Databases {
         confirm: bool,
         _project_id: Option<&str>,
     ) -> Result<DatabaseRecord> {
+        let options = OperationOptions {
+            idempotency_key: Some(format!(
+                "ts_database_delete_{}",
+                encode_segment(database_id, "database_name")?
+            )),
+            cancellation: None,
+        };
+        self.delete_with_options(database_id, confirm, _project_id, options)
+            .await
+    }
+
+    /// Soft-delete a database with explicit retry and cancellation controls.
+    pub async fn delete_with_options(
+        &self,
+        database_id: &str,
+        confirm: bool,
+        _project_id: Option<&str>,
+        options: OperationOptions,
+    ) -> Result<DatabaseRecord> {
         if !confirm {
             return Err(Error::new(
                 ErrorKind::Validation,
@@ -397,27 +416,22 @@ impl Databases {
                 "Database deletion requires confirm to be true.",
             ));
         }
-        let mut request = Request {
-            route_name: "databases.delete".to_owned(),
-            method: Method::Delete,
-            url: database_url(&self.shared, database_id)?,
-            headers: Vec::new(),
-            body: None,
-        };
+        let request = request_options(
+            Request {
+                route_name: "databases.delete".to_owned(),
+                method: Method::Delete,
+                url: database_url(&self.shared, database_id)?,
+                headers: Vec::new(),
+                body: None,
+            },
+            &options,
+        )?;
+        let mut request = request;
         request.headers.push((
             "x-terrascale-delete-confirmation".to_owned(),
             database_id.trim().to_owned(),
         ));
-        // DELETE is a mutation too. Carry a deterministic key so a retry
-        // cannot turn one user action into two deletes.
-        request.headers.push((
-            "idempotency-key".to_owned(),
-            format!(
-                "ts_database_delete_{}",
-                encode_segment(database_id, "database_name")?
-            ),
-        ));
-        self.shared.send_typed(request).await
+        send_with_options(&self.shared, request, &options).await
     }
     pub async fn restore(
         &self,
@@ -861,6 +875,9 @@ impl<'de> Deserialize<'de> for HealthResponse {
                     healthy: wire.healthy,
                 })
             }
+            // The pre-contract mock used an empty array for this endpoint.
+            // Preserve that compatibility shape; a real member's published
+            // response remains the object form above.
             serde_json::Value::Array(_) => Ok(Self {
                 region: String::new(),
                 healthy: false,

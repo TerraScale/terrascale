@@ -9,7 +9,7 @@
 //! any mismatch returns a typed [`ResetReason`] with a fresh authorized
 //! snapshot (GOAL D-46).
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -322,6 +322,15 @@ pub struct ResetFrame {
     pub checkpoint: Option<Checkpoint>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<RegionCode>,
+    /// Authorization generation carried by an authorization replacement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorization_generation: Option<u64>,
+    /// Identities removed by an authorization transition.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed: Vec<String>,
+    /// Complete-result digest carried by a replacement snapshot, when known.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub digest: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }
@@ -384,8 +393,9 @@ pub enum PollOutcome {
 pub struct ResultItem {
     /// Stable row identity across snapshots and deltas.
     pub identity: String,
-    /// Projected value.
-    pub value: serde_json::Value,
+    /// Projected canonical JSON bytes, keyed by field path. The SDK keeps
+    /// these opaque; a caller may parse a field explicitly at its boundary.
+    pub value: BTreeMap<String, Vec<u8>>,
 }
 
 /// Authorized snapshot bootstrapping or replacing a view.
@@ -394,11 +404,17 @@ pub struct ViewSnapshot {
     /// View generation; deltas from another generation force a reset.
     #[serde(alias = "viewGeneration")]
     pub view_generation: u64,
+    /// Authorization generation for this complete authorized result.
+    #[serde(default)]
+    pub authorization_generation: u64,
     /// Revision of this snapshot (the journal cut).
     #[serde(alias = "baseRevision")]
     pub revision: String,
     /// Full ordered result.
     pub items: Vec<ResultItem>,
+    /// Lowercase hexadecimal digest stated by the producer.
+    #[serde(default)]
+    pub digest: String,
     /// Position to resume from.
     pub checkpoint: Checkpoint,
 }
@@ -417,6 +433,10 @@ pub struct ViewDelta {
     pub to_revision: String,
     /// Ordered operations.
     pub operations: Vec<ViewOperation>,
+    /// Lowercase hexadecimal digest stated for the complete result at the
+    /// target revision.
+    #[serde(default)]
+    pub digest: String,
     /// Position to resume from.
     pub checkpoint: Checkpoint,
 }
@@ -428,15 +448,15 @@ pub enum ViewOperation {
     Insert {
         identity: String,
         position: u64,
-        value: serde_json::Value,
+        value: BTreeMap<String, Vec<u8>>,
     },
     Update {
         identity: String,
-        value: serde_json::Value,
+        value: BTreeMap<String, Vec<u8>>,
     },
     Patch {
         identity: String,
-        changes: serde_json::Value,
+        changes: Vec<FieldChange>,
     },
     Remove {
         identity: String,
@@ -445,6 +465,13 @@ pub enum ViewOperation {
         identity: String,
         position: u64,
     },
+}
+
+/// One projected field replacement or removal in a patch operation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldChange {
+    pub path: String,
+    pub value: Option<Vec<u8>>,
 }
 
 /// Outcome of applying a delta to a [`Subscription`].
@@ -461,8 +488,10 @@ pub enum ApplyOutcome {
 pub struct Subscription {
     id: String,
     generation: Option<u64>,
+    authorization_generation: Option<u64>,
     revision: Option<String>,
     items: Vec<ResultItem>,
+    digest: String,
     checkpoint: Option<Checkpoint>,
     pending: VecDeque<ViewDelta>,
 }
@@ -474,8 +503,10 @@ impl Subscription {
         Self {
             id: id.into(),
             generation: None,
+            authorization_generation: None,
             revision: None,
             items: Vec::new(),
+            digest: String::new(),
             checkpoint: None,
             pending: VecDeque::new(),
         }
@@ -505,6 +536,18 @@ impl Subscription {
         self.revision.as_deref()
     }
 
+    /// Current authorization generation, if a snapshot has been applied.
+    #[must_use]
+    pub fn authorization_generation(&self) -> Option<u64> {
+        self.authorization_generation
+    }
+
+    /// Digest stated by the producer for the complete current result.
+    #[must_use]
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+
     fn install_checkpoint(&mut self, checkpoint: Checkpoint) {
         self.checkpoint = Some(checkpoint);
     }
@@ -512,8 +555,10 @@ impl Subscription {
     /// Install an authorized snapshot (bootstrap or reset).
     pub fn apply_snapshot(&mut self, snapshot: ViewSnapshot) {
         self.generation = Some(snapshot.view_generation);
+        self.authorization_generation = Some(snapshot.authorization_generation);
         self.revision = Some(snapshot.revision);
         self.items = snapshot.items;
+        self.digest = snapshot.digest;
         self.checkpoint = Some(snapshot.checkpoint);
         self.pending.clear();
     }
@@ -535,6 +580,9 @@ impl Subscription {
             (Some(generation), Some(revision))
                 if *generation == delta.view_generation && *revision == delta.from_revision =>
             {
+                if delta.to_revision <= delta.from_revision {
+                    return ApplyOutcome::ResetRequired(ResetReason::InvalidOperations);
+                }
                 // Apply against a candidate so an invalid operation can never
                 // partially mutate an otherwise authoritative revision.
                 let mut candidate = self.items.clone();
@@ -545,10 +593,17 @@ impl Subscription {
                 }
                 self.items = candidate;
                 self.revision = Some(delta.to_revision.clone());
+                self.digest = delta.digest.clone();
                 self.checkpoint = Some(delta.checkpoint.clone());
                 ApplyOutcome::Applied
             }
-            (Some(_), Some(revision)) if *revision == delta.to_revision => ApplyOutcome::Duplicate,
+            (Some(_), Some(revision)) if *revision == delta.to_revision => {
+                if self.digest == delta.digest {
+                    ApplyOutcome::Duplicate
+                } else {
+                    ApplyOutcome::ResetRequired(ResetReason::ViewDiverged)
+                }
+            }
             (Some(_), _) => ApplyOutcome::ResetRequired(ResetReason::Reconnect),
             (None, _) => ApplyOutcome::ResetRequired(ResetReason::Reconnect),
         }
@@ -585,7 +640,13 @@ fn apply_operation(items: &mut Vec<ResultItem>, operation: &ViewOperation) -> bo
         }
         ViewOperation::Patch { identity, changes } => {
             if let Some(item) = items.iter_mut().find(|item| &item.identity == identity) {
-                merge_patch(&mut item.value, changes);
+                for change in changes {
+                    if let Some(value) = &change.value {
+                        item.value.insert(change.path.clone(), value.clone());
+                    } else {
+                        item.value.remove(&change.path);
+                    }
+                }
                 true
             } else {
                 false
@@ -606,24 +667,6 @@ fn apply_operation(items: &mut Vec<ResultItem>, operation: &ViewOperation) -> bo
                 false
             }
         }
-    }
-}
-
-fn merge_patch(value: &mut serde_json::Value, changes: &serde_json::Value) {
-    match (value, changes) {
-        (serde_json::Value::Object(target), serde_json::Value::Object(changes)) => {
-            for (key, change) in changes {
-                if change.is_null() {
-                    target.remove(key);
-                } else {
-                    merge_patch(
-                        target.entry(key.clone()).or_insert(serde_json::Value::Null),
-                        change,
-                    );
-                }
-            }
-        }
-        (target, change) => *target = change.clone(),
     }
 }
 
@@ -691,7 +734,6 @@ impl ReactiveClient {
             "statement": query.sql(),
             "parameters": BASE64.encode(parameters),
             "checkpoint": options.checkpoint.as_ref().map(Checkpoint::to_base64),
-            "transport": "http",
         });
         let mut request = Request::json("reactive.subscribe", Method::Post, url, &body)?;
         if let Some(hint) = options.region_hint {
@@ -1117,8 +1159,10 @@ fn decode_checkpoint_value(
 fn empty_snapshot_at(generation: u64, checkpoint: Checkpoint, revision: String) -> ViewSnapshot {
     ViewSnapshot {
         view_generation: generation,
+        authorization_generation: 0,
         revision,
         items: Vec::new(),
+        digest: String::new(),
         checkpoint,
     }
 }
@@ -1133,11 +1177,21 @@ fn decode_snapshot_value(
         .ok_or_else(|| "reactive inline snapshot is not an object".to_owned())?;
     let view_generation =
         u64_field(object, &["view_generation", "viewGeneration"]).unwrap_or(generation);
+    let authorization_generation = u64_field(
+        object,
+        &["authorization_generation", "authorizationGeneration"],
+    )
+    .unwrap_or_default();
     let revision = match object.get("revision") {
         Some(serde_json::Value::String(value)) => value.clone(),
         Some(serde_json::Value::Number(value)) => value.to_string(),
         _ => "0".to_owned(),
     };
+    let digest = object
+        .get("digest")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
     let inner_checkpoint = object
         .get("checkpoint")
         .map(|value| decode_checkpoint_value(value, "snapshot.checkpoint"))
@@ -1160,8 +1214,10 @@ fn decode_snapshot_value(
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(ViewSnapshot {
         view_generation,
+        authorization_generation,
         revision,
         items,
+        digest,
         checkpoint,
     })
 }
@@ -1175,39 +1231,48 @@ fn decode_result_item(value: &serde_json::Value) -> std::result::Result<ResultIt
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| "reactive result item has no identity".to_owned())?
         .to_owned();
-    if let Some(value) = object.get("value") {
-        return Ok(ResultItem {
-            identity,
-            value: value.clone(),
-        });
-    }
-    let fields = object
-        .get("fields")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| "reactive result item fields are not an array".to_owned())?;
-    let mut result = serde_json::Map::new();
-    for field in fields {
-        let field = field
-            .as_object()
-            .ok_or_else(|| "reactive projected field is not an object".to_owned())?;
-        let path = field
-            .get("path")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| "reactive projected field has no path".to_owned())?;
-        let bytes = decode_bytes_value(
-            field
-                .get("value")
-                .ok_or_else(|| "reactive projected field has no value".to_owned())?,
-        )?;
-        let parsed = serde_json::from_slice(&bytes)
-            .map_err(|error| format!("reactive projected value is not canonical JSON: {error}"))?;
-        if result.insert(path.to_owned(), parsed).is_some() {
-            return Err("reactive result item contains duplicate fields".to_owned());
+    let mut result = BTreeMap::new();
+    if let Some(value) = object.get("value").and_then(serde_json::Value::as_object) {
+        // Legacy JSON snapshots expose values as JSON. Preserve them as
+        // canonical bytes at the boundary; MessagePack never takes this
+        // branch and therefore never parses/transcodes its opaque bytes.
+        for (path, value) in value {
+            if result
+                .insert(
+                    path.clone(),
+                    serde_json::to_vec(value).map_err(|error| error.to_string())?,
+                )
+                .is_some()
+            {
+                return Err("reactive result item contains duplicate fields".to_owned());
+            }
+        }
+    } else {
+        let fields = object
+            .get("fields")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| "reactive result item fields are not an array".to_owned())?;
+        for field in fields {
+            let field = field
+                .as_object()
+                .ok_or_else(|| "reactive projected field is not an object".to_owned())?;
+            let path = field
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| "reactive projected field has no path".to_owned())?;
+            let bytes = decode_bytes_value(
+                field
+                    .get("value")
+                    .ok_or_else(|| "reactive projected field has no value".to_owned())?,
+            )?;
+            if result.insert(path.to_owned(), bytes).is_some() {
+                return Err("reactive result item contains duplicate fields".to_owned());
+            }
         }
     }
     Ok(ResultItem {
         identity,
-        value: serde_json::Value::Object(result),
+        value: result,
     })
 }
 
@@ -1309,6 +1374,9 @@ impl LiveSubscription {
                         .placement
                         .as_deref()
                         .and_then(|placement| placement.parse().ok()),
+                    authorization_generation: None,
+                    removed: Vec::new(),
+                    digest: String::new(),
                     detail: Some(error.message),
                 }));
             }
@@ -1319,6 +1387,9 @@ impl LiveSubscription {
                     snapshot: None,
                     checkpoint: self.state.checkpoint().cloned(),
                     region: None,
+                    authorization_generation: None,
+                    removed: Vec::new(),
+                    digest: String::new(),
                     detail: Some(error.message),
                 }));
             }
@@ -1329,6 +1400,30 @@ impl LiveSubscription {
                 reset.checkpoint = self.state.checkpoint().cloned();
             }
             if let Some(snapshot) = reset.snapshot.clone() {
+                if let Some(auth_generation) = reset.authorization_generation {
+                    if snapshot.authorization_generation != auth_generation
+                        || snapshot.items.iter().any(|item| {
+                            reset
+                                .removed
+                                .iter()
+                                .any(|removed| removed == &item.identity)
+                        })
+                    {
+                        return Ok(PollOutcome::Reset(ResetFrame {
+                            reason: ResetReason::ViewDiverged,
+                            snapshot: None,
+                            checkpoint: self.state.checkpoint().cloned(),
+                            region: None,
+                            authorization_generation: Some(auth_generation),
+                            removed: reset.removed,
+                            digest: reset.digest,
+                            detail: Some(
+                                "authorization replacement disagrees with its removed identities or generation."
+                                    .to_owned(),
+                            ),
+                        }));
+                    }
+                }
                 self.state.apply_snapshot(snapshot);
             }
             return Ok(PollOutcome::Reset(reset));
@@ -1395,61 +1490,49 @@ pub(crate) fn decode_reactive_msgpack_json(bytes: &[u8]) -> Result<serde_json::V
     }
     let mut reader = MsgpackReader { bytes, cursor: 0 };
     let envelope_count = reader.array_count(MSGPACK_MAX_ARRAY_ITEMS)?;
-    // A single envelope is itself an array of seven fields. The first field
-    // is protocol major=2, which disambiguates it from an envelope list.
-    let single = envelope_count == 7
-        && matches!(bytes.get(reader.cursor), Some(2) | Some(0xcc))
-        && (bytes.get(reader.cursor) == Some(&2) || bytes.get(reader.cursor + 1) == Some(&2));
-    let envelope_count = if single { 1 } else { envelope_count };
-    if envelope_count == 0 {
-        return Ok(serde_json::json!({}));
+    // The published HTTP log and WebSocket protocol carry exactly one
+    // indexed envelope per binary frame. An outer array of envelopes is an
+    // old/noncanonical transport shape and must fail closed; accepting it
+    // would let callers observe a partial batch as one revision.
+    if envelope_count != 7 || peek_u32(bytes, reader.cursor) != Some(2) {
+        return Err(msgpack_error("noncanonical top-level envelope batch"));
     }
-    if single {
-        reader.cursor = 0;
-    }
-    let mut responses = Vec::with_capacity(envelope_count);
-    for _ in 0..envelope_count {
-        responses.push(decode_reactive_envelope(&mut reader)?);
-    }
+    reader.cursor = 0;
+    let response = decode_reactive_envelope(&mut reader)?;
     if reader.cursor != bytes.len() {
-        return Err(Error::invalid_response(
-            "reactive MessagePack frame has trailing bytes",
-        ));
+        return Err(msgpack_error("trailing bytes after reactive envelope"));
     }
-    let mut response = serde_json::Map::new();
-    let mut deltas = Vec::new();
-    let mut checkpoint = None;
-    let mut reset = None;
-    for value in responses {
-        let object = value
-            .as_object()
-            .ok_or_else(|| Error::invalid_response("reactive envelope body is not an object"))?;
-        if let Some(items) = object.get("deltas").and_then(serde_json::Value::as_array) {
-            deltas.extend(items.iter().cloned());
-        }
-        if let Some(value) = object.get("checkpoint") {
-            checkpoint = Some(value.clone());
-        }
-        if let Some(value) = object.get("reset") {
-            reset = Some(value.clone());
-        }
+    Ok(response)
+}
+
+fn peek_u32(bytes: &[u8], cursor: usize) -> Option<u32> {
+    let tag = *bytes.get(cursor)?;
+    match tag {
+        0x00..=0x7f => Some(u32::from(tag)),
+        0xcc => bytes.get(cursor + 1).copied().map(u32::from),
+        0xcd => bytes
+            .get(cursor + 1..cursor + 3)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u16::from_be_bytes)
+            .map(u32::from),
+        0xce => bytes
+            .get(cursor + 1..cursor + 5)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u32::from_be_bytes),
+        0xcf => bytes
+            .get(cursor + 1..cursor + 9)
+            .and_then(|bytes| bytes.try_into().ok())
+            .and_then(|bytes| u64::from_be_bytes(bytes).try_into().ok()),
+        _ => None,
     }
-    if !deltas.is_empty() {
-        response.insert("deltas".to_owned(), serde_json::Value::Array(deltas));
-    }
-    if let Some(checkpoint) = checkpoint {
-        response.insert("checkpoint".to_owned(), checkpoint);
-    }
-    if let Some(reset) = reset {
-        response.insert("reset".to_owned(), reset);
-    }
-    Ok(serde_json::Value::Object(response))
 }
 
 fn decode_reactive_envelope(reader: &mut MsgpackReader<'_>) -> Result<serde_json::Value> {
     reader.array(7)?;
     if reader.u32()? != 2 || reader.u32()? != 1 {
-        return Err(Error::invalid_response(
+        return Err(Error::new(
+            ErrorKind::InvalidResponse,
+            "unsupported_version",
             "unsupported reactive MessagePack protocol version",
         ));
     }
@@ -1461,14 +1544,20 @@ fn decode_reactive_envelope(reader: &mut MsgpackReader<'_>) -> Result<serde_json
     let tag = reader.u32()?;
     let _correlation = reader.u64()?;
     let _causation = reader.u64()?;
+    if matches!(tag, 1 | 2 | 7) {
+        return Err(msgpack_error(
+            "received a client-to-server reactive message",
+        ));
+    }
     decode_msgpack_message(reader, tag)
 }
 
 fn msgpack_error(message: impl Into<String>) -> Error {
-    Error::invalid_response(format!(
-        "malformed reactive MessagePack frame: {}",
-        message.into()
-    ))
+    Error::new(
+        ErrorKind::InvalidResponse,
+        "malformed_frame",
+        format!("malformed reactive MessagePack frame: {}", message.into()),
+    )
 }
 
 fn scan_msgpack(bytes: &[u8], cursor: &mut usize, depth: usize) -> Result<()> {
@@ -1690,10 +1779,10 @@ fn decode_msgpack_message(reader: &mut MsgpackReader<'_>, tag: u32) -> Result<se
             let from = reader.u64()?;
             let to = reader.u64()?;
             let operations = decode_msgpack_operations(reader)?;
-            let _digest = reader.text(64)?;
+            let digest = reader.text(64)?;
             let checkpoint = BASE64.encode(reader.binary(1, MAX_CHECKPOINT_BYTES)?);
             Ok(
-                serde_json::json!({"deltas": [{"view_generation": generation, "from_revision": from.to_string(), "to_revision": to.to_string(), "operations": operations, "checkpoint": checkpoint}]}),
+                serde_json::json!({"deltas": [{"view_generation": generation, "from_revision": from.to_string(), "to_revision": to.to_string(), "operations": operations, "digest": digest, "checkpoint": checkpoint}]}),
             )
         }
         5 => {
@@ -1720,13 +1809,21 @@ fn decode_msgpack_message(reader: &mut MsgpackReader<'_>, tag: u32) -> Result<se
             // authorization changed is a typed permission reset
             reader.array(4)?;
             let _subscription = reader.text(128)?;
-            let _generation = reader.u64()?;
+            let authorization_generation = reader.u64()?;
             let count = reader.array_count(10_000)?;
+            let mut removed = Vec::with_capacity(count);
             for _ in 0..count {
-                let _ = reader.text(256)?;
+                removed.push(reader.text(256)?);
             }
             let snapshot = decode_msgpack_snapshot(reader)?;
-            Ok(serde_json::json!({"reset": {"reason": "permission_changed", "snapshot": snapshot}}))
+            let digest = snapshot
+                .get("digest")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            Ok(
+                serde_json::json!({"reset": {"reason": "permission_changed", "authorization_generation": authorization_generation, "removed": removed, "digest": digest, "snapshot": snapshot}}),
+            )
         }
         9 => {
             reader.array(1)?;
@@ -1792,7 +1889,7 @@ impl<'a> MsgpackReader<'a> {
 fn decode_msgpack_snapshot(reader: &mut MsgpackReader<'_>) -> Result<serde_json::Value> {
     reader.array(6)?;
     let generation = reader.u64()?;
-    let _authorization_generation = reader.u64()?;
+    let authorization_generation = reader.u64()?;
     let revision = reader.u64()?;
     let count = reader.array_count(10_000)?;
     let mut items = Vec::with_capacity(count);
@@ -1802,16 +1899,16 @@ fn decode_msgpack_snapshot(reader: &mut MsgpackReader<'_>) -> Result<serde_json:
         let fields = decode_msgpack_fields(reader)?;
         items.push(serde_json::json!({"identity": identity, "value": fields}));
     }
-    let _digest = reader.text(64)?;
+    let digest = reader.text(64)?;
     let checkpoint = BASE64.encode(reader.binary(1, MAX_CHECKPOINT_BYTES)?);
     Ok(
-        serde_json::json!({"view_generation": generation, "revision": revision.to_string(), "items": items, "checkpoint": checkpoint}),
+        serde_json::json!({"view_generation": generation, "authorization_generation": authorization_generation, "revision": revision.to_string(), "items": items, "digest": digest, "checkpoint": checkpoint}),
     )
 }
 
 fn decode_msgpack_fields(reader: &mut MsgpackReader<'_>) -> Result<serde_json::Value> {
     let count = reader.array_count(1024)?;
-    let mut fields = serde_json::Map::new();
+    let mut fields = Vec::with_capacity(count);
     let mut aggregate_bytes = 0usize;
     for _ in 0..count {
         reader.array(2)?;
@@ -1828,13 +1925,17 @@ fn decode_msgpack_fields(reader: &mut MsgpackReader<'_>) -> Result<serde_json::V
                 "projected fields exceed their aggregate bound",
             ));
         }
-        let value: serde_json::Value = serde_json::from_slice(&bytes)
-            .map_err(|_| msgpack_error("projected value is not canonical JSON"))?;
-        if fields.insert(path, value).is_some() {
+        if fields.iter().any(|field: &serde_json::Value| {
+            field.get("path").and_then(serde_json::Value::as_str) == Some(path.as_str())
+        }) {
             return Err(msgpack_error("duplicate projected field"));
         }
+        // Keep the producer's canonical JSON bytes opaque. Serde's array
+        // representation is only a transport bridge back into ResultItem;
+        // the bytes are never parsed or normalized here.
+        fields.push(serde_json::json!({"path": path, "value": bytes}));
     }
-    Ok(serde_json::Value::Object(fields))
+    Ok(serde_json::Value::Array(fields))
 }
 
 fn decode_msgpack_operations(reader: &mut MsgpackReader<'_>) -> Result<Vec<serde_json::Value>> {
@@ -1865,7 +1966,7 @@ fn decode_msgpack_operations(reader: &mut MsgpackReader<'_>) -> Result<Vec<serde
                     return Err(msgpack_error("invalid patch shape"));
                 }
                 let count = reader.array_count(1024)?;
-                let mut changes = serde_json::Map::new();
+                let mut changes = Vec::with_capacity(count);
                 let mut aggregate_bytes = 0usize;
                 for _ in 0..count {
                     reader.array(2)?;
@@ -1881,12 +1982,15 @@ fn decode_msgpack_operations(reader: &mut MsgpackReader<'_>) -> Result<Vec<serde
                         if aggregate_bytes > MSGPACK_MAX_BINARY_BYTES {
                             return Err(msgpack_error("patch exceeds its aggregate bound"));
                         }
-                        serde_json::from_slice(&bytes)
-                            .map_err(|_| msgpack_error("patch value is not canonical JSON"))?
+                        serde_json::json!(bytes)
                     };
-                    if changes.insert(path, value).is_some() {
+                    if changes.iter().any(|change: &serde_json::Value| {
+                        change.get("path").and_then(serde_json::Value::as_str)
+                            == Some(path.as_str())
+                    }) {
                         return Err(msgpack_error("duplicate patch field"));
                     }
+                    changes.push(serde_json::json!({"path": path, "value": value}));
                 }
                 serde_json::json!({"kind":"patch","identity":identity,"changes":changes})
             }
