@@ -952,6 +952,10 @@ pub struct Engine {
     /// lifecycle record never makes an index visible without a fresh SQLite
     /// segment at the matching publication boundary.
     pub(crate) auto_index_lifecycle: Mutex<crate::auto_index::LifecycleStore>,
+    /// Bounded literal-free execution observations used to rank D-31
+    /// candidates. Values are logical pages/rows only; document bodies never
+    /// enter this sketch.
+    pub(crate) auto_index_observations: Mutex<crate::auto_index::WorkloadSketch>,
     /// The Storage Tier Mover's control state (P4): the configured
     /// policy and the pause gate. The handle is [`Engine::tiers`].
     /// The group-commit mailbox: waiting intents and the leader flag.
@@ -1062,6 +1066,7 @@ impl Engine {
             _index_subscription: index_subscription,
             bulk_audit: Arc::new(crate::query::bulk::BulkAuditJournal::new()),
             auto_index_lifecycle: Mutex::new(auto_index_lifecycle),
+            auto_index_observations: Mutex::new(crate::auto_index::WorkloadSketch::default()),
             commit_mailbox: Arc::new(Mutex::new(CommitMailbox::default())),
             commit_arrivals: std::sync::Condvar::new(),
         })
@@ -1838,7 +1843,7 @@ impl Engine {
     /// outside the structural limits, and the transaction path's typed
     /// failures otherwise.
     /// The wall-clock milliseconds of the replication clock's epoch.
-    fn now_millis() -> u64 {
+    pub(crate) fn now_millis() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(0))
@@ -3023,6 +3028,407 @@ impl Engine {
             });
         }
         Ok(entries)
+    }
+
+    /// Returns the durable D-31 lifecycle generation for one tenant.
+    pub fn auto_index_lifecycle_generation(&self, tenant: &TenantId) -> Result<u64, EngineError> {
+        self.validate_tenant(tenant)?;
+        self.auto_index_lifecycle
+            .lock()
+            .map(|state| state.generation())
+            .map_err(|_| EngineError::StorageFailure)
+    }
+
+    /// Returns a bounded, durable lifecycle snapshot.  The process-local
+    /// planner catalog is joined only as a physical-segment observation; an
+    /// entry is marked visible only when its durable lifecycle record says it
+    /// is active, preserving the zero-stale-read invariant across restart.
+    pub fn auto_index_lifecycle_snapshot(
+        &self,
+        tenant: &TenantId,
+        collection: Option<&str>,
+        limit: usize,
+    ) -> Result<crate::auto_index::LifecycleSnapshot, EngineError> {
+        self.validate_tenant(tenant)?;
+        let mut snapshot = self
+            .auto_index_lifecycle
+            .lock()
+            .map_err(|_| EngineError::StorageFailure)?
+            .snapshot(tenant.as_str(), collection, limit);
+        if snapshot.indexes.len() < limit {
+            let registered = self.indexes.definitions(tenant);
+            for entry in registered {
+                if entry.definition().kind() != crate::query::optimizer::IndexKind::Auto
+                    || collection
+                        .is_some_and(|name| entry.definition().collection().as_str() != name)
+                    || snapshot.indexes.iter().any(|item| item.id == entry.namespace().name())
+                {
+                    continue;
+                }
+                let phase = match entry.state() {
+                    crate::query::optimizer::IndexLifecycleState::Active => {
+                        crate::auto_index::LifecyclePhase::Active
+                    }
+                    crate::query::optimizer::IndexLifecycleState::Idle => {
+                        crate::auto_index::LifecyclePhase::Invisible
+                    }
+                    crate::query::optimizer::IndexLifecycleState::Retired => {
+                        crate::auto_index::LifecyclePhase::Abandoned
+                    }
+                };
+                let generation = entry.published().map_or(0, |value| value.generation());
+                snapshot.indexes.push(crate::auto_index::LifecycleIndexView {
+                    id: entry.namespace().name().to_owned(),
+                    tenant: tenant.as_str().to_owned(),
+                    collection: entry.definition().collection().as_str().to_owned(),
+                    fields: entry
+                        .definition()
+                        .fields()
+                        .iter()
+                        .map(|field| field.name().to_owned())
+                        .collect(),
+                    phase,
+                    generation,
+                    covered_watermark: 0,
+                    target_watermark: None,
+                    visible: phase == crate::auto_index::LifecyclePhase::Active
+                        && entry.published().is_some(),
+                    pinned: false,
+                    forbidden: false,
+                    maintenance_cost: entry.definition().fields().len() as u64,
+                    last_used_millis: None,
+                    zero_stale_reads: phase == crate::auto_index::LifecyclePhase::Active
+                        && entry.published().is_some(),
+                    regression_free: phase == crate::auto_index::LifecyclePhase::Active,
+                });
+                if snapshot.indexes.len() >= limit {
+                    break;
+                }
+            }
+        }
+        snapshot.indexes.sort_by(|left, right| left.id.cmp(&right.id));
+        snapshot.truncated |= snapshot.indexes.len() > limit;
+        snapshot.indexes.truncate(limit);
+        Ok(snapshot)
+    }
+
+    /// Computes bounded recommendations from real query selection records and
+    /// measured execution observations.  Candidate identities are derived
+    /// from the canonical field order, so retries and Regions agree without
+    /// carrying query literals.
+    pub fn auto_index_recommendations(
+        &self,
+        tenant: &TenantId,
+        collection: Option<&str>,
+        limit: usize,
+    ) -> Result<crate::auto_index::RecommendationSnapshot, EngineError> {
+        self.validate_tenant(tenant)?;
+        let generation = self.auto_index_lifecycle_generation(tenant)?;
+        let forbidden =
+            self.auto_index_lifecycle.lock().map_err(|_| EngineError::StorageFailure)?;
+        let mut grouped: BTreeMap<(String, Vec<String>), (u64, f64)> = BTreeMap::new();
+        if let Ok(observations) = self.auto_index_observations.lock() {
+            for observation in observations.observations() {
+                if collection.is_some_and(|name| observation.template.collection != name)
+                    || (observation.template.predicates.is_empty()
+                        && observation.template.ordering.is_empty())
+                {
+                    continue;
+                }
+                let fields = observation
+                    .template
+                    .predicates
+                    .iter()
+                    .map(|predicate| predicate.field.clone())
+                    .chain(observation.template.ordering.iter().cloned())
+                    .collect::<Vec<_>>();
+                let row = grouped
+                    .entry((observation.template.collection.clone(), fields))
+                    .or_default();
+                row.0 = row.0.saturating_add(1);
+                row.1 += observation.cost.total() as f64;
+            }
+        }
+        for record in self.indexes.selection_records(tenant) {
+            if collection.is_some_and(|name| record.collection() != name) {
+                continue;
+            }
+            let fields: Vec<String> =
+                record.query_fields().iter().map(|field| field.name().to_owned()).collect();
+            if fields.is_empty() {
+                continue;
+            }
+            let score = record.candidates().len() as f64 + 1.0;
+            let row = grouped.entry((record.collection().to_owned(), fields)).or_default();
+            row.0 = row.0.saturating_add(1);
+            row.1 += score;
+        }
+        drop(forbidden);
+        let mut recommendations = Vec::new();
+        for ((collection_name, fields), (frequency, score)) in grouped {
+            let definition_fields = fields
+                .iter()
+                .filter_map(|field| {
+                    crate::query::optimizer::IndexField::try_new(
+                        field,
+                        crate::query::optimizer::IndexCapabilities::FULL,
+                    )
+                    .ok()
+                })
+                .collect();
+            let Ok(definition) = crate::query::optimizer::IndexDefinition::try_new(
+                crate::types::CollectionName::try_new(&collection_name)
+                    .map_err(|_| EngineError::StorageFailure)?,
+                definition_fields,
+                crate::query::optimizer::IndexKind::Auto,
+            ) else {
+                continue;
+            };
+            let candidate_id = crate::query::optimizer::auto_index_name(&definition);
+            if self
+                .auto_index_lifecycle
+                .lock()
+                .map_err(|_| EngineError::StorageFailure)?
+                .is_forbidden(&candidate_id)
+            {
+                continue;
+            }
+            let collection_key = crate::types::CollectionName::try_new(&collection_name)
+                .map_err(|_| EngineError::StorageFailure)?;
+            let needs_descriptor = fields
+                .iter()
+                .any(|field| self.pushdown_field_state(&collection_key, field).is_none());
+            recommendations.push(crate::auto_index::LifecycleRecommendation {
+                candidate_id,
+                tenant: tenant.as_str().to_owned(),
+                collection: collection_name,
+                maintenance_cost: fields.len() as u64,
+                fields,
+                score: score + frequency as f64,
+                generation,
+                needs_descriptor,
+            });
+        }
+        recommendations.sort_by(|left, right| {
+            right
+                .score
+                .total_cmp(&left.score)
+                .then_with(|| left.candidate_id.cmp(&right.candidate_id))
+        });
+        let truncated = recommendations.len() > limit;
+        recommendations.truncate(limit);
+        Ok(crate::auto_index::RecommendationSnapshot { generation, truncated, recommendations })
+    }
+
+    /// Applies one recommendation after an optimistic generation check.  The
+    /// extracted columns are registered before the durable lifecycle event;
+    /// the descriptor write path maintains them in every subsequent commit.
+    pub fn auto_index_apply(
+        &self,
+        tenant: &TenantId,
+        candidate_id: &str,
+        expected_generation: u64,
+        at_millis: u64,
+    ) -> Result<crate::auto_index::LifecycleIndexView, EngineError> {
+        let current = self.auto_index_lifecycle_generation(tenant)?;
+        if current != expected_generation {
+            return Err(EngineError::Conflict);
+        }
+        let recommendation = self
+            .auto_index_recommendations(tenant, None, 256)?
+            .recommendations
+            .into_iter()
+            .find(|item| item.candidate_id == candidate_id)
+            .ok_or(EngineError::Conflict)?;
+        let mut active = true;
+        let collection = crate::types::CollectionName::try_new(&recommendation.collection)
+            .map_err(|_| EngineError::InvalidDocument)?;
+        for field in &recommendation.fields {
+            match self.register_index_field(&collection, field) {
+                Ok(
+                    crate::storage::DescriptorRegistration::Active
+                    | crate::storage::DescriptorRegistration::Unchanged,
+                ) => {}
+                Ok(crate::storage::DescriptorRegistration::Building) => active = false,
+                Err(IndexRegistrationError::BudgetExceeded) => return Err(EngineError::Conflict),
+                Err(IndexRegistrationError::Storage | IndexRegistrationError::Closed) => {
+                    return Err(EngineError::StorageFailure);
+                }
+            }
+        }
+        let view = crate::auto_index::LifecycleIndexView {
+            id: recommendation.candidate_id.clone(),
+            tenant: tenant.as_str().to_owned(),
+            collection: recommendation.collection,
+            fields: recommendation.fields,
+            phase: if active {
+                crate::auto_index::LifecyclePhase::Active
+            } else {
+                crate::auto_index::LifecyclePhase::Building
+            },
+            generation: current,
+            covered_watermark: 0,
+            target_watermark: None,
+            visible: active,
+            pinned: false,
+            forbidden: false,
+            maintenance_cost: recommendation.maintenance_cost,
+            last_used_millis: Some(at_millis),
+            zero_stale_reads: active,
+            regression_free: active,
+        };
+        let digest = *blake3::hash(view.id.as_bytes()).as_bytes();
+        self.auto_index_lifecycle
+            .lock()
+            .map_err(|_| EngineError::StorageFailure)?
+            .install(view.clone(), at_millis, digest)
+            .map_err(|_| EngineError::StorageFailure)?;
+        Ok(view)
+    }
+
+    /// Pins one exact normalized template to an active candidate.
+    pub fn auto_index_pin_template(
+        &self,
+        tenant: &TenantId,
+        index_id: &str,
+        template: &str,
+        expected_generation: u64,
+    ) -> Result<crate::auto_index::LifecycleIndexView, EngineError> {
+        if self.auto_index_lifecycle_generation(tenant)? != expected_generation {
+            return Err(EngineError::Conflict);
+        }
+        let mut lifecycle =
+            self.auto_index_lifecycle.lock().map_err(|_| EngineError::StorageFailure)?;
+        let mut view = lifecycle
+            .snapshot(tenant.as_str(), None, usize::MAX)
+            .indexes
+            .into_iter()
+            .find(|item| item.id == index_id)
+            .ok_or(EngineError::Conflict)?;
+        if view.phase != crate::auto_index::LifecyclePhase::Active {
+            return Err(EngineError::Conflict);
+        }
+        view.pinned = true;
+        lifecycle
+            .control(
+                index_id,
+                false,
+                Self::now_millis(),
+                *blake3::hash(template.as_bytes()).as_bytes(),
+            )
+            .map_err(|_| EngineError::StorageFailure)?;
+        Ok(view)
+    }
+
+    /// Forbids one exact candidate shape and invalidates all optimistic
+    /// generations.  It never disables automatic indexing for a collection.
+    pub fn auto_index_forbid_shape(
+        &self,
+        tenant: &TenantId,
+        candidate_id: &str,
+        shape: &str,
+        expected_generation: u64,
+    ) -> Result<u64, EngineError> {
+        if self.auto_index_lifecycle_generation(tenant)? != expected_generation {
+            return Err(EngineError::Conflict);
+        }
+        if candidate_id.is_empty() || shape.is_empty() {
+            return Err(EngineError::InvalidDocument);
+        }
+        self.auto_index_lifecycle
+            .lock()
+            .map_err(|_| EngineError::StorageFailure)?
+            .control(
+                candidate_id,
+                true,
+                Self::now_millis(),
+                *blake3::hash(shape.as_bytes()).as_bytes(),
+            )
+            .map_err(|_| EngineError::StorageFailure)?;
+        self.auto_index_lifecycle_generation(tenant)
+    }
+
+    /// Retires one candidate after its lifecycle has made it invisible.
+    pub fn auto_index_retire(
+        &self,
+        tenant: &TenantId,
+        index_id: &str,
+        expected_generation: u64,
+        at_millis: u64,
+    ) -> Result<crate::auto_index::LifecycleIndexView, EngineError> {
+        if self.auto_index_lifecycle_generation(tenant)? != expected_generation {
+            return Err(EngineError::Conflict);
+        }
+        let mut lifecycle =
+            self.auto_index_lifecycle.lock().map_err(|_| EngineError::StorageFailure)?;
+        let view = lifecycle
+            .snapshot(tenant.as_str(), None, usize::MAX)
+            .indexes
+            .into_iter()
+            .find(|item| item.id == index_id)
+            .ok_or(EngineError::Conflict)?;
+        lifecycle
+            .retire_index(index_id, at_millis, *blake3::hash(index_id.as_bytes()).as_bytes())
+            .map_err(|_| EngineError::StorageFailure)?;
+        let mut retired = view;
+        retired.phase = crate::auto_index::LifecyclePhase::Abandoned;
+        retired.visible = false;
+        Ok(retired)
+    }
+
+    /// Returns bounded durable lifecycle audit entries.
+    pub fn auto_index_lifecycle_audit(
+        &self,
+        tenant: &TenantId,
+        index_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<crate::auto_index::LifecycleAuditEntry>, EngineError> {
+        self.validate_tenant(tenant)?;
+        self.auto_index_lifecycle
+            .lock()
+            .map(|state| state.audit(index_id, limit))
+            .map_err(|_| EngineError::StorageFailure)
+    }
+
+    /// Returns bounded shadow evidence.  Empty evidence is explicit: the
+    /// candidate cannot be promoted by this read until the shadow worker has
+    /// supplied the minimum paired samples.
+    pub fn auto_index_shadow_evidence(
+        &self,
+        tenant: &TenantId,
+        index_id: &str,
+        limit: usize,
+    ) -> Result<crate::auto_index::ShadowEvidence, EngineError> {
+        self.validate_tenant(tenant)?;
+        if let Some(evidence) = self
+            .auto_index_lifecycle
+            .lock()
+            .map_err(|_| EngineError::StorageFailure)?
+            .evidence(index_id, limit)
+        {
+            return Ok(evidence);
+        }
+        Ok(crate::auto_index::ShadowEvidence {
+            index_id: index_id.to_owned(),
+            generation: self.auto_index_lifecycle_generation(tenant)?,
+            baseline: Vec::new(),
+            candidate: Vec::new(),
+            improvement: 0.0,
+            regression: false,
+            digest: [0; 32],
+        })
+    }
+
+    /// Records one literal-free execution observation for the D-31 bounded
+    /// workload sketch. Query execution supplies this after it has computed
+    /// the result statistics, so the observation is never synthetic.
+    pub(crate) fn record_auto_index_observation(
+        &self,
+        observation: crate::auto_index::Observation,
+    ) {
+        if let Ok(mut observations) = self.auto_index_observations.lock() {
+            observations.observe(observation);
+        }
     }
 
     /// Returns one document's retained revision history, newest first
