@@ -1112,7 +1112,9 @@ fn lower_projection(items: &[SelectItem]) -> Result<Option<Vec<SqlProjection>>, 
         };
         let field = field_name(expr)?;
         let output = output.unwrap_or(field.as_str());
-        if !valid_identifier(output) || fields.iter().any(|known: &SqlProjection| known.output == output) {
+        if !valid_identifier(output)
+            || fields.iter().any(|known: &SqlProjection| known.output == output)
+        {
             return Err(SqlError::binding(SqlErrorClass::InvalidIdentifier, output));
         }
         fields.push(SqlProjection { field, output: output.to_owned() });
