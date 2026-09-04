@@ -22,7 +22,7 @@ use crate::{
 use std::io::Read;
 
 /// The manifest file name inside one recovery-point directory.
-pub(crate) const MANIFEST_FILE: &str = "manifest.tbv2m";
+pub(crate) const MANIFEST_FILE: &str = "manifest.tbv1m";
 
 /// Manifest file name for the authenticated current backup format. The
 /// legacy plaintext path above is intentionally retained only for explicit

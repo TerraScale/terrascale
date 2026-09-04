@@ -1,7 +1,7 @@
 //! The typed index lifecycle operations, state, staleness, and statistics
 //! of the engine seam (GAP-Q18).
 //!
-//! This module owns the administrative half of index lifecycle in V2:
+//! This module owns the administrative half of index lifecycle in TerraBase:
 //! the per-index operational state machine (create, delete, start, stop,
 //! enable, disable, reset with in-place and side-by-side modes), lock
 //! modes and priority on the deployment record, the recorded-error
@@ -355,7 +355,7 @@ impl IndexErrorCategory {
 /// The record names the action and the typed failure category with the
 /// lifecycle-clock instant it was observed — never an error string, a
 /// document value, or a path (V1's error surfaces carry free-text
-/// messages; V2's recorded form is typed and content-free).
+/// messages; TerraBase's recorded form is typed and content-free).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct IndexErrorRecord {
     action: IndexErrorAction,

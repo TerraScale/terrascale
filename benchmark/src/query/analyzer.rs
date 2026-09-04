@@ -1,4 +1,4 @@
-//! The analyzer and term-vector foundation (GAP-Q13, TerraBaseV2#67).
+//! The analyzer and term-vector foundation (GAP-Q13, TerraBase#67).
 //!
 //! V1's relevance features — search, highlighting, suggestions,
 //! more-like-this — all stand on one primitive: an analyzer turns one field
@@ -22,7 +22,7 @@
 //! 1. **No arbitrary code.** An analyzer is a typed value. There is no
 //!    variant, field, or name anywhere in this contract that can carry
 //!    source code, and therefore nothing to compile, load, or execute. V1
-//!    compiles user analyzer source at deployment; V2 rejects that entire
+//!    compiles user analyzer source at deployment; TerraBase rejects that entire
 //!    execution model — the charter's no-arbitrary-code rule
 //!    (PD-2026-08-26-08 D2) applied to the analysis surface, the same rule
 //!    that replaced RQL's JavaScript projections with typed
@@ -31,7 +31,7 @@
 //!    each capped by a named constant, and every cap refuses with a typed
 //!    error before unbounded state exists ([`AnalyzerError`]). V1's only
 //!    comparable guard is an overflow guard of half an `int`'s terms per
-//!    field; V2's bounds are engine bounds, not overflow guards.
+//!    field; TerraBase's bounds are engine bounds, not overflow guards.
 //! 3. **No recursion.** Tokenization is one linear walk over the value.
 //!    There is no recursive function on this path and no input that can
 //!    deepen one.
@@ -39,7 +39,7 @@
 //!    term-vector mode outside the contract, or a contract version other
 //!    than the one this engine speaks is refused — never guessed, never
 //!    substituted with equality. V1 refuses an unknown analyzer name too;
-//!    V2 refuses it with a typed error.
+//!    TerraBase refuses it with a typed error.
 //!
 //! The full decision record — the engine-surface decision this packet owes
 //! (PROPOSED for parent ratification), the alternatives with their
@@ -83,13 +83,13 @@ pub const MAX_TOKEN_FILTERS: usize = 4;
 ///
 /// An initial engine bound, tunable with measured evidence. V1 sizes its
 /// analyzer buffers from the input (4 KiB default) and grows them as
-/// needed; V2 refuses the input instead of growing without a ceiling.
+/// needed; TerraBase refuses the input instead of growing without a ceiling.
 pub const MAX_ANALYZED_VALUE_BYTES: usize = 1024 * 1024;
 
 /// The maximum size in bytes of one analyzed term.
 ///
 /// The bound a single token contributes to engine state. V1 has no
-/// term-length bound — a keyword token is the whole value — so V2's
+/// term-length bound — a keyword token is the whole value — so TerraBase's
 /// tighter bound is a recorded accepted difference.
 pub const MAX_TERM_BYTES: usize = 4096;
 
@@ -176,7 +176,7 @@ pub enum TokenFilterKind {
     ///
     /// V1's lower-case transformer is the anchor. Offsets stay offsets
     /// into the original value even when lowercasing changes the term's
-    /// byte length — a V2 declaration: V1's token offsets index the
+    /// byte length — a TerraBase declaration: V1's token offsets index the
     /// transformed buffer.
     LowerCase,
 }
@@ -415,7 +415,7 @@ impl Analyzer {
     /// emission order — the per-entry term order V1's engine keeps for
     /// phrase matching.
     ///
-    /// An empty value produces an empty term vector: V2's term contract
+    /// An empty value produces an empty term vector: TerraBase's term contract
     /// requires non-empty terms, where V1's keyword tokenizer emits one
     /// zero-length token — a recorded accepted difference.
     ///
@@ -629,7 +629,7 @@ impl TermVectorMode {
 /// The byte range of one token occurrence in the analyzed value.
 ///
 /// Offsets are UTF-8 byte offsets into the original field value, not
-/// character indices and not offsets into the filtered term text — a V2
+/// character indices and not offsets into the filtered term text — a TerraBase
 /// declaration (V1's token offsets index the analyzer's transformed
 /// buffer). The range is half-open: `start < end <= end of value`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

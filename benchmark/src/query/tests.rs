@@ -1960,7 +1960,7 @@ fn predicate_comparison_is_exact_across_integer_and_number_domains() {
 /// dates as tick integers ride the exact integer order, and ISO-8601 date
 /// strings ride the lexicographic string order, which is identical for
 /// same-format timestamps. The close-out record files this as the accepted
-/// V2 mapping rather than a native date domain.
+/// TerraBase mapping rather than a native date domain.
 #[test]
 fn date_valued_fields_order_exactly_in_the_integer_and_string_domains() {
     let (dir, engine) = open_engine("gap-eval-q2-dates");
@@ -2919,7 +2919,7 @@ fn statistics_count_caps_are_typed_exact_and_saturating() {
 
     // An offset beyond the matched set saturates the capped count at zero;
     // V1's collection path can compute a negative cap
-    // (`Math.Min(limit, TotalResults - offset)` unclamped) and V2 never does.
+    // (`Math.Min(limit, TotalResults - offset)` unclamped) and TerraBase never does.
     let query = spec(
         "tenant-a",
         "users",

@@ -63,7 +63,7 @@ if [[ -n "$previous_bundle" ]]; then
     echo "previous contract bundle has no safe proto directory: $previous_bundle" >&2
     exit 1
   }
-  [[ -f "$previous_bundle/msgpack/terrascale.sync.v2.msgpack.json" ]] || {
+  [[ -f "$previous_bundle/msgpack/terrascale.sync.v1.msgpack.json" ]] || {
     echo "previous contract bundle has no MessagePack manifest" >&2
     exit 1
   }
@@ -210,10 +210,10 @@ for relative in ("conformance/reactive.json",):
         raise SystemExit("reactive conformance is not tied to the current OpenAPI digest")
     if reactive.get("openapiBlake3") != openapi_blake3:
         raise SystemExit("reactive conformance has the wrong OpenAPI digest")
-    msgpack_entry = next((entry for entry in manifest.get("artifacts", []) if entry.get("path") == "msgpack/terrascale.sync.v2.msgpack.json"), None)
+    msgpack_entry = next((entry for entry in manifest.get("artifacts", []) if entry.get("path") == "msgpack/terrascale.sync.v1.msgpack.json"), None)
     if reactive.get("manifestBlake3") != (msgpack_entry or {}).get("blake3"):
         raise SystemExit("reactive conformance has the wrong MessagePack manifest digest")
-    if reactive.get("manifestSha256") != hashlib.sha256((root / "msgpack/terrascale.sync.v2.msgpack.json").read_bytes()).hexdigest():
+    if reactive.get("manifestSha256") != hashlib.sha256((root / "msgpack/terrascale.sync.v1.msgpack.json").read_bytes()).hexdigest():
         raise SystemExit("reactive conformance is not tied to the current MessagePack manifest")
     for key in ("attach", "snapshot", "log", "reset"):
         if key not in reactive:
@@ -222,15 +222,15 @@ for relative in ("conformance/reactive.json",):
         if re.fullmatch(r"[0-9a-f]*", reactive[key].get("hex", "")) is None:
             raise SystemExit(f"reactive {key} bytes are not canonical hex")
 
-msgpack_manifest = root / "msgpack" / "terrascale.sync.v2.msgpack.json"
+msgpack_manifest = root / "msgpack" / "terrascale.sync.v1.msgpack.json"
 manifest_bytes = msgpack_manifest.read_bytes()
 manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
-manifest_blake3 = next((entry.get("blake3") for entry in manifest.get("artifacts", []) if entry.get("path") == "msgpack/terrascale.sync.v2.msgpack.json"), None)
+manifest_blake3 = next((entry.get("blake3") for entry in manifest.get("artifacts", []) if entry.get("path") == "msgpack/terrascale.sync.v1.msgpack.json"), None)
 if not isinstance(manifest_blake3, str) or not re.fullmatch(r"[0-9a-f]{64}", manifest_blake3):
     raise SystemExit("manifest has no valid MessagePack artifact digest")
 for relative in ("conformance/msgpack/message-vectors.json", "conformance/msgpack/hostile-vectors.json"):
     corpus = load(relative)
-    if corpus.get("protocol") != "terrascale.sync.v2.msgpack" or corpus.get("version") != "2.1":
+    if corpus.get("protocol") != "terrascale.sync.v1.msgpack" or corpus.get("version") != "1.0":
         raise SystemExit(f"{relative} has the wrong protocol identity")
     if corpus.get("contractVersion") != version:
         raise SystemExit(f"{relative} has the wrong contract version")
@@ -809,8 +809,8 @@ if previous_version >= current_version:
 
 compare_openapi(load_json(previous_root / "openapi.json"), load_json(current_root / "openapi.json"))
 compare_message_pack(
-    load_json(previous_root / "msgpack" / "terrascale.sync.v2.msgpack.json"),
-    load_json(current_root / "msgpack" / "terrascale.sync.v2.msgpack.json"),
+    load_json(previous_root / "msgpack" / "terrascale.sync.v1.msgpack.json"),
+    load_json(current_root / "msgpack" / "terrascale.sync.v1.msgpack.json"),
 )
 print("OpenAPI and MessagePack contracts are additive")
 PY

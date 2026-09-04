@@ -112,7 +112,7 @@ fn manifest_validation_rejects_path_traversal_and_in_progress_manifests() {
     // scope), so the point has zero real members; the probe appends a
     // traversal member line and validation must still reject the manifest
     // before any file under that name is touched.
-    let manifest_path = destination.join(format!("rp-{identity}")).join("manifest.tbv2m");
+    let manifest_path = destination.join(format!("rp-{identity}")).join("manifest.tbv1m");
     let original = std::fs::read(&manifest_path).expect("reads the manifest");
     let traversal = append_traversal_member(&original, "../../etc/passwd");
     std::fs::write(&manifest_path, &traversal).expect("writes the traversal manifest");
@@ -134,7 +134,7 @@ fn manifest_validation_rejects_path_traversal_and_in_progress_manifests() {
     let partial_dir = destination.join(format!("rp-{staging_identity}"));
     std::fs::create_dir_all(&partial_dir).expect("creates a point directory");
     std::fs::write(
-        partial_dir.join("manifest.tbv2m.inprogress"),
+        partial_dir.join("manifest.tbv1m.inprogress"),
         b"terrabase-backup-manifest 2\nin_progress true\n",
     )
     .expect("writes an in-progress manifest");
@@ -189,7 +189,7 @@ fn create_unsealed_orphan(destination: &std::path::Path, identity: &str) -> std:
     let orphan = destination.join(format!("rp-{identity}"));
     std::fs::create_dir_all(&orphan).expect("creates the orphan directory");
     std::fs::write(orphan.join("member-000001"), b"staged bytes").expect("stages a member");
-    assert!(!orphan.join("manifest.tbv2m").exists(), "the orphan holds no sealed manifest");
+    assert!(!orphan.join("manifest.tbv1m").exists(), "the orphan holds no sealed manifest");
     orphan
 }
 

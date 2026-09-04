@@ -1039,7 +1039,7 @@ fn percentile(values: &[f64], fraction: f64) -> f64 {
 fn report_json(config: &Config, report: &[(&str, Verdict)]) -> String {
     let observed_rss_mib = current_rss_bytes(config.member_pid) / 1024 / 1024;
     let mut out =
-        String::from("{\"family\":\"sync\",\"protocol\":\"sync-v2 MessagePack\",\"topology\":\"");
+        String::from("{\"family\":\"sync\",\"protocol\":\"sync-v1 MessagePack\",\"topology\":\"");
     out.push_str(&json_escape(&config.replication));
     out.push_str("\",\"runtime_digest\":\"");
     out.push_str(&config.runtime_digest);

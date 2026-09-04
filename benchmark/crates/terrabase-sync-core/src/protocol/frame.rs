@@ -1,11 +1,11 @@
-//! The `terrascale.sync.v2` frame envelope: the shared discipline every
+//! The `terrascale.sync.v1` frame envelope: the shared discipline every
 //! frame carries — protocol version, frame kind, correlation and
 //! causation identity, an idempotency key exactly where mutation is
 //! possible, and a content digest over the canonical body — plus its
 //! versioned, fail-closed wire encoding.
 
 use super::body::FrameKind;
-use super::body::SyncV2Body;
+use super::body::SyncV1Body;
 use crate::FrameDigest;
 use crate::FrameId;
 
@@ -14,7 +14,7 @@ use crate::FrameId;
 pub enum ProtocolError {
     /// The frame's leading version byte is not
     /// [`super::SYNC_PROTOCOL_VERSION`]. Unknown versions fail closed;
-    /// this includes the v1 wire, which v2 deliberately does not speak.
+    /// only the launch v1 wire is accepted.
     UnsupportedVersion(u8),
     /// The frame is structurally invalid: truncation, trailing bytes,
     /// length disagreement, unknown kind, violated limits, or a
@@ -91,17 +91,17 @@ impl IdempotencyKey {
     }
 }
 
-/// One typed, versioned `terrascale.sync.v2` frame.
+/// One typed, versioned `terrascale.sync.v1` frame.
 #[derive(Debug)]
-pub struct SyncV2Frame {
+pub struct SyncV1Frame {
     correlation: FrameId,
     causation: FrameId,
     idempotency: Option<IdempotencyKey>,
     digest: FrameDigest,
-    body: SyncV2Body,
+    body: SyncV1Body,
 }
 
-impl SyncV2Frame {
+impl SyncV1Frame {
     /// Seals a body into a frame: validates the body, enforces the
     /// idempotency pairing (a key exactly on the mutation-family
     /// frames), and computes the content digest over the canonical body
@@ -112,7 +112,7 @@ impl SyncV2Frame {
     /// Returns [`ProtocolError`] when the body violates its invariants
     /// or the idempotency pairing is wrong.
     pub fn seal(
-        body: SyncV2Body,
+        body: SyncV1Body,
         correlation: FrameId,
         causation: FrameId,
         idempotency: Option<IdempotencyKey>,
@@ -175,7 +175,7 @@ impl SyncV2Frame {
 
     /// The frame's body, by reference.
     #[must_use]
-    pub fn body(&self) -> &SyncV2Body {
+    pub fn body(&self) -> &SyncV1Body {
         &self.body
     }
 
@@ -188,7 +188,7 @@ impl SyncV2Frame {
     /// The versioned wire encoding:
     ///
     /// ```text
-    /// u8  version = 2
+    /// u8  version = 1
     /// u16 kind code
     /// u64 correlation
     /// u64 causation
@@ -232,7 +232,7 @@ impl SyncV2Frame {
     /// v1), unknown kinds, truncation, trailing bytes, length
     /// disagreement, limit violations, and idempotency-pairing
     /// violations. Digest disagreement is not a decode error — call
-    /// [`SyncV2Frame::verify`] on the result.
+    /// [`SyncV1Frame::verify`] on the result.
     ///
     /// # Errors
     ///
@@ -298,7 +298,7 @@ impl SyncV2Frame {
         }
         let decoded_kind =
             FrameKind::from_code(kind).ok_or_else(|| malformed("unknown frame kind"))?;
-        let body = SyncV2Body::from_body_bytes(body_bytes)?;
+        let body = SyncV1Body::from_body_bytes(body_bytes)?;
         if body.kind() != decoded_kind {
             return Err(malformed("the body kind disagrees with the envelope kind"));
         }

@@ -17,11 +17,11 @@
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Verdict {
     /// TerraBase measurably better than the comparand.
-    V2Faster,
+    V1Faster,
     /// No measurable difference beyond the gate's noise band.
     NoImprovement,
     /// TerraBase measurably worse than the comparand.
-    V2Regression,
+    V1Regression,
     /// The evidence cannot support a call.
     Inconclusive,
 }
@@ -30,9 +30,9 @@ impl Verdict {
     /// The exact charter token.
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
-            Self::V2Faster => "v2-faster",
+            Self::V1Faster => "v1-faster",
             Self::NoImprovement => "no-improvement",
-            Self::V2Regression => "v2-regression",
+            Self::V1Regression => "v1-regression",
             Self::Inconclusive => "inconclusive",
         }
     }
@@ -40,7 +40,7 @@ impl Verdict {
 
 /// The closed verdict vocabulary, in charter order.
 pub(crate) const VERDICT_VOCABULARY: [&str; 4] =
-    ["v2-faster", "no-improvement", "v2-regression", "inconclusive"];
+    ["v1-faster", "no-improvement", "v1-regression", "inconclusive"];
 
 /// The per-run answer to the charter's objective question.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

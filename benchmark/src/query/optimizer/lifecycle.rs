@@ -24,7 +24,7 @@
 //! dynamic query's optimizer pass, so selection decides against
 //! post-maintenance truth and one public-seam query is enough to drive the
 //! whole state machine. V1 runs the surpass pass on database idle
-//! operations; V2 maps that to [`Engine::maintain_indexes`], the engine-owned
+//! operations; TerraBase maps that to [`Engine::maintain_indexes`], the engine-owned
 //! tick a host schedules on its own timer (PD-2026-08-26-01 D1: cadence is
 //! host-side, the pass is engine-side), with the thresholds configured
 //! through [`EngineConfig`](crate::engine::EngineConfig) at open. The query
@@ -34,7 +34,7 @@
 //! # Deletion is always drain-waited
 //!
 //! V1 deletes a surpassed index immediately in the background pass and
-//! drain-waits only on the query path (AX-17/AX-18). V2 routes **every**
+//! drain-waits only on the query path (AX-17/AX-18). TerraBase routes **every**
 //! auto-index deletion through one rule: the replacement's covered storage
 //! sequence must reach the target's (the catalog's coverage parity, the
 //! adaptation of V1's etag parity), and only then does a drain wait start,

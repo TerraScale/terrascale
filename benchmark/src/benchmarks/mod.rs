@@ -6,7 +6,7 @@
 //! adapters:
 //!
 //! - the charter's **exact claim vocabulary** — a comparison verdict
-//!   (`v2-faster`, `no-improvement`, `v2-regression`, `inconclusive`) and
+//!   (`v1-faster`, `no-improvement`, `v1-regression`, `inconclusive`) and
 //!   the separate objective status (`met`, `not met`, `inconclusive`) — as
 //!   closed enums, so no receipt can invent a word;
 //! - the **statistical gate carried over from V1** unchanged: a change is

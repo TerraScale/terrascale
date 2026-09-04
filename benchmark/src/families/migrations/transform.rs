@@ -391,7 +391,7 @@ pub enum RollbackLimit {
 /// forward-only (`to > from`, the same direction the recorded schema's
 /// evolution allows), its target's version identity must equal `to`, and it
 /// is rejected on the reserved family collection. This is distinct from the
-/// V1-to-V2 Logical Migration, which moves data between engines.
+/// V1-to-TerraBase Logical Migration, which moves data between engines.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SchemaMigration {
     collection: CollectionName,

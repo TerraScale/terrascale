@@ -617,7 +617,7 @@ pub enum SessionTracking {
 
 /// The transaction mode one save runs under (V1 `TransactionMode`).
 ///
-/// `ClusterWide` fails closed at open: no V2 cluster transaction exists
+/// `ClusterWide` fails closed at open: no TerraBase cluster transaction exists
 /// (SH-05 owns it), so accepting the mode and failing at save would let a
 /// session accumulate work that can never commit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -763,7 +763,7 @@ impl Default for SessionOptions {
 pub enum SessionError {
     /// The scope names another Engine.
     ScopeMismatch,
-    /// The requested mode has no V2 implementation (SH-05 owns cluster
+    /// The requested mode has no TerraBase implementation (SH-05 owns cluster
     /// transactions), so the session refuses to open rather than accept
     /// work that can never commit.
     ClusterWideUnavailable,

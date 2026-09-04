@@ -1,4 +1,4 @@
-//! Transport-independent state for the `terrascale.sync.v2` result view.
+//! Transport-independent state for the `terrascale.sync.v1` result view.
 //!
 //! This module deliberately has no transport, storage, query, or replication
 //! dependency.  A view is an ordered, authorized projection; its revisions
@@ -951,7 +951,7 @@ pub enum ApplyOutcome {
 /// Why a stream requires a fresh authorized snapshot.
 ///
 /// The wire values are the stable `reset_reason` enum values of the
-/// `terrascale.sync.v2.msgpack` manifest (1–9); unknown values fail
+/// `terrascale.sync.v1.msgpack` manifest (1–9); unknown values fail
 /// closed on decode. The [`ResetReason::name`] strings are the
 /// manifest's snake-case names, shared with `ts-typescript`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1661,8 +1661,8 @@ mod tests {
     #[test]
     fn reset_reasons_match_the_msgpack_manifest() {
         // The stable `reset_reason` enum of
-        // `contracts/msgpack/terrascale.sync.v2.msgpack.json` (protocol
-        // 2.1) and the generated `ts-typescript` module: values 1–9
+        // `contracts/msgpack/terrascale.sync.v1.msgpack.json` (protocol
+        // 1.0) and the generated `ts-typescript` module: values 1–9
         // with the manifest's snake-case names.
         let expected: &[(ResetReason, u8, &str)] = &[
             (ResetReason::CheckpointExpired, 1, "checkpoint_expired"),

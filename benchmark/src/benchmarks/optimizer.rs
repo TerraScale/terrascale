@@ -282,8 +282,8 @@ impl WritePathComparison {
     ///
     /// Lower is better here: `Stable` is the budget met (`no-improvement`),
     /// `Worse` — the auto-index side appending measurably more — is the
-    /// budget breached (`v2-regression`), and `Better` is recorded as
-    /// `v2-faster` rather than absorbed.
+    /// budget breached (`v1-regression`), and `Better` is recorded as
+    /// `v1-faster` rather than absorbed.
     pub(crate) fn of(
         without_auto_indexes: Vec<f64>,
         with_auto_indexes: Vec<f64>,
@@ -295,8 +295,8 @@ impl WritePathComparison {
             gates::classify_lower(&current, &prior, LaneConfig::RECORD_MINIMUM.noise_percent);
         let verdict = match trend {
             Trend::Stable => Verdict::NoImprovement,
-            Trend::Worse => Verdict::V2Regression,
-            Trend::Better => Verdict::V2Faster,
+            Trend::Worse => Verdict::V1Regression,
+            Trend::Better => Verdict::V1Faster,
         };
         Self { without_auto_indexes, with_auto_indexes, active_auto_indexes, trend, verdict }
     }

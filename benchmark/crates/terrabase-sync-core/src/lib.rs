@@ -14,7 +14,7 @@
 //!   subscription expansion, and optimistic mutation presentation. A
 //!   view is an ordered, authorized projection; its revisions and
 //!   checkpoints are delivery facts, not database causal positions.
-//! - [`protocol`]: the `terrascale.sync.v2` client-channel frame
+//! - [`protocol`]: the `terrascale.sync.v1` client-channel frame
 //!   envelope discipline — version, frame kind, correlation/causation
 //!   identity, idempotency pairing, content digest, fail-closed decode —
 //!   and the frame kinds that survive the CRDT deletion (session,
@@ -40,7 +40,7 @@ pub mod server;
 pub mod subscription;
 /// Bounded canonical shared-view registry and immutable revision publications.
 pub mod view;
-/// The bounded MessagePack codec for the public `terrascale.sync.v2` wire.
+/// The bounded MessagePack codec for the public `terrascale.sync.v1` wire.
 pub mod wire;
 
 /// The correlation or causation identity of one protocol frame.

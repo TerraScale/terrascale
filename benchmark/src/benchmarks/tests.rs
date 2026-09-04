@@ -38,11 +38,11 @@ fn throughput(current: &[f64], prior: &[f64]) -> ReferenceComparison {
 #[test]
 fn verdict_vocabulary_is_exact_and_closed() {
     let tokens: Vec<&str> =
-        [Verdict::V2Faster, Verdict::NoImprovement, Verdict::V2Regression, Verdict::Inconclusive]
+        [Verdict::V1Faster, Verdict::NoImprovement, Verdict::V1Regression, Verdict::Inconclusive]
             .iter()
             .map(|verdict| verdict.as_str())
             .collect();
-    assert_eq!(tokens, ["v2-faster", "no-improvement", "v2-regression", "inconclusive"]);
+    assert_eq!(tokens, ["v1-faster", "no-improvement", "v1-regression", "inconclusive"]);
     assert_eq!(vocabulary::VERDICT_VOCABULARY.len(), 4);
     for verdict in vocabulary::VERDICT_VOCABULARY {
         assert!(tokens.contains(&verdict), "unknown verdict token {verdict}");
@@ -133,12 +133,12 @@ fn objective_status_reads_the_comparison() {
     let slower = ReferenceComparison { throughput: Trend::Worse, p95: Trend::Stable };
     let slower_p95 = ReferenceComparison { throughput: Trend::Better, p95: Trend::Worse };
 
-    assert_eq!(gates::objective_status(better), (ObjectiveStatus::Met, Verdict::V2Faster));
+    assert_eq!(gates::objective_status(better), (ObjectiveStatus::Met, Verdict::V1Faster));
     assert_eq!(gates::objective_status(stable), (ObjectiveStatus::Met, Verdict::NoImprovement));
-    assert_eq!(gates::objective_status(slower), (ObjectiveStatus::NotMet, Verdict::V2Regression));
+    assert_eq!(gates::objective_status(slower), (ObjectiveStatus::NotMet, Verdict::V1Regression));
     assert_eq!(
         gates::objective_status(slower_p95),
-        (ObjectiveStatus::NotMet, Verdict::V2Regression)
+        (ObjectiveStatus::NotMet, Verdict::V1Regression)
     );
 }
 
@@ -160,7 +160,7 @@ fn a_missing_reference_forces_inconclusive() {
     assert_eq!(verdict, Verdict::Inconclusive);
 
     let (status, verdict) = gates::reference_comparison_status(&ran, comparison);
-    assert_eq!((status, verdict), (ObjectiveStatus::Met, Verdict::V2Faster));
+    assert_eq!((status, verdict), (ObjectiveStatus::Met, Verdict::V1Faster));
 }
 
 /// V1's recorded-run minimums: a recorded run needs at least 1,000 seed
@@ -357,7 +357,7 @@ fn a_receipt_renders_the_discipline_lines() {
     assert!(text.contains("verdict: inconclusive"), "{text}");
     assert!(text.contains("postgresql reference: unrun"), "{text}");
     assert!(!text.contains("PostgreSQL-parity-or-better: met"), "{text}");
-    assert!(!text.contains("v2-faster"), "{text}");
+    assert!(!text.contains("v1-faster"), "{text}");
     assert!(text.contains("postgresql pin: "), "{text}");
 }
 

@@ -120,7 +120,7 @@ impl DurableSplitState {
         self
     }
 
-    /// Returns the operation context, when this is a v2 record.
+    /// Returns the operation context, when this record carries operation context.
     #[must_use]
     pub const fn context(&self) -> Option<SplitContext> {
         self.context

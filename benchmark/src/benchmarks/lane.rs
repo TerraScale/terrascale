@@ -327,7 +327,7 @@ impl Workload {
                  acknowledgement frames (the SE-06 bytes-on-wire definition)"
             }
             Self::SyncTriggerNotificationSize => {
-                "the encoded, content-free trigger notification: the terrascale.sync.v2 \
+                "the encoded, content-free trigger notification: the terrascale.sync.v1 \
                  trigger frame on the client link (collection scope, storage sequence, \
                  operation id — nothing else), from the same wire shapes the SE-04 golden \
                  corpus records; the member link carries no trigger-notification frame \

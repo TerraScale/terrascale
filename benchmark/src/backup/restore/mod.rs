@@ -129,7 +129,7 @@ const RESERVED_FAMILY_COLLECTION: &str = "terrabase.families";
 /// (`FORMAT_MAGIC`/`FORMAT_VERSION`) is private to the file adapter; this
 /// spelled copy follows the repository's cross-module constant convention,
 /// and the durable open path enforces the real bytes behind it.
-const STORAGE_FORMAT_LABEL: &str = "TBV2FORMAT 1";
+const STORAGE_FORMAT_LABEL: &str = "TBV1FORMAT 1";
 
 /// The maximum write count of one replayed publication batch. Records
 /// stream from member files into batches of at most this size, so no

@@ -27,7 +27,7 @@ use crate::envelope::{LaneCommit, LaneDocument, LaneWrite, MAX_FIELD_BYTES};
 use crate::identity::{CollectionName, DocumentId, MemberId, OperationId, TenantId};
 
 /// The journal file's magic and format version.
-const JOURNAL_MAGIC: &[u8; 8] = b"TBV2MLJ1";
+const JOURNAL_MAGIC: &[u8; 8] = b"TBV1MLJ1";
 
 /// The digest length written per record.
 const DIGEST_BYTES: usize = 32;

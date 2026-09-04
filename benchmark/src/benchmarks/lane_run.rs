@@ -1127,7 +1127,7 @@ mod tests {
         assert!(matches!(run, ReferenceRun::Ran { .. }));
         assert_eq!(comparison.throughput, gates::Trend::Better);
         assert_eq!(status, ObjectiveStatus::Met);
-        assert_eq!(verdict, Verdict::V2Faster);
+        assert_eq!(verdict, Verdict::V1Faster);
     }
 
     #[test]

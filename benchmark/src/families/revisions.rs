@@ -1,4 +1,4 @@
-//! Revisions completeness (GAP-F05, TerraBaseV2#74).
+//! Revisions completeness (GAP-F05, TerraBase#74).
 //!
 //! W3-F gave revisions their typed family seam: a per-document revision log
 //! in one reserved record, explicit `ForceCreate`/`Revert`/`Configure`

@@ -1,4 +1,4 @@
-//! The `terrascale.sync.v2` protocol contract, stated as tests.
+//! The `terrascale.sync.v1` protocol contract, stated as tests.
 //!
 //! The typed wire vocabulary (ticket SE-04) is a public module of this
 //! crate: these tests cross that seam only. The frame envelope carries
@@ -18,27 +18,26 @@ use terrabase_sync_core::protocol::IdempotencyKey;
 use terrabase_sync_core::protocol::ProtocolError;
 use terrabase_sync_core::protocol::SYNC_PROTOCOL_CONTRACT;
 use terrabase_sync_core::protocol::SYNC_PROTOCOL_VERSION;
-use terrabase_sync_core::protocol::SyncV2Body;
-use terrabase_sync_core::protocol::SyncV2Frame;
+use terrabase_sync_core::protocol::SyncV1Body;
+use terrabase_sync_core::protocol::SyncV1Frame;
 use terrabase_sync_core::protocol::trigger_frame;
 
 #[test]
 fn contract_identity_and_version_are_fixed_and_fail_closed() {
-    assert_eq!(SYNC_PROTOCOL_CONTRACT, "terrascale.sync.v2");
-    assert_eq!(SYNC_PROTOCOL_VERSION, 2);
+    assert_eq!(SYNC_PROTOCOL_CONTRACT, "terrascale.sync.v1");
+    assert_eq!(SYNC_PROTOCOL_VERSION, 1);
 
-    let frame = SyncV2Frame::seal(SyncV2Body::Heartbeat, FrameId::new(1), FrameId::new(0), None)
+    let frame = SyncV1Frame::seal(SyncV1Body::Heartbeat, FrameId::new(1), FrameId::new(0), None)
         .expect("heartbeat seals");
     let wire = frame.to_bytes();
     assert_eq!(wire[0], SYNC_PROTOCOL_VERSION, "the leading byte is the version");
 
-    // Every version other than 2 fails closed — including 1, the v1
-    // wire this contract deliberately does not speak.
-    for version in [0u8, 1, 3, 0xFF] {
+    // Every version other than the launch version fails closed.
+    for version in [0u8, 2, 3, 0xFF] {
         let mut bad = wire.clone();
         bad[0] = version;
         assert!(
-            matches!(SyncV2Frame::from_bytes(&bad), Err(ProtocolError::UnsupportedVersion(v)) if v == version),
+            matches!(SyncV1Frame::from_bytes(&bad), Err(ProtocolError::UnsupportedVersion(v)) if v == version),
             "version {version} must fail closed"
         );
     }
@@ -81,8 +80,8 @@ fn the_deleted_crdt_era_frame_codes_fail_closed() {
 
 #[test]
 fn envelope_carries_identity_and_digest() {
-    let body = SyncV2Body::SessionSetup { collections: vec!["orders".to_string()] };
-    let frame = SyncV2Frame::seal(body, FrameId::new(11), FrameId::new(4), None)
+    let body = SyncV1Body::SessionSetup { collections: vec!["orders".to_string()] };
+    let frame = SyncV1Frame::seal(body, FrameId::new(11), FrameId::new(4), None)
         .expect("session setup seals");
     assert_eq!(frame.correlation(), FrameId::new(11));
     assert_eq!(frame.causation(), FrameId::new(4));
@@ -90,13 +89,13 @@ fn envelope_carries_identity_and_digest() {
     assert!(frame.verify(), "a sealed frame verifies");
 
     let wire = frame.to_bytes();
-    let decoded = SyncV2Frame::from_bytes(&wire).expect("round trips");
+    let decoded = SyncV1Frame::from_bytes(&wire).expect("round trips");
     assert!(decoded.verify());
     assert_eq!(decoded.kind(), FrameKind::SessionSetup);
     assert_eq!(decoded.correlation(), frame.correlation());
     assert_eq!(decoded.causation(), frame.causation());
     match decoded.body() {
-        SyncV2Body::SessionSetup { collections } => {
+        SyncV1Body::SessionSetup { collections } => {
             assert_eq!(collections, &["orders".to_string()]);
         }
         other => panic!("wrong body {other:?}"),
@@ -106,7 +105,7 @@ fn envelope_carries_identity_and_digest() {
     let mut tampered = wire.clone();
     let last = tampered.len() - 1;
     tampered[last] ^= 0xFF;
-    if let Ok(bad) = SyncV2Frame::from_bytes(&tampered) {
+    if let Ok(bad) = SyncV1Frame::from_bytes(&tampered) {
         assert!(!bad.verify(), "a tampered frame fails the digest check");
     }
 }
@@ -122,7 +121,7 @@ fn no_frame_kind_carries_an_idempotency_key() {
         assert!(!body.is_mutation(), "{kind:?} is not a mutation kind");
         assert!(
             matches!(
-                SyncV2Frame::seal(body, FrameId::new(1), FrameId::new(0), Some(key.clone())),
+                SyncV1Frame::seal(body, FrameId::new(1), FrameId::new(0), Some(key.clone())),
                 Err(ProtocolError::IdempotencyPairing(_))
             ),
             "{kind:?} must not carry an idempotency key"
@@ -130,10 +129,10 @@ fn no_frame_kind_carries_an_idempotency_key() {
     }
 
     // The wire pairing is enforced on decode, fail closed.
-    let good = SyncV2Frame::seal(SyncV2Body::Heartbeat, FrameId::new(1), FrameId::new(0), None)
+    let good = SyncV1Frame::seal(SyncV1Body::Heartbeat, FrameId::new(1), FrameId::new(0), None)
         .expect("seals")
         .to_bytes();
-    assert!(SyncV2Frame::from_bytes(&good).is_ok());
+    assert!(SyncV1Frame::from_bytes(&good).is_ok());
 
     // Idempotency keys are validated: empty or oversized keys never build.
     assert!(IdempotencyKey::new("").is_err());
@@ -146,7 +145,7 @@ fn trigger_notifications_are_small_typed_and_content_free() {
     let frame = trigger_frame("orders", 42, "op-000042", FrameId::new(9), FrameId::new(8))
         .expect("trigger seals");
     assert_eq!(frame.kind(), FrameKind::Trigger);
-    let SyncV2Body::Trigger { collection, storage_sequence, operation_id } = frame.body() else {
+    let SyncV1Body::Trigger { collection, storage_sequence, operation_id } = frame.body() else {
         panic!("trigger body");
     };
     // The payload is exactly two identifiers plus the scope: no document
@@ -175,8 +174,8 @@ fn trigger_notifications_are_small_typed_and_content_free() {
 
 #[test]
 fn malformed_frames_are_rejected_with_typed_errors() {
-    let frame = SyncV2Frame::seal(
-        SyncV2Body::SessionSetup { collections: vec!["orders".to_string()] },
+    let frame = SyncV1Frame::seal(
+        SyncV1Body::SessionSetup { collections: vec!["orders".to_string()] },
         FrameId::new(5),
         FrameId::new(1),
         None,
@@ -187,7 +186,7 @@ fn malformed_frames_are_rejected_with_typed_errors() {
     // Truncation at every length is rejected.
     for len in 0..wire.len() {
         assert!(
-            SyncV2Frame::from_bytes(&wire[..len]).is_err(),
+            SyncV1Frame::from_bytes(&wire[..len]).is_err(),
             "truncated frame of {len} bytes must not decode"
         );
     }
@@ -195,14 +194,14 @@ fn malformed_frames_are_rejected_with_typed_errors() {
     // Trailing bytes are rejected.
     let mut trailing = wire.clone();
     trailing.push(0);
-    assert!(matches!(SyncV2Frame::from_bytes(&trailing), Err(ProtocolError::MalformedFrame(_))));
+    assert!(matches!(SyncV1Frame::from_bytes(&trailing), Err(ProtocolError::MalformedFrame(_))));
 
     // An unknown frame kind fails closed.
     let mut unknown = wire.clone();
     let kind_at = 1; // version byte, then kind
     unknown[kind_at] = 0xFF;
     unknown[kind_at + 1] = 0x7F;
-    assert!(matches!(SyncV2Frame::from_bytes(&unknown), Err(ProtocolError::MalformedFrame(_))));
+    assert!(matches!(SyncV1Frame::from_bytes(&unknown), Err(ProtocolError::MalformedFrame(_))));
 
     // The outer body-length field lying about the body is rejected: the
     // fixed header ends at byte 36, where the body length begins.
@@ -210,33 +209,33 @@ fn malformed_frames_are_rejected_with_typed_errors() {
     assert_eq!(body_len_at, 28);
     let mut lying = wire.clone();
     lying[body_len_at] ^= 0xFF;
-    assert!(SyncV2Frame::from_bytes(&lying).is_err());
+    assert!(SyncV1Frame::from_bytes(&lying).is_err());
 
     // Empty input fails closed.
-    assert!(matches!(SyncV2Frame::from_bytes(&[]), Err(ProtocolError::UnsupportedVersion(0))));
+    assert!(matches!(SyncV1Frame::from_bytes(&[]), Err(ProtocolError::UnsupportedVersion(0))));
 }
 
 #[test]
 fn session_and_subscription_bodies_round_trip() {
-    let bodies: Vec<SyncV2Body> = vec![
-        SyncV2Body::SessionSetup { collections: vec!["orders".to_string(), "items".to_string()] },
-        SyncV2Body::SessionAccepted { session: 77, collections: vec!["orders".to_string()] },
-        SyncV2Body::SubscriptionModify {
+    let bodies: Vec<SyncV1Body> = vec![
+        SyncV1Body::SessionSetup { collections: vec!["orders".to_string(), "items".to_string()] },
+        SyncV1Body::SessionAccepted { session: 77, collections: vec!["orders".to_string()] },
+        SyncV1Body::SubscriptionModify {
             add: vec!["items".to_string()],
             remove: vec!["orders".to_string()],
         },
-        SyncV2Body::SubscriptionChanged { active: vec!["items".to_string()] },
-        SyncV2Body::RegionRouteChange { region: "eu-1".to_string() },
-        SyncV2Body::Error {
+        SyncV1Body::SubscriptionChanged { active: vec!["items".to_string()] },
+        SyncV1Body::RegionRouteChange { region: "eu-1".to_string() },
+        SyncV1Body::Error {
             code: ErrorCode::UnsupportedVersion,
             detail: Some("terrascale.sync.v1 is not spoken here".to_string()),
         },
     ];
     for body in bodies {
-        let frame = SyncV2Frame::seal(body, FrameId::new(2), FrameId::new(1), None).expect("seals");
+        let frame = SyncV1Frame::seal(body, FrameId::new(2), FrameId::new(1), None).expect("seals");
         assert!(frame.verify());
         let wire = frame.to_bytes();
-        let decoded = SyncV2Frame::from_bytes(&wire).expect("decodes");
+        let decoded = SyncV1Frame::from_bytes(&wire).expect("decodes");
         assert_eq!(decoded.kind(), frame.kind());
         assert!(decoded.verify(), "{:?} round-trips verifying", frame.kind());
     }
@@ -248,7 +247,7 @@ fn frame_budgets_are_written_definitions_with_exact_envelope_overhead() {
     // spends before any body — version, kind, correlation, causation,
     // idempotency presence, digest, body length, and the body's kind tag.
     let heartbeat =
-        SyncV2Frame::seal(SyncV2Body::Heartbeat, FrameId::new(1), FrameId::new(0), None)
+        SyncV1Frame::seal(SyncV1Body::Heartbeat, FrameId::new(1), FrameId::new(0), None)
             .expect("seals");
     assert_eq!(
         heartbeat.to_bytes().len(),
@@ -274,9 +273,9 @@ fn frame_budgets_are_written_definitions_with_exact_envelope_overhead() {
     // Class budgets are a decode/encode invariant, not only an advisory
     // diagnostic.  A valid body can still be refused when it does not fit
     // the budget allocated to its frame class.
-    let oversized = SyncV2Body::SessionSetup { collections: vec!["orders".repeat(32); 256] };
+    let oversized = SyncV1Body::SessionSetup { collections: vec!["orders".repeat(32); 256] };
     assert!(matches!(
-        SyncV2Frame::seal(oversized, FrameId::new(1), FrameId::new(0), None),
+        SyncV1Frame::seal(oversized, FrameId::new(1), FrameId::new(0), None),
         Err(ProtocolError::MalformedFrame("frame exceeds its class budget"))
     ));
 }
@@ -294,29 +293,29 @@ const ALL_KINDS: &[FrameKind] = &[
 ];
 
 /// A structurally valid body for every kind (budget/direction probes).
-fn sample_body(kind: FrameKind) -> SyncV2Body {
+fn sample_body(kind: FrameKind) -> SyncV1Body {
     match kind {
         FrameKind::SessionSetup => {
-            SyncV2Body::SessionSetup { collections: vec!["orders".to_string()] }
+            SyncV1Body::SessionSetup { collections: vec!["orders".to_string()] }
         }
         FrameKind::SessionAccepted => {
-            SyncV2Body::SessionAccepted { session: 1, collections: vec!["orders".to_string()] }
+            SyncV1Body::SessionAccepted { session: 1, collections: vec!["orders".to_string()] }
         }
         FrameKind::SubscriptionModify => {
-            SyncV2Body::SubscriptionModify { add: vec!["items".to_string()], remove: Vec::new() }
+            SyncV1Body::SubscriptionModify { add: vec!["items".to_string()], remove: Vec::new() }
         }
         FrameKind::SubscriptionChanged => {
-            SyncV2Body::SubscriptionChanged { active: vec!["items".to_string()] }
+            SyncV1Body::SubscriptionChanged { active: vec!["items".to_string()] }
         }
-        FrameKind::Heartbeat => SyncV2Body::Heartbeat,
-        FrameKind::Trigger => SyncV2Body::Trigger {
+        FrameKind::Heartbeat => SyncV1Body::Heartbeat,
+        FrameKind::Trigger => SyncV1Body::Trigger {
             collection: "orders".to_string(),
             storage_sequence: 1,
             operation_id: "op-000001".to_string(),
         },
         FrameKind::RegionRouteChange => {
-            SyncV2Body::RegionRouteChange { region: "eu-1".to_string() }
+            SyncV1Body::RegionRouteChange { region: "eu-1".to_string() }
         }
-        FrameKind::Error => SyncV2Body::Error { code: ErrorCode::SessionClosed, detail: None },
+        FrameKind::Error => SyncV1Body::Error { code: ErrorCode::SessionClosed, detail: None },
     }
 }

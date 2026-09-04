@@ -115,7 +115,7 @@ impl ProductionWorld {
     /// the durable applied journal set is the qualification state.
     #[must_use]
     pub fn digest(&self) -> u64 {
-        let mut hash = fnv_bytes(0xcbf2_9ce4_8422_2325, b"terrabase-sim-world-v2");
+        let mut hash = fnv_bytes(0xcbf2_9ce4_8422_2325, b"terrabase-sim-world-v1");
         for region in &self.regions {
             hash = fnv_bytes(hash, &region.id.index().to_be_bytes());
             hash = fnv_bytes(hash, &self.fingerprint(region.id).to_be_bytes());
@@ -843,7 +843,7 @@ impl ReplicationEngine for ProductionWorld {
         }) else {
             return 0;
         };
-        let mut hash = fnv_bytes(0xcbf2_9ce4_8422_2325, b"terrabase-sim-fingerprint-v2");
+        let mut hash = fnv_bytes(0xcbf2_9ce4_8422_2325, b"terrabase-sim-fingerprint-v1");
         hash = fnv_bytes(hash, &(state.applied.len() as u64).to_be_bytes());
         // Include evidence derived from the durable files without hashing
         // path-bound local origins, which intentionally differ after the

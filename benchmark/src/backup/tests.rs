@@ -258,7 +258,7 @@ fn an_explicit_database_key_produces_only_the_encrypted_manifest() {
     .expect("the explicit key permits the backup");
     let point = destination.join(format!("rp-{}", result.manifest().identity()));
     assert!(point.join("manifest.tbv3e").is_file());
-    assert!(!point.join("manifest.tbv2m").exists());
+    assert!(!point.join("manifest.tbv1m").exists());
 }
 
 #[test]
@@ -690,7 +690,7 @@ fn manifest_validation_rejects_path_traversal_and_in_progress_manifests() {
     // A traversal member name is rejected by validation, whatever the
     // identity line claims.
     let point_dir = destination.join(format!("rp-{identity}"));
-    let manifest_path = point_dir.join("manifest.tbv2m");
+    let manifest_path = point_dir.join("manifest.tbv1m");
     let original = std::fs::read(&manifest_path).expect("reads the manifest");
     let mut traversal = original.clone();
     patch_member_name(&mut traversal, "../escape");
@@ -710,7 +710,7 @@ fn manifest_validation_rejects_path_traversal_and_in_progress_manifests() {
     let partial_dir = destination.join(format!("rp-{}", "f".repeat(64)));
     std::fs::create_dir_all(&partial_dir).expect("creates a point directory");
     std::fs::write(
-        partial_dir.join("manifest.tbv2m.inprogress"),
+        partial_dir.join("manifest.tbv1m.inprogress"),
         format!("{}\nin_progress true\n", crate::backup::manifest::HEADER),
     )
     .expect("writes an in-progress manifest");
@@ -1224,7 +1224,7 @@ fn a_torn_publish_orphan_is_repaired_by_the_identical_retry() {
             .expect("copies a staged member into the orphan");
     }
     assert!(
-        !orphan.join("manifest.tbv2m").exists(),
+        !orphan.join("manifest.tbv1m").exists(),
         "the orphan is exactly the unsealed crash state"
     );
 

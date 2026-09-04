@@ -90,7 +90,7 @@ pub(crate) fn classify_lower(
     }
 }
 
-/// The gate's verdict on one V2-versus-reference comparison.
+/// The gate's verdict on one TerraBase-versus-reference comparison.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ReferenceComparison {
     /// The throughput trend (higher is better).
@@ -110,10 +110,10 @@ impl ReferenceComparison {
         let parity_throughput =
             matches!(self.throughput, Trend::Better | Trend::Stable) && self.p95 != Trend::Worse;
         if !parity_throughput {
-            return (ObjectiveStatus::NotMet, Verdict::V2Regression);
+            return (ObjectiveStatus::NotMet, Verdict::V1Regression);
         }
         match self.throughput {
-            Trend::Better => (ObjectiveStatus::Met, Verdict::V2Faster),
+            Trend::Better => (ObjectiveStatus::Met, Verdict::V1Faster),
             _ => (ObjectiveStatus::Met, Verdict::NoImprovement),
         }
     }

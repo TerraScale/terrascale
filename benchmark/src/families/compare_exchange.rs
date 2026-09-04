@@ -1,4 +1,4 @@
-//! Compare-exchange scope and completion (GAP-F10, TerraBaseV2#78).
+//! Compare-exchange scope and completion (GAP-F10, TerraBase#78).
 //!
 //! Declaration-only module root wired by the integrator so the GAP-F10
 //! packet owns this file's contents without editing `src/families/mod.rs`.

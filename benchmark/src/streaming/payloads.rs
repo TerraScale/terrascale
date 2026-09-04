@@ -59,7 +59,7 @@ pub const CHANGE_PAYLOAD_DIGEST_BYTES: usize = 64;
 /// the family record it was derived from.
 ///
 /// V1's finer-grained change types (`Increment`, `Mixed`) are write-time
-/// facts computed against the pre-state; V2 derives payloads from the
+/// facts computed against the pre-state; TerraBase derives payloads from the
 /// published post-state alone, so the recoverable shapes are exactly these
 /// two (decision record, recorded limit 1).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

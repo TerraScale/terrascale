@@ -1704,7 +1704,7 @@ pub fn canonical_hash<T: CanonicalEncode>(
 }
 
 /// Persisted canonical-hash prefix retained from the pre-rename format.
-pub const LEGACY_CANONICAL_HASH_PREFIX: &[u8] = b"TerraBaseV2\0";
+pub const LEGACY_CANONICAL_HASH_PREFIX: &[u8] = b"TerraBase\0";
 
 /// A canonical hashing request failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1917,7 +1917,7 @@ mod tests {
 
     #[test]
     fn product_rename_preserves_legacy_causal_hash_identity() {
-        assert_eq!(LEGACY_CANONICAL_HASH_PREFIX, b"TerraBaseV2\0");
+        assert_eq!(LEGACY_CANONICAL_HASH_PREFIX, b"TerraBase\0");
         let commit = CommitId::new(
             DatabaseId::from_bytes([1; 16]),
             PartitionId::new(7),

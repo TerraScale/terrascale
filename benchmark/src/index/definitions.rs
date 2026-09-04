@@ -1,7 +1,7 @@
 //! The typed static index definition language (GAP-Q06).
 //!
 //! This module owns the versioned, typed contract through which a static
-//! index is authored in V2: map stages (including multi-map), the optional
+//! index is authored in TerraBase: map stages (including multi-map), the optional
 //! reduce stage that turns maps into static aggregation, per-field options
 //! (indexing, storage, analysis), dynamic-field rules, compound-field
 //! hints, and map-reduce output collections. The decision record — the
@@ -10,7 +10,7 @@
 //! feeds are `docs/parity/gapq06-ws-parity-proposals.md`.
 //!
 //! The language replaces V1's code-authored index definitions with closed
-//! typed values, per the charter's no-arbitrary-code rule for V2 languages
+//! typed values, per the charter's no-arbitrary-code rule for TerraBase languages
 //! (PD-2026-08-26-08 D2): a map stage projects document field paths and the
 //! document identity, never executable code; a reduce stage groups by
 //! projected keys and aggregates with the typed count/sum vocabulary; field
@@ -1193,7 +1193,7 @@ impl DefinitionDifferences {
     }
 }
 
-/// A validated static index definition: the typed authoring unit of V2
+/// A validated static index definition: the typed authoring unit of TerraBase
 /// static indexes.
 ///
 /// One definition names an index, carries the language version it was
@@ -1376,7 +1376,7 @@ impl StaticIndexDefinition {
     ///
     /// The name and language version are identity, not content: they are
     /// never reported. V1 folds output-collection changes into its reduce
-    /// difference; V2 reports them separately as output, with the same
+    /// difference; TerraBase reports them separately as output, with the same
     /// rebuild consequence through
     /// [`DefinitionDifferences::reindex_required`].
     #[must_use]

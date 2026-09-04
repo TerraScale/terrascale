@@ -538,7 +538,7 @@ fn cluster_wide_mode_fails_closed_at_open() {
     let (dir, engine) = open_engine("cluster-wide");
     let scope = scope(&engine, "tenant-a");
     let error = Session::open(&engine, &scope, SessionOptions::new().cluster_wide())
-        .expect_err("no V2 cluster transaction exists");
+        .expect_err("no TerraBase cluster transaction exists");
     assert_eq!(error, SessionError::ClusterWideUnavailable);
 
     let single = Session::open(

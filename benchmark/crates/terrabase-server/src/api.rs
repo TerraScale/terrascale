@@ -1132,7 +1132,7 @@ fn openapi_schemas() -> serde_json::Value {
     }));
     schemas.insert("ReactiveEnvelope".to_owned(), serde_json::json!({
         "type": "array",
-        "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
+        "description": "One indexed sync-v1 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
         "minItems": 7, "maxItems": 7,
         "prefixItems": [
             { "type": "integer", "minimum": 0 }, { "type": "integer", "minimum": 0 },
@@ -1144,7 +1144,7 @@ fn openapi_schemas() -> serde_json::Value {
     }));
     schemas.insert("ReactiveFramesResponse".to_owned(), serde_json::json!({
         "type": "array",
-        "description": "MessagePack array of indexed sync-v2 envelopes; projected bodies remain opaque canonical JSON bytes.",
+        "description": "MessagePack array of indexed sync-v1 envelopes; projected bodies remain opaque canonical JSON bytes.",
         "items": { "$ref": "#/components/schemas/ReactiveEnvelope" }
     }));
     serde_json::Value::Object(std::mem::take(schemas))

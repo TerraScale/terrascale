@@ -1,4 +1,4 @@
-//! The typed frame-body vocabulary of `terrascale.sync.v2`: one enum
+//! The typed frame-body vocabulary of `terrascale.sync.v1`: one enum
 //! variant per frame kind, each with a canonical byte encoding that is
 //! the digest input and the wire body.
 //!
@@ -126,9 +126,9 @@ impl ErrorCode {
     }
 }
 
-/// The typed payload of one `terrascale.sync.v2` frame.
+/// The typed payload of one `terrascale.sync.v1` frame.
 #[derive(Clone, Debug, PartialEq)]
-pub enum SyncV2Body {
+pub enum SyncV1Body {
     /// Open a session.
     SessionSetup {
         /// The collections the session subscribes to.
@@ -294,19 +294,19 @@ impl BodyCursor<'_> {
     }
 }
 
-impl SyncV2Body {
+impl SyncV1Body {
     /// The body's frame kind.
     #[must_use]
     pub fn kind(&self) -> FrameKind {
         match self {
-            SyncV2Body::SessionSetup { .. } => FrameKind::SessionSetup,
-            SyncV2Body::SessionAccepted { .. } => FrameKind::SessionAccepted,
-            SyncV2Body::SubscriptionModify { .. } => FrameKind::SubscriptionModify,
-            SyncV2Body::SubscriptionChanged { .. } => FrameKind::SubscriptionChanged,
-            SyncV2Body::Heartbeat => FrameKind::Heartbeat,
-            SyncV2Body::Trigger { .. } => FrameKind::Trigger,
-            SyncV2Body::RegionRouteChange { .. } => FrameKind::RegionRouteChange,
-            SyncV2Body::Error { .. } => FrameKind::Error,
+            SyncV1Body::SessionSetup { .. } => FrameKind::SessionSetup,
+            SyncV1Body::SessionAccepted { .. } => FrameKind::SessionAccepted,
+            SyncV1Body::SubscriptionModify { .. } => FrameKind::SubscriptionModify,
+            SyncV1Body::SubscriptionChanged { .. } => FrameKind::SubscriptionChanged,
+            SyncV1Body::Heartbeat => FrameKind::Heartbeat,
+            SyncV1Body::Trigger { .. } => FrameKind::Trigger,
+            SyncV1Body::RegionRouteChange { .. } => FrameKind::RegionRouteChange,
+            SyncV1Body::Error { .. } => FrameKind::Error,
         }
     }
 
@@ -330,27 +330,27 @@ impl SyncV2Body {
     /// Returns a static reason naming the violated invariant.
     pub fn validate(&self) -> Result<(), &'static str> {
         match self {
-            SyncV2Body::SessionSetup { collections }
-            | SyncV2Body::SessionAccepted { collections, .. } => check_strings(collections)?,
-            SyncV2Body::SubscriptionModify { add, remove } => {
+            SyncV1Body::SessionSetup { collections }
+            | SyncV1Body::SessionAccepted { collections, .. } => check_strings(collections)?,
+            SyncV1Body::SubscriptionModify { add, remove } => {
                 check_strings(add)?;
                 check_strings(remove)?;
             }
-            SyncV2Body::SubscriptionChanged { active } => check_strings(active)?,
-            SyncV2Body::Heartbeat => {}
-            SyncV2Body::Trigger { collection, operation_id, .. } => {
+            SyncV1Body::SubscriptionChanged { active } => check_strings(active)?,
+            SyncV1Body::Heartbeat => {}
+            SyncV1Body::Trigger { collection, operation_id, .. } => {
                 if collection.len() > MAX_TRIGGER_IDENT_BYTES
                     || operation_id.len() > MAX_TRIGGER_IDENT_BYTES
                 {
                     return Err("trigger identifiers are bounded to 64 bytes");
                 }
             }
-            SyncV2Body::RegionRouteChange { region } => {
+            SyncV1Body::RegionRouteChange { region } => {
                 if region.len() > MAX_IDENT_BYTES {
                     return Err("string exceeds its frame limit");
                 }
             }
-            SyncV2Body::Error { detail, .. } => {
+            SyncV1Body::Error { detail, .. } => {
                 if detail.as_ref().is_some_and(|d| d.len() > MAX_DETAIL_BYTES) {
                     return Err("the error detail is bounded");
                 }
@@ -374,26 +374,26 @@ impl SyncV2Body {
         let mut out = Vec::new();
         push_u16(&mut out, self.kind().code());
         match self {
-            SyncV2Body::SessionSetup { collections } => push_strings(&mut out, collections)?,
-            SyncV2Body::SessionAccepted { session, collections } => {
+            SyncV1Body::SessionSetup { collections } => push_strings(&mut out, collections)?,
+            SyncV1Body::SessionAccepted { session, collections } => {
                 push_u64(&mut out, *session);
                 push_strings(&mut out, collections)?;
             }
-            SyncV2Body::SubscriptionModify { add, remove } => {
+            SyncV1Body::SubscriptionModify { add, remove } => {
                 push_strings(&mut out, add)?;
                 push_strings(&mut out, remove)?;
             }
-            SyncV2Body::SubscriptionChanged { active } => push_strings(&mut out, active)?,
-            SyncV2Body::Heartbeat => {}
-            SyncV2Body::Trigger { collection, storage_sequence, operation_id } => {
+            SyncV1Body::SubscriptionChanged { active } => push_strings(&mut out, active)?,
+            SyncV1Body::Heartbeat => {}
+            SyncV1Body::Trigger { collection, storage_sequence, operation_id } => {
                 push_str(&mut out, collection, MAX_TRIGGER_IDENT_BYTES)?;
                 push_u64(&mut out, *storage_sequence);
                 push_str(&mut out, operation_id, MAX_TRIGGER_IDENT_BYTES)?;
             }
-            SyncV2Body::RegionRouteChange { region } => {
+            SyncV1Body::RegionRouteChange { region } => {
                 push_str(&mut out, region, MAX_IDENT_BYTES)?;
             }
-            SyncV2Body::Error { code, detail } => {
+            SyncV1Body::Error { code, detail } => {
                 push_u8(&mut out, code.code());
                 match detail {
                     Some(text) => {
@@ -424,32 +424,32 @@ impl SyncV2Body {
         let body = match kind {
             FrameKind::SessionSetup => {
                 let collections = cursor.strings().map_err(malformed)?;
-                SyncV2Body::SessionSetup { collections }
+                SyncV1Body::SessionSetup { collections }
             }
             FrameKind::SessionAccepted => {
                 let session = cursor.u64().map_err(malformed)?;
                 let collections = cursor.strings().map_err(malformed)?;
-                SyncV2Body::SessionAccepted { session, collections }
+                SyncV1Body::SessionAccepted { session, collections }
             }
             FrameKind::SubscriptionModify => {
                 let add = cursor.strings().map_err(malformed)?;
                 let remove = cursor.strings().map_err(malformed)?;
-                SyncV2Body::SubscriptionModify { add, remove }
+                SyncV1Body::SubscriptionModify { add, remove }
             }
             FrameKind::SubscriptionChanged => {
                 let active = cursor.strings().map_err(malformed)?;
-                SyncV2Body::SubscriptionChanged { active }
+                SyncV1Body::SubscriptionChanged { active }
             }
-            FrameKind::Heartbeat => SyncV2Body::Heartbeat,
+            FrameKind::Heartbeat => SyncV1Body::Heartbeat,
             FrameKind::Trigger => {
                 let collection = cursor.str(MAX_TRIGGER_IDENT_BYTES).map_err(malformed)?;
                 let storage_sequence = cursor.u64().map_err(malformed)?;
                 let operation_id = cursor.str(MAX_TRIGGER_IDENT_BYTES).map_err(malformed)?;
-                SyncV2Body::Trigger { collection, storage_sequence, operation_id }
+                SyncV1Body::Trigger { collection, storage_sequence, operation_id }
             }
             FrameKind::RegionRouteChange => {
                 let region = cursor.str(MAX_IDENT_BYTES).map_err(malformed)?;
-                SyncV2Body::RegionRouteChange { region }
+                SyncV1Body::RegionRouteChange { region }
             }
             FrameKind::Error => {
                 let code = ErrorCode::from_code(cursor.u8().map_err(malformed)?)
@@ -459,7 +459,7 @@ impl SyncV2Body {
                     1 => Some(cursor.str(MAX_DETAIL_BYTES).map_err(malformed)?),
                     _ => return Err(malformed("unknown detail flag")),
                 };
-                SyncV2Body::Error { code, detail }
+                SyncV1Body::Error { code, detail }
             }
         };
         cursor.end().map_err(malformed)?;

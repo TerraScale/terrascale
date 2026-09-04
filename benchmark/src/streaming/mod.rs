@@ -1051,7 +1051,7 @@ pub enum ChangeKind {
 ///
 /// # V1 Changes API parity mapping
 ///
-/// | V1 selector | V2 form |
+/// | V1 selector | TerraBase form |
 /// | --- | --- |
 /// | `forDocument(id)` | [`ChangeFilter::with_document`] |
 /// | `forDocumentsStartingWith(prefix)` | [`ChangeFilter::with_prefix`] |

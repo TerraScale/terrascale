@@ -1,4 +1,4 @@
-//! The bounded MessagePack codec for `terrascale.sync.v2`.
+//! The bounded MessagePack codec for `terrascale.sync.v1`.
 //!
 //! This module is deliberately independent from the older [`crate::protocol`]
 //! frame format. The public wire is one indexed MessagePack envelope:
@@ -9,9 +9,9 @@
 use std::fmt;
 
 /// The protocol major version spoken by this codec.
-pub const MAJOR_VERSION: u32 = 2;
+pub const MAJOR_VERSION: u32 = 1;
 /// The protocol minor version spoken by this codec.
-pub const MINOR_VERSION: u32 = 1;
+pub const MINOR_VERSION: u32 = 0;
 /// Feature bits understood by this codec.
 pub const SUPPORTED_FEATURES: u32 = 0;
 /// Maximum complete `MessagePack` message size.

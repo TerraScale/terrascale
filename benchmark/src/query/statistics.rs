@@ -3,13 +3,13 @@
 //!
 //! V1 answers a query with a result array plus a statistics block — the
 //! index it used, whether that index was stale, a state etag, the total,
-//! skipped, and scanned counts, and a server-side duration. V2 carries the
+//! skipped, and scanned counts, and a server-side duration. TerraBase carries the
 //! same inventory in typed shape: the index identity and the per-namespace
 //! staleness live on [`QueryResult`](super::QueryResult) beside the rows
 //! (the includes-contract precedent for sibling-of-rows data), and this
 //! module owns the counts, the state token, and the diagnostic duration.
 //!
-//! The full V1-to-V2 field mapping, with file and line anchors into the
+//! The full V1-to-TerraBase field mapping, with file and line anchors into the
 //! pinned V1 tree, is the decision record
 //! `docs/query/gapq11-result-statistics.md`.
 
@@ -149,7 +149,7 @@ impl DiagnosticDuration {
 /// V1's `ScannedResults` and the skipped half of its filter accounting.
 ///
 /// Every count is an exact `u64`. V1 answers a count it does not know with
-/// the in-band marker `-1` and can compute a negative capped count; V2 does
+/// the in-band marker `-1` and can compute a negative capped count; TerraBase does
 /// neither: a bound that cannot be met refuses before execution, a count
 /// saturates instead of wrapping, and the capped count saturates at zero
 /// instead of going negative, so no marker value is ever ambiguous with a
@@ -194,7 +194,7 @@ impl QueryStatistics {
     ) -> Self {
         // The V1 capped count — `min(limit, total - offset)` clamped at
         // zero on V1's index path but unclamped (and so possibly negative)
-        // on its collection path. V2 saturates both ends: the offset
+        // on its collection path. TerraBase saturates both ends: the offset
         // subtracts to zero, never below, and no limit means no cap.
         let remaining = matched.saturating_sub(paging.offset());
         let capped_matched = match paging.limit() {
@@ -220,7 +220,7 @@ impl QueryStatistics {
     /// predicate.
     ///
     /// This is the skipped half of V1's filter accounting. It does not
-    /// include the page offset: V2 pages over the ordered matched set, so
+    /// include the page offset: TerraBase pages over the ordered matched set, so
     /// the matched count stays exact and the caller never adjusts a page
     /// start by the skipped count the way V1's filtered collection queries
     /// must.
@@ -233,7 +233,7 @@ impl QueryStatistics {
     /// of the page limit and the matches remaining after the offset, and
     /// zero when the offset reaches past the matched set.
     ///
-    /// This is V1's `CappedMaxResults` with V2's saturating rule: never
+    /// This is V1's `CappedMaxResults` with TerraBase's saturating rule: never
     /// negative, never a `-1` marker, and exact for the window it
     /// describes. The uncapped matched count stays on
     /// [`QueryResult::matched`](super::QueryResult::matched).

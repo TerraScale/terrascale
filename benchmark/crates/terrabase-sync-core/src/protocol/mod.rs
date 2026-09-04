@@ -1,4 +1,4 @@
-//! The `terrascale.sync.v2` client-channel wire protocol: the
+//! The `terrascale.sync.v1` client-channel wire protocol: the
 //! versioned frame vocabulary spoken between client Sync Sessions and
 //! the serving host.
 //!
@@ -35,21 +35,21 @@ mod frame;
 
 pub use body::ErrorCode;
 pub use body::FrameKind;
-pub use body::SyncV2Body;
+pub use body::SyncV1Body;
 pub use frame::IdempotencyKey;
 pub use frame::ProtocolError;
-pub use frame::SyncV2Frame;
+pub use frame::SyncV1Frame;
 
 use crate::FrameId;
 
 /// The contract identity of the protocol.
-pub const SYNC_PROTOCOL_CONTRACT: &str = "terrascale.sync.v2";
+pub const SYNC_PROTOCOL_CONTRACT: &str = "terrascale.sync.v1";
 
 /// The wire version this module speaks. The leading byte of every
 /// frame; every other value fails closed on decode — including `1`,
 /// the v1 wire this contract deliberately does not speak (no V1 wire
 /// compatibility; charter PD-2026-08-26-10).
-pub const SYNC_PROTOCOL_VERSION: u8 = 2;
+pub const SYNC_PROTOCOL_VERSION: u8 = 1;
 
 /// The fixed per-frame envelope overhead in bytes: version (1), kind
 /// (2), correlation (8), causation (8), idempotency presence (1),
@@ -102,20 +102,20 @@ pub enum Direction {
     Both,
 }
 
-impl SyncV2Body {
+impl SyncV1Body {
     /// The direction this frame travels on the client channel.
     #[must_use]
     pub fn direction(&self) -> Direction {
         match self {
-            SyncV2Body::SessionSetup { .. } | SyncV2Body::SubscriptionModify { .. } => {
+            SyncV1Body::SessionSetup { .. } | SyncV1Body::SubscriptionModify { .. } => {
                 Direction::ClientToServer
             }
-            SyncV2Body::SessionAccepted { .. }
-            | SyncV2Body::SubscriptionChanged { .. }
-            | SyncV2Body::Trigger { .. }
-            | SyncV2Body::RegionRouteChange { .. }
-            | SyncV2Body::Error { .. } => Direction::ServerToClient,
-            SyncV2Body::Heartbeat => Direction::Both,
+            SyncV1Body::SessionAccepted { .. }
+            | SyncV1Body::SubscriptionChanged { .. }
+            | SyncV1Body::Trigger { .. }
+            | SyncV1Body::RegionRouteChange { .. }
+            | SyncV1Body::Error { .. } => Direction::ServerToClient,
+            SyncV1Body::Heartbeat => Direction::Both,
         }
     }
 
@@ -123,15 +123,15 @@ impl SyncV2Body {
     #[must_use]
     pub fn frame_class(&self) -> FrameClass {
         match self {
-            SyncV2Body::SessionSetup { .. } | SyncV2Body::SessionAccepted { .. } => {
+            SyncV1Body::SessionSetup { .. } | SyncV1Body::SessionAccepted { .. } => {
                 FrameClass::Session
             }
-            SyncV2Body::SubscriptionModify { .. } | SyncV2Body::SubscriptionChanged { .. } => {
+            SyncV1Body::SubscriptionModify { .. } | SyncV1Body::SubscriptionChanged { .. } => {
                 FrameClass::Subscription
             }
-            SyncV2Body::Heartbeat => FrameClass::Heartbeat,
-            SyncV2Body::Trigger { .. } => FrameClass::Trigger,
-            SyncV2Body::RegionRouteChange { .. } | SyncV2Body::Error { .. } => FrameClass::Control,
+            SyncV1Body::Heartbeat => FrameClass::Heartbeat,
+            SyncV1Body::Trigger { .. } => FrameClass::Trigger,
+            SyncV1Body::RegionRouteChange { .. } | SyncV1Body::Error { .. } => FrameClass::Control,
         }
     }
 }
@@ -178,7 +178,7 @@ impl FrameClass {
     }
 }
 
-impl SyncV2Frame {
+impl SyncV1Frame {
     /// Whether the frame fits its class's written budget.
     #[must_use]
     pub fn within_class_budget(&self) -> bool {
@@ -200,9 +200,9 @@ pub fn trigger_frame(
     operation_id: &str,
     correlation: FrameId,
     causation: FrameId,
-) -> Result<SyncV2Frame, ProtocolError> {
-    SyncV2Frame::seal(
-        SyncV2Body::Trigger {
+) -> Result<SyncV1Frame, ProtocolError> {
+    SyncV1Frame::seal(
+        SyncV1Body::Trigger {
             collection: collection.to_string(),
             storage_sequence,
             operation_id: operation_id.to_string(),
@@ -220,7 +220,7 @@ mod tests {
     #[test]
     fn the_fixed_envelope_matches_a_heartbeat() {
         let frame =
-            SyncV2Frame::seal(SyncV2Body::Heartbeat, FrameId::new(1), FrameId::new(0), None)
+            SyncV1Frame::seal(SyncV1Body::Heartbeat, FrameId::new(1), FrameId::new(0), None)
                 .expect("seals");
         assert_eq!(frame.to_bytes().len(), FIXED_ENVELOPE_BYTES);
     }
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn budget_definitions_cover_their_classes() {
         let heartbeat =
-            SyncV2Frame::seal(SyncV2Body::Heartbeat, FrameId::new(1), FrameId::new(0), None)
+            SyncV1Frame::seal(SyncV1Body::Heartbeat, FrameId::new(1), FrameId::new(0), None)
                 .expect("seals");
         assert!(heartbeat.to_bytes().len() <= HEARTBEAT_FRAME_BUDGET_BYTES);
         // The worst-case trigger: 64-byte collection and operation ids.

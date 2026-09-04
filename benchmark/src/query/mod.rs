@@ -57,7 +57,7 @@ pub use bulk::{
     DeleteByQueryRequest, DeletionConfirmation, MAX_BULK_AUDIT_ENTRIES, MAX_BULK_DETAILS,
     MAX_BULK_PAGE_DOCUMENTS, PatchByQueryRequest,
 };
-// GAP-Q13 (TerraBaseV2#67) collision action: the analyzer foundation was
+// GAP-Q13 (TerraBase#67) collision action: the analyzer foundation was
 // wired in as a declaration-only private root; without this re-export its
 // typed contract is unreachable and rustc treats its contents as dead
 // code. The export shape is the parent's to ratify or reshape.

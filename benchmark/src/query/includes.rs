@@ -49,7 +49,7 @@ pub const MAX_INCLUDE_PATH_SEGMENTS: usize = 8;
 /// `1` is V1 parity: V1's `IncludeDocumentsCommand` gathers from the result
 /// rows and loads the references, but never gathers from the loaded
 /// documents, so its includes are exactly one level deep. Depths above `1`
-/// chain the same path out of each included document and are a bounded V2
+/// chain the same path out of each included document and are a bounded TerraBase
 /// extension.
 pub const MAX_INCLUDE_DEPTH: u8 = 4;
 

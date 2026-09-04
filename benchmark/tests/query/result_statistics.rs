@@ -4,7 +4,7 @@
 //! after authorization), so execution-derived statistics are covered by the
 //! in-crate tests. What the public surface pins here is the count-cap
 //! decision: a page limit above [`MAX_PAGE_LIMIT`] refuses typed at
-//! construction — V2 never answers a query whose paging bound exceeds its
+//! construction — TerraBase never answers a query whose paging bound exceeds its
 //! cap, so no result ever carries a truncated count in place of a refusal.
 
 use std::time::Duration;

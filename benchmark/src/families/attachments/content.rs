@@ -50,7 +50,7 @@ pub const MAX_SEGMENT_BYTES: usize = 64 * 1024;
 
 /// The largest staged content size the plane accepts today.
 ///
-/// V1 streams attachments of unbounded size; the V2 engine plane starts with
+/// V1 streams attachments of unbounded size; the TerraBase engine plane starts with
 /// an explicit, typed ceiling so over-limit requests fail with
 /// [`AttachmentContentError::SizeLimitExceeded`] instead of exhausting
 /// memory. Raising or lifting it is a recorded decision, never a silent one

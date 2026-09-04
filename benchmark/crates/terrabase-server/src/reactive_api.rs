@@ -1301,7 +1301,7 @@ fn capability_scope(scope: &str) -> String {
     format!("scope-{}", blake3::hash(scope.as_bytes()).to_hex())
 }
 fn checkpoint_bytes(view: &str, generation: u64, revision: u64) -> Vec<u8> {
-    let mut bytes = b"terrascale.sync.v2\0".to_vec();
+    let mut bytes = b"terrascale.sync.v1\0".to_vec();
     bytes.extend_from_slice(&blake3::hash(view.as_bytes()).as_bytes()[..16]);
     bytes.extend_from_slice(&generation.to_be_bytes());
     bytes.extend_from_slice(&revision.to_be_bytes());

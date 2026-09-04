@@ -1,10 +1,10 @@
 # Convex 2026 public feature survey (CP-01 evidence record)
 
-Status: competitor evidence record for ticket TerraScale/TerraBaseV2#29
+Status: competitor evidence record for ticket TerraScale/TerraBase#29
 (CP-01). Web survey of Convex's public documentation, accessed 2026-08-26.
 Every entry names the exact URL it was verified from; entries marked
 (index) were verified only as listings on a fetched index page, not by
-fetching the target page. No claim in this file is a TerraBaseV2 claim;
+fetching the target page. No claim in this file is a TerraBase claim;
 it records what the competitor ships.
 
 ## EV-C1 — Docs index and positioning

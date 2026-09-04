@@ -1029,7 +1029,7 @@ fn digest_items(items: &[ResultItem]) -> String {
 
 fn checkpoint(generation: u64, revision: u64, retention_generation: u64) -> Vec<u8> {
     let mut value = Vec::with_capacity(32);
-    value.extend_from_slice(b"tsv2\0");
+    value.extend_from_slice(b"tsv1\0");
     value.extend_from_slice(&generation.to_be_bytes());
     value.extend_from_slice(&revision.to_be_bytes());
     value.extend_from_slice(&retention_generation.to_be_bytes());
@@ -1044,7 +1044,7 @@ fn valid_checkpoint(
     revision: u64,
     retention_generation: u64,
 ) -> bool {
-    if value.len() != 37 || &value[..5] != b"tsv2\0" {
+    if value.len() != 37 || &value[..5] != b"tsv1\0" {
         return false;
     }
     let read = |offset| {

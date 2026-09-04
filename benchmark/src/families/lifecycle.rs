@@ -1,4 +1,4 @@
-//! Lifecycle and archival execution (GAP-F06, TerraBaseV2#75).
+//! Lifecycle and archival execution (GAP-F06, TerraBase#75).
 //!
 //! The typed lifecycle and archival families record *state* — expiry and
 //! refresh targets, archival marks and delay policies. This module adds the
@@ -1392,7 +1392,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // Repair loop 1 (warden findings, TerraBaseV2#75)
+    // Repair loop 1 (warden findings, TerraBase#75)
     // ------------------------------------------------------------------
 
     /// Runs one closure that must terminate, failing the test when it

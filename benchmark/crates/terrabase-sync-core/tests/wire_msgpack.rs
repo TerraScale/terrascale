@@ -49,14 +49,14 @@ fn checked_in_golden_vectors_match_the_typescript_codec() {
                 parameters: vec![1, 2],
                 checkpoint: None,
             },
-            "9702010001010094a173a171c4020102c0",
+            "9701000001010094a173a171c4020102c0",
         ),
-        (2, 1, Message::Unsubscribe { subscription: "s".to_owned() }, "9702010002020191a173"),
+        (2, 1, Message::Unsubscribe { subscription: "s".to_owned() }, "9701000002020191a173"),
         (
             3,
             2,
             Message::Snapshot { subscription: "s".to_owned(), snapshot: snapshot(1, 2, 3, 0x63) },
-            "9702010003030292a173960102039192a1649192a178c40179d94061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161c40163",
+            "9701000003030292a173960102039192a1649192a178c40179d94061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161c40163",
         ),
         (
             4,
@@ -89,7 +89,7 @@ fn checked_in_golden_vectors_match_the_typescript_codec() {
                 digest: "b".repeat(64),
                 checkpoint: vec![0x64],
             },
-            "9702010004040397a173010304959401a165019192a178c401699302a1649192a178c401759303a1649292a178c4017092a17ac09204a1659305a16400d94062626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262c40164",
+            "9701000004040397a173010304959401a165019192a178c401699302a1649192a178c401759303a1649292a178c4017092a17ac09204a1659305a16400d94062626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262c40164",
         ),
         (
             5,
@@ -99,14 +99,14 @@ fn checked_in_golden_vectors_match_the_typescript_codec() {
                 reason: ResetReason::GenerationChanged,
                 snapshot: snapshot(2, 2, 5, 0x65),
             },
-            "9702010005050493a17303960202059192a1649192a178c40179d94061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161c40165",
+            "9701000005050493a17303960202059192a1649192a178c40179d94061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161c40165",
         ),
-        (6, 5, Message::Heartbeat, "9702010006060590"),
+        (6, 5, Message::Heartbeat, "9701000006060590"),
         (
             7,
             6,
             Message::CheckpointAck { subscription: "s".to_owned(), checkpoint: vec![0x66] },
-            "9702010007070692a173c40166",
+            "9701000007070692a173c40166",
         ),
         (
             8,
@@ -117,16 +117,16 @@ fn checked_in_golden_vectors_match_the_typescript_codec() {
                 removed: vec!["d".to_owned()],
                 snapshot: Snapshot { items: Vec::new(), ..snapshot(2, 3, 5, 0x67) },
             },
-            "9702010008080794a1730391a1649602030590d94061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161c40167",
+            "9701000008080794a1730391a1649602030590d94061616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161c40167",
         ),
-        (9, 8, Message::RegionRouteChange { region: "FRA".to_owned() }, "9702010009090891a3465241"),
+        (9, 8, Message::RegionRouteChange { region: "FRA".to_owned() }, "9701000009090891a3465241"),
         (
             10,
             9,
             Message::Error { code: ErrorCode::Overloaded, detail: Some("retry".to_owned()) },
-            "970201000a0a099207a57265747279",
+            "970100000a0a099207a57265747279",
         ),
-        (11, 10, Message::Backpressure { mode: BackpressureMode::Pause }, "970201000b0b0a9101"),
+        (11, 10, Message::Backpressure { mode: BackpressureMode::Pause }, "970100000b0b0a9101"),
     ];
     for (correlation, causation, message, expected) in vectors {
         let actual =
@@ -142,16 +142,16 @@ fn checked_in_golden_vectors_match_the_typescript_codec() {
 #[test]
 fn hostile_shapes_fail_closed_before_allocation() {
     let hostile = [
-        ("97020100060100810102", WireError::MapForbidden),
-        ("97020100060100d40000", WireError::ExtensionForbidden),
-        ("9702010006010091ca3fc00000", WireError::Float32Forbidden),
-        ("97020100060100", WireError::Truncated),
-        ("9702010006010090c0", WireError::TrailingBytes),
-        ("9702000006010090", WireError::UnsupportedMinor(0)),
-        ("9702010106010090", WireError::UnknownFeatures(1)),
-        ("970201000c010090", WireError::UnknownTag(12)),
-        ("970201000a01009263c0", WireError::UnknownEnum("error_code", 99)),
-        ("9702010004010097a173010102919107a0c40101", WireError::UnknownVariant(7)),
+        ("97010000060100810102", WireError::MapForbidden),
+        ("97010000060100d40000", WireError::ExtensionForbidden),
+        ("9701000006010091ca3fc00000", WireError::Float32Forbidden),
+        ("97010000060100", WireError::Truncated),
+        ("9701000006010090c0", WireError::TrailingBytes),
+        ("9701010006010090", WireError::UnsupportedMinor(0)),
+        ("9701000106010090", WireError::UnknownFeatures(1)),
+        ("970100000c010090", WireError::UnknownTag(12)),
+        ("970100000a01009263c0", WireError::UnknownEnum("error_code", 99)),
+        ("9701000004010097a173010102919107a0c40101", WireError::UnknownVariant(7)),
     ];
     for (hex, expected) in hostile {
         let error = decode_envelope(&bytes(hex)).expect_err(hex);
@@ -163,10 +163,10 @@ fn hostile_shapes_fail_closed_before_allocation() {
 fn alternate_valid_integer_and_array_encodings_decode_but_writer_is_canonical() {
     // The reader accepts valid non-minimal integer/array headers, as does the
     // TypeScript reader, while the writer always emits fix forms where valid.
-    let alternate = bytes("97ce00000002cd0001cc00ce00000002cd0001cc00dc0001a173");
+    let alternate = bytes("97ce00000001cd0000cc00ce00000002cd0001cc00dc0001a173");
     let expected = envelope(1, 0, Message::Unsubscribe { subscription: "s".to_owned() });
     assert_eq!(decode_envelope(&alternate).expect("alternate encoding"), expected);
-    assert_eq!(encode_envelope(&expected).expect("canonical"), bytes("9702010002010091a173"));
+    assert_eq!(encode_envelope(&expected).expect("canonical"), bytes("9701000002010091a173"));
 }
 
 #[test]

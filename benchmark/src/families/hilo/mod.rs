@@ -1,6 +1,6 @@
 //! The `HiLo` identity-distribution contract (GAP-F09).
 //!
-//! GAP-D01 ownership class 12 gave V2 save-time identity allocation inside
+//! GAP-D01 ownership class 12 gave TerraBase save-time identity allocation inside
 //! the save transaction; this module is the distribution layer on top of
 //! the same identity family — V1's client-side `HiLo` generator, moved
 //! engine-side. A [`HiLoDistributor`] reserves whole blocks of one

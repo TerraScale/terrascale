@@ -1,7 +1,7 @@
 //! Public-path tests for the typed static index definition contract
-//! (GAP-Q06, ticket TerraBase/TerraBaseV2#63).
+//! (GAP-Q06, ticket TerraBase/TerraBase#63).
 //!
-//! The typed definition language is the V2 replacement for V1's
+//! The typed definition language is the TerraBase replacement for V1's
 //! code-authored static index definitions: maps, reduce, multi-map, field
 //! options (indexing/storage/analysis), dynamic and compound fields, and
 //! map-reduce output collections are typed, versioned, fail-closed values.

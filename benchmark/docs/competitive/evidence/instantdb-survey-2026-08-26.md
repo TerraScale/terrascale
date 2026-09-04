@@ -1,11 +1,11 @@
 # InstantDB 2026 public feature survey (CP-01 evidence record)
 
-Status: competitor evidence record for ticket TerraScale/TerraBaseV2#29
+Status: competitor evidence record for ticket TerraScale/TerraBase#29
 (CP-01). Web survey of InstantDB's public documentation and product pages,
 accessed 2026-08-26. Every entry names the exact URL it was verified from;
 entries marked (index) were verified only as listings on a fetched index
 page, not by fetching the target page. No claim in this file is a
-TerraBaseV2 claim; it records what the competitor ships.
+TerraBase claim; it records what the competitor ships.
 
 Survey context that the matrix must carry, not hide: the InstantDB docs
 carry a banner stating "Instant is sunsetting. Services will continue
