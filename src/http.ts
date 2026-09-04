@@ -11,6 +11,11 @@ import {
   type TerraScaleResult,
   type TerraScaleValidationIssue,
 } from "./result.js";
+import {
+  canonicalRegionCode,
+  regionalApiBaseUrl,
+  type TerraScaleRegionCode,
+} from "./regions.js";
 export type TerraScaleRouteName =
   | `access.${string}`
   | `admin.${string}`
@@ -18,6 +23,9 @@ export type TerraScaleRouteName =
   | `backups.${string}`
   | `databaseBranches.${string}`
   | `databases.${string}`
+  | `documents.${string}`
+  | `reactive.${string}`
+  | `sql.${string}`
   | `notifications.${string}`
   | `onboarding.${string}`
   | `organizations.${string}`
@@ -43,6 +51,8 @@ export type TerraScaleRequestOptions<TBody = unknown> = {
   readonly idempotencyKey?: string | false | undefined;
   /** Abort the underlying fetch, including while a retry is pending. */
   readonly signal?: AbortSignal | undefined;
+  /** A per-request REST Region hint. It is never used for reactive traffic. */
+  readonly regionHint?: TerraScaleRegionCode | undefined;
 };
 
 export type TerraScaleRequestMetric = {
@@ -60,6 +70,8 @@ export class TerraScaleHttp {
   readonly #accessToken: TerraScaleRuntimeConfig["accessToken"];
   readonly #idempotencyKeyFactory: TerraScaleRuntimeConfig["idempotencyKeyFactory"];
   readonly #requestMetricRecorder: TerraScaleRuntimeConfig["requestMetricRecorder"];
+  #pinnedRegion: TerraScaleRegionCode | undefined;
+  #sessionToken: string | undefined;
 
   constructor(config: TerraScaleRuntimeConfig) {
     this.config = resolveRuntimeConfig(config);
@@ -71,6 +83,43 @@ export class TerraScaleHttp {
     this.#accessToken = config.accessToken;
     this.#idempotencyKeyFactory = config.idempotencyKeyFactory;
     this.#requestMetricRecorder = config.requestMetricRecorder;
+    this.#pinnedRegion = undefined;
+    const configuredSession = (config as TerraScaleRuntimeConfig & { readonly sessionToken?: unknown }).sessionToken;
+    this.#sessionToken = validateSessionToken(configuredSession) ? configuredSession.trim() : undefined;
+  }
+
+  /** Region learned from trusted first-contact/421 response headers. */
+  get pinnedRegion(): TerraScaleRegionCode | undefined {
+    return this.#pinnedRegion ?? this.config.preferredRegion;
+  }
+
+  /** Current opaque causal session frontier, if one has been observed. */
+  get sessionToken(): string | undefined {
+    return this.#sessionToken;
+  }
+
+  /** Explicitly install a causal session frontier for subsequent requests. */
+  setSessionToken(token: string | undefined): void {
+    if (token === undefined) {
+      this.#sessionToken = undefined;
+      return;
+    }
+    if (!validateSessionToken(token)) {
+      throw new TypeError("Session tokens must be nonblank, contain no control characters, and be at most 16384 characters.");
+    }
+    this.#sessionToken = token.trim();
+  }
+
+  /** Explicitly pin REST traffic to one registered Region. */
+  pinRegion(region: TerraScaleRegionCode): void {
+    this.#pinnedRegion = canonicalRegionCode(region);
+    if (this.#pinnedRegion === undefined) {
+      throw new TypeError("region must be exactly one of GRU, SFO, or FRA.");
+    }
+  }
+
+  clearRegionPin(): void {
+    this.#pinnedRegion = undefined;
   }
 
   async request<TResponse, TBody = unknown>(
@@ -83,11 +132,14 @@ export class TerraScaleHttp {
     try {
       idempotencyKey = this.resolveIdempotencyKey(options);
       let attempt = 0;
+      let repaired421 = false;
       while (true) {
         let responseReceived = false;
         let fetchStarted = false;
         try {
-          const url = buildUrl(this.baseUrl(), options.path, options.query);
+          const requestBase = this.baseUrl(options.regionHint);
+          const globalFirstContact = this.isGlobalFirstContact(requestBase, options.regionHint);
+          const url = buildUrl(requestBase, options.path, options.query);
           const headers = await this.buildHeaders(options, idempotencyKey);
           const requestInit: RequestInit = {
             method: options.method,
@@ -104,6 +156,7 @@ export class TerraScaleHttp {
           const response = await this.#fetch(request);
           responseReceived = true;
           const body = await readResponseBody(response);
+          this.observeSession(response.headers);
           this.recordRequestMetric(base, options.routeName, response.status, performance.now() - startedAt);
 
           // Conditional reads use 304 as a successful cache hit. There is no
@@ -114,6 +167,7 @@ export class TerraScaleHttp {
           }
 
           if (response.ok) {
+            if (globalFirstContact) this.observeServingRegion(response.headers);
             if (!body.ok) {
               return err(
                 options.routeName,
@@ -133,8 +187,20 @@ export class TerraScaleHttp {
             return ok(options.routeName, response.status, response.headers, body.value as TResponse);
           }
 
+          if (response.status === 421 && !repaired421) {
+            const repaired = placementRegion(response.headers);
+            if (repaired !== undefined && repaired !== this.#pinnedRegion) {
+              this.#pinnedRegion = repaired;
+              repaired421 = true;
+              // Placement is authoritative for this one replay, including
+              // when the original request supplied a per-call hint.
+              attempt++;
+              continue;
+            }
+          }
+
           const error = errorFromResponse(response, body.ok ? body.value : body.raw);
-          if (this.canRetry(idempotencyKey, attempt, response.status)) {
+          if (this.canRetry(options.method, idempotencyKey, attempt, response.status)) {
             await delayForRetry(retryDelay(response, this.config.retryDelayMs, attempt), options.signal);
             attempt++;
             continue;
@@ -148,7 +214,7 @@ export class TerraScaleHttp {
             body.ok ? body.value : body.raw,
           );
         } catch (error) {
-          if (fetchStarted && !responseReceived && !options.signal?.aborted && this.canRetry(idempotencyKey, attempt)) {
+          if (fetchStarted && !responseReceived && !options.signal?.aborted && this.canRetry(options.method, idempotencyKey, attempt)) {
             await delayForRetry(retryDelay(undefined, this.config.retryDelayMs, attempt), options.signal);
             attempt++;
             continue;
@@ -171,8 +237,19 @@ export class TerraScaleHttp {
     }
   }
 
-  private baseUrl(): string {
-    return this.config.apiBaseUrl;
+  private baseUrl(regionHint?: TerraScaleRegionCode): string {
+    const region = regionHint ?? this.#pinnedRegion;
+    if (region === undefined) {
+      return this.config.apiBaseUrl;
+    }
+    return regionalApiBaseUrl(this.config.apiBaseUrl, region);
+  }
+
+  private isGlobalFirstContact(baseUrl: string, regionHint?: TerraScaleRegionCode): boolean {
+    return this.config.regionAffinity === "failover" &&
+      this.#pinnedRegion === undefined &&
+      regionHint === undefined &&
+      baseUrl === this.config.apiBaseUrl;
   }
 
   private async buildHeaders<TBody>(
@@ -188,16 +265,24 @@ export class TerraScaleHttp {
     }
 
     if (
-      this.config.regionAffinity === "failover" &&
-      this.config.preferredRegion !== undefined
+      options.regionHint !== undefined ||
+      (this.config.regionAffinity === "failover" &&
+        (this.config.preferredRegion !== undefined || this.#pinnedRegion !== undefined))
     ) {
-      headers.set("x-terrascale-preferred-region", this.config.preferredRegion);
+      headers.set(
+        "x-terrascale-preferred-region",
+        (options.regionHint ?? this.#pinnedRegion ?? this.config.preferredRegion)!,
+      );
     }
 
     const token = await resolveAccessToken(this.#accessToken);
 
     if (token !== undefined && token.length > 0) {
       headers.set("authorization", token.startsWith("Bearer ") ? token : `Bearer ${token}`);
+    }
+
+    if (this.#sessionToken !== undefined) {
+      headers.set("x-terrascale-session", this.#sessionToken);
     }
 
     if (options.headers !== undefined) {
@@ -231,6 +316,7 @@ export class TerraScaleHttp {
   }
 
   private canRetry(
+    method: TerraScaleHttpMethod,
     idempotencyKey: string | undefined,
     attempt: number,
     status?: number,
@@ -239,12 +325,31 @@ export class TerraScaleHttp {
       return false;
     }
 
-    const retryableOperation = idempotencyKey !== undefined;
+    // GET is safe to repeat by contract. Mutations require the caller's
+    // stable idempotency identity; other POSTs (SQL/reactive) are not
+    // assumed idempotent merely because they use HTTP POST.
+    const retryableOperation = method === "GET" || (isMutation(method) && idempotencyKey !== undefined);
     if (!retryableOperation) {
       return false;
     }
 
     return status === undefined || retryableStatuses.has(status);
+  }
+
+  private observeServingRegion(headers: Headers): void {
+    const region = servingRegion(headers);
+    if (region !== undefined && this.#pinnedRegion === undefined) {
+      this.#pinnedRegion = region;
+    }
+  }
+
+  private observeSession(headers: Headers): void {
+    const candidate = headers.get("x-terrascale-session")?.trim();
+    if (candidate === undefined || !validateSessionToken(candidate)) return;
+    const current = this.#sessionToken;
+    if (current === undefined || sessionTokenAdvances(current, candidate)) {
+      this.#sessionToken = candidate;
+    }
   }
 
   private recordRequestMetric(
@@ -290,6 +395,41 @@ function isMutation(method: TerraScaleHttpMethod): boolean {
 }
 
 const retryableStatuses = new Set([408, 429, 500, 502, 503, 504]);
+
+const MAX_SESSION_TOKEN = 0xffff_ffff_ffff_ffffn;
+
+function validateSessionToken(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim();
+  if (!/^\d+$/u.test(normalized) || normalized.length > 20) return false;
+  try {
+    return BigInt(normalized) <= MAX_SESSION_TOKEN;
+  } catch {
+    return false;
+  }
+}
+
+function sessionTokenAdvances(current: string, candidate: string): boolean {
+  try {
+    return BigInt(candidate) > BigInt(current);
+  } catch {
+    return false;
+  }
+}
+
+function servingRegion(headers: Headers): TerraScaleRegionCode | undefined {
+  return canonicalRegionCode(headers.get("x-terrascale-serving-region") ?? headers.get("x-terrascale-region") ?? undefined);
+}
+
+function placementRegion(headers: Headers): TerraScaleRegionCode | undefined {
+  const raw = headers.get("x-terrascale-placement");
+  if (raw === null) return undefined;
+  for (const candidate of raw.split(",")) {
+    const region = canonicalRegionCode(candidate.trim());
+    if (region !== undefined) return region;
+  }
+  return undefined;
+}
 
 function retryDelay(response: Response | undefined, baseDelayMs: number, attempt: number): number {
   const retryAfter = response?.headers.get("retry-after");

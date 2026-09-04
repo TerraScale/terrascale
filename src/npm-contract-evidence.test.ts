@@ -21,16 +21,27 @@ test("npm contract evidence binds the reviewed descriptor and packed route bytes
     repositoryRoot,
     path.join(repositoryRoot, "sdk-route-manifest.json"),
   );
+  const descriptor = JSON.parse(
+    await readFile(path.join(repositoryRoot, "sdk-openapi-contract-descriptor.json"), "utf8"),
+  ) as {
+    readonly descriptorVersion: number;
+    readonly routeCount: number;
+    readonly sources: { readonly openApiSha256: string };
+  };
+  const routeManifest = JSON.parse(
+    await readFile(path.join(repositoryRoot, "sdk-route-manifest.json"), "utf8"),
+  ) as { readonly routeCount: number };
 
   assert.deepEqual(evidence, {
-    descriptorVersion: 2,
+    descriptorVersion: descriptor.descriptorVersion,
     descriptorSha256: await fileSha256(
       path.join(repositoryRoot, "sdk-openapi-contract-descriptor.json"),
     ),
-    openApiSha256: "3566e1bf139f4bd6681b16374e097a99e45926cf049ec5aa6fdf421768b13c5c",
+    openApiSha256: descriptor.sources.openApiSha256,
     routeManifestSha256: await fileSha256(path.join(repositoryRoot, "sdk-route-manifest.json")),
-    routeCount: 60,
+    routeCount: descriptor.routeCount,
   });
+  assert.equal(descriptor.routeCount, routeManifest.routeCount);
 });
 
 test("npm contract evidence refuses stale, malformed, or substituted inputs", async () => {

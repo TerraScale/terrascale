@@ -2,6 +2,38 @@ export const terraScaleRegionCodes = ["GRU", "SFO", "FRA"] as const;
 
 export type TerraScaleRegionCode = (typeof terraScaleRegionCodes)[number];
 
+/** The public global REST origin. Regional hosts are derived from this name. */
+export const terraScaleGlobalApiHostname = "api.terrascale.tech";
+
+/** Return the canonical public hostname for a Region's REST member. */
+export function regionalApiHostname(region: TerraScaleRegionCode): string {
+  return `${region.toLowerCase()}.${terraScaleGlobalApiHostname}`;
+}
+
+/**
+ * Rewrites the production global API hostname to a regional member hostname.
+ * Custom origins (tests, local proxies, and dashboard service bindings) stay
+ * unchanged; the caller still sends the region as a typed request hint.
+ */
+export function regionalApiBaseUrl(
+  baseUrl: string,
+  region: TerraScaleRegionCode,
+): string {
+  let url: URL;
+  try {
+    url = new URL(`${baseUrl}/`);
+  } catch {
+    return baseUrl;
+  }
+
+  if (url.hostname.toLowerCase() !== terraScaleGlobalApiHostname) {
+    return baseUrl;
+  }
+
+  url.hostname = regionalApiHostname(region);
+  return url.toString().replace(/\/$/u, "");
+}
+
 export type TerraScaleRegion = {
   readonly code: TerraScaleRegionCode;
   readonly displayName: string;

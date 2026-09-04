@@ -14,7 +14,7 @@ function fixtureFetch(requests: Request[]): typeof fetch {
 }
 
 describe("management entrypoint", () => {
-  it("uses only published project-scoped routes and preserves encoded identifiers", async () => {
+  it("fails closed for project-scoped routes absent from the producer contract", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleManagementClient({
       apiBaseUrl: "https://api.example.test",
@@ -22,34 +22,29 @@ describe("management entrypoint", () => {
       fetch: fixtureFetch(requests),
     });
 
-    await client.databases.create({ name: "primary" });
-    await client.databases.get("database/one");
-    await client.databases.delete("database/one", { confirm: true });
-    await client.branches.getCapability();
-    await client.usage.getProject();
-
-    expect(new URL(requests[0]!.url).pathname).toBe("/api/v1/projects/project%2Fone/databases");
-    expect(await requests[0]!.json()).toEqual({ name: "primary" });
-    expect(new URL(requests[1]!.url).pathname).toBe("/api/v1/projects/project%2Fone/databases/database%2Fone");
-    expect(new URL(requests[2]!.url).pathname).toBe("/api/v1/projects/project%2Fone/databases/database%2Fone");
-    expect(requests[2]!.headers.get("x-terrascale-delete-confirmation")).toBe("database/one");
-    expect(new URL(requests[3]!.url).pathname).toBe("/api/v1/projects/project%2Fone/database-branches/capability");
-    expect(new URL(requests[4]!.url).pathname).toBe("/api/v1/projects/project%2Fone/usage");
+    for (const operation of [
+      () => client.databases.create({ name: "primary" }),
+      () => client.databases.get("database/one"),
+      () => client.databases.delete("database/one", { confirm: true }),
+      () => client.branches.getCapability(),
+      () => client.usage.getProject(),
+    ]) {
+      expect(operation).toThrow(ManagementContractGapError);
+    }
+    expect(requests).toHaveLength(0);
   });
 
-  it("fails closed for missing scope, invalid input, and unconfirmed deletion", async () => {
+  it("fails closed before validating or sending unsupported project routes", async () => {
     const requests: Request[] = [];
     const client = createTerraScaleManagementClient({
       apiBaseUrl: "https://api.example.test",
       fetch: fixtureFetch(requests),
     });
 
-    expect(() => client.databases.list()).toThrow("projectId");
-    expect(() => client.databases.create({ name: "" }, "project")).toThrow("name");
-    expect(() => client.databases.create({ name: "db", placement: ["GRU"] }, "project")).toThrow(ManagementContractGapError);
-    expect(() => client.databases.create({ name: "db", placement: ["GRU"], residency: "eu-only" }, "project")).toThrow("cannot be widened");
-    expect(() => client.databases.list("project", { take: 201 })).toThrow("take");
-    expect(() => client.databases.delete("db", { confirm: false as never })).toThrow("confirm");
+    expect(() => client.databases.list()).toThrow(ManagementContractGapError);
+    expect(() => client.databases.create({ name: "" }, "project")).toThrow(ManagementContractGapError);
+    expect(() => client.databases.list("project", { take: 201 })).toThrow(ManagementContractGapError);
+    expect(() => client.databases.delete("db", { confirm: false as never })).toThrow(ManagementContractGapError);
     expect(requests).toHaveLength(0);
   });
 

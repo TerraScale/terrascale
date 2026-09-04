@@ -6,7 +6,7 @@
     "bundle": "contracts",
     "openapi": "openapi.json"
   },
-  "routeCount": 35,
+  "routeCount": 36,
   "routes": [
     {
       "base": "api",
@@ -247,7 +247,7 @@
       "routeName": "databases.putSchema",
       "method": "PUT",
       "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/schema",
-      "requestType": "void",
+      "requestType": "JsonValue",
       "responseType": "never"
     },
     {
@@ -281,7 +281,7 @@
       "method": "POST",
       "pathTemplate": "/api/v1/databases/{name}/reactive/poll",
       "requestType": "ReactivePollRequest",
-      "responseType": "ReactiveFramesResponse"
+      "responseType": "never"
     },
     {
       "base": "api",
@@ -369,7 +369,7 @@
       "method": "POST",
       "pathTemplate": "/api/v1/reactive/views",
       "requestType": "AttachViewRequest",
-      "responseType": "never"
+      "responseType": "AttachViewResponse"
     },
     {
       "base": "api",
@@ -380,7 +380,18 @@
       "method": "GET",
       "pathTemplate": "/api/v1/reactive/views/{view}/{generation}/log",
       "requestType": "void",
-      "responseType": "never"
+      "responseType": "ReactiveEnvelope"
+    },
+    {
+      "base": "api",
+      "client": "reactive",
+      "operation": "snapshot",
+      "operationId": "snapshot",
+      "routeName": "reactive.snapshot",
+      "method": "GET",
+      "pathTemplate": "/api/v1/reactive/views/{view}/{generation}/snapshot/{chunk}",
+      "requestType": "void",
+      "responseType": "ReactiveEnvelope"
     },
     {
       "base": "api",

@@ -46,6 +46,17 @@ export type SyncV2Transport = "http" | "websocket";
 
 export type SyncV2AccessToken = string | (() => string | undefined | Promise<string | undefined>);
 
+/** The small WebSocket surface used by the optional direct transport. */
+export type SyncV2WebSocket = {
+  binaryType: string;
+  send: (data: Uint8Array | ArrayBuffer) => void;
+  close: (code?: number, reason?: string) => void;
+  addEventListener: (type: "open" | "message" | "error" | "close", listener: (event: unknown) => void) => void;
+  removeEventListener: (type: "open" | "message" | "error" | "close", listener: (event: unknown) => void) => void;
+};
+
+export type SyncV2WebSocketFactory = (url: string) => SyncV2WebSocket;
+
 export type SyncV2ClientOptions = {
   /** The member/API origin used for the authenticated view attach. */
   readonly apiBaseUrl?: string;
@@ -53,6 +64,8 @@ export type SyncV2ClientOptions = {
   readonly syncBaseUrl?: string;
   readonly fetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   readonly accessToken?: SyncV2AccessToken;
+  /** Optional direct WebSocket constructor. HTTP remains the default. */
+  readonly webSocketFactory?: SyncV2WebSocketFactory;
   /** Bounded server long-poll window. The contract ceiling is 25 seconds. */
   readonly pollWindowMs?: number;
   /** Delay between reconnect attempts after a transport failure. */
@@ -65,7 +78,6 @@ export type SyncV2SubscribeOptions = SyncV2OpenSubscriptionOptions & {
   /** Alias accepted by the public attach contract. */
   readonly database?: string;
   readonly transport?: SyncV2Transport;
-  readonly regionHint?: string;
   readonly signal?: AbortSignal;
   /** Do not start the background HTTP poll loop until `poll` is called. */
   readonly autoStart?: boolean;
@@ -141,17 +153,20 @@ export class TerraScaleSyncV2Client {
   readonly #apiBaseUrl: string;
   readonly #syncBaseUrl: string;
   readonly #accessToken: SyncV2AccessToken | undefined;
+  readonly #webSocketFactory: SyncV2WebSocketFactory | undefined;
   readonly #pollWindowMs: number;
   readonly #reconnectDelayMs: number;
   #online = false;
   #paused = false;
   #region: string | null = null;
+  #correlation = 1n;
 
   public constructor(options: SyncV2ClientOptions = {}) {
     this.#fetch = options.fetch ?? globalThis.fetch?.bind(globalThis);
     this.#apiBaseUrl = normalizeOrigin(options.apiBaseUrl ?? "https://api.terrascale.tech");
     this.#syncBaseUrl = normalizeOrigin(options.syncBaseUrl ?? "https://sync.api.terrascale.tech");
     this.#accessToken = options.accessToken;
+    this.#webSocketFactory = options.webSocketFactory;
     this.#pollWindowMs = boundedDuration(options.pollWindowMs ?? 25_000, "pollWindowMs", 25_000);
     this.#reconnectDelayMs = boundedDuration(options.reconnectDelayMs ?? 250, "reconnectDelayMs", 30_000);
   }
@@ -220,19 +235,12 @@ export class TerraScaleSyncV2Client {
 
   /**
    * Attaches to the canonical shared view and starts bounded HTTP long-polling.
-   * WebSocket is an explicit override and is rejected here until an injected
-   * WebSocket transport is supplied by a future contract revision.
+   * WebSocket is an explicit override. HTTP remains the cacheable default.
    */
   public async subscribe(options: SyncV2SubscribeOptions): Promise<SyncV2LiveSubscription> {
     const transport = options.transport ?? "http";
     if (transport !== "http" && transport !== "websocket") {
       throw new TerraScaleSyncV2ClientError("invalid_state", `unsupported reactive transport '${String(transport)}'`);
-    }
-    if (transport === "websocket") {
-      throw new TerraScaleSyncV2ClientError(
-        "invalid_state",
-        "WebSocket transport is opt-in and requires the direct WebSocket transport; HTTP long-polling is the default",
-      );
     }
     if (this.#fetch === undefined) {
       throw new TerraScaleSyncV2ClientError("transport", "no fetch implementation is available");
@@ -274,6 +282,11 @@ export class TerraScaleSyncV2Client {
       closed: false,
       abortController: new AbortController(),
       freshRequired: false,
+      transport,
+      websocketUrl: attached.websocketUrl,
+      socket: undefined,
+      etag: undefined,
+      etagOffset: undefined,
       loop: undefined,
       reset: initialReset,
     };
@@ -302,8 +315,22 @@ export class TerraScaleSyncV2Client {
       throw error;
     }
 
+    if (transport === "websocket") {
+      try {
+        await this.#openWebSocket(state, options.signal);
+      } catch (error) {
+        state.closed = true;
+        state.abortController.abort();
+        this.#live.delete(options.subscription);
+        this.#subscriptions.delete(options.subscription);
+        opened.subscription.view.setOnline(false);
+        this.setOnline(previousOnline);
+        throw error;
+      }
+    }
+
     const live = this.#publicLiveSubscription(state);
-    if (options.autoStart !== false) state.loop = this.#pollLoop(state, options.signal);
+    if (options.autoStart !== false && transport === "http") state.loop = this.#pollLoop(state, options.signal);
     return live;
   }
 
@@ -441,6 +468,16 @@ export class TerraScaleSyncV2Client {
     return envelope;
   }
 
+  /** Applies one complete WebSocket MessagePack message.
+   *
+   * The protocol defines one envelope per binary WebSocket message; the
+   * plural name remains useful to transport adapters delivering messages in
+   * a batch callback.
+   */
+  public receiveMany(frame: Uint8Array): readonly SyncV2Envelope[] {
+    return [this.receive(frame)];
+  }
+
   #requireSubscription(subscription: string): SyncV2Subscription {
     const current = this.#subscriptions.get(subscription);
     if (current === undefined) {
@@ -460,7 +497,6 @@ export class TerraScaleSyncV2Client {
   ): Promise<AttachedView> {
     const headers = await this.#headers("application/json", undefined);
     headers.set("Content-Type", "application/json");
-    if (options.regionHint !== undefined) headers.set("X-TerraScale-Region-Hint", options.regionHint);
     const response = await this.#request(
       `${this.#apiBaseUrl}/api/v1/reactive/views`,
       {
@@ -472,7 +508,6 @@ export class TerraScaleSyncV2Client {
           statement: message.query,
           parameters: bytesToBase64(message.parameters),
           checkpoint: message.checkpoint === null ? null : bytesToBase64(message.checkpoint),
-          transport: "http",
         }),
         ...(signal === undefined ? {} : { signal }),
       },
@@ -619,6 +654,8 @@ export class TerraScaleSyncV2Client {
 
   async #reconnect(state: LiveSubscriptionState, signal?: AbortSignal): Promise<void> {
     if (state.closed || this.#fetch === undefined) return;
+    state.socket?.close(1000, "reconnect");
+    state.socket = undefined;
     const current = state.freshRequired ? undefined : state.opened.subscription.view.getCheckpoint();
     const message = state.opened.message;
     const options: SyncV2SubscribeOptions = {
@@ -627,7 +664,7 @@ export class TerraScaleSyncV2Client {
       parameters: new Uint8Array(message.parameters),
       checkpoint: current,
       databaseId: state.databaseId,
-      ...(this.#region === null ? {} : { regionHint: this.#region }),
+      transport: state.transport,
       autoStart: false,
     };
     const linked = linkAbortSignals(state.abortController.signal, signal);
@@ -656,6 +693,7 @@ export class TerraScaleSyncV2Client {
     state.capabilityHeader = attached.capabilityHeader;
     state.logUrl = attached.logUrl;
     state.snapshotUrls = attached.snapshotUrls;
+    state.websocketUrl = attached.websocketUrl;
     if (attached.snapshot !== undefined) {
       installAttachedSnapshot(state.opened.subscription.view, attached.snapshot);
     } else {
@@ -664,16 +702,104 @@ export class TerraScaleSyncV2Client {
         if (bytes !== undefined) this.receive(bytes);
       }
     }
+    if (state.transport === "websocket") await this.#openWebSocket(state, signal);
     state.freshRequired = false;
     state.regionMoved = false;
     this.setOnline(true);
+  }
+
+  async #openWebSocket(state: LiveSubscriptionState, signal?: AbortSignal): Promise<void> {
+    const factory = this.#webSocketFactory ?? (typeof globalThis.WebSocket === "function"
+      ? (url: string) => new globalThis.WebSocket(url) as unknown as SyncV2WebSocket
+      : undefined);
+    if (factory === undefined) {
+      throw new TerraScaleSyncV2ClientError(
+        "transport",
+        "WebSocket transport was requested but no WebSocket implementation is available",
+      );
+    }
+    const url = state.websocketUrl ?? websocketUrl(this.#syncBaseUrl, state.opened.subscription.id, state.generation);
+    const socket = factory(url);
+    if (socket === undefined || socket === null || typeof socket.send !== "function" || typeof socket.close !== "function") {
+      throw new TerraScaleSyncV2ClientError("transport", "the WebSocket factory returned an invalid socket");
+    }
+    socket.binaryType = "arraybuffer";
+    state.socket = socket;
+    await new Promise<void>((resolve, reject) => {
+      let opened = false;
+      let settled = false;
+      const cleanupOpen = () => socket.removeEventListener("open", onOpen);
+      const abort = () => {
+        socket.close(1000, "aborted");
+        if (!settled) {
+          settled = true;
+          reject(signal?.reason ?? state.abortController.signal.reason);
+        }
+      };
+      const onOpen = () => {
+        opened = true;
+        cleanupOpen();
+        if (signal?.aborted || state.abortController.signal.aborted) {
+          abort();
+          return;
+        }
+        try {
+          socket.send(this.encode(state.opened.message, this.#correlation++));
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        } catch (error) {
+          if (!settled) {
+            settled = true;
+            reject(error instanceof TerraScaleSyncV2ClientError ? error : new TerraScaleSyncV2ClientError("transport", "WebSocket subscribe failed", { cause: error }));
+          }
+        }
+      };
+      const onMessage = (event: unknown) => {
+        void (async () => {
+          try {
+            const frame = await socketFrame(event);
+            if (frame === undefined) throw new TerraScaleSyncV2ClientError("protocol_error", "WebSocket data was not binary MessagePack");
+            this.receiveMany(frame);
+          } catch (error) {
+            this.setOnline(false);
+            socket.close(1002, "invalid reactive frame");
+            if (!opened && !settled) {
+              settled = true;
+              reject(error);
+            }
+          }
+        })();
+      };
+      const onError = (event: unknown) => {
+        this.setOnline(false);
+        if (!opened && !settled) {
+          settled = true;
+          reject(new TerraScaleSyncV2ClientError("transport", "WebSocket connection failed", { cause: event }));
+        }
+      };
+      const onClose = () => {
+        this.setOnline(false);
+        if (!opened && !settled) {
+          settled = true;
+          reject(new TerraScaleSyncV2ClientError("transport", "WebSocket closed before it opened"));
+        }
+      };
+      socket.addEventListener("open", onOpen);
+      socket.addEventListener("message", onMessage);
+      socket.addEventListener("error", onError);
+      socket.addEventListener("close", onClose);
+      state.abortController.signal.addEventListener("abort", abort, { once: true });
+      signal?.addEventListener("abort", abort, { once: true });
+    });
   }
 
   #publicLiveSubscription(state: LiveSubscriptionState): SyncV2LiveSubscription {
     return {
       id: state.opened.subscription.id,
       view: state.opened.subscription.view,
-      transport: "http",
+      get transport() { return state.transport; },
       get generation() { return state.generation; },
       get capability() { return state.capability; },
       get logUrl() { return state.logUrl; },
@@ -686,6 +812,8 @@ export class TerraScaleSyncV2Client {
         if (state.closed) return;
         state.closed = true;
         state.abortController.abort();
+        state.socket?.close(1000, "closed");
+        state.socket = undefined;
         this.#live.delete(state.opened.subscription.id);
         this.#subscriptions.delete(state.opened.subscription.id);
         state.opened.subscription.view.setOnline(false);
@@ -765,6 +893,7 @@ type AttachedView = {
   readonly snapshotUrls: readonly string[];
   readonly logUrl: string;
   readonly snapshot: TerrascaleSyncV2MsgpackSnapshot | undefined;
+  readonly websocketUrl: string | undefined;
 };
 
 type LiveSubscriptionState = {
@@ -778,6 +907,11 @@ type LiveSubscriptionState = {
   closed: boolean;
   readonly abortController: AbortController;
   freshRequired: boolean;
+  transport: SyncV2Transport;
+  websocketUrl: string | undefined;
+  socket: SyncV2WebSocket | undefined;
+  etag: string | undefined;
+  etagOffset: bigint | undefined;
   regionMoved?: boolean;
   reset: SyncV2Reset | undefined;
   loop: Promise<void> | undefined;
@@ -911,6 +1045,17 @@ async function resolveToken(token: SyncV2AccessToken | undefined): Promise<strin
   return typeof token === "function" ? await token() : token;
 }
 
+async function socketFrame(event: unknown): Promise<Uint8Array | undefined> {
+  if (!isRecord(event)) return undefined;
+  const data = event.data;
+  if (data instanceof Uint8Array) return new Uint8Array(data);
+  if (data instanceof ArrayBuffer) return new Uint8Array(data.slice(0));
+  if (typeof Blob !== "undefined" && data instanceof Blob) {
+    return new Uint8Array(await data.arrayBuffer());
+  }
+  return undefined;
+}
+
 async function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
   if (milliseconds === 0) return;
   await new Promise<void>((resolve, reject) => {
@@ -1010,6 +1155,10 @@ function decodeAttachedView(value: unknown, syncOrigin: string, subscription: st
   const normalizedCapabilityHeader = typeof capabilityHeader === "string"
     ? capabilityHeader.toLowerCase()
     : "x-terrascale-view-capability";
+  const websocketValue = value.websocketUrl ?? value.websocket_url ?? value.wsUrl ?? value.ws_url;
+  const websocketUrl = websocketValue === undefined
+    ? undefined
+    : canonicalWebSocketUrl(websocketValue, syncOrigin, view, generation);
   const expectedLogPath = canonicalViewPath(view, generation, "log");
   const rawLogUrl = value.logUrl ?? value.log_url ?? value.log;
   const logUrl = rawLogUrl === undefined
@@ -1054,9 +1203,41 @@ function decodeAttachedView(value: unknown, syncOrigin: string, subscription: st
         digest: syncV2ResultDigest([]),
         checkpoint,
       },
+      websocketUrl,
     };
   }
-  return { generation, checkpoint, capability: capabilityValue, capabilityHeader: normalizedCapabilityHeader, snapshotUrls, logUrl, snapshot };
+  return { generation, checkpoint, capability: capabilityValue, capabilityHeader: normalizedCapabilityHeader, snapshotUrls, logUrl, snapshot, websocketUrl };
+}
+
+function canonicalWebSocketUrl(raw: unknown, apiOrigin: string, view: string, generation: bigint): string {
+  if (typeof raw !== "string" || raw.length === 0 || raw.length > 4096) {
+    throw new TerraScaleSyncV2ClientError("protocol_error", "WebSocket URL is outside its bound");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(raw, apiOrigin);
+  } catch (error) {
+    throw new TerraScaleSyncV2ClientError("protocol_error", "WebSocket URL is invalid", { cause: error });
+  }
+  const expectedOrigin = new URL(apiOrigin).origin.replace(/^http/iu, "ws");
+  const expectedPath = canonicalViewPath(view, generation, "websocket");
+  if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
+    throw new TerraScaleSyncV2ClientError("protocol_error", "WebSocket URL must use ws or wss");
+  }
+  if (parsed.origin !== expectedOrigin || parsed.username !== "" || parsed.password !== "" || parsed.hash !== "" || parsed.pathname !== expectedPath) {
+    throw new TerraScaleSyncV2ClientError("protocol_error", "WebSocket URL is not the canonical API URL");
+  }
+  if ([...parsed.searchParams.keys()].length !== 0) {
+    throw new TerraScaleSyncV2ClientError("protocol_error", "WebSocket URL must not carry query parameters");
+  }
+  return parsed.toString();
+}
+
+function websocketUrl(apiOrigin: string, view: string, generation: bigint): string {
+  const parsed = new URL(apiOrigin);
+  parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
+  parsed.pathname = canonicalViewPath(view, generation, "websocket");
+  return parsed.toString();
 }
 
 function canonicalAttachedUrl(raw: unknown, syncOrigin: string, expectedPath: string, kind: "log" | "snapshot"): string {

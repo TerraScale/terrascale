@@ -142,6 +142,7 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
   #correlation = 1n;
   #checkpoint: SyncV2ViewCheckpoint | undefined;
   #forceReset = false;
+  #externalAbortCleanup: (() => void) | undefined;
   /** Latest view cut waiting for the TanStack commit currently in flight. */
   #pendingPublication: TerraScaleTanStackPublication<T> | undefined;
   #publicationRunning = false;
@@ -154,7 +155,11 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
       : options.checkpoint;
     if (options.signal !== undefined) {
       if (options.signal.aborted) this.dispose();
-      else options.signal.addEventListener("abort", () => this.dispose(), { once: true });
+      else {
+        const onAbort = () => this.dispose();
+        options.signal.addEventListener("abort", onAbort, { once: true });
+        this.#externalAbortCleanup = () => options.signal?.removeEventListener("abort", onAbort);
+      }
     }
 
     this.#collectionOptions = Object.freeze({
@@ -188,7 +193,16 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
     this.#forceReset = messageKind === "snapshot" || messageKind === "reset" || messageKind === "authorization_changed";
     try {
       const envelope = this.#options.client.receive(frame);
+      // A route change invalidates the current delivery path. Resume from the
+      // last committed opaque checkpoint on a fresh subscription so a caller
+      // does not have to understand Region routing details.
+      if (envelope.message.kind === "region_route_change") {
+        void this.resubscribe().catch(error => this.#transportFailed(error));
+      }
       return envelope;
+    } catch (error) {
+      this.#transportFailed(error);
+      throw error;
     } finally {
       this.#forceReset = false;
     }
@@ -199,7 +213,21 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
     if (this.#syncParams === undefined) {
       throw new Error("TerraScale TanStack sync: open() requires the collection sync callback");
     }
-    this.#openSession();
+    void this.#openSession().catch(() => undefined);
+  }
+
+  /**
+   * Reopens the public view from the last collection-committed checkpoint.
+   * This is the recovery path for reconnects, Region movement, and transports
+   * that report a closed stream. It never fabricates local durable state.
+   */
+  public async resubscribe(): Promise<void> {
+    this.#assertActive();
+    if (this.#syncParams === undefined) {
+      throw new Error("TerraScale TanStack sync: resubscribe() requires the collection sync callback");
+    }
+    if (this.#session !== undefined) await this.#closeSession(true);
+    await this.#openSession();
   }
 
   /** Encodes a checkpoint acknowledgement for the active view. */
@@ -269,6 +297,8 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
       }
     }
     this.#abort.abort();
+    this.#externalAbortCleanup?.();
+    this.#externalAbortCleanup = undefined;
     this.#removeViewListener?.();
     this.#removeViewListener = undefined;
     this.#session = undefined;
@@ -281,34 +311,58 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
   #start(params: TerraScaleTanStackSyncParams<T, TKey>): () => void {
     this.#assertActive();
     this.#syncParams = params;
-    this.#openSession();
+    void this.#openSession().catch(() => undefined);
     return () => {
       this.dispose();
     };
   }
 
-  #openSession(): void {
+  async #openSession(): Promise<void> {
     if (this.#session !== undefined || this.#disposed) return;
     this.#options.client.setOnline(true);
-    const opened = this.#options.client.openSubscription({
-      subscription: this.#options.subscription,
-      query: this.#options.query,
-      parameters: new Uint8Array(this.#options.parameters ?? new Uint8Array()),
-      ...(this.#checkpoint === undefined ? {} : { checkpoint: this.#checkpoint }),
-    });
+    let opened: ReturnType<TerraScaleSyncV2Client["openSubscription"]>;
+    try {
+      opened = this.#options.client.openSubscription({
+        subscription: this.#options.subscription,
+        query: this.#options.query,
+        parameters: new Uint8Array(this.#options.parameters ?? new Uint8Array()),
+        ...(this.#checkpoint === undefined ? {} : { checkpoint: this.#checkpoint }),
+      });
+    } catch (error) {
+      this.#transportFailed(error);
+      throw error;
+    }
     this.#session = opened.subscription;
     this.#removeViewListener = opened.subscription.view.subscribe(() => this.#publish());
     try {
       const frame = this.#options.client.encode(opened.message, this.#nextCorrelation());
-      const sent = this.#options.transport.send(frame, this.#abort.signal);
-      if (sent !== undefined) {
-        void Promise.resolve(sent)
-          .then(() => { if (!this.#disposed) opened.subscription.view.setOnline(true); })
-          .catch((error: unknown) => this.#transportFailed(error));
-      }
+      await this.#options.transport.send(frame, this.#abort.signal);
+      if (!this.#disposed) opened.subscription.view.setOnline(true);
     } catch (error) {
       this.#transportFailed(error);
+      throw error;
     }
+  }
+
+  async #closeSession(sendUnsubscribe: boolean): Promise<void> {
+    const session = this.#session;
+    if (session === undefined) return;
+    const view = session.view;
+    this.#removeViewListener?.();
+    this.#removeViewListener = undefined;
+    this.#session = undefined;
+    let frame: Uint8Array | undefined;
+    try {
+      if (sendUnsubscribe && this.#options.client.getSnapshot().online) {
+        frame = this.#options.client.encode({ kind: "unsubscribe", subscription: session.id }, this.#nextCorrelation());
+      }
+      this.#options.client.closeSubscription(session.id);
+      if (frame !== undefined) await this.#options.transport.send(frame, this.#abort.signal);
+    } catch {
+      // Closing local ownership is sufficient when the transport has already
+      // gone away; server session retention handles the eventual cleanup.
+    }
+    view.setOnline(false);
   }
 
   #publish(): void {

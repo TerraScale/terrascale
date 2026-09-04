@@ -83,7 +83,7 @@ type Listener = () => void;
 /** Framework-neutral query observer used by useQuery and SSR-safe tests. */
 export class ReactiveQueryObserver<TValue> {
   readonly #source: ReactiveQuerySource<TValue>;
-  readonly #enabled: boolean;
+  #enabled: boolean;
   readonly #listeners = new Set<Listener>();
   readonly #serverSnapshot: ReactiveQueryState<TValue>;
   #state: ReactiveQueryState<TValue>;
@@ -110,6 +110,23 @@ export class ReactiveQueryObserver<TValue> {
 
   public getSnapshot = (): ReactiveQueryState<TValue> => this.#state;
   public getServerSnapshot = (): ReactiveQueryState<TValue> => this.#serverSnapshot;
+
+  /**
+   * Updates the small, hook-facing option set without replacing the external
+   * store. React may render a hook with a new options object while preserving
+   * the observer; an `enabled` transition must therefore start/stop delivery
+   * at the subscription boundary instead of leaving a stale subscription.
+   */
+  public updateOptions(options: ReactiveQueryOptions<TValue> = {}): void {
+    const enabled = options.enabled ?? true;
+    const wasEnabled = this.#enabled;
+    this.#enabled = enabled;
+    if (!enabled && wasEnabled) {
+      this.dispose();
+    } else if (enabled && !wasEnabled && this.#listeners.size > 0) {
+      this.start();
+    }
+  }
 
   public subscribe = (listener: Listener): (() => void) => {
     this.#listeners.add(listener);
@@ -319,7 +336,7 @@ export type ReactiveMutationState<TValue> = {
 };
 
 export class ReactiveMutationObserver<TValue, TVariables> {
-  readonly #options: ReactiveMutationOptions<TValue, TVariables>;
+  #options: ReactiveMutationOptions<TValue, TVariables>;
   readonly #listeners = new Set<Listener>();
   #state: ReactiveMutationState<TValue> = freezeMutationState({ status: "idle", data: undefined as TValue | undefined, error: undefined, idempotencyKey: undefined, isPending: false });
   #abort: AbortController | undefined;
@@ -333,6 +350,14 @@ export class ReactiveMutationObserver<TValue, TVariables> {
     this.#options = options;
   }
 
+  /** Keep callbacks current when a component re-renders without replacing the
+   * observer (the normal `useMutation` lifecycle). A mutation already running
+   * captures the callbacks it started with, so a render cannot redirect an
+   * in-flight durable request. */
+  public updateOptions(options: ReactiveMutationOptions<TValue, TVariables>): void {
+    this.#options = options;
+  }
+
   public getSnapshot = (): ReactiveMutationState<TValue> => this.#state;
   public subscribe = (listener: Listener): (() => void) => {
     this.#listeners.add(listener);
@@ -342,10 +367,11 @@ export class ReactiveMutationObserver<TValue, TVariables> {
   public async mutateAsync(variables: TVariables): Promise<TValue> {
     if (this.#disposed) throw new ReactiveMutationError("cancelled", "the mutation observer has been disposed");
     if (this.#state.isPending) throw new ReactiveMutationError("mutation_in_flight", "only one mutation may be in flight per hook");
+    const options = this.#options;
     const idempotencyKey = normalizeIdempotencyKey(
-      typeof this.#options.idempotencyKey === "function"
-        ? this.#options.idempotencyKey(variables)
-        : this.#options.idempotencyKey ?? createIdempotencyKey(),
+      typeof options.idempotencyKey === "function"
+        ? options.idempotencyKey(variables)
+        : options.idempotencyKey ?? createIdempotencyKey(),
     );
     const abort = new AbortController();
     const run = ++this.#run;
@@ -355,9 +381,9 @@ export class ReactiveMutationObserver<TValue, TVariables> {
     this.#activeKey = idempotencyKey;
     this.#setState({ status: "pending", data: this.#state.data, error: undefined, idempotencyKey, isPending: true });
     try {
-      this.#rollback = toRollback(await this.#options.onMutate?.(variables, context));
+      this.#rollback = toRollback(await options.onMutate?.(variables, context));
       if (abort.signal.aborted || run !== this.#activeRun) throw cancelledError();
-      const result = await this.#options.mutationFn(variables, context);
+      const result = await options.mutationFn(variables, context);
       if (abort.signal.aborted) throw cancelledError();
       const value = unwrapMutationResult(result);
       this.#rollback = undefined;
@@ -457,8 +483,8 @@ function freezeMutationState<TValue>(state: ReactiveMutationState<TValue>): Reac
 function toCleanup(disposer: ReactiveDisposer | void): (() => void) | undefined {
   if (disposer === undefined) return undefined;
   if (typeof disposer === "function") return disposer;
-  if ("dispose" in disposer) return disposer.dispose;
-  return disposer.unsubscribe;
+  if ("dispose" in disposer) return () => disposer.dispose();
+  return () => disposer.unsubscribe();
 }
 
 function disposeSubscription(disposer: ReactiveDisposer | void): void {

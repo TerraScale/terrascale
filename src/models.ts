@@ -1,29 +1,20 @@
 import type { TerraScaleRegion, TerraScaleRegionCode } from "./regions.js";
-import type {
-  AuditEventId,
-  BackupId,
-  BackupPolicyId,
-  DatabaseId,
-  InvitationId,
-  NotificationId,
-  OrganizationId,
-  ProjectId,
-  RestoreId,
-  UserId,
-} from "./ids.js";
 
-export type {
-  AuditEventId,
-  BackupId,
-  BackupPolicyId,
-  DatabaseId,
-  InvitationId,
-  NotificationId,
-  OrganizationId,
-  ProjectId,
-  RestoreId,
-  UserId,
-} from "./ids.js";
+/** Structural brands remain available for generated schema IDs. */
+declare const terraScaleBrand: unique symbol;
+export type Brand<TValue, TBrand extends string> = TValue & { readonly [terraScaleBrand]?: TBrand };
+
+/** Public API resource identifiers are opaque strings, not ULID wrappers. */
+export type OrganizationId = string;
+export type ProjectId = string;
+export type DatabaseId = string;
+export type UserId = string;
+export type InvitationId = string;
+export type BackupId = string;
+export type BackupPolicyId = string;
+export type NotificationId = string;
+export type AuditEventId = string;
+export type RestoreId = string;
 
 export type Timestamp = string;
 export type JsonPrimitive = boolean | null | number | string;

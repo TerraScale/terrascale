@@ -27,12 +27,13 @@ test("workflow delegates host-mode verification to the Deploy CLI", async () => 
   assert.doesNotMatch(workflow, /(?:container:|\bimage:|docker|podman|REGISTRY_|DEPLOY_CLI_READ_TOKEN)/iu);
   assert.match(workflow, /runs-on: terrascale-builder/u);
   assert.match(workflow, /actions\/checkout@d23441a48e516b6c34aea4fa41551a30e30af803/u);
-  assert.match(workflow, /releases\/latest/u);
-  assert.match(workflow, /releases\/tag\/v0\\\.0\\\.0-dev\\\.\(\[0-9a-f\]\{40\}\|\[0-9a-f\]\{64\}\)\$/u);
-  assert.match(workflow, /release="https:\/\/git\.terrascale\.tech\/TerraScale\/ts-deploy\/releases\/download\/\$\{tag\}"/u);
-  assert.match(workflow, /\$\{release\}\/SHA256SUMS[^\r\n]*\$\{release\}\/\$\{asset\}/u);
-  assert.match(workflow, /sha256sum -c -/u);
-  assert.doesNotMatch(workflow, /releases\/download\/latest(?:[\/'"`\s]|$)/u);
+  assert.match(workflow, /TS_DEPLOY_VERSION: \$\{\{ vars\.TS_DEPLOY_VERSION \}\}/u);
+  assert.match(workflow, /case "\$\(uname -m\)" in[\s\S]*aarch64\|arm64\) asset=ts-deploy-linux-arm64[\s\S]*x86_64\|amd64\) asset=ts-deploy-linux-amd64/u);
+  assert.match(workflow, /release="\$\{TS_DEPLOY_VERSION:-latest\}"/u);
+  assert.match(workflow, /case "\$\{release\}" in[\s\S]*latest\|v\[0-9\]\*\.\[0-9\]\*\.\[0-9\]\*\)/u);
+  assert.match(workflow, /fj release view "\$\{release\}" --repo TerraScale\/ts-deploy/u);
+  assert.match(workflow, /fj release asset download "\$\{release\}" "\$\{asset\}" --repo TerraScale\/ts-deploy --output ts-deploy/u);
+  assert.match(workflow, /chmod \+x ts-deploy/u);
   assert.match(workflow, /\.\/ts-deploy ci --repo ts-typescript/u);
 });
 
@@ -58,6 +59,7 @@ test("release E2E configuration guard fails closed before skip-capable tests", a
 test("a clean SDK-only checkout runs fixture tests and installs a usable npm pack", async () => {
   const workspace = await mkdtemp(path.join(tmpdir(), "terrascale-sdk-release-package-"));
   const checkout = path.join(workspace, "sdk");
+  const producerContracts = path.join(workspace, "terrabase", "contracts");
   const packages = path.join(workspace, "packages");
   const consumer = path.join(workspace, "consumer");
 
@@ -66,12 +68,15 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
       recursive: true,
       filter: (source) => ![".git", "node_modules", "dist"].includes(path.basename(source)),
     });
+    await mkdir(path.dirname(producerContracts), { recursive: true });
+    await cp(path.resolve(repositoryRoot, "../terrabase/contracts"), producerContracts, { recursive: true });
     await mkdir(packages);
     await mkdir(consumer);
+    const checkoutEnvironment = { ...process.env, CONTRACT_SOURCE: "../terrabase/contracts" };
     await run("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: checkout });
     await run("npm", ["run", "build"], { cwd: checkout });
-    await run("npx", ["vitest", "run", "src/public-schema-parity.test.ts"], { cwd: checkout });
-    await run("node", ["scripts/generate-client-route-manifest.ts", "--check"], { cwd: checkout });
+    await run("npx", ["vitest", "run", "src/public-schema-parity.test.ts"], { cwd: checkout, env: checkoutEnvironment });
+    await run("node", ["scripts/generate-client-route-manifest.ts", "--check"], { cwd: checkout, env: checkoutEnvironment });
     const packed = await run("npm", ["pack", "--pack-destination", packages], { cwd: checkout });
     const tarball = path.join(packages, packed.stdout.trim().split("\n").at(-1)!);
     const listing = await run("tar", ["-tf", tarball]);

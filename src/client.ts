@@ -9,6 +9,7 @@ import {
 } from "./regions.js";
 import { err, type TerraScaleFailure, type TerraScaleResult, type TerraScaleSuccess } from "./result.js";
 import { TenantsClient } from "./tenants.js";
+import { TerraScaleSyncV2Client } from "./sync/v2/client.js";
 
 const apiRoot = "/api/v1";
 
@@ -42,8 +43,8 @@ export class TerraScaleClient {
   readonly documents: DocumentsClient;
   /** Read-only parameterized SQL against a named database. */
   readonly sql: SqlClient;
-  /** The reactive producer is not yet published on the canonical E-5 route. */
-  readonly reactive: ReactiveClient;
+  /** The canonical reactive view client backed by the sync v2 state machine. */
+  readonly reactive: TerraScaleSyncV2Client;
 
   constructor(config: TerraScaleRuntimeConfig) {
     this.#http = new TerraScaleHttp(config);
@@ -60,7 +61,11 @@ export class TerraScaleClient {
     this.notifications = new NotificationsClient(this.#http);
     this.documents = new DocumentsClient(this.#http);
     this.sql = new SqlClient(this.#http);
-    this.reactive = new ReactiveClient();
+    this.reactive = new TerraScaleSyncV2Client({
+      apiBaseUrl: config.apiBaseUrl,
+      fetch: config.fetch,
+      accessToken: config.accessToken,
+    });
 
     // Keep these additional public surfaces out of the ordinary client route
     // enumeration. Their operation families have their own named manifests
@@ -357,33 +362,6 @@ export class SqlClient {
       },
       signal,
     });
-  }
-}
-
-/** Explicitly identifies the unpublished direct reactive producer. */
-export class ReactiveContractGapError extends Error {
-  readonly code = "contract_gap" as const;
-  readonly operation: string;
-
-  constructor(operation = "reactive.subscribe") {
-    super(`The published reactive contract is missing ${operation}.`);
-    this.name = "ReactiveContractGapError";
-    this.operation = operation;
-  }
-}
-
-export type ReactiveSubscribeOptions = {
-  readonly database?: string;
-  readonly collection?: string;
-  readonly query?: string;
-  readonly parameters?: SqlParameters;
-  readonly signal?: AbortSignal;
-};
-
-/** Fail-closed placeholder until the canonical E-5 producer is published. */
-export class ReactiveClient {
-  subscribe(_options?: ReactiveSubscribeOptions): Promise<never> {
-    return Promise.reject(new ReactiveContractGapError());
   }
 }
 

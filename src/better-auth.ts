@@ -45,6 +45,13 @@ type BetterAuthPageInput = BetterAuthOperationInput & {
   } | undefined;
 };
 
+/** A named schema/index operation owned by the Database API. */
+export type BetterAuthIndexInput = {
+  readonly model: string;
+  readonly fields: readonly string[];
+  readonly unique?: boolean | undefined;
+};
+
 type BetterAuthMutationInput = {
   readonly model: string;
   /** The operation implementation reuses this for a safe retry/replay. */
@@ -100,6 +107,20 @@ export type BetterAuthDatabaseOperations = {
     readonly increment: Record<string, number>;
     readonly set?: Record<string, unknown> | undefined;
   }) => Promise<TerraScaleResult<T | null>>;
+  /**
+   * Ensure an auth index exists. This is optional while the producer's
+   * generated contract is being rolled out; invoking the adapter operation
+   * without it fails with `contract_gap` rather than falling back to SQLite.
+   */
+  readonly index?: ((input: BetterAuthIndexInput & BetterAuthMutationInput) => Promise<TerraScaleResult<void>>) | undefined;
+  /** Compatibility spelling used by some generated contract revisions. */
+  readonly ensureIndex?:
+    | ((input: BetterAuthIndexInput & BetterAuthMutationInput) => Promise<TerraScaleResult<void>>)
+    | undefined;
+  /** Compatibility spelling used by some generated contract revisions. */
+  readonly createIndex?:
+    | ((input: BetterAuthIndexInput & BetterAuthMutationInput) => Promise<TerraScaleResult<void>>)
+    | undefined;
   readonly transaction: <T>(
     callback: (operations: Omit<BetterAuthDatabaseOperations, "transaction">) => Promise<T>,
   ) => Promise<T>;
@@ -120,6 +141,10 @@ export type BetterAuthAdapterOptions = {
   readonly maxTransactionOperations?: number | undefined;
   /** Supplies stable keys for an outer retry; defaults to a per-call UUID. */
   readonly idempotencyKeyFactory?: (() => string) | undefined;
+  /** Number of additional attempts for documented transient mutations. */
+  readonly maxRetryAttempts?: number | undefined;
+  /** Delay before a retry; Retry-After from the producer takes precedence. */
+  readonly retryDelayMs?: number | undefined;
 };
 
 export type BetterAuthDatabaseAdapter = {
@@ -177,6 +202,8 @@ export type BetterAuthDatabaseAdapter = {
     readonly increment: Record<string, number>;
     readonly set?: Record<string, unknown> | undefined;
   }) => Promise<T | null>;
+  /** Explicit named index operation; never implemented with local storage. */
+  readonly index: (input: BetterAuthIndexInput) => Promise<void>;
   readonly transaction: <T>(callback: (adapter: BetterAuthTransactionAdapter) => Promise<T>) => Promise<T>;
   readonly createSchema?: ((input: {
     readonly tables: unknown;
@@ -204,10 +231,21 @@ type TransactionBudget = {
   used: number;
 };
 
+/**
+ * A transaction can be replayed by the producer after an uncertain commit.
+ * Keep the generated keys by operation ordinal so replaying the callback does
+ * not turn one logical mutation into several idempotency identities.
+ */
+type MutationKeyScope = {
+  readonly keys: string[];
+  cursor: number;
+};
+
 function createAdapter(
   operations: BetterAuthDatabaseOperations,
   options: BetterAuthAdapterOptions,
   transactionBudget?: TransactionBudget,
+  keyScope?: MutationKeyScope,
 ): BetterAuthDatabaseAdapter {
   validateOperations(operations, transactionBudget === undefined);
   const defaultPageSize = options.defaultPageSize ?? 100;
@@ -222,12 +260,68 @@ function createAdapter(
   ) {
     throw new TypeError("maxTransactionOperations must be an integer between 1 and 1000.");
   }
+  const maxRetryAttempts = options.maxRetryAttempts ?? 0;
+  if (!Number.isSafeInteger(maxRetryAttempts) || maxRetryAttempts < 0 || maxRetryAttempts > 8) {
+    throw new TypeError("maxRetryAttempts must be an integer between 0 and 8.");
+  }
+  const retryDelayMs = options.retryDelayMs ?? 250;
+  if (!Number.isFinite(retryDelayMs) || retryDelayMs < 0 || retryDelayMs > 30_000) {
+    throw new TypeError("retryDelayMs must be a finite number between 0 and 30000.");
+  }
 
   const id = options.id ?? "terrascale-database-api";
   if (id.trim().length === 0) throw new TypeError("The Better Auth adapter id cannot be empty.");
   const key = options.idempotencyKeyFactory ?? (() => randomUUID());
   const nextKey = (): string => {
-    const value = key();
+    if (keyScope !== undefined) {
+      const ordinal = keyScope.cursor++;
+      const cached = keyScope.keys[ordinal];
+      if (cached !== undefined) return cached;
+      const generated = validateIdempotencyKey(key());
+      keyScope.keys.push(generated);
+      return generated;
+    }
+    return validateIdempotencyKey(key());
+  };
+
+  const invokeRead = async <T>(operation: () => Promise<TerraScaleResult<T>>): Promise<T> =>
+    unwrap(await operation());
+
+  const invokeMutation = async <T>(
+    operation: () => Promise<TerraScaleResult<T>>,
+    idempotencyKey: string,
+  ): Promise<T> => {
+    let attempt = 0;
+    while (true) {
+      let result: TerraScaleResult<T>;
+      try {
+        result = await operation();
+      } catch (error) {
+        if (!isRetryableThrownError(error, attempt, maxRetryAttempts)) throw error;
+        await delayForRetry(retryDelayMs, undefined);
+        attempt += 1;
+        continue;
+      }
+      if (!isRetryableResult(result, attempt, maxRetryAttempts, idempotencyKey)) {
+        return unwrap(result);
+      }
+      await delayForRetry(retryDelay(result, retryDelayMs, attempt), undefined);
+      attempt += 1;
+    }
+  };
+
+  const invokeMutationVoid = async (
+    operation: () => Promise<TerraScaleResult<void>>,
+    idempotencyKey: string,
+  ): Promise<void> => {
+    await invokeMutation(operation, idempotencyKey);
+  };
+
+  const indexOperation = operations.index ?? operations.ensureIndex ?? operations.createIndex;
+
+  /* Keep validation in one place so a malformed factory fails before a
+   * producer call and can never emit a credential-like key. */
+  function validateIdempotencyKey(value: unknown): string {
     if (
       typeof value !== "string" ||
       value.trim().length === 0 ||
@@ -236,8 +330,8 @@ function createAdapter(
     ) {
       throw new TypeError("Better Auth idempotency keys must be 1-128 printable characters.");
     }
-    return value;
-  };
+    return value.trim();
+  }
 
   const adapter: BetterAuthDatabaseAdapter = {
     id,
@@ -251,14 +345,16 @@ function createAdapter(
       requireModel(input.model);
       const data = { ...input.data } as BetterAuthRecord;
       if (input.forceAllowId !== true) delete data.id;
-      return unwrap(
-        await operations.insertUnique({
+      const idempotencyKey = nextKey();
+      return (await invokeMutation(
+        () => operations.insertUnique({
           model: input.model,
           data,
           ...(input.select === undefined ? {} : { select: input.select }),
-          idempotencyKey: nextKey(),
+          idempotencyKey,
         }),
-      ) as R;
+        idempotencyKey,
+      )) as R;
     },
     async findOne<T>(input: {
       readonly model: string;
@@ -268,14 +364,12 @@ function createAdapter(
     }) {
       consumeTransactionBudget(transactionBudget);
       requireModel(input.model);
-      return unwrap(
-        await operations.findOne({
+      return (await invokeRead(() => operations.findOne({
           model: input.model,
           where: input.where,
           ...(input.select === undefined ? {} : { select: input.select }),
           ...(input.join === undefined ? {} : { join: boundedJoin(input.join, defaultPageSize) }),
-        }),
-      ) as T | null;
+        }))) as T | null;
     },
     async findMany<T>(input: {
       readonly model: string;
@@ -288,8 +382,7 @@ function createAdapter(
     }) {
       consumeTransactionBudget(transactionBudget);
       requireModel(input.model);
-      return [...unwrap(
-        await operations.findPage({
+      return [...(await invokeRead(() => operations.findPage({
           model: input.model,
           where: input.where ?? [],
           limit: boundedPageSize(input.limit, defaultPageSize),
@@ -297,8 +390,7 @@ function createAdapter(
           ...(input.sortBy === undefined ? {} : { sortBy: input.sortBy }),
           ...(input.offset === undefined ? {} : { offset: boundedOffset(input.offset) }),
           ...(input.join === undefined ? {} : { join: boundedJoin(input.join, defaultPageSize) }),
-        }),
-      )] as T[];
+        })))] as T[];
     },
     async count(input: {
       readonly model: string;
@@ -306,7 +398,7 @@ function createAdapter(
     }) {
       consumeTransactionBudget(transactionBudget);
       requireModel(input.model);
-      return unwrap(await operations.count({ model: input.model, where: input.where ?? [] }));
+      return invokeRead(() => operations.count({ model: input.model, where: input.where ?? [] }));
     },
     async update<T>(input: {
       readonly model: string;
@@ -315,14 +407,16 @@ function createAdapter(
     }) {
       consumeTransactionBudget(transactionBudget);
       requireModel(input.model);
-      return unwrap(
-        await operations.compareAndSwap({
+      const idempotencyKey = nextKey();
+      return (await invokeMutation(
+        () => operations.compareAndSwap({
           model: input.model,
           where: input.where,
           update: input.update,
-          idempotencyKey: nextKey(),
+          idempotencyKey,
         }),
-      ) as T | null;
+        idempotencyKey,
+      )) as T | null;
     },
     async updateMany(input: {
       readonly model: string;
@@ -331,13 +425,15 @@ function createAdapter(
     }) {
       consumeTransactionBudget(transactionBudget);
       requireModel(input.model);
-      return unwrap(
-        await operations.updateMany({
+      const idempotencyKey = nextKey();
+      return invokeMutation(
+        () => operations.updateMany({
           model: input.model,
           where: input.where,
           update: input.update,
-          idempotencyKey: nextKey(),
+          idempotencyKey,
         }),
+        idempotencyKey,
       );
     },
     async delete(input: {
@@ -346,8 +442,10 @@ function createAdapter(
     }) {
       consumeTransactionBudget(transactionBudget);
       requireModel(input.model);
-      unwrap(
-        await operations.delete({ model: input.model, where: input.where, idempotencyKey: nextKey() }),
+      const idempotencyKey = nextKey();
+      await invokeMutationVoid(
+        () => operations.delete({ model: input.model, where: input.where, idempotencyKey }),
+        idempotencyKey,
       );
     },
     async deleteMany(input: {
@@ -356,12 +454,14 @@ function createAdapter(
     }) {
       consumeTransactionBudget(transactionBudget);
       requireModel(input.model);
-      return unwrap(
-        await operations.deleteMany({
+      const idempotencyKey = nextKey();
+      return invokeMutation(
+        () => operations.deleteMany({
           model: input.model,
           where: input.where,
-          idempotencyKey: nextKey(),
+          idempotencyKey,
         }),
+        idempotencyKey,
       );
     },
     async consumeOne<T>(input: {
@@ -370,13 +470,15 @@ function createAdapter(
     }) {
       consumeTransactionBudget(transactionBudget);
       requireModel(input.model);
-      return unwrap(
-        await operations.consumeOne({
+      const idempotencyKey = nextKey();
+      return (await invokeMutation(
+        () => operations.consumeOne({
           model: input.model,
           where: input.where,
-          idempotencyKey: nextKey(),
+          idempotencyKey,
         }),
-      ) as T | null;
+        idempotencyKey,
+      )) as T | null;
     },
     async incrementOne<T>(input: {
       readonly model: string;
@@ -386,15 +488,36 @@ function createAdapter(
     }) {
       consumeTransactionBudget(transactionBudget);
       requireModel(input.model);
-      return unwrap(
-        await operations.incrementOne({
+      const idempotencyKey = nextKey();
+      return (await invokeMutation(
+        () => operations.incrementOne({
           model: input.model,
           where: input.where,
           increment: input.increment,
           ...(input.set === undefined ? {} : { set: input.set }),
-          idempotencyKey: nextKey(),
+          idempotencyKey,
         }),
-      ) as T | null;
+        idempotencyKey,
+      )) as T | null;
+    },
+    async index(input: BetterAuthIndexInput): Promise<void> {
+      requireModel(input.model);
+      if (indexOperation === undefined) {
+        throw new BetterAuthAdapterError(
+          "The published Database API contract does not expose the Better Auth index operation.",
+          "contract_gap",
+          { missingOperations: ["index"] },
+        );
+      }
+      const fields = [...input.fields];
+      if (fields.length === 0 || fields.length > 64 || fields.some(field => typeof field !== "string" || field.trim().length === 0)) {
+        throw new TypeError("Better Auth index fields must contain between 1 and 64 nonblank names.");
+      }
+      const idempotencyKey = nextKey();
+      await invokeMutationVoid(
+        () => indexOperation({ model: input.model, fields, ...(input.unique === undefined ? {} : { unique: input.unique }), idempotencyKey }),
+        idempotencyKey,
+      );
     },
     async transaction(callback) {
       if (typeof callback !== "function") {
@@ -404,12 +527,14 @@ function createAdapter(
         limit: maxTransactionOperations,
         used: 0,
       };
+      const mutationKeys = keyScope ?? { keys: [], cursor: 0 };
       return operations.transaction(async (transactionOperations) =>
         callback(
           createAdapter(
             transactionOperations as BetterAuthDatabaseOperations,
             options,
             budget,
+            mutationKeys,
           ) as BetterAuthTransactionAdapter,
         ),
       );
@@ -501,6 +626,42 @@ function consumeTransactionBudget(budget: TransactionBudget | undefined): void {
       { limit: budget.limit },
     );
   }
+}
+
+const betterAuthRetryableStatuses = new Set([408, 429, 500, 502, 503, 504]);
+
+function isRetryableThrownError(error: unknown, attempt: number, maxAttempts: number): boolean {
+  if (attempt >= maxAttempts || !error || typeof error !== "object") return false;
+  const status = (error as { readonly status?: unknown }).status;
+  return typeof status === "number" && betterAuthRetryableStatuses.has(status);
+}
+
+function isRetryableResult<T>(
+  result: TerraScaleResult<T>,
+  attempt: number,
+  maxAttempts: number,
+  idempotencyKey: string,
+): boolean {
+  if (attempt >= maxAttempts || idempotencyKey.length === 0 || result.ok) return false;
+  return result.status !== undefined && betterAuthRetryableStatuses.has(result.status);
+}
+
+function retryDelay<T>(result: TerraScaleResult<T>, baseDelayMs: number, attempt: number): number {
+  if (!result.ok) {
+    const retryAfter = result.headers?.get("retry-after");
+    if (retryAfter !== null && retryAfter !== undefined) {
+      const seconds = Number(retryAfter);
+      if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1_000, 30_000);
+      const date = Date.parse(retryAfter);
+      if (Number.isFinite(date)) return Math.min(Math.max(0, date - Date.now()), 30_000);
+    }
+  }
+  return Math.min(baseDelayMs * (2 ** attempt), 30_000);
+}
+
+function delayForRetry(milliseconds: number, _signal?: AbortSignal): Promise<void> {
+  if (milliseconds <= 0) return Promise.resolve();
+  return new Promise(resolve => globalThis.setTimeout(resolve, milliseconds));
 }
 
 function boundedPageSize(value: number | undefined, fallback: number): number {

@@ -1,7 +1,7 @@
 {
   "contractVersion": "v1",
   "descriptorVersion": 2,
-  "routeCount": 35,
+  "routeCount": 36,
   "routes": [
     {
       "base": "api",
@@ -3454,12 +3454,16 @@
             "name": "generation",
             "required": true,
             "schema": {
-              "type": "string"
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
             }
           },
           "required": true,
           "schema": {
-            "type": "string"
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         {
@@ -3501,10 +3505,391 @@
       "request": {
         "kind": "void"
       },
-      "responses": [],
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactiveEnvelope",
+                  "siblings": {
+                    "resolved": {
+                      "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
+                      "items": false,
+                      "maxItems": 7,
+                      "minItems": 7,
+                      "prefixItems": [
+                        {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "oneOf": [
+                            {
+                              "type": "array"
+                            },
+                            {
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      ],
+                      "type": "array"
+                    },
+                    "siblings": {
+                      "resolved": {
+                        "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
+                        "items": false,
+                        "maxItems": 7,
+                        "minItems": 7,
+                        "prefixItems": [
+                          {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "oneOf": [
+                              {
+                                "type": "array"
+                              },
+                              {
+                                "type": "object"
+                              }
+                            ]
+                          }
+                        ],
+                        "type": "array"
+                      }
+                    }
+                  },
+                  "resolved": {
+                    "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
+                    "items": false,
+                    "maxItems": 7,
+                    "minItems": 7,
+                    "prefixItems": [
+                      {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      {
+                        "oneOf": [
+                          {
+                            "type": "array"
+                          },
+                          {
+                            "type": "object"
+                          }
+                        ]
+                      }
+                    ],
+                    "type": "array"
+                  }
+                }
+              }
+            },
+            "description": "Immutable view delta"
+          },
+          "status": "200"
+        }
+      ],
       "routeName": "reactive.viewLog",
       "sdkRequestType": "void",
-      "sdkResponseType": "never"
+      "sdkResponseType": "ReactiveEnvelope"
+    },
+    {
+      "base": "api",
+      "client": "reactive",
+      "method": "GET",
+      "operation": "snapshot",
+      "operationId": "snapshot",
+      "parameters": [
+        {
+          "in": "path",
+          "name": "chunk",
+          "parameter": {
+            "in": "path",
+            "name": "chunk",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "generation",
+          "parameter": {
+            "in": "path",
+            "name": "generation",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        {
+          "in": "path",
+          "name": "view",
+          "parameter": {
+            "in": "path",
+            "name": "view",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "in": "query",
+          "name": "cut",
+          "parameter": {
+            "in": "query",
+            "name": "cut",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": false,
+          "schema": {
+            "format": "int64",
+            "type": "integer"
+          }
+        }
+      ],
+      "pathTemplate": "/api/v1/reactive/views/{view}/{generation}/snapshot/{chunk}",
+      "request": {
+        "kind": "void"
+      },
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactiveEnvelope",
+                  "siblings": {
+                    "resolved": {
+                      "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
+                      "items": false,
+                      "maxItems": 7,
+                      "minItems": 7,
+                      "prefixItems": [
+                        {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "oneOf": [
+                            {
+                              "type": "array"
+                            },
+                            {
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      ],
+                      "type": "array"
+                    },
+                    "siblings": {
+                      "resolved": {
+                        "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
+                        "items": false,
+                        "maxItems": 7,
+                        "minItems": 7,
+                        "prefixItems": [
+                          {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "oneOf": [
+                              {
+                                "type": "array"
+                              },
+                              {
+                                "type": "object"
+                              }
+                            ]
+                          }
+                        ],
+                        "type": "array"
+                      }
+                    }
+                  },
+                  "resolved": {
+                    "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
+                    "items": false,
+                    "maxItems": 7,
+                    "minItems": 7,
+                    "prefixItems": [
+                      {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      {
+                        "oneOf": [
+                          {
+                            "type": "array"
+                          },
+                          {
+                            "type": "object"
+                          }
+                        ]
+                      }
+                    ],
+                    "type": "array"
+                  }
+                }
+              }
+            },
+            "description": "Immutable view snapshot"
+          },
+          "status": "200"
+        }
+      ],
+      "routeName": "reactive.snapshot",
+      "sdkRequestType": "void",
+      "sdkResponseType": "ReactiveEnvelope"
     },
     {
       "base": "api",
@@ -8368,321 +8753,10 @@
         },
         "required": true
       },
-      "responses": [
-        {
-          "response": {
-            "content": {
-              "application/msgpack": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReactiveFramesResponse",
-                  "siblings": {
-                    "resolved": {
-                      "description": "MessagePack array of indexed sync-v2 envelopes; projected bodies remain opaque canonical JSON bytes.",
-                      "items": {
-                        "$ref": "#/components/schemas/ReactiveEnvelope",
-                        "siblings": {
-                          "resolved": {
-                            "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
-                            "items": false,
-                            "maxItems": 7,
-                            "minItems": 7,
-                            "prefixItems": [
-                              {
-                                "minimum": 0,
-                                "type": "integer"
-                              },
-                              {
-                                "minimum": 0,
-                                "type": "integer"
-                              },
-                              {
-                                "minimum": 0,
-                                "type": "integer"
-                              },
-                              {
-                                "minimum": 0,
-                                "type": "integer"
-                              },
-                              {
-                                "minimum": 0,
-                                "type": "integer"
-                              },
-                              {
-                                "minimum": 0,
-                                "type": "integer"
-                              },
-                              {
-                                "oneOf": [
-                                  {
-                                    "type": "array"
-                                  },
-                                  {
-                                    "type": "object"
-                                  }
-                                ]
-                              }
-                            ],
-                            "type": "array"
-                          }
-                        },
-                        "resolved": {
-                          "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
-                          "items": false,
-                          "maxItems": 7,
-                          "minItems": 7,
-                          "prefixItems": [
-                            {
-                              "minimum": 0,
-                              "type": "integer"
-                            },
-                            {
-                              "minimum": 0,
-                              "type": "integer"
-                            },
-                            {
-                              "minimum": 0,
-                              "type": "integer"
-                            },
-                            {
-                              "minimum": 0,
-                              "type": "integer"
-                            },
-                            {
-                              "minimum": 0,
-                              "type": "integer"
-                            },
-                            {
-                              "minimum": 0,
-                              "type": "integer"
-                            },
-                            {
-                              "oneOf": [
-                                {
-                                  "type": "array"
-                                },
-                                {
-                                  "type": "object"
-                                }
-                              ]
-                            }
-                          ],
-                          "type": "array"
-                        }
-                      },
-                      "type": "array"
-                    },
-                    "siblings": {
-                      "resolved": {
-                        "description": "MessagePack array of indexed sync-v2 envelopes; projected bodies remain opaque canonical JSON bytes.",
-                        "items": {
-                          "$ref": "#/components/schemas/ReactiveEnvelope",
-                          "siblings": {
-                            "resolved": {
-                              "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
-                              "items": false,
-                              "maxItems": 7,
-                              "minItems": 7,
-                              "prefixItems": [
-                                {
-                                  "minimum": 0,
-                                  "type": "integer"
-                                },
-                                {
-                                  "minimum": 0,
-                                  "type": "integer"
-                                },
-                                {
-                                  "minimum": 0,
-                                  "type": "integer"
-                                },
-                                {
-                                  "minimum": 0,
-                                  "type": "integer"
-                                },
-                                {
-                                  "minimum": 0,
-                                  "type": "integer"
-                                },
-                                {
-                                  "minimum": 0,
-                                  "type": "integer"
-                                },
-                                {
-                                  "oneOf": [
-                                    {
-                                      "type": "array"
-                                    },
-                                    {
-                                      "type": "object"
-                                    }
-                                  ]
-                                }
-                              ],
-                              "type": "array"
-                            },
-                            "siblings": {
-                              "resolved": {
-                                "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
-                                "items": false,
-                                "maxItems": 7,
-                                "minItems": 7,
-                                "prefixItems": [
-                                  {
-                                    "minimum": 0,
-                                    "type": "integer"
-                                  },
-                                  {
-                                    "minimum": 0,
-                                    "type": "integer"
-                                  },
-                                  {
-                                    "minimum": 0,
-                                    "type": "integer"
-                                  },
-                                  {
-                                    "minimum": 0,
-                                    "type": "integer"
-                                  },
-                                  {
-                                    "minimum": 0,
-                                    "type": "integer"
-                                  },
-                                  {
-                                    "minimum": 0,
-                                    "type": "integer"
-                                  },
-                                  {
-                                    "oneOf": [
-                                      {
-                                        "type": "array"
-                                      },
-                                      {
-                                        "type": "object"
-                                      }
-                                    ]
-                                  }
-                                ],
-                                "type": "array"
-                              }
-                            }
-                          },
-                          "resolved": {
-                            "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
-                            "items": false,
-                            "maxItems": 7,
-                            "minItems": 7,
-                            "prefixItems": [
-                              {
-                                "minimum": 0,
-                                "type": "integer"
-                              },
-                              {
-                                "minimum": 0,
-                                "type": "integer"
-                              },
-                              {
-                                "minimum": 0,
-                                "type": "integer"
-                              },
-                              {
-                                "minimum": 0,
-                                "type": "integer"
-                              },
-                              {
-                                "minimum": 0,
-                                "type": "integer"
-                              },
-                              {
-                                "minimum": 0,
-                                "type": "integer"
-                              },
-                              {
-                                "oneOf": [
-                                  {
-                                    "type": "array"
-                                  },
-                                  {
-                                    "type": "object"
-                                  }
-                                ]
-                              }
-                            ],
-                            "type": "array"
-                          }
-                        },
-                        "type": "array"
-                      }
-                    }
-                  },
-                  "resolved": {
-                    "description": "MessagePack array of indexed sync-v2 envelopes; projected bodies remain opaque canonical JSON bytes.",
-                    "items": {
-                      "$ref": "#/components/schemas/ReactiveEnvelope",
-                      "resolved": {
-                        "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
-                        "items": false,
-                        "maxItems": 7,
-                        "minItems": 7,
-                        "prefixItems": [
-                          {
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          {
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          {
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          {
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          {
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          {
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          {
-                            "oneOf": [
-                              {
-                                "type": "array"
-                              },
-                              {
-                                "type": "object"
-                              }
-                            ]
-                          }
-                        ],
-                        "type": "array"
-                      }
-                    },
-                    "type": "array"
-                  }
-                }
-              }
-            },
-            "description": "Reactive query changes",
-            "headers": {
-              "X-TerraScale-Subscription": {
-                "schema": {
-                  "format": "int64",
-                  "type": "integer"
-                }
-              }
-            }
-          },
-          "status": "200"
-        }
-      ],
+      "responses": [],
       "routeName": "databases.poll",
       "sdkRequestType": "ReactivePollRequest",
-      "sdkResponseType": "ReactiveFramesResponse"
+      "sdkResponseType": "never"
     },
     {
       "base": "api",
@@ -11845,47 +11919,113 @@
               "siblings": {
                 "resolved": {
                   "properties": {
-                    "id": {
+                    "checkpoint": {
+                      "description": "Base64 encoded opaque resume checkpoint",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "databaseId": {
                       "type": "string"
                     },
-                    "name": {
+                    "entitlement_epoch": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "parameters": {
+                      "description": "Base64 encoded SQL parameter bytes",
                       "type": "string"
                     },
-                    "view": {
+                    "statement": {
                       "type": "string"
+                    },
+                    "subscription": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
+                  "required": [
+                    "databaseId",
+                    "statement"
+                  ],
                   "type": "object"
                 },
                 "siblings": {
                   "resolved": {
                     "properties": {
-                      "id": {
+                      "checkpoint": {
+                        "description": "Base64 encoded opaque resume checkpoint",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "databaseId": {
                         "type": "string"
                       },
-                      "name": {
+                      "entitlement_epoch": {
+                        "format": "int64",
+                        "type": "integer"
+                      },
+                      "parameters": {
+                        "description": "Base64 encoded SQL parameter bytes",
                         "type": "string"
                       },
-                      "view": {
+                      "statement": {
                         "type": "string"
+                      },
+                      "subscription": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
                       }
                     },
+                    "required": [
+                      "databaseId",
+                      "statement"
+                    ],
                     "type": "object"
                   }
                 }
               },
               "resolved": {
                 "properties": {
-                  "id": {
+                  "checkpoint": {
+                    "description": "Base64 encoded opaque resume checkpoint",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "databaseId": {
                     "type": "string"
                   },
-                  "name": {
+                  "entitlement_epoch": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "parameters": {
+                    "description": "Base64 encoded SQL parameter bytes",
                     "type": "string"
                   },
-                  "view": {
+                  "statement": {
                     "type": "string"
+                  },
+                  "subscription": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   }
                 },
+                "required": [
+                  "databaseId",
+                  "statement"
+                ],
                 "type": "object"
               }
             }
@@ -11899,60 +12039,276 @@
                 "siblings": {
                   "resolved": {
                     "properties": {
-                      "id": {
+                      "checkpoint": {
+                        "description": "Base64 encoded opaque resume checkpoint",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "databaseId": {
                         "type": "string"
                       },
-                      "name": {
+                      "entitlement_epoch": {
+                        "format": "int64",
+                        "type": "integer"
+                      },
+                      "parameters": {
+                        "description": "Base64 encoded SQL parameter bytes",
                         "type": "string"
                       },
-                      "view": {
+                      "statement": {
                         "type": "string"
+                      },
+                      "subscription": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
                       }
                     },
+                    "required": [
+                      "databaseId",
+                      "statement"
+                    ],
                     "type": "object"
                   },
                   "siblings": {
                     "resolved": {
                       "properties": {
-                        "id": {
+                        "checkpoint": {
+                          "description": "Base64 encoded opaque resume checkpoint",
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "databaseId": {
                           "type": "string"
                         },
-                        "name": {
+                        "entitlement_epoch": {
+                          "format": "int64",
+                          "type": "integer"
+                        },
+                        "parameters": {
+                          "description": "Base64 encoded SQL parameter bytes",
                           "type": "string"
                         },
-                        "view": {
+                        "statement": {
                           "type": "string"
+                        },
+                        "subscription": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
                         }
                       },
+                      "required": [
+                        "databaseId",
+                        "statement"
+                      ],
                       "type": "object"
                     }
                   }
                 },
                 "resolved": {
                   "properties": {
-                    "id": {
+                    "checkpoint": {
+                      "description": "Base64 encoded opaque resume checkpoint",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "databaseId": {
                       "type": "string"
                     },
-                    "name": {
+                    "entitlement_epoch": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "parameters": {
+                      "description": "Base64 encoded SQL parameter bytes",
                       "type": "string"
                     },
-                    "view": {
+                    "statement": {
                       "type": "string"
+                    },
+                    "subscription": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
+                  "required": [
+                    "databaseId",
+                    "statement"
+                  ],
                   "type": "object"
                 }
               }
             }
           },
-          "required": false
+          "required": true
         },
-        "required": false
+        "required": true
       },
-      "responses": [],
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachViewResponse",
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "capability": {
+                          "type": "string"
+                        },
+                        "capability_header": {
+                          "type": "string"
+                        },
+                        "checkpoint": {
+                          "type": "string"
+                        },
+                        "generation": {
+                          "format": "int64",
+                          "type": "integer"
+                        },
+                        "log": {
+                          "type": "string"
+                        },
+                        "offset": {
+                          "format": "int64",
+                          "type": "integer"
+                        },
+                        "snapshot_chunks": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "view": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "view",
+                        "generation",
+                        "snapshot_chunks",
+                        "log",
+                        "checkpoint",
+                        "capability",
+                        "capability_header",
+                        "offset"
+                      ],
+                      "type": "object"
+                    },
+                    "siblings": {
+                      "resolved": {
+                        "properties": {
+                          "capability": {
+                            "type": "string"
+                          },
+                          "capability_header": {
+                            "type": "string"
+                          },
+                          "checkpoint": {
+                            "type": "string"
+                          },
+                          "generation": {
+                            "format": "int64",
+                            "type": "integer"
+                          },
+                          "log": {
+                            "type": "string"
+                          },
+                          "offset": {
+                            "format": "int64",
+                            "type": "integer"
+                          },
+                          "snapshot_chunks": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "view": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "view",
+                          "generation",
+                          "snapshot_chunks",
+                          "log",
+                          "checkpoint",
+                          "capability",
+                          "capability_header",
+                          "offset"
+                        ],
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "resolved": {
+                    "properties": {
+                      "capability": {
+                        "type": "string"
+                      },
+                      "capability_header": {
+                        "type": "string"
+                      },
+                      "checkpoint": {
+                        "type": "string"
+                      },
+                      "generation": {
+                        "format": "int64",
+                        "type": "integer"
+                      },
+                      "log": {
+                        "type": "string"
+                      },
+                      "offset": {
+                        "format": "int64",
+                        "type": "integer"
+                      },
+                      "snapshot_chunks": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "view": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "view",
+                      "generation",
+                      "snapshot_chunks",
+                      "log",
+                      "checkpoint",
+                      "capability",
+                      "capability_header",
+                      "offset"
+                    ],
+                    "type": "object"
+                  }
+                }
+              }
+            },
+            "description": "Canonical SQL view attached"
+          },
+          "status": "201"
+        }
+      ],
       "routeName": "reactive.attachView",
       "sdkRequestType": "AttachViewRequest",
-      "sdkResponseType": "never"
+      "sdkResponseType": "AttachViewResponse"
     },
     {
       "base": "api",
@@ -13021,16 +13377,856 @@
       ],
       "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/schema",
       "request": {
-        "kind": "void"
+        "content": [
+          {
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/JsonValue",
+              "siblings": {
+                "resolved": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "items": {
+                        "$ref": "#/components/schemas/JsonValue",
+                        "resolved": {
+                          "oneOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "integer"
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "items": {
+                                "$ref": "#/components/schemas/JsonValue"
+                              },
+                              "type": "array"
+                            },
+                            {
+                              "additionalProperties": {
+                                "$ref": "#/components/schemas/JsonValue"
+                              },
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "type": "array"
+                    },
+                    {
+                      "additionalProperties": {
+                        "$ref": "#/components/schemas/JsonValue",
+                        "resolved": {
+                          "oneOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "integer"
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "items": {
+                                "$ref": "#/components/schemas/JsonValue"
+                              },
+                              "type": "array"
+                            },
+                            {
+                              "additionalProperties": {
+                                "$ref": "#/components/schemas/JsonValue"
+                              },
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                },
+                "siblings": {
+                  "resolved": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "items": {
+                          "$ref": "#/components/schemas/JsonValue",
+                          "siblings": {
+                            "resolved": {
+                              "oneOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "items": {
+                                    "$ref": "#/components/schemas/JsonValue",
+                                    "resolved": {
+                                      "oneOf": [
+                                        {
+                                          "type": "null"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        },
+                                        {
+                                          "type": "integer"
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "items": {
+                                            "$ref": "#/components/schemas/JsonValue"
+                                          },
+                                          "type": "array"
+                                        },
+                                        {
+                                          "additionalProperties": {
+                                            "$ref": "#/components/schemas/JsonValue"
+                                          },
+                                          "type": "object"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "type": "array"
+                                },
+                                {
+                                  "additionalProperties": {
+                                    "$ref": "#/components/schemas/JsonValue",
+                                    "resolved": {
+                                      "oneOf": [
+                                        {
+                                          "type": "null"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        },
+                                        {
+                                          "type": "integer"
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "items": {
+                                            "$ref": "#/components/schemas/JsonValue"
+                                          },
+                                          "type": "array"
+                                        },
+                                        {
+                                          "additionalProperties": {
+                                            "$ref": "#/components/schemas/JsonValue"
+                                          },
+                                          "type": "object"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "type": "object"
+                                }
+                              ]
+                            }
+                          },
+                          "resolved": {
+                            "oneOf": [
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "integer"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "items": {
+                                  "$ref": "#/components/schemas/JsonValue"
+                                },
+                                "type": "array"
+                              },
+                              {
+                                "additionalProperties": {
+                                  "$ref": "#/components/schemas/JsonValue"
+                                },
+                                "type": "object"
+                              }
+                            ]
+                          }
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "additionalProperties": {
+                          "$ref": "#/components/schemas/JsonValue",
+                          "siblings": {
+                            "resolved": {
+                              "oneOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "items": {
+                                    "$ref": "#/components/schemas/JsonValue",
+                                    "resolved": {
+                                      "oneOf": [
+                                        {
+                                          "type": "null"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        },
+                                        {
+                                          "type": "integer"
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "items": {
+                                            "$ref": "#/components/schemas/JsonValue"
+                                          },
+                                          "type": "array"
+                                        },
+                                        {
+                                          "additionalProperties": {
+                                            "$ref": "#/components/schemas/JsonValue"
+                                          },
+                                          "type": "object"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "type": "array"
+                                },
+                                {
+                                  "additionalProperties": {
+                                    "$ref": "#/components/schemas/JsonValue",
+                                    "resolved": {
+                                      "oneOf": [
+                                        {
+                                          "type": "null"
+                                        },
+                                        {
+                                          "type": "boolean"
+                                        },
+                                        {
+                                          "type": "integer"
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "items": {
+                                            "$ref": "#/components/schemas/JsonValue"
+                                          },
+                                          "type": "array"
+                                        },
+                                        {
+                                          "additionalProperties": {
+                                            "$ref": "#/components/schemas/JsonValue"
+                                          },
+                                          "type": "object"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "type": "object"
+                                }
+                              ]
+                            }
+                          },
+                          "resolved": {
+                            "oneOf": [
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "integer"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "items": {
+                                  "$ref": "#/components/schemas/JsonValue"
+                                },
+                                "type": "array"
+                              },
+                              {
+                                "additionalProperties": {
+                                  "$ref": "#/components/schemas/JsonValue"
+                                },
+                                "type": "object"
+                              }
+                            ]
+                          }
+                        },
+                        "type": "object"
+                      }
+                    ]
+                  }
+                }
+              },
+              "resolved": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "items": {
+                      "$ref": "#/components/schemas/JsonValue"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "additionalProperties": {
+                      "$ref": "#/components/schemas/JsonValue"
+                    },
+                    "type": "object"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JsonValue",
+                "siblings": {
+                  "resolved": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "items": {
+                          "$ref": "#/components/schemas/JsonValue",
+                          "resolved": {
+                            "oneOf": [
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "integer"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "items": {
+                                  "$ref": "#/components/schemas/JsonValue"
+                                },
+                                "type": "array"
+                              },
+                              {
+                                "additionalProperties": {
+                                  "$ref": "#/components/schemas/JsonValue"
+                                },
+                                "type": "object"
+                              }
+                            ]
+                          }
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "additionalProperties": {
+                          "$ref": "#/components/schemas/JsonValue",
+                          "resolved": {
+                            "oneOf": [
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "type": "integer"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "items": {
+                                  "$ref": "#/components/schemas/JsonValue"
+                                },
+                                "type": "array"
+                              },
+                              {
+                                "additionalProperties": {
+                                  "$ref": "#/components/schemas/JsonValue"
+                                },
+                                "type": "object"
+                              }
+                            ]
+                          }
+                        },
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "siblings": {
+                    "resolved": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "items": {
+                            "$ref": "#/components/schemas/JsonValue",
+                            "siblings": {
+                              "resolved": {
+                                "oneOf": [
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "type": "integer"
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "items": {
+                                      "$ref": "#/components/schemas/JsonValue",
+                                      "resolved": {
+                                        "oneOf": [
+                                          {
+                                            "type": "null"
+                                          },
+                                          {
+                                            "type": "boolean"
+                                          },
+                                          {
+                                            "type": "integer"
+                                          },
+                                          {
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "items": {
+                                              "$ref": "#/components/schemas/JsonValue"
+                                            },
+                                            "type": "array"
+                                          },
+                                          {
+                                            "additionalProperties": {
+                                              "$ref": "#/components/schemas/JsonValue"
+                                            },
+                                            "type": "object"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "type": "array"
+                                  },
+                                  {
+                                    "additionalProperties": {
+                                      "$ref": "#/components/schemas/JsonValue",
+                                      "resolved": {
+                                        "oneOf": [
+                                          {
+                                            "type": "null"
+                                          },
+                                          {
+                                            "type": "boolean"
+                                          },
+                                          {
+                                            "type": "integer"
+                                          },
+                                          {
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "items": {
+                                              "$ref": "#/components/schemas/JsonValue"
+                                            },
+                                            "type": "array"
+                                          },
+                                          {
+                                            "additionalProperties": {
+                                              "$ref": "#/components/schemas/JsonValue"
+                                            },
+                                            "type": "object"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "type": "object"
+                                  }
+                                ]
+                              }
+                            },
+                            "resolved": {
+                              "oneOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "items": {
+                                    "$ref": "#/components/schemas/JsonValue"
+                                  },
+                                  "type": "array"
+                                },
+                                {
+                                  "additionalProperties": {
+                                    "$ref": "#/components/schemas/JsonValue"
+                                  },
+                                  "type": "object"
+                                }
+                              ]
+                            }
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "additionalProperties": {
+                            "$ref": "#/components/schemas/JsonValue",
+                            "siblings": {
+                              "resolved": {
+                                "oneOf": [
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "type": "integer"
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "items": {
+                                      "$ref": "#/components/schemas/JsonValue",
+                                      "resolved": {
+                                        "oneOf": [
+                                          {
+                                            "type": "null"
+                                          },
+                                          {
+                                            "type": "boolean"
+                                          },
+                                          {
+                                            "type": "integer"
+                                          },
+                                          {
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "items": {
+                                              "$ref": "#/components/schemas/JsonValue"
+                                            },
+                                            "type": "array"
+                                          },
+                                          {
+                                            "additionalProperties": {
+                                              "$ref": "#/components/schemas/JsonValue"
+                                            },
+                                            "type": "object"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "type": "array"
+                                  },
+                                  {
+                                    "additionalProperties": {
+                                      "$ref": "#/components/schemas/JsonValue",
+                                      "resolved": {
+                                        "oneOf": [
+                                          {
+                                            "type": "null"
+                                          },
+                                          {
+                                            "type": "boolean"
+                                          },
+                                          {
+                                            "type": "integer"
+                                          },
+                                          {
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "items": {
+                                              "$ref": "#/components/schemas/JsonValue"
+                                            },
+                                            "type": "array"
+                                          },
+                                          {
+                                            "additionalProperties": {
+                                              "$ref": "#/components/schemas/JsonValue"
+                                            },
+                                            "type": "object"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "type": "object"
+                                  }
+                                ]
+                              }
+                            },
+                            "resolved": {
+                              "oneOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "items": {
+                                    "$ref": "#/components/schemas/JsonValue"
+                                  },
+                                  "type": "array"
+                                },
+                                {
+                                  "additionalProperties": {
+                                    "$ref": "#/components/schemas/JsonValue"
+                                  },
+                                  "type": "object"
+                                }
+                              ]
+                            }
+                          },
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "resolved": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "items": {
+                        "$ref": "#/components/schemas/JsonValue"
+                      },
+                      "type": "array"
+                    },
+                    {
+                      "additionalProperties": {
+                        "$ref": "#/components/schemas/JsonValue"
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "required": true
       },
       "responses": [],
       "routeName": "databases.putSchema",
-      "sdkRequestType": "void",
+      "sdkRequestType": "JsonValue",
       "sdkResponseType": "never"
     }
   ],
   "sources": {
-    "openApiSha256": "a1de99028d81c320f35207c9da8a0e3325445f04b12343b89e509ba71b2b2edf",
-    "routeManifestSha256": "c84279255527ff050e26025a6a49342fdd8ea02c68e76336c6979caf285ed1b5"
+    "openApiSha256": "8c8d52d92403a7fd64b06e85f314d072151d39f6a5df8b643965722a350d9a66",
+    "routeManifestSha256": "4ef2a163b4dd3218be567d3c84bb787a0b3a1bd6912296eb70561cc1475fdb8e"
   }
 }

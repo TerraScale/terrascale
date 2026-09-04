@@ -24,6 +24,7 @@ export function useQuery<TValue>(
     () => new ReactiveQueryObserver(source, options),
     [source],
   );
+  observer.updateOptions(options);
   const state = useSyncExternalStore(
     observer.subscribe,
     observer.getSnapshot,
@@ -54,6 +55,7 @@ export function useMutation<TValue, TVariables = void>(
   const observerRef = useRef<ReactiveMutationObserver<TValue, TVariables> | undefined>(undefined);
   if (observerRef.current === undefined) observerRef.current = new ReactiveMutationObserver(options);
   const observer = observerRef.current;
+  observer.updateOptions(options);
   const state = useSyncExternalStore(observer.subscribe, observer.getSnapshot, observer.getSnapshot);
   useEffect(() => () => observer.dispose(), [observer]);
   const mutate = useCallback((variables: TVariables) => observer.mutate(variables), [observer]);

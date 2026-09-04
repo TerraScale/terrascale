@@ -82,7 +82,7 @@ test("generated route metadata pins the terrabase contract version", async () =>
   assert.equal(parsed.routes.some(({ pathTemplate }) => pathTemplate.includes("/reactive")), true);
 });
 
-test("shipped browser paths do not import Node-only modules or the local emulator", async () => {
+test("shipped browser paths do not import Node-only modules", async () => {
   const sources = await productionSources(path.join(repositoryRoot, "src"));
   assert.notEqual(sources.length, 0);
 

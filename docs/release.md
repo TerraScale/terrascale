@@ -128,7 +128,7 @@ Use the next patch version only for backward-compatible changes. Before `1.0`,
 a source-breaking exported TypeScript type change requires the next minor
 version. This release is `0.3.0`. It removes the dedicated Auth, project
 credential, payment, billing, pricing, and project authentication-settings
-clients, models, routes, and local-emulator implementations. Consumers must stop
+clients, models, and routes. Consumers must stop
 calling those removed namespaces before upgrading from `0.2.x`. This release
 also applies the workspace M0 launch cuts (GOAL.md D-40): the retired product
 surfaces and their repository-scoped data clients are deleted, and the data

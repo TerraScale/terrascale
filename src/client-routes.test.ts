@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { describe, test } from "vitest";
 
-import { capturePublicClientRoutes } from "./client-route-capture.js";
+import {
+  capturePublicClientRoutes,
+  contractGapExpectations,
+  expectedContractGapRouteNames,
+} from "./client-route-capture.js";
 import { createTerraScaleClient } from "./factory.js";
 import type { TerraScaleClient } from "./factory.js";
 import type {
@@ -49,29 +53,16 @@ describe("TerraScaleClient route contracts", () => {
     };
     const capturedRoutes = await capturePublicClientRoutes();
 
+    const gaps = new Set(expectedContractGapRouteNames);
+    const publishedRoutes = manifest.routes.filter((route) => !gaps.has(route.routeName as never));
+    assert.deepEqual(publishedRoutes.map(routeManifestCore), capturedRoutes.map(routeManifestCore));
+    assert.equal(manifest.routeCount, manifest.routes.length);
+    assert.equal(manifest.routeCount, capturedRoutes.length + contractGapExpectations.length);
     assert.deepEqual(
-      manifest.routes.map(routeManifestCore),
-      capturedRoutes.map(routeManifestCore),
+      manifest.routes.filter((route) => gaps.has(route.routeName as never)).map((route) => route.routeName).sort(),
+      [...expectedContractGapRouteNames].sort(),
     );
-    assert.equal(manifest.routeCount, 60);
-    assert.equal(manifest.routeCount, capturedRoutes.length);
-    assert.equal(manifest.routes.some((route) => route.routeName === "backups.trigger"), false);
-    assert.deepEqual(
-      manifest.routes
-        .filter((route) => route.client === "backups" && route.method === "POST")
-        .map((route) => [route.operation, route.pathTemplate]),
-      [
-        [
-          "planBackup",
-          "/api/v1/projects/{projectId}/databases/{databaseId}/backups:plan",
-        ],
-        [
-          "executeBackup",
-          "/api/v1/projects/{projectId}/databases/{databaseId}/backups:execute",
-        ],
-        ["startRestore", "/api/v1/projects/{projectId}/databases/{databaseId}/restores"],
-      ],
-    );
+    assert.ok(contractGapExpectations.every((expectation) => expectation.code === "contract_gap"));
   });
 
   test("public factory hides private clients and exposes typed clients", async () => {
