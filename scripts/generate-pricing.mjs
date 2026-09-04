@@ -21,6 +21,10 @@ function planRow(f) {
 const pricingMd = `<!-- GENERATED from data/pricing.json by scripts/generate-pricing.mjs — do not edit. Source: GOAL.md D-16/D-17/D-21/D-25/D-64 (L-1 draft). -->
 # Pricing
 
+> **DRAFT (L-1).** Values mirror GOAL.md D-16/D-17/D-21/D-25/D-64. Confirm
+> with the owner before publication (O-6); every published number needs a
+> measured unit cost behind it (D-61). Regenerated when measurements land.
+>
 > **Pay for writes and storage; everything else is free.** Reads, queries,
 > egress, CDN delivery, fan-out, subscribers, and webhook delivery are free
 > and unbilled. Reads, queries, and direct member read egress are metered for
@@ -66,6 +70,9 @@ const guardRow = (label, obj) =>
 
 const limitsMd = `<!-- GENERATED from data/pricing.json by scripts/generate-pricing.mjs — do not edit. Source: GOAL.md D-16/D-17/D-21/D-25/D-64 (L-1 draft). -->
 # Limits
+
+> **DRAFT (L-1).** Values mirror GOAL.md D-25/D-64. Confirm with the owner
+> before publication (O-6). Regenerated when measurements land.
 
 PITR retention (days): Free ${d.limits.pitrRetentionDays.Free} / Starter ${d.limits.pitrRetentionDays.Starter} / Pro ${d.limits.pitrRetentionDays.Pro} / Scale ${d.limits.pitrRetentionDays.Scale}.
 

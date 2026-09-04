@@ -1,6 +1,9 @@
 <!-- GENERATED from data/pricing.json by scripts/generate-pricing.mjs — do not edit. Source: GOAL.md D-16/D-17/D-21/D-25/D-64 (L-1 draft). -->
 # Limits
 
+> **DRAFT (L-1).** Values mirror GOAL.md D-25/D-64. Confirm with the owner
+> before publication (O-6). Regenerated when measurements land.
+
 PITR retention (days): Free 1 / Starter 7 / Pro 30 / Scale 35.
 
 Databases per org: Free 1 / Starter 5 / Pro 25 / Scale soft-unlimited.
