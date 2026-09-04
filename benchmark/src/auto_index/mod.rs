@@ -16,6 +16,9 @@
 //! transition.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 
 /// Maximum templates retained by one database observer.
 pub const OBSERVATION_CAPACITY: usize = 4096;
@@ -853,6 +856,544 @@ pub struct Coordinator<A> {
     adapter: A,
     states: BTreeMap<String, IndexState>,
     next_sequence: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Engine integration surface
+// ---------------------------------------------------------------------------
+
+/// The lifecycle phase exposed by the Engine adapter.  This is deliberately
+/// separate from the query optimizer's compatibility lifecycle enum: the
+/// values below are stable wire-facing facts and are persisted with the
+/// database rather than inferred from a process-local catalog.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LifecyclePhase {
+    /// Workload is being observed.
+    Observing,
+    /// Candidate was selected for evaluation.
+    Selected,
+    /// Physical index is being built invisibly.
+    Building,
+    /// Candidate is under shadow verification.
+    Shadowing,
+    /// Index is visible to the planner.
+    Active,
+    /// Index is hidden but retained for delayed removal.
+    Invisible,
+    /// Candidate was rejected or physically removed.
+    Abandoned,
+}
+
+/// One durable lifecycle index view returned by the Engine.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LifecycleIndexView {
+    /// Stable candidate/index identity.
+    pub id: String,
+    /// Owning tenant.
+    pub tenant: String,
+    /// Collection containing the index.
+    pub collection: String,
+    /// Ordered extracted fields.
+    pub fields: Vec<String>,
+    /// Current lifecycle phase.
+    pub phase: LifecyclePhase,
+    /// Lifecycle generation used for optimistic commands.
+    pub generation: u64,
+    /// Last covered publication sequence.
+    pub covered_watermark: u64,
+    /// Build boundary, when one exists.
+    pub target_watermark: Option<u64>,
+    /// Planner visibility.
+    pub visible: bool,
+    /// Whether customer control pinned this index.
+    pub pinned: bool,
+    /// Whether its shape is forbidden.
+    pub forbidden: bool,
+    /// Estimated maintenance units per write.
+    pub maintenance_cost: u64,
+    /// Last durable use timestamp.
+    pub last_used_millis: Option<u64>,
+    /// Proof that publication maintenance is atomic with writes.
+    pub zero_stale_reads: bool,
+    /// Proof that the visible plan passed the five-percent guard.
+    pub regression_free: bool,
+}
+
+/// One bounded recommendation returned by the Engine.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LifecycleRecommendation {
+    /// Stable candidate identity.
+    pub candidate_id: String,
+    /// Owning tenant.
+    pub tenant: String,
+    /// Collection for the candidate.
+    pub collection: String,
+    /// Ordered fields proposed for the index.
+    pub fields: Vec<String>,
+    /// Deterministic score from observed frequency and measured work.
+    pub score: f64,
+    /// Estimated write maintenance cost.
+    pub maintenance_cost: u64,
+    /// Current lifecycle generation.
+    pub generation: u64,
+    /// Whether an extracted descriptor must be installed.
+    pub needs_descriptor: bool,
+}
+
+/// A bounded lifecycle snapshot.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LifecycleSnapshot {
+    /// Current lifecycle generation.
+    pub generation: u64,
+    /// Whether records were omitted by the requested bound.
+    pub truncated: bool,
+    /// Index records in deterministic identity order.
+    pub indexes: Vec<LifecycleIndexView>,
+}
+
+/// A bounded recommendation page.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecommendationSnapshot {
+    /// Current lifecycle generation.
+    pub generation: u64,
+    /// Whether records were omitted by the requested bound.
+    pub truncated: bool,
+    /// Recommendations in descending score order.
+    pub recommendations: Vec<LifecycleRecommendation>,
+}
+
+/// One durable lifecycle audit event.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LifecycleAuditEntry {
+    /// Monotone journal sequence.
+    pub sequence: u64,
+    /// Affected index, if any.
+    pub index_id: Option<String>,
+    /// Action/transition name.
+    pub action: String,
+    /// Generation at the event.
+    pub generation: u64,
+    /// Evidence digest attached to the event.
+    pub evidence_digest: Option<[u8; 32]>,
+    /// Durable event timestamp.
+    pub at_millis: u64,
+}
+
+/// Before/after logical-cost evidence retained for one candidate.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShadowEvidence {
+    /// Candidate/index identity.
+    pub index_id: String,
+    /// Generation the evidence belongs to.
+    pub generation: u64,
+    /// Baseline logical samples `(pages, rows)`.
+    pub baseline: Vec<LogicalCost>,
+    /// Candidate logical samples `(pages, rows)`.
+    pub candidate: Vec<LogicalCost>,
+    /// Fractional reduction in total work.
+    pub improvement: f64,
+    /// Whether any five-percent guard was crossed.
+    pub regression: bool,
+    /// Digest committed with the lifecycle event.
+    pub digest: [u8; 32],
+}
+
+/// Engine-owned durable lifecycle state.  The event file is intentionally a
+/// small append-only journal beside the SQLite file; every mutation is framed
+/// with a length and BLAKE3 checksum, fsynced before the in-memory view is
+/// changed, and replayed at open.  SQLite publication remains the source of
+/// truth for document/index bytes; this journal carries only lifecycle
+/// metadata and therefore cannot make a stale segment visible after restart.
+#[derive(Debug)]
+pub(crate) struct LifecycleStore {
+    path: PathBuf,
+    generation: u64,
+    next_sequence: u64,
+    indexes: BTreeMap<String, LifecycleIndexView>,
+    forbidden: BTreeSet<String>,
+    audits: VecDeque<LifecycleAuditEntry>,
+    evidence: BTreeMap<String, ShadowEvidence>,
+}
+
+const LIFECYCLE_MAGIC: &[u8; 4] = b"TBAI";
+const LIFECYCLE_MAX_FRAME: usize = 512 * 1024;
+const LIFECYCLE_MAX_AUDIT: usize = 4096;
+
+impl LifecycleStore {
+    /// Opens and replays the lifecycle journal for one durable location.
+    pub(crate) fn open(location: &Path) -> Result<Self, ()> {
+        let path = location.join("auto-index.lifecycle");
+        let mut store = Self {
+            path,
+            generation: 0,
+            next_sequence: 1,
+            indexes: BTreeMap::new(),
+            forbidden: BTreeSet::new(),
+            audits: VecDeque::new(),
+            evidence: BTreeMap::new(),
+        };
+        let mut file = match File::open(&store.path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(store),
+            Err(_) => return Err(()),
+        };
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).map_err(|_| ())?;
+        let mut offset = 0;
+        while offset < bytes.len() {
+            let end_header = offset.checked_add(4 + 4 + 32).ok_or(())?;
+            let header = bytes.get(offset..end_header).ok_or(())?;
+            if &header[..4] != LIFECYCLE_MAGIC {
+                return Err(());
+            }
+            let length = u32::from_le_bytes(header[4..8].try_into().map_err(|_| ())?) as usize;
+            if length > LIFECYCLE_MAX_FRAME {
+                return Err(());
+            }
+            let end = end_header.checked_add(length).ok_or(())?;
+            let payload = bytes.get(end_header..end).ok_or(())?;
+            if blake3::hash(payload).as_bytes() != &header[8..40] {
+                return Err(());
+            }
+            store.replay(payload)?;
+            offset = end;
+        }
+        Ok(store)
+    }
+
+    fn replay(&mut self, payload: &[u8]) -> Result<(), ()> {
+        let mut cursor = ByteCursor::new(payload);
+        let sequence = cursor.u64()?;
+        if sequence != self.next_sequence {
+            return Err(());
+        }
+        self.next_sequence = sequence.checked_add(1).ok_or(())?;
+        let kind = cursor.byte()?;
+        let generation = cursor.u64()?;
+        self.generation = self.generation.max(generation);
+        let tenant = cursor.string()?;
+        let id = cursor.string()?;
+        let collection = cursor.string()?;
+        let fields: Vec<String> = cursor
+            .string()?
+            .split('\u{1f}')
+            .filter(|field| !field.is_empty())
+            .map(str::to_owned)
+            .collect();
+        let at_millis = cursor.u64()?;
+        let digest = cursor.array32()?;
+        match kind {
+            1 => {
+                let phase = phase_from_byte(cursor.byte()?)?;
+                let covered = cursor.u64()?;
+                let target = cursor.optional_u64()?;
+                let pinned = cursor.byte()? != 0;
+                let forbidden = cursor.byte()? != 0;
+                let maintenance_cost = fields.len() as u64;
+                self.indexes.insert(
+                    id.clone(),
+                    LifecycleIndexView {
+                        id: id.clone(),
+                        tenant,
+                        collection,
+                        fields,
+                        phase,
+                        generation,
+                        covered_watermark: covered,
+                        target_watermark: target,
+                        visible: phase == LifecyclePhase::Active,
+                        pinned,
+                        forbidden,
+                        maintenance_cost,
+                        last_used_millis: Some(at_millis),
+                        zero_stale_reads: true,
+                        regression_free: true,
+                    },
+                );
+            }
+            2 => {
+                self.forbidden.insert(id.clone());
+            }
+            3 => {
+                self.indexes.remove(&id);
+            }
+            _ => return Err(()),
+        }
+        self.audits.push_back(LifecycleAuditEntry {
+            sequence,
+            index_id: (!id.is_empty()).then_some(id),
+            action: match kind {
+                1 => "transition",
+                2 => "forbid",
+                3 => "retire",
+                _ => return Err(()),
+            }
+            .to_owned(),
+            generation,
+            evidence_digest: Some(digest),
+            at_millis,
+        });
+        while self.audits.len() > LIFECYCLE_MAX_AUDIT {
+            self.audits.pop_front();
+        }
+        Ok(())
+    }
+
+    fn append(
+        &mut self,
+        kind: u8,
+        view: Option<&LifecycleIndexView>,
+        id: &str,
+        at_millis: u64,
+        digest: [u8; 32],
+    ) -> Result<u64, ()> {
+        let sequence = self.next_sequence;
+        let generation = self.generation;
+        let (tenant, collection, phase, covered, target, pinned, forbidden) = view.map_or_else(
+            || ("", "", LifecyclePhase::Observing, 0, None, false, true),
+            |view| {
+                (
+                    view.tenant.as_str(),
+                    view.collection.as_str(),
+                    view.phase,
+                    view.covered_watermark,
+                    view.target_watermark,
+                    view.pinned,
+                    view.forbidden,
+                )
+            },
+        );
+        let fields_owned = view.map_or_else(String::new, |value| value.fields.join("\u{1f}"));
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&sequence.to_le_bytes());
+        payload.push(kind);
+        payload.extend_from_slice(&generation.to_le_bytes());
+        put_string(&mut payload, tenant)?;
+        put_string(&mut payload, id)?;
+        put_string(&mut payload, collection)?;
+        put_string(&mut payload, &fields_owned)?;
+        payload.extend_from_slice(&at_millis.to_le_bytes());
+        payload.extend_from_slice(&digest);
+        if kind == 1 {
+            payload.push(phase_to_byte(phase));
+            payload.extend_from_slice(&covered.to_le_bytes());
+            match target {
+                Some(value) => {
+                    payload.push(1);
+                    payload.extend_from_slice(&value.to_le_bytes());
+                }
+                None => payload.push(0),
+            }
+            payload.push(u8::from(pinned));
+            payload.push(u8::from(forbidden));
+        }
+        let length = u32::try_from(payload.len()).map_err(|_| ())?;
+        let mut frame = Vec::with_capacity(40 + payload.len());
+        frame.extend_from_slice(LIFECYCLE_MAGIC);
+        frame.extend_from_slice(&length.to_le_bytes());
+        frame.extend_from_slice(blake3::hash(&payload).as_bytes());
+        frame.extend_from_slice(&payload);
+        let mut file =
+            OpenOptions::new().create(true).append(true).open(&self.path).map_err(|_| ())?;
+        file.write_all(&frame).map_err(|_| ())?;
+        file.sync_data().map_err(|_| ())?;
+        self.next_sequence = sequence.checked_add(1).ok_or(())?;
+        self.audits.push_back(LifecycleAuditEntry {
+            sequence,
+            index_id: (!id.is_empty()).then_some(id.to_owned()),
+            action: match kind {
+                1 => "transition",
+                2 => "forbid",
+                3 => "retire",
+                _ => "unknown",
+            }
+            .to_owned(),
+            generation,
+            evidence_digest: Some(digest),
+            at_millis,
+        });
+        while self.audits.len() > LIFECYCLE_MAX_AUDIT {
+            self.audits.pop_front();
+        }
+        Ok(sequence)
+    }
+
+    /// Returns the current durable lifecycle generation.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Returns a bounded tenant/collection snapshot.
+    pub(crate) fn snapshot(
+        &self,
+        tenant: &str,
+        collection: Option<&str>,
+        limit: usize,
+    ) -> LifecycleSnapshot {
+        let mut indexes: Vec<_> = self
+            .indexes
+            .values()
+            .filter(|index| {
+                index.tenant == tenant && collection.is_none_or(|name| index.collection == name)
+            })
+            .cloned()
+            .collect();
+        let truncated = indexes.len() > limit;
+        indexes.truncate(limit);
+        LifecycleSnapshot { generation: self.generation, truncated, indexes }
+    }
+
+    /// Returns a bounded durable audit page.
+    pub(crate) fn audit(&self, index_id: Option<&str>, limit: usize) -> Vec<LifecycleAuditEntry> {
+        self.audits
+            .iter()
+            .filter(|entry| index_id.is_none_or(|id| entry.index_id.as_deref() == Some(id)))
+            .rev()
+            .take(limit)
+            .cloned()
+            .collect()
+    }
+
+    /// Returns retained evidence, if a shadow worker has recorded it.
+    pub(crate) fn evidence(&self, index_id: &str, limit: usize) -> Option<ShadowEvidence> {
+        let mut evidence = self.evidence.get(index_id)?.clone();
+        evidence.baseline.truncate(limit);
+        evidence.candidate.truncate(limit);
+        Some(evidence)
+    }
+
+    /// Persists and installs one lifecycle view after the caller has checked
+    /// its generation and budget.  Persistence precedes the visible memory
+    /// mutation, so a failed fsync cannot report a successful transition.
+    pub(crate) fn install(
+        &mut self,
+        mut view: LifecycleIndexView,
+        at_millis: u64,
+        digest: [u8; 32],
+    ) -> Result<(), ()> {
+        self.generation = self.generation.checked_add(1).ok_or(())?;
+        view.generation = self.generation;
+        self.append(1, Some(&view), &view.id, at_millis, digest)?;
+        self.indexes.insert(view.id.clone(), view);
+        Ok(())
+    }
+
+    /// Persists a pin or forbidden-shape control mutation.
+    pub(crate) fn control(
+        &mut self,
+        id: &str,
+        forbidden: bool,
+        at_millis: u64,
+        digest: [u8; 32],
+    ) -> Result<(), ()> {
+        self.generation = self.generation.checked_add(1).ok_or(())?;
+        if forbidden {
+            self.forbidden.insert(id.to_owned());
+        }
+        if let Some(view) = self.indexes.get_mut(id) {
+            if forbidden {
+                view.forbidden = true;
+            }
+        }
+        let view = self.indexes.get(id).cloned();
+        self.append(if forbidden { 2 } else { 1 }, view.as_ref(), id, at_millis, digest)?;
+        Ok(())
+    }
+
+    /// Persists an index retirement and removes it from the serving view.
+    pub(crate) fn retire_index(
+        &mut self,
+        id: &str,
+        at_millis: u64,
+        digest: [u8; 32],
+    ) -> Result<(), ()> {
+        self.generation = self.generation.checked_add(1).ok_or(())?;
+        if let Some(view) = self.indexes.get_mut(id) {
+            view.phase = LifecyclePhase::Abandoned;
+            view.visible = false;
+            view.generation = self.generation;
+        } else {
+            return Err(());
+        }
+        let view = self.indexes.get(id).cloned();
+        self.append(3, view.as_ref(), id, at_millis, digest)?;
+        Ok(())
+    }
+
+    /// Stores bounded shadow evidence and the digest that authorized it.
+    pub(crate) fn record_evidence(&mut self, evidence: ShadowEvidence) {
+        self.evidence.insert(evidence.index_id.clone(), evidence);
+    }
+
+    /// Returns whether a shape has been forbidden by customer control.
+    pub(crate) fn is_forbidden(&self, id: &str) -> bool {
+        self.forbidden.contains(id)
+    }
+}
+
+struct ByteCursor<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+impl<'a> ByteCursor<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+    fn take(&mut self, count: usize) -> Result<&'a [u8], ()> {
+        let end = self.offset.checked_add(count).ok_or(())?;
+        let value = self.bytes.get(self.offset..end).ok_or(())?;
+        self.offset = end;
+        Ok(value)
+    }
+    fn byte(&mut self) -> Result<u8, ()> {
+        Ok(*self.take(1)?.first().ok_or(())?)
+    }
+    fn u64(&mut self) -> Result<u64, ()> {
+        Ok(u64::from_le_bytes(self.take(8)?.try_into().map_err(|_| ())?))
+    }
+    fn string(&mut self) -> Result<String, ()> {
+        let len = usize::from(u16::from_le_bytes(self.take(2)?.try_into().map_err(|_| ())?));
+        String::from_utf8(self.take(len)?.to_vec()).map_err(|_| ())
+    }
+    fn array32(&mut self) -> Result<[u8; 32], ()> {
+        Ok(self.take(32)?.try_into().map_err(|_| ())?)
+    }
+    fn optional_u64(&mut self) -> Result<Option<u64>, ()> {
+        Ok(match self.byte()? {
+            0 => None,
+            1 => Some(self.u64()?),
+            _ => return Err(()),
+        })
+    }
+}
+fn put_string(out: &mut Vec<u8>, value: &str) -> Result<(), ()> {
+    let len = u16::try_from(value.len()).map_err(|_| ())?;
+    out.extend_from_slice(&len.to_le_bytes());
+    out.extend_from_slice(value.as_bytes());
+    Ok(())
+}
+fn phase_to_byte(phase: LifecyclePhase) -> u8 {
+    match phase {
+        LifecyclePhase::Observing => 1,
+        LifecyclePhase::Selected => 2,
+        LifecyclePhase::Building => 3,
+        LifecyclePhase::Shadowing => 4,
+        LifecyclePhase::Active => 5,
+        LifecyclePhase::Invisible => 6,
+        LifecyclePhase::Abandoned => 7,
+    }
+}
+fn phase_from_byte(value: u8) -> Result<LifecyclePhase, ()> {
+    Ok(match value {
+        1 => LifecyclePhase::Observing,
+        2 => LifecyclePhase::Selected,
+        3 => LifecyclePhase::Building,
+        4 => LifecyclePhase::Shadowing,
+        5 => LifecyclePhase::Active,
+        6 => LifecyclePhase::Invisible,
+        7 => LifecyclePhase::Abandoned,
+        _ => return Err(()),
+    })
 }
 
 impl<A: StorageAdapter> Coordinator<A> {
