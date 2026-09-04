@@ -364,7 +364,7 @@ public sealed class TerraScaleReactiveHttpClient
     private static ReactiveWireEnvelope ReadEnvelope(ref ReactiveMsgpackReader reader)
     {
         CheckArray(ref reader, 7);
-        if (reader.U32() != 2 || reader.U32() != 1 || reader.U32() != 0) throw new TerraScaleReactiveProtocolException("The reactive frame version or feature set is unsupported.");
+        if (reader.U32() != 1 || reader.U32() != 0 || reader.U32() != 0) throw new TerraScaleReactiveProtocolException("The reactive frame version or feature set is unsupported.");
         var tag = reader.U32(); var correlation = reader.U64(); var causation = reader.U64(); return new ReactiveWireEnvelope(tag, correlation, causation, ReadMessage(ref reader, tag));
     }
 
