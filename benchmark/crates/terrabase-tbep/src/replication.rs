@@ -79,6 +79,11 @@ pub fn pull_origin_records_with_cancellation(
             hlc: provenance.hlc(),
             origin: provenance.origin().to_owned(),
             origin_sequence: provenance.origin_sequence(),
+            // JournalProvenance currently exposes the source dot but not the
+            // opaque context blob. The storage/streaming owner must add that
+            // accessor; until then an empty context is the only legacy-safe
+            // representation (and decodes as the empty frontier).
+            context: Vec::new(),
         });
     }
     Ok((records, batch.next_checkpoint()))

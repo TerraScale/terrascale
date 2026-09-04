@@ -55,6 +55,88 @@ fn to_engine_value(value: &TbepValue) -> DocumentValue {
     }
 }
 
+/// Evaluates the public schema subset at the TBEP boundary. The family
+/// schema evaluator is intentionally crate-private; keeping this small
+/// adapter-side projection lets the protocol return the same closed
+/// violation vocabulary without exposing an evaluator as a new API seam.
+fn schema_violations(
+    schema: &terrabase::families::SchemaDefinition,
+    value: &DocumentValue,
+) -> Vec<(String, terrabase::families::ViolationKind)> {
+    use terrabase::families::{SchemaFieldType, SchemaRule, ViolationKind};
+    let DocumentValue::Object(fields) = value else {
+        return if schema.rules().is_empty() {
+            Vec::new()
+        } else {
+            vec![(String::new(), ViolationKind::DocumentNotObject)]
+        };
+    };
+    let mut result = Vec::new();
+    for rule in schema.rules() {
+        let field = rule.field();
+        let present = fields.get(field);
+        match rule {
+            SchemaRule::Required { .. } if present.is_none() => {
+                result.push((field.to_owned(), ViolationKind::MissingRequiredField));
+            }
+            SchemaRule::FieldType { kind, .. }
+                if present.is_some_and(|value| {
+                    !matches!(
+                        (kind, value),
+                        (SchemaFieldType::Boolean, DocumentValue::Boolean(_))
+                            | (SchemaFieldType::Integer, DocumentValue::Integer(_))
+                            | (SchemaFieldType::Number, DocumentValue::Integer(_))
+                            | (SchemaFieldType::Number, DocumentValue::Number(_))
+                            | (SchemaFieldType::Text, DocumentValue::String(_))
+                            | (SchemaFieldType::Object, DocumentValue::Object(_))
+                            | (SchemaFieldType::Array, DocumentValue::Array(_))
+                    )
+                }) =>
+            {
+                result.push((field.to_owned(), ViolationKind::TypeMismatch))
+            }
+            SchemaRule::EnumValues { values, .. } => {
+                if let Some(value) = present
+                    && !matches!(value, DocumentValue::String(text) if values.contains(text))
+                {
+                    result.push((field.to_owned(), ViolationKind::ValueNotAllowed));
+                }
+            }
+            SchemaRule::NumberRange { min, max, .. } => {
+                let out_of_range = match present {
+                    Some(DocumentValue::Integer(number)) => {
+                        min.is_some_and(|bound| *number < bound)
+                            || max.is_some_and(|bound| *number > bound)
+                    }
+                    Some(DocumentValue::Number(number)) => {
+                        min.is_some_and(|bound| *number < bound as f64)
+                            || max.is_some_and(|bound| *number > bound as f64)
+                    }
+                    _ => false,
+                };
+                if out_of_range {
+                    result.push((field.to_owned(), ViolationKind::NumberOutOfRange));
+                }
+            }
+            SchemaRule::TextLength { min, max, .. } => {
+                let out_of_range = match present {
+                    Some(DocumentValue::String(text)) => {
+                        let length = text.chars().count() as u64;
+                        min.is_some_and(|bound| length < bound)
+                            || max.is_some_and(|bound| length > bound)
+                    }
+                    _ => false,
+                };
+                if out_of_range {
+                    result.push((field.to_owned(), ViolationKind::LengthOutOfRange));
+                }
+            }
+            _ => {}
+        }
+    }
+    result
+}
+
 const fn engine_region(region: crate::registry::UsageRegion) -> RegionCode {
     match region {
         crate::registry::UsageRegion::Gru => RegionCode::GRU,
@@ -96,17 +178,17 @@ fn wire_usage_fact(
 ) -> Result<crate::registry::UsageFact, HostingError> {
     let fact = durable.fact();
     let (meter, unit, charge_scope, minting_rule) = match (fact.meter(), fact.identity().rule()) {
-        (MeterKind::AdmittedRequestUnits, EngineMintingRule::StableAdmittedRequest) => (
-            crate::registry::UsageMeter::AdmittedRequestUnits,
-            crate::registry::UsageUnit::RequestUnit,
-            crate::registry::UsageChargeScope::AdmittedRequest,
-            crate::registry::UsageMintingRule::StableAdmittedRequest,
+        (MeterKind::DocumentWriteUnits, EngineMintingRule::AcceptedOriginCommit) => (
+            crate::registry::UsageMeter::DocumentWriteUnits,
+            crate::registry::UsageUnit::WriteUnit,
+            crate::registry::UsageChargeScope::DocumentWrite,
+            crate::registry::UsageMintingRule::AcceptedOriginCommit,
         ),
-        (MeterKind::PublicEgressBytes, EngineMintingRule::PublicResponseBytes) => (
-            crate::registry::UsageMeter::PublicEgressBytes,
-            crate::registry::UsageUnit::Byte,
-            crate::registry::UsageChargeScope::PublicEgress,
-            crate::registry::UsageMintingRule::PublicResponse,
+        (MeterKind::StorageByteSeconds, EngineMintingRule::StableAdmittedRequest) => (
+            crate::registry::UsageMeter::StorageByteSeconds,
+            crate::registry::UsageUnit::ByteSecond,
+            crate::registry::UsageChargeScope::LogicalStorage,
+            crate::registry::UsageMintingRule::LogicalStorage,
         ),
         _ => {
             return Err(HostingError::UsageCorrupt(
@@ -503,11 +585,25 @@ impl TbepHost for EngineHost {
             .parse::<i128>()
             .map_err(|_| HostingError::Invalid("the usage units are invalid".into()))?;
         let meter = match request.meter {
-            crate::registry::UsageRecordMeter::AdmittedRequestUnits => {
-                EngineUsageRecordMeter::AdmittedRequestUnits
+            crate::registry::UsageRecordMeter::DocumentWriteUnits => {
+                EngineUsageRecordMeter::DocumentWriteUnits
             }
+            crate::registry::UsageRecordMeter::StorageByteSeconds => {
+                EngineUsageRecordMeter::StorageByteSeconds
+            }
+            #[allow(deprecated)]
+            crate::registry::UsageRecordMeter::AdmittedRequestUnits => {
+                return Err(HostingError::Invalid("the usage meter is not billable".into()));
+            }
+            #[allow(deprecated)]
             crate::registry::UsageRecordMeter::PublicEgressBytes => {
-                EngineUsageRecordMeter::PublicEgressBytes
+                return Err(HostingError::Invalid("the usage meter is not billable".into()));
+            }
+            #[allow(deprecated)]
+            crate::registry::UsageRecordMeter::ActiveRegionSeats
+            | crate::registry::UsageRecordMeter::BackupByteHours
+            | crate::registry::UsageRecordMeter::RestoreWork => {
+                return Err(HostingError::Invalid("the usage meter is not billable".into()));
             }
         };
         let command = EngineUsageRecordRequest::try_new(
@@ -689,11 +785,11 @@ impl TbepHost for EngineHost {
             });
         };
         let body = to_engine_value(&request.document);
-        let violations = terrabase::families::violations(&policy, &body)
+        let violations = schema_violations(&policy, &body)
             .into_iter()
             .map(|violation| crate::registry::SchemaViolation {
-                field: violation.field().to_owned(),
-                kind: match violation.kind() {
+                field: violation.0,
+                kind: match violation.1 {
                     terrabase::families::ViolationKind::DocumentNotObject => {
                         crate::registry::ViolationKind::DocumentNotObject
                     }

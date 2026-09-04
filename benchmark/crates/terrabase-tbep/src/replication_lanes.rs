@@ -639,6 +639,7 @@ fn pull_origin_page(
                 hlc: provenance.hlc(),
                 origin: provenance.origin().to_owned(),
                 origin_sequence: provenance.origin_sequence(),
+                context: Vec::new(),
             },
         ));
     }
@@ -742,6 +743,7 @@ fn replicated_record(write: &ReplicatedWrite) -> Result<ReplicatedRecord, Hostin
         hlc: write.hlc,
         origin: write.origin.clone(),
         origin_sequence: write.origin_sequence,
+        context: Vec::new(),
     })
 }
 
