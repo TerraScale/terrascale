@@ -6,9 +6,8 @@
 //! identifier and the engine accessor hands the public API router
 //! (`S-03`) the same storage truth. The document/query/family/sync-session
 //! data-plane RPCs were deleted with the S-03 TBEP reduction; the host now
-//! serves collection schemas, topology, usage, and supervision, and keeps
-//! the Storage Tier Mover administration stubs. Unsupported operations
-//! fail with typed errors.
+//! serves collection schemas, topology, usage, and supervision. Unsupported
+//! operations fail with typed errors.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -164,9 +163,7 @@ fn usage_error(error: UsageCommandError) -> HostingError {
         UsageCommandError::IdentityConflict | UsageCommandError::RequiresSynced => {
             HostingError::Refused(error.to_string())
         }
-        UsageCommandError::UnsupportedBackend
-        | UsageCommandError::UsageUnavailable
-        | UsageCommandError::StorageUnavailable => {
+        UsageCommandError::UsageUnavailable | UsageCommandError::StorageUnavailable => {
             HostingError::UsageUnavailable(error.to_string())
         }
         UsageCommandError::CorruptStorage => HostingError::UsageCorrupt(error.to_string()),
@@ -460,81 +457,6 @@ impl TbepHost for EngineHost {
         Err(HostingError::Refused(
             "backbone delivery is served by the sync-delivery host beside this one".into(),
         ))
-    }
-
-    fn tier_configure(
-        &self,
-        scope: &BoundScope,
-        _request: &crate::registry::TierConfigureRequest,
-        _idempotency_key: &str,
-    ) -> Result<crate::registry::TierConfigureResponse, HostingError> {
-        self.count_frame();
-        self.ensure_serving()?;
-        self.admit_scope(scope)?;
-        Err(HostingError::Refused("the storage tier mover is deleted with the LSM engine (D-49); the RPC surface retires with the M1 TBEP refresh".into()))
-    }
-
-    fn tier_inspect(
-        &self,
-        scope: &BoundScope,
-    ) -> Result<crate::registry::TierInspectResponse, HostingError> {
-        self.count_frame();
-        self.ensure_serving()?;
-        self.admit_scope(scope)?;
-        Err(HostingError::Refused("the storage tier mover is deleted with the LSM engine (D-49); the RPC surface retires with the M1 TBEP refresh".into()))
-    }
-
-    fn tier_explain(
-        &self,
-        scope: &BoundScope,
-    ) -> Result<crate::registry::TierExplainResponse, HostingError> {
-        self.count_frame();
-        self.ensure_serving()?;
-        self.admit_scope(scope)?;
-        Err(HostingError::Refused("the storage tier mover is deleted with the LSM engine (D-49); the RPC surface retires with the M1 TBEP refresh".into()))
-    }
-
-    fn tier_dry_run(
-        &self,
-        scope: &BoundScope,
-    ) -> Result<crate::registry::TierDryRunResponse, HostingError> {
-        self.count_frame();
-        self.ensure_serving()?;
-        self.admit_scope(scope)?;
-        Err(HostingError::Refused("the storage tier mover is deleted with the LSM engine (D-49); the RPC surface retires with the M1 TBEP refresh".into()))
-    }
-
-    fn tier_run(
-        &self,
-        scope: &BoundScope,
-        _idempotency_key: &str,
-    ) -> Result<crate::registry::TierRunResponse, HostingError> {
-        self.count_frame();
-        self.ensure_serving()?;
-        self.admit_scope(scope)?;
-        Err(HostingError::Refused("the storage tier mover is deleted with the LSM engine (D-49); the RPC surface retires with the M1 TBEP refresh".into()))
-    }
-
-    fn tier_pause(
-        &self,
-        scope: &BoundScope,
-        _idempotency_key: &str,
-    ) -> Result<crate::registry::TierPauseResponse, HostingError> {
-        self.count_frame();
-        self.ensure_serving()?;
-        self.admit_scope(scope)?;
-        Err(HostingError::Refused("the storage tier mover is deleted with the LSM engine (D-49); the RPC surface retires with the M1 TBEP refresh".into()))
-    }
-
-    fn tier_resume(
-        &self,
-        scope: &BoundScope,
-        _idempotency_key: &str,
-    ) -> Result<crate::registry::TierResumeResponse, HostingError> {
-        self.count_frame();
-        self.ensure_serving()?;
-        self.admit_scope(scope)?;
-        Err(HostingError::Refused("the storage tier mover is deleted with the LSM engine (D-49); the RPC surface retires with the M1 TBEP refresh".into()))
     }
 
     fn topology_read(
