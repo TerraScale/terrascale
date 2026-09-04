@@ -1,0 +1,16 @@
+name: check
+
+on:
+  push:
+    branches: [develop]
+
+jobs:
+  check:
+    runs-on: terrascale-builder
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          github-server-url: https://git.terrascale.tech
+          fetch-depth: 0
+          persist-credentials: false
+      - run: curl -fsSL -o ts-deploy https://git.terrascale.tech/TerraScale/ts-deploy/releases/download/latest/ts-deploy-linux-arm64 && chmod +x ts-deploy && ./ts-deploy ci --repo ts-rust
