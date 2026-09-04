@@ -126,6 +126,7 @@ fn public_replication_apply_is_idempotent_and_order_stable() {
         hlc: 10,
         origin: "gru".to_owned(),
         origin_sequence: 1,
+        context: Vec::new(),
     };
     let second = ReplicatedRecord {
         collection: collection.clone(),
@@ -136,6 +137,7 @@ fn public_replication_apply_is_idempotent_and_order_stable() {
         hlc: 11,
         origin: "sfo".to_owned(),
         origin_sequence: 1,
+        context: Vec::new(),
     };
     let dirs: Vec<_> = ["a", "b", "c"]
         .into_iter()
