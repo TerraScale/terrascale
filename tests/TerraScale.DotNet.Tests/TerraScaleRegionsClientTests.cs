@@ -21,8 +21,7 @@ public sealed class TerraScaleRegionsClientTests
             "https://api.example.invalid/api/v1/regions/GRU",
             Accept: "application/json",
             Authorization: null,
-            ApiKey: null,
-            ProjectId: null));
+            ApiKey: null));
         await Assert.That(region.Code).IsEqualTo(TerraScaleRegions.Gru);
         await Assert.That(region.Name).IsEqualTo("Sao Paulo");
         await Assert.That(region.Country).IsEqualTo("BR");
@@ -187,8 +186,7 @@ public sealed class TerraScaleRegionsClientTests
         Type[] publicRegionTypes =
         [
             typeof(TerraScaleRegion),
-            typeof(TerraScaleRegionDetails),
-            typeof(TerraScaleAdminRegion)
+            typeof(TerraScaleRegionDetails)
         ];
 
         foreach (var regionType in publicRegionTypes)
@@ -211,8 +209,7 @@ public sealed class TerraScaleRegionsClientTests
     private static TerraScaleClient CreateClient(HttpClient httpClient) => new(httpClient, new TerraScaleClientOptions
     {
         BaseAddress = new Uri("https://api.example.invalid/"),
-        ApiKey = "test-key",
-        ProjectId = "project-a"
+        ApiKey = "test-key"
     });
 
     private static string RegionJson(
@@ -242,8 +239,7 @@ public sealed class TerraScaleRegionsClientTests
                 requestUri.GetComponents(UriComponents.AbsoluteUri, UriFormat.UriEscaped),
                 Header(request, "Accept"),
                 Header(request, "Authorization"),
-                Header(request, "X-TerraScale-Auth-Key"),
-                Header(request, "X-TerraScale-Project-Id"));
+                Header(request, "X-TerraScale-Auth-Key"));
             return Task.FromResult(new HttpResponseMessage(statusCode)
             {
                 Content = new StringContent(responseBody, Encoding.UTF8, "application/json")
@@ -273,6 +269,5 @@ public sealed class TerraScaleRegionsClientTests
         string Uri,
         string? Accept,
         string? Authorization,
-        string? ApiKey,
-        string? ProjectId);
+        string? ApiKey);
 }

@@ -111,7 +111,6 @@ public sealed class TerraScaleBackupConfirmationRequestTests
         {
             BaseAddress = new Uri("https://api.example.invalid/"),
             ApiKey = "test-key",
-            ProjectId = "project-a",
             IdempotencyKeyFactory = idempotencyKeyFactory
         });
 

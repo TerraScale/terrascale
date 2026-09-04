@@ -54,21 +54,10 @@ public sealed class TerraScaleClient
         Collections = new TerraScaleCollectionsClient(this);
         Documents = new TerraScaleDocumentsClient(this);
         Schemas = new TerraScaleSchemasClient(this);
-        Billing = new TerraScaleBillingClient(this);
-        Onboarding = new TerraScaleOnboardingClient(this);
-        Organizations = new TerraScaleOrganizationsClient(this);
-        Projects = new TerraScaleProjectsClient(this);
         Regions = new TerraScaleRegionsClient(this);
-        ProjectDatabases = new TerraScaleProjectDatabasesClient(this);
         DatabaseBranches = new TerraScaleDatabaseBranchesClient(this);
         SavedQueries = new TerraScaleSavedQueriesClient(this);
-        ProjectUsage = new TerraScaleProjectUsageClient(this);
-        Audit = new TerraScaleAuditClient(this);
         ApiKeys = new TerraScaleApiKeysClient(this);
-        M2MApplications = new TerraScaleM2MApplicationsClient(this);
-        Access = new TerraScaleProjectAccessClient(this);
-        Notifications = new TerraScaleNotificationsClient(this);
-        Administration = new TerraScaleAdministrationClient(this);
         Backups = new TerraScaleBackupsClient(this);
     }
 
@@ -93,34 +82,9 @@ public sealed class TerraScaleClient
     public TerraScaleSchemasClient Schemas { get; }
 
     /// <summary>
-    /// Organization billing, invoices, checkout, and customer portal operations.
-    /// </summary>
-    public TerraScaleBillingClient Billing { get; }
-
-    /// <summary>
-    /// Resumable onboarding operations.
-    /// </summary>
-    public TerraScaleOnboardingClient Onboarding { get; }
-
-    /// <summary>
-    /// Organization, membership, and invitation operations.
-    /// </summary>
-    public TerraScaleOrganizationsClient Organizations { get; }
-
-    /// <summary>
-    /// Project list and lookup operations.
-    /// </summary>
-    public TerraScaleProjectsClient Projects { get; }
-
-    /// <summary>
     /// TerraScale region catalog operations.
     /// </summary>
     public TerraScaleRegionsClient Regions { get; }
-
-    /// <summary>
-    /// Project-scoped logical database operations.
-    /// </summary>
-    public TerraScaleProjectDatabasesClient ProjectDatabases { get; }
 
     /// <summary>
     /// Physical database branch capability and clone-request operations.
@@ -133,39 +97,9 @@ public sealed class TerraScaleClient
     public TerraScaleSavedQueriesClient SavedQueries { get; }
 
     /// <summary>
-    /// Project usage operations.
-    /// </summary>
-    public TerraScaleProjectUsageClient ProjectUsage { get; }
-
-    /// <summary>
-    /// Project audit-event operations.
-    /// </summary>
-    public TerraScaleAuditClient Audit { get; }
-
-    /// <summary>
     /// Project auth API key management operations.
     /// </summary>
     public TerraScaleApiKeysClient ApiKeys { get; }
-
-    /// <summary>
-    /// Project machine-to-machine application operations.
-    /// </summary>
-    public TerraScaleM2MApplicationsClient M2MApplications { get; }
-
-    /// <summary>
-    /// Project team-member access operations.
-    /// </summary>
-    public TerraScaleProjectAccessClient Access { get; }
-
-    /// <summary>
-    /// Dashboard notification operations for the signed-in user.
-    /// </summary>
-    public TerraScaleNotificationsClient Notifications { get; }
-
-    /// <summary>
-    /// Role-protected TerraScale platform administration operations.
-    /// </summary>
-    public TerraScaleAdministrationClient Administration { get; }
 
     /// <summary>
     /// Project database backup, restore point, and restore operations.
@@ -1114,7 +1048,6 @@ public sealed class TerraScaleClient
         if (!string.IsNullOrWhiteSpace(options.ApiKey))
         {
             request.Headers.TryAddWithoutValidation("X-TerraScale-Auth-Key", options.ApiKey.Trim());
-            request.Headers.TryAddWithoutValidation("X-TerraScale-Project-Id", options.ProjectId?.Trim());
             return;
         }
 
@@ -1131,18 +1064,6 @@ public sealed class TerraScaleClient
 
 
 
-    internal void ValidateConfiguredProjectId(string projectId)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
-
-        if (!string.IsNullOrWhiteSpace(options.ProjectId) &&
-            !string.Equals(options.ProjectId.Trim(), projectId.Trim(), StringComparison.OrdinalIgnoreCase))
-        {
-            throw new ArgumentException(
-                "The request projectId conflicts with the configured TerraScaleClientOptions.ProjectId.",
-                nameof(projectId));
-        }
-    }
 
 
     private async ValueTask<string?> ResolveBearerTokenAsync(

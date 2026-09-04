@@ -14,11 +14,10 @@ public sealed class TerraScaleMediaTypeContractTests
         var client = CreateClient(httpClient);
 
         _ = await client.Databases.ListAsync();
-        _ = await client.Access.ListTeamMembersAsync("project-a");
         _ = await client.Regions.ListAsync();
         _ = await client.Regions.GetAsync(TerraScaleRegions.Gru);
 
-        await Assert.That(handler.Requests).Count().IsEqualTo(4);
+        await Assert.That(handler.Requests).Count().IsEqualTo(3);
         await Assert.That(handler.Requests.All(static request =>
                 request.Accept.SequenceEqual(["application/json"], StringComparer.OrdinalIgnoreCase)))
             .IsTrue();
@@ -28,8 +27,7 @@ public sealed class TerraScaleMediaTypeContractTests
     private static TerraScaleClient CreateClient(HttpClient httpClient) => new(httpClient, new TerraScaleClientOptions
     {
         BaseAddress = new Uri("https://api.example.invalid/"),
-        ApiKey = "test-key",
-        ProjectId = "project-a"
+        ApiKey = "test-key"
     });
 
     private sealed class RecordingHandler : HttpMessageHandler

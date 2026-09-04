@@ -12,155 +12,41 @@ internal readonly record struct TerraScaleBoundRoute(string RequestUri)
 internal static class TerraScaleApiRoutes
 {
 
-    public static TerraScaleBoundRoute OnboardingGetState() =>
-        new TerraScaleBoundRoute("/api/v1/onboarding");
 
-    public static TerraScaleBoundRoute OnboardingOrganizationCreate() =>
-        new TerraScaleBoundRoute("/api/v1/onboarding/organization");
 
-    public static TerraScaleBoundRoute OnboardingProjectCreate() =>
-        new TerraScaleBoundRoute("/api/v1/onboarding/project");
 
-    public static TerraScaleBoundRoute OrganizationsList(int skip, int take) =>
-        new TerraScaleBoundRoute(WithQuery("/api/v1/organizations", ("skip", Number(skip)), ("take", Number(take))));
 
-    public static TerraScaleBoundRoute OrganizationsCreate() =>
-        new TerraScaleBoundRoute("/api/v1/organizations");
 
-    public static TerraScaleBoundRoute OrganizationGet(string organizationId) =>
-        new TerraScaleBoundRoute($"/api/v1/organizations/{Escape(organizationId)}");
 
-    public static TerraScaleBoundRoute OrganizationUpdate(string organizationId) =>
-        new TerraScaleBoundRoute($"/api/v1/organizations/{Escape(organizationId)}");
 
-    public static TerraScaleBoundRoute OrganizationDeletionRequest(string organizationId) =>
-        new TerraScaleBoundRoute($"/api/v1/organizations/{Escape(organizationId)}:request-deletion");
 
-    public static TerraScaleBoundRoute OrganizationLeave(string organizationId) =>
-        new TerraScaleBoundRoute($"/api/v1/organizations/{Escape(organizationId)}:leave");
 
-    public static TerraScaleBoundRoute OrganizationMembersList(string organizationId, int skip, int take) =>
-        new TerraScaleBoundRoute(WithQuery(
-                $"/api/v1/organizations/{Escape(organizationId)}/members",
-                ("skip", Number(skip)),
-                ("take", Number(take))));
 
-    public static TerraScaleBoundRoute OrganizationMemberUpdate(string organizationId, string userId) =>
-        new TerraScaleBoundRoute($"/api/v1/organizations/{Escape(organizationId)}/members/{Escape(userId)}");
 
-    public static TerraScaleBoundRoute OrganizationMemberRemove(string organizationId, string userId) =>
-        new TerraScaleBoundRoute($"/api/v1/organizations/{Escape(organizationId)}/members/{Escape(userId)}:remove");
 
-    public static TerraScaleBoundRoute OrganizationInvitationsList(string organizationId, int skip, int take) =>
-        new TerraScaleBoundRoute(WithQuery(
-                $"/api/v1/organizations/{Escape(organizationId)}/invitations",
-                ("skip", Number(skip)),
-                ("take", Number(take))));
 
-    public static TerraScaleBoundRoute OrganizationInvitationCreate(string organizationId) =>
-        new TerraScaleBoundRoute($"/api/v1/organizations/{Escape(organizationId)}/invitations");
 
-    public static TerraScaleBoundRoute OrganizationInvitationAccept(string organizationId, string invitationId) =>
-        OrganizationInvitationAction(
-            organizationId,
-            invitationId,
-            "accept");
 
-    public static TerraScaleBoundRoute OrganizationInvitationDecline(string organizationId, string invitationId) =>
-        OrganizationInvitationAction(
-            organizationId,
-            invitationId,
-            "decline");
 
-    public static TerraScaleBoundRoute OrganizationInvitationResend(string organizationId, string invitationId) =>
-        OrganizationInvitationAction(
-            organizationId,
-            invitationId,
-            "resend");
 
-    public static TerraScaleBoundRoute OrganizationInvitationCancel(string organizationId, string invitationId) =>
-        OrganizationInvitationAction(
-            organizationId,
-            invitationId,
-            "cancel");
 
+    public static TerraScaleBoundRoute ProjectSavedQueriesList(string projectId, int skip, int take) =>
+        new TerraScaleBoundRoute(WithQuery($"/api/v1/projects/{Escape(projectId)}/saved-queries", ("skip", Number(skip)), ("take", Number(take))));
+    public static TerraScaleBoundRoute ProjectSavedQueriesCreate(string projectId) =>
+        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/saved-queries");
+    public static TerraScaleBoundRoute ProjectSavedQueryGet(string projectId, string savedQueryId) =>
+        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/saved-queries/{Escape(savedQueryId)}");
+    public static TerraScaleBoundRoute ProjectSavedQueryUpdate(string projectId, string savedQueryId) =>
+        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/saved-queries/{Escape(savedQueryId)}");
+    public static TerraScaleBoundRoute ProjectSavedQueryDelete(string projectId, string savedQueryId) =>
+        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/saved-queries/{Escape(savedQueryId)}");
     public static TerraScaleBoundRoute RegionsList() =>
         new TerraScaleBoundRoute("/api/v1/regions");
 
     public static TerraScaleBoundRoute RegionGet(string regionCode) =>
         new TerraScaleBoundRoute($"/api/v1/regions/{Escape(regionCode)}");
 
-    public static TerraScaleBoundRoute ProjectsList(string organizationId, int skip, int take) =>
-        new TerraScaleBoundRoute(WithQuery($"/api/v1/organizations/{Escape(organizationId)}/projects", ("skip", Number(skip)), ("take", Number(take))));
 
-    public static TerraScaleBoundRoute ProjectsCreate(string organizationId) =>
-        new TerraScaleBoundRoute($"/api/v1/organizations/{Escape(organizationId)}/projects");
-
-    public static TerraScaleBoundRoute ProjectGet(string projectId) =>
-        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}");
-
-    public static TerraScaleBoundRoute ProjectUpdate(string projectId) =>
-        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}");
-
-    public static TerraScaleBoundRoute ProjectDelete(string projectId) =>
-        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}");
-
-    public static TerraScaleBoundRoute ProjectRegionPlacementsList(string projectId) =>
-        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/regions");
-
-    public static TerraScaleBoundRoute ProjectTeamMembersList(string projectId, int skip, int take) =>
-        new TerraScaleBoundRoute(WithQuery($"/api/v1/projects/{Escape(projectId)}/access/team-members", ("skip", Number(skip)), ("take", Number(take))));
-
-    public static TerraScaleBoundRoute ProjectTeamMembersCreate(string projectId) =>
-        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/access/team-members");
-
-    public static TerraScaleBoundRoute ProjectTeamMemberUpdate(string projectId, string userId) =>
-        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/access/team-members/{Escape(userId)}");
-
-    public static TerraScaleBoundRoute ProjectTeamMemberDelete(string projectId, string userId) =>
-        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/access/team-members/{Escape(userId)}");
-
-    public static TerraScaleBoundRoute ProjectDatabasesList(string projectId, int skip, int take) =>
-        new TerraScaleBoundRoute(WithQuery($"/api/v1/projects/{Escape(projectId)}/databases", ("skip", Number(skip)), ("take", Number(take))));
-
-    public static TerraScaleBoundRoute ProjectDatabasesCreate(string projectId) =>
-        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/databases");
-
-    public static TerraScaleBoundRoute ProjectDatabaseGet(string projectId, string databaseId) =>
-        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/databases/{Escape(databaseId)}");
-
-    public static TerraScaleBoundRoute ProjectDatabaseDelete(string projectId, string databaseId) =>
-        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/databases/{Escape(databaseId)}");
-
-    public static TerraScaleBoundRoute DatabaseBranchesCreate(string projectId) =>
-        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/database-branches");
-
-    public static TerraScaleBoundRoute DatabaseBranchesCapabilityGet(string projectId) =>
-        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/database-branches/capability");
-
-    public static TerraScaleBoundRoute ProjectSavedQueriesList(string projectId, int skip, int take) =>
-        new TerraScaleBoundRoute(WithQuery($"/api/v1/projects/{Escape(projectId)}/saved-queries", ("skip", Number(skip)), ("take", Number(take))));
-
-    public static TerraScaleBoundRoute ProjectSavedQueriesCreate(string projectId) =>
-        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/saved-queries");
-
-    public static TerraScaleBoundRoute ProjectSavedQueryGet(string projectId, string savedQueryId) =>
-        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/saved-queries/{Escape(savedQueryId)}");
-
-    public static TerraScaleBoundRoute ProjectSavedQueryUpdate(string projectId, string savedQueryId) =>
-        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/saved-queries/{Escape(savedQueryId)}");
-
-    public static TerraScaleBoundRoute ProjectSavedQueryDelete(string projectId, string savedQueryId) =>
-        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/saved-queries/{Escape(savedQueryId)}");
-
-    public static TerraScaleBoundRoute ProjectAuditList(string projectId, int skip, int take) =>
-        new TerraScaleBoundRoute(WithQuery(
-                $"/api/v1/projects/{Escape(projectId)}/audit",
-                ("skip", Number(skip)),
-                ("take", Number(take))));
-
-    public static TerraScaleBoundRoute ProjectAuditGet(string projectId, string auditEventId) =>
-        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/audit/{Escape(auditEventId)}");
 
 
 
@@ -174,6 +60,11 @@ internal static class TerraScaleApiRoutes
 
 
 
+    public static TerraScaleBoundRoute DatabaseBranchesCreate(string projectId) =>
+        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/database-branches");
+
+    public static TerraScaleBoundRoute DatabaseBranchesCapabilityGet(string projectId) =>
+        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/database-branches/capability");
 
 
 
@@ -216,23 +107,10 @@ internal static class TerraScaleApiRoutes
     public static TerraScaleBoundRoute SchemaConfigure(string repositoryId) =>
         new TerraScaleBoundRoute($"/api/v1/repositories/{Escape(repositoryId)}/schema");
 
-    public static TerraScaleBoundRoute ProjectUsageGet(string projectId) =>
-        new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/usage");
 
-    public static TerraScaleBoundRoute ProjectUsageWorkloadGet(string projectId, string? range) =>
-        new TerraScaleBoundRoute(WithQuery($"/api/v1/projects/{Escape(projectId)}/usage/workload", ("range", NormalizeOptional(range))));
 
-    public static TerraScaleBoundRoute ProjectUsageHistoryGet(string projectId, string? range) =>
-        new TerraScaleBoundRoute(WithQuery($"/api/v1/projects/{Escape(projectId)}/usage/history", ("range", NormalizeOptional(range))));
 
-    public static TerraScaleBoundRoute ProjectLatencyGet(string projectId, double? latitude, double? longitude) =>
-        new TerraScaleBoundRoute(WithQuery(
-                $"/api/v1/projects/{Escape(projectId)}/latency",
-                ("latitude", Number(latitude)),
-                ("longitude", Number(longitude))));
 
-    public static TerraScaleBoundRoute OrganizationUsageGet(string organizationId) =>
-        new TerraScaleBoundRoute($"/api/v1/organizations/{Escape(organizationId)}/usage");
 
     public static string PricingPlansList() =>
         "/api/v1/pricing/plans";
@@ -282,29 +160,8 @@ internal static class TerraScaleApiRoutes
     public static string M2MTokenCreate(string projectId) =>
         $"/api/v1/projects/{Escape(projectId)}/auth/m2m/token";
 
-    public static TerraScaleBoundRoute NotificationsList(
-        int skip,
-        int take,
-        bool unreadOnly,
-        string? organizationId = null,
-        string? projectId = null,
-        bool includeOrganizationNotifications = false) =>
-        new TerraScaleBoundRoute(WithQuery(
-                "/api/v1/users/me/notifications",
-                ("skip", Number(skip)),
-                ("take", Number(take)),
-                ("unreadOnly", Boolean(unreadOnly)),
-                ("organizationId", NormalizeOptional(organizationId)),
-                ("projectId", NormalizeOptional(projectId)),
-                ("includeOrganizationNotifications", Boolean(includeOrganizationNotifications))));
 
-    public static TerraScaleBoundRoute NotificationMarkRead(string notificationId) =>
-        new TerraScaleBoundRoute($"/api/v1/users/me/notifications/{Escape(notificationId)}:mark-read");
 
-    public static TerraScaleBoundRoute NotificationsMarkAllRead(string? organizationId = null) =>
-        new TerraScaleBoundRoute(WithQuery(
-                "/api/v1/users/me/notifications:mark-all-read",
-                ("organizationId", NormalizeOptional(organizationId))));
 
     public static string AdminOverviewGet() =>
         "/api/v1/admin";
@@ -397,11 +254,6 @@ internal static class TerraScaleApiRoutes
         new TerraScaleBoundRoute($"/api/v1/projects/{Escape(projectId)}/databases/{Escape(databaseId)}/restores/{Escape(restoreId)}");
 
 
-    private static TerraScaleBoundRoute OrganizationInvitationAction(
-        string organizationId,
-        string invitationId,
-        string action) =>
-        new TerraScaleBoundRoute($"/api/v1/organizations/{Escape(organizationId)}/invitations/{Escape(invitationId)}:{action}");
 
     private static string WithQuery(string path, params (string Name, string? Value)[] values)
     {

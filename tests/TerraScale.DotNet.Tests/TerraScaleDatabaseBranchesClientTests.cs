@@ -70,7 +70,6 @@ public sealed class TerraScaleDatabaseBranchesClientTests
     {
         BaseAddress = new Uri("https://api.example.invalid/"),
         ApiKey = "test-key",
-        ProjectId = "project-a"
     });
 
     private sealed class RecordingHandler(HttpStatusCode statusCode, string responseBody) : HttpMessageHandler

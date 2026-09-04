@@ -45,11 +45,6 @@ public sealed record TerraScaleClientOptions
     public Func<CancellationToken, ValueTask<string>>? BearerTokenProvider { get; set; }
 
     /// <summary>
-    /// TerraScale project id used with project API-key authentication.
-    /// </summary>
-    public string? ProjectId { get; set; }
-
-    /// <summary>
     /// Number of transient retry attempts after the initial request. The default is zero and the maximum is eight.
     /// </summary>
     public int MaxRetryAttempts { get; set; }
@@ -110,11 +105,6 @@ public sealed record TerraScaleClientOptions
         if (hasStaticBearerToken && hasBearerTokenProvider)
         {
             throw new ArgumentException("Configure either BearerToken or BearerTokenProvider, not both.", nameof(BearerTokenProvider));
-        }
-
-        if (hasApiKey && string.IsNullOrWhiteSpace(ProjectId))
-        {
-            throw new ArgumentException("ProjectId is required when ApiKey is configured.", nameof(ProjectId));
         }
 
         if (MaxRetryAttempts < 0)

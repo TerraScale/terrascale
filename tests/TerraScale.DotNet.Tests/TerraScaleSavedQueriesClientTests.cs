@@ -16,7 +16,6 @@ public sealed class TerraScaleSavedQueriesClientTests
         {
             BaseAddress = new Uri("https://api.example.invalid/"),
             ApiKey = "test-key",
-            ProjectId = "project-a",
             IdempotencyKeyFactory = () => "factory-key"
         });
 
@@ -73,7 +72,6 @@ public sealed class TerraScaleSavedQueriesClientTests
         {
             BaseAddress = new Uri("https://api.example.invalid/"),
             ApiKey = "test-key",
-            ProjectId = "project-a"
         });
 
         await client.SavedQueries.ListAsync("project-a", take: 0);
@@ -116,7 +114,6 @@ public sealed class TerraScaleSavedQueriesClientTests
         {
             BaseAddress = new Uri("https://api.example.invalid/"),
             ApiKey = "test-key",
-            ProjectId = "project-a"
         });
 
         var listException = await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.SavedQueries.ListAsync("project-a", take: -1));
