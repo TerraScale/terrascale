@@ -665,18 +665,15 @@ async fn create_database(State(state): State<Arc<ApiState>>, body: String) -> Re
         Ok(record) => {
             // The backup stream attaches at creation (S-06): open the
             // engine location so the database file exists, then start one
-            // stream child for it from its first moment. Free is the
-            // default plan until the billing lane supplies the database's
-            // plan (D-25 retention).
+            // stream child for it from its first moment. The plan comes
+            // from the fleet's per-database registry — Free until the
+            // billing lane supplies the database's plan (D-25 retention,
+            // fail-closed).
             if let Some(catalog) = state.catalog.clone() {
                 let _ = catalog.host_for(&state.scope.0, &state.scope.1, name);
                 let location = catalog.location_for(&state.scope.0, &state.scope.1, name);
-                let _ = state.backups.attach(
-                    name,
-                    &location,
-                    &state.backup_root,
-                    crate::backup::retention_for_plan("free"),
-                );
+                let plan = state.backups.plan_for(name);
+                let _ = state.backups.attach_with_plan(name, &location, &state.backup_root, &plan);
             }
             record_response(StatusCode::CREATED, &record)
         }
@@ -1455,9 +1452,11 @@ fn time_travel_document(
     if at_seconds > now_seconds.saturating_add(60) {
         return invalid_at("it is in the future");
     }
-    // Free is the default plan until the billing lane supplies the
-    // database's plan (D-25 retention).
-    let retention_days = crate::backup::retention_days_for_plan("free");
+    // The retention gate reads the database's plan from the fleet's
+    // per-database registry — Free until the billing lane supplies it
+    // (D-25 retention, unknown plans fail closed to the Free window).
+    let plan = state.backups.plan_for(name);
+    let retention_days = crate::backup::retention_days_for_plan(&plan);
     if at_seconds.saturating_add(retention_days.saturating_mul(86_400)) < now_seconds {
         return ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
@@ -2125,13 +2124,10 @@ async fn restore_or_branch(
     match state.backups.restore_to_location(&name, at_seconds, &location) {
         Ok(()) => {
             // The new database is a main.db from its first moment: it gets
-            // its own stream under the default plan (D-25 retention).
-            let _ = state.backups.attach(
-                target,
-                &location,
-                &state.backup_root,
-                crate::backup::retention_for_plan("free"),
-            );
+            // its own stream under the source's plan (Free until the
+            // billing lane supplies plans; D-25 retention, fail-closed).
+            let plan = state.backups.plan_for(&name);
+            let _ = state.backups.attach_with_plan(target, &location, &state.backup_root, &plan);
             record_response(StatusCode::CREATED, &record)
         }
         Err(error) => {
@@ -2575,6 +2571,61 @@ mod tests {
         let body = String::from_utf8(body.to_vec()).expect("utf-8");
         assert!(body.contains("live-branch"), "the branch lists under its parent: {body}");
         fleet.detach_all();
+    }
+
+    /// The S-06 `?at=` retention gate reads the database's plan from the
+    /// fleet registry: Free refuses a ten-day-old moment, Pro lets it
+    /// through to the restore (which refuses without a stream — the gate
+    /// passed), and an unknown plan fails closed to Free. No Litestream
+    /// needed: the gate answers before any restore runs.
+    #[test]
+    fn time_travel_retention_gate_honors_the_database_plan() {
+        use terrabase::types::{CollectionName, DocumentId};
+        let state = state();
+        let collection = CollectionName::try_new("orders").expect("the collection parses");
+        let id = DocumentId::try_new("orders/first").expect("the document id parses");
+        let headers = axum::http::HeaderMap::new();
+        let ten_days_ago_millis =
+            (super::unix_now_seconds().saturating_sub(10 * 86_400) as i64) * 1000;
+
+        let refused = super::time_travel_document(
+            &state,
+            "planned",
+            &collection,
+            &id,
+            ten_days_ago_millis,
+            &headers,
+        )
+        .status();
+        assert_eq!(refused, StatusCode::UNPROCESSABLE_ENTITY, "Free refuses the old moment");
+
+        state.backups.set_plan("planned", "pro");
+        let gated = super::time_travel_document(
+            &state,
+            "planned",
+            &collection,
+            &id,
+            ten_days_ago_millis,
+            &headers,
+        )
+        .status();
+        assert_ne!(
+            gated,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Pro admits the moment past the Free window"
+        );
+
+        state.backups.set_plan("planned", "team");
+        let closed = super::time_travel_document(
+            &state,
+            "planned",
+            &collection,
+            &id,
+            ten_days_ago_millis,
+            &headers,
+        )
+        .status();
+        assert_eq!(closed, StatusCode::UNPROCESSABLE_ENTITY, "unknown plans fail closed");
     }
 
     /// The S-06 time-travel journey through the router: write, wait,

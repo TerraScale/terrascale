@@ -33,12 +33,27 @@ struct Stream {
 pub struct BackupStreams {
     litestream: PathBuf,
     streams: Mutex<BTreeMap<String, Stream>>,
+    /// The billing plan per database (S-06 plan plumbing, D-25): the
+    /// retention window each stream is configured with and each `?at=`
+    /// gate is judged against. The billing lane owns this map post-M1
+    /// (it calls [`Self::set_plan`]); until then every database reads
+    /// the [`DEFAULT_PLAN`] default and unknown plans fail closed to it.
+    plans: Mutex<BTreeMap<String, String>>,
 }
+
+/// The plan every database runs under until the billing lane says
+/// otherwise: the shortest retention window, so nothing over-promises
+/// durability (D-25).
+pub const DEFAULT_PLAN: &str = "free";
 
 impl BackupStreams {
     /// Starts a fleet that shells out to the given Litestream binary.
     pub fn new(litestream: PathBuf) -> Self {
-        Self { litestream, streams: Mutex::new(BTreeMap::new()) }
+        Self {
+            litestream,
+            streams: Mutex::new(BTreeMap::new()),
+            plans: Mutex::new(BTreeMap::new()),
+        }
     }
 
     /// The member's fleet: the packaged Litestream when present, else a
@@ -50,6 +65,54 @@ impl BackupStreams {
     /// Whether a stream child runs for the database.
     pub fn attached(&self, database: &str) -> bool {
         self.streams.lock().expect("the stream lock is not poisoned").contains_key(database)
+    }
+
+    /// The database's billing plan (S-06 plan plumbing, D-25): the stored
+    /// plan, or [`DEFAULT_PLAN`] when the billing lane has named none.
+    /// Unknown plans are returned as stored — the retention maps
+    /// ([`retention_days_for_plan`], [`retention_for_plan`]) fail those
+    /// closed to Free, so a typo never widens a window.
+    pub fn plan_for(&self, database: &str) -> String {
+        self.plans
+            .lock()
+            .expect("the plan lock is not poisoned")
+            .get(database)
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_PLAN.to_owned())
+    }
+
+    /// Records the database's billing plan (the billing lane owns this
+    /// post-M1; the API create/restore paths record the fleet default).
+    /// The name canonicalizes to lowercase; an empty name resets to
+    /// [`DEFAULT_PLAN`].
+    pub fn set_plan(&self, database: &str, plan: &str) {
+        let normalized = plan.trim().to_ascii_lowercase();
+        let normalized = if normalized.is_empty() { DEFAULT_PLAN.to_owned() } else { normalized };
+        self.plans
+            .lock()
+            .expect("the plan lock is not poisoned")
+            .insert(database.to_owned(), normalized);
+    }
+
+    /// The database's PITR retention in days under its current plan
+    /// (unknown plans fail closed to Free via [`retention_days_for_plan`]).
+    pub fn retention_days(&self, database: &str) -> u64 {
+        retention_days_for_plan(&self.plan_for(database))
+    }
+
+    /// Attaches one database under its billing plan: records `plan` and
+    /// configures the stream with the matching retention window. This is
+    /// the attach path the API create/restore routes use; [`Self::attach`]
+    /// stays as the raw-retention primitive the tests drive directly.
+    pub fn attach_with_plan(
+        &self,
+        database: &str,
+        location: &Path,
+        replica_root: &Path,
+        plan: &str,
+    ) -> io::Result<()> {
+        self.set_plan(database, plan);
+        self.attach(database, location, replica_root, retention_for_plan(&self.plan_for(database)))
     }
 
     /// Finds Litestream on `PATH`: the pinned 0.5.x the operator packaged.
@@ -186,7 +249,9 @@ impl BackupStreams {
     }
 
     /// Stops one database's stream. The artifacts stay (retention owns
-    /// them). Absent databases are a no-op.
+    /// them). Absent databases are a no-op. The plan entry drops with
+    /// the stream, so a later re-attach starts from the fleet default
+    /// until the billing lane re-supplies the plan.
     pub fn detach(&self, database: &str) {
         if let Some(mut stream) =
             self.streams.lock().expect("the stream lock is not poisoned").remove(database)
@@ -194,6 +259,7 @@ impl BackupStreams {
             let _ = stream.child.kill();
             let _ = stream.child.wait();
         }
+        self.plans.lock().expect("the plan lock is not poisoned").remove(database);
     }
 
     /// Stops every stream (member shutdown).
@@ -732,6 +798,31 @@ mod tests {
         assert_eq!(retention_for_plan("pro"), "720h");
         assert_eq!(retention_for_plan("scale"), "840h");
         assert_eq!(retention_for_plan("team"), "24h");
+    }
+
+    /// The S-06 plan plumbing: databases default to Free, the billing
+    /// lane's `set_plan` feeds the retention window, unknown plans fail
+    /// closed, and detach resets to the default.
+    #[test]
+    fn plan_plumbing_defaults_free_and_fails_closed() {
+        let fleet = BackupStreams::new(PathBuf::from("/nonexistent-litestream"));
+        assert_eq!(fleet.plan_for("database-a"), DEFAULT_PLAN);
+        assert_eq!(fleet.retention_days("database-a"), 1);
+        fleet.set_plan("database-a", "pro");
+        assert_eq!(fleet.plan_for("database-a"), "pro");
+        assert_eq!(fleet.retention_days("database-a"), 30);
+        fleet.set_plan("database-a", "  Starter ");
+        assert_eq!(fleet.plan_for("database-a"), "starter");
+        assert_eq!(fleet.retention_days("database-a"), 7);
+        fleet.set_plan("database-a", "team");
+        assert_eq!(fleet.plan_for("database-a"), "team");
+        assert_eq!(
+            fleet.retention_days("database-a"),
+            1,
+            "unknown plans fail closed to the Free window"
+        );
+        fleet.detach("database-a");
+        assert_eq!(fleet.plan_for("database-a"), DEFAULT_PLAN);
     }
 
     /// Without a stream there is no replica to time-travel into: the
