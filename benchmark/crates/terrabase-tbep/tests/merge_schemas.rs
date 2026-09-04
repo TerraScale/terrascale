@@ -206,7 +206,10 @@ fn concurrent_writes_converge_with_deterministic_history() {
 /// highest value even against the HLC order, sets union and intersect,
 /// and the MV register keeps both values. Only declared collections store
 /// kernels.
-#[allow(clippy::too_many_lines, reason = "the typed-field matrix exercises four kernels end to end")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the typed-field matrix exercises four kernels end to end"
+)]
 #[test]
 fn typed_fields_merge_with_kernels_only_on_declared_collections() {
     let (_a_location, member_a) = member("typed-a");

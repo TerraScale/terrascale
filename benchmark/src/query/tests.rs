@@ -19,7 +19,7 @@ use super::{
     GenerationView, GrammarVersion, IndexNamespace, ObservedGeneration, OrderDirection,
     OrderingKey, QueryCondition, QueryError, QueryOrdering, QueryPaging, QueryPredicate,
     QueryProjection, QuerySource, QuerySpec, QueryStore, StalenessMode, StalenessPolicy,
-    TqlParameters,
+    TqlParameters, VectorSearchRequest,
     execute::execute_with_view,
     spec::{MAX_PAGE_LIMIT, validate_field_name},
     tql,
@@ -3685,6 +3685,182 @@ fn large_collection_first_search_is_not_ready_until_the_text_backfill_completes(
         result.statistics().scanned(),
         11,
         "the narrowed read touches exactly the live matches — zero stale reads"
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // the fixture builds, backfills, and pins both top-k paths together
+fn scale_100k_fts_and_vector_top_k_are_exact() {
+    // S-02 done-when: FTS + vector top-k over a 100k-document fixture. One
+    // collection carries both the searched text and the searched embedding,
+    // so both top-k paths prove exactness over the same corpus: the FTS path
+    // through the governed text backfill (the first search fails
+    // `IndexNotReady`, the bounded pump completes the descriptor, the retry
+    // narrows to exactly the planted needles), the vector path as the exact
+    // cosine k-NN over the whole snapshot (every document scored, the
+    // planted best direction first, scores descending). Both executes carry
+    // a latency smoke bound beside their correctness pins.
+    fn filler_embedding(index: u32) -> Vec<DocumentValue> {
+        // Every component is positive, so the cosine with `[1,0,0,0]` is
+        // strictly below 1 — the planted best direction is the unique top-1.
+        [
+            f64::from(index % 7 + 1),
+            f64::from((index / 7) % 7 + 1),
+            f64::from((index / 13) % 5 + 1),
+            f64::from((index / 29) % 3 + 1),
+        ]
+        .into_iter()
+        .map(DocumentValue::Number)
+        .collect()
+    }
+
+    const DOCUMENTS: u32 = 100_000;
+    const WAVE: u32 = 10_000;
+    const NEEDLE_EVERY: u32 = 10_000;
+    const NEEDLE_AT: u32 = 7;
+    const NEEDLES: u64 = (DOCUMENTS / NEEDLE_EVERY) as u64;
+    const BEST_INDEX: u32 = 42_424;
+    const TOP_K: u32 = 10;
+
+    let (dir, engine) = open_engine("scale-100k-topk");
+    let tenant_scope = scope(&engine, "tenant-a");
+    for wave in 0..DOCUMENTS / WAVE {
+        let documents = (0..WAVE)
+            .map(|offset| {
+                let index = wave * WAVE + offset;
+                let id = format!("doc-{index:06}");
+                let body = if index % NEEDLE_EVERY == NEEDLE_AT {
+                    format!("zephyrneedle brass telescope observation {index}")
+                } else {
+                    format!("bulk filler words {index}")
+                };
+                let embedding = if index == BEST_INDEX {
+                    vec![
+                        DocumentValue::Number(1.0),
+                        DocumentValue::Number(0.0),
+                        DocumentValue::Number(0.0),
+                        DocumentValue::Number(0.0),
+                    ]
+                } else {
+                    filler_embedding(index)
+                };
+                object_document(
+                    &id,
+                    "corpus",
+                    &[
+                        ("body", DocumentValue::String(body)),
+                        ("embedding", DocumentValue::Array(embedding)),
+                    ],
+                )
+            })
+            .collect::<Vec<_>>();
+        commit_documents(&engine, &tenant_scope, &format!("op-scale-{wave:02}"), documents);
+    }
+    let store = engine.queries();
+    let parameters = search_parameters("zephyrneedle");
+    let first = compile_tql(
+        &engine,
+        "from corpus where search(body, $q) order by score() desc limit 10",
+        &parameters,
+        "tenant-a",
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    assert_eq!(
+        store.execute(&first, &snapshot),
+        Err(QueryError::IndexNotReady),
+        "the first search over 100k unindexed rows fails closed until the governed text backfill completes"
+    );
+    let mut active = false;
+    for _ in 0..100 {
+        let progress = engine.maintain_index_backfills().expect("the governed pass pumps");
+        if progress.iter().any(|step| step.active) {
+            active = true;
+            break;
+        }
+    }
+    assert!(active, "the bounded pass completes the 100k text descriptor");
+    // A client retries with a fresh query after `IndexBuilding`: recompile
+    // so the plan carries a live deadline past the backfill window.
+    let fresh = engine.read_snapshot(&tenant_scope).expect("fresh snapshot");
+    let ranked = compile_tql(
+        &engine,
+        "from corpus where search(body, $q) order by score() desc limit 10",
+        &parameters,
+        "tenant-a",
+    );
+    let started = std::time::Instant::now();
+    let result = store.execute(&ranked, &fresh).expect("the FTS top-10 serves once active");
+    let fts_elapsed = started.elapsed();
+    assert_eq!(
+        result.matched(),
+        NEEDLES,
+        "the 100k FTS top-k resolves exactly the planted needles — no missing rows, no phantoms"
+    );
+    let mut actual = row_ids(&result);
+    actual.sort();
+    let mut expected = (0..NEEDLES)
+        .map(|needle| {
+            let index =
+                u32::try_from(needle).expect("ten needles fit in u32") * NEEDLE_EVERY + NEEDLE_AT;
+            format!("doc-{index:06}")
+        })
+        .collect::<Vec<_>>();
+    expected.sort();
+    assert_eq!(actual, expected, "the FTS top-10 returns exactly the needle set");
+    assert!(
+        !expected.contains(&format!("doc-{BEST_INDEX:06}")),
+        "the best vector document carries filler text, so the needle set excludes it"
+    );
+    assert_eq!(
+        result.statistics().scanned(),
+        NEEDLES,
+        "the narrowed read touches exactly the live matches — zero stale reads"
+    );
+    assert!(
+        fts_elapsed < Duration::from_secs(30),
+        "FTS top-10 latency smoke over 100k documents: {fts_elapsed:?}"
+    );
+    let request = VectorSearchRequest::try_new(
+        source("corpus"),
+        "embedding",
+        vec![1.0, 0.0, 0.0, 0.0],
+        TOP_K,
+    )
+    .expect("valid request");
+    let started = std::time::Instant::now();
+    let knn = store.vector_search(&request, &fresh).expect("the exact k-NN serves over 100k");
+    let vector_elapsed = started.elapsed();
+    assert!(knn.exact(), "the 100k vector top-k is the exact k-NN, never an approximation");
+    assert_eq!(knn.statistics().scanned(), u64::from(DOCUMENTS));
+    assert_eq!(
+        knn.statistics().scored(),
+        u64::from(DOCUMENTS),
+        "every document of the 100k corpus is scored — the top-k is exact, not sampled"
+    );
+    assert_eq!(knn.statistics().returned(), u64::from(TOP_K));
+    assert_eq!(knn.matches().len(), usize::try_from(TOP_K).expect("small top-k"));
+    assert_eq!(
+        knn.matches()[0].id().as_str(),
+        format!("doc-{BEST_INDEX:06}"),
+        "the planted best direction is the unique top-1"
+    );
+    assert!((knn.matches()[0].score() - 1.0).abs() < 1e-12);
+    for pair in knn.matches().windows(2) {
+        assert!(
+            pair[0].score() >= pair[1].score(),
+            "vector top-k scores descend: {} before {}",
+            pair[0].score(),
+            pair[1].score()
+        );
+    }
+    assert!(
+        vector_elapsed < Duration::from_secs(30),
+        "vector top-10 latency smoke over 100k documents: {vector_elapsed:?}"
+    );
+    eprintln!(
+        "scale-100k top-k: FTS top-10 in {fts_elapsed:?}, vector top-10 in {vector_elapsed:?}"
     );
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();
