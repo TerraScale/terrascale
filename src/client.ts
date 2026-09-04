@@ -409,7 +409,7 @@ export class SqlClient {
     const signal = typeof requestOrSql === "string"
       ? maybeOptions.signal
       : isSqlOptions(third) ? third.signal : maybeOptions.signal;
-    return directRequest(this.#http, "sql.execute", {
+    return directRequest(this.#http, "databases.executeSql", {
       method: "POST",
       path: `${apiRoot}/databases/${idPathSegment(database)}/sql`,
       body: {
