@@ -53,7 +53,6 @@ public sealed class TerraScaleClient
         this.httpClient.BaseAddress ??= optionSnapshot.BaseAddress;
         Databases = new TerraScaleDatabasesClient(this);
         Collections = new TerraScaleCollectionsClient(this);
-        Repositories = new TerraScaleRepositoriesClient(this);
         Documents = new TerraScaleDocumentsClient(this);
         Tql = new TerraScaleTqlClient(this);
         Schemas = new TerraScaleSchemasClient(this);
@@ -66,8 +65,6 @@ public sealed class TerraScaleClient
         ProjectDatabases = new TerraScaleProjectDatabasesClient(this);
         DatabaseBranches = new TerraScaleDatabaseBranchesClient(this);
         SavedQueries = new TerraScaleSavedQueriesClient(this);
-        Queues = new TerraScaleQueuesClient(this);
-        Environments = new TerraScaleEnvironmentsClient(this);
         ProjectUsage = new TerraScaleProjectUsageClient(this);
         Audit = new TerraScaleAuditClient(this);
         ApiKeys = new TerraScaleApiKeysClient(this);
@@ -88,11 +85,6 @@ public sealed class TerraScaleClient
     /// Database collection operations.
     /// </summary>
     public TerraScaleCollectionsClient Collections { get; }
-
-    /// <summary>
-    /// Repository management operations.
-    /// </summary>
-    public TerraScaleRepositoriesClient Repositories { get; }
 
     /// <summary>
     /// Repository document operations.
@@ -155,16 +147,6 @@ public sealed class TerraScaleClient
     public TerraScaleSavedQueriesClient SavedQueries { get; }
 
     /// <summary>
-    /// Project-scoped queue and topic operations.
-    /// </summary>
-    public TerraScaleQueuesClient Queues { get; }
-
-    /// <summary>
-    /// Project database environment operations.
-    /// </summary>
-    public TerraScaleEnvironmentsClient Environments { get; }
-
-    /// <summary>
     /// Project usage operations.
     /// </summary>
     public TerraScaleProjectUsageClient ProjectUsage { get; }
@@ -209,56 +191,16 @@ public sealed class TerraScaleClient
     /// </summary>
     public TerraScaleSyncClient Sync { get; }
 
-    /// <summary>
-    /// Creates a typed repository facade for document CRUD, list, and query operations.
-    /// </summary>
-    public TerraScaleTypedRepository<TEntity> Repository<TEntity>(string repository)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(repository);
-        return new TerraScaleTypedRepository<TEntity>(this, repository.Trim());
-    }
 
-    /// <summary>
-    /// Creates a client context that targets a default database for repository creation.
-    /// </summary>
-    public TerraScaleClient ForDatabase(string databaseId)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
-        return new TerraScaleClient(
-            httpClient,
-            options with
-            {
-                DatabaseId = databaseId.Trim(),
-                EnvironmentId = null
-            });
-    }
 
-    /// <summary>
-    /// Creates a client context that targets a default database environment for repository creation.
-    /// </summary>
-    public TerraScaleClient ForEnvironment(string databaseId, string environmentId)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(environmentId);
-        return new TerraScaleClient(
-            httpClient,
-            options with
-            {
-                DatabaseId = databaseId.Trim(),
-                EnvironmentId = environmentId.Trim()
-            });
-    }
 
-    internal string? DatabaseId => options.DatabaseId;
-
-    internal string? EnvironmentId => options.EnvironmentId;
 
     internal Task<TResponse> SendAsync<TResponse>(
         HttpMethod method,
         TerraScaleBoundRoute route,
         object? body,
         CancellationToken cancellationToken) =>
-        SendAsync<TResponse>(method, ValidatePublicRoute(method, route), body, cancellationToken);
+        SendAsync<TResponse>(method, route.RequestUri, body, cancellationToken);
 
     internal Task<TResponse> SendAsync<TResponse>(
         HttpMethod method,
@@ -273,7 +215,7 @@ public sealed class TerraScaleClient
         object? body,
         Action<HttpRequestMessage>? configureRequest,
         CancellationToken cancellationToken) =>
-        SendAsync<TResponse>(method, ValidatePublicRoute(method, route), body, configureRequest, cancellationToken);
+        SendAsync<TResponse>(method, route.RequestUri, body, configureRequest, cancellationToken);
 
     internal Task<TResponse> SendAsync<TResponse>(
         HttpMethod method,
@@ -289,7 +231,7 @@ public sealed class TerraScaleClient
         object? body,
         string? preferredRegion,
         CancellationToken cancellationToken) =>
-        SendAsync<TResponse>(method, ValidatePublicRoute(method, route), body, preferredRegion, cancellationToken);
+        SendAsync<TResponse>(method, route.RequestUri, body, preferredRegion, cancellationToken);
 
     internal Task<TResponse> SendAsync<TResponse>(
         HttpMethod method,
@@ -308,7 +250,7 @@ public sealed class TerraScaleClient
         CancellationToken cancellationToken) =>
         SendAsync<TResponse>(
             method,
-            ValidatePublicRoute(method, route),
+            route.RequestUri,
             body,
             preferredRegion,
             configureRequest,
@@ -338,7 +280,7 @@ public sealed class TerraScaleClient
         string? idempotencyKey = null) =>
         SendJsonAsync(
             method,
-            ValidatePublicRoute(method, route),
+            route.RequestUri,
             responseTypeInfo,
             cancellationToken,
             idempotencyKey);
@@ -361,7 +303,7 @@ public sealed class TerraScaleClient
         string? idempotencyKey = null) =>
         SendJsonAsync(
             method,
-            ValidatePublicRoute(method, route),
+            route.RequestUri,
             body,
             requestTypeInfo,
             responseTypeInfo,
@@ -387,7 +329,7 @@ public sealed class TerraScaleClient
         CancellationToken cancellationToken) =>
         SendNonRetryableJsonAsync(
             method,
-            ValidatePublicRoute(method, route),
+            route.RequestUri,
             body,
             requestTypeInfo,
             responseTypeInfo,
@@ -456,7 +398,7 @@ public sealed class TerraScaleClient
         CancellationToken cancellationToken) =>
         SendWithIdempotencyKeyAsync<TResponse>(
             method,
-            ValidatePublicRoute(method, route),
+            route.RequestUri,
             body,
             idempotencyKey,
             cancellationToken);
@@ -484,7 +426,7 @@ public sealed class TerraScaleClient
         CancellationToken cancellationToken) =>
         SendNonRetryableMutationAsync<TResponse>(
             method,
-            ValidatePublicRoute(method, route),
+            route.RequestUri,
             body,
             cancellationToken);
 
@@ -508,7 +450,7 @@ public sealed class TerraScaleClient
         HttpMethod method,
         TerraScaleBoundRoute route,
         CancellationToken cancellationToken) =>
-        SendNonRetryableMutationAsync(method, ValidatePublicRoute(method, route), cancellationToken);
+        SendNonRetryableMutationAsync(method, route.RequestUri, cancellationToken);
 
     internal Task SendNonRetryableMutationAsync(
         HttpMethod method,
@@ -525,7 +467,7 @@ public sealed class TerraScaleClient
         HttpMethod method,
         TerraScaleBoundRoute route,
         CancellationToken cancellationToken) =>
-        SendNonRetryableNoContentAsync(method, ValidatePublicRoute(method, route), cancellationToken);
+        SendNonRetryableNoContentAsync(method, route.RequestUri, cancellationToken);
 
     internal async Task SendNonRetryableNoContentAsync(
         HttpMethod method,
@@ -534,7 +476,7 @@ public sealed class TerraScaleClient
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(body);
-        var requestUri = ValidatePublicRoute(method, route);
+        var requestUri = route.RequestUri;
         using var activity = StartActivity(method, requestUri);
         using var response = await SendWithRetriesAsync(
             method,
@@ -589,7 +531,7 @@ public sealed class TerraScaleClient
         CancellationToken cancellationToken) =>
         SendAsync(
             method,
-            ValidatePublicRoute(method, route),
+            route.RequestUri,
             body,
             preferredRegion,
             configureRequest,
@@ -615,16 +557,6 @@ public sealed class TerraScaleClient
             idempotencyKeyOverride: null,
             allowUnkeyedPutRetry: true);
 
-    private static string ValidatePublicRoute(HttpMethod method, TerraScaleBoundRoute route)
-    {
-        if (!string.Equals(method.Method, route.Method.Method, StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException(
-                $"Route {route.Definition.RouteName} requires {route.Method.Method}, not {method.Method}.");
-        }
-
-        return route.RequestUri;
-    }
 
     private async Task<TResult> SendAsync<TResponse, TResult>(
         HttpMethod method,
@@ -677,7 +609,7 @@ public sealed class TerraScaleClient
         CancellationToken cancellationToken) =>
         await SendAnonymousJsonAsync<TResponse>(
             method,
-            ValidatePublicRoute(method, route),
+            route.RequestUri,
             body,
             cancellationToken).ConfigureAwait(false);
 
@@ -708,7 +640,7 @@ public sealed class TerraScaleClient
         CancellationToken cancellationToken) =>
         await SendAnonymousJsonAsync(
             method,
-            ValidatePublicRoute(method, route),
+            route.RequestUri,
             responseTypeInfo,
             cancellationToken).ConfigureAwait(false);
 

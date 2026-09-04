@@ -50,16 +50,6 @@ public sealed record TerraScaleClientOptions
     public string? ProjectId { get; set; }
 
     /// <summary>
-    /// Default TerraScale database id used by repository operations when one is not supplied per call.
-    /// </summary>
-    public string? DatabaseId { get; set; }
-
-    /// <summary>
-    /// Default TerraScale database environment id used by repository operations when one is not supplied per call.
-    /// </summary>
-    public string? EnvironmentId { get; set; }
-
-    /// <summary>
     /// Number of transient retry attempts after the initial request. The default is zero and the maximum is eight.
     /// </summary>
     public int MaxRetryAttempts { get; set; }
@@ -125,11 +115,6 @@ public sealed record TerraScaleClientOptions
         if (hasApiKey && string.IsNullOrWhiteSpace(ProjectId))
         {
             throw new ArgumentException("ProjectId is required when ApiKey is configured.", nameof(ProjectId));
-        }
-
-        if (!string.IsNullOrWhiteSpace(EnvironmentId) && string.IsNullOrWhiteSpace(DatabaseId))
-        {
-            throw new ArgumentException("DatabaseId is required when EnvironmentId is configured.", nameof(DatabaseId));
         }
 
         if (MaxRetryAttempts < 0)
