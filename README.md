@@ -20,9 +20,8 @@ before that regeneration.
   reversible optimistic presentation) that awaits the pinned reactive contract
   (ADR 0002). No transport, route, or wire protocol ships here yet.
 
-Retired concepts (queues, repositories, environments, TQL, the legacy sync
-protocols, the EF Core package, and the Dashboard/Database-API clients) are
-deleted per the workspace decisions, not deprecated.
+Retired product concepts are deleted per the workspace decisions, not
+deprecated: this SDK ships only the launch surface above.
 
 ## Create a client
 
