@@ -25,6 +25,12 @@ pub(crate) const WELCH_CRITICAL_VALUE: f64 = 2.0;
 /// this amount for a template.  A template crossing this boundary is pinned
 /// to its baseline plan before the candidate is made visible.
 pub(crate) const MAX_REGRESSION_FRACTION: f64 = 0.05;
+/// Absolute tolerance for zero comparisons on logical-work floats (ADR 0045
+/// §3.7). Costs are integer-derived and exactly comparable when equal, but
+/// mean/variance accumulation can leave sub-epsilon residue; gaps within
+/// float noise count as ties so replay stays deterministic. Existing margins
+/// (5 % guard, 20 % activation, Welch 2.0) exceed it by orders of magnitude.
+const ZERO_EPSILON: f64 = f64::EPSILON;
 
 /// A bounded pair of logical-cost samples for Welch verification.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -189,8 +195,13 @@ pub(crate) fn verify_shadow(
     }
     let standard_error_squared =
         baseline.variance / baseline.count + candidate_stats.variance / candidate_stats.count;
-    let (statistic, significant) = if standard_error_squared == 0.0 {
-        (if difference == 0.0 { 0.0 } else { f64::INFINITY }, difference != 0.0)
+    // Epsilon tie: exact equality holds for identical integer-derived samples,
+    // but mean/variance rounding can leave sub-epsilon residue. Gaps within
+    // float noise count as ties so replay stays deterministic.
+    let is_zero_variance = standard_error_squared.abs() < ZERO_EPSILON;
+    let is_zero_difference = difference.abs() < ZERO_EPSILON;
+    let (statistic, significant) = if is_zero_variance {
+        (if is_zero_difference { 0.0 } else { f64::INFINITY }, !is_zero_difference)
     } else {
         let statistic = difference.abs() / standard_error_squared.sqrt();
         if !statistic.is_finite() {
@@ -256,7 +267,9 @@ fn statistics(samples: &[LogicalCost]) -> Option<Statistics> {
     // arrival order and avoids order-dependent floating-point accumulation.
     let mut values = samples.iter().map(|cost| scalar_cost(*cost)).collect::<Option<Vec<_>>>()?;
     values.sort_unstable_by(|left, right| left.total_cmp(right));
-    let count = values.len() as f64;
+    // Saturating: sample vectors are bounded by `MAX_SHADOW_SAMPLES`; the
+    // fallback keeps the mean total for oversized inputs.
+    let count = f64::from(u32::try_from(values.len()).unwrap_or(u32::MAX));
     let sum = values.iter().try_fold(0.0, |sum, value| {
         let next = sum + value;
         next.is_finite().then_some(next)
@@ -288,12 +301,18 @@ struct MetricStatistics {
     rows_p95: f64,
 }
 
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "bounded logical counters; precision is below measurement noise"
+)]
 fn metric_statistics(samples: &[LogicalCost]) -> Option<MetricStatistics> {
     let mut pages = samples.iter().map(|cost| cost.pages_read() as f64).collect::<Vec<_>>();
     let mut rows = samples.iter().map(|cost| cost.rows_examined() as f64).collect::<Vec<_>>();
     pages.sort_unstable_by(f64::total_cmp);
     rows.sort_unstable_by(f64::total_cmp);
-    let count = pages.len() as f64;
+    // Saturating: sample vectors are bounded by `MAX_SHADOW_SAMPLES`; the
+    // fallback keeps the mean total for oversized inputs.
+    let count = f64::from(u32::try_from(pages.len()).unwrap_or(u32::MAX));
     let pages_sum = pages.iter().try_fold(0.0, |sum, value| {
         let next = sum + value;
         next.is_finite().then_some(next)
@@ -325,8 +344,11 @@ fn exceeds_guard(baseline: f64, candidate: f64) -> bool {
     if !baseline.is_finite() || !candidate.is_finite() || baseline < 0.0 || candidate < 0.0 {
         return true;
     }
-    if baseline == 0.0 {
-        return candidate > 0.0;
+    // Epsilon tie: integer-derived baselines compare exactly at zero, but a
+    // sub-epsilon residue must not flip the guard. Gaps within float noise
+    // count as ties.
+    if baseline.abs() < ZERO_EPSILON {
+        return candidate.abs() >= ZERO_EPSILON;
     }
     candidate > baseline * (1.0 + MAX_REGRESSION_FRACTION)
 }
@@ -392,6 +414,10 @@ pub(crate) fn verify_templates(
     result
 }
 
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "bounded logical counters; precision is below measurement noise"
+)]
 fn scalar_cost(cost: LogicalCost) -> Option<f64> {
     let total = cost.pages_read().checked_add(cost.rows_examined())?;
     let value = total as f64;
@@ -580,11 +606,16 @@ mod tests {
     fn evidence_retains_p95_pages_and_rows() {
         let mut baseline = Vec::with_capacity(MIN_SHADOW_SAMPLES);
         let mut candidate_costs = Vec::with_capacity(MIN_SHADOW_SAMPLES);
-        for _ in 0..(MIN_SHADOW_SAMPLES - 1) {
+        // Nearest-rank p95 over 20 samples is index 18 (the 19th smallest),
+        // so pinning the tail needs two copies; a single outlier leaves p95
+        // on the body.
+        for _ in 0..(MIN_SHADOW_SAMPLES - 2) {
             baseline.push(LogicalCost::new(1, 10));
             candidate_costs.push(LogicalCost::new(2, 10));
         }
         baseline.push(LogicalCost::new(8, 10));
+        baseline.push(LogicalCost::new(8, 10));
+        candidate_costs.push(LogicalCost::new(8, 10));
         candidate_costs.push(LogicalCost::new(8, 10));
         let evidence = verify_shadow(
             &template(),
@@ -592,20 +623,40 @@ mod tests {
             &ShadowSamples::new(baseline, candidate_costs),
         )
         .expect("valid bounded evidence");
-        assert_eq!(evidence.baseline_pages_p95, 8.0);
-        assert_eq!(evidence.candidate_pages_p95, 8.0);
-        assert_eq!(evidence.baseline_rows_p95, 10.0);
-        assert_eq!(evidence.candidate_rows_p95, 10.0);
+        assert!(
+            (evidence.baseline_pages_p95 - 8.0).abs() < ZERO_EPSILON,
+            "baseline pages p95 {}",
+            evidence.baseline_pages_p95
+        );
+        assert!(
+            (evidence.candidate_pages_p95 - 8.0).abs() < ZERO_EPSILON,
+            "candidate pages p95 {}",
+            evidence.candidate_pages_p95
+        );
+        assert!(
+            (evidence.baseline_rows_p95 - 10.0).abs() < ZERO_EPSILON,
+            "baseline rows p95 {}",
+            evidence.baseline_rows_p95
+        );
+        assert!(
+            (evidence.candidate_rows_p95 - 10.0).abs() < ZERO_EPSILON,
+            "candidate rows p95 {}",
+            evidence.candidate_rows_p95
+        );
         assert!(evidence.hard_regression);
     }
 
     #[test]
     fn mean_logical_work_regression_crosses_the_five_percent_guard() {
         // Keep p95 equal while shifting the body of the distribution. This
-        // catches regressions that a tail-only guard would miss.
-        let mut baseline = vec![LogicalCost::new(100, 0); MIN_SHADOW_SAMPLES - 1];
-        let mut candidate_costs = vec![LogicalCost::new(110, 0); MIN_SHADOW_SAMPLES - 1];
+        // catches regressions that a tail-only guard would miss. Nearest-rank
+        // p95 over 20 samples is index 18, so the shared tail needs two
+        // copies to stay on the tail while the body shifts.
+        let mut baseline = vec![LogicalCost::new(100, 0); MIN_SHADOW_SAMPLES - 2];
+        let mut candidate_costs = vec![LogicalCost::new(110, 0); MIN_SHADOW_SAMPLES - 2];
         baseline.push(LogicalCost::new(150, 0));
+        baseline.push(LogicalCost::new(150, 0));
+        candidate_costs.push(LogicalCost::new(150, 0));
         candidate_costs.push(LogicalCost::new(150, 0));
         let evidence = verify_shadow(
             &template(),
@@ -613,7 +664,12 @@ mod tests {
             &ShadowSamples::new(baseline, candidate_costs),
         )
         .expect("valid bounded evidence");
-        assert_eq!(evidence.baseline_p95, evidence.candidate_p95);
+        assert!(
+            (evidence.baseline_p95 - evidence.candidate_p95).abs() < ZERO_EPSILON,
+            "p95 {} vs {}",
+            evidence.baseline_p95,
+            evidence.candidate_p95
+        );
         assert!(evidence.candidate_mean > evidence.baseline_mean * 1.05);
         assert!(evidence.hard_regression);
         assert_eq!(decision_for(evidence), ShadowDecision::ActivateWithPins);
