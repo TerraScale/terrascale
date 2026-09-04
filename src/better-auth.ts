@@ -212,6 +212,61 @@ export type BetterAuthDatabaseAdapter = {
   readonly options: { readonly adapterConfig: { readonly adapterId: string } };
 };
 
+export type LocalBetterAuthHttpOptions = {
+  readonly baseUrl: string;
+  readonly fetch?: typeof fetch;
+};
+
+/** Development-only HTTP operation port for the loopback SQLite runtime. */
+export function createLocalBetterAuthHttpOperations(
+  options: LocalBetterAuthHttpOptions,
+): BetterAuthDatabaseOperations {
+  const url = new URL(options.baseUrl);
+  if (!["127.0.0.1", "localhost", "::1"].includes(url.hostname) || url.protocol !== "http:") {
+    throw new TypeError("The local Better Auth operation port must use loopback HTTP.");
+  }
+  if (process.env.NODE_ENV === "production" || process.env.CI) {
+    throw new TypeError("The local Better Auth operation port is disabled outside development.");
+  }
+  const request = async <T>(action: string, input: unknown): Promise<T> => {
+    const response = await (options.fetch ?? globalThis.fetch)(
+      new URL(`/__terrascale/local/better-auth/${action}`, url),
+      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) },
+    );
+    if (!response.ok) throw new BetterAuthAdapterError(`Local Better Auth ${action} failed with HTTP ${response.status}.`, "local_transport", { status: response.status });
+    return reviveDates(await response.json()) as T;
+  };
+  const operations: BetterAuthDatabaseOperations = {
+    insertUnique: (input) => request("insertUnique", input),
+    findOne: (input) => request("findOne", input),
+    findPage: (input) => request("findPage", input),
+    count: (input) => request("count", input),
+    compareAndSwap: (input) => request("compareAndSwap", input),
+    updateMany: (input) => request("updateMany", input),
+    delete: (input) => request("delete", input),
+    deleteMany: (input) => request("deleteMany", input),
+    consumeOne: (input) => request("consumeOne", input),
+    incrementOne: (input) => request("incrementOne", input),
+    transaction: (callback) => callback(operationsWithoutTransaction(operations)),
+    migrate: (input) => request("migrate", input),
+  };
+  return operations;
+}
+
+function operationsWithoutTransaction(operations: BetterAuthDatabaseOperations) {
+  const { transaction: _transaction, ...rest } = operations;
+  return rest;
+}
+
+function reviveDates(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(reviveDates);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, reviveDates(entry)]));
+  }
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/u.test(value)) return new Date(value);
+  return value;
+}
+
 /**
  * Creates the server-only Better Auth adapter.
  *

@@ -47,8 +47,16 @@
     },
     "./better-auth": {
       "types": "./dist/better-auth.d.ts",
+      "import": "./dist/better-auth.js",
       "node": "./dist/better-auth.js"
+    },
+    "./local": {
+      "types": "./dist/local/index.d.ts",
+      "node": "./dist/local/index.js"
     }
+  },
+  "bin": {
+    "terrascale-local": "./dist/local/cli.js"
   },
   "files": [
     "dist",
@@ -66,6 +74,7 @@
     "qualify:artifact": "node scripts/qualify-npm-artifact.ts",
     "generate:route-manifest": "npm run build && node scripts/generate-client-route-manifest.ts",
     "generate:openapi-contract-descriptor": "npm run build && node scripts/generate-openapi-contract-descriptor.ts",
+    "local": "node dist/local/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:browser": "playwright test"

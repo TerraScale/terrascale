@@ -63,6 +63,7 @@ describe("forbidden SDK surface", () => {
         return filePath.endsWith(".ts")
           && !filePath.endsWith(".test.ts")
           && !relative.startsWith("src/integration/")
+          && !relative.startsWith("src/local/")
           && !relative.startsWith("src/better-auth.ts")
           && !filePath.endsWith("client-route-capture.ts");
       })),

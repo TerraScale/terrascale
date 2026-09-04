@@ -55,9 +55,13 @@ test("package metadata declares the supported Node and browser matrix", async ()
   });
   assert.deepEqual(packageJson.exports?.["./better-auth"], {
     types: "./dist/better-auth.d.ts",
+    import: "./dist/better-auth.js",
     node: "./dist/better-auth.js",
   });
-  assert.equal("./local" in (packageJson.exports ?? {}), false);
+  assert.deepEqual(packageJson.exports?.["./local"], {
+    types: "./dist/local/index.d.ts",
+    node: "./dist/local/index.js",
+  });
 });
 
 test("generated route metadata pins the terrabase contract version", async () => {
@@ -113,7 +117,7 @@ async function productionSources(directory: string): Promise<string[]> {
   const paths = await Promise.all(entries.map(async (entry) => {
     const entryPath = path.join(directory, entry.name);
     if (entry.isDirectory()) {
-      return entry.name === "integration" || entry.name === "better-auth" ? [] : productionSources(entryPath);
+      return entry.name === "integration" || entry.name === "better-auth" || entry.name === "local" ? [] : productionSources(entryPath);
     }
     if (
       !entry.name.endsWith(".ts") ||

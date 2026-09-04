@@ -1,9 +1,15 @@
 import type { ProjectId } from "./models.js";
+import { isRegisteredLocalRuntimeFetch } from "./local-runtime-capability.js";
 import { parseRegionCode, type TerraScaleRegionCode } from "./regions.js";
 
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export type AccessTokenProvider = string | (() => Promise<string | undefined> | string | undefined);
+
+export type TerraScaleSqliteRuntimeConfig = {
+  readonly enabled: true;
+  readonly databasePath: string;
+};
 
 import type { TerraScaleRequestMetricRecorder } from "./http.js";
 
@@ -18,6 +24,7 @@ export type TerraScaleRuntimeConfig = {
   readonly regionAffinity?: "failover" | "strict" | undefined;
   readonly maxRetryAttempts?: number | undefined;
   readonly retryDelayMs?: number | undefined;
+  readonly sqlite?: TerraScaleSqliteRuntimeConfig | undefined;
 };
 
 export type ResolvedTerraScaleRuntimeConfig = {
@@ -27,6 +34,7 @@ export type ResolvedTerraScaleRuntimeConfig = {
   readonly regionAffinity: "failover" | "strict";
   readonly maxRetryAttempts: number;
   readonly retryDelayMs: number;
+  readonly sqlite?: TerraScaleSqliteRuntimeConfig | undefined;
 };
 
 export function resolveRuntimeConfig(
@@ -34,6 +42,10 @@ export function resolveRuntimeConfig(
 ): ResolvedTerraScaleRuntimeConfig {
   if (Object.hasOwn(config, "defaultHeaders")) {
     throw new TypeError("defaultHeaders is not supported; use the named credential and routing options.");
+  }
+
+  if (config.sqlite !== undefined && !isLocalRuntimeConfig(config)) {
+    throw new TypeError("SQLite mode is only available through the @terrascale/sdk/local entrypoint.");
   }
 
   const fetchHandler = config.fetch ?? globalThis.fetch?.bind(globalThis);
@@ -75,7 +87,12 @@ export function resolveRuntimeConfig(
     regionAffinity,
     maxRetryAttempts,
     retryDelayMs,
+    ...(config.sqlite === undefined ? {} : { sqlite: config.sqlite }),
   };
+}
+
+function isLocalRuntimeConfig(config: TerraScaleRuntimeConfig): boolean {
+  return config.apiBaseUrl === "http://127.0.0.1" && isRegisteredLocalRuntimeFetch(config.fetch);
 }
 
 export async function resolveAccessToken(

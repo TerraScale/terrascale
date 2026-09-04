@@ -77,6 +77,7 @@ test("built package keeps all public clients on typed operations without a runti
     "./react",
     "./tanstack",
     "./better-auth",
+    "./local",
   ]);
 });
 
