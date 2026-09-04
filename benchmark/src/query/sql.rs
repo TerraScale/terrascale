@@ -61,7 +61,8 @@ pub(crate) struct SqlLowered {
 }
 
 /// Execute-only SQL retained for shapes the typed subscribable model cannot
-/// represent (joins, reducers, windows, subqueries, and CTEs).
+/// represent (joins, reducers, windows, subqueries, CTEs, and syntax outside
+/// the launch lowering).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SqlRuntime {
     pub(crate) text: String,
@@ -339,7 +340,8 @@ pub enum LiveSubset {
     Live,
     /// The statement is execute-only; the operator names the refusal.
     ExecuteOnly {
-        /// The non-live operator: `join`, `aggregate`, `window`, or `subquery`.
+        /// The non-live operator: `join`, `aggregate`, `window`, `subquery`,
+        /// or `unsupported` when SQL has no live lowering.
         operator: &'static str,
     },
 }
@@ -377,7 +379,8 @@ impl NotSubscribable {
         Self { operator }
     }
 
-    /// Returns the non-live operator: `join`, `aggregate`, `window`, or `subquery`.
+    /// Returns the non-live operator: `join`, `aggregate`, `window`,
+    /// `subquery`, or `unsupported`.
     #[must_use]
     pub const fn operator(self) -> &'static str {
         self.operator
@@ -400,10 +403,10 @@ impl NotSubscribable {
 /// `window`, `subquery` — so a statement carrying several non-live operators
 /// names the first.
 ///
-/// A `Live` tag is the subscribe shape, not a lowering promise: the planner
-/// still validates the launch lowering exactly, so shapes the executor
-/// cannot express refuse with [`SqlErrorClass::UnsupportedStatement`] at
-/// compile.
+/// A `Live` tag is also a lowering promise: the classifier runs the same
+/// lowering shape checks used by the planner with synthetic values for any
+/// placeholders. This keeps unsupported predicates and clauses execute-only
+/// instead of attaching a view the sync engine cannot update correctly.
 #[must_use]
 pub fn classify_live_subset(parsed: &ParsedSql) -> LiveSubset {
     let statement = match parsed.statement() {
@@ -434,6 +437,8 @@ pub fn classify_live_subset(parsed: &ParsedSql) -> LiveSubset {
         LiveSubset::ExecuteOnly { operator: "window" }
     } else if scan.has("subquery") {
         LiveSubset::ExecuteOnly { operator: "subquery" }
+    } else if !live_lowering_shape(parsed) {
+        LiveSubset::ExecuteOnly { operator: "unsupported" }
     } else {
         LiveSubset::Live
     }
@@ -506,7 +511,9 @@ impl Visitor for LiveSubsetScan {
     }
 
     fn pre_visit_select(&mut self, select: &Select) -> ControlFlow<Self::Break> {
-        if select.from.iter().any(|table| !table.joins.is_empty()) {
+        // Comma-separated relations are implicit CROSS JOINs and need the
+        // same integrated state as explicit JOIN syntax.
+        if select.from.len() != 1 || select.from.iter().any(|table| !table.joins.is_empty()) {
             self.hit("join");
         }
         if has_group_by(select) || select.having.is_some() {
@@ -543,6 +550,79 @@ impl Visitor for LiveSubsetScan {
         }
         ControlFlow::Continue(())
     }
+}
+
+/// Checks that a statement has an exact launch live lowering. Bindings are
+/// represented by harmless synthetic values, so their presence or type does
+/// not turn a supported shape into execute-only. Literal bound violations and
+/// all unsupported syntax still fail closed.
+fn live_lowering_shape(parsed: &ParsedSql) -> bool {
+    let mut collector = ParameterCollector::default();
+    let _ = parsed.statement().visit(&mut collector);
+    let mut parameters = SqlParameters::new();
+    for name in collector.names {
+        // String values satisfy MATCH/LIKE; scalar predicates do not impose
+        // a type at this layer. The real caller's values are checked later.
+        if parameters.insert(&name, DocumentValue::String("x%".to_owned())).is_err() {
+            return false;
+        }
+    }
+    match lower(parsed, &parameters) {
+        Ok(_) => true,
+        // A placeholder used for LIMIT/OFFSET is represented by a string
+        // above because its eventual bound type is caller data.
+        Err(error)
+            if error.class() == SqlErrorClass::InvalidBound
+                && statement_has_paging_placeholder(parsed) =>
+        {
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+fn statement_has_paging_placeholder(parsed: &ParsedSql) -> bool {
+    struct PagingPlaceholder(bool);
+    impl Visitor for PagingPlaceholder {
+        type Break = std::convert::Infallible;
+
+        fn pre_visit_query(&mut self, query: &Query) -> ControlFlow<Self::Break> {
+            let Some(clause) = &query.limit_clause else { return ControlFlow::Continue(()) };
+            let has_placeholder = match clause {
+                LimitClause::LimitOffset { limit, offset, .. } => {
+                    limit.as_ref().is_some_and(has_expr_placeholder)
+                        || offset.as_ref().is_some_and(|offset| has_expr_placeholder(&offset.value))
+                }
+                LimitClause::OffsetCommaLimit { offset, limit } => {
+                    has_expr_placeholder(offset) || has_expr_placeholder(limit)
+                }
+            };
+            self.0 |= has_placeholder;
+            ControlFlow::Continue(())
+        }
+    }
+
+    let mut visitor = PagingPlaceholder(false);
+    let _ = parsed.statement().visit(&mut visitor);
+    visitor.0
+}
+
+fn has_expr_placeholder(expression: &Expr) -> bool {
+    struct Placeholder(bool);
+    impl Visitor for Placeholder {
+        type Break = std::convert::Infallible;
+
+        fn pre_visit_expr(&mut self, expression: &Expr) -> ControlFlow<Self::Break> {
+            if matches!(expression, Expr::Value(value) if matches!(value.value, Value::Placeholder(_)))
+            {
+                self.0 = true;
+            }
+            ControlFlow::Continue(())
+        }
+    }
+    let mut visitor = Placeholder(false);
+    let _ = expression.visit(&mut visitor);
+    visitor.0
 }
 
 /// Reports whether one select groups its rows.
@@ -745,10 +825,23 @@ pub(crate) fn lower(
     let SetExpr::Select(select) = statement.body.as_ref() else {
         return Err(SqlError::binding(SqlErrorClass::UnsupportedStatement, "query body"));
     };
+    if statement.fetch.is_some()
+        || !statement.locks.is_empty()
+        || statement.for_clause.is_some()
+        || statement.settings.is_some()
+        || statement.format_clause.is_some()
+        || !statement.pipe_operators.is_empty()
+    {
+        return Err(SqlError::binding(SqlErrorClass::UnsupportedStatement, "query clauses"));
+    }
     if select.distinct.is_some()
+        || select.select_modifiers.is_some()
+        || select.top.is_some()
         || select.into.is_some()
+        || select.exclude.is_some()
         || !select.lateral_views.is_empty()
         || select.prewhere.is_some()
+        || !select.connect_by.is_empty()
         || !matches!(select.group_by, sqlparser::ast::GroupByExpr::Expressions(ref values, ref modifiers) if values.is_empty() && modifiers.is_empty())
         || select.having.is_some()
         || !select.cluster_by.is_empty()
@@ -756,6 +849,8 @@ pub(crate) fn lower(
         || !select.sort_by.is_empty()
         || !select.named_window.is_empty()
         || select.qualify.is_some()
+        || select.value_table_mode.is_some()
+        || !matches!(select.flavor, sqlparser::ast::SelectFlavor::Standard)
     {
         return Err(SqlError::binding(SqlErrorClass::UnsupportedStatement, "SELECT clauses"));
     }
