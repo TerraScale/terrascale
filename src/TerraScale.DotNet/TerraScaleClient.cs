@@ -27,6 +27,7 @@ public sealed class TerraScaleClient
     private readonly JsonSerializerOptions jsonOptions;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> sessionConsistencyTokens =
         new(StringComparer.OrdinalIgnoreCase);
+    private Uri? pinnedRestBaseAddress;
 
     /// <summary>
     /// Creates a TerraScale client over a caller-owned <see cref="HttpClient"/>.
@@ -919,6 +920,7 @@ public sealed class TerraScaleClient
         var requestId = CreateRequestId();
         var idempotencyKey = idempotencyKeyOverride ?? CreateIdempotencyKey(method);
         var attempt = 0;
+        var repairedRestPin = false;
 
         while (true)
         {
@@ -939,6 +941,16 @@ public sealed class TerraScaleClient
                     HttpCompletionOption.ResponseHeadersRead,
                     cancellationToken).ConfigureAwait(false);
 
+                if (response.StatusCode == HttpStatusCode.MisdirectedRequest &&
+                    !repairedRestPin &&
+                    TryRepairRestPin(response, request.RequestUri))
+                {
+                    repairedRestPin = true;
+                    response.Dispose();
+                    continue;
+                }
+
+                ObserveRestPin(response);
                 if (!ShouldRetryResponse(response, method, idempotencyKey, attempt, allowUnkeyedPutRetry))
                 {
                     return response;
@@ -973,6 +985,7 @@ public sealed class TerraScaleClient
         var request = new HttpRequestMessage(method, requestUri);
         try
         {
+            ApplyRestPin(request);
             ApplyRequestVersion(request);
             if (authenticationMode == RequestAuthenticationMode.Authenticated)
             {
@@ -1006,6 +1019,102 @@ public sealed class TerraScaleClient
             throw;
         }
     }
+
+    private void ApplyRestPin(HttpRequestMessage request)
+    {
+        var pinnedBaseAddress = Volatile.Read(ref pinnedRestBaseAddress);
+        if (pinnedBaseAddress is not null && request.RequestUri is { IsAbsoluteUri: false } relativeUri)
+        {
+            request.RequestUri = new Uri(pinnedBaseAddress, relativeUri);
+        }
+    }
+
+    private void ObserveRestPin(HttpResponseMessage response)
+    {
+        if (TryReadRegionHeader(response, "X-TerraScale-Region", out var region))
+        {
+            PinRestRegion(region);
+        }
+    }
+
+    private bool TryRepairRestPin(HttpResponseMessage response, Uri? requestUri)
+    {
+        if (options.RegionAffinity == TerraScaleRegionAffinity.Strict ||
+            !IsTerraScaleRestHost(options.BaseAddress.Host) ||
+            !response.Headers.TryGetValues("X-TerraScale-Placement", out var values))
+        {
+            return false;
+        }
+
+        var requestRegion = RegionFromHost(requestUri?.Host);
+        foreach (var value in values)
+        {
+            foreach (var candidate in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (IsRegion(candidate) && !string.Equals(candidate, requestRegion, StringComparison.Ordinal))
+                {
+                    PinRestRegion(candidate);
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private void PinRestRegion(string region)
+    {
+        if (options.RegionAffinity == TerraScaleRegionAffinity.Strict ||
+            !IsTerraScaleRestHost(options.BaseAddress.Host) ||
+            !IsRegion(region))
+        {
+            return;
+        }
+
+        var builder = new UriBuilder(options.BaseAddress)
+        {
+            Host = $"{region.ToLowerInvariant()}.api.terrascale.tech"
+        };
+        Volatile.Write(ref pinnedRestBaseAddress, builder.Uri);
+    }
+
+    private static bool TryReadRegionHeader(
+        HttpResponseMessage response,
+        string headerName,
+        out string region)
+    {
+        if (response.Headers.TryGetValues(headerName, out var values))
+        {
+            var candidate = values.FirstOrDefault()?.Trim();
+            if (candidate is not null && IsRegion(candidate))
+            {
+                region = candidate;
+                return true;
+            }
+        }
+
+        region = string.Empty;
+        return false;
+    }
+
+    private static bool IsTerraScaleRestHost(string host) =>
+        string.Equals(host, "api.terrascale.tech", StringComparison.OrdinalIgnoreCase) ||
+        RegionFromHost(host) is not null;
+
+    private static string? RegionFromHost(string? host)
+    {
+        const string suffix = ".api.terrascale.tech";
+        if (host is null || !host.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var candidate = host[..^suffix.Length].ToUpperInvariant();
+        return IsRegion(candidate) ? candidate : null;
+    }
+
+    private static bool IsRegion(string region) =>
+        region is TerraScaleRegions.Gru or TerraScaleRegions.Sfo or TerraScaleRegions.Fra;
 
     private Func<HttpContent?> CreateJsonContentFactory(object? body) =>
         body is null
