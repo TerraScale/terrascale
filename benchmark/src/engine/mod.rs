@@ -55,7 +55,7 @@ use crate::{
     families::FamilyStore,
     observability::{CommitResult as MetricCommitResult, MetricsRegistry},
     operations::{EngineRequest, EngineResponse},
-    query::QueryStore,
+    query::{QueryStore, tql as tql_surface},
     storage::{
         self, CommitIntent, CommitPublicationEvent, CommitResult, PublishedCommit, StagedWrite,
         StoragePort, UsageFactPosition, UsageStorageError,
@@ -1730,14 +1730,43 @@ impl Engine {
         }
     }
 
+    /// Returns one document's current replication stamp: the newest row's
+    /// `hlc`, `origin`, and tombstone flag — the deterministic merge's
+    /// comparison input. `None` when the key has no row.
+    ///
+    /// This is the flagged S-05 port the TBEP anti-entropy scan reads
+    /// (issue #130, slice 2e): the same seam
+    /// [`Engine::apply_replicated`]'s merge verdict compares against, so
+    /// the Merkle causal bytes and the merge order can never disagree.
+    /// Read-only; the S-02 query/storage lane is otherwise untouched.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::ScopeMismatch`] when the scope names another
+    /// Engine and [`EngineError::StorageFailure`] when storage cannot be
+    /// reached.
+    pub fn document_replication_stamp(
+        &self,
+        scope: &TenantScope,
+        collection: &CollectionName,
+        id: &DocumentId,
+    ) -> Result<Option<(u64, String, bool)>, EngineError> {
+        self.validate_scope(scope)?;
+        let storage = self.lock_storage()?;
+        Ok(storage.port.document_provenance_at(scope.tenant(), collection, id))
+    }
+
     /// Runs one storage retention sweep: prune publication history every
     /// consumer frontier has passed, then fold the WAL back into the
-    /// database file. Crate-private: the maintenance loop owns the cadence.
+    /// database file. Expired TTL keys sweep first (bounded), so one
+    /// maintenance cadence reclaims both history and expiries.
+    /// Crate-private: the maintenance loop owns the cadence.
     ///
     /// # Errors
     ///
     /// Returns [`EngineError::StorageFailure`] when storage fails the sweep.
     pub(crate) fn run_retention_sweep(&self) -> Result<(), EngineError> {
+        self.sweep_expired_ttl(1024)?;
         let mut storage = self.lock_storage()?;
         storage.port.run_retention_sweep().map_err(|()| EngineError::StorageFailure)
     }
@@ -2101,6 +2130,149 @@ impl Engine {
     ) -> Option<bool> {
         let storage = self.lock_storage().ok()?;
         storage.port.index_descriptor_state(collection, field)
+    }
+
+    /// Returns the TQL capabilities this engine reports to the parser:
+    /// full-text search ships (S-02 slice D), vector search stays gated
+    /// (workspace goal D-40: vector is post-launch).
+    #[must_use]
+    pub fn tql_capabilities(&self) -> tql_surface::TqlCapabilities {
+        tql_surface::engine_capabilities()
+    }
+
+    /// Registers one full-text descriptor for a collection (S-02 slice D,
+    /// D-39): the field gains FTS5 rows written by the Rust write path
+    /// from the next commit on, backfilled inline inside the cost cap and
+    /// governed beyond it. Idempotent for an identical descriptor.
+    ///
+    /// This is the durable half of text-index creation; the query path's
+    /// first-query policy and the S-03 collections route drive it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexRegistrationError::Storage`] when durable
+    /// registration fails. Text has no column budget.
+    pub fn register_fts_field(
+        &self,
+        collection: &CollectionName,
+        field: &str,
+    ) -> Result<crate::storage::DescriptorRegistration, IndexRegistrationError> {
+        let mut storage = self.lock_storage().map_err(|_| IndexRegistrationError::Storage)?;
+        storage.port.register_fts_descriptor(collection, field).map_err(|error| match error {
+            crate::storage::IndexDescriptorError::ColumnBudgetExceeded => {
+                IndexRegistrationError::BudgetExceeded
+            }
+            crate::storage::IndexDescriptorError::Storage => IndexRegistrationError::Storage,
+        })
+    }
+
+    /// Reports one collection field's text-descriptor state without
+    /// registering anything: `Some(true)` narrows, `Some(false)` is
+    /// building, `None` is absent. Crate-only: the query path's
+    /// first-query policy is the only reader.
+    pub(crate) fn fts_field_state(&self, collection: &CollectionName, field: &str) -> Option<bool> {
+        let storage = self.lock_storage().ok()?;
+        storage.port.fts_descriptor_state(collection, field)
+    }
+
+    /// Returns the FTS5 candidate set of one search — the matching
+    /// document ids with relevance scores, higher first — or `Ok(None)`
+    /// when the index cannot narrow the read and the caller must take the
+    /// exact scan. Crate-only: the query executor is the consumer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::SnapshotPageLimitExceeded`] above the bounded
+    /// page ceiling, the same snapshot validation errors as
+    /// [`Engine::snapshot_documents`], or [`EngineError::StorageFailure`]
+    /// when a persisted candidate fails integrity checks.
+    pub(crate) fn snapshot_fts_match(
+        &self,
+        scope: &TenantScope,
+        snapshot: &ReadSnapshot,
+        collection: &CollectionName,
+        field: &str,
+        query: &str,
+        match_any: bool,
+    ) -> Result<Option<Vec<(String, f64)>>, EngineError> {
+        if snapshot.engine_identity() != self.identity {
+            return Err(EngineError::SnapshotEngineMismatch);
+        }
+        self.validate_scope(scope)?;
+        if snapshot.tenant() != scope.tenant() {
+            return Err(EngineError::SnapshotTenantMismatch);
+        }
+        let storage = self.lock_storage()?;
+        match storage.port.fts_match(
+            snapshot.sequence(),
+            scope.tenant(),
+            collection,
+            field,
+            query,
+            match_any,
+        ) {
+            Some(Ok(candidates)) => Ok(Some(candidates)),
+            Some(Err(_)) => Err(EngineError::StorageFailure),
+            None => Ok(None),
+        }
+    }
+
+    /// Sweeps at most `batch` expired TTL keys into origin tombstones
+    /// (S-02 slice D): one transaction per tenant, committed
+    /// [`LocalDurability::Written`], returning the tombstones written.
+    /// Read-time filtering already hides expired keys, so the sweep is
+    /// reclamation and FTS hygiene, never a correctness gate — a lost wave
+    /// is simply rewritten by the next sweep.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::StorageFailure`] when storage cannot be
+    /// reached or a sweep commit is refused for a durable reason.
+    pub fn sweep_expired_ttl(&self, batch: u32) -> Result<u64, EngineError> {
+        let now_millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(i64::MAX, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX));
+        let keys = {
+            let storage = self.lock_storage()?;
+            storage.port.expired_ttl_keys(now_millis, batch.max(1)).map_err(|()| {
+                EngineError::StorageFailure
+            })?
+        };
+        if keys.is_empty() {
+            return Ok(0);
+        }
+        let mut by_tenant: std::collections::BTreeMap<String, Vec<crate::storage::ExpiredTtlKey>> =
+            std::collections::BTreeMap::new();
+        for key in keys {
+            by_tenant.entry(key.tenant.as_str().to_owned()).or_default().push(key);
+        }
+        let mut tombstones = 0_u64;
+        for (_, group) in by_tenant {
+            let tenant = group[0].tenant.clone();
+            let scope = self.scope_for(&tenant);
+            let snapshot = self.read_snapshot(&scope)?;
+            let operation = OperationId::try_new(
+                &crate::identity::process_generator().generate().to_text(),
+            )
+            .map_err(|_| EngineError::StorageFailure)?;
+            let mut transaction = self.begin(&scope, snapshot, operation)?;
+            for key in &group {
+                transaction.delete_in_collection(
+                    &key.collection,
+                    key.id.clone(),
+                    ExpectedVersion::Any,
+                );
+            }
+            match transaction.commit(LocalDurability::Written) {
+                CommitOutcome::Committed(_) => {
+                    tombstones = tombstones.saturating_add(group.len() as u64);
+                }
+                CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => {
+                    return Err(EngineError::StorageFailure);
+                }
+            }
+        }
+        Ok(tombstones)
     }
 
     /// Audits observed query shapes against durable descriptor coverage

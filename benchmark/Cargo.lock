@@ -1845,6 +1845,7 @@ dependencies = [
  "rustls-pki-types",
  "terrabase",
  "terrabase-member-transport",
+ "terrabase-replication-core",
  "terrabase-sync-core",
  "tokio",
  "tokio-rustls",

@@ -1,8 +1,8 @@
-//! Replication support kernels for the SQLite storage plane
+//! Replication support kernels for the `SQLite` storage plane
 //! (ADR 0041; GOAL.md D-35/D-36/D-45).
 //!
 //! Intra-region replication is a physical WAL-frame follower of the
-//! writer's SQLite file; cross-region replication is a journal tailer
+//! writer's `SQLite` file; cross-region replication is a journal tailer
 //! shipping committed journal rows with document-level causal
 //! metadata. Neither replays a logical per-field CRDT model, so this
 //! crate no longer carries one: the per-field last-writer-wins

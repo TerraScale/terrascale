@@ -78,6 +78,10 @@ terrabase = { path = "../..", default-features = false }
 # lanes drive the journal tailer's pull/apply path over fault-injectable
 # MemberTransport lanes.
 terrabase-member-transport = { path = "../terrabase-member-transport", default-features = false }
+# The Merkle anti-entropy kernels (S-05, ADR 0041 D-45): the
+# journal-independent catch-up (`anti_entropy`) compares member states
+# through these transport-free decision surfaces.
+terrabase-replication-core = { path = "../terrabase-replication-core" }
 # The follower's generation fold (`wal_follower`): folding the follower's
 # WAL into its database file rides mainline SQLite, pinned exactly like the
 # engine's own substrate (D-27: the same bundled amalgamation and version,

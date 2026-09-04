@@ -33,6 +33,10 @@
 //!   — the writer's WAL tail, the follower's validated append with an
 //!   `fdatasync` ack, fold-and-adopt across the per-wave generations,
 //!   and promotion by opening the follower's location.
+//! - [`anti_entropy`]: the journal-independent catch-up (S-05, D-45) —
+//!   Merkle state comparison over the kept replication-core kernels,
+//!   bounded repair through the deterministic merge, and snapshot
+//!   bootstrap from the region-local snapshot file set.
 //! - [`grpc`]: the tonic serving layer — prost⇄domain conversion,
 //!   metadata discipline, streaming subscriptions, and the UDS and
 //!   TLS listeners.
@@ -59,6 +63,7 @@ compile_error!("select exactly one of `local-crypto` or `production-fips`");
 #[cfg(not(any(feature = "local-crypto", feature = "production-fips")))]
 compile_error!("select one of `local-crypto` or `production-fips`");
 
+pub mod anti_entropy;
 pub mod catalog;
 pub mod engine_host;
 pub mod grpc;

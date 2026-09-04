@@ -149,6 +149,16 @@ impl RegionLink {
         self.cursor
     }
 
+    /// Adopts the journal cursor a snapshot bootstrap recovered (see
+    /// [`crate::anti_entropy::journal_end`]): the link resumes past the
+    /// snapshot instead of re-shipping what the copied file set already
+    /// serves. In-flight frames belong to the old cursor and are dropped —
+    /// the apply replays them idempotently if they ever arrive.
+    pub fn set_cursor(&mut self, cursor: Option<ChangeCheckpoint>) {
+        self.cursor = cursor;
+        self.in_flight.clear();
+    }
+
     /// The frames this link currently holds in flight.
     #[must_use]
     pub fn in_flight(&self) -> usize {
