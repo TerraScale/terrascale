@@ -29,7 +29,7 @@ public sealed class TerraScaleDocumentsClientTests
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
-        var document = await client.Documents.GetAsync("orders", "items", "item-1", new TerraScaleDocumentReadOptions(IfNoneMatch: "\"old\"", Session: 7));
+        var document = await client.Documents.GetAsync("orders", "items", "item-1", new TerraScaleDocumentReadOptions(IfNoneMatch: "\"old\"", Session: "7"));
 
         await Assert.That(handler.Request?.IfNoneMatch).IsEqualTo("\"old\"");
         await Assert.That(handler.Request?.Session).IsEqualTo("7");

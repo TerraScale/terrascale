@@ -66,6 +66,29 @@ public sealed class TerraScaleClientTests
         await Assert.That(handler.IdempotencyKeys.SequenceEqual(["sql-operation-key", "sql-operation-key"])).IsTrue();
     }
 
+    [Test]
+    public async Task EndpointValidationRejectsInsecureProductionAndCredentialBearingUris()
+    {
+        using var httpClient = new HttpClient(new RecordingHandler("[]"));
+        foreach (var address in new[] { "http://api.example.invalid", "https://user:secret@api.example.invalid", "https://api.example.invalid/?token=secret" })
+        {
+            var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            {
+                _ = new TerraScaleClient(httpClient, new TerraScaleClientOptions { BaseAddress = new Uri(address) });
+                return Task.CompletedTask;
+            });
+            await Assert.That(exception).IsNotNull();
+        }
+    }
+
+    [Test]
+    public async Task EndpointValidationAllowsExplicitLoopbackHttp()
+    {
+        using var httpClient = new HttpClient(new RecordingHandler("[]"));
+        var client = new TerraScaleClient(httpClient, new TerraScaleClientOptions { BaseAddress = new Uri("http://127.0.0.1:18446") });
+        await Assert.That(client).IsNotNull();
+    }
+
     private sealed class RecordingHandler(string body) : HttpMessageHandler
     {
         public string? Authorization { get; private set; }

@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace TerraScale.DotNet;
 
 /// <summary>
@@ -70,6 +72,7 @@ public sealed record TerraScaleClientOptions
         {
             throw new ArgumentException("TerraScale base address must be absolute.", nameof(BaseAddress));
         }
+        ValidateEndpoint(BaseAddress, nameof(BaseAddress));
 
         if (!Enum.IsDefined(RegionAffinity))
         {
@@ -131,6 +134,21 @@ public sealed record TerraScaleClientOptions
                 $"Retry delay must be less than or equal to {MaximumRetryDelay.TotalSeconds:0} seconds.");
         }
     }
+
+    private static void ValidateEndpoint(Uri endpoint, string name)
+    {
+        if (endpoint.UserInfo.Length != 0 || endpoint.Query.Length != 0 || endpoint.Fragment.Length != 0 || endpoint.AbsolutePath is not ("" or "/"))
+            throw new ArgumentException("TerraScale endpoints must be origins without credentials, paths, queries, or fragments.", name);
+        if (endpoint.Scheme is not ("http" or "https"))
+            throw new ArgumentException("TerraScale endpoints must use HTTP or HTTPS.", name);
+        if (endpoint.Scheme == "http" && !IsLoopbackOrTestHost(endpoint.Host))
+            throw new ArgumentException("HTTP is allowed only for loopback or explicit test endpoints; production endpoints must use HTTPS.", name);
+    }
+
+    private static bool IsLoopbackOrTestHost(string host) =>
+        string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) ||
+        host.EndsWith(".test", StringComparison.OrdinalIgnoreCase) ||
+        IPAddress.TryParse(host, out var address) && IPAddress.IsLoopback(address);
 
     private static string? ValidateRegion(string? region)
     {

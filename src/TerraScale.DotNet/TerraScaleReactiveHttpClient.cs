@@ -234,7 +234,7 @@ public sealed class TerraScaleReactiveHttpClient
         if (string.IsNullOrWhiteSpace(value) || !Uri.TryCreate(value, UriKind.RelativeOrAbsolute, out var parsed))
             throw new TerraScaleReactiveProtocolException($"The attach response carried an invalid {resourceName} URL.");
         var resolved = parsed.IsAbsoluteUri ? parsed : new Uri(options.BaseAddress, parsed);
-        if (resolved.Scheme is not (Uri.UriSchemeHttp or Uri.UriSchemeHttps) || resolved.UserInfo.Length != 0 || !SameOrigin(resolved, options.BaseAddress))
+        if (!(resolved.Scheme.Equals("http", StringComparison.OrdinalIgnoreCase) || resolved.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase)) || resolved.UserInfo.Length != 0 || !SameOrigin(resolved, options.BaseAddress))
             throw new TerraScaleReactiveProtocolException($"The attach response carried an unsafe {resourceName} URL.");
         return resolved;
     }
@@ -455,7 +455,8 @@ public sealed class TerraScaleReactiveHttpClient
     }
     internal static void ValidateCheckpointToken(string? token) { ValidateText(token, nameof(token), 16 * 1024); if (StrictUtf8.GetByteCount(token!) is < 1 or > MaxCheckpointBytes) throw new TerraScaleReactiveProtocolException("The checkpoint exceeds its opaque byte bound."); }
     private static TerraScaleViewCheckpoint NewCheckpoint(byte[] bytes) => new(Convert.ToBase64String(bytes));
-    private static Uri NormalizeOrigin(Uri uri, string name) { if (uri is null || !uri.IsAbsoluteUri || uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0 || uri.AbsolutePath != "/") throw new ArgumentException("The reactive origin must be an absolute URL without credentials, path, query, or fragment.", name); if (uri.Scheme is not ("http" or "https")) throw new ArgumentException("The reactive origin must use HTTP or HTTPS.", name); return new UriBuilder(uri) { Path = string.Empty }.Uri; }
+    private static Uri NormalizeOrigin(Uri uri, string name) { if (uri is null || !uri.IsAbsoluteUri || uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0 || uri.AbsolutePath != "/") throw new ArgumentException("The reactive origin must be an absolute URL without credentials, path, query, or fragment.", name); if (uri.Scheme is not ("http" or "https")) throw new ArgumentException("The reactive origin must use HTTP or HTTPS.", name); if (uri.Scheme == "http" && !IsLoopbackOrTestHost(uri.Host)) throw new ArgumentException("HTTP is allowed only for loopback or explicit test endpoints; production endpoints must use HTTPS.", name); return new UriBuilder(uri) { Path = string.Empty }.Uri; }
+    private static bool IsLoopbackOrTestHost(string host) => string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) || host.EndsWith(".test", StringComparison.OrdinalIgnoreCase) || System.Net.IPAddress.TryParse(host, out var address) && System.Net.IPAddress.IsLoopback(address);
     private static Uri AppendOffset(Uri log, ulong offset) => new UriBuilder(log) { Query = "offset=" + offset.ToString(System.Globalization.CultureInfo.InvariantCulture) }.Uri;
 
     internal sealed record ReactiveWireEnvelope(uint Tag, ulong Correlation, ulong Causation, ReactiveWireMessage Message);

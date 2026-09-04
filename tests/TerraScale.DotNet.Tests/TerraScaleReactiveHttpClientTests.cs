@@ -31,10 +31,10 @@ public sealed class TerraScaleReactiveHttpClientTests
         await Assert.That(attach.GetProperty("statement").GetString()).IsEqualTo("SELECT * FROM orders WHERE id = ?");
         await Assert.That(attach.GetProperty("parameters").GetString()).IsEqualTo("AP8B");
         await Assert.That(attach.GetProperty("checkpoint").ValueKind).IsEqualTo(JsonValueKind.Null);
-        await Assert.That(attach.GetProperty("transport").GetString()).IsEqualTo("http");
+        await Assert.That(attach.TryGetProperty("transport", out _)).IsFalse();
         await Assert.That(handler.Requests[0].Headers["Authorization"]).IsEqualTo("Bearer token");
         await Assert.That(handler.Requests[0].Headers["X-TerraScale-Region-Hint"]).IsEqualTo("gru");
-        await Assert.That(handler.Requests[1].Uri.AbsoluteUri).IsEqualTo("https://sync.api.terrascale.tech/api/v1/reactive/views/view-1/3/snapshot/0");
+        await Assert.That(handler.Requests[1].Uri.AbsoluteUri).IsEqualTo("https://sync.api.terrascale.tech/api/v1/reactive/views/view-1/3/snapshot/0?cut=0");
         await Assert.That(handler.Requests[1].Headers["X-TerraScale-View-Capability"]).IsEqualTo("capability");
         await Assert.That(handler.Requests[2].Uri.Query).IsEqualTo("?offset=0");
         await Assert.That(handler.Requests[2].Headers["X-TerraScale-View-Capability"]).IsEqualTo("capability");
@@ -64,6 +64,29 @@ public sealed class TerraScaleReactiveHttpClientTests
         var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
         await using var subscription = await client.SubscribeAsync("db", "sub", "SELECT * FROM docs");
         await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() => subscription.ReadNextAsync());
+    }
+
+    [Test]
+    public async Task SameRevisionDigestDivergenceIsRejected()
+    {
+        using var handler = new ReactiveHandler(pollFrame: Envelope(4, body: Delta("sub", 3, 0, 0, "Y3AtMA==", digest: "different")));
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+        await using var subscription = await client.SubscribeAsync("db", "sub", "SELECT * FROM docs");
+        await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() => subscription.ReadNextAsync());
+    }
+
+    [Test]
+    public async Task DeltaOperationsUpdateTheCurrentSnapshot()
+    {
+        var insert = new byte[] { 0x91, 0x94, 0x01, 0xa1, (byte)'x', 0x90, 0x00 };
+        using var handler = new ReactiveHandler(pollFrame: Envelope(4, body: Delta("sub", 3, 0, 1, "Y3AtMQ==", operations: insert)));
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+        await using var subscription = await client.SubscribeAsync("db", "sub", "SELECT * FROM docs");
+        await subscription.ReadNextAsync();
+        await Assert.That(subscription.CurrentSnapshot.Items).Count().IsEqualTo(1);
+        await Assert.That(subscription.CurrentSnapshot.Items[0].Identity).IsEqualTo("x");
     }
 
     [Test]
@@ -126,7 +149,7 @@ public sealed class TerraScaleReactiveHttpClientTests
             if (request.Method == HttpMethod.Post)
             {
                 AttachBody = await request.Content!.ReadAsStringAsync(cancellationToken);
-                return Json("{\"viewId\":\"view-1\",\"generation\":3,\"snapshotUrls\":[\"https://attacker.invalid/not-canonical\"],\"logUrl\":\"https://attacker.invalid/log\",\"checkpoint\":\"Y3AtMA==\",\"capability\":\"capability\"}");
+                return Json("{\"view\":\"view-1\",\"generation\":3,\"snapshot_chunks\":[\"/api/v1/reactive/views/view-1/3/snapshot/0?cut=0\"],\"log\":\"/api/v1/reactive/views/view-1/3/log?offset=0\",\"checkpoint\":\"Y3AtMA==\",\"capability\":\"capability\",\"capability_header\":\"X-TerraScale-View-Capability\",\"offset\":0}", HttpStatusCode.Created);
             }
             if (request.RequestUri!.AbsolutePath.EndsWith("/snapshot/0", StringComparison.Ordinal))
             {
@@ -148,7 +171,7 @@ public sealed class TerraScaleReactiveHttpClientTests
             return poll;
         }
 
-        private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+        private static HttpResponseMessage Json(string body, HttpStatusCode status = HttpStatusCode.OK) => new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
         private static HttpResponseMessage Binary(byte[] body) => new(HttpStatusCode.OK) { Content = new ByteArrayContent(body) };
     }
 
@@ -169,12 +192,16 @@ public sealed class TerraScaleReactiveHttpClientTests
         return result.ToArray();
     }
 
-    private static byte[] Delta(string subscription, uint generation, uint from, uint to, string checkpoint)
+    private static byte[] Delta(string subscription, uint generation, uint from, uint to, string checkpoint, string digest = "d", byte[]? operations = null)
     {
         var bytes = Convert.FromBase64String(checkpoint);
         var result = new List<byte> { 0x97, (byte)(0xa0 | subscription.Length) };
         result.AddRange(Encoding.UTF8.GetBytes(subscription));
-        result.AddRange(new byte[] { (byte)generation, (byte)from, (byte)to, 0x90, 0xa1, (byte)'d', 0xc4, (byte)bytes.Length });
+        result.AddRange(new byte[] { (byte)generation, (byte)from, (byte)to });
+        result.AddRange(operations ?? [0x90]);
+        result.Add((byte)(0xa0 | digest.Length));
+        result.AddRange(Encoding.UTF8.GetBytes(digest));
+        result.AddRange(new byte[] { 0xc4, (byte)bytes.Length });
         result.AddRange(bytes);
         return result.ToArray();
     }

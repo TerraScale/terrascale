@@ -1059,7 +1059,7 @@ public sealed class TerraScaleClient
         var scope = DocumentConsistencyScope(database, documentId);
         if (sessionConsistencyTokens.TryGetValue(scope, out var token))
         {
-            request.Headers.TryAddWithoutValidation("X-TerraScale-Session-Consistency-Token", token);
+            request.Headers.TryAddWithoutValidation("X-TerraScale-Session", token);
         }
     }
 
