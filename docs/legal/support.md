@@ -11,9 +11,9 @@ DRAFT — not legal advice, not published. Blocked on owner action O-5 (legal en
 
 ## Channels
 
-- **Discord** — public, for everyone. Community-supported, not a contractual
+- **Discord** — public, for everyone ([invite link — placeholder, publish at launch]). Community-supported, not a contractual
   channel.
-- **Email** — for paid plans (Starter, Pro, Scale).
+- **Email** — for paid plans (Starter, Pro, Scale): **support@terrascale.tech** (draft address; confirmed before launch).
 - **Shared channel with response-time targets** — for Scale.
 
 There is no ticketing product, and no phone support.
