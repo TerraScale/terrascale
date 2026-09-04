@@ -1,15 +1,29 @@
 import type { TerraScaleRegion, TerraScaleRegionCode } from "./regions.js";
+import type {
+  AuditEventId,
+  BackupId,
+  BackupPolicyId,
+  DatabaseId,
+  InvitationId,
+  NotificationId,
+  OrganizationId,
+  ProjectId,
+  RestoreId,
+  UserId,
+} from "./ids.js";
 
-export type AuditEventId = string;
-export type BackupId = string;
-export type BackupPolicyId = string;
-export type DatabaseId = string;
-export type InvitationId = string;
-export type NotificationId = string;
-export type OrganizationId = string;
-export type ProjectId = string;
-export type RestoreId = string;
-export type UserId = string;
+export type {
+  AuditEventId,
+  BackupId,
+  BackupPolicyId,
+  DatabaseId,
+  InvitationId,
+  NotificationId,
+  OrganizationId,
+  ProjectId,
+  RestoreId,
+  UserId,
+} from "./ids.js";
 
 export type Timestamp = string;
 export type JsonPrimitive = boolean | null | number | string;

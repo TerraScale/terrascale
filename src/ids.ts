@@ -1,7 +1,11 @@
 declare const terraScaleBrand: unique symbol;
 
 export type Brand<TValue, TBrand extends string> = TValue & {
-  readonly [terraScaleBrand]: TBrand;
+  /**
+   * The marker is optional so generated wire-model strings remain source
+   * compatible while values returned by the runtime helpers carry the brand.
+   */
+  readonly [terraScaleBrand]?: TBrand;
 };
 
 export type Ulid = Brand<string, "Ulid">;
