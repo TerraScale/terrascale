@@ -2,191 +2,78 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import ts from "typescript";
+import { fileURLToPath } from "node:url";
+import { contractOpenApiPath, pinnedContractVersion, resolveContractBundle } from "./openapi-contract-paths.ts";
 
-const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
-const repositoryRoot = path.resolve(scriptDirectory, "..");
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = path.join(repositoryRoot, "sdk-route-manifest.json");
-const clientSourcePath = path.join(repositoryRoot, "src", "client.ts");
-const captureModuleUrl = pathToFileURL(
-  path.join(repositoryRoot, "dist", "client-route-capture.js"),
-).href;
 const checkOnly = process.argv.includes("--check");
-
-const { capturePublicClientRoutes } = await import(captureModuleUrl);
-let capturedRoutes;
-
+const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "options", "trace"]);
+const bundle = await resolveContractBundle();
 try {
-  capturedRoutes = await capturePublicClientRoutes();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-}
-
-const routeMetadata = await readRouteMetadata();
-
-const manifest = {
-  manifestVersion: 1,
-  source: {
-    client: "src/client.ts",
-    capture: "src/client-route-capture.ts",
-  },
-  routeCount: capturedRoutes.length,
-  routes: capturedRoutes.map((route) => routeWithMetadata(route, routeMetadata.get(route.routeName))),
-};
-
-const manifestJson = `${JSON.stringify(manifest, null, 2)}\n`;
-
-if (checkOnly) {
-  const existingManifestJson = await readFile(manifestPath, "utf8");
-
-  if (existingManifestJson !== manifestJson) {
-    console.error("sdk-route-manifest.json is out of date. Run npm run generate:route-manifest.");
-    process.exit(1);
+  const specPath = await contractOpenApiPath(bundle);
+  const spec = JSON.parse(await readFile(specPath, "utf8")) as OpenApiDocument;
+  const routes = Object.entries(spec.paths ?? {}).flatMap(([pathTemplate, pathItem]) =>
+    Object.entries(pathItem).filter(([method]) => HTTP_METHODS.has(method)).map(([method, operation]) => {
+      const operationValue = operation as OpenApiOperation;
+      const operationId = operationValue.operationId;
+      if (!operationId) throw new Error(`contracts: OpenAPI operation ${method.toUpperCase()} ${pathTemplate} has no operationId.`);
+      return {
+        base: "api",
+        client: clientName(pathTemplate),
+        operation: camelCase(operationId),
+        operationId,
+        routeName: `${clientName(pathTemplate)}.${camelCase(operationId)}`,
+        method: method.toUpperCase(),
+        pathTemplate,
+        requestType: requestType(operationValue.requestBody),
+        responseType: responseType(operationValue.responses),
+      };
+    }),
+  ).sort((left, right) => `${left.pathTemplate} ${left.method}`.localeCompare(`${right.pathTemplate} ${right.method}`));
+  const manifest = {
+    manifestVersion: 2,
+    contractVersion: pinnedContractVersion,
+    source: {
+      repository: "terrabase",
+      bundle: "contracts",
+      openapi: "openapi.json",
+    },
+    routeCount: routes.length,
+    routes,
+  };
+  const json = `${JSON.stringify(manifest, null, 2)}\n`;
+  if (checkOnly) {
+    if (await readFile(manifestPath, "utf8") !== json) throw new Error("sdk-route-manifest.json is out of date. Run npm run generate:route-manifest.");
+    console.log(`sdk-route-manifest.json is current (${routes.length} routes from terrabase ${pinnedContractVersion}).`);
+  } else {
+    await writeFile(manifestPath, json);
+    console.log(`Wrote sdk-route-manifest.json with ${routes.length} routes from terrabase ${pinnedContractVersion}.`);
   }
-
-  console.log(`sdk-route-manifest.json is current (${manifest.routeCount} routes).`);
-} else {
-  await writeFile(manifestPath, manifestJson);
-  console.log(
-    `Wrote sdk-route-manifest.json with ${manifest.routeCount} routes.`,
-  );
+} finally {
+  await bundle.cleanup();
 }
 
-function routeWithMetadata(route, metadata) {
-  return compactObject({
-    base: route.base,
-    client: route.client,
-    operation: route.operation,
-    routeName: route.routeName,
-    method: route.method,
-    pathTemplate: route.pathTemplate,
-    requestType: metadata?.requestType ?? (route.sourceContract.body.kind === "json" ? "json" : undefined),
-    responseType: metadata?.responseType,
-    sourceContract: route.sourceContract,
-  });
+type OpenApiDocument = { readonly paths?: Record<string, Record<string, unknown>> };
+type OpenApiOperation = { readonly operationId?: string; readonly requestBody?: OpenApiSchemaRef; readonly responses?: Record<string, OpenApiResponse> };
+type OpenApiSchemaRef = { readonly $ref?: string; readonly content?: Record<string, { readonly schema?: OpenApiSchemaRef }> };
+type OpenApiResponse = { readonly content?: Record<string, { readonly schema?: OpenApiSchemaRef }> };
+
+function schemaName(value: OpenApiSchemaRef | undefined): string | undefined {
+  const reference = value && "$ref" in value && typeof value.$ref === "string" ? value.$ref : undefined;
+  return reference?.split("/").at(-1);
 }
-
-function compactObject(value) {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entryValue]) => entryValue !== undefined),
-  );
+function requestType(body: OpenApiSchemaRef | undefined): string { return body === undefined ? "void" : schemaName(body.content?.["application/json"]?.schema) ?? "json"; }
+function responseType(responses: Record<string, OpenApiResponse> | undefined): string {
+  const response = Object.entries(responses ?? {}).filter(([status]) => /^2(?:\d\d|xx)$/iu.test(status)).sort(([left], [right]) => left.localeCompare(right))[0]?.[1];
+  if (response === undefined) return "never";
+  const content = response.content?.["application/json"] ?? Object.values(response.content ?? {})[0];
+  return schemaName(content?.schema) ?? "void";
 }
-
-async function readRouteMetadata() {
-  const clientSource = await readFile(clientSourcePath, "utf8");
-  const sourceFile = ts.createSourceFile(
-    clientSourcePath,
-    clientSource,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
-  const metadataByRouteName = new Map();
-
-  visit(sourceFile, (node) => {
-    if (!ts.isClassDeclaration(node) || node.name === undefined) {
-      return;
-    }
-
-    const clientName = node.name.text;
-    if (!clientName.endsWith("Client")) {
-      return;
-    }
-
-    for (const member of node.members) {
-      if (!ts.isMethodDeclaration(member) || member.body === undefined) {
-        continue;
-      }
-
-      const routeNames = routeNamesFromMethod(member);
-      if (routeNames.length === 0) {
-        continue;
-      }
-
-      const metadata = compactObject({
-        requestType: requestTypeFromMethod(member, sourceFile),
-        responseType: responseTypeFromMethod(member, sourceFile),
-      });
-
-      for (const routeName of routeNames) {
-        if (!metadataByRouteName.has(routeName)) {
-          metadataByRouteName.set(routeName, metadata);
-        }
-      }
-    }
-  });
-
-  return metadataByRouteName;
-}
-
-function routeNamesFromMethod(method) {
-  const routeNames = [];
-
-  visit(method.body, (node) => {
-    if (
-      ts.isPropertyAssignment(node) &&
-      ts.isIdentifier(node.name) &&
-      node.name.text === "routeName"
-    ) {
-      routeNames.push(...stringLiteralsFromExpression(node.initializer));
-    }
-  });
-
-  return routeNames;
-}
-
-function stringLiteralsFromExpression(expression) {
-  if (ts.isStringLiteral(expression)) {
-    return [expression.text];
-  }
-
-  if (ts.isConditionalExpression(expression)) {
-    return [
-      ...stringLiteralsFromExpression(expression.whenTrue),
-      ...stringLiteralsFromExpression(expression.whenFalse),
-    ];
-  }
-
-  return [];
-}
-
-function requestTypeFromMethod(method, sourceFile) {
-  for (const parameter of method.parameters) {
-    if (!ts.isIdentifier(parameter.name) || parameter.name.text !== "request") {
-      continue;
-    }
-
-    if (parameter.type === undefined) {
-      continue;
-    }
-
-    return normalizeTypeText(parameter.type.getText(sourceFile));
-  }
-
-  return undefined;
-}
-
-function responseTypeFromMethod(method, sourceFile) {
-  if (method.type === undefined) {
-    return undefined;
-  }
-
-  const returnType = normalizeTypeText(method.type.getText(sourceFile));
-  const resultType = returnType.match(/^Promise<TerraScaleResult<(.+)>>$/u);
-  return resultType?.[1] ?? returnType;
-}
-
-function normalizeTypeText(typeText) {
-  return typeText
-    .replaceAll("Models.", "")
-    .replaceAll("\n", " ")
-    .replace(/\s+/gu, " ")
-    .trim();
-}
-
-function visit(node, visitor) {
-  visitor(node);
-  ts.forEachChild(node, (child) => visit(child, visitor));
+function camelCase(value: string): string { return value.replace(/[-_ ]+(.)/gu, (_, character: string) => character.toUpperCase()); }
+function clientName(pathTemplate: string): string {
+  if (pathTemplate.startsWith("/api/v1/reactive/")) return "reactive";
+  if (pathTemplate === "/api/v1/health") return "health";
+  if (pathTemplate === "/api/v1/regions") return "regions";
+  return "databases";
 }

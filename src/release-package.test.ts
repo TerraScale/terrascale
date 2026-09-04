@@ -27,7 +27,12 @@ test("workflow delegates host-mode verification to the Deploy CLI", async () => 
   assert.doesNotMatch(workflow, /(?:container:|\bimage:|docker|podman|REGISTRY_|DEPLOY_CLI_READ_TOKEN)/iu);
   assert.match(workflow, /runs-on: terrascale-builder/u);
   assert.match(workflow, /actions\/checkout@d23441a48e516b6c34aea4fa41551a30e30af803/u);
-  assert.match(workflow, /releases\/download\/latest\/ts-deploy-linux-arm64/u);
+  assert.match(workflow, /releases\/latest/u);
+  assert.match(workflow, /releases\/tag\/v0\\\.0\\\.0-dev\\\.\(\[0-9a-f\]\{40\}\|\[0-9a-f\]\{64\}\)\$/u);
+  assert.match(workflow, /release="https:\/\/git\.terrascale\.tech\/TerraScale\/ts-deploy\/releases\/download\/\$\{tag\}"/u);
+  assert.match(workflow, /\$\{release\}\/SHA256SUMS[^\r\n]*\$\{release\}\/\$\{asset\}/u);
+  assert.match(workflow, /sha256sum -c -/u);
+  assert.doesNotMatch(workflow, /releases\/download\/latest(?:[\/'"`\s]|$)/u);
   assert.match(workflow, /\.\/ts-deploy ci --repo ts-typescript/u);
 });
 

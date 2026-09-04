@@ -25,12 +25,25 @@ test("D-68 CI checks out the event revision and delegates to ts-deploy", async (
   assert.match(workflow, /persist-credentials:\s*false\b/u);
   assert.match(workflow, /runs-on:\s*terrascale-builder\b/u);
 
-  // The release asset name may change; the HTTPS latest-release endpoint is
-  // the stable boundary this consumer workflow needs to enforce.
+  // Resolve the latest release to its immutable commit-derived tag before
+  // downloading and verifying the selected architecture asset.
   assert.match(
     workflow,
-    /\bcurl\b[^\r\n]*https:\/\/git\.terrascale\.tech\/TerraScale\/ts-deploy\/releases\/download\/latest\//u,
+    /\bcurl\b[^\r\n]*--proto '=https'[^\r\n]*--tlsv1\.2[^\r\n]*-fsSI[^\r\n]*https:\/\/git\.terrascale\.tech\/TerraScale\/ts-deploy\/releases\/latest/u,
   );
+  assert.match(
+    workflow,
+    /releases\/tag\/v0\\\.0\\\.0-dev\\\.\(\[0-9a-f\]\{40\}\|\[0-9a-f\]\{64\}\)\$/u,
+  );
+  assert.match(workflow, /tag=\$\{location##\*\/\}/u);
+  assert.match(
+    workflow,
+    /release="https:\/\/git\.terrascale\.tech\/TerraScale\/ts-deploy\/releases\/download\/\$\{tag\}"/u,
+  );
+  assert.match(workflow, /-o SHA256SUMS "\$\{release\}\/SHA256SUMS" -o ts-deploy "\$\{release\}\/\$\{asset\}"/u);
+  assert.match(workflow, /grep -Fc "  \$\{asset\}" SHA256SUMS/u);
+  assert.match(workflow, /awk -v asset="\$\{asset\}"[^\r\n]*sha256sum -c -/u);
+  assert.doesNotMatch(workflow, /releases\/download\/latest(?:[\/'"`\s]|$)/u);
 
   const invocations = workflow.match(/\b(?:\.\/)?ts-deploy ci --repo ts-typescript\b/gu) ?? [];
   assert.equal(invocations.length, 1);

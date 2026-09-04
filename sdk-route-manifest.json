@@ -1,1727 +1,397 @@
 {
-  "manifestVersion": 1,
+  "manifestVersion": 2,
+  "contractVersion": "v1",
   "source": {
-    "client": "src/client.ts",
-    "capture": "src/client-route-capture.ts"
+    "repository": "terrabase",
+    "bundle": "contracts",
+    "openapi": "openapi.json"
   },
-  "routeCount": 60,
+  "routeCount": 35,
   "routes": [
     {
       "base": "api",
-      "client": "onboarding",
-      "operation": "getState",
-      "routeName": "onboarding.getState",
+      "client": "databases",
+      "operation": "listDatabases",
+      "operationId": "list_databases",
+      "routeName": "databases.listDatabases",
       "method": "GET",
-      "pathTemplate": "/api/v1/onboarding",
-      "responseType": "OnboardingState",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
+      "pathTemplate": "/api/v1/databases",
+      "requestType": "void",
+      "responseType": "DatabaseListResponse"
     },
     {
       "base": "api",
-      "client": "onboarding",
-      "operation": "createOrganization",
-      "routeName": "onboarding.organization.create",
+      "client": "databases",
+      "operation": "createDatabase",
+      "operationId": "create_database",
+      "routeName": "databases.createDatabase",
       "method": "POST",
-      "pathTemplate": "/api/v1/onboarding/organization",
-      "requestType": "CreateOnboardingOrganizationRequest",
-      "responseType": "OnboardingState",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "name": "Analytical Engines"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
+      "pathTemplate": "/api/v1/databases",
+      "requestType": "CreateDatabaseRequest",
+      "responseType": "DatabaseRecord"
     },
     {
       "base": "api",
-      "client": "onboarding",
-      "operation": "createProject",
-      "routeName": "onboarding.project.create",
-      "method": "POST",
-      "pathTemplate": "/api/v1/onboarding/project",
-      "requestType": "CreateOnboardingProjectRequest",
-      "responseType": "OnboardingState",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "name": "Primary",
-            "regions": [
-              "GRU"
-            ],
-            "backupRegion": "GRU"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "organizations",
-      "operation": "list",
-      "routeName": "organizations.list",
-      "method": "GET",
-      "pathTemplate": "/api/v1/organizations",
-      "responseType": "readonly Organization[]",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          }
-        ],
-        "query": [
-          {
-            "name": "skip",
-            "value": "0"
-          },
-          {
-            "name": "take",
-            "value": "25"
-          }
-        ]
-      }
-    },
-    {
-      "base": "api",
-      "client": "organizations",
-      "operation": "create",
-      "routeName": "organizations.create",
-      "method": "POST",
-      "pathTemplate": "/api/v1/organizations",
-      "requestType": "CreateOrganizationRequest",
-      "responseType": "Organization",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "name": "Analytical Engines"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "organizations",
-      "operation": "get",
-      "routeName": "organizations.get",
-      "method": "GET",
-      "pathTemplate": "/api/v1/organizations/{organizationId}",
-      "responseType": "Organization",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "organizations",
-      "operation": "update",
-      "routeName": "organizations.update",
-      "method": "PATCH",
-      "pathTemplate": "/api/v1/organizations/{organizationId}",
-      "requestType": "UpdateOrganizationRequest",
-      "responseType": "Organization",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "name": "Analytical Engines"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "organizations",
-      "operation": "requestDeletion",
-      "routeName": "organizations.deletion.request",
-      "method": "POST",
-      "pathTemplate": "/api/v1/organizations/{organizationId}:request-deletion",
-      "requestType": "RequestOrganizationDeletionRequest",
-      "responseType": "Organization",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "confirm": true,
-            "organizationName": "Analytical Engines"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "organizations",
-      "operation": "leave",
-      "routeName": "organizations.leave",
-      "method": "POST",
-      "pathTemplate": "/api/v1/organizations/{organizationId}:leave",
-      "responseType": "void",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "organizations",
-      "operation": "listProjects",
-      "routeName": "organizations.projects.list",
-      "method": "GET",
-      "pathTemplate": "/api/v1/organizations/{organizationId}/projects",
-      "responseType": "readonly Project[]",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          }
-        ],
-        "query": [
-          {
-            "name": "skip",
-            "value": "0"
-          },
-          {
-            "name": "take",
-            "value": "25"
-          }
-        ]
-      }
-    },
-    {
-      "base": "api",
-      "client": "organizations",
-      "operation": "listMembers",
-      "routeName": "organizations.members.list",
-      "method": "GET",
-      "pathTemplate": "/api/v1/organizations/{organizationId}/members",
-      "responseType": "readonly OrganizationMember[]",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          }
-        ],
-        "query": [
-          {
-            "name": "skip",
-            "value": "0"
-          },
-          {
-            "name": "take",
-            "value": "25"
-          }
-        ]
-      }
-    },
-    {
-      "base": "api",
-      "client": "organizations",
-      "operation": "updateMemberRole",
-      "routeName": "organizations.members.updateRole",
-      "method": "PATCH",
-      "pathTemplate": "/api/v1/organizations/{organizationId}/members/{userId}",
-      "requestType": "UpdateOrganizationMemberRoleRequest",
-      "responseType": "OrganizationMember",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "role": "OrganizationOwner"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "organizations",
-      "operation": "removeMember",
-      "routeName": "organizations.members.remove",
-      "method": "POST",
-      "pathTemplate": "/api/v1/organizations/{organizationId}/members/{userId}:remove",
-      "requestType": "RemoveOrganizationMemberRequest",
-      "responseType": "void",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "confirm": true
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "organizations",
-      "operation": "createProject",
-      "routeName": "organizations.projects.create",
-      "method": "POST",
-      "pathTemplate": "/api/v1/organizations/{organizationId}/projects",
-      "requestType": "CreateProjectRequest",
-      "responseType": "Project",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "name": "Primary",
-            "regions": [
-              "GRU"
-            ],
-            "backupRegion": "GRU"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "organizations",
-      "operation": "getProject",
-      "routeName": "organizations.projects.get",
-      "method": "GET",
-      "pathTemplate": "/api/v1/projects/{projectId}",
-      "responseType": "Project",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "organizations",
-      "operation": "listProjectRegionPlacements",
-      "routeName": "organizations.projects.regions.list",
-      "method": "GET",
-      "pathTemplate": "/api/v1/projects/{projectId}/regions",
-      "responseType": "readonly ProjectRegionPlacement[]",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "organizations",
-      "operation": "updateProject",
-      "routeName": "organizations.projects.update",
-      "method": "PATCH",
-      "pathTemplate": "/api/v1/projects/{projectId}",
-      "requestType": "UpdateProjectRequest",
-      "responseType": "Project",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "name": "Core",
-            "backupRegion": "GRU"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "organizations",
-      "operation": "deleteProject",
-      "routeName": "organizations.projects.delete",
+      "client": "databases",
+      "operation": "deleteDatabase",
+      "operationId": "delete_database",
+      "routeName": "databases.deleteDatabase",
       "method": "DELETE",
-      "pathTemplate": "/api/v1/projects/{projectId}",
-      "requestType": "DeleteProjectRequest",
-      "responseType": "DeletedProject",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "confirm": true,
-            "projectName": "Core"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
+      "pathTemplate": "/api/v1/databases/{name}",
+      "requestType": "void",
+      "responseType": "DatabaseRecord"
     },
     {
       "base": "api",
-      "client": "organizations",
-      "operation": "listInvitations",
-      "routeName": "organizations.invitations.list",
+      "client": "databases",
+      "operation": "getDatabase",
+      "operationId": "get_database",
+      "routeName": "databases.getDatabase",
       "method": "GET",
-      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations",
-      "responseType": "readonly Invitation[]",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          }
-        ],
-        "query": [
-          {
-            "name": "skip",
-            "value": "0"
-          },
-          {
-            "name": "take",
-            "value": "25"
-          }
-        ]
-      }
+      "pathTemplate": "/api/v1/databases/{name}",
+      "requestType": "void",
+      "responseType": "DatabaseRecord"
     },
     {
       "base": "api",
-      "client": "organizations",
-      "operation": "createInvitation",
-      "routeName": "organizations.invitations.create",
-      "method": "POST",
-      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations",
-      "requestType": "CreateInvitationRequest",
-      "responseType": "Invitation",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "email": "grace@example.test",
-            "projectId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-            "responseUrlTemplate": "https://app.example.test/invitations/{invitationId}?organizationId={organizationId}"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
+      "client": "databases",
+      "operation": "listBackups",
+      "operationId": "list_backups",
+      "routeName": "databases.listBackups",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/backups",
+      "requestType": "void",
+      "responseType": "BackupStatusResponse"
     },
     {
       "base": "api",
-      "client": "organizations",
-      "operation": "acceptInvitation",
-      "routeName": "organizations.invitations.accept",
+      "client": "databases",
+      "operation": "restoreBackup",
+      "operationId": "restore_backup",
+      "routeName": "databases.restoreBackup",
       "method": "POST",
-      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:accept",
-      "responseType": "Invitation",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
+      "pathTemplate": "/api/v1/databases/{name}/backups/restore",
+      "requestType": "RestoreRequest",
+      "responseType": "DatabaseRecord"
     },
     {
       "base": "api",
-      "client": "organizations",
-      "operation": "declineInvitation",
-      "routeName": "organizations.invitations.decline",
-      "method": "POST",
-      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:decline",
-      "responseType": "Invitation",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
+      "client": "databases",
+      "operation": "listBranches",
+      "operationId": "list_branches",
+      "routeName": "databases.listBranches",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/branches",
+      "requestType": "void",
+      "responseType": "BranchListResponse"
     },
     {
       "base": "api",
-      "client": "organizations",
-      "operation": "resendInvitation",
-      "routeName": "organizations.invitations.resend",
+      "client": "databases",
+      "operation": "createBranch",
+      "operationId": "create_branch",
+      "routeName": "databases.createBranch",
       "method": "POST",
-      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:resend",
-      "responseType": "Invitation",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
+      "pathTemplate": "/api/v1/databases/{name}/branches",
+      "requestType": "RestoreRequest",
+      "responseType": "DatabaseRecord"
     },
     {
       "base": "api",
-      "client": "organizations",
-      "operation": "cancelInvitation",
-      "routeName": "organizations.invitations.cancel",
+      "client": "databases",
+      "operation": "listCollections",
+      "operationId": "list_collections",
+      "routeName": "databases.listCollections",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/collections",
+      "requestType": "void",
+      "responseType": "CollectionsResponse"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "listDocuments",
+      "operationId": "list_documents",
+      "routeName": "databases.listDocuments",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/documents",
+      "requestType": "void",
+      "responseType": "DocumentsResponse"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "deleteDocument",
+      "operationId": "delete_document",
+      "routeName": "databases.deleteDocument",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/documents/{id}",
+      "requestType": "void",
+      "responseType": "void"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "getDocument",
+      "operationId": "get_document",
+      "routeName": "databases.getDocument",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/documents/{id}",
+      "requestType": "void",
+      "responseType": "JsonValue"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "patchDocument",
+      "operationId": "patch_document",
+      "routeName": "databases.patchDocument",
+      "method": "PATCH",
+      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/documents/{id}",
+      "requestType": "JsonValue",
+      "responseType": "DocumentWriteResponse"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "putDocument",
+      "operationId": "put_document",
+      "routeName": "databases.putDocument",
+      "method": "PUT",
+      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/documents/{id}",
+      "requestType": "JsonValue",
+      "responseType": "DocumentWriteResponse"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "documentHistory",
+      "operationId": "document_history",
+      "routeName": "databases.documentHistory",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/documents/{id}/history",
+      "requestType": "void",
+      "responseType": "HistoryResponse"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "batchDocuments",
+      "operationId": "batch_documents",
+      "routeName": "databases.batchDocuments",
       "method": "POST",
-      "pathTemplate": "/api/v1/organizations/{organizationId}/invitations/{invitationId}:cancel",
-      "responseType": "Invitation",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
+      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/documents/batch",
+      "requestType": "BatchRequest",
+      "responseType": "BatchResponse"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "listIndexes",
+      "operationId": "list_indexes",
+      "routeName": "databases.listIndexes",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/indexes",
+      "requestType": "void",
+      "responseType": "IndexListResponse"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "createIndex",
+      "operationId": "create_index",
+      "routeName": "databases.createIndex",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/indexes",
+      "requestType": "CreateIndexRequest",
+      "responseType": "IndexCreatedResponse"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "deleteIndex",
+      "operationId": "delete_index",
+      "routeName": "databases.deleteIndex",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/indexes/{field}",
+      "requestType": "void",
+      "responseType": "never"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "indexRecommendations",
+      "operationId": "index_recommendations",
+      "routeName": "databases.indexRecommendations",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/indexes/recommendations",
+      "requestType": "void",
+      "responseType": "never"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "getSchema",
+      "operationId": "get_schema",
+      "routeName": "databases.getSchema",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/schema",
+      "requestType": "void",
+      "responseType": "never"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "putSchema",
+      "operationId": "put_schema",
+      "routeName": "databases.putSchema",
+      "method": "PUT",
+      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/schema",
+      "requestType": "void",
+      "responseType": "never"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "createExport",
+      "operationId": "create_export",
+      "routeName": "databases.createExport",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{name}/exports",
+      "requestType": "void",
+      "responseType": "never"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "websocket",
+      "operationId": "websocket",
+      "routeName": "databases.websocket",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/reactive",
+      "requestType": "void",
+      "responseType": "never"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "poll",
+      "operationId": "poll",
+      "routeName": "databases.poll",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{name}/reactive/poll",
+      "requestType": "ReactivePollRequest",
+      "responseType": "ReactiveFramesResponse"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "restoreDatabase",
+      "operationId": "restore_database",
+      "routeName": "databases.restoreDatabase",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{name}/restore",
+      "requestType": "void",
+      "responseType": "DatabaseRecord"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "executeSql",
+      "operationId": "execute_sql",
+      "routeName": "databases.executeSql",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{name}/sql",
+      "requestType": "SqlRequest",
+      "responseType": "SqlResultResponse"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "databaseUsage",
+      "operationId": "database_usage",
+      "routeName": "databases.databaseUsage",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/usage",
+      "requestType": "void",
+      "responseType": "never"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "listWebhooks",
+      "operationId": "list_webhooks",
+      "routeName": "databases.listWebhooks",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/webhooks",
+      "requestType": "void",
+      "responseType": "never"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "createWebhook",
+      "operationId": "create_webhook",
+      "routeName": "databases.createWebhook",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{name}/webhooks",
+      "requestType": "WebhookRequest",
+      "responseType": "never"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "deleteWebhook",
+      "operationId": "delete_webhook",
+      "routeName": "databases.deleteWebhook",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/databases/{name}/webhooks/{id}",
+      "requestType": "void",
+      "responseType": "never"
+    },
+    {
+      "base": "api",
+      "client": "health",
+      "operation": "health",
+      "operationId": "health",
+      "routeName": "health.health",
+      "method": "GET",
+      "pathTemplate": "/api/v1/health",
+      "requestType": "void",
+      "responseType": "HealthResponse"
+    },
+    {
+      "base": "api",
+      "client": "reactive",
+      "operation": "attachView",
+      "operationId": "attach_view",
+      "routeName": "reactive.attachView",
+      "method": "POST",
+      "pathTemplate": "/api/v1/reactive/views",
+      "requestType": "AttachViewRequest",
+      "responseType": "never"
+    },
+    {
+      "base": "api",
+      "client": "reactive",
+      "operation": "viewLog",
+      "operationId": "view_log",
+      "routeName": "reactive.viewLog",
+      "method": "GET",
+      "pathTemplate": "/api/v1/reactive/views/{view}/{generation}/log",
+      "requestType": "void",
+      "responseType": "never"
     },
     {
       "base": "api",
       "client": "regions",
-      "operation": "list",
-      "routeName": "regions.list",
+      "operation": "regions",
+      "operationId": "regions",
+      "routeName": "regions.regions",
       "method": "GET",
       "pathTemplate": "/api/v1/regions",
-      "responseType": "RegionsResponse",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "regions",
-      "operation": "get",
-      "routeName": "regions.get",
-      "method": "GET",
-      "pathTemplate": "/api/v1/regions/{regionCode}",
-      "responseType": "RegionDetails",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "savedQueries",
-      "operation": "list",
-      "routeName": "savedQueries.list",
-      "method": "GET",
-      "pathTemplate": "/api/v1/projects/{projectId}/saved-queries",
-      "responseType": "ProjectSavedQueryPageResponse",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": [
-          {
-            "name": "skip",
-            "value": "0"
-          },
-          {
-            "name": "take",
-            "value": "100"
-          }
-        ]
-      }
-    },
-    {
-      "base": "api",
-      "client": "savedQueries",
-      "operation": "create",
-      "routeName": "savedQueries.create",
-      "method": "POST",
-      "pathTemplate": "/api/v1/projects/{projectId}/saved-queries",
-      "requestType": "ProjectSavedQueryRequest",
-      "responseType": "ProjectSavedQueryResponse",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "name": "Active users",
-            "query": "SELECT * FROM users WHERE active = true"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "savedQueries",
-      "operation": "get",
-      "routeName": "savedQueries.get",
-      "method": "GET",
-      "pathTemplate": "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}",
-      "responseType": "ProjectSavedQueryResponse",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "savedQueries",
-      "operation": "update",
-      "routeName": "savedQueries.update",
-      "method": "PUT",
-      "pathTemplate": "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}",
-      "requestType": "UpdateProjectSavedQueryRequest",
-      "responseType": "ProjectSavedQueryResponse",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "name": "Active users",
-            "query": "SELECT * FROM users WHERE active = true",
-            "revision": "opaque-revision"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "savedQueries",
-      "operation": "delete",
-      "routeName": "savedQueries.delete",
-      "method": "DELETE",
-      "pathTemplate": "/api/v1/projects/{projectId}/saved-queries/{savedQueryId}",
-      "responseType": "DeletedProjectSavedQueryResponse",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "operation": "list",
-      "routeName": "databases.list",
-      "method": "GET",
-      "pathTemplate": "/api/v1/projects/{projectId}/databases",
-      "responseType": "readonly ProjectDatabase[]",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": [
-          {
-            "name": "skip",
-            "value": "0"
-          },
-          {
-            "name": "take",
-            "value": "100"
-          }
-        ]
-      }
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "operation": "create",
-      "routeName": "databases.create",
-      "method": "POST",
-      "pathTemplate": "/api/v1/projects/{projectId}/databases",
-      "requestType": "CreateDatabaseRequest",
-      "responseType": "ProjectDatabase",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "name": "primary"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "operation": "get",
-      "routeName": "databases.get",
-      "method": "GET",
-      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}",
-      "responseType": "ProjectDatabase",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "operation": "delete",
-      "routeName": "databases.delete",
-      "method": "DELETE",
-      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}",
-      "responseType": "DeletedProjectDatabaseResponse",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-delete-confirmation",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAW"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "databaseBranches",
-      "operation": "getCapability",
-      "routeName": "databaseBranches.getCapability",
-      "method": "GET",
-      "pathTemplate": "/api/v1/projects/{projectId}/database-branches/capability",
-      "responseType": "DatabaseBranchCapabilityResponse",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "databaseBranches",
-      "operation": "requestClone",
-      "routeName": "databaseBranches.requestClone",
-      "method": "POST",
-      "pathTemplate": "/api/v1/projects/{projectId}/database-branches",
-      "requestType": "CreateDatabaseBranchRequest",
-      "responseType": "never",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "sourceDatabaseId": "01ARZ3NDEKTSV4RRFFQ69G5FAW"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "backups",
-      "operation": "configurePolicy",
-      "routeName": "backups.policy.configure",
-      "method": "PUT",
-      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups/policy",
-      "requestType": "ConfigureBackupPolicyRequest",
-      "responseType": "BackupPolicyResponse",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "fullBackupCron": "0 2 * * *",
-            "incrementalBackupCron": "0 */6 * * *",
-            "retentionDays": 30,
-            "disabled": false
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "backups",
-      "operation": "planBackup",
-      "routeName": "backups.plan",
-      "method": "POST",
-      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups:plan",
-      "requestType": "DatabaseBackupConfirmationPlanRequest",
-      "responseType": "DatabaseBackupConfirmationPlanResponse",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "operationSessionId": "backup-operation-session"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "backups",
-      "operation": "executeBackup",
-      "routeName": "backups.execute",
-      "method": "POST",
-      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups:execute",
-      "requestType": "DatabaseBackupConfirmationExecuteRequest",
-      "responseType": "BackupJobResponse",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "operationSessionId": "backup-operation-session",
-            "confirmationToken": "backup-confirmation-token"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          },
-          {
-            "name": "idempotency-key",
-            "value": "backup-execution-key"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "backups",
-      "operation": "listBackups",
-      "routeName": "backups.list",
-      "method": "GET",
-      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups",
-      "responseType": "readonly BackupJobResponse[]",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": [
-          {
-            "name": "skip",
-            "value": "0"
-          },
-          {
-            "name": "take",
-            "value": "25"
-          }
-        ]
-      }
-    },
-    {
-      "base": "api",
-      "client": "backups",
-      "operation": "getBackup",
-      "routeName": "backups.get",
-      "method": "GET",
-      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/backups/{backupId}",
-      "responseType": "BackupJobResponse",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "backups",
-      "operation": "listRestorePoints",
-      "routeName": "backups.restorePoints.list",
-      "method": "GET",
-      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/restore-points",
-      "responseType": "readonly RestorePointResponse[]",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "backups",
-      "operation": "startRestore",
-      "routeName": "backups.restores.start",
-      "method": "POST",
-      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/restores",
-      "requestType": "StartRestoreRequest",
-      "responseType": "RestoreJobResponse",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "backupId": "01NRZ3NDEKTSV4RRFFQ69G5FAV",
-            "idempotencyKey": "restore-1"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "backups",
-      "operation": "getRestore",
-      "routeName": "backups.restores.get",
-      "method": "GET",
-      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/restores/{restoreId}",
-      "responseType": "RestoreJobResponse",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "backups",
-      "operation": "listRestores",
-      "routeName": "backups.restores.list",
-      "method": "GET",
-      "pathTemplate": "/api/v1/projects/{projectId}/databases/{databaseId}/restores",
-      "responseType": "readonly RestoreJobResponse[]",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": [
-          {
-            "name": "skip",
-            "value": "0"
-          },
-          {
-            "name": "take",
-            "value": "25"
-          }
-        ]
-      }
-    },
-    {
-      "base": "api",
-      "client": "access",
-      "operation": "listTeamMembers",
-      "routeName": "access.teamMembers.list",
-      "method": "GET",
-      "pathTemplate": "/api/v1/projects/{projectId}/access/team-members",
-      "responseType": "Page<TeamMember>",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": [
-          {
-            "name": "skip",
-            "value": "0"
-          },
-          {
-            "name": "take",
-            "value": "25"
-          }
-        ]
-      }
-    },
-    {
-      "base": "api",
-      "client": "access",
-      "operation": "addTeamMember",
-      "routeName": "access.teamMembers.add",
-      "method": "POST",
-      "pathTemplate": "/api/v1/projects/{projectId}/access/team-members",
-      "requestType": "AddTeamMemberRequest",
-      "responseType": "TeamMember",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "userId": "01KRZ3NDEKTSV4RRFFQ69G5FAV",
-            "role": "owner"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "access",
-      "operation": "updateTeamMember",
-      "routeName": "access.teamMembers.update",
-      "method": "PATCH",
-      "pathTemplate": "/api/v1/projects/{projectId}/access/team-members/{userId}",
-      "requestType": "UpdateTeamMemberRequest",
-      "responseType": "TeamMember",
-      "sourceContract": {
-        "body": {
-          "kind": "json",
-          "shape": {
-            "role": "member"
-          }
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "content-type",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "access",
-      "operation": "removeTeamMember",
-      "routeName": "access.teamMembers.remove",
-      "method": "DELETE",
-      "pathTemplate": "/api/v1/projects/{projectId}/access/team-members/{userId}",
-      "responseType": "void",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "usage",
-      "operation": "getProjectUsage",
-      "routeName": "usage.project.get",
-      "method": "GET",
-      "pathTemplate": "/api/v1/projects/{projectId}/usage",
-      "responseType": "UsageSummary",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "usage",
-      "operation": "getOrganizationUsage",
-      "routeName": "usage.organization.get",
-      "method": "GET",
-      "pathTemplate": "/api/v1/organizations/{organizationId}/usage",
-      "responseType": "OrganizationUsage",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "usage",
-      "operation": "getProjectUsageWorkload",
-      "routeName": "usage.project.workload",
-      "method": "GET",
-      "pathTemplate": "/api/v1/projects/{projectId}/usage/workload",
-      "responseType": "UsageWorkload",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": [
-          {
-            "name": "range",
-            "value": "24h"
-          }
-        ]
-      }
-    },
-    {
-      "base": "api",
-      "client": "usage",
-      "operation": "getProjectLatency",
-      "routeName": "usage.project.latency",
-      "method": "GET",
-      "pathTemplate": "/api/v1/projects/{projectId}/latency",
-      "responseType": "ProjectLatency",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": [
-          {
-            "name": "latitude",
-            "value": "-23.55"
-          },
-          {
-            "name": "longitude",
-            "value": "-46.63"
-          }
-        ]
-      }
-    },
-    {
-      "base": "api",
-      "client": "usage",
-      "operation": "getProjectUsageHistory",
-      "routeName": "usage.project.history",
-      "method": "GET",
-      "pathTemplate": "/api/v1/projects/{projectId}/usage/history",
-      "responseType": "ProjectUsageHistory",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": [
-          {
-            "name": "range",
-            "value": "30d"
-          }
-        ]
-      }
-    },
-    {
-      "base": "api",
-      "client": "audit",
-      "operation": "list",
-      "routeName": "audit.list",
-      "method": "GET",
-      "pathTemplate": "/api/v1/projects/{projectId}/audit",
-      "responseType": "Page<AuditEvent>",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": [
-          {
-            "name": "skip",
-            "value": "0"
-          },
-          {
-            "name": "take",
-            "value": "25"
-          }
-        ]
-      }
-    },
-    {
-      "base": "api",
-      "client": "audit",
-      "operation": "get",
-      "routeName": "audit.get",
-      "method": "GET",
-      "pathTemplate": "/api/v1/projects/{projectId}/audit/{auditEventId}",
-      "responseType": "AuditEvent",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          },
-          {
-            "name": "x-terrascale-project-id",
-            "value": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "notifications",
-      "operation": "list",
-      "routeName": "notifications.list",
-      "method": "GET",
-      "pathTemplate": "/api/v1/users/me/notifications",
-      "responseType": "readonly Notification[]",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          }
-        ],
-        "query": [
-          {
-            "name": "organizationId",
-            "value": "01ERZ3NDEKTSV4RRFFQ69G5FAV"
-          },
-          {
-            "name": "skip",
-            "value": "0"
-          },
-          {
-            "name": "take",
-            "value": "25"
-          },
-          {
-            "name": "unreadOnly",
-            "value": "true"
-          }
-        ]
-      }
-    },
-    {
-      "base": "api",
-      "client": "notifications",
-      "operation": "markRead",
-      "routeName": "notifications.markRead",
-      "method": "POST",
-      "pathTemplate": "/api/v1/users/me/notifications/{notificationId}:mark-read",
-      "responseType": "Notification",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          }
-        ],
-        "query": []
-      }
-    },
-    {
-      "base": "api",
-      "client": "notifications",
-      "operation": "markAllRead",
-      "routeName": "notifications.markAllRead",
-      "method": "POST",
-      "pathTemplate": "/api/v1/users/me/notifications:mark-all-read",
-      "responseType": "MarkAllNotificationsReadResponse",
-      "sourceContract": {
-        "body": {
-          "kind": "void"
-        },
-        "headers": [
-          {
-            "name": "accept",
-            "value": "application/json"
-          }
-        ],
-        "query": [
-          {
-            "name": "organizationId",
-            "value": "01ERZ3NDEKTSV4RRFFQ69G5FAV"
-          }
-        ]
-      }
+      "requestType": "void",
+      "responseType": "HealthResponse"
     }
   ]
 }

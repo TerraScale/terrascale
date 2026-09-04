@@ -46,6 +46,7 @@ export async function generateOpenApiContractDescriptor({ manifestPath, specPath
 
   return canonicalize({
     descriptorVersion: 2,
+    ...(typeof manifest.contractVersion === "string" ? { contractVersion: manifest.contractVersion } : {}),
     routeCount: routes.length,
     routes,
     sources: {
@@ -56,6 +57,10 @@ export async function generateOpenApiContractDescriptor({ manifestPath, specPath
 }
 
 function assertSdkContract(route, request, responses) {
+  // Routes generated directly from terrabase OpenAPI intentionally have no
+  // captured request. Source-contract assertions only apply to legacy capture
+  // metadata when it is present.
+  if (route.sourceContract === undefined) return;
   const requestType = route.requestType ?? "void";
   const sourceBody = route.sourceContract?.body?.kind ?? "void";
   if (requestType !== "void" && requestType !== "never" && sourceBody === "void") {

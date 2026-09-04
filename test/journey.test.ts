@@ -588,13 +588,13 @@ describe("P-3 journey chapter 2: live+sync (mock)", () => {
     try {
       const attach = (await requests[0]?.clone().json()) as { checkpoint: string };
       assert.equal(attach.checkpoint, "/wA=");
-      await assert.rejects(
-        () => live.poll(),
-        (error: unknown) =>
-          error instanceof TerraScaleSyncV2ClientError &&
-          error.code === "reset_required" &&
-          error.reset?.reason === "retention-advanced",
-      );
+      // A refused/expired checkpoint is reported as a typed reset and the
+      // correctness path immediately reattaches without the stale token.
+      await live.poll();
+      assert.equal(requests.length, 3);
+      assert.equal(live.reset?.reason, "retention-advanced");
+      const freshAttach = (await requests[2]?.clone().json()) as { checkpoint: null };
+      assert.equal(freshAttach.checkpoint, null);
     } finally {
       live.close();
     }
@@ -644,7 +644,7 @@ describe("P-3 journey chapter 2: live+sync (mock)", () => {
           serverFrame({ kind: "error", code: "authentication_expired", detail: null }),
         ),
       (error: unknown) =>
-        error instanceof TerraScaleSyncV2ClientError && error.code === "remote_error",
+        error instanceof TerraScaleSyncV2ClientError && error.code === "authentication_expired",
     );
     assert.equal(client.getSnapshot().online, false);
   });

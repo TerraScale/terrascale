@@ -60,6 +60,28 @@ test("package metadata declares the supported Node and browser matrix", async ()
   assert.equal("./local" in (packageJson.exports ?? {}), false);
 });
 
+test("generated route metadata pins the terrabase contract version", async () => {
+  const [version, manifest] = await Promise.all([
+    readFile(path.join(repositoryRoot, "CONTRACT_VERSION"), "utf8"),
+    readFile(path.join(repositoryRoot, "sdk-route-manifest.json"), "utf8"),
+  ]);
+  const parsed = JSON.parse(manifest) as {
+    readonly manifestVersion: number;
+    readonly contractVersion: string;
+    readonly source?: { readonly repository?: string; readonly bundle?: string };
+    readonly routeCount: number;
+    readonly routes: readonly { readonly pathTemplate: string }[];
+  };
+  assert.equal(version.trim(), "v1");
+  assert.equal(parsed.manifestVersion, 2);
+  assert.equal(parsed.contractVersion, version.trim());
+  assert.deepEqual(parsed.source, { repository: "terrabase", bundle: "contracts", openapi: "openapi.json" });
+  assert.equal(parsed.routeCount, parsed.routes.length);
+  assert.equal(parsed.routes.some(({ pathTemplate }) => pathTemplate.includes("/documents")), true);
+  assert.equal(parsed.routes.some(({ pathTemplate }) => pathTemplate.endsWith("/sql")), true);
+  assert.equal(parsed.routes.some(({ pathTemplate }) => pathTemplate.includes("/reactive")), true);
+});
+
 test("shipped browser paths do not import Node-only modules or the local emulator", async () => {
   const sources = await productionSources(path.join(repositoryRoot, "src"));
   assert.notEqual(sources.length, 0);

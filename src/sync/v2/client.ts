@@ -722,34 +722,37 @@ export class TerraScaleSyncV2Client {
 
   async #httpError(response: Response, operation: string): Promise<TerraScaleSyncV2ClientError> {
     let detail = `${operation} returned HTTP ${response.status}`;
+    let error: Record<string, unknown> | undefined;
     let reset: SyncV2Reset | undefined;
     try {
       const body: unknown = await response.clone().json();
       if (isRecord(body)) {
-        const error = isRecord(body.error) ? body.error : body;
+        error = isRecord(body.error) ? body.error : body;
         if (typeof error.message === "string") detail = error.message;
-        if (typeof error.reason === "string") reset = { reason: normalizeResetReason(error.reason), message: detail };
-        if (typeof error.code === "string" && error.code === "checkpoint_refused") {
-          reset = { reason: "checkpoint-expired", message: detail };
-        }
       }
     } catch {
       // Status and operation are sufficient when an error body is unavailable.
+    }
+
+    // Authentication and authorization are terminal for this session. Check
+    // their typed contract codes before interpreting a status or reset reason,
+    // so an expired session can never be retried or misclassified as a stale
+    // checkpoint.
+    if (response.status === 401 || error?.code === "authentication_expired") {
+      return new TerraScaleSyncV2ClientError("authentication_expired", detail);
+    }
+    if (response.status === 403 || error?.code === "permission_denied") {
+      return new TerraScaleSyncV2ClientError("permission_denied", detail);
+    }
+    if (error?.code === "checkpoint_refused") {
+      reset = { reason: "checkpoint-expired", message: detail };
+    } else if (typeof error?.reason === "string") {
+      reset = { reason: normalizeResetReason(error.reason), message: detail };
     }
     if (reset === undefined && response.status === 410) {
       reset = { reason: "retention-advanced", message: detail };
     }
     if (reset !== undefined) return new TerraScaleSyncV2ClientError("reset_required", detail, undefined, reset);
-    try {
-      const body: unknown = await response.clone().json();
-      const error = isRecord(body) && isRecord(body.error) ? body.error : isRecord(body) ? body : undefined;
-      if (error?.code === "authentication_expired") return new TerraScaleSyncV2ClientError("authentication_expired", detail);
-      if (error?.code === "permission_denied") return new TerraScaleSyncV2ClientError("permission_denied", detail);
-    } catch {
-      // Fall through to the HTTP status mapping below.
-    }
-    if (response.status === 401) return new TerraScaleSyncV2ClientError("authentication_expired", detail);
-    if (response.status === 403) return new TerraScaleSyncV2ClientError("permission_denied", detail);
     return new TerraScaleSyncV2ClientError("transport", detail);
   }
 }
